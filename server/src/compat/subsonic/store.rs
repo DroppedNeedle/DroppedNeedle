@@ -184,7 +184,7 @@ pub struct TranscodeDecisionData {
 }
 
 /// Client playback capabilities (getTranscodeDecision JSON body).
-/// Parsed and passed to [`Store::advanced_decide`]; no store reads it yet.
+/// Parsed, validated and passed to [`Store::advanced_decide`].
 #[derive(Debug, Clone, Default)]
 pub struct ClientInfo {
     /// Client name.
@@ -195,6 +195,12 @@ pub struct ClientInfo {
     pub max_audio_bitrate: Option<i64>,
     /// Max transcoding audio bitrate (0 = unset).
     pub max_transcoding_audio_bitrate: Option<i64>,
+    /// Formats the client plays as-is.
+    pub direct_play_profiles: Vec<super::media::client_info::DirectPlayProfile>,
+    /// Formats the client accepts from the transcoder.
+    pub transcoding_profiles: Vec<super::media::client_info::TranscodingProfile>,
+    /// Per-codec limits.
+    pub codec_profiles: Vec<super::media::client_info::CodecProfile>,
 }
 
 /// The library/services backing store. Every method reads or mutates

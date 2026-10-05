@@ -7,11 +7,14 @@
 //! ([`Store::for_caller`]).
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use super::library::{CompatError, CompatLibrary, ImageBytes, whole};
 use super::playback::CompatPlayback;
 use super::queues::CompatQueues;
 use crate::auth::users::UsersDeps;
+use crate::compat::settings::LiveSettings;
+use crate::compat::subsonic::advanced;
 use crate::compat::subsonic::ids::IdKind;
 use crate::compat::subsonic::store::{
     AlbumSort, BookmarkRecord, ClientInfo, LyricLine, LyricsData, NowPlayingRow, PlaylistDetail,
@@ -26,6 +29,7 @@ use crate::reads::library::player::{
     AlbumOrder, AlbumQuery, PlayerAlbum, PlayerTrack, TrackOrder, TrackQuery,
 };
 use crate::reads::library::stores::ArtistRecord;
+use crate::runtime_config::Crypto;
 
 /// Unix seconds to the `YYYY-MM-DDTHH:MM:SSZ` form Subsonic shows.
 fn iso_text(unix: u64) -> Option<String> {
@@ -136,6 +140,8 @@ pub struct SubsonicStore {
     playback: CompatPlayback,
     users: UsersDeps,
     scan: LibrarySetup,
+    crypto: Arc<Crypto>,
+    settings: LiveSettings,
     caller: Option<String>,
 }
 
@@ -147,6 +153,8 @@ impl SubsonicStore {
         playback: CompatPlayback,
         users: UsersDeps,
         scan: LibrarySetup,
+        crypto: Arc<Crypto>,
+        settings: LiveSettings,
     ) -> Self {
         Self {
             library,
@@ -154,6 +162,8 @@ impl SubsonicStore {
             playback,
             users,
             scan,
+            crypto,
+            settings,
             caller: None,
         }
     }
@@ -890,25 +900,40 @@ impl Store for SubsonicStore {
 
     async fn advanced_decide(
         &self,
-        _track: &ViewTrack,
-        _client: &ClientInfo,
-        _user_id: &str,
+        track: &ViewTrack,
+        client: &ClientInfo,
+        user_id: &str,
     ) -> Result<TranscodeDecisionData, CompatError> {
-        // Signed advanced-transcode params are not issued yet; the
-        // decide-based stream path still transcodes on its own.
-        Ok(TranscodeDecisionData {
-            can_direct_play: true,
-            can_transcode: false,
-            ..TranscodeDecisionData::default()
-        })
+        let settings = self.settings.subsonic();
+        let policy = advanced::Policy {
+            transcoding_enabled: settings.transcoding_enabled,
+            ffmpeg_available: settings.ffmpeg_available,
+            max_bitrate_kbps: settings.transcode_max_bitrate_kbps,
+        };
+        let decision = advanced::decide(track, client, policy);
+        let mut answer = decision.answer;
+        answer.transcode_params = decision.grant.and_then(|grant| {
+            advanced::seal(
+                &self.crypto,
+                user_id,
+                &track.file_id,
+                grant,
+                Self::now() as i64,
+            )
+        });
+        Ok(answer)
     }
 
     async fn decode_transcode_params(
         &self,
-        _params: &str,
-        _user_id: &str,
-        _file_id: &str,
+        params: &str,
+        user_id: &str,
+        file_id: &str,
     ) -> Result<(bool, Option<String>, Option<i64>), CompatError> {
-        Ok((false, None, None))
+        // Forged, expired or foreign parameters grant nothing.
+        Ok(
+            advanced::open(&self.crypto, params, user_id, file_id, Self::now() as i64)
+                .unwrap_or((false, None, None)),
+        )
     }
 }

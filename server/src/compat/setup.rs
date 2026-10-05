@@ -108,7 +108,7 @@ pub struct CompatSetup {
 impl CompatSetup {
     /// Bind the production seams.
     pub fn build(deps: CompatDeps) -> Self {
-        let passwords = ProdCompatPasswords::new(deps.users.clone(), deps.crypto);
+        let passwords = ProdCompatPasswords::new(deps.users.clone(), Arc::clone(&deps.crypto));
         let playback = CompatPlayback::new(deps.playback);
         let store = SubsonicStore::new(
             deps.library.clone(),
@@ -116,6 +116,8 @@ impl CompatSetup {
             playback.clone(),
             deps.users.clone(),
             deps.scan,
+            deps.crypto,
+            deps.settings.clone(),
         );
         let jellyfin = JellyfinState::new(
             passwords.clone(),

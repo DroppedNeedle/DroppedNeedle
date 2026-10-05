@@ -471,18 +471,19 @@ pub async fn transcode_decision<P: Principal, S: Store, B: AudioBackend>(
         .map_err(Ctx::<P, S, B>::store_err)?
         .ok_or_else(|| SubsonicError::new(NOT_FOUND, "Song not found"))?;
     let user_id = ctx.user()?.user_id().to_owned();
+    let client = ClientInfo {
+        name: client.name,
+        platform: client.platform,
+        max_audio_bitrate: client.max_audio_bitrate,
+        max_transcoding_audio_bitrate: client.max_transcoding_audio_bitrate,
+        direct_play_profiles: client.direct_play_profiles,
+        transcoding_profiles: client.transcoding_profiles,
+        codec_profiles: client.codec_profiles,
+    };
+    super::advanced::validate(&client)?;
     let decision = ctx
         .store
-        .advanced_decide(
-            &track,
-            &ClientInfo {
-                name: client.name,
-                platform: client.platform,
-                max_audio_bitrate: client.max_audio_bitrate,
-                max_transcoding_audio_bitrate: client.max_transcoding_audio_bitrate,
-            },
-            &user_id,
-        )
+        .advanced_decide(&track, &client, &user_id)
         .await
         .map_err(Ctx::<P, S, B>::store_err)?;
     let details = |stream: Option<super::store::StreamDetailsData>| {

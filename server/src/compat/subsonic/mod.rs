@@ -89,6 +89,7 @@
 //!   CORS, case-insensitive paths, access-log redaction. The enablement
 //!   gate itself (`enabled` in [`Settings`]) runs here before lookup.
 
+pub mod advanced;
 pub mod auth;
 pub mod browse;
 pub mod error;
