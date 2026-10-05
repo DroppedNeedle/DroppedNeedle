@@ -301,8 +301,6 @@ async fn http_verifier_maps_stub_statuses() {
 // SQLite stores
 // ---------------------------------------------------------------------------
 
-/// Scratch-dir sequence so parallel tests never share a database.
-
 /// Mirror a user row so FK-backed prefs and link writes accept it.
 async fn mirror_user(runtime: &DbRuntime, user_id: &str) {
     let user_id = user_id.to_owned();

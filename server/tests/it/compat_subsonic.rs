@@ -147,8 +147,10 @@ async fn envelopes_are_byte_exact() {
 
 #[tokio::test]
 async fn error_codes() {
+    /// Endpoint, query pairs and the expected Subsonic error code.
+    type Case<'a> = (&'a str, &'a [(&'a str, &'a str)], u32);
     let store = FakeStore::loaded();
-    let unauthed: [(&str, &[(&str, &str)], u32); 6] = [
+    let unauthed: [Case; 6] = [
         (
             "ping",
             &[("u", "user"), ("p", "wrong"), ("c", "golden")],
@@ -171,7 +173,7 @@ async fn error_codes() {
     let good_key = request("ping", &[("apiKey", "key-1"), ("c", "golden")], false);
     assert_ok(&run(&settings(), &store, &good_key).await, "apiKey alone");
 
-    let authed: [(&str, &[(&str, &str)], u32); 36] = [
+    let authed: [Case; 36] = [
         ("nope", &[], 0),
         ("ping", &[("f", "yaml")], 10),
         ("getArtists", &[("musicFolderId", "2")], 70),
