@@ -1,4 +1,6 @@
-// Hand-mirrors backend/api/v1/schemas/plugins.py (snake_case wire format).
+// The plugin list as the settings page reads it; new fields come straight
+// from the generated contract.
+import type { components } from '$lib/api/v3/openapi';
 
 export const PLUGIN_SECRET_MASK = 'plugin****';
 
@@ -27,6 +29,9 @@ export interface PluginInfo {
 	ui_external_url: string;
 	sources: string[];
 	targets: string[];
+	permissions: string[];
+	runtime?: components['schemas']['PluginRuntimeInfo'] | null;
+	install?: components['schemas']['PluginInstallInfo'] | null;
 }
 
 export interface PluginListResponse {

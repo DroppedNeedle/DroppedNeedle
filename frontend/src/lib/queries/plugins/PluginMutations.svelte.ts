@@ -33,22 +33,6 @@ export const updatePluginMutation = () =>
 		}
 	}));
 
-export const installPluginMutation = () =>
-	createMutation(() => ({
-		mutationFn: (repositoryUrl: string) =>
-			api.global.post<PluginInfo>(API.plugins.install(), { repository_url: repositoryUrl }),
-		onSuccess: async (plugin) => {
-			toastStore.show({
-				message: `Installed ${plugin.display_name}. Review it, then enable it below.`,
-				type: 'success'
-			});
-			await invalidateQueriesWithPersister({ queryKey: PluginQueryKeyFactory.prefix });
-		},
-		onError: (error: Error) => {
-			toastStore.show({ message: error.message || 'Install failed.', type: 'error' });
-		}
-	}));
-
 export const uninstallPluginMutation = () =>
 	createMutation(() => ({
 		mutationFn: (name: string) => api.global.delete(API.plugins.uninstall(name)),

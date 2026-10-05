@@ -1,31 +1,31 @@
 <script lang="ts">
-	import { Blocks, CircleAlert, ExternalLink, Trash2 } from 'lucide-svelte';
-	import GitHubIcon from '$lib/components/GitHubIcon.svelte';
+	import { Blocks, CircleAlert, ExternalLink, RefreshCw, Trash2 } from 'lucide-svelte';
 	import { getPluginsQuery } from '$lib/queries/plugins/PluginQueries.svelte';
 	import {
-		installPluginMutation,
 		uninstallPluginMutation,
 		updatePluginMutation
 	} from '$lib/queries/plugins/PluginMutations.svelte';
+	import { updatePluginFromSourceMutation } from '$lib/queries/plugins/PluginInstallMutations.svelte';
 	import type { PluginInfo } from '$lib/queries/plugins/types';
 	import { authStore } from '$lib/stores/authStore.svelte';
+	import PluginInstall from './PluginInstall.svelte';
 	import PluginPanel from './PluginPanel.svelte';
 
 	const pluginsQuery = getPluginsQuery();
 	const update = updatePluginMutation();
-	const install = installPluginMutation();
 	const uninstall = uninstallPluginMutation();
+	const sourceUpdate = updatePluginFromSourceMutation();
 	const plugins = $derived(pluginsQuery.data?.plugins ?? []);
 
-	let repoUrl = $state('');
 	let confirmingRemoval = $state<string | null>(null);
 
-	function submitInstall(event: SubmitEvent) {
-		event.preventDefault();
-		const url = repoUrl.trim();
-		if (!url || install.isPending) return;
-		install.mutate(url, { onSuccess: () => (repoUrl = '') });
-	}
+	const runtimeLabels: Record<string, string> = {
+		starting: 'starting',
+		running: 'running',
+		restarting: 'restarting',
+		stopped: 'stopped',
+		failed: 'failed'
+	};
 
 	// local draft per plugin so typing doesn't fight the query cache; seeded in
 	// an effect (never during render - that would be a state_unsafe_mutation)
@@ -54,43 +54,14 @@
 		<div class="flex items-center gap-2">
 			<Blocks class="h-5 w-5 text-primary" aria-hidden="true" />
 			<h2 class="card-title">Plugins</h2>
-			<span class="badge badge-warning badge-sm">experimental</span>
 		</div>
 		<p class="text-sm text-base-content/60">
-			Third-party extensions loaded from the <code>plugins/</code> folder in your data directory. A plugin
-			runs with the server's full privileges. Only enable code you trust. See PLUGINS.md in the repository
-			for the API.
+			Plugins add download sources, scrobble webhooks, buy links and more. Each one runs as its own
+			program on your server, with the same file and network access as DroppedNeedle. It is not
+			sandboxed: only install plugins you trust. See PLUGINS.md in the repository.
 		</p>
 
-		<form class="mt-2 flex flex-wrap items-end gap-2" onsubmit={submitInstall}>
-			<div class="form-control min-w-0 flex-1">
-				<label class="label py-1" for="plugin-repo-url">
-					<span class="label-text text-sm">Install from GitHub</span>
-				</label>
-				<label class="input input-bordered input-sm flex w-full items-center gap-2">
-					<GitHubIcon class="h-4 w-4 shrink-0 opacity-50" />
-					<input
-						id="plugin-repo-url"
-						type="url"
-						class="grow"
-						placeholder="https://github.com/owner/repo"
-						bind:value={repoUrl}
-						disabled={install.isPending}
-					/>
-				</label>
-			</div>
-			<button
-				class="btn btn-primary btn-sm"
-				type="submit"
-				disabled={install.isPending || !repoUrl.trim()}
-			>
-				{install.isPending ? 'Installing…' : 'Install'}
-			</button>
-		</form>
-		<p class="text-xs text-base-content/45">
-			Downloads the repository into your plugins folder. Nothing runs until you enable it. Read the
-			code first.
-		</p>
+		<PluginInstall />
 
 		{#if pluginsQuery.isLoading}
 			<div class="skeleton h-20 w-full rounded-xl"></div>
@@ -172,6 +143,35 @@
 								</label>
 							</div>
 
+							{#if plugin.runtime}
+								<p class="mt-2 text-xs text-base-content/55">
+									Process: {runtimeLabels[plugin.runtime.state] ?? plugin.runtime.state}
+									{#if plugin.runtime.restarts > 0}
+										· restarted {plugin.runtime.restarts}×
+									{/if}
+									{#if (plugin.runtime.dropped_events ?? 0) > 0}
+										· {plugin.runtime.dropped_events} events skipped while busy
+									{/if}
+								</p>
+								{#if plugin.runtime.last_error && plugin.runtime.state !== 'running'}
+									<div
+										class="mt-1 flex items-center gap-2 rounded-lg bg-error/10 px-3 py-2 text-xs text-error"
+									>
+										<CircleAlert class="h-4 w-4 shrink-0" aria-hidden="true" />
+										{plugin.runtime.last_error}
+									</div>
+								{/if}
+							{/if}
+							{#if plugin.install}
+								<p class="mt-1 text-xs text-base-content/45">
+									From {plugin.install.repository}
+									{plugin.install.ref_kind === 'branch' && plugin.install.reference === 'HEAD'
+										? '(default branch)'
+										: `${plugin.install.ref_kind} ${plugin.install.reference}`}
+									· commit <code>{plugin.install.commit.slice(0, 12)}</code>
+								</p>
+							{/if}
+
 							{#if plugin.error}
 								<div
 									class="mt-2 flex items-center gap-2 rounded-lg bg-error/10 px-3 py-2 text-xs text-error"
@@ -240,6 +240,17 @@
 									>
 										<Trash2 class="h-3.5 w-3.5" aria-hidden="true" />
 									</button>
+									{#if plugin.install}
+										<button
+											class="btn btn-ghost btn-xs"
+											onclick={() => sourceUpdate.mutate(plugin.name)}
+											disabled={sourceUpdate.isPending}
+											aria-label="Update {plugin.display_name} from GitHub"
+										>
+											<RefreshCw class="h-3.5 w-3.5" aria-hidden="true" />
+											Update
+										</button>
+									{/if}
 									<button
 										class="btn btn-primary btn-xs"
 										onclick={() => save(plugin)}
