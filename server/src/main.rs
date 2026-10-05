@@ -87,7 +87,12 @@ fn main() {
             std::process::exit(1);
         }
     };
-    if let Err(message) = runtime.block_on(run(config)) {
+    let grace = config.shutdown_grace;
+    let outcome = runtime.block_on(run(config));
+    // Tasks still running (an open stream's connection task, a stuck
+    // blocking call) get the same grace, then the process exits anyway.
+    runtime.shutdown_timeout(grace);
+    if let Err(message) = outcome {
         eprintln!("{message}");
         std::process::exit(1);
     }
@@ -104,15 +109,16 @@ fn print_openapi() {
     }
 }
 
-/// Boot, bind, and serve until SIGTERM or Ctrl-C.
+/// Bind, boot, and serve until SIGTERM or Ctrl-C. Binding comes first so
+/// a taken port fails before recovery runs or any loop starts; clients
+/// that connect during boot wait in the listen backlog.
 async fn run(config: AppConfig) -> Result<(), String> {
-    let (host, port) = (config.bind_host, config.port);
+    let listener = bootstrap::bind(config.bind_host, config.port)
+        .await
+        .map_err(|error| error.to_string())?;
     let (router, background) = bootstrap::build(config)
         .await
         .map_err(|error| format!("boot failed: {error}"))?;
-    let listener = bootstrap::bind(host, port)
-        .await
-        .map_err(|error| error.to_string())?;
     if let Ok(address) = listener.local_addr() {
         tracing::info!(%address, "listening");
     }
