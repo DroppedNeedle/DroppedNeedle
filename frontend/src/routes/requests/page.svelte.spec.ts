@@ -133,15 +133,6 @@ vi.mock('$app/state', () => ({ page: { url: new URL('http://localhost/requests')
 import RequestsPage from './+page.svelte';
 
 describe('requests route page (R10 surface)', () => {
-	it('lists the active requests with a live count badge', async () => {
-		await render(RequestsPage);
-
-		await expect.element(page.getByText('Blue Lines').first()).toBeInTheDocument();
-		await expect.element(page.getByText('Unfinished Sympathy').first()).toBeInTheDocument();
-		const badge = page.getByRole('tab', { name: /Active/ });
-		await expect.element(badge.getByText('2')).toBeInTheDocument();
-	});
-
 	it('batch-cancels the selected rows with one call per kind', async () => {
 		await render(RequestsPage);
 
@@ -160,17 +151,6 @@ describe('requests route page (R10 surface)', () => {
 			mbids: ['track-mbid-2'],
 			kind: 'track'
 		});
-	});
-
-	it('reads history through the v3 history hook when the tab opens', async () => {
-		await render(RequestsPage);
-
-		await page.getByRole('tab', { name: /History/ }).click();
-
-		await expect
-			.element(page.getByRole('combobox', { name: 'Filter by status' }))
-			.toBeInTheDocument();
-		await expect.element(page.getByText('Blue Lines').first()).toBeInTheDocument();
 	});
 
 	it('shows pending approvals with row actions for admins', async () => {

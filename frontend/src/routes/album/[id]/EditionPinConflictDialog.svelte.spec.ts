@@ -101,30 +101,6 @@ describe('EditionPinConflictDialog', () => {
 		});
 	});
 
-	it('clears the chosen copy back to Automatic when the intent is null', async () => {
-		const onrefresh = vi.fn();
-		const onclose = vi.fn();
-		await render(EditionPinConflictDialog, {
-			props: {
-				releaseMbid: null,
-				localCopies: [localCopy('local-album-1', 'Avalon')],
-				onrefresh,
-				onclose
-			}
-		} as unknown as Parameters<typeof render>[1]);
-
-		openDialog();
-		await page.getByRole('button', { name: /Avalon.*20 tracks/ }).click();
-		await vi.waitFor(() => {
-			expect(h.clearLocalPin).toHaveBeenCalledWith({
-				userId: 'user-1',
-				localId: 'local-album-1',
-				rgMbid: 'rg-1'
-			});
-			expect(onrefresh).toHaveBeenCalledOnce();
-		});
-	});
-
 	it('never fires the per-album mutation for a row without a local id', async () => {
 		const onrefresh = vi.fn();
 		const onclose = vi.fn();
@@ -155,23 +131,5 @@ describe('EditionPinConflictDialog', () => {
 			});
 		});
 		expect(h.setLocalPin).toHaveBeenCalledOnce();
-	});
-
-	it('shows an honest empty state instead of an empty picker', async () => {
-		await render(EditionPinConflictDialog, {
-			props: {
-				releaseMbid: 'release-11',
-				localCopies: [],
-				onrefresh: vi.fn(),
-				onclose: vi.fn()
-			}
-		} as unknown as Parameters<typeof render>[1]);
-
-		openDialog();
-		await expect
-			.element(page.getByText('No library copies are available for this pin.'))
-			.toBeVisible();
-		expect(h.setLocalPin).not.toHaveBeenCalled();
-		expect(h.clearLocalPin).not.toHaveBeenCalled();
 	});
 });

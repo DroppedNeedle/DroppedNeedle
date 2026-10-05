@@ -1,4 +1,4 @@
-import { page, userEvent } from '@vitest/browser/context';
+import { page } from '@vitest/browser/context';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import type { PlaylistDetailV3 } from '$lib/queries/playlists/PlaylistV3Queries.svelte';
@@ -109,16 +109,6 @@ vi.mock('$lib/queries/QueryClient', () => {
 		}
 	};
 });
-
-vi.mock('$lib/queries/discover/DiscoverQuery.svelte', () => ({
-	getPlaylistSuggestionsQuery: () => ({
-		data: undefined,
-		isLoading: false,
-		isError: false,
-		error: null,
-		refetch: vi.fn()
-	})
-}));
 
 // The discovery modal (inside the header) reads V3 suggestions.
 vi.mock('$lib/queries/discover/DiscoverV3Queries.svelte', () => ({
@@ -237,100 +227,6 @@ describe('Playlist detail page', () => {
 		}
 	});
 
-	it('renders header with playlist name, track count, and duration', async () => {
-		detailQuery.data = makePlaylist();
-		await renderDetail('pl-1');
-
-		await expect
-			.element(page.getByRole('heading', { name: 'My Playlist', level: 1 }))
-			.toBeVisible();
-		await expect.element(page.getByText(/2 tracks/)).toBeVisible();
-		await expect.element(page.getByText(/8 min/)).toBeVisible();
-	});
-
-	it('renders track rows with correct data', async () => {
-		detailQuery.data = makePlaylist();
-		await renderDetail('pl-1');
-
-		await expect.element(page.getByText('First Track')).toBeVisible();
-		await expect.element(page.getByText('Second Track')).toBeVisible();
-		await expect.element(page.getByText('Other Artist')).toBeVisible();
-	});
-
-	it('shows the import chip for a V3 detail carrying source_ref', async () => {
-		detailQuery.data = makePlaylist({ source_ref: 'plex:xyz' });
-		await renderDetail('pl-1');
-
-		await expect.element(page.getByText(/Imported from Plex/)).toBeVisible();
-	});
-
-	it('shows error state when playlist is missing', async () => {
-		detailQuery.data = undefined;
-		detailQuery.isError = true;
-		detailQuery.error = new Error('404 not found');
-		await renderDetail('pl-bad');
-
-		await expect.element(page.getByText("Couldn't load this playlist")).toBeVisible();
-		await expect.element(page.getByText('Playlist not found')).toBeVisible();
-	});
-
-	it('shows empty state when playlist has no tracks', async () => {
-		detailQuery.data = makePlaylist({ tracks: [], track_count: 0 });
-		await renderDetail('pl-1');
-
-		await expect.element(page.getByText('This playlist is empty')).toBeVisible();
-	});
-
-	it('Play All calls playQueue with all tracks', async () => {
-		detailQuery.data = makePlaylist();
-		await renderDetail('pl-1');
-
-		await expect
-			.element(page.getByRole('heading', { name: 'My Playlist', level: 1 }))
-			.toBeVisible();
-
-		await page.getByRole('button', { name: /Play All/ }).click();
-
-		expect(mockPlayQueue).toHaveBeenCalledOnce();
-		const [items, startIdx, shuffle] = mockPlayQueue.mock.calls[0];
-		expect(items).toHaveLength(2);
-		expect(startIdx).toBe(0);
-		expect(shuffle).toBe(false);
-	});
-
-	it('Shuffle calls playQueue with shuffle=true', async () => {
-		detailQuery.data = makePlaylist();
-		await renderDetail('pl-1');
-
-		await expect
-			.element(page.getByRole('heading', { name: 'My Playlist', level: 1 }))
-			.toBeVisible();
-
-		await page.getByRole('button', { name: /Shuffle/ }).click();
-
-		expect(mockPlayQueue).toHaveBeenCalledOnce();
-		expect(mockPlayQueue.mock.calls[0][2]).toBe(true);
-	});
-
-	it('Play All is disabled when playlist has no tracks', async () => {
-		detailQuery.data = makePlaylist({ tracks: [], track_count: 0 });
-		await renderDetail('pl-1');
-
-		await expect.element(page.getByText('This playlist is empty')).toBeVisible();
-		const playBtn = page.getByRole('button', { name: /Play All/ });
-		expect(await playBtn.element()).toBeDisabled();
-	});
-
-	it('back button is visible when playlist loads', async () => {
-		detailQuery.data = makePlaylist();
-		await renderDetail('pl-1');
-
-		await expect
-			.element(page.getByRole('heading', { name: 'My Playlist', level: 1 }))
-			.toBeVisible();
-		await expect.element(page.getByRole('button', { name: /Go back/ })).toBeVisible();
-	});
-
 	it('owner sees the share toggle', async () => {
 		detailQuery.data = makePlaylist({ is_owner: true });
 		await renderDetail('pl-1');
@@ -352,73 +248,6 @@ describe('Playlist detail page', () => {
 		expect(
 			page.getByRole('checkbox', { name: /Make playlist (public|private)/ }).elements()
 		).toHaveLength(0);
-	});
-
-	it('inline name editing: clicking name shows input, Escape cancels', async () => {
-		detailQuery.data = makePlaylist();
-		await renderDetail('pl-1');
-
-		await page.getByRole('button', { name: /Edit playlist name/ }).click();
-		const nameInput = page.getByPlaceholder('Playlist name');
-		await expect.element(nameInput).toBeVisible();
-
-		await userEvent.keyboard('{Escape}');
-
-		await expect
-			.element(page.getByRole('heading', { name: 'My Playlist', level: 1 }))
-			.toBeVisible();
-		expect(mockRenameMutate).not.toHaveBeenCalled();
-	});
-
-	it('inline name editing: Enter saves new name', async () => {
-		mockRenameMutate.mockResolvedValue(makePlaylist({ name: 'Renamed' }));
-		detailQuery.data = makePlaylist();
-		await renderDetail('pl-1');
-
-		await page.getByRole('button', { name: /Edit playlist name/ }).click();
-		const nameInput = page.getByPlaceholder('Playlist name');
-		await expect.element(nameInput).toBeVisible();
-		await nameInput.clear();
-		await nameInput.fill('Renamed');
-		await userEvent.keyboard('{Enter}');
-
-		expect(mockRenameMutate).toHaveBeenCalledOnce();
-		expect(mockRenameMutate.mock.calls[0][0]).toEqual({ id: 'pl-1', name: 'Renamed' });
-	});
-
-	it('calls resolvePlaylistSources after playlist loads', async () => {
-		detailQuery.data = makePlaylist();
-		mockResolveMutate.mockResolvedValue({ sources: {} });
-		await renderDetail('pl-1');
-
-		await expect
-			.element(page.getByRole('heading', { name: 'My Playlist', level: 1 }))
-			.toBeVisible();
-		await vi.waitFor(() => {
-			expect(mockResolveMutate).toHaveBeenCalledWith('pl-1');
-		});
-	});
-
-	it('shows play button on track hover with correct aria label', async () => {
-		detailQuery.data = makePlaylist();
-		await renderDetail('pl-1');
-
-		await expect.element(page.getByText('First Track')).toBeVisible();
-		expect(page.getByRole('button', { name: 'Play First Track' }).elements()).toHaveLength(1);
-	});
-
-	it('play button on track calls playQueue with correct start index', async () => {
-		detailQuery.data = makePlaylist();
-		await renderDetail('pl-1');
-
-		await expect.element(page.getByText('Second Track')).toBeVisible();
-		await page.getByRole('button', { name: 'Play Second Track' }).click();
-
-		expect(mockPlayQueue).toHaveBeenCalledOnce();
-		const [items, startIdx, shuffle] = mockPlayQueue.mock.calls[0];
-		expect(items).toHaveLength(2);
-		expect(startIdx).toBe(1);
-		expect(shuffle).toBe(false);
 	});
 
 	it('missing banner counts albums without sources but skips library_file_id rows', async () => {

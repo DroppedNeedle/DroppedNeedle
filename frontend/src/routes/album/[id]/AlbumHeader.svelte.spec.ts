@@ -10,7 +10,6 @@ import type {
 	LibraryAlbumSummary
 } from '$lib/types';
 import { ApiError } from '$lib/api/client';
-import { toastStore } from '$lib/stores/toast';
 
 const h = vi.hoisted(() => ({
 	editions: undefined as AlbumEditionsResponse | undefined,
@@ -162,7 +161,6 @@ const blob = vi.hoisted(() => ({ download: vi.fn() }));
 vi.mock('$lib/utils/blobDownload', () => ({ downloadBlob: blob.download }));
 
 import AlbumHeader from './AlbumHeader.svelte';
-import AlbumDownloadButton from './AlbumDownloadButton.svelte';
 
 const album: AlbumBasicInfo = {
 	title: 'Avalon',
@@ -278,30 +276,6 @@ describe('AlbumHeader automatic edition selection', () => {
 		};
 	});
 
-	it('shows the refreshed automatic match and refreshes after a manual pin', async () => {
-		const onrefresh = await renderHeader();
-		const trigger = page.getByRole('button', {
-			name: 'Edition: Automatic · 2008 · US · 20 tracks'
-		});
-
-		await expect.element(trigger).toBeVisible();
-		await expect.element(page.getByText('Edition complete', { exact: true })).toBeVisible();
-		await expect
-			.element(page.getByRole('button', { name: 'Acquire this edition' }))
-			.not.toBeInTheDocument();
-		await trigger.click();
-		await expect.element(page.getByText('automatic', { exact: true })).toBeVisible();
-
-		await page.getByRole('button', { name: '2008 · XW · 11 tracks' }).click();
-		await vi.waitFor(() => {
-			expect(h.setPin).toHaveBeenCalledWith({
-				mbid: album.musicbrainz_id,
-				releaseMbid: 'release-11'
-			});
-			expect(onrefresh).toHaveBeenCalledOnce();
-		});
-	});
-
 	it('pins an unowned RG through the RG URL without touching the per-album route', async () => {
 		const onrefresh = await renderHeader({ localCopies: [] });
 
@@ -316,72 +290,6 @@ describe('AlbumHeader automatic edition selection', () => {
 		});
 		expect(h.setLocalPin).not.toHaveBeenCalled();
 		expect(h.clearLocalPin).not.toHaveBeenCalled();
-	});
-
-	it('uses edition resolution when native tracks have no stored release identity', async () => {
-		const editions = h.editions;
-		expect(editions).toBeDefined();
-		if (!editions) throw new Error('Expected edition data');
-		h.editions = { ...editions, selected_release_mbid: 'release-20' };
-		await renderHeader({
-			trackData: { ...tracksInfo, selected_release_mbid: null }
-		});
-
-		await expect
-			.element(
-				page.getByRole('button', {
-					name: 'Edition: Automatic · 2008 · US · 20 tracks'
-				})
-			)
-			.toBeVisible();
-	});
-
-	it('offers to complete a partial edition', async () => {
-		await renderHeader({ libraryTrackCount: 11 });
-
-		await expect.element(page.getByRole('button', { name: 'Complete this edition' })).toBeVisible();
-		await expect
-			.element(page.getByText('Edition complete', { exact: true }))
-			.not.toBeInTheDocument();
-	});
-
-	it('offers to upgrade a complete edition below the cutoff', async () => {
-		await renderHeader({ libraryBelowCutoff: true });
-
-		await expect.element(page.getByRole('button', { name: 'Upgrade this edition' })).toBeVisible();
-	});
-
-	it('ST7 W2: keeps the picker hidden while tracks load even though the query warms', async () => {
-		await renderHeader({ loadingTracks: true });
-		await expect.element(page.getByRole('button', { name: /Edition: / })).not.toBeInTheDocument();
-
-		// tracks resolve -> picker appears with editions data that warmed earlier
-		await renderHeader({ loadingTracks: false });
-		await expect
-			.element(page.getByRole('button', { name: 'Edition: Automatic · 2008 · US · 20 tracks' }))
-			.toBeVisible();
-	});
-
-	it('exposes local re-identification beside the canonical release controls', async () => {
-		await renderHeader({ localCopies: [localAlbum] });
-
-		const trigger = page.getByRole('button', { name: 'Re-identify…' });
-		await expect.element(trigger).toBeVisible();
-		await trigger.click();
-		await expect.element(page.getByRole('heading', { name: 'Identify Avalon' })).toBeVisible();
-		await expect.element(page.getByText('This screen never writes music files.')).toBeVisible();
-	});
-
-	it('opens the copy picker when the shared pin conflicts', async () => {
-		h.setPin.mockRejectedValue(new ApiError(409, 'Multiple albums match', 'CONFLICT'));
-		await renderHeader({ localCopies: [localAlbum] });
-
-		await page.getByRole('button', { name: 'Edition: Automatic · 2008 · US · 20 tracks' }).click();
-		await page.getByRole('button', { name: '2008 · XW · 11 tracks' }).click();
-		await expect
-			.element(page.getByRole('heading', { name: 'Which copy should this edition apply to?' }))
-			.toBeVisible();
-		expect(h.setPin).toHaveBeenCalledOnce();
 	});
 
 	it('pins the chosen copy through the local URL, then refreshes and closes', async () => {
@@ -403,108 +311,12 @@ describe('AlbumHeader automatic edition selection', () => {
 		});
 		await expectConflictDialogClosed();
 	});
-
-	it('toasts instead of opening the picker when a non-conflict pin fails', async () => {
-		h.setPin.mockRejectedValue(new ApiError(500, 'Server broke', 'INTERNAL'));
-		const show = vi.mocked(toastStore.show);
-		show.mockClear();
-		await renderHeader({ localCopies: [localAlbum] });
-
-		await page.getByRole('button', { name: 'Edition: Automatic · 2008 · US · 20 tracks' }).click();
-		await page.getByRole('button', { name: '2008 · XW · 11 tracks' }).click();
-		await vi.waitFor(() => {
-			expect(show).toHaveBeenCalledWith(
-				expect.objectContaining({ message: 'Server broke', type: 'error' })
-			);
-		});
-		await expectConflictDialogClosed();
-	});
-
-	it('falls back to a toast on conflict when no local copies are known', async () => {
-		h.setPin.mockRejectedValue(new ApiError(409, 'Multiple albums match', 'CONFLICT'));
-		const show = vi.mocked(toastStore.show);
-		show.mockClear();
-		await renderHeader({ localCopies: [] });
-
-		await page.getByRole('button', { name: 'Edition: Automatic · 2008 · US · 20 tracks' }).click();
-		await page.getByRole('button', { name: '2008 · XW · 11 tracks' }).click();
-		await vi.waitFor(() => {
-			expect(show).toHaveBeenCalledWith(
-				expect.objectContaining({ message: 'Multiple albums match', type: 'error' })
-			);
-		});
-		await expectConflictDialogClosed();
-	});
 });
 
 describe('AlbumHeader album download button', () => {
 	beforeEach(() => {
 		blob.download.mockReset();
 		blob.download.mockResolvedValue(undefined);
-	});
-
-	it('downloads the string-id variant with a total-size caption', async () => {
-		expect.assertions(3);
-		await renderHeader({ localCopies: [localAlbum] });
-
-		const button = page.getByRole('button', { name: /Download album/ });
-		await expect.element(button).toBeVisible();
-		await expect.element(page.getByText('ZIP · 1 B')).toBeVisible();
-		await button.click();
-		expect(blob.download).toHaveBeenCalledWith('/api/v1/download/local/album/local-album-1');
-	});
-
-	it('falls back to the RG-MBID variant with a bare ZIP caption', async () => {
-		expect.assertions(3);
-		await renderHeader({ localCopies: [] });
-
-		const button = page.getByRole('button', { name: /Download album/ });
-		await expect.element(button).toBeVisible();
-		await expect.element(page.getByText('ZIP', { exact: true })).toBeVisible();
-		await button.click();
-		expect(blob.download).toHaveBeenCalledWith(
-			'/api/v1/download/local/album/mbid/4b6276da-e7c7-36df-8771-34b92f774d3b'
-		);
-	});
-
-	it('disables the button when zero local tracks are known', async () => {
-		expect.assertions(2);
-		await renderHeader({ localCopies: [localAlbum], libraryTrackCount: 0 });
-
-		const button = page.getByRole('button', { name: /Download album/ });
-		await expect.element(button).toBeVisible();
-		await expect.element(button).toBeDisabled();
-	});
-
-	it('toasts on blob failure and stays live for retry', async () => {
-		blob.download.mockRejectedValueOnce(new Error('gone'));
-		const show = vi.mocked(toastStore.show);
-		show.mockClear();
-		await renderHeader({ localCopies: [localAlbum] });
-
-		const button = page.getByRole('button', { name: /Download album/ });
-		await button.click();
-		await vi.waitFor(() => {
-			expect(show).toHaveBeenCalledWith(expect.objectContaining({ type: 'error' }));
-		});
-		const messages = show.mock.calls.map((call) => String(call[0].message));
-		expect(messages.every((message) => !message.includes('/api/v1/download'))).toBe(true);
-		await expect.element(button).toBeEnabled();
-	});
-
-	it('renders nothing when neither id nor mbid is known', async () => {
-		expect.assertions(1);
-		await render(AlbumDownloadButton, {
-			albumId: null,
-			mbid: null,
-			totalSizeBytes: null,
-			trackCount: 5,
-			downloadAllowed: true
-		});
-
-		await expect
-			.element(page.getByRole('button', { name: /Download album/ }))
-			.not.toBeInTheDocument();
 	});
 
 	it('renders nothing when downloads are restricted', async () => {

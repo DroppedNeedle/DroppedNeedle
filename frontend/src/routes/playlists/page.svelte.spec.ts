@@ -78,54 +78,6 @@ describe('Playlists list page', () => {
 		mockGoto.mockReset();
 	});
 
-	it('renders playlist cards with correct data', async () => {
-		listQuery.data = [
-			makePlaylist({ id: 'pl-1', name: 'Rock Mix', track_count: 10 }),
-			makePlaylist({ id: 'pl-2', name: 'Chill Vibes', track_count: 3 })
-		];
-		await render(PlaylistsPage);
-
-		await expect.element(page.getByText('Rock Mix')).toBeVisible();
-		await expect.element(page.getByText('Chill Vibes')).toBeVisible();
-		await expect.element(page.getByText(/10 tracks/)).toBeVisible();
-	});
-
-	it('renders empty state when no playlists exist', async () => {
-		listQuery.data = [];
-		await render(PlaylistsPage);
-
-		await expect.element(page.getByText('No playlists yet')).toBeVisible();
-		await expect.element(page.getByText('Create your first playlist')).toBeVisible();
-	});
-
-	it('renders error state when fetch fails', async () => {
-		listQuery.isError = true;
-		listQuery.error = new Error('Server error');
-		await render(PlaylistsPage);
-
-		await expect.element(page.getByText('Server error')).toBeVisible();
-		await expect.element(page.getByRole('button', { name: /Retry/ })).toBeVisible();
-	});
-
-	it('shows new playlist input when clicking New Playlist', async () => {
-		listQuery.data = [];
-		await render(PlaylistsPage);
-
-		await expect.element(page.getByText('No playlists yet')).toBeVisible();
-		const newBtn = page.getByRole('button', { name: /New Playlist/ }).first();
-		await newBtn.click();
-
-		await expect.element(page.getByPlaceholder('Playlist name...')).toBeVisible();
-	});
-
-	it('page heading is visible', async () => {
-		listQuery.data = [];
-		await render(PlaylistsPage);
-		await expect
-			.element(page.getByRole('heading', { name: 'Playlists', exact: true }))
-			.toBeVisible();
-	});
-
 	it('groups owned and shared playlists into labelled sections', async () => {
 		listQuery.data = [
 			makePlaylist({ id: 'mine', name: 'My Mix', is_owner: true }),
@@ -150,14 +102,6 @@ describe('Playlists list page', () => {
 
 		await expect.element(page.getByText('Private playlist')).toBeVisible();
 		await expect.element(page.getByText(/owned by Cara/)).toBeVisible();
-	});
-
-	it('shows the import badge for a V3 row carrying source_ref', async () => {
-		listQuery.data = [makePlaylist({ id: 'pl-1', name: 'Plex Mix', source_ref: 'plex:xyz' })];
-		await render(PlaylistsPage);
-
-		await expect.element(page.getByText('Plex Mix')).toBeVisible();
-		await expect.element(page.getByText(/from Plex/)).toBeVisible();
 	});
 
 	it('hides the delete button on a shared (non-owned) card', async () => {

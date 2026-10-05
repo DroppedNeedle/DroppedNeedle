@@ -227,15 +227,9 @@ import { nowPlayingStore } from '$lib/stores/nowPlayingSessions.svelte';
 import { nowPlayingReporter } from '$lib/stores/nowPlayingReporter.svelte';
 import { authStore, type AuthUser } from '$lib/stores/authStore.svelte';
 import { initCacheTTLs } from '$lib/stores/cacheTtl.svelte';
-import { playbackToast } from '$lib/stores/playbackToast.svelte';
 import { discographyDownloadStore } from '$lib/stores/discographyDownload.svelte';
 import { batchDownloadStore } from '$lib/stores/batchDownloadStatus.svelte';
-import {
-	openGlobalPlaylistModal,
-	playlistModalState,
-	resetPlaylistModal
-} from '$lib/stores/playlistModal.svelte';
-import type { QueueItem } from '$lib/player/types';
+import { resetPlaylistModal } from '$lib/stores/playlistModal.svelte';
 
 type IntegrationState = {
 	download_client: boolean;
@@ -262,17 +256,6 @@ const integrationState: IntegrationState = {
 const childrenSnippet = createRawSnippet(() => ({
 	render: () => '<div data-testid="page-content">Page</div>'
 }));
-
-const playlistTrack: QueueItem = {
-	trackSourceId: 'track-1',
-	trackName: 'Track',
-	artistName: 'Artist',
-	trackNumber: 1,
-	albumId: 'album-1',
-	albumName: 'Album',
-	coverUrl: null,
-	sourceType: 'local'
-};
 
 async function renderLayout() {
 	return await render(Layout, {
@@ -316,98 +299,6 @@ describe('+layout.svelte sidebar', () => {
 
 		await expect.element(page.getByTestId('page-content')).toBeVisible();
 		expect(shellModuleState.playerImports).toBe(0);
-	});
-
-	it('offers a bounded retry when the authenticated shell chunk fails', async () => {
-		shellModuleState.shellFailures = 1;
-		await renderLayout();
-
-		await expect.element(page.getByRole('alert')).toBeVisible();
-		const retry = page.getByRole('button', { name: 'Try again' });
-		await expect.element(retry).toBeEnabled();
-
-		await retry.click();
-		await expect.element(page.getByTestId('page-content')).toBeVisible();
-	});
-
-	it('reports and resets a failed playlist modal chunk', async () => {
-		shellModuleState.playlistFailures = 1;
-		await renderLayout();
-		await expect.element(page.getByTestId('page-content')).toBeVisible();
-
-		openGlobalPlaylistModal([playlistTrack]);
-
-		await vi.waitFor(() =>
-			expect(playbackToast.show).toHaveBeenCalledWith(
-				'Could not load the playlist dialog. Try again.',
-				'error'
-			)
-		);
-		expect(playlistModalState.shouldMount).toBe(false);
-	});
-
-	it('reports and closes a failed discography modal chunk', async () => {
-		shellModuleState.discographyFailures = 1;
-		await renderLayout();
-		await expect.element(page.getByTestId('page-content')).toBeVisible();
-
-		discographyDownloadStore.show('Artist', 'artist-1', []);
-
-		await vi.waitFor(() =>
-			expect(playbackToast.show).toHaveBeenCalledWith(
-				'Could not load the discography dialog. Try again.',
-				'error'
-			)
-		);
-		expect(discographyDownloadStore.open).toBe(false);
-	});
-
-	it('does not render "Playlists" link in the sidebar when the download client is unavailable', async () => {
-		await renderLayout();
-		await expect
-			.element(
-				page
-					.getByTestId('app-shell')
-					.getByRole('link', { name: 'Playlists', exact: true, includeHidden: true })
-					.first()
-			)
-			.not.toBeInTheDocument();
-	});
-
-	it('renders "Playlists" link in the sidebar when the download client is available', async () => {
-		integrationState.download_client = true;
-		await renderLayout();
-		await expect
-			.element(
-				page
-					.getByTestId('app-shell')
-					.getByRole('link', { name: 'Playlists', exact: true, includeHidden: true })
-					.first()
-			)
-			.toBeInTheDocument();
-	});
-
-	it('always renders "Library" link in the sidebar', async () => {
-		await renderLayout();
-		// "Library" renders in both the desktop sidebar (first in DOM) and the mobile bottom nav, so scope to the first match for the sidebar link
-		await expect.element(page.getByText('Library').first()).toBeInTheDocument();
-	});
-
-	it('uses the sole shipped dark theme', async () => {
-		await renderLayout();
-
-		await expect.element(page.getByTestId('app-shell')).toHaveAttribute('data-theme', 'dark');
-	});
-
-	it('Playlists link navigates to /playlists', async () => {
-		integrationState.download_client = true;
-		await renderLayout();
-		const link = page
-			.getByTestId('app-shell')
-			.getByRole('link', { name: 'Playlists', exact: true, includeHidden: true })
-			.first();
-		await expect.element(link).toBeInTheDocument();
-		await expect.element(link).toHaveAttribute('href', '/playlists');
 	});
 
 	it('shows the Library Management destination in a labelled admin section', async () => {

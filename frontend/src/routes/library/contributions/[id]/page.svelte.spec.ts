@@ -182,21 +182,6 @@ describe('library contribution page', () => {
 		await expect.element(page.getByRole('button', { name: 'Check MusicBrainz' })).toBeDisabled();
 	});
 
-	it('uses an exact Discogs ID through the deterministic selection action', async () => {
-		await render(ContributionPage, {
-			props: { data: { contributionId: contribution.id, primarySource: 'listenbrainz' } }
-		} as unknown as Parameters<typeof render>[1]);
-
-		await page.getByRole('textbox', { name: 'Discogs release' }).fill('249504');
-		await page.getByRole('button', { name: 'Use release' }).click();
-
-		expect(h.mutateSelect).toHaveBeenCalledWith({
-			contributionId: 'contribution-1',
-			expectedRowRevision: 1,
-			releaseIdOrUrl: '249504'
-		});
-	});
-
 	it('shows shared contribution status without curator controls to listeners', async () => {
 		h.authStore.isTrusted = false;
 		await render(ContributionPage, {

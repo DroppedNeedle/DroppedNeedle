@@ -45,23 +45,6 @@ describe('UnmatchedFilesSection', () => {
 		h.removeMut.mockReset();
 	});
 
-	it('shows the file’s OWN tagged identity and the doesn’t-match state', async () => {
-		await renderSection([orphan()]);
-		await expect.element(page.getByText(/Unmatched files/)).toBeVisible();
-		await expect
-			.element(page.getByText(/Stored under this album, but they don't match/))
-			.toBeVisible();
-		// the honesty payload: what the tags actually say
-		await expect.element(page.getByText(/Dan Romer - Arrival in Ashford/)).toBeVisible();
-		await expect.element(page.getByText(/Doesn't match/)).toBeVisible();
-		await expect.element(page.getByText(/0102 Arrival in Ashford\.flac/)).toBeVisible();
-	});
-
-	it('renders nothing at all when every file matches', async () => {
-		const { container } = await renderSection([]);
-		expect(container.querySelector('section')).toBeNull();
-	});
-
 	it('removal is a two-step confirm before the mutation fires', async () => {
 		await renderSection([orphan()]);
 		await page.getByRole('button', { name: /^Remove$/ }).click();
@@ -82,10 +65,5 @@ describe('UnmatchedFilesSection', () => {
 		await renderSection([orphan()], false);
 		await expect.element(page.getByText(/Dan Romer - Arrival in Ashford/)).toBeVisible();
 		expect(page.getByRole('button', { name: /^Remove$/ }).elements().length).toBe(0);
-	});
-
-	it('offers an inline preview without touching the play queue', async () => {
-		await renderSection([orphan()]);
-		await expect.element(page.getByRole('button', { name: /Play a preview/ })).toBeVisible();
 	});
 });

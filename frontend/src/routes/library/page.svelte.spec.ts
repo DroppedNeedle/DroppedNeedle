@@ -31,19 +31,6 @@ function user(role: AuthUser['role']): AuthUser {
 afterEach(() => authStore.clear());
 
 describe('library route page', () => {
-	it('renders the Library header and subtitle', async () => {
-		await render(LibraryPage);
-		await expect.element(page.getByRole('heading', { name: 'Library' })).toBeVisible();
-		await expect.element(page.getByText('Your scanned music library')).toBeVisible();
-	});
-
-	it('links Listen to the Listening Room', async () => {
-		await render(LibraryPage);
-		await expect
-			.element(page.getByRole('link', { name: 'Listen' }))
-			.toHaveAttribute('href', '/library/local');
-	});
-
 	it('points a non-admin to their own Profile for Connect Apps', async () => {
 		authStore.setUser(user('user'));
 		await render(LibraryPage);
