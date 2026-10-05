@@ -67,7 +67,7 @@ pub fn utc_now_iso() -> String {
 }
 
 /// Unix seconds → (year, month, day, hour, min, sec) UTC (Howard Hinnant's
-/// civil-from-days; the tree has no date crate on this slice).
+/// civil-from-days; no date crate needed).
 fn civil_from_unix(secs: i64) -> (i64, u32, u32, u32, u32, u32) {
     let days = secs.div_euclid(86_400);
     let time = secs.rem_euclid(86_400);

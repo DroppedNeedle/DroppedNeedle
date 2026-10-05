@@ -1,6 +1,6 @@
 //! Compat-scoped CORS: wildcard origin, credentials off.
 //!
-//! Ports `backend/api/compat/common/cors.py` verbatim. `*` with creds off
+//! Ports v2's compat CORS policy verbatim. `*` with creds off
 //! is safe here because compat auth is an explicit token or secret, never
 //! an ambient cookie. Applies to `/subsonic` + `/jellyfin` only, and
 //! OPTIONS preflights short-circuit 204 before auth (they carry no

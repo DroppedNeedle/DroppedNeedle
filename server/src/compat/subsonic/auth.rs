@@ -1,14 +1,14 @@
 //! Auth seam: principal shape plus credential classification.
 //!
 //! Secret verification (app passwords only, never account passwords) is
-//! owned by the auth slice (`server/src/auth/compat_auth/subsonic.rs`).
-//! This module only classifies which scheme the caller attempted and
-//! enforces the mutual-exclusion rules, so the integrator can hand the
+//! owned by `auth::compat_auth::subsonic`. This module only classifies
+//! which scheme the caller attempted and enforces the mutual-exclusion
+//! rules, so the HTTP adapter can hand the
 //! extracted [`Credentials`] to the real verifier and adapt the result
 //! into a [`Principal`].
 //!
-//! v2: `backend/api/compat/subsonic/auth.py`,
-//! `backend/services/compat/app_password_service.py::verify_subsonic`.
+//! v2: the Subsonic compat auth and the app password service's
+//! `verify_subsonic`.
 
 use super::error::{CONFLICTING_AUTH, PARAM_MISSING, SubsonicError};
 use super::params::SubsonicParameters;

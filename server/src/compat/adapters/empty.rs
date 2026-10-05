@@ -1,14 +1,13 @@
-//! Honest-memory production store: user mutations round-trip in memory,
-//! catalog reads are empty until the v3 catalog join lands.
+//! In-memory production store: user mutations round-trip in memory,
+//! catalog reads are empty until the compat store is joined to the v3
+//! catalog.
 //!
-//! Playlists, favorites, queues, and bookmarks work within the process
-//! (the collections in-memory precedent). Playback reports and presence
-//! are REAL (stage-6 services); scan status/trigger and avatars are REAL
-//! (library + users deps). Catalog reads (artists, albums, tracks, genres,
-//! search, lyrics, covers) return empty: v3's scan-to-catalog publish path
-//! has not landed, so there is nothing to serve yet, and serving fixture
-//! data in production would be a lie. The catalog join is the recorded
-//! stage-9 follow-up.
+//! Playlists, favorites, queues, and bookmarks work within the process.
+//! Playback reports and presence are real (the playback services); scan
+//! status/trigger and avatars are real (library + users deps). Catalog
+//! reads (artists, albums, tracks, genres, search, lyrics, covers) return
+//! empty: the compat store does not read the v3 catalog yet, and serving
+//! fixture data in production would mislead clients.
 
 use std::collections::HashMap;
 use std::convert::Infallible;

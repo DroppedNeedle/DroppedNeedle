@@ -1,6 +1,6 @@
 //! Ordered response values plus the XML/JSON/JSONP serializer.
 //!
-//! v2: `backend/api/compat/subsonic/serialization.py`. The value model is
+//! v2: the Subsonic serializer. The value model is
 //! ordered (field order on the wire matches v2's `msgspec.to_builtins`
 //! struct order): objects render scalars as attributes in order, a `value`
 //! key as text, objects as child elements, and lists as repeated children.

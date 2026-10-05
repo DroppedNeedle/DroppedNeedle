@@ -5,12 +5,13 @@
 //! (NOT the native envelope). Streaming is anonymous: real Jellyfin audio
 //! routes have no `[Authorize]`, and native players (Jellify, Finamp, Manet)
 //! fetch with no auth header. Still gated by protocol-enabled + a valid
-//! opaque item id (v2 `_handle(auth=False)` + §2.3 anon-audio rationale).
+//! opaque item id (v2 `_handle(auth=False)`: players fetch audio URLs
+//! without headers).
 //!
-//! Route notes for the integrator: `/Items/Filters` MUST stay registered
+//! Route notes: `/Items/Filters` must stay registered
 //! alongside (before, for clarity) `/Items/{item_id}` or "Filters" would be
 //! captured as an id (v2 comment; axum prefers the static route). There is
-//! deliberately NO `/jellyfin/socket` endpoint (v2 gap: uvicorn 403s the
+//! no `/jellyfin/socket` endpoint, on purpose (v2 gap: uvicorn 403s the
 //! websocket scope; Finamp PlayOn only, non-blocking).
 
 use crate::auth::compat_auth::jellyfin::{
@@ -39,17 +40,17 @@ use super::seams::{
 
 // ===== State + registration =====
 
-/// Router dependencies. Every seam is a generic so the integrator binds the
-/// real adapters without touching this slice: `S` app-password store (auth
-/// slice owns it), `L` library reads, `E` stage-6 engine, `P` scrobble
+/// Router dependencies. Every seam is a generic so production binds the
+/// real adapters without touching the routes: `S` app-password store
+/// (from `compat_auth`), `L` library reads, `E` stream engine, `P` scrobble
 /// adapter, `I` persisted id map.
 #[derive(Clone)]
 pub struct JellyfinState<S, L, E, P, I> {
-    /// App-password store (auth slice's `JellyfinPasswordStore`).
+    /// App-password store (`compat_auth`'s `JellyfinPasswordStore`).
     pub passwords: S,
     /// Library reads.
     pub library: L,
-    /// Streaming engine (stage-6 binding).
+    /// Streaming engine.
     pub engine: E,
     /// Playback sessions (scrobble adapter binding).
     pub sessions: P,
@@ -60,12 +61,12 @@ pub struct JellyfinState<S, L, E, P, I> {
     /// Deployment prefix for `TranscodingUrl` (`""` standalone; real base
     /// path when wired, so players stay inside the prefix).
     pub base_path: String,
-    /// Restart-stable server id, computed once (auth slice owns the value).
+    /// Restart-stable server id, computed once (`compat_auth` owns the value).
     pub server_id: String,
 }
 
 impl<S, L, E, P, I> JellyfinState<S, L, E, P, I> {
-    /// Assemble state; `server_id()` is restart-stable (auth slice).
+    /// Assemble state; `server_id()` is restart-stable.
     pub fn new(
         passwords: S,
         library: L,
@@ -293,7 +294,7 @@ fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
 }
 
 /// Exact-spelling raw-query lookup for the two auth keys (v2 `auth.py`
-/// reads Starlette's case-SENSITIVE params: only `ApiKey` and `api_key`).
+/// reads Starlette's case-sensitive params: only `ApiKey` and `api_key`).
 fn query_exact<'a>(raw: Option<&'a str>, key: &str) -> Option<&'a str> {
     for pair in raw.unwrap_or("").split('&') {
         let (name, value) = match pair.find('=') {
@@ -459,9 +460,9 @@ where
 
 // ===== Auth / user =====
 
-/// `AuthenticateByName`: the app password echoes VERBATIM as `AccessToken`
-/// with a fresh `SessionInfo` and the full non-null user object (auth slice
-/// renders it; bad credentials → 401, never 403).
+/// `AuthenticateByName`: the app password echoes verbatim as `AccessToken`
+/// with a fresh `SessionInfo` and the full non-null user object
+/// (`compat_auth` renders it; bad credentials → 401, never 403).
 async fn authenticate<S, L, E, P, I>(
     State(state): State<JellyfinState<S, L, E, P, I>>,
     request: Request<Body>,
@@ -541,7 +542,7 @@ where
     }
 }
 
-/// The `{user_id}` path id is IGNORED; the caller is always returned (v2
+/// The `{user_id}` path id is ignored; the caller is always returned (v2
 /// `_user_dto(u)` parity).
 async fn user_by_id<S, L, E, P, I>(
     State(state): State<JellyfinState<S, L, E, P, I>>,
@@ -677,8 +678,8 @@ fn sort_albums(albums: &mut [super::seams::AlbumView], key: SortKey, desc: bool)
     });
 }
 
-/// Stable stand-in shuffle for `SortBy=Random` (the integrator binds the
-/// real discover ordering; tests only pin stability + completeness).
+/// Stable stand-in shuffle for `SortBy=Random` (the real discover ordering
+/// is not bound yet; tests only pin stability + completeness).
 fn fnv(s: &str) -> u64 {
     let mut hash: u64 = 0xcbf29ce484222325;
     for byte in s.bytes() {
@@ -707,7 +708,7 @@ where
 
 /// One item by decoded kind. Genre and library kinds have no branch in v2
 /// `_single_item` either, so they resolve to `None` (skipped in `Ids`
-/// lookups, 404 for direct fetch) — ported faithfully.
+/// lookups, 404 for direct fetch), as v2 does.
 async fn fetch_item<S, L, E, P, I>(
     state: &JellyfinState<S, L, E, P, I>,
     user_id: &str,
@@ -1294,7 +1295,7 @@ where
     )
 }
 
-/// Jellify Recently Added: a BARE JSON array of the newest albums (v2
+/// Jellify Recently Added: a bare JSON array of the newest albums (v2
 /// `_latest`). `ParentId`, when given, must be the music library.
 async fn latest<S, L, E, P, I>(
     State(state): State<JellyfinState<S, L, E, P, I>>,
@@ -1696,9 +1697,8 @@ where
 }
 
 /// Run the policy and serve direct or transcoded bytes (v2
-/// `_stream_decided`, minus the plugin fallback: no plugin seam exists on
-/// this slice yet, so a local miss is a plain 404 — the integrator adds the
-/// plugin-stream fallback owned by the remotes work).
+/// `_stream_decided`, minus the plugin fallback: no plugin seam exists
+/// here yet, so a local miss is a plain 404.
 async fn stream_decided<S, L, E, P, I>(
     state: &JellyfinState<S, L, E, P, I>,
     range: Option<&str>,
@@ -1774,7 +1774,7 @@ where
 }
 
 /// `HEAD /Audio/...`: the same status and headers GET would answer
-/// (200/206/416 — HEAD honors Range), always with an empty body, no
+/// (200/206/416; HEAD honors Range), always with an empty body, no
 /// lease (v2 `_audio_stream_head`).
 async fn audio_head<S, L, E, P, I>(
     State(state): State<JellyfinState<S, L, E, P, I>>,
@@ -1909,7 +1909,7 @@ where
 }
 
 /// GET+POST PlaybackInfo (v2 `_playback_info`). `DirectStreamUrl` embeds
-/// `?api_key=<token>` for headerless players; transcoding fields appear ONLY
+/// `?api_key=<token>` for headerless players; transcoding fields appear only
 /// when the policy says transcode; Finamp's 15 non-null fields are always
 /// present (MediaStream 5 + MediaSourceInfo 10, v2 issue #438).
 async fn playback_info<S, L, E, P, I>(
@@ -2363,7 +2363,7 @@ where
     no_content()
 }
 
-/// Stop → drop presence ALWAYS, then scrobble IFF past the threshold (v2
+/// Stop → always drop presence, then scrobble only if past the threshold (v2
 /// `_playing_stopped`). `Failed` stops skip the scrobble.
 async fn playing_stopped<S, L, E, P, I>(
     State(state): State<JellyfinState<S, L, E, P, I>>,
@@ -2756,8 +2756,8 @@ where
 
 /// Similar + both InstantMix routes share one handler (v2 `_similar`):
 /// resolves the artist from an artist/track/album id and serves same-artist
-/// tracks. Unknown ids and unresolvable kinds yield an EMPTY result, not a
-/// 404. (The integrator binds the real similarity ranking.)
+/// tracks. Unknown ids and unresolvable kinds yield an empty result, not a
+/// 404. (No real similarity ranking is bound yet.)
 async fn similar<S, L, E, P, I>(
     State(state): State<JellyfinState<S, L, E, P, I>>,
     Path(item_id): Path<String>,

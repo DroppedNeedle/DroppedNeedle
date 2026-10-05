@@ -1,6 +1,6 @@
 //! Subsonic error codes and the binary-vs-envelope split.
 //!
-//! v2: `backend/api/compat/subsonic/errors.py`, `router.py` (`_BINARY`,
+//! v2: the Subsonic errors and router (`_BINARY`,
 //! `_AUTH_CODES`, `_binary_error`, `_dispatch`).
 
 use std::fmt;

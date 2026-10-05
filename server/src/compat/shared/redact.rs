@@ -1,6 +1,6 @@
 //! Log-safe request targets for the compat surface.
 //!
-//! Ports `backend/api/compat/common/redact.py` (brief-pinned keys).
+//! Ports v2's compat log redaction (the keys are pinned by tests).
 //! Subsonic puts credentials in the query string (`p/t/s/apiKey`) on
 //! every request, so access logs must never record the raw target: use
 //! [`redact_request_target`]. Matching is case-insensitive over the

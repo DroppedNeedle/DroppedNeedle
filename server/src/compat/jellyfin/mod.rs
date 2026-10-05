@@ -1,10 +1,9 @@
 //! Jellyfin compat shim: PascalCase shapes, real statuses, anonymous audio.
 //!
-//! Ported from v2 `backend/api/compat/jellyfin/` (`router.py`, `models.py`,
-//! `builders.py`, `auth.py`, `errors.py`, `serialization.py`) and the stage-0
-//! matrix (`stage0-compat.md` §§1 preamble + 2). Every client quirk carries
-//! its citation in the code; the matrixed clients are Finamp, Jellify, and
-//! Manet ONLY — Swiftfin, Infuse, the web client, Kodi, Roku, DLNA,
+//! Ported from v2's Jellyfin compat package (router, models, builders,
+//! auth, errors, serialization) and its client matrix. Every client quirk
+//! carries its citation in the code; the matrixed clients are Finamp,
+//! Jellify, and Manet only. Swiftfin, Infuse, the web client, Kodi, Roku, DLNA,
 //! QuickConnect flows, PlayOn/remote-control, video/live-TV, and
 //! socket-based sessions are explicitly out of contract.
 //!
@@ -17,13 +16,13 @@
 //! [`CompatSetup`](crate::compat::setup::CompatSetup), which nests the
 //! [`router`] under `/jellyfin` outside the `/api/*` session gate (compat
 //! carries its own app-password auth) behind the shared CORS + limits
-//! layers. Production binds the seams to the stage-3 password store, the
-//! honest-memory [`seams::MemoryLibrary`], the stage-6
+//! layers. Production binds the seams to the app-password store, the
+//! in-memory [`seams::MemoryLibrary`], the
 //! [`GatewayStream`](crate::compat::adapters::engines::GatewayStream), and
-//! the stage-6 playback adapter. Deliberately NOT in this module: rate
+//! the playback adapter. Not in this module, on purpose: rate
 //! limiting, CORS, case-insensitive path handling, access-log redaction
 //! (the shared compat edge in [`compat::http`](crate::compat::http)), and
-//! the plugin-stream fallback (remotes work).
+//! the plugin-stream fallback (not wired yet).
 
 pub mod builders;
 pub mod models;

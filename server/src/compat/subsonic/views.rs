@@ -1,8 +1,8 @@
 //! Library view DTOs plus View -> Subsonic converters.
-//! v2: `backend/api/compat/subsonic/models.py` (`to_*`, `mime_for`, `iso`).
+//! v2: the Subsonic models (`to_*`, `mime_for`, `iso`).
 //!
 //! These are minimal local shapes carrying exactly the fields the wire
-//! needs; the integrator fills them from the real library stores.
+//! needs; the store fills them from the real library.
 
 use super::ids::{IdKind, encode};
 use super::models::{

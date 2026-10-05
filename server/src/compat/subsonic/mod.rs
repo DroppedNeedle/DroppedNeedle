@@ -1,9 +1,8 @@
-//! DroppedNeedle v3 stage-9 Subsonic-compat slice.
+//! Subsonic/OpenSubsonic compat API.
 //!
-//! Pinned protocol `1.16.1`, ported quirk-for-quirk from v2
-//! (`backend/api/compat/subsonic/`) and stage0-compat.md §§1-2. Every
-//! behavior below cites its source; the sibling golden corpus pins the
-//! wire bytes.
+//! Pinned protocol `1.16.1`, ported quirk-for-quirk from v2's Subsonic
+//! compat package. Every behavior below cites its source; the golden tests
+//! pin the wire bytes.
 //!
 //! # Endpoint x fields x auth
 //!
@@ -34,7 +33,7 @@
 //! | updatePlaylist/deletePlaylist | ok | yes | rename/public/add/remove-by-index |
 //! | star/unstar | ok | yes | prefix-routed, deduped; empty -> 10 |
 //! | getStarred2/getStarred | starred2/starred | yes | ID3 vs file shapes |
-//! | setRating | ok | yes | validated no-op (D11) |
+//! | setRating | ok | yes | validated no-op |
 //! | scrobble | ok | yes | parallel time[]; submission=false -> now-playing |
 //! | getNowPlaying | nowPlaying | yes | presence |
 //! | reportPlayback | ok | yes | GET/form/JSON; extension playbackReport:1 |
@@ -59,42 +58,42 @@
 //! - Feishin bitrate-0 (#464/#468): client bitrate caps <= 0 mean unset,
 //!   in `decide()` and in getTranscodeDecision client parsing.
 //! - Feishin lowercase paths: case-insensitive route matching lives in
-//!   the edge middleware (CompatPathCaseMiddleware port, another slice);
+//!   the edge middleware (`compat::shared::path_case`);
 //!   endpoint names are casefolded here too.
 //! - Feishin playlist cover art (#287): getCoverArt serves playlist art.
 //! - Navidrome 0.62.0: repeated-same musicFolderId accepted, any other
 //!   folder id is 70 (`browse::validate_music_folder`).
 //! - Streamable-only playlist counts (#181).
-//! - getAvatar 403-as-text for non-self usernames: the ONLY 403-as-text;
+//! - getAvatar 403-as-text for non-self usernames: the only 403-as-text;
 //!   code 50 anywhere in the dispatch path stays enveloped.
 //! - Binary-vs-envelope split: binary dispatch errors outside
 //!   {10,40,41,42,43,44,50} render `text/plain` (70 -> 404, else 404).
 //! - Transcode hints on song children only when transcoding is enabled
-//!   AND ffmpeg is present.
+//!   and ffmpeg is present.
 //! - Served-but-unadvertised extensions (songLyrics, playbackReport,
 //!   indexBasedQueue, transcoding, all v1) stay out of
 //!   getOpenSubsonicExtensions (the matrix wins over the router: 3
 //!   advertised, `transcoding` served but unadvertised).
 //!
-//! # Seams (owned elsewhere; the integrator binds them)
+//! # Seams (implemented elsewhere, bound in `compat::setup`)
 //!
 //! - Auth: [`auth::Credentials`] classification here; secret verification
-//!   is the auth slice's (`auth::compat_auth::subsonic::authenticate`).
-//!   Implement [`Verifier`] by delegating to it.
+//!   lives in `auth::compat_auth::subsonic::authenticate`, and [`Verifier`]
+//!   delegates to it.
 //! - Data: [`store::Store`] (library, playlists, favorites, scrobble,
 //!   queues, bookmarks, lyrics, avatars, scan, cover art, advanced
 //!   transcode).
-//! - Audio bytes: [`stream::AudioBackend`] on the stage-6 engine
+//! - Audio bytes: [`stream::AudioBackend`] on the stream engine
 //!   (ranges, HEAD, leases, pools, cancellation, plugin fallback).
-//! - Edge (another slice): enablement kill-switch default, rate limits,
+//! - Edge (`compat::shared`): enablement kill-switch default, rate limits,
 //!   CORS, case-insensitive paths, access-log redaction. The enablement
 //!   gate itself (`enabled` in [`Settings`]) runs here before lookup.
 //!
 //! # Golden harness (inline, no on-disk corpus)
 //!
-//! One brief per matrix row in `tests/it/compat_subsonic.rs`, replayed
+//! One test per matrix row in `tests/it/compat_subsonic.rs`, replayed
 //! against a live [`dispatch`] with the [`fake`] fixture (fixed clock)
-//! and the fake verifier. Each brief asserts status, content type,
+//! and the fake verifier. Each test asserts status, content type,
 //! headers, and body on the [`Rendered`](value::Rendered) struct:
 //! exact bytes for key rows (ping, license, one failed envelope), field
 //! asserts elsewhere. Binary rows pin the text-vs-envelope split and the
@@ -120,7 +119,7 @@ pub mod fake;
 
 use std::collections::HashMap;
 
-// Seam surface: public for the HTTP adapter and integrators.
+// Seam surface: public for the HTTP adapter.
 pub use auth::{Credentials, Principal, classify};
 pub use error::{GENERIC, PARAM_MISSING, SubsonicError};
 pub use params::SubsonicParameters;
@@ -149,7 +148,7 @@ pub const PUBLIC_ENDPOINT: &str = "getopensubsonicextensions";
 /// getAvatar refusal for a non-self username, v2 message verbatim.
 pub const AVATAR_FORBIDDEN_MESSAGE: &str = "Avatar access is limited to the authenticated user";
 
-/// Normalize an endpoint name: casefold, strip ONE `.view` suffix
+/// Normalize an endpoint name: casefold, strip one `.view` suffix
 /// (v2 `_dispatch`).
 pub fn normalize_endpoint(raw: &str) -> String {
     let folded = raw.to_lowercase();
@@ -167,7 +166,7 @@ pub fn dispatch_uses_envelope(code: u8, normalized_endpoint: &str) -> bool {
     !is_binary_endpoint(normalized_endpoint) || AUTH_CODES.contains(&code)
 }
 
-/// Server settings the slice reads (integrator fills from preferences).
+/// Server settings the Subsonic API reads (filled from preferences).
 #[derive(Debug, Clone)]
 pub struct Settings {
     /// Kill switch; off -> failed envelope code 0 (v2 enablement).
@@ -191,7 +190,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            // Kill switches default OFF (stage0 posture §0): serving the
+            // Kill switches default off: serving the
             // API is opt-in, never an accident of `Default`.
             enabled: false,
             server_name: "DroppedNeedle".to_owned(),
@@ -218,7 +217,7 @@ impl Settings {
     }
 }
 
-/// One inbound request (the integrator builds this from the HTTP layer).
+/// One inbound request (the HTTP adapter builds this).
 #[derive(Debug, Clone, Default)]
 pub struct Request {
     /// Uppercase HTTP method (`GET`/`POST`/`HEAD`).
@@ -389,7 +388,7 @@ impl Outcome {
     }
 }
 
-/// Secret verifier. INTEGRATOR SEAM: implement by delegating to
+/// Secret verifier. Implemented by delegating to
 /// `auth::compat_auth::subsonic::authenticate` and adapting the result.
 pub trait Verifier: Clone + Send + Sync {
     /// Principal type the handlers see.

@@ -1,14 +1,13 @@
 //! Streaming seam: range math, content types, the `decide()` policy,
 //! and the audio backend trait.
 //!
-//! The stage-6 engine owns real bytes; the integrator implements
+//! The stream engine owns real bytes; the compat adapters implement
 //! [`AudioBackend`] on top of it. Everything else here (byte-exact range
-//! handling, the Feishin bitrate-0 quirk, download filenames) is slice
-//! logic ported from v2 and covered by goldens.
+//! handling, the Feishin bitrate-0 quirk, download filenames) is ported
+//! from v2 and covered by goldens.
 //!
-//! v2: `backend/services/compat/transcode_service.py` (`decide()`),
-//! `backend/services/local_files_service.py` (ranges, HEAD, MIME),
-//! `backend/api/compat/subsonic/router.py` (`_serve_file`, `_stream`,
+//! v2: the compat transcode service (`decide()`), the local files service
+//! (ranges, HEAD, MIME), and the Subsonic router (`_serve_file`, `_stream`,
 //! `_download`, `_cover_size`).
 
 use super::error::{GENERIC, SubsonicError};
@@ -45,11 +44,10 @@ pub fn content_type_for(suffix: &str) -> Option<&'static str> {
 }
 
 /// Transcode output MIME/suffix (v2 `out_media_type`/`out_suffix`).
-/// The ONE copy: `opus` maps to the ogg pair, every other format —
-/// including `mp3` and anything unexpected — to the mp3 pair. (A deleted
-/// shared duplicate mapped this the other way round; the server default
-/// is validated to `mp3`/`opus`, so both agreed on every reachable input,
-/// and this spelling is the survivor.)
+/// The one copy: `opus` maps to the ogg pair, every other format
+/// (including `mp3` and anything unexpected) to the mp3 pair. The server
+/// default is validated to `mp3`/`opus`, so every reachable input maps
+/// as v2 did.
 pub fn transcode_hint(format: &str) -> (&'static str, &'static str) {
     match format {
         "opus" => ("audio/ogg", "opus"),
@@ -70,12 +68,12 @@ pub struct StreamPlan {
     pub start_seconds: f64,
 }
 
-/// The `decide()` policy, rules in order (stage0 §3.1):
+/// The `decide()` policy, rules in order:
 /// 1. force-original, transcoding off, or no ffmpeg -> direct.
-/// 2. A transcode needs an EXPLICIT client trigger: codec mismatch
+/// 2. A transcode needs an explicit client trigger: codec mismatch
 ///    (`req` non-empty, not `raw`, not the source format) or the client
 ///    ceiling under the source bitrate. The server max is a quality
-///    CEILING, never a trigger. `max_bitrate <= 0`/None means unset
+///    ceiling, never a trigger. `max_bitrate <= 0`/None means unset
 ///    (Feishin sends bitrate cap 0, issues #464/#468).
 /// 3. Output is `req` when it is mp3/opus else the server default;
 ///    bitrate clamps to `max(min(client, server), 32)`.
@@ -279,7 +277,7 @@ pub struct AudioFacts {
     pub duration_seconds: Option<f64>,
 }
 
-/// One served audio response: headers plus body bytes. The integrator
+/// One served audio response: headers plus body bytes. The HTTP adapter
 /// maps this onto the real streaming response (ranges already applied).
 #[derive(Debug, Clone)]
 pub struct ServedAudio {
@@ -332,8 +330,8 @@ impl std::fmt::Display for BackendError {
 
 impl std::error::Error for BackendError {}
 
-/// Minimal audio backend. INTEGRATOR SEAM: implement this on the
-/// stage-6 streaming engine (`LocalFilesService` + transcode pipeline).
+/// Minimal audio backend, implemented over the stream engine (local files
+/// plus the transcode pipeline) in `compat::adapters::engines`.
 /// Leases, concurrency pools, cancellation, and the plugin-stream
 /// fallback (local miss -> plugin ref -> bytes) all live behind this
 /// trait: resolve plugin refs inside `audio_facts`/`read_range` so a
@@ -346,7 +344,7 @@ pub trait AudioBackend: Clone + Send + Sync {
         file_id: &str,
     ) -> impl Future<Output = Result<Option<AudioFacts>, BackendError>> + Send;
 
-    /// Byte slice `[start, end]` inclusive of the ORIGINAL file.
+    /// Byte slice `[start, end]` inclusive of the original file.
     fn read_range(
         &self,
         file_id: &str,
@@ -354,7 +352,7 @@ pub trait AudioBackend: Clone + Send + Sync {
         end: u64,
     ) -> impl Future<Output = Result<Vec<u8>, BackendError>> + Send;
 
-    /// Facts plus the whole ORIGINAL object in ONE backend open, for the
+    /// Facts plus the whole original object in one backend open, for the
     /// GET path (`serve_original` slices facts and range from the single
     /// read instead of opening twice). The default composes `audio_facts`
     /// + `read_range`; engine-backed backends override it with one `open`.
@@ -414,8 +412,8 @@ impl From<BackendError> for ServeError {
 
 /// Serve original bytes with HEAD/range/416 handling (v2 `_serve_file`
 /// minus the lease plumbing, which lives behind [`AudioBackend`]).
-/// HEAD answers the same status and headers GET would (200/206/416 —
-/// HEAD honors Range, like the stage-6 engine), always with an empty
+/// HEAD answers the same status and headers GET would (200/206/416;
+/// HEAD honors Range, like the stream engine), always with an empty
 /// body. GET opens the backend exactly once ([`AudioBackend::read_object`])
 /// and slices facts and range from that single read.
 pub async fn serve_original<B: AudioBackend>(

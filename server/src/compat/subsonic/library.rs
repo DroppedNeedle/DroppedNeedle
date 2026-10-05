@@ -1,6 +1,6 @@
 //! Library handlers: playlists, favorites, scrobble, queues,
 //! bookmarks, info, lyrics, genres, user, scan, discovery.
-//! v2: `backend/api/compat/subsonic/router.py` (endpoint functions).
+//! v2: the Subsonic router's endpoint functions.
 
 use super::auth::Principal;
 use super::browse::validate_music_folder;
@@ -483,7 +483,7 @@ pub async fn starred<P: Principal, S: Store, B: AudioBackend>(
     ))
 }
 
-/// D11 validated no-op: the target and 0-5 range are checked, then
+/// Validated no-op: the target and 0-5 range are checked, then
 /// nothing is persisted.
 pub async fn set_rating<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
@@ -1189,7 +1189,7 @@ pub async fn songs_by_genre<P: Principal, S: Store, B: AudioBackend>(
     ))
 }
 
-/// Caller user object; the `username` param is required but IGNORED.
+/// Caller user object; the `username` param is required but ignored.
 pub async fn user<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Outcome, SubsonicError> {
@@ -1247,7 +1247,7 @@ pub async fn start_scan<P: Principal, S: Store, B: AudioBackend>(
     ))
 }
 
-/// Top songs: the artist name must match EXACTLY (case-insensitive),
+/// Top songs: the artist name must match exactly (case-insensitive),
 /// else 70.
 pub async fn top_songs<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,

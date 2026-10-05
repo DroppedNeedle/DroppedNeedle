@@ -1,5 +1,5 @@
 //! Browse handlers: ping through search.
-//! v2: `backend/api/compat/subsonic/router.py` (endpoint functions).
+//! v2: the Subsonic router's endpoint functions.
 
 use std::collections::BTreeMap;
 
@@ -88,9 +88,9 @@ pub async fn license<P: Principal, S: Store, B: AudioBackend>(
     Ok(Outcome::keyed("license", SLicense { valid: true }.render()))
 }
 
-/// Advertised OpenSubsonic extensions, all v1. PUBLIC (no auth).
+/// Advertised OpenSubsonic extensions, all v1. Public (no auth).
 /// The set is owned by `compat::shared::extensions` (matrix wins: exactly
-/// 3; `transcoding` is served but deliberately NOT advertised).
+/// 3; `transcoding` is served but not advertised, on purpose).
 pub async fn extensions<P: Principal, S: Store, B: AudioBackend>(
     _ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Outcome, SubsonicError> {

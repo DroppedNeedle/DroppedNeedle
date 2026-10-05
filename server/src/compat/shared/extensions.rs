@@ -1,13 +1,11 @@
 //! Advertised OpenSubsonic extensions, and the one choice v2
 //! left open.
 //!
-//! THE DIVERGENCE (stage0-compat section 1.1): v2's
-//! `capability_matrix.json` advertises 3 extensions and marks
-//! `transcoding` implemented-but-unadvertised with blocker
-//! `real_target_client_certification`, while v2's router advertises all
-//! 4. v3 resolves this to ONE choice:
-//!
-//! THE MATRIX WINS: 3 advertised, `transcoding` stays unadvertised.
+//! v2 disagreed with itself: its `capability_matrix.json` advertises 3
+//! extensions and marks `transcoding` implemented-but-unadvertised with
+//! blocker `real_target_client_certification`, while its router advertises
+//! all 4. v3 makes one choice: the matrix wins. 3 are advertised, and
+//! `transcoding` stays unadvertised.
 //!
 //! Why: the matrix evidence says no real client was ever available
 //! against an authorized non-deploy target, so every newly implemented
@@ -44,7 +42,7 @@ pub const ADVERTISED: [Extension; 3] = [
     },
 ];
 
-/// Implemented and served but NOT advertised, all v1, each blocked on
+/// Implemented and served but not advertised, all v1, each blocked on
 /// `real_target_client_certification` (matrix
 /// `implemented_unadvertised_extensions`, pinned in `contract.json`).
 pub const IMPLEMENTED_UNADVERTISED: [Extension; 4] = [
@@ -66,8 +64,7 @@ pub const IMPLEMENTED_UNADVERTISED: [Extension; 4] = [
     },
 ];
 
-/// Deliberately unadvertised forever (matrix
-/// `deliberately_unadvertised`).
+/// Never advertised, on purpose (matrix `deliberately_unadvertised`).
 pub const NEVER_ADVERTISED: [&str; 9] = [
     "sonicSimilarity",
     "songLyrics:2",

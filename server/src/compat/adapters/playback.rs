@@ -1,4 +1,4 @@
-//! Compat playback: scrobbles and presence over the stage-6 reporting
+//! Compat playback: scrobbles and presence over the playback reporting
 //! services.
 //!
 //! Both protocols share one adapter. Scrobbles go through
@@ -33,7 +33,7 @@ pub struct CompatPlayback {
 }
 
 impl CompatPlayback {
-    /// Wrap the stage-6 reporting deps.
+    /// Wrap the playback reporting deps.
     pub fn new(deps: PlaybackDeps) -> Self {
         Self {
             deps,

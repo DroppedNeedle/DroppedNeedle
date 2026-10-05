@@ -1,10 +1,10 @@
-//! Compat streaming over the stage-6 engine: both protocol seams call the
+//! Compat streaming over the stream engine: both protocol seams call the
 //! same [`StreamEngine`](crate::stream::routes::StreamEngine) the native
 //! routes use, so bytes, leases, and transcode execution are shared. Range
 //! slicing stays in each protocol layer (already byte-identical rules);
 //! the adapters map whole-object opens onto the seam outcomes.
 //!
-//! Compat file ids pass through as stage-6 local stream keys. Unknown ids
+//! Compat file ids pass through as local stream keys. Unknown ids
 //! fail exactly like native unknown ids (404/70), and exhausted leases
 //! surface as 429 + `Retry-After: 1`.
 
@@ -56,7 +56,7 @@ fn backend_error(fault: StreamFault) -> BackendError {
     }
 }
 
-/// Subsonic audio backend over any stage-6 engine.
+/// Subsonic audio backend over any stream engine.
 pub struct GatewayAudio<E> {
     engine: Arc<E>,
     lease_user: String,
@@ -178,7 +178,7 @@ impl<E: StreamEngine + 'static> AudioBackend for GatewayAudio<E> {
     }
 }
 
-/// Jellyfin stream engine over any stage-6 engine.
+/// Jellyfin stream engine over any stream engine.
 pub struct GatewayStream<E> {
     engine: Arc<E>,
 }

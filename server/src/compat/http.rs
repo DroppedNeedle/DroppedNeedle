@@ -244,7 +244,7 @@ fn limit_ip(request: &Request) -> String {
 }
 
 /// Exact-spelling query lookup for the two Jellyfin auth keys (v2 reads
-/// case-SENSITIVE params: only `ApiKey` and `api_key`).
+/// case-sensitive params: only `ApiKey` and `api_key`).
 fn query_exact<'a>(raw: Option<&'a str>, key: &str) -> Option<&'a str> {
     for pair in raw.unwrap_or("").split('&') {
         let (name, value) = match pair.find('=') {
@@ -425,11 +425,11 @@ pub fn rendered_response(rendered: &Rendered, head_only: bool) -> Response {
 /// Subsonic router state: the dispatch seams plus the shared buckets.
 #[derive(Clone)]
 pub struct SubsonicState<V, S, B> {
-    /// Stage-3-backed verifier.
+    /// App-password verifier.
     pub verifier: V,
     /// Library store.
     pub store: S,
-    /// Stage-6-backed audio.
+    /// Audio over the stream engine.
     pub audio: B,
     /// Server settings (kill switch, names, transcode policy).
     pub settings: Settings,

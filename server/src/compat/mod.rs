@@ -1,8 +1,8 @@
 //! Third-party protocol shims: Subsonic/OpenSubsonic and Jellyfin.
 //!
-//! Stage 9. Both routers mount OUTSIDE the `/api` session gate with their
-//! own app-password auth (stage-3 contracts), the stage-6 engine for bytes,
-//! and the shared edge policy (kill switches default OFF, CORS `*` creds
+//! Both routers mount outside the `/api` session gate with their own
+//! app-password auth ([`crate::auth::compat_auth`]), the stream engine for
+//! bytes, and the shared edge policy (kill switches default off, CORS `*` creds
 //! off, case-insensitive paths, rate limits plus auth backoff, log
 //! redaction).
 //!
@@ -11,18 +11,19 @@
 //! - Auth: [`ProdCompatPasswords`](crate::auth::compat_auth::prod::ProdCompatPasswords)
 //!   over the real users tables (app passwords only, never native tokens
 //!   or account passwords). The Subsonic [`Verifier`](subsonic::Verifier)
-//!   maps classified credentials back onto the stage-3 `authenticate` so
-//!   the contract runs exactly once; Jellyfin handlers call the stage-3
+//!   maps classified credentials back onto `compat_auth`'s `authenticate`
+//!   so the contract runs exactly once; Jellyfin handlers call
 //!   `resolve_token`/`authenticate_by_name` directly.
 //! - Streaming: [`GatewayAudio`](adapters::engines::GatewayAudio) and
-//!   [`GatewayStream`](adapters::engines::GatewayStream) over the stage-6
+//!   [`GatewayStream`](adapters::engines::GatewayStream) over the
 //!   [`StreamEngine`](crate::stream::routes::StreamEngine). Range slicing
 //!   stays in each protocol layer (byte-identical rules); leases run under
 //!   fixed `compat:subsonic` / `compat:jellyfin` principals until the seams
 //!   carry a caller.
-//! - Library: the honest-memory [`MemoryStore`](adapters::empty::MemoryStore)
-//!   (mutations round-trip, catalog reads empty) until the v3 catalog join
-//!   lands; Jellyfin reads use the empty [`MemoryLibrary`](jellyfin::seams::MemoryLibrary).
+//! - Library: the in-memory [`MemoryStore`](adapters::empty::MemoryStore)
+//!   (mutations round-trip, catalog reads empty) until the compat store is
+//!   joined to the v3 catalog; Jellyfin reads use the empty
+//!   [`MemoryLibrary`](jellyfin::seams::MemoryLibrary).
 //!
 //! # Golden format (one spelling)
 //!
@@ -39,7 +40,7 @@
 //!   re-add `re:` markers afterwards.
 //! - Protocol suites (`tests/it/compat_subsonic.rs`, `tests/it/compat_jellyfin.rs`):
 //!   dispatches against fixture seams, asserting status, content type,
-//!   headers, and body per brief. Subsonic asserts on the `Rendered`
+//!   headers, and body per test. Subsonic asserts on the `Rendered`
 //!   struct (exact bytes for key rows, field asserts elsewhere);
 //!   Jellyfin asserts through the inline `Golden` harness (status +
 //!   header sidecar + `BodyExp::Exact` wire bytes or parsed-JSON

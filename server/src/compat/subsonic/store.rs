@@ -1,12 +1,11 @@
 //! Data seam: the [`Store`] trait plus the records handlers need.
 //!
-//! INTEGRATOR SEAM: implement [`Store`] on the real v3 library,
-//! playlist, favorites, scrobble, queue, bookmark, lyrics, avatar, and
-//! scan stores. The trait is async and generic (`RPITIT` style, matching
-//! `server/src/auth/compat_auth`); handlers take `&impl Store`.
+//! The seam to the real v3 library, playlist, favorites, scrobble, queue,
+//! bookmark, lyrics, avatar, and scan stores. The trait is async and
+//! generic (`RPITIT` style, matching `auth::compat_auth`); handlers take
+//! `&impl Store`.
 //!
-//! v2: `CompatServices` (`backend/api/compat/common/deps.py`) behind
-//! `backend/api/compat/subsonic/router.py`.
+//! v2: `CompatServices` behind the Subsonic router.
 
 use std::collections::HashMap;
 
@@ -185,7 +184,7 @@ pub struct TranscodeDecisionData {
 }
 
 /// Client playback capabilities (getTranscodeDecision JSON body).
-/// Read by the integrator's `advanced_decide`, not by this slice.
+/// Parsed and passed to [`Store::advanced_decide`]; no store reads it yet.
 #[derive(Debug, Clone, Default)]
 pub struct ClientInfo {
     /// Client name.

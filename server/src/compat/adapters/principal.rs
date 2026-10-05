@@ -1,4 +1,4 @@
-//! Compat principal: stage-3 verification plus a profile lookup.
+//! Compat principal: app-password verification plus a profile lookup.
 //!
 //! The password stores authenticate to a user id; the Subsonic handlers
 //! also need the username, display name, and admin flag. [`CompatProfiles`]
@@ -79,9 +79,9 @@ impl Principal for CompatPrincipal {
     }
 }
 
-/// Subsonic secret verifier over the stage-3 app-password store. The
+/// Subsonic secret verifier over the app-password store. The
 /// classified [`Credentials`] map back onto [`SubsonicParams`] so the
-/// stage-3 [`authenticate`] runs the exact contract (schemes, precedence,
+/// `compat_auth` [`authenticate`] runs the exact contract (schemes, precedence,
 /// caps); denials keep their codes, and a vanished account fails as code
 /// 40 like an unknown credential.
 #[derive(Debug, Clone)]

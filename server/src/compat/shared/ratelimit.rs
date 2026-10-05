@@ -1,6 +1,6 @@
 //! Bounded, identity-aware rate limiting for the compat APIs.
 //!
-//! Ports `backend/api/compat/common/ratelimit.py`: a public-IP bucket
+//! Ports v2's compat rate limiter: a public-IP bucket
 //! (5/s, burst 20), per-principal browse (30/s, burst 120) and mutation
 //! (5/s, burst 20) buckets, and per-IP auth-failure backoff (5 failures
 //! in 60s locks out for 10s, doubling to 5min). Media paths are

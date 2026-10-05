@@ -1,24 +1,23 @@
-//! Boundary traits this slice does not own, plus in-memory fakes.
-//!
-//! SEAMS (the integrator binds the real adapters; the router is generic over
-//! every trait here):
+//! Boundary traits to code the Jellyfin routes do not own, plus in-memory
+//! fakes. The router is generic over every trait here; `compat::setup`
+//! binds the production adapters.
 //!
 //! - Auth: [`crate::auth::compat_auth::jellyfin::JellyfinPasswordStore`]
-//!   (owned by the auth slice). This file only adds the thin [`Principal`]
-//!   view over its `JellyfinUser`. Login bodies reuse the auth slice's
+//!   (from `compat_auth`). This file only adds the thin [`Principal`]
+//!   view over its `JellyfinUser`. Login bodies reuse `compat_auth`'s
 //!   `login_echo_json`, so the Finamp/Manet login contract has one owner.
-//! - Library reads: [`LibraryRead`]. The integrator binds the view services
+//! - Library reads: [`LibraryRead`]. Real view services (to be bound)
 //!   (paged, user-scoped, real search); the router's in-memory filtering,
 //!   sorting, and paging over the snapshot only pins the quirk contract.
-//! - Streaming: [`StreamEngine`]. The integrator binds the stage-6 engine
+//! - Streaming: [`StreamEngine`]. Production binds the stream engine
 //!   (real `stream_track` byte contract, ffmpeg pipe, concurrency leases).
 //!   [`MemoryEngine`] replays the same range/status contract over seeded
-//!   bytes so the goldens pin it; [`decide`] ports the §3.1 policy rules
+//!   bytes so the goldens pin it; [`decide`] ports v2's transcode policy rules
 //!   verbatim for the PlaybackInfo direct/transcode fork.
-//! - Ids: [`IdMap`]. The integrator binds the persisted compat id map;
+//! - Ids: [`IdMap`]. A persisted compat id map is the intended binding;
 //!   [`MemoryIds`] ports the deterministic `sha256("kind:internal")[:32]`
 //!   derivation with an in-memory reverse table.
-//! - Playback sessions: [`PlaybackSessions`]. The integrator binds the
+//! - Playback sessions: [`PlaybackSessions`]. Production binds the
 //!   scrobble adapter (presence + scrobble forwarding).
 
 use std::collections::{HashMap, HashSet};
@@ -44,7 +43,7 @@ pub struct JellyfinSettings {
     pub server_version: String,
     /// Transcoding master switch.
     pub transcoding_enabled: bool,
-    /// Quality ceiling in kbps, default 320 — a ceiling, never a trigger.
+    /// Quality ceiling in kbps, default 320: a ceiling, never a trigger.
     pub transcode_max_bitrate_kbps: u32,
     /// Default transcode output (`mp3` or `opus`).
     pub transcode_default_format: String,
@@ -79,7 +78,7 @@ pub struct Principal {
 }
 
 impl Principal {
-    /// Build from the auth slice's user (display-name `or`-chain parity via
+    /// Build from `compat_auth`'s user (display-name `or`-chain parity via
     /// `effective_name`).
     pub fn from_user(user: &JellyfinUser, token: &str) -> Self {
         Self {
@@ -120,8 +119,8 @@ pub trait IdMap: Clone + Send + Sync + 'static {
 }
 
 /// Deterministic `sha256("kind:internal")[:32]` with an in-memory reverse
-/// table (v2 `CompatIdMapService` derivation; the persisted table is the
-/// integrator's binding).
+/// table (v2 `CompatIdMapService` derivation; the persisted table is not
+/// bound yet).
 #[derive(Debug, Clone, Default)]
 pub struct MemoryIds {
     reverse: std::sync::Arc<Mutex<HashMap<String, (String, String)>>>,
@@ -366,7 +365,7 @@ struct MemoryRows {
     artist_images: HashMap<String, CoverBytes>,
 }
 
-/// In-memory [`LibraryRead`] for tests and the standalone briefs.
+/// In-memory [`LibraryRead`] for tests and the empty production library.
 #[derive(Debug, Clone, Default)]
 pub struct MemoryLibrary {
     rows: std::sync::Arc<Mutex<MemoryRows>>,
@@ -758,7 +757,7 @@ pub struct DecideInput<'a> {
     pub force_original: bool,
     pub start_seconds: f64,
     pub transcoding_enabled: bool,
-    /// Server quality ceiling, default 320 — a ceiling, never a trigger.
+    /// Server quality ceiling, default 320: a ceiling, never a trigger.
     pub server_max_kbps: u32,
     /// Default output when the request names none usable.
     pub default_format: &'a str,
@@ -777,7 +776,7 @@ pub enum StreamPlan {
 }
 
 /// Direct-vs-transcode policy, v2 `transcode_service.decide()` rules in
-/// order: silent direct fallback first; a transcode needs an EXPLICIT client
+/// order: silent direct fallback first; a transcode needs an explicit client
 /// request (codec mismatch or client ceiling below source); the server max
 /// only caps quality once transcoding.
 pub fn decide(input: &DecideInput) -> StreamPlan {
@@ -817,7 +816,7 @@ pub struct ByteOutcome {
     pub body: Vec<u8>,
 }
 
-/// Audio bytes behind the `/Audio` routes. The integrator binds the stage-6
+/// Audio bytes behind the `/Audio` routes. Production binds the stream
 /// engine (range-capable file streams, ffmpeg pipe, concurrency leases with
 /// 429 + `Retry-After: 1`); the router only maps outcomes to responses.
 pub trait StreamEngine: Clone + Send + Sync + 'static {
@@ -832,7 +831,7 @@ pub trait StreamEngine: Clone + Send + Sync + 'static {
     /// empty body. The router maps it straight onto the response.
     fn head(&self, file_id: &str, range: Option<&str>) -> impl Future<Output = ByteOutcome> + Send;
     /// Transcoded bytes (estimate off on Jellyfin: never a Content-Length).
-    /// BINDING OBLIGATION: the real adapter must serve an UNSIZED streaming
+    /// The real adapter must serve an unsized streaming
     /// body (ffmpeg pipe). Axum auto-adds `Content-Length` to sized bodies,
     /// so a sized adapter response would violate the v2 contract on the wire;
     /// only an unknown size hint keeps the header off.
@@ -845,7 +844,7 @@ pub trait StreamEngine: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = ByteOutcome> + Send;
 }
 
-/// Content-Type per extension, v2 §1.5 list verbatim.
+/// Content-Type per extension, v2's list verbatim.
 pub fn content_type_for_format(format: Option<&str>) -> &'static str {
     match format.unwrap_or("").to_lowercase().as_str() {
         "flac" => "audio/flac",
@@ -904,7 +903,7 @@ fn resolve_range(range: Option<&str>, size: usize) -> Result<Option<(usize, usiz
         return Err(());
     }
     // Surrounding whitespace is insignificant on every path (the engine
-    // parser and the Subsonic slice trim too).
+    // parser and the Subsonic code trim too).
     let spec = header.trim().strip_prefix("bytes=").ok_or(())?;
     if spec.is_empty() || spec.contains(',') {
         return Err(());
@@ -958,7 +957,7 @@ impl StreamEngine for MemoryEngine {
             Err(()) => return unsatisfied(size),
         };
         // `Content-Encoding: identity` on every audio response: gzip drops
-        // Content-Length and breaks seeking (v2 §1.5).
+        // Content-Length and breaks seeking (as v2 found).
         let content_type = content_type_for_format(format.as_deref()).to_owned();
         match span {
             None => ByteOutcome {
@@ -1002,7 +1001,7 @@ impl StreamEngine for MemoryEngine {
             Err(()) => return unsatisfied(size),
         };
         // GET-equivalent headers, empty body: HEAD honors Range (206 +
-        // Content-Range) exactly like the stage-6 engine does.
+        // Content-Range) exactly like the stream engine does.
         let content_type = content_type_for_format(format.as_deref()).to_owned();
         match span {
             None => ByteOutcome {
@@ -1039,11 +1038,11 @@ impl StreamEngine for MemoryEngine {
         bitrate_kbps: u32,
         start_seconds: f64,
     ) -> ByteOutcome {
-        // Marker bytes only: the integrator binds the real ffmpeg pipe. The
-        // header set is the honest v2 contract (200, no ranges, no store,
+        // Marker bytes only: production binds the real ffmpeg pipe. The
+        // header set is the real v2 contract (200, no ranges, no store,
         // identity encoding, never a Content-Length on Jellyfin). Transcoded
-        // opus rides an ogg container (`-f ogg`), hence `audio/ogg` — unlike
-        // direct .opus files, which serve as `audio/opus` (v2 §3.2).
+        // opus rides an ogg container (`-f ogg`), hence `audio/ogg`, unlike
+        // direct .opus files, which serve as `audio/opus` (as in v2).
         let _ = self.lookup(file_id);
         let content_type = if format.eq_ignore_ascii_case("opus") {
             "audio/ogg"
@@ -1065,8 +1064,8 @@ impl StreamEngine for MemoryEngine {
 
 // ===== Playback sessions seam =====
 
-/// Presence + scrobble calls behind the `/Sessions/Playing*` routes. The
-/// integrator binds the compat scrobble adapter.
+/// Presence + scrobble calls behind the `/Sessions/Playing*` routes.
+/// Production binds the compat scrobble adapter.
 pub trait PlaybackSessions: Clone + Send + Sync + 'static {
     fn mark_started(&self, user_id: &str, key: &str) -> impl Future<Output = ()> + Send;
     fn pop_started(&self, user_id: &str, key: &str) -> impl Future<Output = Option<String>> + Send;

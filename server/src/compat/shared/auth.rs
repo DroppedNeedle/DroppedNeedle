@@ -1,26 +1,26 @@
-//! Compat auth posture: OUTSIDE the `/api` middleware.
+//! Compat auth posture: outside the `/api` middleware.
 //!
 //! v2 mounts the compat shims in `target_application.py` outside the
 //! `/api/*` AuthMiddleware, with auth of their own: per-user app
-//! passwords ONLY, never account passwords, never native tokens. The
-//! credential stores live in stage 3 (`auth::compat_auth`, reused here
+//! passwords only, never account passwords, never native tokens. The
+//! credential stores live in `auth::compat_auth` (reused here
 //! by the routers, never reinvented); this module holds the shared
 //! posture around them: who counts as anonymous, how principals are
 //! labeled for rate limiting, and how failures feed backoff. (The v2
 //! `_plugin_user` fallback needs no helper here: anonymous routes carry
-//! no plugin seam in this slice, so there is nothing to verify a fallback
+//! no plugin seam here, so there is nothing to verify a fallback
 //! token against.)
 
 use super::ratelimit::CompatRateLimits;
 
 /// Subsonic public endpoint (normalized: casefolded, one `.view`
-/// stripped). The ONLY endpoint that skips auth; binary
+/// stripped). The only endpoint that skips auth; binary
 /// stream/download/cover included, everything else needs it (v2
-/// `_PUBLIC`, stage0 section 1.3).
+/// `_PUBLIC`).
 pub const SUBSONIC_PUBLIC_ENDPOINT: &str = "getopensubsonicextensions";
 
 /// Normalize an endpoint the way v2 `_dispatch` does: casefold, strip
-/// ONE trailing `.view`.
+/// one trailing `.view`.
 pub fn normalize_subsonic_endpoint(raw: &str) -> String {
     let folded = raw.to_lowercase();
     folded.strip_suffix(".view").unwrap_or(&folded).to_owned()

@@ -1,4 +1,4 @@
-//! Type-prefixed Subsonic ids. v2: `backend/api/compat/subsonic/ids.py`.
+//! Type-prefixed Subsonic ids, as v2 spells them.
 //!
 //! Internal ids: artist = artist_mbid, album = rg_mbid, track = file_id,
 //! playlist = playlist_id, genre = slug. Unknown prefix decodes to error 70.

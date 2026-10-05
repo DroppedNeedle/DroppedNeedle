@@ -166,7 +166,7 @@ impl UserPolicy {
 }
 
 /// User object for `/Users/Me` and `/Users/{id}` (the `{id}` is ignored,
-/// v2 parity). The login echo itself is rendered by the auth slice's
+/// v2 parity). The login echo itself is rendered by `compat_auth`'s
 /// `login_echo_json`; this struct's field order matches it exactly so the
 /// goldens can assert the two agree byte for byte.
 #[derive(Debug, Clone, Serialize)]

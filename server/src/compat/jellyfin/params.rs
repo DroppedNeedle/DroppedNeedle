@@ -1,4 +1,4 @@
-//! Case-insensitive query parsing, ported from v2 `router.py` (`_CIParams`
+//! Case-insensitive query parsing, ported from v2's Jellyfin router (`_CIParams`
 //! and friends). Real Jellyfin (ASP.NET Core) binds query strings
 //! case-insensitively, so clients send mixed casing (`parentId` vs
 //! `ParentId`).

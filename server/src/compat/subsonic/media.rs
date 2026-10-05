@@ -1,5 +1,5 @@
 //! Media handlers: cover art, stream, download, transcode, avatar.
-//! v2: `backend/api/compat/subsonic/router.py` (endpoint functions).
+//! v2: the Subsonic router's endpoint functions.
 
 use super::auth::Principal;
 use super::error::{NOT_FOUND, SubsonicError};
@@ -584,7 +584,7 @@ pub async fn transcode_stream<P: Principal, S: Store, B: AudioBackend>(
     }
 }
 
-/// Avatar: self-only. A username that is not the caller's is the ONE
+/// Avatar: self-only. A username that is not the caller's is the one
 /// direct 403-as-text (`_binary_error(50)`); a missing avatar is 70.
 pub async fn avatar<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,

@@ -1,4 +1,4 @@
-//! Subsonic response objects. v2: `backend/api/compat/subsonic/models.py`.
+//! Subsonic response objects, ported from v2's Subsonic models.
 //!
 //! Field names are exact Subsonic/OpenSubsonic camelCase and render in
 //! declaration order (v2 `msgspec.to_builtins` struct order). Optional

@@ -1,5 +1,5 @@
 //! Strict, bounded Subsonic parameter decoding.
-//! v2: `backend/api/compat/subsonic/parameters.py` (all caps verbatim).
+//! v2: the Subsonic parameter parser (all caps verbatim).
 
 use super::error::{PARAM_MISSING, SubsonicError};
 

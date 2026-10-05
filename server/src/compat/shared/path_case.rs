@@ -1,6 +1,6 @@
 //! Case-insensitive path routing for the compat shims.
 //!
-//! Ports `backend/api/compat/common/path_case.py`. Real Jellyfin
+//! Ports v2's compat path-case middleware. Real Jellyfin
 //! (ASP.NET Core) routes case-insensitively and clients rely on it:
 //! Feishin POSTs lowercase `/jellyfin/users/authenticatebyname`. Axum
 //! matches case-sensitively, so compat paths are canonicalized to the
@@ -8,7 +8,7 @@
 //! template is lossless because every compat path param is a hex/uuid
 //! id, an int, or an already-lowercased value.
 //!
-//! Must sit OUTSIDE the rate-limit middleware so its exact-path checks
+//! Must sit outside the rate-limit middleware so its exact-path checks
 //! see the canonical form.
 
 /// Path prefixes this canonicalization covers.

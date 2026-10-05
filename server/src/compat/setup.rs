@@ -1,12 +1,12 @@
 //! Compat bundle: production seam bindings plus the mounted routers.
 //!
 //! [`CompatSetup`] is the one `AppState` field compat adds. It binds auth
-//! to the stage-3 app-password store ([`ProdCompatPasswords`](crate::auth::compat_auth::prod::ProdCompatPasswords)),
-//! playback to the stage-6 reporting services, and streaming to the
-//! stage-6 engine; the library store is the honest-memory [`MemoryStore`]
-//! until the v3 catalog join lands (see its docs). Both routers mount
-//! OUTSIDE the `/api` session gate with the shared layers (case, CORS,
-//! limits) and kill switches default OFF.
+//! to the app-password store ([`ProdCompatPasswords`](crate::auth::compat_auth::prod::ProdCompatPasswords)),
+//! playback to the reporting services, and streaming to the stream engine;
+//! the library store is the in-memory [`MemoryStore`] until it is joined to
+//! the v3 catalog (see its docs). Both routers mount outside the `/api`
+//! session gate with the shared layers (case, CORS, limits) and kill
+//! switches default off.
 //!
 //! Lease principals: Subsonic media is always authed but the audio seam
 //! carries no caller, so leases run under the fixed `compat:subsonic`
@@ -36,10 +36,10 @@ use crate::playback::services::PlaybackDeps;
 use crate::runtime_config::Crypto;
 use crate::runtime_config::sections::{AudioFormat, ConnectApps};
 
-/// Stage-3-backed Subsonic verifier.
+/// Subsonic verifier over the app-password store.
 pub type CompatVerifier = SubsonicVerifier<ProdCompatPasswords, UsersDeps>;
 
-/// Stage-6-backed Subsonic audio.
+/// Subsonic audio over the stream engine.
 pub type CompatAudio = GatewayAudio<MediaEngine>;
 
 /// Wired Jellyfin router state.
@@ -51,7 +51,7 @@ pub type CompatJellyfinState = crate::compat::jellyfin::JellyfinState<
     MemoryIds,
 >;
 
-/// Everything `create_app` needs to mount the compat slices.
+/// Everything `create_app` needs to mount the compat routers.
 #[derive(Clone)]
 pub struct CompatSetup {
     verifier: CompatVerifier,
@@ -221,7 +221,7 @@ impl CompatSetup {
     }
 
     /// The mounted compat routers with the shared layers, ready to merge
-    /// OUTSIDE the `/api` session gate. Case-variant paths and preflights
+    /// outside the `/api` session gate. Case-variant paths and preflights
     /// never match a route; the app fallbacks redispatch them here via
     /// [`fallback_redispatch`](crate::compat::http::fallback_redispatch).
     pub fn router(&self) -> Router {
