@@ -14,6 +14,35 @@ use std::sync::Arc;
 use super::events_watcher::EventsWatcher;
 use super::registry::{JobExit, JobKind, JobRegistry, RegistryStore};
 
+/// Kick the upcoming-events sweep. Single-flight: overlapping kicks
+/// collapse into one, so a burst of saves schedules one sweep.
+pub trait EventsKick: Send + Sync {
+    /// Request a sweep. Cheap, idempotent under concurrency.
+    fn kick(&self);
+}
+
+/// No-op kick, for tests.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Debug, Default)]
+pub struct NoopKick;
+
+#[cfg(any(test, feature = "test-support"))]
+impl EventsKick for NoopKick {
+    fn kick(&self) {}
+}
+
+/// Closure adapter so wiring passes the real sweep with one line.
+pub struct FnKick<F> {
+    /// Kick closure.
+    pub kick_fn: F,
+}
+
+impl<F: Fn() + Send + Sync> EventsKick for FnKick<F> {
+    fn kick(&self) {
+        (self.kick_fn)();
+    }
+}
+
 /// Registered name of the kick one-shot.
 pub const JOB_NAME: &str = "events-kick";
 

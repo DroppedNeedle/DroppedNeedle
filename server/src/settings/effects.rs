@@ -9,8 +9,10 @@
 
 use std::sync::Arc;
 
-use crate::providers::cache::{ProviderCache, invalidate_source};
 use futures_util::future::BoxFuture;
+
+use crate::jobs::events_kick::EventsKick;
+use crate::providers::cache::{ProviderCache, invalidate_source};
 
 /// Sections whose save invalidates provider caches, and the events
 /// section, which additionally kicks the sweep. Only sources with
@@ -31,35 +33,6 @@ pub enum SavedSection {
     Library,
     /// Anything else (no cache roots).
     Other,
-}
-
-/// Kick the upcoming-events sweep. Single-flight: overlapping kicks
-/// collapse into one, so a burst of saves schedules one sweep.
-pub trait EventsKick: Send + Sync {
-    /// Request a sweep. Cheap, idempotent under concurrency.
-    fn kick(&self);
-}
-
-/// No-op kick, for tests.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-pub struct NoopKick;
-
-#[cfg(any(test, feature = "test-support"))]
-impl EventsKick for NoopKick {
-    fn kick(&self) {}
-}
-
-/// Closure adapter so wiring passes the real sweep with one line.
-pub struct FnKick<F> {
-    /// Kick closure.
-    pub kick_fn: F,
-}
-
-impl<F: Fn() + Send + Sync> EventsKick for FnKick<F> {
-    fn kick(&self) {
-        (self.kick_fn)();
-    }
 }
 
 /// Post-save fan-out. Called after a section persists; failures are

@@ -1046,3 +1046,249 @@ fn parse_release_group_metadata(entry: &serde_json::Value) -> ReleaseGroupMetada
         release_group_tags: collect("release_group"),
     }
 }
+
+// --- credential verification ---------------------------------------------------
+//
+// The settings Verify button and the per-user link flow both check a
+// username/token pair against the live API. Neither goes through the paced
+// metadata client: a verify is one admin-initiated call, not a read path.
+
+/// Answer from a ListenBrainz credential check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifyOutcome {
+    /// Whether the credential checked out.
+    pub valid: bool,
+    /// Short human-readable detail.
+    pub message: String,
+    /// The upstream is rate-limiting; the caller should answer 429.
+    pub rate_limited: bool,
+}
+
+/// Credential checks against ListenBrainz. With a token this validates the
+/// token; without one it validates that the username exists.
+pub trait ListenBrainzVerifier: Send + Sync {
+    /// Check one username/token pair.
+    fn verify<'a>(
+        &'a self,
+        username: &'a str,
+        token: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, VerifyOutcome>;
+}
+
+/// Percent-encode one path segment.
+fn encode_segment(segment: &str) -> String {
+    let mut out = String::new();
+    for byte in segment.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// Render a count with thousands separators, the way v2's `{count:,}` does.
+fn grouped_count(count: i64) -> String {
+    let digits = count.max(0).to_string();
+    let mut out = String::new();
+    for (index, digit) in digits.chars().rev().enumerate() {
+        if index > 0 && index % 3 == 0 {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out.chars().rev().collect()
+}
+
+fn unavailable() -> VerifyOutcome {
+    VerifyOutcome {
+        valid: false,
+        message: "ListenBrainz is temporarily unavailable. Try again shortly.".to_owned(),
+        rate_limited: false,
+    }
+}
+
+fn transport_outcome(error: &reqwest::Error) -> VerifyOutcome {
+    if error.is_timeout() {
+        return VerifyOutcome {
+            valid: false,
+            message: "Connection timed out".to_owned(),
+            rate_limited: false,
+        };
+    }
+    if error.is_connect() {
+        return VerifyOutcome {
+            valid: false,
+            message: "Could not connect to ListenBrainz".to_owned(),
+            rate_limited: false,
+        };
+    }
+    unavailable()
+}
+
+/// Credential checks over HTTP. Status mapping ports v2's repository
+/// verify methods: 401/403 on the token call means an invalid token, 404
+/// on the username call means an unknown user, and 429 means back off.
+pub struct HttpListenBrainzVerifier {
+    http: reqwest::Client,
+    base_url: String,
+}
+
+impl HttpListenBrainzVerifier {
+    /// Check against one API root (the production host or a fake).
+    pub fn new(http: reqwest::Client, base_url: &str) -> Self {
+        Self {
+            http,
+            base_url: base_url.trim_end_matches('/').to_owned(),
+        }
+    }
+
+    /// Check against the production API.
+    pub fn prod(http: reqwest::Client) -> Self {
+        Self::new(http, DEFAULT_BASE_URL)
+    }
+
+    async fn verify_token(&self, token: &str, username: &str) -> VerifyOutcome {
+        if !header_safe_token(token) {
+            return VerifyOutcome {
+                valid: false,
+                message: "Token invalid or expired".to_owned(),
+                rate_limited: false,
+            };
+        }
+        let response = self
+            .http
+            .get(format!("{}/1/validate-token", self.base_url))
+            .header("Authorization", format!("Token {token}"))
+            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+            .send()
+            .await;
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => return transport_outcome(&error),
+        };
+        let status = response.status().as_u16();
+        if status == 429 {
+            return VerifyOutcome {
+                valid: false,
+                message:
+                    "ListenBrainz is temporarily rate-limiting this server. Try again shortly."
+                        .to_owned(),
+                rate_limited: true,
+            };
+        }
+        if status == 401 || status == 403 {
+            return VerifyOutcome {
+                valid: false,
+                message: "Token invalid or expired".to_owned(),
+                rate_limited: false,
+            };
+        }
+        if status != 200 {
+            return unavailable();
+        }
+        let bytes = match response.bytes().await {
+            Ok(bytes) => bytes,
+            Err(_) => return unavailable(),
+        };
+        let body: serde_json::Value = match serde_json::from_slice(&bytes) {
+            Ok(body) => body,
+            Err(_) => return unavailable(),
+        };
+        if body.get("valid").and_then(|valid| valid.as_bool()) == Some(true) {
+            let who = body
+                .get("user_name")
+                .and_then(|name| name.as_str())
+                .unwrap_or(username);
+            return VerifyOutcome {
+                valid: true,
+                message: format!("Successfully connected as '{who}'"),
+                rate_limited: false,
+            };
+        }
+        VerifyOutcome {
+            valid: false,
+            message: "Token invalid or expired".to_owned(),
+            rate_limited: false,
+        }
+    }
+
+    async fn verify_username(&self, username: &str) -> VerifyOutcome {
+        if username.is_empty() {
+            return VerifyOutcome {
+                valid: false,
+                message: "No username provided".to_owned(),
+                rate_limited: false,
+            };
+        }
+        let response = self
+            .http
+            .get(format!(
+                "{}/1/user/{}/listen-count",
+                self.base_url,
+                encode_segment(username)
+            ))
+            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+            .send()
+            .await;
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => return transport_outcome(&error),
+        };
+        let status = response.status().as_u16();
+        if status == 429 {
+            return VerifyOutcome {
+                valid: false,
+                message:
+                    "ListenBrainz is temporarily rate-limiting this server. Try again shortly."
+                        .to_owned(),
+                rate_limited: true,
+            };
+        }
+        if status == 404 {
+            return VerifyOutcome {
+                valid: false,
+                message: format!("User '{username}' not found"),
+                rate_limited: false,
+            };
+        }
+        if status != 200 {
+            return unavailable();
+        }
+        let bytes = match response.bytes().await {
+            Ok(bytes) => bytes,
+            Err(_) => return unavailable(),
+        };
+        let body: serde_json::Value = match serde_json::from_slice(&bytes) {
+            Ok(body) => body,
+            Err(_) => return unavailable(),
+        };
+        let count = body
+            .get("payload")
+            .and_then(|payload| payload.get("count"))
+            .and_then(|count| count.as_i64())
+            .unwrap_or(0);
+        VerifyOutcome {
+            valid: true,
+            message: format!("User found with {} listens", grouped_count(count)),
+            rate_limited: false,
+        }
+    }
+}
+
+impl ListenBrainzVerifier for HttpListenBrainzVerifier {
+    fn verify<'a>(
+        &'a self,
+        username: &'a str,
+        token: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, VerifyOutcome> {
+        Box::pin(async move {
+            if token.is_empty() {
+                self.verify_username(username).await
+            } else {
+                self.verify_token(token, username).await
+            }
+        })
+    }
+}

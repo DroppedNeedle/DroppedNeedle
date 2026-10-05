@@ -119,10 +119,11 @@ impl SettingsSetup {
     ) -> Result<Self, String> {
         use std::sync::atomic::{AtomicU64, Ordering};
 
+        use crate::jobs::events_kick::NoopKick;
         use crate::providers::InMemoryProviderCache;
         use crate::providers::cache::ProviderCache;
         use crate::runtime_config::Crypto;
-        use crate::settings::effects::{LiveSaveEffects, NoopKick};
+        use crate::settings::effects::LiveSaveEffects;
         use crate::settings::section_prefs::{MemorySectionPrefsStore, StaticLinkStatus};
 
         /// Scratch-dir sequence so parallel test states never share a store.

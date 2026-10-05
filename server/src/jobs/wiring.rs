@@ -23,7 +23,7 @@ use axum::Router;
 use crate::auth::users::{UsersDeps, roles::Role};
 use crate::db::{CheckpointService, DurableWorkWakeups, WriteLane};
 use crate::jobs::checkpoint::{self, CheckpointRunner};
-use crate::jobs::events_kick::{self, KickOutcome};
+use crate::jobs::events_kick::{self, EventsKick, FnKick, KickOutcome};
 use crate::jobs::events_watcher::{self, EventsWatcher, PollTimeSource, SystemWatchClock};
 use crate::jobs::personal_mix::{self, PersonalMixer};
 use crate::jobs::playlist_sync::{
@@ -40,7 +40,6 @@ use crate::runtime_config::ConfigStore;
 use crate::runtime_config::secret_sections::{
     AdvancedSettings, EventsSettings, NavidromeConnection,
 };
-use crate::settings::effects::{EventsKick, FnKick};
 
 /// Grace per job at shutdown. Loops select on their stop signal next to
 /// every sleep, so this only binds a cycle that is mid-flight.

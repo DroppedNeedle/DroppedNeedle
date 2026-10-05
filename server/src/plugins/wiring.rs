@@ -40,11 +40,11 @@ use super::host::{
 use super::manifest::PluginManifest;
 use super::runtime::{ModuleLoader, PluginModule};
 use super::scrobble::{
-    ConnectionChangedHook, HttpListenBrainzVerifier, ListenBrainzLinkStore, NoopMixApprovalHook,
-    ScrobbleDeps, ScrobblePrefsStore, SqliteListenBrainzLinkStore, SqliteScrobblePrefsStore,
-    StaticMixState,
+    ConnectionChangedHook, ListenBrainzLinkStore, NoopMixApprovalHook, ScrobbleDeps,
+    ScrobblePrefsStore, SqliteListenBrainzLinkStore, SqliteScrobblePrefsStore, StaticMixState,
 };
 use super::ticks::{PluginTickLoops, TICK_CANCEL_GRACE, TickLoopSync, TickStoreKind};
+use crate::providers::listenbrainz::HttpListenBrainzVerifier;
 
 /// Role lookups over the user store. The plugins routes call this
 /// synchronously while the store is async, so the lookup bridges with

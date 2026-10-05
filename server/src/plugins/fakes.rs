@@ -18,7 +18,7 @@ use super::runtime::{
     BoxFuture, EventKind, ModuleLoader, PluginEvent, PluginModule, PluginPurchaseLink,
     PluginRouteBody, PluginRouteResponse, ScrobbleEvent, TickContext,
 };
-use super::scrobble::{ListenBrainzVerifier, VerifyOutcome};
+use crate::providers::listenbrainz::{ListenBrainzVerifier, VerifyOutcome};
 
 /// How a fake tick behaves.
 #[derive(Debug, Clone, Default)]

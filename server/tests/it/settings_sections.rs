@@ -1353,9 +1353,10 @@ async fn live_save_effects_sweep_only_the_saved_section() {
     use std::sync::atomic::AtomicBool;
     use std::time::Duration;
 
+    use droppedneedle::jobs::events_kick::FnKick;
     use droppedneedle::providers::InMemoryProviderCache;
     use droppedneedle::providers::ProviderCache as _;
-    use droppedneedle::settings::effects::{FnKick, LiveSaveEffects};
+    use droppedneedle::settings::effects::LiveSaveEffects;
 
     let cache = Arc::new(InMemoryProviderCache::new());
     for key in [

@@ -497,7 +497,7 @@ pub async fn verify_listenbrainz(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<ListenBrainzConnectionDto>,
 ) -> Result<Json<VerifyConnectionResponse>, SettingsError> {
-    use crate::plugins::scrobble::LISTENBRAINZ_BASE_URL;
+    use crate::providers::listenbrainz::DEFAULT_BASE_URL as LISTENBRAINZ_BASE_URL;
     use crate::runtime_config::mask::LISTENBRAINZ_TOKEN_MASK;
     let stored = settings.service().get_listenbrainz_raw()?;
     let token = resolve_secret(

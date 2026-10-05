@@ -19,11 +19,12 @@ use droppedneedle::ids::IdGenerator;
 use droppedneedle::plugins::fakes::{FakeRoles, FakeVerifier};
 use droppedneedle::plugins::handlers::{ScrobbleHttpDeps, scrobble_router};
 use droppedneedle::plugins::scrobble::{
-    HttpListenBrainzVerifier, ListenBrainzLinkStore, MemoryListenBrainzLinkStore,
-    MemoryScrobblePrefsStore, NoopConnectionChangedHook, NoopMixApprovalHook, ScrobbleDeps,
-    ScrobblePrefsPatch, ScrobblePrefsStore, SqliteListenBrainzLinkStore, SqliteScrobblePrefsStore,
-    StaticMixState, VerifyOutcome, connect_listenbrainz,
+    ListenBrainzLinkStore, MemoryListenBrainzLinkStore, MemoryScrobblePrefsStore,
+    NoopConnectionChangedHook, NoopMixApprovalHook, ScrobbleDeps, ScrobblePrefsPatch,
+    ScrobblePrefsStore, SqliteListenBrainzLinkStore, SqliteScrobblePrefsStore, StaticMixState,
+    connect_listenbrainz,
 };
+use droppedneedle::providers::listenbrainz::{HttpListenBrainzVerifier, VerifyOutcome};
 use droppedneedle::runtime_config::crypto::Crypto;
 use tower::ServiceExt as _;
 
@@ -271,7 +272,7 @@ impl axum::response::IntoResponse for JsonStub {
 
 #[tokio::test]
 async fn http_verifier_maps_stub_statuses() {
-    use droppedneedle::plugins::scrobble::ListenBrainzVerifier;
+    use droppedneedle::providers::listenbrainz::ListenBrainzVerifier;
     let (base, server) = stub_server().await;
     let verifier = HttpListenBrainzVerifier::new(reqwest::Client::new(), &base);
 
