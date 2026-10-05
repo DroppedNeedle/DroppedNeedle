@@ -235,6 +235,8 @@ pub struct SettingsService {
     pub effects: Arc<dyn SaveEffects>,
     /// Error-id mint.
     pub ids: Arc<dyn IdGenerator>,
+    /// `TZ` from the deployment config, when set.
+    pub timezone: Option<String>,
 }
 
 impl SettingsService {
@@ -248,7 +250,15 @@ impl SettingsService {
             store,
             effects,
             ids,
+            timezone: None,
         }
+    }
+
+    /// Label scan schedules with this timezone name (`TZ`).
+    #[must_use]
+    pub fn with_timezone(mut self, timezone: Option<String>) -> Self {
+        self.timezone = timezone;
+        self
     }
 
     fn config(&self, error: ConfigError) -> SettingsError {
@@ -295,7 +305,7 @@ impl SettingsService {
             daily_scan_time: stored.daily_scan_time,
             last_scan: stored.last_scan,
             last_scan_success: stored.last_scan_success,
-            server_timezone: server_timezone(),
+            server_timezone: server_timezone(self.timezone.as_deref()),
         })
     }
 
@@ -319,7 +329,7 @@ impl SettingsService {
             daily_scan_time: saved.daily_scan_time,
             last_scan: saved.last_scan,
             last_scan_success: saved.last_scan_success,
-            server_timezone: server_timezone(),
+            server_timezone: server_timezone(self.timezone.as_deref()),
         })
     }
 
@@ -2180,14 +2190,11 @@ impl From<super::models::OidcConnectionDto> for OidcConnection {
 }
 
 /// Server-local timezone label for the daily-scan picker. Prefers the
-/// IANA name from `TZ`, else the local abbreviation, else "server time".
-pub fn server_timezone() -> String {
-    if let Some(tz) = std::env::var("TZ")
-        .ok()
-        .map(|tz| tz.trim().to_owned())
-        .filter(|tz| !tz.is_empty())
-    {
-        return tz;
+/// configured IANA name (`TZ`), else the local abbreviation, else
+/// "server time".
+pub fn server_timezone(configured: Option<&str>) -> String {
+    if let Some(tz) = configured {
+        return tz.to_owned();
     }
     v2_timezone_label().unwrap_or_else(|| "server time".to_owned())
 }

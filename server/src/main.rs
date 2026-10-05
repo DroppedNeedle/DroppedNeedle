@@ -94,7 +94,6 @@ fn main() {
     #[cfg(not(debug_assertions))]
     let tooling_routes = false;
 
-    init_tracing();
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -126,6 +125,7 @@ fn print_openapi() {
 /// Boot state, bind, and serve until SIGTERM or Ctrl-C.
 async fn serve(tooling_routes: bool) -> Result<(), String> {
     let mut config = AppConfig::load().map_err(|error| error.to_string())?;
+    init_tracing(&config.log_filter);
     #[cfg(debug_assertions)]
     {
         config.debug_cors = true;
@@ -133,7 +133,7 @@ async fn serve(tooling_routes: bool) -> Result<(), String> {
     }
     #[cfg(not(debug_assertions))]
     let _ = tooling_routes;
-    let http = HttpClientFactory::new().map_err(|error| error.to_string())?;
+    let http = HttpClientFactory::with_settings(&config.http).map_err(|error| error.to_string())?;
     let runtime = open_runtime(&DbConfig::new(&config.library_db_path))
         .await
         .map_err(|error| error.to_string())?;
@@ -336,6 +336,7 @@ async fn serve(tooling_routes: bool) -> Result<(), String> {
         ids.clone(),
         auth.users.clone(),
         http.shared().clone(),
+        config.timezone.clone(),
     )
     .with_section_prefs(
         Arc::new(SqliteSectionPrefsStore {
@@ -358,7 +359,7 @@ async fn serve(tooling_routes: bool) -> Result<(), String> {
         config_store.clone(),
         ids.clone(),
         plugins_crypto,
-        config.root_app_dir.join("plugins"),
+        config.plugins_dir(),
         provider_cache.clone(),
         jobs.registry().clone(),
         runtime.pool().clone(),

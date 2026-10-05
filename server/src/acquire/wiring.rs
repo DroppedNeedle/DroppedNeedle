@@ -258,7 +258,7 @@ impl AcquireSetup {
         collections: &mut CollectionsState,
     ) -> Result<Self, String> {
         let (http, no_redirect) = (http.shared().clone(), http.no_redirect().clone());
-        let staging_root = config.root_app_dir.join("staging");
+        let staging_root = config.imports_dir();
         let journal = Arc::new(Journal::open(db_path)?);
         let dispatch = Arc::new(UnifiedDispatch::new(
             journal.clone(),
@@ -277,7 +277,7 @@ impl AcquireSetup {
         let source_priority: SourcePriority = config_store.get().unwrap_or_default();
 
         let usenet_policy = usenet_policy_from(&policy);
-        let slskd_repo = slskd_repository(&http, &slskd_section, &config.root_app_dir);
+        let slskd_repo = slskd_repository(&http, &slskd_section, &config.slskd_downloads_path);
         let sab_queue = sabnzbd_queue(&http, &sab_section, &usenet_policy);
         let newznab = Arc::new(newznab_indexer(&http, &indexers));
         let prowlarr = Arc::new(prowlarr_indexer(&http, &prowlarr_section));
@@ -1021,20 +1021,19 @@ fn utc_ymd(days: u64) -> String {
     format!("{year:04}-{month:02}-{day:02}")
 }
 
-/// slskd repository, when the section configures one. The mount resolves
-/// to `<root>/downloads/slskd` plus the confined subpath; review the
-/// deployment mapping for the slskd volume before relying on it.
+/// slskd repository, when the section configures one. The mount is
+/// `SLSKD_DOWNLOADS_PATH` plus the confined subpath from settings.
 fn slskd_repository(
     http: &reqwest::Client,
     section: &SlskdConnection,
-    root: &Path,
+    downloads: &Path,
 ) -> Option<Arc<SlskdRepository<ReqwestSlskdHttp>>> {
     if section.url.is_empty() || section.api_key.expose().is_empty() {
         return None;
     }
     let transport = ReqwestSlskdHttp::new(http.clone(), &section.url, section.api_key.expose());
     let client = SlskdClient::new(transport);
-    let mut mount = root.join("downloads").join("slskd");
+    let mut mount = downloads.to_path_buf();
     for part in section.downloads_subpath.split(['/', '\\']) {
         let part = part.trim();
         if part.is_empty() || part == "." || part == ".." {

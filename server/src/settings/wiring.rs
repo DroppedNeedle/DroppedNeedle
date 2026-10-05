@@ -58,20 +58,21 @@ pub struct SettingsSetup {
 
 impl SettingsSetup {
     /// Build over the shared store, the wired fan-out, the id mint,
-    /// the account rows for gating, and the outbound HTTP client.
+    /// the account rows for gating, the outbound HTTP client, and the
+    /// deployment timezone name.
     pub fn build(
         store: Arc<ConfigStore>,
         effects: Arc<dyn SaveEffects>,
         ids: Arc<dyn IdGenerator>,
         users: UsersDeps,
         http: reqwest::Client,
+        timezone: Option<String>,
     ) -> Self {
         Self {
-            service: Arc::new(SettingsService::new(
-                store.clone(),
-                effects.clone(),
-                ids.clone(),
-            )),
+            service: Arc::new(
+                SettingsService::new(store.clone(), effects.clone(), ids.clone())
+                    .with_timezone(timezone),
+            ),
             users,
             probes: Arc::new(LiveProbes::new(http)),
             lifecycle: Arc::new(MusicBrainzLifecycle::new(store, ids, effects)),
