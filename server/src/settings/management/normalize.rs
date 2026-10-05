@@ -30,9 +30,7 @@ pub fn migration_carry(
 
     for profile in &mut incoming.profiles {
         if profile.organization.sidecar_patterns == legacy_patterns {
-            profile.organization.sidecar_patterns = profile.organization.sidecar_patterns.clone();
-            // Replaced with the DTO default below; the legacy list is
-            // silent-migrated to current defaults.
+            // The legacy default list migrates silently to the current one.
             profile.organization.sidecar_patterns =
                 OrganizationManagementSettings::default().sidecar_patterns;
         }

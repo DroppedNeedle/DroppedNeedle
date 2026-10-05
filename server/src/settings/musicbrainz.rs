@@ -200,10 +200,10 @@ impl MusicBrainzLifecycle {
             });
         }
         if mode == MbSourceMode::Official {
-            let dto = self.save_official(&previous)?;
+            let view = self.save_official(&previous)?;
             drop(_op);
             self.effects.after_save(SavedSection::MusicBrainz).await;
-            return Ok(dto);
+            return Ok(view);
         }
         let api_url = update.api_url.clone().unwrap_or_default();
         let api_url = api_url.trim().trim_end_matches('/').to_owned();
@@ -244,10 +244,10 @@ impl MusicBrainzLifecycle {
         next.clamped_to_official_limits = false;
         *self.pending_mut()? = None;
         let saved: MusicBrainzSettings = self.store.save(next).map_err(|e| self.config(e))?;
-        let dto = self.view(saved);
+        let view = self.view(saved);
         drop(_op);
         self.effects.after_save(SavedSection::MusicBrainz).await;
-        Ok(dto)
+        Ok(view)
     }
 
     fn save_official(
@@ -315,10 +315,10 @@ impl MusicBrainzLifecycle {
         let proposal = PendingProposal::fresh(generation + 1);
         *self.pending_mut()? = Some(proposal.clone());
         let saved: MusicBrainzSettings = self.store.save(next).map_err(|e| self.config(e))?;
-        let dto = self.view(saved);
+        let view = self.view(saved);
         drop(_op);
         self.effects.after_save(SavedSection::MusicBrainz).await;
-        Ok((dto, proposal))
+        Ok((view, proposal))
     }
 
     /// Record consent for the exact staged proposal and the consenting
@@ -429,9 +429,9 @@ impl MusicBrainzLifecycle {
     ) -> Result<MusicBrainzSettingsView, SettingsError> {
         // The locks live and die inside the sync core: no guard
         // crosses the effects await below (guards are not Send).
-        let dto = self.promote_verified(binding)?;
+        let view = self.promote_verified(binding)?;
         self.effects.after_save(SavedSection::MusicBrainz).await;
-        Ok(dto)
+        Ok(view)
     }
 
     /// Synchronous promotion core: validate the exact verified proposal,
