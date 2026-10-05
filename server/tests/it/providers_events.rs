@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use axum::Router;
 use axum::extract::Query;
@@ -640,6 +641,53 @@ async fn youtube_upstream_429_and_bad_payload_map() {
     // All three dispatched, so all three were charged.
     assert_eq!(quota_file_json(&path)["count"], json!(3));
     let _ = std::fs::remove_file(&path);
+}
+
+/// Two client instances on one quota path cannot spend the last slot twice.
+#[tokio::test]
+async fn youtube_two_instances_share_last_slot() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let handler_calls = Arc::clone(&calls);
+    let app = Router::new().route(
+        "/youtube/v3/search",
+        get(move || {
+            let handler_calls = Arc::clone(&handler_calls);
+            async move {
+                handler_calls.fetch_add(1, Ordering::SeqCst);
+                // Overlap window, as above: 10ms forces the race with margin.
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                axum::Json(search_hit("abcdefghijk"))
+            }
+        }),
+    );
+    let base = serve(app).await;
+    let (_scratch, path) = quota_path("last-slot");
+    let first =
+        YouTubeClient::with_base_url(http(), path.clone(), enabled_settings(1), &base).unwrap();
+    let second =
+        YouTubeClient::with_base_url(http(), path.clone(), enabled_settings(1), &base).unwrap();
+
+    let (one, two) = tokio::join!(
+        first.search_video("a", "one"),
+        second.search_track("a", "two"),
+    );
+    let outcomes = [one, two];
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|o| matches!(o, Ok(Some(id)) if id == "abcdefghijk"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|o| matches!(o, Err(YoutubeError::QuotaExhausted)))
+            .count(),
+        1
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(quota_file_json(&path)["count"], json!(1));
 }
 
 // ---------------------------------------------------------------------------

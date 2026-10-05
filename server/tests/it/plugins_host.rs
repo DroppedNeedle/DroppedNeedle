@@ -695,3 +695,26 @@ async fn admin_plugin_lifecycle_over_http() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 }
+
+/// Plugin route statuses clamp to the fixed table: upstream 5xx becomes
+/// 502, a redirect becomes 200, and a 404 passes through.
+#[tokio::test]
+async fn ext_route_statuses_clamp_to_the_fixed_table() {
+    use droppedneedle::plugins::fakes::FakeRouteScript;
+    use droppedneedle::plugins::runtime::PluginRouteBody;
+
+    let rig = rig("ext-clamp");
+    let module = enable_toy(&rig, TOY_MANIFEST, &["publisher"]);
+    let query = HashMap::new();
+    for (plugin_status, served) in [(500, 502), (302, 200), (404, 404)] {
+        *module.route_scripts.lock().unwrap() = vec![FakeRouteScript::Status(
+            plugin_status,
+            serde_json::json!({}),
+        )];
+        let result = rig
+            .host
+            .handle_plugin_route("toy", "GET", "status", &query, &PluginRouteBody::Empty)
+            .await;
+        assert_eq!(result.status, served, "plugin answered {plugin_status}");
+    }
+}

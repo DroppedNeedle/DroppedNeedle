@@ -568,3 +568,17 @@ async fn server_faults_hide_causes() {
         );
     }
 }
+
+/// `track_hidden` users stay out of the Subsonic now-playing list.
+#[tokio::test]
+async fn compat_now_playing_serves_full_sessions_only() {
+    let rig = rig();
+    rig.prefs.set_visibility("user-hidden", "track_hidden");
+    start(&rig, "user-1", "track-1", "local").await;
+    start(&rig, "user-hidden", "track-1", "local").await;
+
+    let served = rig.deps.presence.compat_now_playing();
+    assert_eq!(served.len(), 1);
+    assert_eq!(served[0].1, "track-1");
+    assert_eq!(served[0].0.track_name, "Roads");
+}

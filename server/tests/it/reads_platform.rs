@@ -347,3 +347,27 @@ async fn covers_400_carries_only_caller_input() {
     assert!(!text.contains("placeholder"), "{text}");
     assert!(!text.contains("cover-art-archive"), "{text}");
 }
+
+/// The covers debug route stays out of the mounted platform router.
+#[tokio::test]
+async fn covers_debug_route_stays_out() {
+    use platform::version::{FakeReleases, VersionInfo, VersionState};
+    let releases = FakeReleases::new(
+        VersionInfo {
+            version: "1.2.0".to_owned(),
+            build_date: None,
+        },
+        None,
+        Vec::new(),
+    );
+    let app = platform::platform_router(platform::PlatformState::new(
+        CoversState::new(Arc::new(covers_fixture())),
+        VersionState::new(Arc::new(releases)),
+        WrappedState::new(
+            WRAPPED_KEY.to_owned(),
+            Arc::new(FakeWrappedData::empty(2026)),
+        ),
+    ));
+    let (status, _, _) = get(app, "/covers/debug/artist/art-1", &[]).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

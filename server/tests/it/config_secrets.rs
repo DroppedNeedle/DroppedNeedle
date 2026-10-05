@@ -551,3 +551,75 @@ fn quota_stale_date_reads_zero_and_rolls_over() {
     );
     assert_eq!(file["count"], serde_json::Value::Number(1.into()));
 }
+
+/// Debug output of every secret section, plugin settings included, hides
+/// decrypted secrets.
+#[test]
+fn every_secret_section_debug_redacts() {
+    fn assert_redacted<T: std::fmt::Debug>(value: T, secret: &str) {
+        let shown = format!("{value:?}");
+        assert!(!shown.contains(secret), "leaked in {shown}");
+    }
+    let mut slskd = SlskdConnection::default();
+    *slskd.api_key.expose_mut() = "redact-me".to_owned();
+    assert_redacted(slskd, "redact-me");
+    let mut jellyfin = JellyfinConnection::default();
+    *jellyfin.api_key.expose_mut() = "redact-me".to_owned();
+    assert_redacted(jellyfin, "redact-me");
+    let mut navidrome = NavidromeConnection::default();
+    *navidrome.password.expose_mut() = "redact-me".to_owned();
+    assert_redacted(navidrome, "redact-me");
+    let mut plex = PlexConnection::default();
+    *plex.plex_token.expose_mut() = "redact-me".to_owned();
+    assert_redacted(plex, "redact-me");
+    let mut listenbrainz = ListenBrainzConnection::default();
+    *listenbrainz.user_token.expose_mut() = "redact-me".to_owned();
+    assert_redacted(listenbrainz, "redact-me");
+    let mut youtube = YouTubeConnection::default();
+    *youtube.api_key.expose_mut() = "redact-me".to_owned();
+    assert_redacted(youtube, "redact-me");
+    let mut spotify = SpotifySettings::default();
+    *spotify.client_secret.expose_mut() = "redact-me".to_owned();
+    assert_redacted(spotify, "redact-me");
+    let mut events = EventsSettings::default();
+    *events.ticketmaster_api_key.expose_mut() = "redact-me".to_owned();
+    *events.skiddle_api_key.expose_mut() = "redact-me".to_owned();
+    assert_redacted(events, "redact-me");
+    let mut wrapped = WrappedSettings::default();
+    *wrapped.api_key.expose_mut() = "redact-me".to_owned();
+    assert_redacted(wrapped, "redact-me");
+    let mut oidc = OidcConnection::default();
+    *oidc.client_secret.expose_mut() = "redact-me".to_owned();
+    assert_redacted(oidc, "redact-me");
+    let mut library = TypedLibrary::default();
+    *library.acoustid_api_key.expose_mut() = "redact-me".to_owned();
+    assert_redacted(library, "redact-me");
+    let mut advanced = AdvancedSettings::default();
+    *advanced.audiodb_api_key.expose_mut() = "redact-me".to_owned();
+    assert_redacted(advanced, "redact-me");
+    let mut prowlarr = ProwlarrConnection::default();
+    *prowlarr.api_key.expose_mut() = "redact-me".to_owned();
+    assert_redacted(prowlarr, "redact-me");
+    let mut lidarr = LidarrImportConnection::default();
+    *lidarr.api_key.expose_mut() = "redact-me".to_owned();
+    assert_redacted(lidarr, "redact-me");
+    let mut clients = DownloadClients::default();
+    *clients.sabnzbd.api_key.expose_mut() = "redact-me".to_owned();
+    assert_redacted(clients, "redact-me");
+    let mut indexer = NewznabIndexer::default();
+    *indexer.api_key.expose_mut() = "redact-me".to_owned();
+    assert_redacted(indexer, "redact-me");
+    let mut plugin_settings = std::collections::HashMap::new();
+    plugin_settings.insert("token".to_owned(), "redact-me".to_owned());
+    plugin_settings.insert("nick".to_owned(), "plain".to_owned());
+    let shown = format!(
+        "{:?}",
+        PluginConfig {
+            enabled: true,
+            settings: plugin_settings,
+        }
+    );
+    assert!(!shown.contains("redact-me"), "leaked in {shown}");
+    assert!(!shown.contains("plain"), "leaked in {shown}");
+    assert!(shown.contains("token"), "keys must stay visible: {shown}");
+}

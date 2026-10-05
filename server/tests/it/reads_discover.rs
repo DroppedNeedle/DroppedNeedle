@@ -405,3 +405,23 @@ async fn loop_uses_honest_intervals_and_stops_on_shutdown() {
     );
     assert!(!registry.is_live(RefreshScope::Discover));
 }
+
+/// Your-top charts are fetched for the calling user only.
+#[tokio::test]
+async fn your_top_is_per_user() {
+    let rig = rig();
+    let (status, body, _) = call(
+        app(&rig, Some("user-9")),
+        "GET",
+        "/api/v3/home/your-top/albums?range=all_time&limit=3",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["range_key"], "all_time");
+    assert_eq!(body["items"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        rig.charts.calls(),
+        vec!["your_top:user-9:all_time:listenbrainz"]
+    );
+}
