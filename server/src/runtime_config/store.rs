@@ -115,7 +115,7 @@ impl ConfigStore {
         self.decrypt_in_place(&mut section)?;
         section.normalize();
         mask_in_place(&mut section);
-        Ok(Masked::from(section))
+        Ok(Masked::from_masked(section))
     }
 
     /// Resolve submitted values for a connection probe: each secret that
@@ -152,11 +152,7 @@ impl ConfigStore {
     /// anything else is encrypted fresh; empty stays empty). Returns the
     /// saved section masked, so a client that re-saves the echo keeps its
     /// secrets instead of encrypting the mask.
-    pub fn save_secret<S: SecretSection>(
-        &self,
-        incoming: impl Into<Masked<S>>,
-    ) -> Result<Masked<S>, ConfigError> {
-        let incoming = incoming.into().into_inner();
+    pub fn save_secret<S: SecretSection>(&self, incoming: S) -> Result<Masked<S>, ConfigError> {
         incoming.validate()?;
         let mut normalized = incoming;
         normalized.normalize();
@@ -196,7 +192,7 @@ impl ConfigStore {
         // Ciphertext is empty exactly when the secret is unset, so masking
         // the stored form gives the same echo as a fresh masked read.
         mask_in_place(&mut normalized);
-        Ok(Masked::from(normalized))
+        Ok(Masked::from_masked(normalized))
     }
 
     /// All configured indexers, keys masked, ordered by priority.
@@ -210,7 +206,7 @@ impl ConfigStore {
             out.push(indexer);
         }
         out.sort_by_key(|indexer| indexer.priority);
-        Ok(out.into_iter().map(Masked::from).collect())
+        Ok(out.into_iter().map(Masked::from_masked).collect())
     }
 
     /// Resolve one submitted indexer for a caps probe: a masked key
@@ -255,11 +251,8 @@ impl ConfigStore {
     /// Upsert one indexer BY ID (a new id is minted when blank). The key is
     /// encrypted, or preserved when the masked sentinel comes back.
     /// Returns the indexer id.
-    pub fn save_indexer(
-        &self,
-        incoming: impl Into<Masked<NewznabIndexer>>,
-    ) -> Result<String, ConfigError> {
-        let mut row = incoming.into().into_inner();
+    pub fn save_indexer(&self, incoming: NewznabIndexer) -> Result<String, ConfigError> {
+        let mut row = incoming;
         super::sections::normalize_http_url(&mut row.url, "https://");
         let mut stored = self.decode_section::<Indexers>()?;
         let existing = stored.0.iter().find(|item| item.id == row.id);

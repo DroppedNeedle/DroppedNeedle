@@ -111,38 +111,53 @@ pub fn display_mask(plaintext: &str, mask: &'static str) -> &'static str {
 
 /// A section (or indexer) as it crosses the API boundary. Every secret
 /// field holds its mask sentinel, a new value, or "" (clear), never the
-/// stored plaintext:
+/// stored plaintext. There are only three ways to get one:
 ///
-/// - reads build it through [`ConfigStore::get_masked`](super::ConfigStore::get_masked),
-///   which swaps each set secret for its mask;
-/// - request bodies decode straight into it, and
-///   [`ConfigStore::save_secret`](super::ConfigStore::save_secret) resolves
-///   each field (mask keeps the stored secret, anything else is new);
-/// - [`ConfigStore::unmask`](super::ConfigStore::unmask) turns submitted
-///   values into what a connection probe should test.
+/// - a masked read: [`ConfigStore::get_masked`](super::ConfigStore::get_masked)
+///   and the echo of [`ConfigStore::save_secret`](super::ConfigStore::save_secret)
+///   swap each set secret for its mask;
+/// - a request body, which decodes straight into it;
+/// - [`Masked::map`] / [`Masked::try_map`], which derive a part or a
+///   normalized copy of a value that was already masked.
 ///
-/// Settings handlers serve and accept `Masked<S>` for secret sections, so
-/// a raw read (decrypted secrets) cannot be returned by accident: it has a
-/// different type. On the wire the wrapper is invisible: it serializes as
-/// `S`, and its OpenAPI schema is `S`'s.
+/// There is no conversion from a bare `T`, so a raw read (decrypted
+/// secrets) cannot type-check as `Masked`. Settings handlers serve and
+/// accept `Masked<S>` for secret sections; [`ConfigStore::unmask`](super::ConfigStore::unmask)
+/// turns submitted values into what a connection probe should test. On
+/// the wire the wrapper is invisible: it serializes as `S`, and its
+/// OpenAPI schema is `S`'s.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Masked<T>(T);
 
 impl<T> Masked<T> {
+    /// Wrap a value whose secrets the store just masked. Only the store
+    /// builds masked values from scratch.
+    pub(super) fn from_masked(value: T) -> Self {
+        Self(value)
+    }
+
     /// The wrapped value, for reading or editing non-secret fields before
-    /// handing it back to a save (which re-wraps it through `From`).
+    /// handing it to a save as submitted values.
     #[must_use]
     pub fn into_inner(self) -> T {
         self.0
     }
-}
 
-/// Values built server-side follow the same rule as a request body: each
-/// secret field holds its mask (keep), a new value, or "" (clear).
-impl<T> From<T> for Masked<T> {
-    fn from(value: T) -> Self {
-        Self(value)
+    /// Derive a part or a normalized copy of a masked value. `derive`
+    /// must only reshape what it is given, never bring in secrets from
+    /// elsewhere.
+    #[must_use]
+    pub(crate) fn map<U>(self, derive: impl FnOnce(T) -> U) -> Masked<U> {
+        Masked(derive(self.0))
+    }
+
+    /// [`Masked::map`] for a derivation that can fail.
+    pub(crate) fn try_map<U, E>(
+        self,
+        derive: impl FnOnce(T) -> Result<U, E>,
+    ) -> Result<Masked<U>, E> {
+        derive(self.0).map(Masked)
     }
 }
 

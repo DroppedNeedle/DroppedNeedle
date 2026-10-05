@@ -107,8 +107,9 @@ impl SettingsService {
 
     // --- generic section access -------------------------------------------------
 
-    /// Read one plain section.
-    pub fn get<S: Section>(&self) -> Result<S, SettingsError> {
+    /// Read one plain section. Secret sections go through
+    /// [`SettingsService::get_masked`].
+    pub fn get<S: PlainSection>(&self) -> Result<S, SettingsError> {
         self.store.get().map_err(|error| self.config(error))
     }
 
@@ -133,6 +134,15 @@ impl SettingsService {
     pub async fn save_masked<S: SecretSection + Send + 'static>(
         &self,
         incoming: Masked<S>,
+    ) -> Result<Masked<S>, SettingsError> {
+        self.save_submitted(incoming.into_inner()).await
+    }
+
+    /// Save a secret section built server-side from submitted values (a
+    /// masked read with non-secret fields edited, or a request body).
+    async fn save_submitted<S: SecretSection + Send + 'static>(
+        &self,
+        incoming: S,
     ) -> Result<Masked<S>, SettingsError> {
         let saved = self.write(move |store| store.save_secret(incoming)).await?;
         self.effects.after_save(SavedSection::for_key(S::KEY)).await;
@@ -200,8 +210,9 @@ impl SettingsService {
 
     /// The SABnzbd connection (the one client in `download_clients`).
     pub fn get_sabnzbd(&self) -> Result<Masked<SabnzbdConnection>, SettingsError> {
-        let clients = self.get_masked::<DownloadClients>()?.into_inner();
-        Ok(Masked::from(clients.sabnzbd))
+        Ok(self
+            .get_masked::<DownloadClients>()?
+            .map(|clients| clients.sabnzbd))
     }
 
     /// Save the SABnzbd connection (a masked key keeps the stored one).
@@ -211,8 +222,8 @@ impl SettingsService {
     ) -> Result<Masked<SabnzbdConnection>, SettingsError> {
         let mut clients = self.get_masked::<DownloadClients>()?.into_inner();
         clients.sabnzbd = incoming.into_inner();
-        let saved: Masked<DownloadClients> = self.save_masked(Masked::from(clients)).await?;
-        Ok(Masked::from(saved.into_inner().sabnzbd))
+        let saved = self.save_submitted(clients).await?;
+        Ok(saved.map(|clients| clients.sabnzbd))
     }
 
     /// The advanced tunables in form units.
@@ -228,7 +239,7 @@ impl SettingsService {
         &self,
         form: AdvancedSettingsForm,
     ) -> Result<AdvancedSettingsForm, SettingsError> {
-        let saved = self.save_masked(form.into_section()).await?;
+        let saved = self.save_submitted(form.into_section()).await?;
         Ok(AdvancedSettingsForm::from_section(&saved))
     }
 
@@ -256,10 +267,9 @@ impl SettingsService {
     /// The library settings: normalized roots plus the policy revision,
     /// the reconciliation projection, and warnings (AcoustID key masked).
     pub fn get_library(&self) -> Result<LibrarySettingsResponse, SettingsError> {
-        let stored = self.get_masked::<TypedLibrary>()?.into_inner();
-        Ok(library_policy::settings_response(library_policy::resolve(
-            &stored,
-        )?))
+        let stored = self.get_masked::<TypedLibrary>()?;
+        let resolved = stored.try_map(|library| library_policy::resolve(&library))?;
+        Ok(library_policy::settings_response(resolved))
     }
 
     /// Save the library settings. The expected revision must match the
@@ -277,10 +287,7 @@ impl SettingsService {
             });
         }
         let resolved = library_policy::resolve(&request.settings)?;
-        let saved = self.save_masked(Masked::from(resolved.settings)).await?;
-        Ok(library_policy::settings_response(library_policy::resolve(
-            &saved.into_inner(),
-        )?))
+        self.save_library_settings(resolved.settings).await
     }
 
     /// Add one library root path. The path must be a directory on this
@@ -342,10 +349,17 @@ impl SettingsService {
         library: TypedLibrary,
     ) -> Result<LibrarySettingsResponse, SettingsError> {
         let resolved = library_policy::resolve(&library)?;
-        let saved = self.save_masked(Masked::from(resolved.settings)).await?;
-        Ok(library_policy::settings_response(library_policy::resolve(
-            &saved.into_inner(),
-        )?))
+        self.save_library_settings(resolved.settings).await
+    }
+
+    /// Save normalized library settings and answer with the masked view.
+    async fn save_library_settings(
+        &self,
+        settings: TypedLibrary,
+    ) -> Result<LibrarySettingsResponse, SettingsError> {
+        let saved = self.save_submitted(settings).await?;
+        let resolved = saved.try_map(|library| library_policy::resolve(&library))?;
+        Ok(library_policy::settings_response(resolved))
     }
 
     // --- download policy --------------------------------------------------------------
@@ -483,13 +497,18 @@ impl SettingsService {
             .map_err(|error| self.config(error))
     }
 
-    /// Save one indexer (create when the id is blank, else update). A
-    /// masked key keeps the stored one.
+    /// Save one indexer: create when the id is blank, else update. A path
+    /// id, when given, wins over the body id. A masked key keeps the
+    /// stored one.
     pub async fn save_indexer(
         &self,
         incoming: Masked<NewznabIndexer>,
+        path_id: Option<String>,
     ) -> Result<IndexerSavedResponse, SettingsError> {
         let mut indexer = incoming.into_inner();
+        if let Some(id) = path_id {
+            indexer.id = id;
+        }
         if indexer.indexer_type.trim().is_empty() {
             indexer.indexer_type = "newznab".to_owned();
         }
@@ -701,10 +720,8 @@ impl SettingsService {
         incoming: Masked<SabnzbdConnection>,
     ) -> Result<SabnzbdTestResponse, SettingsError> {
         let url = require_service_url(&incoming.url, "SABnzbd URL")?;
-        let clients = DownloadClients {
-            sabnzbd: incoming.into_inner(),
-        };
-        let resolved = self.unmask(Masked::from(clients))?.sabnzbd;
+        let clients = incoming.map(|sabnzbd| DownloadClients { sabnzbd });
+        let resolved = self.unmask(clients)?.sabnzbd;
         let verdict = self
             .probes
             .sabnzbd(&url, resolved.api_key.expose(), &resolved.downloads_mount)

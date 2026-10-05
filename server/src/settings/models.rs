@@ -646,10 +646,14 @@ pub struct AdvancedSettingsForm {
 impl AdvancedSettingsForm {
     /// Stored units floored back to the form's human units (v2
     /// `from_backend`: `// 3600`, `// 60`, `// 60000`, `// 1000`; the rest
-    /// pass through). Pass a masked section: the AudioDB key is copied
-    /// as it is.
+    /// pass through). The section is masked, so the AudioDB key shows as
+    /// its mask.
     #[must_use]
-    pub fn from_section(section: &AdvancedSettings) -> Self {
+    pub fn from_section(section: &Masked<AdvancedSettings>) -> Self {
+        Self::from_values(section)
+    }
+
+    fn from_values(section: &AdvancedSettings) -> Self {
         Self {
             cache_ttl_album_library: section.cache_ttl_album_library / 3600,
             cache_ttl_album_non_library: section.cache_ttl_album_non_library / 3600,
@@ -728,10 +732,10 @@ impl AdvancedSettingsForm {
 
     /// Form units scaled to stored units (v2 `to_backend`: `* 3600`,
     /// `* 60`, `* 60000`, `* 1000`; the rest pass through). The AudioDB
-    /// key follows the mask rule on save.
+    /// key is a submitted value: the mask keeps the stored key.
     #[must_use]
-    pub fn into_section(self) -> Masked<AdvancedSettings> {
-        Masked::from(AdvancedSettings {
+    pub fn into_section(self) -> AdvancedSettings {
+        AdvancedSettings {
             cache_ttl_album_library: self.cache_ttl_album_library * 3600,
             cache_ttl_album_non_library: self.cache_ttl_album_non_library * 3600,
             cache_ttl_artist_library: self.cache_ttl_artist_library * 3600,
@@ -804,14 +808,15 @@ impl AdvancedSettingsForm {
             sync_stall_timeout_minutes: self.sync_stall_timeout_minutes,
             sync_max_timeout_hours: self.sync_max_timeout_hours,
             request_concurrency: self.request_concurrency,
-        })
+        }
     }
 }
 
-/// Defaults are the stored defaults in form units.
+/// Defaults are the stored defaults in form units. The default section
+/// holds no AudioDB key, so there is nothing to mask.
 impl Default for AdvancedSettingsForm {
     fn default() -> Self {
-        Self::from_section(&AdvancedSettings::default())
+        Self::from_values(&AdvancedSettings::default())
     }
 }
 

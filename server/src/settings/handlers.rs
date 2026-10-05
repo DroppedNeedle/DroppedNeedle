@@ -1080,7 +1080,7 @@ pub async fn create_indexer(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<Masked<NewznabIndexer>>,
 ) -> JsonResult<IndexerSavedResponse> {
-    settings.service().save_indexer(body).await.map(Json)
+    settings.service().save_indexer(body, None).await.map(Json)
 }
 
 /// Save one indexer; the path id wins over the body id.
@@ -1096,11 +1096,9 @@ pub async fn update_indexer(
     Path(id): Path<String>,
     ValidJson(body): ValidJson<Masked<NewznabIndexer>>,
 ) -> JsonResult<IndexerSavedResponse> {
-    let mut indexer = body.into_inner();
-    indexer.id = id;
     settings
         .service()
-        .save_indexer(Masked::from(indexer))
+        .save_indexer(body, Some(id))
         .await
         .map(Json)
 }

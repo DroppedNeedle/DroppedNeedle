@@ -20,7 +20,7 @@ use droppedneedle::auth::users::memory::TestRig;
 use droppedneedle::auth::users::roles::{Role, SessionKind};
 use droppedneedle::runtime_config::mask::{INDEXER_API_KEY_MASK, JELLYFIN_API_KEY_MASK};
 use droppedneedle::runtime_config::secret_sections::{JellyfinConnection, TypedLibrary};
-use droppedneedle::runtime_config::{ConfigStore, Crypto, Masked};
+use droppedneedle::runtime_config::{ConfigStore, Crypto};
 use droppedneedle::settings::effects::{SaveEffects, SavedSection};
 use droppedneedle::settings::models::{AdvancedSettingsForm, LibrarySettingsSaveRequest};
 use droppedneedle::settings::musicbrainz::BRAINZMASH_DISCLOSURE_VERSION;
@@ -326,11 +326,17 @@ async fn library_round_trip_cas_and_paths() {
     let view = service.get_library().expect("reads default");
     assert!(!view.policy_revision.is_empty());
 
-    // Stale token rejected before anything persists.
-    let stale = LibrarySettingsSaveRequest {
-        settings: Masked::from(TypedLibrary::default()),
-        expected_policy_revision: "wrong".to_owned(),
+    // Requests decode the way a client body would.
+    let request = |settings: Value, revision: &str| -> LibrarySettingsSaveRequest {
+        serde_json::from_value(json!({
+            "settings": settings,
+            "expected_policy_revision": revision,
+        }))
+        .expect("request decodes")
     };
+
+    // Stale token rejected before anything persists.
+    let stale = request(json!({}), "wrong");
     let error = service.save_library(stale).await.expect_err("stale fails");
     assert!(matches!(
         error,
@@ -341,15 +347,11 @@ async fn library_round_trip_cas_and_paths() {
     std::fs::create_dir_all(dir.join("music")).expect("fixture dir builds");
     let root = dir.join("music").to_string_lossy().into_owned();
 
-    let with_key = TypedLibrary {
-        acoustid_api_key: "acoustid-secret".into(),
-        ..Default::default()
-    };
     let saved = service
-        .save_library(LibrarySettingsSaveRequest {
-            settings: Masked::from(with_key),
-            expected_policy_revision: view.policy_revision.clone(),
-        })
+        .save_library(request(
+            json!({"acoustid_api_key": "acoustid-secret"}),
+            &view.policy_revision,
+        ))
         .await
         .expect("saves");
     assert_eq!(saved.settings.acoustid_api_key.expose(), ACOUSTID_KEY_MASK);

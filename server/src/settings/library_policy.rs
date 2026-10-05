@@ -719,17 +719,19 @@ pub async fn preview_impact(
 }
 
 /// Build the GET view: normalized settings plus revision, the applied
-/// reconciliation projection, and warnings. The caller passes settings
-/// that came from a masked read, so the AcoustID key is already masked.
-pub fn settings_response(resolved: ResolvedLibraryPolicy) -> LibrarySettingsResponse {
+/// reconciliation projection, and warnings. The policy was resolved from
+/// a masked read, so the AcoustID key stays masked.
+pub fn settings_response(resolved: Masked<ResolvedLibraryPolicy>) -> LibrarySettingsResponse {
+    let policy_revision = resolved.policy_revision.clone();
+    let warnings = resolved.warnings.clone();
     LibrarySettingsResponse {
-        settings: Masked::from(resolved.settings),
-        policy_revision: resolved.policy_revision,
+        settings: resolved.map(|resolved| resolved.settings),
+        policy_revision,
         reconciliation_required: false,
         reconciliation_state: "applied".to_owned(),
         pending_policy_revision: None,
         affected_scope_ids: Vec::new(),
         actions_applied: Vec::new(),
-        warnings: resolved.warnings,
+        warnings,
     }
 }
