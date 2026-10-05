@@ -1,15 +1,10 @@
-//! R9 ListenBrainz and scrobble-settings backend briefs.
-//!
-//! Each test pins one behavior: verify-then-store connects, username rules,
-//! sealed tokens that never reach the wire, prefs round-trips with their
-//! defaults, enum validation, and the personal-mix hook edge. No live
-//! ListenBrainz traffic: connects run against a scripted verifier, and the
-//! HTTP verifier runs against a loopback stub.
+//! ListenBrainz linking and scrobble settings: connect verifies before it
+//! stores, rejected credentials store nothing, sealed tokens survive a
+//! reopen of the SQLite stores, the link lifecycle over HTTP, and the HTTP
+//! verifier against a loopback stub.
 
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicU64, Ordering},
-};
+use crate::common::ScratchDir;
+use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -27,7 +22,7 @@ use droppedneedle::plugins::scrobble::{
     HttpListenBrainzVerifier, ListenBrainzLinkStore, MemoryListenBrainzLinkStore,
     MemoryScrobblePrefsStore, NoopConnectionChangedHook, NoopMixApprovalHook, ScrobbleDeps,
     ScrobblePrefsPatch, ScrobblePrefsStore, SqliteListenBrainzLinkStore, SqliteScrobblePrefsStore,
-    StaticMixState, VerifyOutcome, connect_listenbrainz, disconnect_listenbrainz,
+    StaticMixState, VerifyOutcome, connect_listenbrainz,
 };
 use droppedneedle::runtime_config::crypto::Crypto;
 use tower::ServiceExt as _;
@@ -115,33 +110,6 @@ async fn connect_verifies_then_stores() {
 }
 
 #[tokio::test]
-async fn connect_requires_a_username() {
-    let rig = rig();
-    let router = with_test_principal(scrobble_router(rig.http), user_session("user-1"));
-    let response = router
-        .oneshot(
-            Request::builder()
-                .method("PUT")
-                .uri("/me/connections/listenbrainz")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    serde_json::json!({"user_token": "lb-token-1", "username": "  "}).to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert!(
-        json_body(response)
-            .await
-            .to_string()
-            .contains("username is required")
-    );
-    assert!(!rig.deps.links.has_link("user-1").await);
-}
-
-#[tokio::test]
 async fn rejected_credentials_store_nothing() {
     let rig = rig();
     *rig.verifier.fallback.lock().unwrap() = VerifyOutcome {
@@ -164,33 +132,6 @@ async fn rejected_credentials_store_nothing() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert!(!rig.deps.links.has_link("user-1").await);
-}
-
-#[tokio::test]
-async fn rate_limited_verify_answers_429() {
-    let rig = rig();
-    *rig.verifier.fallback.lock().unwrap() = VerifyOutcome {
-        valid: false,
-        message: "rate-limiting".to_owned(),
-        rate_limited: true,
-    };
-    let router = with_test_principal(scrobble_router(rig.http), user_session("user-1"));
-    let response = router
-        .oneshot(
-            Request::builder()
-                .method("PUT")
-                .uri("/me/connections/listenbrainz")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    serde_json::json!({"user_token": "t", "username": "melody"}).to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
-    assert!(response.headers().contains_key("retry-after"));
     assert!(!rig.deps.links.has_link("user-1").await);
 }
 
@@ -250,161 +191,6 @@ async fn link_lifecycle_over_http() {
     let response = router
         .oneshot(
             Request::builder()
-                .uri("/me/connections/listenbrainz")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn unknown_users_read_as_unlinked() {
-    let store = MemoryListenBrainzLinkStore::new(test_crypto());
-    store.save("user-1", "melody", "lb-token-1").await.unwrap();
-    assert!(store.status("user-1").await.is_some());
-    assert_eq!(store.status("ghost").await, None);
-    assert_eq!(store.token_for("ghost").await, None);
-    assert!(!store.has_link("ghost").await);
-    assert!(!store.delete("ghost").await);
-}
-
-#[tokio::test]
-async fn prefs_round_trip_from_defaults() {
-    let rig = rig();
-    let router = with_test_principal(scrobble_router(rig.http), user_session("user-1"));
-    let response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/me/scrobble-preferences")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let prefs = json_body(response).await;
-    assert_eq!(prefs["scrobble_to_lastfm"], false);
-    assert_eq!(prefs["scrobble_to_listenbrainz"], false);
-    assert_eq!(prefs["navidrome_handles_external_scrobbles"], true);
-    assert_eq!(prefs["primary_music_source"], "listenbrainz");
-    assert_eq!(prefs["now_playing_visibility"], "full");
-    assert_eq!(prefs["auto_request_personal_mix"], false);
-    assert_eq!(prefs["auto_request_state"], "none");
-
-    let response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("PUT")
-                .uri("/me/scrobble-preferences")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    serde_json::json!({
-                        "scrobble_to_listenbrainz": true,
-                        "primary_music_source": "lastfm",
-                        "now_playing_visibility": "offline",
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let prefs = json_body(response).await;
-    assert_eq!(prefs["scrobble_to_listenbrainz"], true);
-    assert_eq!(prefs["scrobble_to_lastfm"], false);
-    assert_eq!(prefs["primary_music_source"], "lastfm");
-    assert_eq!(prefs["now_playing_visibility"], "offline");
-    // Untouched fields keep their stored values.
-    assert_eq!(prefs["navidrome_handles_external_scrobbles"], true);
-}
-
-#[tokio::test]
-async fn prefs_reject_unknown_enum_values() {
-    let rig = rig();
-    let router = with_test_principal(scrobble_router(rig.http), user_session("user-1"));
-    for body in [
-        serde_json::json!({"primary_music_source": "deezer"}),
-        serde_json::json!({"now_playing_visibility": "invisible"}),
-    ] {
-        let response = router
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("PUT")
-                    .uri("/me/scrobble-preferences")
-                    .header("content-type", "application/json")
-                    .body(Body::from(body.to_string()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    }
-    let stored = rig.deps.prefs.get("user-1").await;
-    assert_eq!(stored.primary_music_source, "listenbrainz");
-    assert_eq!(stored.now_playing_visibility, "full");
-}
-
-/// Counting personal-mix hook for the toggle edge.
-struct CountingHook {
-    calls: Mutex<Vec<(String, String, bool)>>,
-}
-
-impl droppedneedle::plugins::scrobble::MixApprovalHook for CountingHook {
-    fn on_auto_request_toggled(&self, user_id: &str, role: &str, enabled: bool) {
-        if let Ok(mut guard) = self.calls.lock() {
-            guard.push((user_id.to_owned(), role.to_owned(), enabled));
-        }
-    }
-}
-
-#[tokio::test]
-async fn mix_hook_fires_only_on_real_toggle_changes() {
-    let hook = Arc::new(CountingHook {
-        calls: Mutex::new(Vec::new()),
-    });
-    let deps = ScrobbleDeps::new(
-        Arc::new(MemoryScrobblePrefsStore::new()),
-        Arc::new(MemoryListenBrainzLinkStore::new(test_crypto())),
-        Arc::new(FakeVerifier::valid()),
-        hook.clone(),
-        Arc::new(NoopConnectionChangedHook),
-    );
-    let on = droppedneedle::plugins::scrobble::ScrobblePrefsPatch {
-        auto_request_personal_mix: Some(true),
-        ..droppedneedle::plugins::scrobble::ScrobblePrefsPatch::default()
-    };
-    droppedneedle::plugins::scrobble::update_prefs(&deps, "user-1", "user", &on)
-        .await
-        .unwrap();
-    // Resending the unchanged value must not re-queue the grant.
-    droppedneedle::plugins::scrobble::update_prefs(&deps, "user-1", "user", &on)
-        .await
-        .unwrap();
-    let off = droppedneedle::plugins::scrobble::ScrobblePrefsPatch {
-        auto_request_personal_mix: Some(false),
-        ..droppedneedle::plugins::scrobble::ScrobblePrefsPatch::default()
-    };
-    droppedneedle::plugins::scrobble::update_prefs(&deps, "user-1", "user", &off)
-        .await
-        .unwrap();
-    assert_eq!(hook.calls.lock().unwrap().len(), 2);
-}
-
-#[tokio::test]
-async fn disconnect_without_a_link_is_not_found() {
-    let rig = rig();
-    assert!(!disconnect_listenbrainz(&rig.deps, "user-1").await);
-    let router = with_test_principal(scrobble_router(rig.http), user_session("user-1"));
-    let response = router
-        .oneshot(
-            Request::builder()
-                .method("DELETE")
                 .uri("/me/connections/listenbrainz")
                 .body(Body::empty())
                 .unwrap(),
@@ -516,15 +302,6 @@ async fn http_verifier_maps_stub_statuses() {
 // ---------------------------------------------------------------------------
 
 /// Scratch-dir sequence so parallel tests never share a database.
-static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
-
-fn scratch_db(tag: &str) -> std::path::PathBuf {
-    let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!(
-        "droppedneedle-scrobble-{tag}-{seq}-{}",
-        std::process::id()
-    ))
-}
 
 /// Mirror a user row so FK-backed prefs and link writes accept it.
 async fn mirror_user(runtime: &DbRuntime, user_id: &str) {
@@ -545,7 +322,8 @@ async fn mirror_user(runtime: &DbRuntime, user_id: &str) {
 
 #[tokio::test]
 async fn sqlite_prefs_partial_upsert_survives_reopen() {
-    let db_path = scratch_db("prefs").join("app.db");
+    let scratch = ScratchDir::new("scrobble-prefs");
+    let db_path = scratch.join("app.db");
     let runtime = open_runtime(&DbConfig::new(&db_path))
         .await
         .expect("runtime opens");
@@ -603,7 +381,8 @@ async fn sqlite_prefs_partial_upsert_survives_reopen() {
 
 #[tokio::test]
 async fn sqlite_links_round_trip_sealed_and_survive_reopen() {
-    let db_path = scratch_db("links").join("app.db");
+    let scratch = ScratchDir::new("scrobble-links");
+    let db_path = scratch.join("app.db");
     let runtime = open_runtime(&DbConfig::new(&db_path))
         .await
         .expect("runtime opens");

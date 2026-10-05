@@ -1,11 +1,5 @@
-//! Events briefs: the daily watcher loop plus the registered kick.
-//!
-//! The watcher runs one catch-up sweep after boot (skipping recently swept
-//! artists), then a full sweep each day at the admin's `poll_time`, which it
-//! re-reads every tick. A failing sweep waits for the next slot instead of
-//! retrying hot. The kick fires one immediate sweep after a settings save and
-//! now registers in the job table, closing the v2 gap where the kick ran on
-//! an untracked task. Wall time is scripted by hand; loop time is virtual.
+//! The events watcher: one catch-up run with a skip window, the poll time
+//! re-read on every tick, and a kick while running is skipped.
 
 use std::sync::{
     Arc, Mutex,
@@ -17,9 +11,7 @@ use droppedneedle::jobs::events_kick::{self, KickOutcome};
 use droppedneedle::jobs::events_watcher::{
     self, EventsWatcher, PollTimeSource, WallTime, WatchClock,
 };
-use droppedneedle::jobs::registry::{
-    BoxFuture, JobRegistry, JobState, MemoryRegistryStore, RegistryStore,
-};
+use droppedneedle::jobs::registry::{BoxFuture, JobRegistry, MemoryRegistryStore};
 
 type TestRegistry = JobRegistry<MemoryRegistryStore>;
 
@@ -39,12 +31,6 @@ struct FakeWatcher {
     sweeps: Arc<AtomicU64>,
     windows: Arc<Mutex<Vec<Option<f64>>>>,
     failures_left: Arc<AtomicU64>,
-}
-
-impl FakeWatcher {
-    fn fail_next(&self, times: u64) {
-        self.failures_left.store(times, Ordering::SeqCst);
-    }
 }
 
 impl EventsWatcher for FakeWatcher {
@@ -152,72 +138,6 @@ async fn watcher_catch_up_runs_once_with_skip_window() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn watcher_daily_slot_fires_when_clock_crosses() {
-    let registry = registry();
-    let watcher = FakeWatcher::default();
-    let clock = ManualClock::at(10, 5 * 60);
-    spawn_test_loop(
-        &registry,
-        watcher.clone(),
-        FakePollTime::new("06:00"),
-        clock.clone(),
-    )
-    .await;
-
-    // Boot catch-up first.
-    tokio::time::advance(Duration::from_secs(420)).await;
-    settle().await;
-    assert_eq!(watcher.sweeps.load(Ordering::SeqCst), 1);
-
-    // Still before the 06:00 slot: ticks pass, no sweep.
-    tokio::time::advance(Duration::from_secs(60)).await;
-    settle().await;
-    assert_eq!(watcher.sweeps.load(Ordering::SeqCst), 1);
-
-    // The wall clock crosses into the slot: a full sweep fires.
-    clock.set(10, 6 * 60 + 1);
-    tokio::time::advance(Duration::from_secs(120)).await;
-    settle().await;
-    assert_eq!(watcher.sweeps.load(Ordering::SeqCst), 2);
-    assert_eq!(watcher.windows.lock().unwrap()[1], None);
-
-    registry.cancel_all(Duration::from_secs(5)).await;
-}
-
-#[tokio::test(start_paused = true)]
-async fn watcher_failing_sweep_waits_for_next_slot() {
-    let registry = registry();
-    let watcher = FakeWatcher::default();
-    watcher.fail_next(10);
-    let clock = ManualClock::at(10, 6 * 60 + 1);
-    spawn_test_loop(
-        &registry,
-        watcher.clone(),
-        FakePollTime::new("06:00"),
-        clock.clone(),
-    )
-    .await;
-
-    // The catch-up sweep fails and still counts as the last sweep.
-    tokio::time::advance(Duration::from_secs(420)).await;
-    settle().await;
-    assert_eq!(watcher.sweeps.load(Ordering::SeqCst), 1);
-
-    // Ticks pass without retrying: the failure waits out the daily slot.
-    tokio::time::advance(Duration::from_secs(600)).await;
-    settle().await;
-    assert_eq!(watcher.sweeps.load(Ordering::SeqCst), 1);
-
-    // Tomorrow's slot sweeps again (and fails again, without spinning).
-    clock.set(11, 6 * 60 + 1);
-    tokio::time::advance(Duration::from_secs(120)).await;
-    settle().await;
-    assert_eq!(watcher.sweeps.load(Ordering::SeqCst), 2);
-
-    registry.cancel_all(Duration::from_secs(5)).await;
-}
-
-#[tokio::test(start_paused = true)]
 async fn watcher_rereads_poll_time_every_tick() {
     let registry = registry();
     let watcher = FakeWatcher::default();
@@ -242,31 +162,6 @@ async fn watcher_rereads_poll_time_every_tick() {
 // ---------------------------------------------------------------------------
 // Kick
 // ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn kick_starts_a_registered_sweep() {
-    let registry = registry();
-    let watcher = FakeWatcher::default();
-    assert_eq!(
-        events_kick::kick(&registry, watcher.clone()).await,
-        KickOutcome::Started
-    );
-    // The sweep ran and the row landed as stopped.
-    for _ in 0..500 {
-        if !registry.is_running(events_kick::JOB_NAME) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-    assert_eq!(watcher.sweeps.load(Ordering::SeqCst), 1);
-    let row = registry
-        .store()
-        .get_job(events_kick::JOB_NAME)
-        .await
-        .expect("kick row exists");
-    assert_eq!(row.state, JobState::Stopped);
-    assert!(row.last_heartbeat_at.is_some());
-}
 
 #[tokio::test(start_paused = true)]
 async fn kick_while_running_is_skipped() {

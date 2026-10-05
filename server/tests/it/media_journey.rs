@@ -1,16 +1,13 @@
-//! Stage-6 E2E: connect Plex → browse → play → seek → stop (reported).
-//!
-//! One journey through the real app (`create_app` over a scratch SQLite
+//! Media journeys through the real app (`create_app` over a scratch SQLite
 //! database) against the in-repo mock Plex server: save a Plex connection,
-//! browse its albums, stream whole bytes, seek a range, then run the
-//! playback lifecycle (start → progress → stop) and prove the play landed
-//! in history. A single router serves the whole journey because stage-6
-//! connections live in memory; the default rate class (60 burst) covers
-//! the dozen calls comfortably.
+//! browse its albums, stream whole bytes, seek a range, then start,
+//! progress and stop playback and find the play in history. Also the
+//! transcode length estimate and the concurrent-stream caps.
 
+use crate::common::ScratchDir;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use axum::Router;
 use axum::body::Body;
@@ -48,9 +45,6 @@ const HOST: &str = "e2e.test";
 /// Wrapped shared secret saved into every scratch config.
 const TEST_WRAPPED_KEY: &str = "e2e-wrapped-key-1";
 
-/// Scratch-dir sequence so parallel tests never share a database.
-static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
-
 /// One scratch deployment: migrated database, production adapters, config.
 struct E2e {
     /// Held, never read: dropping it would close the pool out from under
@@ -64,15 +58,13 @@ struct E2e {
     ids: Arc<UuidGenerator>,
     clock: Arc<SystemClock>,
     db_path: std::path::PathBuf,
+    /// Declared last so the database closes before the directory goes.
+    _scratch: ScratchDir,
 }
 
 impl E2e {
     async fn open(tag: &str) -> Self {
-        let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "droppedneedle-media-journey-{tag}-{}-{seq}",
-            std::process::id()
-        ));
+        let dir = ScratchDir::new(&format!("media-journey-{tag}"));
         let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
             .await
             .expect("scratch runtime opens");
@@ -114,6 +106,7 @@ impl E2e {
             ids,
             clock,
             db_path,
+            _scratch: dir,
         }
     }
 
@@ -685,11 +678,8 @@ async fn media_concurrent_streams_under_caps() {
         content_type: "audio/mpeg".to_owned(),
         bytes: bytes.clone(),
     };
-    let root = std::env::temp_dir().join(format!(
-        "droppedneedle-media-caps-{}-{}",
-        std::process::id(),
-        SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
+    let scratch = ScratchDir::new("media-caps");
+    let root = scratch.to_path_buf();
 
     // Under the caps, N concurrent reads all succeed.
     let engine = Gateway::new(

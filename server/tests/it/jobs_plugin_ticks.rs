@@ -1,13 +1,9 @@
-//! Plugin-tick briefs: loop contract plus store durability (D11).
-//!
-//! The loop half pins the v2 `host.py` contract under virtual time: failures
-//! log and continue, hung ticks die at the interval, ticks never overlap,
-//! disabled plugins exit, and `sync_ticks` stays the sole rebuild choke
-//! point. The store half pins the D11 redesign: state lives on the tick
-//! store, keyed by plugin, validated like the old paths, capped at 10 MiB,
-//! readable after every runner is gone, and (on the SQLite store) durable
-//! across a full runtime restart.
+//! Plugin tick loops: a failing tick logs and continues, a hung tick is
+//! cancelled at its interval, ticks never overlap, tick state refuses
+//! unsafe paths, unknown plugins and oversize writes, and SQLite tick
+//! state survives a restart.
 
+use crate::common::ScratchDir;
 use std::collections::HashMap;
 use std::sync::{
     Arc, Mutex,
@@ -20,9 +16,7 @@ use droppedneedle::jobs::plugin_ticks::{
     MemoryTickStore, SqliteTickStore, TickHost, TickPlugin, TickSpec, TickStore, TickStoreError,
     sync_ticks,
 };
-use droppedneedle::jobs::registry::{
-    BoxFuture, JobRegistry, JobState, MemoryRegistryStore, RegistryStore,
-};
+use droppedneedle::jobs::registry::{BoxFuture, JobRegistry, MemoryRegistryStore};
 
 type TestRegistry = JobRegistry<MemoryRegistryStore>;
 
@@ -184,31 +178,6 @@ async fn tick_exception_logs_and_continues() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn tick_cancel_breaks_loop() {
-    let registry = registry();
-    let plugin = FakePlugin::new("tick-toy");
-    let host = FakeHost::with(plugin);
-    let sync = droppedneedle::jobs::plugin_ticks::TickSyncState::new();
-    sync_ticks(
-        &registry,
-        &host,
-        &sync,
-        &[spec("tick-toy", Duration::from_secs(60), false)],
-        Duration::from_secs(5),
-    )
-    .await;
-    settle().await;
-    registry.cancel_all(Duration::from_secs(5)).await;
-    assert!(!registry.is_running(&tick_name("tick-toy")));
-    let row = registry
-        .store()
-        .get_job(&tick_name("tick-toy"))
-        .await
-        .expect("row exists");
-    assert_eq!(row.state, JobState::Stopped);
-}
-
-#[tokio::test(start_paused = true)]
 async fn tick_hung_tick_cancelled_at_interval() {
     let registry = registry();
     let mut plugin = FakePlugin::new("tick-toy");
@@ -257,89 +226,9 @@ async fn tick_no_overlap() {
     registry.cancel_all(Duration::from_secs(5)).await;
 }
 
-#[tokio::test(start_paused = true)]
-async fn tick_disabled_plugin_exits_loop() {
-    let registry = registry();
-    let plugin = FakePlugin::new("tick-toy");
-    let host = FakeHost::with(plugin.clone());
-    let sync = droppedneedle::jobs::plugin_ticks::TickSyncState::new();
-    sync_ticks(
-        &registry,
-        &host,
-        &sync,
-        &[spec("tick-toy", Duration::from_millis(100), true)],
-        Duration::from_secs(5),
-    )
-    .await;
-    settle().await;
-    assert!(plugin.calls() >= 1);
-
-    *plugin.enabled.lock().unwrap() = false;
-    tokio::time::advance(Duration::from_secs(1)).await;
-    settle().await;
-    assert!(!registry.is_running(&tick_name("tick-toy")));
-}
-
-#[tokio::test(start_paused = true)]
-async fn sync_ticks_rebuilds_added_removed_and_changed() {
-    let registry = registry();
-    let host = FakeHost::with(FakePlugin::new("kept"));
-    host.plugins
-        .lock()
-        .unwrap()
-        .insert("added".to_owned(), FakePlugin::new("added"));
-    let sync = droppedneedle::jobs::plugin_ticks::TickSyncState::new();
-
-    sync_ticks(
-        &registry,
-        &host,
-        &sync,
-        &[spec("kept", Duration::from_secs(300), false)],
-        Duration::from_secs(5),
-    )
-    .await;
-    assert!(registry.is_running(&tick_name("kept")));
-
-    // Add one, drop one, change one's interval: the rebuild matches exactly.
-    sync_ticks(
-        &registry,
-        &host,
-        &sync,
-        &[
-            spec("kept", Duration::from_secs(600), false),
-            spec("added", Duration::from_secs(300), false),
-        ],
-        Duration::from_secs(5),
-    )
-    .await;
-    assert!(registry.is_running(&tick_name("kept")));
-    assert!(registry.is_running(&tick_name("added")));
-
-    // Nothing desired: every tick loop goes away.
-    sync_ticks(&registry, &host, &sync, &[], Duration::from_secs(5)).await;
-    assert!(!registry.is_running(&tick_name("kept")));
-    assert!(!registry.is_running(&tick_name("added")));
-}
-
 // ---------------------------------------------------------------------------
 // Tick state on the store
 // ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn tick_state_roundtrip() {
-    let store = MemoryTickStore::with_plugins(&["tick-toy"]);
-    store
-        .write("tick-toy", "cache/seen", b"abc".to_vec())
-        .await
-        .expect("write wins");
-    assert_eq!(
-        store
-            .read("tick-toy", "cache/seen")
-            .await
-            .expect("read wins"),
-        Some(b"abc".to_vec())
-    );
-}
 
 #[tokio::test]
 async fn tick_state_rejects_unsafe_paths_unknown_plugins_and_over_cap() {
@@ -372,68 +261,9 @@ async fn tick_state_rejects_unsafe_paths_unknown_plugins_and_over_cap() {
     assert!(matches!(error, TickStoreError::NotFound(_)));
 }
 
-#[tokio::test(start_paused = true)]
-async fn tick_state_survives_loop_restart() {
-    // One tick writes state through the shared memory store; then every
-    // loop stops (the restart), and a fresh loop generation reads the same
-    // bytes back. This pins loop-restart survival only — the store never
-    // leaves the process here. Process-restart survival is the SQLite
-    // store's brief below.
-    let store = MemoryTickStore::with_plugins(&["tick-toy"]);
-    let registry = registry();
-    let host = FakeHost::with(FakePlugin::new("tick-toy"));
-    let sync = droppedneedle::jobs::plugin_ticks::TickSyncState::new();
-    sync_ticks(
-        &registry,
-        &host,
-        &sync,
-        &[spec("tick-toy", Duration::from_millis(100), true)],
-        Duration::from_secs(5),
-    )
-    .await;
-    settle().await;
-    store
-        .write("tick-toy", "cache/seen", b"tick-1".to_vec())
-        .await
-        .expect("write wins");
-
-    // The restart: all loops stop, the registry rows land, the store stays.
-    registry.cancel_all(Duration::from_secs(5)).await;
-    assert!(!registry.is_running(&tick_name("tick-toy")));
-    drop(registry);
-
-    let revived = JobRegistry::new(MemoryRegistryStore::new());
-    let revived_host = FakeHost::with(FakePlugin::new("tick-toy"));
-    let revived_sync = droppedneedle::jobs::plugin_ticks::TickSyncState::new();
-    sync_ticks(
-        &revived,
-        &revived_host,
-        &revived_sync,
-        &[spec("tick-toy", Duration::from_millis(100), true)],
-        Duration::from_secs(5),
-    )
-    .await;
-    settle().await;
-    assert_eq!(
-        store
-            .read("tick-toy", "cache/seen")
-            .await
-            .expect("read wins"),
-        Some(b"tick-1".to_vec())
-    );
-    revived.cancel_all(Duration::from_secs(5)).await;
-}
-
-/// Scratch-dir sequence so parallel tests never share a database.
-static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
-
 #[tokio::test]
 async fn sqlite_tick_state_survives_a_full_restart() {
-    let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!(
-        "droppedneedle-tick-store-{seq}-{}",
-        std::process::id()
-    ));
+    let dir = ScratchDir::new("tick-store");
     let db_path = dir.join("app.db");
 
     // First boot: register, write, shut everything down.

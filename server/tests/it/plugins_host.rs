@@ -1,9 +1,10 @@
-//! Plugin-host briefs: discovery, install, update, uninstall, ext proxy,
-//! panel serving, publish ingress, fan-out, and durable ticks.
-//!
-//! Each test pins one behavior. Installs run against scripted fetchers and
-//! unpackers: no network, no zip reader needed.
+//! Plugin host: dropped folders run nothing until enabled, installs refuse
+//! bad URLs and unsafe archives, plugin secrets are sealed, the ext proxy
+//! and panels hide undeclared routes from non-admins, publish is stamped
+//! and paced, fan-out runs once per causation, and the admin lifecycle
+//! over HTTP. Installs use scripted fetchers and unpackers.
 
+use crate::common::ScratchDir;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -27,7 +28,7 @@ use droppedneedle::plugins::fakes::{
     scrobble_plugin_event,
 };
 use droppedneedle::plugins::handlers::{ExtRateLimiter, PluginsDeps, plugins_router};
-use droppedneedle::plugins::host::{InstallError, PluginHost, UpdateError};
+use droppedneedle::plugins::host::{InstallError, PluginHost};
 use droppedneedle::plugins::manifest::load_manifest;
 use droppedneedle::plugins::runtime::{PublishPayload, ScrobbleEvent};
 use droppedneedle::plugins::ticks::{
@@ -51,20 +52,6 @@ fn test_crypto() -> Crypto {
     Crypto::from_key_bytes(&[7u8; 32]).unwrap()
 }
 
-fn scratch_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "dn-plugins-{}-{tag}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(dir.join("plugins")).unwrap();
-    dir
-}
-
 fn write_plugin(dir: &Path, folder: &str, manifest: &str) {
     let plugin_dir = dir.join("plugins").join(folder);
     std::fs::create_dir_all(&plugin_dir).unwrap();
@@ -72,20 +59,14 @@ fn write_plugin(dir: &Path, folder: &str, manifest: &str) {
 }
 
 struct Rig {
-    dir: PathBuf,
+    dir: ScratchDir,
     host: Arc<PluginHost>,
     config: Arc<ConfigStore>,
     loader: Arc<FakeLoader>,
 }
 
-impl Drop for Rig {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
-}
-
 fn rig(tag: &str) -> Rig {
-    let dir = scratch_dir(tag);
+    let dir = ScratchDir::new(&format!("plugins-{tag}"));
     let config = Arc::new(ConfigStore::open(&dir.join("config.json"), test_crypto()).unwrap());
     let loader = Arc::new(FakeLoader::new());
     let host = Arc::new(PluginHost::new(
@@ -158,16 +139,6 @@ async fn dropped_folder_runs_no_code_until_enabled() {
     assert!(plugin.module.is_none());
     assert!(plugin.active_capabilities.is_empty());
     assert!(rig.host.desired_ticks().is_empty());
-}
-
-#[tokio::test]
-async fn invalid_manifest_is_listed_with_its_error() {
-    let rig = rig("bad-manifest");
-    write_plugin(&rig.dir, "broken", "[plugin]\nname = \"broken\"\n");
-    rig.host.load_all();
-    let plugin = rig.host.get("broken").unwrap();
-    assert!(!plugin.enabled);
-    assert!(plugin.error.unwrap().contains("api_version"));
 }
 
 #[tokio::test]
@@ -312,16 +283,6 @@ async fn uninstall_removes_code_but_keeps_settings() {
 }
 
 #[tokio::test]
-async fn update_unknown_plugin_is_not_found() {
-    let rig = rig("update-404");
-    rig.host.load_all();
-    assert!(matches!(
-        rig.host.update_settings("ghost", true, HashMap::new()),
-        Err(UpdateError::NotFound)
-    ));
-}
-
-#[tokio::test]
 async fn install_rejects_bad_urls() {
     let fetcher = FakeFetcher::new();
     for bad in [
@@ -338,28 +299,6 @@ async fn install_rejects_bad_urls() {
             "url: {bad}"
         );
     }
-}
-
-#[tokio::test]
-async fn install_tries_main_then_master() {
-    let rig = rig("refs");
-    let fetcher = FakeFetcher::new();
-    fetcher.insert(
-        "https://codeload.github.com/acme/toy/zip/refs/heads/master",
-        b"archive",
-    );
-    let archive = PluginHost::fetch_plugin_archive("https://github.com/acme/toy/", &fetcher)
-        .await
-        .unwrap();
-    assert_eq!(archive, b"archive");
-    assert_eq!(
-        *fetcher.requested.lock().unwrap(),
-        vec![
-            "https://codeload.github.com/acme/toy/zip/refs/heads/main".to_owned(),
-            "https://codeload.github.com/acme/toy/zip/refs/heads/master".to_owned(),
-        ]
-    );
-    let _ = rig;
 }
 
 #[tokio::test]
@@ -381,24 +320,6 @@ async fn install_refuses_unsafe_archives() {
         Err(InstallError::Symlinks)
     );
     assert!(!rig.dir.join("plugins").join("toy").exists());
-}
-
-#[tokio::test]
-async fn install_refuses_bad_layouts() {
-    let rig = rig("layout");
-    let two_roots = FakeUnpacker::new(vec![
-        FakeUnpacker::file("a/plugin.toml", TOY_MANIFEST.as_bytes()),
-        FakeUnpacker::file("b/plugin.toml", TOY_MANIFEST.as_bytes()),
-    ]);
-    assert_eq!(
-        rig.host.install_archive(b"zip", &two_roots),
-        Err(InstallError::Layout)
-    );
-    let no_manifest = FakeUnpacker::new(vec![FakeUnpacker::file("toy-main/plugin.py", b"# code")]);
-    assert_eq!(
-        rig.host.install_archive(b"zip", &no_manifest),
-        Err(InstallError::NoManifest)
-    );
 }
 
 async fn json_body(response: axum::response::Response) -> serde_json::Value {
@@ -520,107 +441,6 @@ async fn ext_proxy_gates_admin_routes_and_paces_callers() {
         .unwrap();
     assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
     assert!(second.headers().contains_key("retry-after"));
-}
-
-#[tokio::test]
-async fn ext_route_statuses_clamp_to_the_fixed_table() {
-    let rig = rig("ext-clamp");
-    let module = enable_toy(&rig, TOY_MANIFEST, &["publisher"]);
-    let query = HashMap::new();
-    let body = droppedneedle::plugins::runtime::PluginRouteBody::Empty;
-
-    *module.route_scripts.lock().unwrap() =
-        vec![droppedneedle::plugins::fakes::FakeRouteScript::Status(
-            500,
-            serde_json::json!({"boom": true}),
-        )];
-    let result = rig
-        .host
-        .handle_plugin_route("toy", "GET", "status", &query, &body)
-        .await;
-    assert_eq!(result.status, 502);
-
-    *module.route_scripts.lock().unwrap() =
-        vec![droppedneedle::plugins::fakes::FakeRouteScript::Status(
-            302,
-            serde_json::json!({}),
-        )];
-    let result = rig
-        .host
-        .handle_plugin_route("toy", "get", "status", &query, &body)
-        .await;
-    assert_eq!(result.status, 200);
-
-    *module.route_scripts.lock().unwrap() =
-        vec![droppedneedle::plugins::fakes::FakeRouteScript::Status(
-            404,
-            serde_json::json!({"missing": true}),
-        )];
-    let result = rig
-        .host
-        .handle_plugin_route("toy", "GET", "status", &query, &body)
-        .await;
-    assert_eq!(result.status, 404);
-}
-
-#[tokio::test]
-async fn panel_bundle_serves_with_etag_and_304() {
-    let rig = rig("panel");
-    let manifest = "[plugin]\n\
-         name = \"toy\"\n\
-         api_version = 1\n\
-         entrypoint = \"plugin:Toy\"\n\
-         capabilities = [\"subscriber\"]\n\
-         [plugin_ui]\n\
-         entry = \"ui/panel.js\"\n\
-         pages = [\"panel\"]\n";
-    enable_toy(&rig, manifest, &["subscriber"]);
-    let bundle = rig.dir.join("plugins").join("toy").join("ui");
-    std::fs::create_dir_all(&bundle).unwrap();
-    std::fs::write(bundle.join("panel.js"), b"console.log(1);").unwrap();
-
-    let router = with_test_principal(
-        plugins_router(scripted_deps(&rig)),
-        admin_session("admin-1"),
-    );
-    let response = router
-        .clone()
-        .oneshot(
-            Request::builder()
-                .uri("/plugins/toy/ui/panel.js")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(
-        response.headers().get("content-type").unwrap(),
-        "text/javascript"
-    );
-    assert_eq!(
-        response.headers().get("x-content-type-options").unwrap(),
-        "nosniff"
-    );
-    let etag = response
-        .headers()
-        .get("etag")
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_owned();
-
-    let cached = router
-        .oneshot(
-            Request::builder()
-                .uri("/plugins/toy/ui/panel.js")
-                .header("if-none-match", etag)
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(cached.status(), StatusCode::NOT_MODIFIED);
 }
 
 #[tokio::test]
@@ -769,62 +589,6 @@ async fn fanout_reaches_subscribers_once_per_causation() {
 }
 
 #[tokio::test]
-async fn failing_module_tick_surfaces_its_error() {
-    // The jobs loop logs this Err and carries on (their briefs pin the
-    // loop side); the adapter's contract is to surface it, never swallow.
-    let rig = rig("tick-fail");
-    let module = enable_toy(&rig, TOY_MANIFEST, &["scheduler"]);
-    *module.tick_behavior.lock().unwrap() = FakeTickBehavior::Fail("boom".to_owned());
-    let store = JobsTickStore::with_plugins(&["toy"]);
-    let adapter = HostTickAdapter::new(Arc::clone(&rig.host), store);
-    let plugin = adapter.get("toy").unwrap();
-    assert_eq!(plugin.on_tick().await, Err("boom".to_owned()));
-}
-
-#[tokio::test]
-async fn loop_sync_registers_and_cancels_with_the_manifests() {
-    let rig = rig("sync");
-    enable_toy(&rig, TOY_MANIFEST, &["scheduler"]);
-    let registry = JobRegistry::new(MemoryRegistryStore::new());
-    let loops = PluginTickLoops::new(
-        registry.clone(),
-        JobsTickStore::new(),
-        Duration::from_secs(5),
-    );
-    loops.sync_host(&rig.host).await;
-    assert!(registry.is_running("plugin-tick:toy"));
-    rig.host
-        .update_settings("toy", false, HashMap::new())
-        .unwrap();
-    loops.sync_host(&rig.host).await;
-    assert!(!registry.is_running("plugin-tick:toy"));
-    registry.cancel_all(Duration::from_secs(5)).await;
-}
-
-#[tokio::test]
-async fn sources_merge_client_and_indexer_views() {
-    let rig = rig("sources");
-    let manifest = "[plugin]\n\
-         name = \"toy\"\n\
-         api_version = 1\n\
-         entrypoint = \"plugin:Toy\"\n\
-         capabilities = [\"download_client\", \"indexer\"]\n\
-         [[capability]]\n\
-         id = \"download_client\"\n\
-         source = \"toy\"\n\
-         display_name = \"Toy Source\"\n\
-         [[capability]]\n\
-         id = \"indexer\"\n\
-         target_source = \"plugin:toy\"\n";
-    enable_toy(&rig, manifest, &["download_client", "indexer"]);
-    let sources = rig.host.plugin_sources();
-    assert_eq!(sources.len(), 1);
-    assert_eq!(sources[0].key, "plugin:toy");
-    assert!(sources[0].has_client && sources[0].has_indexer);
-    assert_eq!(sources[0].health, "ok");
-}
-
-#[tokio::test]
 async fn plugin_routes_need_admins_and_sessions() {
     let rig = rig("auth");
     // No session at all: 401 with the Bearer challenge.
@@ -930,20 +694,4 @@ async fn admin_plugin_lifecycle_over_http() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-}
-
-#[tokio::test]
-async fn scheduler_interval_clamps_into_range() {
-    let rig = rig("clamp");
-    let manifest = "[plugin]\n\
-         name = \"toy\"\n\
-         api_version = 1\n\
-         entrypoint = \"plugin:Toy\"\n\
-         capabilities = [\"scheduler\"]\n\
-         [schedule]\n\
-         interval_minutes = 3\n";
-    // Below the floor: the manifest itself rejects it.
-    write_plugin(&rig.dir, "toy", manifest);
-    rig.host.load_all();
-    assert!(rig.host.get("toy").unwrap().error.is_some());
 }

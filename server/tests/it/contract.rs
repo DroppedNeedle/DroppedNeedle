@@ -1,6 +1,5 @@
-//! Contract-drift brief (TS-diff gate, Rust half): the committed OpenAPI
-//! snapshot matches the document the code builds. The TypeScript half lives
-//! in `server/openapi/check.sh` and runs as a CI gate.
+//! The committed OpenAPI snapshot matches the document the code builds.
+//! `server/openapi/check.sh` diffs the generated TypeScript in CI.
 
 use droppedneedle::docs::ApiDoc;
 use utoipa::OpenApi as _;
@@ -18,10 +17,10 @@ fn committed_openapi_snapshot_matches_code() {
 }
 
 /// The equality check above cannot catch a mounted route nobody told utoipa
-/// about, so the stage-10 routes mounted outside their slices' handlers pin
+/// about, so the trigger routes mounted outside their slices' handlers pin
 /// their documented paths here by name.
 #[test]
-fn openapi_covers_the_stage10_trigger_routes() {
+fn openapi_covers_routes_mounted_outside_their_slices() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/openapi/openapi.json");
     let committed = std::fs::read_to_string(path).unwrap();
     let committed_json: serde_json::Value = serde_json::from_str(&committed).unwrap();
