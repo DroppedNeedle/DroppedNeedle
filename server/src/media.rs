@@ -6,10 +6,9 @@
 //! connections and Navidrome folder preferences are SQLite rows; the admin
 //! servers are read from the config store on every call. Playback catalog,
 //! history, prefs, and display names read the SQLite schema through a
-//! dedicated rusqlite handle. Outbound remote attribution drains through
-//! the [`ReportWorker`] boot spawns beside the other loops.
+//! dedicated rusqlite handle. Remote attribution and scrobble forwarding
+//! drain through the [`MediaWorkers`] boot spawns beside the other loops.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -19,12 +18,16 @@ use crate::auth::users::UsersDeps;
 use crate::config::AppConfig;
 use crate::db::WriteLane;
 use crate::ids::IdGenerator;
-use crate::playback::ports::{ReportTrack, ScrobbleSinks, ServiceOutcome, SystemClock};
+use crate::playback::forwarding::{
+    Endpoints, ForwardWorker, ScrobbleForwarder, StoredScrobbleCredentials,
+};
+use crate::playback::ports::SystemClock;
 use crate::playback::reports::{ReportQueue, run_report_worker};
 use crate::playback::services::{
     MixedDedup, PlaybackDeps, PresenceRegistry, ScrobbleDedup, SessionStore,
 };
 use crate::playback::sqlite::PlaybackDb;
+use crate::plugins::scrobble::SqliteListenBrainzLinkStore;
 use crate::remotes::adapter::MemoryImportSink;
 use crate::remotes::connections::{
     ConfigServers, ConnectionResolver, CredentialCoder, SqliteConnectionStore,
@@ -60,19 +63,23 @@ pub struct MediaSetup {
     pub playback: PlaybackDeps,
 }
 
-/// Outbound attribution drain. Boot spawns [`ReportWorker::run`] and
-/// awaits it after serve; the worker exits once every queue handle in the
-/// app drops.
-pub struct ReportWorker {
-    rx: tokio::sync::mpsc::Receiver<crate::playback::reports::QueuedReport>,
+/// The media background drains: remote attribution and scrobble
+/// forwarding. Boot spawns [`MediaWorkers::run`] and awaits it after
+/// serve; both drains exit once every queue handle in the app drops.
+pub struct MediaWorkers {
+    reports: tokio::sync::mpsc::Receiver<crate::playback::reports::QueuedReport>,
     http: reqwest::Client,
     resolver: Arc<ConnectionResolver>,
+    forwards: ForwardWorker,
 }
 
-impl ReportWorker {
-    /// Drain attribution reports until the app drops its queue handles.
+impl MediaWorkers {
+    /// Drain both queues until the app drops its handles.
     pub async fn run(self) {
-        run_report_worker(self.rx, self.http, self.resolver).await;
+        tokio::join!(
+            run_report_worker(self.reports, self.http, self.resolver),
+            self.forwards.run(),
+        );
     }
 }
 
@@ -97,11 +104,21 @@ impl MediaSetup {
         pool: sqlx::SqlitePool,
         lane: WriteLane,
         config: Arc<ConfigStore>,
-    ) -> Result<(Self, ReportWorker), String> {
+    ) -> Result<(Self, MediaWorkers), String> {
         let resolver = Arc::new(ConnectionResolver::new(
             Arc::new(SqliteConnectionStore::new(pool.clone(), lane.clone())),
-            Arc::new(CredentialCoder::new(crypto)),
+            Arc::new(CredentialCoder::new(crypto.clone())),
             Arc::new(ConfigServers::new(config)),
+        ));
+        let credentials = Arc::new(StoredScrobbleCredentials::new(
+            Arc::new(SqliteListenBrainzLinkStore::new(
+                pool.clone(),
+                lane.clone(),
+                crypto.clone(),
+            )),
+            users.lastfm.clone(),
+            users.lastfm_switch.clone(),
+            crypto,
         ));
         let service = RemotesService::new(
             http.clone(),
@@ -135,9 +152,13 @@ impl MediaSetup {
         };
         let db = Arc::new(PlaybackDb::open(db_path, ids.clone())?);
         let (queue, rx) = ReportQueue::channel();
+        let (forwarder, forwards) =
+            ScrobbleForwarder::channel(db.clone(), remotes.auth.lastfm_switch.clone());
+        let forwards =
+            ForwardWorker::new(forwards, http.clone(), credentials, Endpoints::default());
         let playback = PlaybackDeps {
             catalog: db.clone(),
-            sinks: Arc::new(UnlinkedSinks),
+            sinks: Arc::new(forwarder),
             remotes: Arc::new(queue),
             history: db.clone(),
             prefs: db.clone(),
@@ -149,7 +170,12 @@ impl MediaSetup {
             clock: Arc::new(SystemClock),
             ids: ids.clone(),
         };
-        let worker = ReportWorker { rx, http, resolver };
+        let worker = MediaWorkers {
+            reports: rx,
+            http,
+            resolver,
+            forwards,
+        };
         Ok((
             Self {
                 remotes,
@@ -255,27 +281,4 @@ fn transcode_settings(connect_apps: &ConnectApps) -> TranscodeSettings {
 /// resolve against the live library registry instead.
 fn local_root(config: &AppConfig) -> PathBuf {
     config.root_app_dir.join("music")
-}
-
-/// Scrobble sinks with no linked accounts: every forward answers empty,
-/// which the services already read as "unlinked, history still records".
-/// Native Last.fm/ListenBrainz forwarding is not wired yet.
-struct UnlinkedSinks;
-
-impl ScrobbleSinks for UnlinkedSinks {
-    fn report_now_playing(
-        &self,
-        _user_id: &str,
-        _track: &ReportTrack,
-    ) -> HashMap<String, ServiceOutcome> {
-        HashMap::new()
-    }
-
-    fn submit_scrobble(
-        &self,
-        _user_id: &str,
-        _track: &ReportTrack,
-    ) -> HashMap<String, ServiceOutcome> {
-        HashMap::new()
-    }
 }

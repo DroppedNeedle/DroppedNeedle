@@ -97,21 +97,49 @@ pub struct ServiceOutcome {
     pub error: Option<String>,
 }
 
-/// External scrobble sinks (Last.fm / ListenBrainz). The map key is the
-/// service name; an empty map means no linked account, not a failure.
+/// Which external services one forward may go to, from the user's
+/// scrobble preferences.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ScrobbleTargets {
+    /// Forward to Last.fm.
+    pub lastfm: bool,
+    /// Forward to ListenBrainz.
+    pub listenbrainz: bool,
+}
+
+impl ScrobbleTargets {
+    /// True when no service is wanted.
+    pub fn is_empty(self) -> bool {
+        !self.lastfm && !self.listenbrainz
+    }
+}
+
+/// External scrobble sinks (Last.fm / ListenBrainz). Sinks forward only to
+/// the `targets` asked for, and only for accounts the user linked. The map
+/// key is the service name; an empty map means no linked account, not a
+/// failure.
 pub trait ScrobbleSinks: Send + Sync {
     /// Forward a now-playing report for the user's linked accounts.
     fn report_now_playing(
         &self,
         user_id: &str,
         track: &ReportTrack,
+        targets: ScrobbleTargets,
     ) -> HashMap<String, ServiceOutcome>;
     /// Forward one scrobble for the user's linked accounts.
     fn submit_scrobble(
         &self,
         user_id: &str,
         track: &ReportTrack,
+        targets: ScrobbleTargets,
     ) -> HashMap<String, ServiceOutcome>;
+}
+
+/// Which scrobble services a user has linked. Synchronous like the other
+/// playback ports; a failed read reads as unlinked.
+pub trait ScrobbleLinks: Send + Sync {
+    /// The user's linked services.
+    fn linked(&self, user_id: &str) -> ScrobbleTargets;
 }
 
 /// One outbound session report to a remote music server.

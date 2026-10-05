@@ -12,8 +12,8 @@ use std::{
 use super::{
     ports::{
         Clock, DisplayNames, ListeningPrefs, PlayHistory, PlayRecord, ProviderFailure,
-        RemoteReport, RemoteReporters, ReportTrack, ScrobblePrefs, ScrobbleSinks, ServiceOutcome,
-        TrackCatalog, TrackInfo, VISIBILITY_FULL,
+        RemoteReport, RemoteReporters, ReportTrack, ScrobblePrefs, ScrobbleSinks, ScrobbleTargets,
+        ServiceOutcome, TrackCatalog, TrackInfo, VISIBILITY_FULL,
     },
     warmup::{WarmupScope, WarmupStats},
 };
@@ -163,13 +163,24 @@ impl FakeSinks {
         calls: &Mutex<Vec<(String, ReportTrack)>>,
         user_id: &str,
         track: &ReportTrack,
+        targets: ScrobbleTargets,
     ) -> HashMap<String, ServiceOutcome> {
         if let Ok(mut seen) = calls.lock() {
             seen.push((user_id.to_owned(), track.clone()));
         }
         self.outcomes
             .lock()
-            .map(|outcomes| outcomes.clone())
+            .map(|outcomes| {
+                outcomes
+                    .iter()
+                    .filter(|(service, _)| match service.as_str() {
+                        "lastfm" => targets.lastfm,
+                        "listenbrainz" => targets.listenbrainz,
+                        _ => true,
+                    })
+                    .map(|(service, outcome)| (service.clone(), outcome.clone()))
+                    .collect()
+            })
             .unwrap_or_default()
     }
 }
@@ -179,16 +190,18 @@ impl ScrobbleSinks for FakeSinks {
         &self,
         user_id: &str,
         track: &ReportTrack,
+        targets: ScrobbleTargets,
     ) -> HashMap<String, ServiceOutcome> {
-        self.answer(&self.now_playing_calls, user_id, track)
+        self.answer(&self.now_playing_calls, user_id, track, targets)
     }
 
     fn submit_scrobble(
         &self,
         user_id: &str,
         track: &ReportTrack,
+        targets: ScrobbleTargets,
     ) -> HashMap<String, ServiceOutcome> {
-        self.answer(&self.scrobble_calls, user_id, track)
+        self.answer(&self.scrobble_calls, user_id, track, targets)
     }
 }
 

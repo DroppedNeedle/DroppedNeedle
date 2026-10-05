@@ -50,10 +50,12 @@
 pub mod error;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fakes;
+pub mod forwarding;
 pub mod handlers;
 pub mod models;
 pub mod ports;
 pub mod reports;
+pub mod scrobble_models;
 pub mod services;
 pub mod sqlite;
 pub mod warmup;

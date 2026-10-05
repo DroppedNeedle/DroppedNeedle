@@ -26,8 +26,9 @@ use super::{
     },
     ports::{
         Clock, DisplayNames, ListeningPrefs, PlayHistory, PlayRecord, ProviderFailure,
-        RemoteReport, RemoteReporters, ReportTrack, ScrobblePrefs, ScrobbleSinks, ServiceOutcome,
-        TrackCatalog, TrackInfo, VISIBILITY_FULL, VISIBILITY_OFFLINE, VISIBILITY_TRACK_HIDDEN,
+        RemoteReport, RemoteReporters, ReportTrack, ScrobblePrefs, ScrobbleSinks, ScrobbleTargets,
+        ServiceOutcome, TrackCatalog, TrackInfo, VISIBILITY_FULL, VISIBILITY_OFFLINE,
+        VISIBILITY_TRACK_HIDDEN,
     },
 };
 use crate::ids::IdGenerator;
@@ -1101,12 +1102,28 @@ pub fn forward_sink_now_playing(
         source,
         played_at: None,
     };
-    let outcomes = deps.sinks.report_now_playing(user_id, &track);
-    let (services, any_success) = collect_outcomes(&prefs, outcomes);
+    let targets = targets(&prefs);
+    if targets.is_empty() {
+        return Ok(ScrobbleResponse {
+            accepted: false,
+            services: HashMap::new(),
+        });
+    }
+    let outcomes = deps.sinks.report_now_playing(user_id, &track, targets);
+    let (services, any_success) = collect_outcomes(outcomes);
     Ok(ScrobbleResponse {
         accepted: any_success,
         services,
     })
+}
+
+/// The services a user's preferences forward to (v2: one task per enabled
+/// toggle, and the sink then needs a linked account).
+fn targets(prefs: &ScrobblePrefs) -> ScrobbleTargets {
+    ScrobbleTargets {
+        lastfm: prefs.scrobble_to_lastfm,
+        listenbrainz: prefs.scrobble_to_listenbrainz,
+    }
 }
 
 /// Shared submit core: name-dedup, history, short-track gate, delegation,
@@ -1153,32 +1170,30 @@ fn submit_counted_play(
             services: HashMap::new(),
         };
     }
-    let outcomes = deps.sinks.submit_scrobble(user_id, report);
-    let (services, _) = collect_outcomes(&prefs, outcomes);
+    let targets = targets(&prefs);
+    if targets.is_empty() {
+        return ScrobbleResponse {
+            accepted: true,
+            services: HashMap::new(),
+        };
+    }
+    let outcomes = deps.sinks.submit_scrobble(user_id, report, targets);
+    let (services, _) = collect_outcomes(outcomes);
     ScrobbleResponse {
         accepted: true,
         services,
     }
 }
 
-/// Keep only the outcomes behind enabled preferences, and note whether any
-/// service took the report (v2 `_gather_results`: failures become
-/// per-service errors, never a failed call).
+/// Render per-service outcomes and note whether any service took the
+/// report (v2 `_gather_results`: failures become per-service errors, never
+/// a failed call).
 fn collect_outcomes(
-    prefs: &ScrobblePrefs,
     outcomes: HashMap<String, ServiceOutcome>,
 ) -> (HashMap<String, ServiceResult>, bool) {
     let mut services = HashMap::new();
     let mut any_success = false;
     for (name, outcome) in outcomes {
-        let enabled = match name.as_str() {
-            "lastfm" => prefs.scrobble_to_lastfm,
-            "listenbrainz" => prefs.scrobble_to_listenbrainz,
-            _ => true,
-        };
-        if !enabled {
-            continue;
-        }
         if outcome.success {
             any_success = true;
         } else {
@@ -1221,7 +1236,11 @@ fn forward_now_playing(
         source: source.map(str::to_owned),
         played_at: None,
     };
-    let (services, _) = collect_outcomes(&prefs, deps.sinks.report_now_playing(user_id, &report));
+    let targets = targets(&prefs);
+    if targets.is_empty() {
+        return;
+    }
+    let (services, _) = collect_outcomes(deps.sinks.report_now_playing(user_id, &report, targets));
     if services.values().any(|result| !result.success) {
         tracing::debug!("session-start now-playing forward partially failed");
     }

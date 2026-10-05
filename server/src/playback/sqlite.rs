@@ -22,8 +22,8 @@ use crate::auth::times::to_iso;
 use crate::ids::IdGenerator;
 
 use super::ports::{
-    DisplayNames, ListeningPrefs, PlayHistory, PlayRecord, ProviderFailure, ScrobblePrefs,
-    TrackCatalog, TrackInfo, VISIBILITY_FULL,
+    DisplayNames, ListeningPrefs, PlayHistory, PlayRecord, ProviderFailure, ScrobbleLinks,
+    ScrobblePrefs, ScrobbleTargets, TrackCatalog, TrackInfo, VISIBILITY_FULL,
 };
 
 /// Production playback stores over one rusqlite handle.
@@ -227,6 +227,61 @@ impl PlaybackDb {
             Ok(None) => Ok(VISIBILITY_FULL.to_owned()),
             Err(error) => Err(ProviderFailure(error.to_string())),
         }
+    }
+}
+
+impl ScrobbleLinks for PlaybackDb {
+    fn linked(&self, user_id: &str) -> ScrobbleTargets {
+        off_worker(|| self.read_links(user_id))
+    }
+}
+
+impl PlaybackDb {
+    /// Linked scrobble services from `user_connections`: a ListenBrainz
+    /// row (its document is sealed whole, so presence is the signal) and
+    /// a Last.fm row whose plain document carries a session key. A failed
+    /// read logs and reads as unlinked.
+    fn read_links(&self, user_id: &str) -> ScrobbleTargets {
+        let mut targets = ScrobbleTargets::default();
+        let Some(guard) = self.lock() else {
+            return targets;
+        };
+        let rows = guard
+            .prepare(
+                "SELECT service, connection_data FROM user_connections \
+                 WHERE user_id = ?1 AND enabled = 1 AND service IN ('lastfm', 'listenbrainz')",
+            )
+            .and_then(|mut query| {
+                query
+                    .query_map([user_id], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()
+            });
+        let rows = match rows {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::warn!(%error, "scrobble link read failed; forwarding nothing");
+                return targets;
+            }
+        };
+        for (service, data) in rows {
+            match service.as_str() {
+                "listenbrainz" => targets.listenbrainz = true,
+                "lastfm" => {
+                    targets.lastfm = serde_json::from_str::<serde_json::Value>(&data)
+                        .ok()
+                        .and_then(|doc| {
+                            doc.get("session_key")
+                                .and_then(serde_json::Value::as_str)
+                                .map(|key| !key.is_empty())
+                        })
+                        .unwrap_or(false);
+                }
+                _ => {}
+            }
+        }
+        targets
     }
 }
 

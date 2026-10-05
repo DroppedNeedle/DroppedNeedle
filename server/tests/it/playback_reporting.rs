@@ -582,3 +582,127 @@ async fn compat_now_playing_serves_full_sessions_only() {
     assert_eq!(served[0].1, "track-1");
     assert_eq!(served[0].0.track_name, "Roads");
 }
+
+// ---------------------------------------------------------------------------
+// Scrobble forwarding
+// ---------------------------------------------------------------------------
+
+/// Every user has ListenBrainz linked; nobody has Last.fm.
+struct ListenBrainzOnly;
+
+impl playback::ports::ScrobbleLinks for ListenBrainzOnly {
+    fn linked(&self, _user_id: &str) -> playback::ports::ScrobbleTargets {
+        playback::ports::ScrobbleTargets {
+            lastfm: false,
+            listenbrainz: true,
+        }
+    }
+}
+
+/// One fixed ListenBrainz token per user.
+struct FixedToken;
+
+impl playback::forwarding::ScrobbleCredentials for FixedToken {
+    fn listenbrainz_token<'a>(
+        &'a self,
+        _user_id: &'a str,
+    ) -> droppedneedle::remotes::adapter::BoxFuture<'a, Option<String>> {
+        Box::pin(async { Some("lb-token".to_owned()) })
+    }
+
+    fn lastfm_session<'a>(
+        &'a self,
+        _user_id: &'a str,
+    ) -> droppedneedle::remotes::adapter::BoxFuture<'a, Option<playback::forwarding::LastFmSession>>
+    {
+        Box::pin(async { None })
+    }
+}
+
+type SeenListens = Arc<std::sync::Mutex<Vec<(String, Value)>>>;
+
+async fn record_listen(
+    axum::extract::State(seen): axum::extract::State<SeenListens>,
+    headers: axum::http::HeaderMap,
+    axum::Json(body): axum::Json<Value>,
+) -> axum::Json<Value> {
+    let auth = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    seen.lock().expect("lock").push((auth, body));
+    axum::Json(json!({"status": "ok"}))
+}
+
+/// A counted play reaches ListenBrainz as a `single` listen with the
+/// user's token, once: the dedup keeps a repeat submit at home.
+#[tokio::test]
+async fn a_scrobble_reaches_listenbrainz_once() {
+    use playback::forwarding::{Endpoints, ForwardWorker, ScrobbleForwarder};
+    use playback::models::ScrobbleSubmitRequest;
+
+    let seen: SeenListens = Arc::default();
+    let sink = Router::new()
+        .route("/1/submit-listens", axum::routing::post(record_listen))
+        .with_state(seen.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("binds");
+    let base = format!("http://{}", listener.local_addr().expect("addr"));
+    let server = tokio::spawn(async move {
+        let _ = axum::serve(listener, sink).await;
+    });
+
+    let (forwarder, rx) = ScrobbleForwarder::channel(
+        Arc::new(ListenBrainzOnly),
+        Arc::new(droppedneedle::auth::users::memory::StaticLastFmSwitch(true)),
+    );
+    let worker = ForwardWorker::new(
+        rx,
+        reqwest::Client::new(),
+        Arc::new(FixedToken),
+        Endpoints {
+            listenbrainz: base,
+            lastfm: "http://127.0.0.1:9/unused".to_owned(),
+        },
+    );
+    let worker = tokio::spawn(worker.run());
+    let mut rig = rig();
+    rig.deps.sinks = Arc::new(forwarder);
+    let request = ScrobbleSubmitRequest {
+        track_name: "Roads".to_owned(),
+        artist_name: "Portishead".to_owned(),
+        timestamp: NOW - 60,
+        album_name: Some("Dummy".to_owned()),
+        duration_ms: Some(240_000),
+        mbid: None,
+        release_group_mbid: None,
+        source: None,
+    };
+    for _ in 0..2 {
+        let answer =
+            playback::services::submit_scrobble(&rig.deps, "user-1", &request).expect("accepted");
+        assert!(answer.accepted);
+    }
+    for _ in 0..100 {
+        if !seen.lock().expect("lock").is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    drop(rig);
+    let _ = tokio::time::timeout(Duration::from_secs(5), worker).await;
+    server.abort();
+    let seen = seen.lock().expect("lock").clone();
+    assert_eq!(seen.len(), 1, "the dedup keeps the repeat at home");
+    let (auth, body) = &seen[0];
+    assert_eq!(auth, "Token lb-token");
+    assert_eq!(body["listen_type"], "single");
+    assert_eq!(body["payload"][0]["listened_at"], NOW - 60);
+    assert_eq!(body["payload"][0]["track_metadata"]["track_name"], "Roads");
+    assert_eq!(
+        body["payload"][0]["track_metadata"]["release_name"],
+        "Dummy"
+    );
+}

@@ -169,7 +169,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         &config.library_db_path,
     )
     .map_err(stage("library setup"))?;
-    let (media, report_worker) = MediaSetup::build(
+    let (media, media_workers) = MediaSetup::build(
         &config.library_db_path,
         &config,
         auth.users.clone(),
@@ -294,10 +294,10 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
 
     let mut background = Background::new(config.shutdown_grace);
     let stop = background.stop_signal();
-    // Attribution drain: exits once the app drops its queue handles.
+    // Attribution and scrobble drains: exit once the app drops its queue handles.
     background.push(
-        "report-worker",
-        tokio::spawn(async move { report_worker.run().await }),
+        "media-workers",
+        tokio::spawn(async move { media_workers.run().await }),
     );
     let acquire_loops = acquire
         .spawn_loops(
