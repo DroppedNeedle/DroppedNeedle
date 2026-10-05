@@ -7,10 +7,6 @@
 //! in-repo [`MockSlskd`] server is the executable record of the
 //! live-verified quirks; the `acquire_slskd` contract briefs run against it
 //! on loopback and never touch a live slskd instance.
-//!
-//! Wiring note: this module is intentionally free of `crate::` references so
-//! the slice compiles standalone ahead of integration; the integrator wires
-//! it with one `pub mod` line and no code changes.
 
 pub mod client;
 pub mod error;

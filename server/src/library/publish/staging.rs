@@ -16,10 +16,6 @@
 //! * Items with no managed updates stage byte-identical without
 //!   touching the tag stack, so pure moves never trip tag refusals
 //!   (read-only formats, mixed ID3) on files whose tags they keep.
-//!
-//! `super::super::tags` resolves to the wired tags slice in the
-//! library build and to the `tags` shim in the standalone publish
-//! briefs; both spellings name the same module.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

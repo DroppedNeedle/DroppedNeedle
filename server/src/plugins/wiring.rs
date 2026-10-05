@@ -22,8 +22,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::Router;
 
-// Shared items resolve through the `droppedneedle` crate name, slice
-// siblings through `super`.
 use crate::auth::users::{UsersDeps, roles::Role};
 use crate::db::WriteLane;
 use crate::http_client::HttpClientFactory;

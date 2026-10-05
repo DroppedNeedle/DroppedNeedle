@@ -1,7 +1,6 @@
 //! Wiring bridges to sibling slices, over plain data only.
 //!
-//! This slice stays standalone-compilable (the briefs include it by path),
-//! so the bridges it needs from the app are local traits over plain
+//! The bridges this slice needs from the app are local traits over plain
 //! structs, implemented by the stage-7 wiring. Both default to `None`:
 //!
 //! - [`FollowDecisionSink`] carries approval verdicts into the reads
