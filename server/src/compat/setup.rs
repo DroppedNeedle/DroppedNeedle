@@ -220,6 +220,25 @@ impl CompatSetup {
         self
     }
 
+    /// Key rate limits and lockouts by the client behind these proxies
+    /// (`TRUSTED_PROXY_IPS`).
+    #[must_use]
+    pub fn with_trusted_proxies(
+        mut self,
+        trusted: crate::auth::session::middleware::TrustedProxies,
+    ) -> Self {
+        self.limits = self.limits.with_trusted_proxies(trusted);
+        self.router = Self::assemble(
+            &self.verifier,
+            &self.store,
+            &self.audio,
+            &self.subsonic_settings,
+            &self.jellyfin,
+            &self.limits,
+        );
+        self
+    }
+
     /// The mounted compat routers with the shared layers, ready to merge
     /// outside the `/api` session gate. Case-variant paths and preflights
     /// never match a route; the app fallbacks redispatch them here via

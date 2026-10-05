@@ -12,7 +12,7 @@
 //! answers an empty 429 plus `Retry-After`.
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -24,6 +24,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 
 use crate::auth::compat_auth::jellyfin::{JellyfinPasswordStore, JellyfinRequest, extract_token};
+use crate::auth::session::middleware::TrustedProxies;
+use crate::client_ip::ClientIp;
 use crate::compat::shared::{auth, cors, path_case, ratelimit, redact};
 use crate::compat::subsonic::auth::Principal;
 use crate::compat::subsonic::error::SubsonicError;
@@ -209,6 +211,8 @@ pub struct CompatLimits {
     pub labels: Arc<dyn LabelLookup>,
     /// Server name/version for Subsonic limit envelopes.
     pub settings: Settings,
+    /// Peers whose `X-Forwarded-For` names the client; loopback by default.
+    pub trusted_proxies: TrustedProxies,
 }
 
 impl CompatLimits {
@@ -219,7 +223,16 @@ impl CompatLimits {
             started: Arc::new(Instant::now()),
             labels,
             settings,
+            trusted_proxies: TrustedProxies::default(),
         }
+    }
+
+    /// Key buckets and lockouts by the client behind these proxies
+    /// (`TRUSTED_PROXY_IPS`).
+    #[must_use]
+    pub fn with_trusted_proxies(mut self, trusted: TrustedProxies) -> Self {
+        self.trusted_proxies = trusted;
+        self
     }
 
     fn now(&self) -> f64 {
@@ -233,14 +246,13 @@ impl CompatLimits {
     }
 }
 
-/// Client ip for limit labeling: the TCP peer when served with connect
-/// info, else `unknown` (same limitation as the session middleware).
-fn limit_ip(request: &Request) -> String {
+/// Client ip for limit labeling: the trusted-proxy verdict over the TCP
+/// peer, else `unknown` when served without connect info.
+fn limit_ip(request: &Request, trusted: &TrustedProxies) -> Option<IpAddr> {
     request
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
-        .map(|info| info.0.ip().to_string())
-        .unwrap_or_else(|| "unknown".to_owned())
+        .map(|info| crate::client_ip::client_ip(info.0, request.headers(), trusted))
 }
 
 /// Exact-spelling query lookup for the two Jellyfin auth keys (v2 reads
@@ -330,13 +342,18 @@ fn limit_reject(
 /// is an auth denial); Subsonic denials record in the adapter.
 pub async fn limits_layer(
     State(state): State<CompatLimits>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
     let path = request.uri().path().to_owned();
     let method = request.method().to_string();
     let media = ratelimit::is_media_request(&path);
-    let ip = limit_ip(&request);
+    let client = limit_ip(&request, &state.trusted_proxies);
+    // The Subsonic adapter keys its post-verify buckets on the same value.
+    if let Some(client) = client {
+        request.extensions_mut().insert(ClientIp(client));
+    }
+    let ip = client.map_or_else(|| "unknown".to_owned(), |client| client.to_string());
     let now = state.now();
     let raw_query = request.uri().query().map(str::to_owned);
     if let Some(retry_after) = auth::auth_locked_out(&mut state.lock(), &ip, now) {
@@ -601,8 +618,8 @@ where
     let params = SubsonicParameters::new(pairs);
     let ip = parts
         .extensions
-        .get::<ConnectInfo<SocketAddr>>()
-        .map(|info| info.0.ip().to_string())
+        .get::<ClientIp>()
+        .map(|client| client.0.to_string())
         .unwrap_or_else(|| "unknown".to_owned());
     let now = state.now();
     // Principal buckets + backoff run here (post-verify); the public

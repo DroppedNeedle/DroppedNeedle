@@ -215,7 +215,8 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         media.stream.engine.clone(),
         library.clone(),
         &connect_apps,
-    );
+    )
+    .with_trusted_proxies(config.trusted_proxies.clone());
     let admin = AdminSetup::new(
         auth.users.clone(),
         acquire.requests.quota.clone(),
