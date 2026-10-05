@@ -505,6 +505,7 @@ fn import_refuses_while_the_server_holds_the_database() {
 }
 
 /// A migrated merge target plus its repaired export, ready for one seed.
+/// The scratch guard comes last; keep it alive for the whole test.
 async fn merge_target(
     tag: &str,
 ) -> (
@@ -512,6 +513,7 @@ async fn merge_target(
     PathBuf,
     sqlx::SqlitePool,
     PathBuf,
+    droppedneedle::tooling::scratch::ScratchDir,
 ) {
     let root = scratch_dir(tag);
     let (fixture, export) = repaired_export(&root);
@@ -526,7 +528,7 @@ async fn merge_target(
         .expect("schema migrates");
     let config_dir = root.join("config");
     std::fs::create_dir_all(&config_dir).expect("config dir");
-    (fixture, export, pool, config_dir)
+    (fixture, export, pool, config_dir, root)
 }
 
 async fn run_merge(
@@ -553,7 +555,7 @@ async fn run_merge(
 /// Same-id users keep the existing row, untouched.
 #[tokio::test]
 async fn same_id_user_conflict_keeps_existing_row() {
-    let (fixture, export, pool, config_dir) = merge_target("merge-user").await;
+    let (fixture, export, pool, config_dir, _root) = merge_target("merge-user").await;
     sqlx::query(
         "INSERT INTO auth_users (id, display_name, email, role, created_at, username)
          VALUES (?, 'Old Alice', 'old@example.com', 'user',
@@ -589,7 +591,7 @@ async fn same_id_user_conflict_keeps_existing_row() {
 /// Follows merge: auto_download OR, followed_at min, updated_at max.
 #[tokio::test]
 async fn follow_conflict_merges_or_min_max() {
-    let (fixture, export, pool, config_dir) = merge_target("merge-follow").await;
+    let (fixture, export, pool, config_dir, _root) = merge_target("merge-follow").await;
     sqlx::query(
         "INSERT INTO auth_users (id, display_name, role, created_at) VALUES (?, 'Alice', 'user', '')",
     )
@@ -634,7 +636,7 @@ async fn follow_conflict_merges_or_min_max() {
 /// Approvals keep the most-permissive state with the earliest request.
 #[tokio::test]
 async fn approval_conflict_keeps_most_permissive() {
-    let (fixture, export, pool, config_dir) = merge_target("merge-approval").await;
+    let (fixture, export, pool, config_dir, _root) = merge_target("merge-approval").await;
     sqlx::query(
         "INSERT INTO auth_users (id, display_name, role, created_at) VALUES (?, 'Alice', 'user', '')",
     )
