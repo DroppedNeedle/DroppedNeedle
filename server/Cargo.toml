@@ -30,6 +30,7 @@ rusqlite = { version = "0.32", features = ["bundled", "backup", "functions"] }
 rusty-chromaprint = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+socket2 = "0.6"
 sha2 = "0.10"
 sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio", "macros", "migrate"] }
 symphonia = { version = "0.6", features = ["aac", "alac", "isomp4", "mp3"] }

@@ -408,6 +408,18 @@ impl AuthSetup {
             .merge(plex_router(self.plex.clone()))
     }
 
+    /// Trust these proxies for forwarded host and proto in the session
+    /// gate and the login routes (`TRUSTED_PROXY_IPS`).
+    #[must_use]
+    pub fn with_trusted_proxies(
+        mut self,
+        trusted: crate::auth::session::middleware::TrustedProxies,
+    ) -> Self {
+        self.session_auth = self.session_auth.with_trusted_proxies(trusted.clone());
+        self.native = self.native.with_trusted_proxies(trusted);
+        self
+    }
+
     /// Test bundle over unwired adapters. Nothing here touches a database:
     /// every SQLite adapter fails closed until wired, which is exactly what
     /// non-auth tests need (the middleware passes non-v3 paths through;

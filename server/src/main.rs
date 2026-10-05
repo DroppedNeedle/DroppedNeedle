@@ -1,38 +1,12 @@
 //! DroppedNeedle v3 server binary: one process, graceful SIGTERM shutdown.
+//!
+//! This file keeps the process concerns: arguments, allocator tuning,
+//! the async runtime, the listener and the stop signal. Everything the
+//! server is made of is wired in `droppedneedle::bootstrap`.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::Arc;
-
-use droppedneedle::{
-    AppConfig, AppState,
-    admin::{AdminDb, AdminSetup, quota::reload_overrides},
-    auth::{prod::ProdAuth, users::stores::SystemClock, wiring::AuthSetup},
-    compat::CompatSetup,
-    create_app_with_web,
-    db::{BackupService, DbConfig, open_runtime},
-    docs::ApiDoc,
-    http_client::HttpClientFactory,
-    ids::UuidGenerator,
-    jobs::wiring::{JobsSetup, SHUTDOWN_GRACE},
-    media::MediaSetup,
-    observability::init_tracing,
-    plugins::wiring::PluginsSetup,
-    providers::{Providers, adapters::production_enrichment},
-    reads::ReadsSetup,
-    runtime_config::{
-        ConfigStore, Crypto,
-        secret_sections::{ListenBrainzConnection, WrappedSettings},
-        sections::{ConnectApps, LyricsSettings},
-    },
-    settings::{
-        effects::{LiveSaveEffects, SaveEffects},
-        section_prefs::{SqliteLinkStatus, SqliteSectionPrefsStore},
-        services::SqliteImpactBuckets,
-        wiring::SettingsSetup,
-    },
-};
+use droppedneedle::{AppConfig, bootstrap, docs::ApiDoc, observability::init_tracing};
 use utoipa::OpenApi as _;
 
 /// `--print-openapi` dumps the contract document to stdout for the
@@ -41,6 +15,7 @@ const PRINT_OPENAPI_ARG: &str = "--print-openapi";
 
 /// `--tooling-routes` mounts the dev-only tooling routes (covers-debug).
 /// Debug builds only: a release binary rejects it as unknown.
+#[cfg(debug_assertions)]
 const TOOLING_ROUTES_ARG: &str = "--tooling-routes";
 
 /// Bound glibc malloc arenas and trim retained heap promptly.
@@ -88,11 +63,20 @@ fn main() {
         eprintln!("unknown argument {unknown:?}: expected {PRINT_OPENAPI_ARG}");
         std::process::exit(2);
     }
+    let config = match AppConfig::load() {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    };
     #[cfg(debug_assertions)]
-    let tooling_routes = args.iter().any(|arg| arg == TOOLING_ROUTES_ARG);
-    #[cfg(not(debug_assertions))]
-    let tooling_routes = false;
-
+    let config = AppConfig {
+        debug_cors: true,
+        tooling_routes: args.iter().any(|arg| arg == TOOLING_ROUTES_ARG),
+        ..config
+    };
+    init_tracing(&config.log_filter);
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -103,8 +87,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    let outcome = runtime.block_on(serve(tooling_routes));
-    if let Err(message) = outcome {
+    if let Err(message) = runtime.block_on(run(config)) {
         eprintln!("{message}");
         std::process::exit(1);
     }
@@ -121,413 +104,21 @@ fn print_openapi() {
     }
 }
 
-/// Boot state, bind, and serve until SIGTERM or Ctrl-C.
-async fn serve(tooling_routes: bool) -> Result<(), String> {
-    let mut config = AppConfig::load().map_err(|error| error.to_string())?;
-    init_tracing(&config.log_filter);
-    #[cfg(debug_assertions)]
-    {
-        config.debug_cors = true;
-        config.tooling_routes = tooling_routes;
-    }
-    #[cfg(not(debug_assertions))]
-    let _ = tooling_routes;
-    let http = HttpClientFactory::with_settings(&config.http).map_err(|error| error.to_string())?;
-    // Takes a verified backup first when the schema is behind, then migrates.
-    let runtime = open_runtime(&DbConfig::new(&config.library_db_path))
+/// Boot, bind, and serve until SIGTERM or Ctrl-C.
+async fn run(config: AppConfig) -> Result<(), String> {
+    let (host, port) = (config.bind_host, config.port);
+    let (router, background) = bootstrap::build(config)
+        .await
+        .map_err(|error| format!("boot failed: {error}"))?;
+    let listener = bootstrap::bind(host, port)
         .await
         .map_err(|error| error.to_string())?;
-    // Stamp BASE_PATH into a copy of the shipped web UI, off the workers.
-    let web = {
-        let template = config.static_dir.clone();
-        let served = config.served_static_dir();
-        let base_path = config.base_path.clone();
-        tokio::task::spawn_blocking(move || {
-            droppedneedle::web::WebUi::prepare(&template, &served, &base_path)
-        })
-        .await
-        .map_err(|error| error.to_string())?
-        .map_err(|error| error.to_string())?
-    };
-    if web.is_none() {
-        tracing::warn!("no web UI build found; serving the API only");
+    if let Ok(address) = listener.local_addr() {
+        tracing::info!(%address, "listening");
     }
-    // Two handles over one key file: the store owns its copy outright, so
-    // the adapters load a second handle rather than sharing state.
-    let crypto = Arc::new(
-        Crypto::load_or_generate(&config.config_dir()).map_err(|error| error.to_string())?,
-    );
-    let config_store = Arc::new(
-        ConfigStore::open(
-            &config.config_file,
-            Crypto::load_or_generate(&config.config_dir()).map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())?,
-    );
-    let ids = Arc::new(UuidGenerator);
-    let clock = Arc::new(SystemClock);
-    let auth_bundle = ProdAuth::new(
-        runtime.pool(),
-        runtime.lane(),
-        crypto.clone(),
-        ids.clone(),
-        clock.clone(),
-        &config.cache_dir,
-    );
-    let auth = AuthSetup::build(
-        auth_bundle,
-        config_store.clone(),
-        crypto.clone(),
-        http.shared().clone(),
-        ids.clone(),
-        clock,
-        &config.base_path,
-    )
-    .map_err(|error| error.to_string())?;
-    let wrapped_api_key = config_store
-        .get_raw::<WrappedSettings>()
-        .map(|settings| settings.api_key.expose().to_owned())
-        .map_err(|error| error.to_string())?;
-    // Shared provider deps first: the reads enrichment pair paces through
-    // these same limiters, so production holds one limiter set, not two.
-    // The byte cache stays shared with the admin UX (stats/clear observe
-    // the same entries the clients read).
-    let provider_cache = Arc::new(droppedneedle::providers::InMemoryProviderCache::new());
-    let providers = Arc::new(Providers::new(provider_cache.clone()));
-    let listenbrainz_enabled = match config_store.get_raw::<ListenBrainzConnection>() {
-        Ok(settings) => settings.enabled,
-        Err(error) => {
-            tracing::warn!(%error, "cannot read listenbrainz settings; popularity enrichment disabled");
-            false
-        }
-    };
-    let lyrics_enabled = match config_store.get::<LyricsSettings>() {
-        Ok(settings) => settings.enabled,
-        Err(error) => {
-            tracing::warn!(%error, "cannot read lyrics settings; lyrics enrichment disabled");
-            false
-        }
-    };
-    let enrichment = production_enrichment(
-        http.shared(),
-        &providers,
-        listenbrainz_enabled,
-        lyrics_enabled,
-    );
-    let reads = ReadsSetup::build(
-        runtime.pool(),
-        auth.users.clone(),
-        ids.clone(),
-        wrapped_api_key,
-        Some(enrichment),
-    );
-    let connect_apps = match config_store.get::<ConnectApps>() {
-        Ok(settings) => settings,
-        Err(error) => {
-            tracing::warn!(%error, "cannot read connect_apps settings; transcode defaults apply");
-            ConnectApps::default()
-        }
-    };
-    let library = droppedneedle::library::wiring::LibrarySetup::build(
-        auth.users.clone(),
-        &http,
-        ids.clone(),
-        providers.clone(),
-        &config.library_db_path,
-    )
-    .map_err(|error| format!("library setup: {error}"))?;
-    let compat_crypto = crypto.clone();
-    let plugins_crypto = crypto.clone();
-    let (media, report_worker) = MediaSetup::build(
-        &config.library_db_path,
-        &config,
-        auth.users.clone(),
-        crypto,
-        http.shared().clone(),
-        ids.clone(),
-        connect_apps.clone(),
-        Some(library.root_source()),
-    )
-    .map_err(|error| error.to_string())?;
-    let mut reads = reads;
-    let acquire = droppedneedle::acquire::AcquireSetup::build(
-        &config.library_db_path,
-        &config,
-        auth.users.clone(),
-        &http,
-        ids.clone(),
-        config_store.clone(),
-        &mut reads.collections,
-    )
-    .map_err(|error| format!("acquire setup: {error}"))?;
-    acquire.refresh_admins().await;
-    // Startup recovery before serving traffic: journal classification
-    // plus durable-op registration. Re-running after a clean shutdown
-    // is a no-op (nothing destructive repeats).
-    let recovery = acquire
-        .run_recovery(runtime.wakeups(), runtime.lane())
+    bootstrap::serve(listener, router, background, shutdown_signal())
         .await
-        .map_err(|error| format!("acquire recovery: {error}"))?;
-    tracing::info!(
-        redispatched = recovery.redispatched,
-        resumed = recovery.resumed,
-        restarted = recovery.restarted,
-        "acquire recovery complete"
-    );
-    // Library recovery before serving traffic: publish journal
-    // reconciliation (resume-or-compensate) plus contribution lease
-    // recovery. Scan recovery runs in the supervisor preamble.
-    // Re-running after a clean shutdown is a no-op.
-    let library_recovery = library
-        .run_recovery()
-        .await
-        .map_err(|error| format!("library recovery: {error}"))?;
-    tracing::info!(
-        publish_bundles = library_recovery.publish_recoveries.len(),
-        contrib_recovered = library_recovery.contrib_recovered,
-        "library recovery complete"
-    );
-    // Compat shims: production auth/playback/engine bindings. No new
-    // loops: everything runs inline in the request path.
-    let compat = CompatSetup::build(
-        auth.users.clone(),
-        compat_crypto,
-        media.playback.clone(),
-        media.stream.engine.clone(),
-        library.clone(),
-        &connect_apps,
-    );
-    let admin = AdminSetup::new(
-        auth.users.clone(),
-        acquire.requests.quota.clone(),
-        provider_cache.clone(),
-        providers.clone(),
-    )
-    .with_db(AdminDb::new(runtime.pool().clone(), runtime.lane().clone()))
-    .with_backups(BackupService::new(
-        &config.library_db_path,
-        runtime.backups().backup_dir(),
-    ))
-    .with_checkpoint(runtime.checkpoint().clone());
-    // Durable quota overrides back into the live ledger. A failure here
-    // warns instead of bricking the boot; the admin can re-save.
-    match reload_overrides(runtime.pool(), &acquire.requests.quota).await {
-        Ok(loaded) => tracing::info!(loaded, "quota overrides reloaded"),
-        Err(error) => tracing::warn!(%error, "quota overrides failed to reload; defaults apply"),
-    }
-    // Jobs: the one registry every background loop registers on.
-    let jobs = JobsSetup::build(
-        auth.users.clone(),
-        runtime.wakeups().clone(),
-        runtime.lane().clone(),
-        runtime.checkpoint().clone(),
-        config_store.clone(),
-    );
-    // The precache trigger rides the same registry; the admin route is its
-    // only production caller.
-    let admin = admin.with_precache(jobs.precache_trigger());
-    // Settings: the section service with its save fan-out (provider-cache
-    // invalidation over the shared cache plus the jobs-owned events kick),
-    // the admin-gated HTTP surface, the per-user section prefs, and the
-    // policy-impact buckets.
-    let effects: Arc<dyn SaveEffects> = Arc::new(LiveSaveEffects::new(
-        provider_cache.clone(),
-        jobs.events_kick(),
-    ));
-    let settings = SettingsSetup::build(
-        config_store.clone(),
-        effects,
-        ids.clone(),
-        auth.users.clone(),
-        http.shared().clone(),
-        config.timezone.clone(),
-    )
-    .with_section_prefs(
-        Arc::new(SqliteSectionPrefsStore {
-            pool: runtime.pool().clone(),
-            lane: Arc::new(runtime.lane().clone()),
-        }),
-        Arc::new(SqliteLinkStatus {
-            pool: runtime.pool().clone(),
-            lastfm: auth.users.lastfm.clone(),
-        }),
-    )
-    .with_impact_buckets(Arc::new(SqliteImpactBuckets {
-        pool: runtime.pool().clone(),
-    }));
-    // Plugins: host, routes, and scrobble backend over the shared
-    // jobs registry (one durable mechanism, no duplicate tick loops).
-    let plugins = PluginsSetup::build(
-        auth.users.clone(),
-        http.shared().clone(),
-        config_store.clone(),
-        ids.clone(),
-        plugins_crypto,
-        config.plugins_dir(),
-        provider_cache.clone(),
-        jobs.registry().clone(),
-        runtime.pool().clone(),
-        runtime.lane().clone(),
-    );
-    plugins.sync_ticks().await;
-    let state = AppState::new(
-        ids,
-        http,
-        config.clone(),
-        auth,
-        reads,
-        providers,
-        media,
-        acquire.clone(),
-        library.clone(),
-        compat,
-        admin,
-        settings,
-        jobs.clone(),
-        plugins,
-    );
-    let app = create_app_with_web(state, web);
-
-    // Discover and home refresh loops: they sleep on their intervals behind
-    // one shutdown watch. The loop bodies are provider-cache rebuild hooks;
-    // no rebuildable provider cache exists yet, so each tick is a guarded
-    // no-op. Intervals, single-flight, shutdown and await are live.
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let refresh_registry =
-        Arc::new(droppedneedle::reads::discover::refresh::RefreshRegistry::new());
-    let discover_loop = {
-        let registry = refresh_registry.clone();
-        let sleeper =
-            droppedneedle::reads::discover::refresh::TokioSleeper::new(shutdown_rx.clone());
-        tokio::spawn(async move {
-            droppedneedle::reads::discover::refresh::run_refresh_loop(
-                registry,
-                sleeper,
-                droppedneedle::reads::discover::refresh::RefreshScope::Discover,
-                || async { Ok::<(), String>(()) },
-            )
-            .await;
-        })
-    };
-    let home_loop = {
-        let registry = refresh_registry.clone();
-        let sleeper =
-            droppedneedle::reads::discover::refresh::TokioSleeper::new(shutdown_rx.clone());
-        tokio::spawn(async move {
-            droppedneedle::reads::discover::refresh::run_refresh_loop(
-                registry,
-                sleeper,
-                droppedneedle::reads::discover::refresh::RefreshScope::Home,
-                || async { Ok::<(), String>(()) },
-            )
-            .await;
-        })
-    };
-
-    // MBID warmup loops (Jellyfin one-shot, Navidrome/Plex every 4h) over
-    // the same shutdown watch. The loop bodies are provider index rebuild
-    // hooks; no rebuildable index exists yet, so each tick is a guarded
-    // no-op. Cadences, single-flight, shutdown and await are live.
-    let warmup = {
-        use droppedneedle::playback::{TokioSleeper, WarmupStats, spawn_warmup_loops};
-
-        let sleeper = TokioSleeper::new(shutdown_rx.clone());
-        spawn_warmup_loops(
-            sleeper,
-            || {
-                Box::pin(async {
-                    Ok::<_, String>(WarmupStats {
-                        scope: "jellyfin",
-                        warmed: 0,
-                        pruned: 0,
-                    })
-                })
-            },
-            || {
-                Box::pin(async {
-                    Ok::<_, String>(WarmupStats {
-                        scope: "navidrome",
-                        warmed: 0,
-                        pruned: 0,
-                    })
-                })
-            },
-            || {
-                Box::pin(async {
-                    Ok::<_, String>(WarmupStats {
-                        scope: "plex",
-                        warmed: 0,
-                        pruned: 0,
-                    })
-                })
-            },
-        )
-    };
-
-    // Attribution drain: remote session reports queued by playback
-    // handlers. The worker exits once the app drops its queue handles.
-    let report_loop = tokio::spawn(async move {
-        report_worker.run().await;
-    });
-
-    // Acquisition loops: the four flows loops, the download
-    // worker, and the probe refresh loop over the same shutdown watch.
-    let acquire_loops = acquire
-        .spawn_loops(
-            runtime.wakeups().clone(),
-            runtime.lane().clone(),
-            shutdown_rx.clone(),
-        )
-        .await
-        .map_err(|error| format!("acquire loops: {error}"))?;
-
-    // Library loops: scan supervisor, filesystem watcher,
-    // identify queue, contribution verifier, publish maintenance.
-    let library_loops = library.spawn_loops(shutdown_rx.clone());
-
-    // Jobs loops: checkpoint, presence, personal-mix, playlist
-    // sync, and the events watcher on the shared registry. Cancellation
-    // runs through the registry at shutdown (below), not the watch.
-    jobs.spawn_loops()
-        .await
-        .map_err(|error| format!("jobs loops: {error}"))?;
-
-    let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), config.port);
-    let listener = tokio::net::TcpListener::bind(address)
-        .await
-        .map_err(|error| format!("cannot bind {address}: {error}"))?;
-    tracing::info!(%address, "listening");
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .map_err(|error| format!("server fault: {error}"))?;
-    let _ = shutdown_tx.send(true);
-    // The registry-owned loops (boot loops, the kick, precache runs, and
-    // plugin ticks) stop through their stop signals, each with the same
-    // grace, before the runtime and its writer lane shut down.
-    jobs.cancel_all(SHUTDOWN_GRACE).await;
-    let mut loops = vec![("discover", discover_loop), ("home", home_loop)];
-    for (scope, task) in ["warmup-jellyfin", "warmup-navidrome", "warmup-plex"]
-        .into_iter()
-        .zip(warmup.tasks)
-    {
-        loops.push((scope, task));
-    }
-    loops.push(("report-worker", report_loop));
-    for (scope, handle) in acquire_loops {
-        loops.push((scope, handle));
-    }
-    for (scope, handle) in library_loops {
-        loops.push((scope, handle));
-    }
-    for (scope, handle) in loops {
-        if let Err(error) = handle.await {
-            tracing::warn!(scope, %error, "background loop ended early");
-        }
-    }
-    runtime.shutdown().await;
-    tracing::info!("shutdown complete");
-    Ok(())
+        .map_err(|error| error.to_string())
 }
 
 /// Resolve when the process should stop: SIGTERM or Ctrl-C.
