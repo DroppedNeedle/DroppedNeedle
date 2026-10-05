@@ -10,8 +10,8 @@ use std::process::{Command, Stdio};
 use crate::common;
 
 /// Scratch directory, removed when the test ends.
-fn scratch_dir(tag: &str) -> droppedneedle::tooling::scratch::ScratchDir {
-    droppedneedle::tooling::scratch::ScratchDir::new(tag).expect("scratch dir creates")
+fn scratch_dir(tag: &str) -> crate::common::ScratchDir {
+    crate::common::ScratchDir::new(tag)
 }
 
 /// The compiled tool binary under test: Cargo's per-test variable when
@@ -513,7 +513,7 @@ async fn merge_target(
     PathBuf,
     sqlx::SqlitePool,
     PathBuf,
-    droppedneedle::tooling::scratch::ScratchDir,
+    crate::common::ScratchDir,
 ) {
     let root = scratch_dir(tag);
     let (fixture, export) = repaired_export(&root);

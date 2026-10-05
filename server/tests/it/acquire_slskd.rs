@@ -47,8 +47,8 @@ fn repository_with_key(mock: &MockSlskd, api_key: &str) -> SlskdRepository<Reqwe
 }
 
 /// Scratch mount, removed when the test ends.
-fn temp_mount(tag: &str) -> droppedneedle::tooling::scratch::ScratchDir {
-    droppedneedle::tooling::scratch::ScratchDir::new(tag).expect("mount creates")
+fn temp_mount(tag: &str) -> crate::common::ScratchDir {
+    crate::common::ScratchDir::new(tag)
 }
 
 // Wire-shape tests.

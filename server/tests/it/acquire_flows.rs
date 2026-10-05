@@ -40,18 +40,12 @@ use droppedneedle::db::{DbConfig, DbRuntime, JobState, open_runtime};
 
 const NOW: i64 = 1_700_000_000;
 /// Scratch directory, removed when the test ends.
-fn scratch_dir(name: &str) -> droppedneedle::tooling::scratch::ScratchDir {
-    droppedneedle::tooling::scratch::ScratchDir::new(name).unwrap()
+fn scratch_dir(name: &str) -> crate::common::ScratchDir {
+    crate::common::ScratchDir::new(name)
 }
 
 /// A served runtime for the tests that need the job registry.
-async fn runtime(
-    name: &str,
-) -> (
-    DbRuntime,
-    AcquireDb,
-    droppedneedle::tooling::scratch::ScratchDir,
-) {
+async fn runtime(name: &str) -> (DbRuntime, AcquireDb, crate::common::ScratchDir) {
     let dir = scratch_dir(name);
     let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
         .await

@@ -13,21 +13,10 @@ use droppedneedle::{
 };
 use tower::ServiceExt as _;
 
-/// A scratch directory removed when the test ends, pass or fail.
-struct Scratch(std::path::PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
 /// A small adapter-static style build, stamped for `base_path`. Keep the
 /// guard alive while the UI serves.
-fn web_ui(name: &str, base_path: &str) -> (WebUi, Scratch) {
-    let dir = std::env::temp_dir().join(format!("dn-web-it-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    let guard = Scratch(dir.clone());
+fn web_ui(name: &str, base_path: &str) -> (WebUi, common::ScratchDir) {
+    let dir = common::ScratchDir::new(&format!("web-{name}"));
     let template = dir.join("template");
     std::fs::create_dir_all(template.join("_app/immutable")).unwrap();
     std::fs::write(
@@ -44,7 +33,7 @@ fn web_ui(name: &str, base_path: &str) -> (WebUi, Scratch) {
     let web = WebUi::prepare(&template, &dir.join("static"), base_path)
         .unwrap()
         .unwrap();
-    (web, guard)
+    (web, dir)
 }
 
 async fn get(

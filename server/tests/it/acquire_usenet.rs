@@ -49,8 +49,8 @@ fn queue_for(_mock: &SabnzbdMock, base: &str, mount: PathBuf) -> SabnzbdQueue {
 }
 
 /// Scratch directory, removed when the test ends.
-fn temp_dir(name: &str) -> droppedneedle::tooling::scratch::ScratchDir {
-    droppedneedle::tooling::scratch::ScratchDir::new(name).expect("temp dir")
+fn temp_dir(name: &str) -> crate::common::ScratchDir {
+    crate::common::ScratchDir::new(name)
 }
 
 fn write_file(path: &std::path::Path, bytes: &[u8]) {

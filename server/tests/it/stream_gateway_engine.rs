@@ -8,9 +8,8 @@
 use droppedneedle::stream;
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use futures_util::StreamExt as _;
 use stream::gateway::{Gateway, RemoteMedia, RemoteReader};
@@ -21,34 +20,11 @@ use stream::routes::{
 };
 use stream::transcode::{StreamPlan, TranscodeBody, TranscodeError, TranscodeSettings, Transcoder};
 
-/// Unique scratch root per test. Removed by [`ScratchRoot::drop`].
-struct ScratchRoot {
-    path: PathBuf,
-}
+use crate::common::ScratchDir;
 
-impl ScratchRoot {
-    fn new(tag: &str) -> Self {
-        static NEXT_ID: AtomicU64 = AtomicU64::new(1);
-        let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
-        let path = std::env::temp_dir().join(format!(
-            "droppedneedle-stream-{}-{}-{}",
-            std::process::id(),
-            id,
-            tag
-        ));
-        std::fs::create_dir_all(&path).unwrap();
-        Self { path }
-    }
-
-    fn write(&self, name: &str, bytes: &[u8]) {
-        std::fs::write(self.path.join(name), bytes).unwrap();
-    }
-}
-
-impl Drop for ScratchRoot {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
+/// Write one file into a scratch root.
+fn put(root: &Path, name: &str, bytes: &[u8]) {
+    std::fs::write(root.join(name), bytes).unwrap();
 }
 
 /// Scripted remote reader: canned objects plus canned faults by key.
@@ -148,13 +124,13 @@ impl Transcoder for FakeTranscoder {
 
 /// One engine over a scratch root, a fake remote, and a fake ffmpeg.
 fn engine(
-    root: &ScratchRoot,
+    root: &ScratchDir,
     remote: FakeRemote,
     transcoder: FakeTranscoder,
     ffmpeg_present: bool,
 ) -> Gateway<FakeRemote, FakeTranscoder> {
     Gateway::new(
-        root.path.clone(),
+        root.to_path_buf(),
         remote,
         transcoder,
         TranscodeSettings::default(),
@@ -190,8 +166,8 @@ fn open_transcode(key: &str, format: &str) -> StreamOpen {
 
 #[tokio::test]
 async fn local_direct_reads_file_bytes() {
-    let root = ScratchRoot::new("direct");
-    root.write("song.flac", b"FLAC-BYTES");
+    let root = ScratchDir::new("direct");
+    put(&root, "song.flac", b"FLAC-BYTES");
     let app = engine(
         &root,
         FakeRemote::default(),
@@ -211,8 +187,8 @@ async fn local_direct_reads_file_bytes() {
 
 #[tokio::test]
 async fn local_escape_attempts_are_forbidden() {
-    let root = ScratchRoot::new("sandbox");
-    root.write("song.mp3", b"MP3");
+    let root = ScratchDir::new("sandbox");
+    put(&root, "song.mp3", b"MP3");
     let app = engine(
         &root,
         FakeRemote::default(),
@@ -235,13 +211,12 @@ async fn local_escape_attempts_are_forbidden() {
 #[tokio::test]
 #[cfg(unix)]
 async fn symlink_escape_is_forbidden() {
-    let root = ScratchRoot::new("symlink-root");
-    root.write("song.mp3", b"MP3");
-    let outside = ScratchRoot::new("symlink-outside");
-    outside.write("secret.mp3", b"SECRET");
-    std::os::unix::fs::symlink(outside.path.join("secret.mp3"), root.path.join("link.mp3"))
-        .unwrap();
-    std::os::unix::fs::symlink(root.path.join("song.mp3"), root.path.join("inner.mp3")).unwrap();
+    let root = ScratchDir::new("symlink-root");
+    put(&root, "song.mp3", b"MP3");
+    let outside = ScratchDir::new("symlink-outside");
+    put(&outside, "secret.mp3", b"SECRET");
+    std::os::unix::fs::symlink(outside.join("secret.mp3"), root.join("link.mp3")).unwrap();
+    std::os::unix::fs::symlink(root.join("song.mp3"), root.join("inner.mp3")).unwrap();
     let app = engine(
         &root,
         FakeRemote::default(),
@@ -269,8 +244,8 @@ async fn symlink_escape_is_forbidden() {
 
 #[tokio::test]
 async fn wma_never_streams() {
-    let root = ScratchRoot::new("wma");
-    root.write("song.wma", b"WMA");
+    let root = ScratchDir::new("wma");
+    put(&root, "song.wma", b"WMA");
     let app = engine(
         &root,
         FakeRemote::default(),
@@ -292,7 +267,7 @@ async fn wma_never_streams() {
 
 #[tokio::test]
 async fn remote_direct_proxies_upstream_bytes() {
-    let root = ScratchRoot::new("remote");
+    let root = ScratchDir::new("remote");
     let remote = FakeRemote {
         objects: HashMap::from([(
             "item-9".to_owned(),
@@ -316,8 +291,8 @@ async fn remote_direct_proxies_upstream_bytes() {
 
 #[tokio::test]
 async fn codec_mismatch_transcodes_through_ffmpeg() {
-    let root = ScratchRoot::new("transcode");
-    root.write("song.flac", b"FLAC-BYTES");
+    let root = ScratchDir::new("transcode");
+    put(&root, "song.flac", b"FLAC-BYTES");
     let transcoder = FakeTranscoder::succeeding(vec![b"MP3-".to_vec(), b"OUT".to_vec()]);
     let app = engine(&root, FakeRemote::default(), transcoder, true);
 
@@ -329,8 +304,8 @@ async fn codec_mismatch_transcodes_through_ffmpeg() {
 
 #[tokio::test]
 async fn raw_format_stays_direct() {
-    let root = ScratchRoot::new("raw");
-    root.write("song.flac", b"FLAC-BYTES");
+    let root = ScratchDir::new("raw");
+    put(&root, "song.flac", b"FLAC-BYTES");
     let transcoder = FakeTranscoder::succeeding(vec![b"SHOULD-NOT-RUN".to_vec()]);
     let calls = Arc::clone(&transcoder.calls);
     let app = engine(&root, FakeRemote::default(), transcoder, true);
@@ -343,8 +318,8 @@ async fn raw_format_stays_direct() {
 
 #[tokio::test]
 async fn ffmpeg_absent_falls_back_to_direct() {
-    let root = ScratchRoot::new("no-ffmpeg");
-    root.write("song.flac", b"FLAC-BYTES");
+    let root = ScratchDir::new("no-ffmpeg");
+    put(&root, "song.flac", b"FLAC-BYTES");
     let transcoder = FakeTranscoder::succeeding(vec![b"SHOULD-NOT-RUN".to_vec()]);
     let calls = Arc::clone(&transcoder.calls);
     let app = engine(&root, FakeRemote::default(), transcoder, false);
@@ -356,8 +331,8 @@ async fn ffmpeg_absent_falls_back_to_direct() {
 
 #[tokio::test]
 async fn transcode_capacity_maps_to_fault() {
-    let root = ScratchRoot::new("transcode-cap");
-    root.write("song.flac", b"FLAC-BYTES");
+    let root = ScratchDir::new("transcode-cap");
+    put(&root, "song.flac", b"FLAC-BYTES");
     let app = engine(
         &root,
         FakeRemote::default(),
@@ -376,8 +351,8 @@ async fn transcode_capacity_maps_to_fault() {
 async fn seek_then_transcode_starts_at_offset() {
     // M1: the seek offset rides the params into decide(), so the ffmpeg
     // plan starts at T instead of 0.
-    let root = ScratchRoot::new("seek-transcode");
-    root.write("song.flac", b"FLAC-BYTES");
+    let root = ScratchDir::new("seek-transcode");
+    put(&root, "song.flac", b"FLAC-BYTES");
     let transcoder = FakeTranscoder::succeeding(vec![b"OUT".to_vec()]);
     let calls = Arc::clone(&transcoder.calls);
     let app = engine(&root, FakeRemote::default(), transcoder, true);
@@ -401,8 +376,8 @@ async fn forced_verdict_transcodes_same_codec_despite_unknown_source_bitrate() {
     // M2: the gateway re-decide sees no source bitrate, so a same-codec
     // bitrate plan lands direct, unless the compat adapter carries the
     // explicit `force_transcode` verdict, which the gateway then honors.
-    let root = ScratchRoot::new("forced");
-    root.write("song.mp3", b"MP3-BYTES");
+    let root = ScratchDir::new("forced");
+    put(&root, "song.mp3", b"MP3-BYTES");
     let transcoder = FakeTranscoder::succeeding(vec![b"OUT".to_vec()]);
     let calls = Arc::clone(&transcoder.calls);
     let app = engine(&root, FakeRemote::default(), transcoder, true);
@@ -473,8 +448,8 @@ async fn cancelled_acquire_leaves_no_waiter() {
 // output arrives before the transcode ends.
 #[tokio::test]
 async fn streaming_open_reads_lazily() {
-    let root = ScratchRoot::new("lazy");
-    root.write("song.flac", b"FLAC-BYTES");
+    let root = ScratchDir::new("lazy");
+    put(&root, "song.flac", b"FLAC-BYTES");
     let mut transcoder = FakeTranscoder::succeeding(vec![b"FIRST".to_vec()]);
     transcoder.stall = true;
     let calls = Arc::clone(&transcoder.calls);

@@ -26,8 +26,8 @@ use downloads::{
 use rusqlite::Connection;
 
 /// Scratch directory, removed when the test ends.
-fn scratch_dir(tag: &str) -> droppedneedle::tooling::scratch::ScratchDir {
-    droppedneedle::tooling::scratch::ScratchDir::new(tag).unwrap()
+fn scratch_dir(tag: &str) -> crate::common::ScratchDir {
+    crate::common::ScratchDir::new(tag)
 }
 
 /// Scratch journal: a temp-file database with the real migrations applied.

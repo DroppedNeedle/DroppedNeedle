@@ -41,13 +41,12 @@ struct E2e {
     ids: Arc<UuidGenerator>,
     clock: Arc<SystemClock>,
     db_path: PathBuf,
-    _scratch: droppedneedle::tooling::scratch::ScratchDir,
+    _scratch: crate::common::ScratchDir,
 }
 
 impl E2e {
     async fn open(name: &str) -> Self {
-        let scratch =
-            droppedneedle::tooling::scratch::ScratchDir::new(name).expect("scratch dir creates");
+        let scratch = crate::common::ScratchDir::new(name);
         let dir = scratch.to_path_buf();
         let db_path = dir.join("app.db");
         let runtime = open_runtime(&DbConfig::new(&db_path))
@@ -461,7 +460,7 @@ async fn acquire_follow_approval_arms_auto_download() {
 
 #[tokio::test]
 async fn migrations_upgrade_from_baseline() {
-    let dir = droppedneedle::tooling::scratch::ScratchDir::new("migrate").expect("scratch dir");
+    let dir = crate::common::ScratchDir::new("migrate");
     let db_path = dir.join("migrate.db");
 
     // Baseline only, as the oldest database would hold it.

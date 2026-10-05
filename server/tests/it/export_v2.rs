@@ -17,8 +17,8 @@ const PASSPHRASE: &str = "operator passphrase";
 const INSTANCE_ID: &str = "9f2c4a1e-0000-4000-8000-0123456789ab";
 
 /// Scratch v2 root, removed when the test ends.
-fn scratch_dir(name: &str) -> droppedneedle::tooling::scratch::ScratchDir {
-    let dir = droppedneedle::tooling::scratch::ScratchDir::new(name).unwrap();
+fn scratch_dir(name: &str) -> crate::common::ScratchDir {
+    let dir = crate::common::ScratchDir::new(name);
     std::fs::create_dir_all(dir.join("config")).unwrap();
     std::fs::create_dir_all(dir.join("cache")).unwrap();
     dir
@@ -307,7 +307,7 @@ fn fixture_db(path: &Path) {
     .unwrap();
 }
 
-fn fixture_v2_root() -> (droppedneedle::tooling::scratch::ScratchDir, FernetKey) {
+fn fixture_v2_root() -> (crate::common::ScratchDir, FernetKey) {
     let dir = scratch_dir("full");
     let key = FernetKey::generate().unwrap();
     std::fs::write(
