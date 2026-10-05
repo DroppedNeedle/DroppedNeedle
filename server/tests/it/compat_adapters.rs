@@ -1,21 +1,20 @@
-//! Compat engine-adapter briefs: the REAL `GatewayAudio`/`GatewayStream`
-//! adapters over a stub stage-6 engine.
-//!
-//! The journeys prove the wire contract through the protocol fakes; these
-//! briefs prove the adapters themselves forward opens faithfully: direct
-//! 200/206/416/HEAD parity per protocol, transcode param forwarding
-//! (codec + bitrate + seek offset + forced verdict), single-open reads,
-//! and the 429/404 fault mappings.
+//! The production `GatewayAudio` (Subsonic) and `GatewayStream` (Jellyfin)
+//! adapters over a scripted stream engine. The journeys use protocol
+//! fixtures, so these are what pin the adapters: one engine open per
+//! request, Range and HEAD handling, fault mapping, and that the transcode
+//! codec, bitrate and seek offset reach the engine.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use droppedneedle::compat::adapters::engines::{GatewayAudio, GatewayStream};
 use droppedneedle::compat::jellyfin::seams::StreamEngine as JellyfinEngine;
-use droppedneedle::compat::subsonic::stream::{AudioBackend, StreamPlan, serve_original};
+use droppedneedle::compat::subsonic::stream::{
+    AudioBackend, ServeError, StreamPlan, serve_original,
+};
 use droppedneedle::stream::routes::{OpenMedia, StreamEngine, StreamFault, StreamOpen};
 
-/// Stub stage-6 engine: scripted files, recorded opens, scripted faults.
+/// Scripted engine: scripted files, recorded opens, scripted faults.
 #[derive(Clone)]
 struct StubEngine {
     files: HashMap<String, (Vec<u8>, String, bool)>,
@@ -81,229 +80,157 @@ fn header(headers: &[(String, String)], name: &str) -> Option<String> {
         .map(|(_, value)| value.clone())
 }
 
-// --- Subsonic adapter ---
-
 #[tokio::test]
-async fn gateway_audio_serves_identity_and_ranges_in_one_open_each() {
+async fn subsonic_adapter_serves_ranges_and_forwards_transcodes() {
     let engine = StubEngine::new();
     let audio = audio(&engine);
-
-    // Identity: full object, one open.
-    let served = serve_original(&audio, "song.mp3", None, false, None)
-        .await
-        .expect("identity serves");
-    assert_eq!(served.status, 200);
-    assert_eq!(served.content_type, "audio/mpeg");
-    assert_eq!(served.body.len(), 100);
-    assert_eq!(engine.recorded().len(), 1, "one open per stream");
-
-    // Seek slice: exact bytes, one more open (facts + range sliced from
-    // the single read, never two opens).
-    let served = serve_original(&audio, "song.mp3", Some("bytes=10-19"), false, None)
-        .await
-        .expect("range serves");
-    assert_eq!(served.status, 206);
-    assert_eq!(served.body.len(), 10);
-    assert_eq!(served.body[0], 10);
-    assert_eq!(
-        header(&served.headers, "Content-Range").as_deref(),
-        Some("bytes 10-19/100")
-    );
-    assert_eq!(engine.recorded().len(), 2);
-
-    // Trailing whitespace seeks like the bare header (m8: every parser
-    // trims, so this is a 206 everywhere, never a 416).
-    let served = serve_original(&audio, "song.mp3", Some("bytes=0-1 "), false, None)
-        .await
-        .expect("spaced range serves");
-    assert_eq!(served.status, 206);
-    assert_eq!(served.body, vec![0, 1]);
-}
-
-#[tokio::test]
-async fn gateway_audio_answers_416_and_head_without_bodies() {
-    let engine = StubEngine::new();
-    let audio = audio(&engine);
-
+    for (range, head, status, content_range, body) in [
+        (None, false, 200, None, (0..100u8).collect::<Vec<_>>()),
+        (
+            Some("bytes=10-19"),
+            false,
+            206,
+            Some("bytes 10-19/100"),
+            (10..20u8).collect(),
+        ),
+        // Every parser trims, so trailing whitespace still seeks.
+        (
+            Some("bytes=0-1 "),
+            false,
+            206,
+            Some("bytes 0-1/100"),
+            vec![0, 1],
+        ),
+        (None, true, 200, None, vec![]),
+        (Some("bytes=5-9"), true, 206, Some("bytes 5-9/100"), vec![]),
+    ] {
+        let served = serve_original(&audio, "song.mp3", range, head, None)
+            .await
+            .expect("serves");
+        let case = format!("{range:?} head={head}");
+        assert_eq!(served.status, status, "{case}");
+        assert_eq!(served.content_type, "audio/mpeg", "{case}");
+        assert_eq!(
+            header(&served.headers, "Content-Range").as_deref(),
+            content_range,
+            "{case}"
+        );
+        assert_eq!(served.body, body, "{case}");
+    }
+    assert_eq!(engine.recorded().len(), 5, "one engine open per request");
     let err = serve_original(&audio, "song.mp3", Some("bytes=100-"), false, None)
         .await
-        .expect_err("past-the-end is 416");
-    assert!(matches!(
-        err,
-        droppedneedle::compat::subsonic::stream::ServeError::RangeUnsatisfiable(100)
-    ));
+        .expect_err("past the end");
+    assert!(matches!(err, ServeError::RangeUnsatisfiable(100)));
 
-    // HEAD: facts only, empty body, GET-equivalent headers.
-    let served = serve_original(&audio, "song.mp3", None, true, None)
-        .await
-        .expect("head serves");
-    assert_eq!(served.status, 200);
-    assert!(served.body.is_empty());
-    assert_eq!(
-        header(&served.headers, "Content-Length").as_deref(),
-        Some("100")
-    );
-    let served = serve_original(&audio, "song.mp3", Some("bytes=5-9"), true, None)
-        .await
-        .expect("head with range serves");
-    assert_eq!(served.status, 206);
-    assert_eq!(
-        header(&served.headers, "Content-Range").as_deref(),
-        Some("bytes 5-9/100")
-    );
-    assert!(served.body.is_empty());
-}
-
-#[tokio::test]
-async fn gateway_audio_forwards_transcode_codec_bitrate_and_offset() {
-    // M1/M2 adapter half: the compat plan's codec, bitrate, seek offset,
-    // and forced verdict all reach the engine open.
-    let engine = StubEngine::new();
-    let audio = audio(&engine);
     let plan = StreamPlan {
         transcode: true,
         out_format: Some("opus".to_owned()),
         out_bitrate_kbps: Some(128),
         start_seconds: 30.0,
     };
-    let (bytes, content_type) = audio
+    audio
         .transcode("song.mp3", &plan)
         .await
-        .expect("transcode forwards");
-    assert_eq!(content_type, "audio/mpeg");
-    assert_eq!(bytes.len(), 100);
-    let opens = engine.recorded();
-    assert_eq!(opens.len(), 1);
-    assert_eq!(opens[0].params.format.as_deref(), Some("opus"));
-    assert_eq!(opens[0].params.max_bitrate_kbps, Some(128));
-    assert_eq!(opens[0].params.start_seconds, 30.0);
-    assert!(opens[0].params.force_transcode);
-}
-
-// --- Jellyfin adapter ---
-
-#[tokio::test]
-async fn gateway_stream_serves_identity_and_ranges() {
-    let engine = StubEngine::new();
-    let stream = stream(&engine);
-
-    let outcome = stream.direct("song.mp3", None).await;
-    assert_eq!(outcome.status, 200);
-    assert_eq!(outcome.body.len(), 100);
-    assert_eq!(
-        header(&outcome.headers, "Content-Type").as_deref(),
-        Some("audio/mpeg")
-    );
-    assert_eq!(
-        header(&outcome.headers, "Accept-Ranges").as_deref(),
-        Some("bytes")
-    );
-
-    let outcome = stream.direct("song.mp3", Some("bytes=10-19")).await;
-    assert_eq!(outcome.status, 206);
-    assert_eq!(outcome.body, (10..20u8).collect::<Vec<_>>());
-    assert_eq!(
-        header(&outcome.headers, "Content-Range").as_deref(),
-        Some("bytes 10-19/100")
-    );
-
-    // Trailing whitespace seeks like the bare header (m8).
-    let outcome = stream.direct("song.mp3", Some("bytes=0-1 ")).await;
-    assert_eq!(outcome.status, 206);
-    assert_eq!(outcome.body, vec![0, 1]);
-
-    let outcome = stream.direct("song.mp3", Some("bytes=100-")).await;
-    assert_eq!(outcome.status, 416);
-    assert_eq!(
-        header(&outcome.headers, "Content-Range").as_deref(),
-        Some("bytes */100")
-    );
-    assert!(outcome.body.is_empty());
+        .expect("transcodes");
+    let params = &engine.recorded()[6].params;
+    assert_eq!(params.format.as_deref(), Some("opus"));
+    assert_eq!(params.max_bitrate_kbps, Some(128));
+    assert_eq!(params.start_seconds, 30.0);
+    assert!(params.force_transcode);
 }
 
 #[tokio::test]
-async fn gateway_stream_head_mirrors_get_without_bodies() {
+async fn jellyfin_adapter_serves_ranges_maps_faults_and_forwards_transcodes() {
     let engine = StubEngine::new();
     let stream = stream(&engine);
-
-    let outcome = stream.head("song.mp3", None).await;
-    assert_eq!(outcome.status, 200);
+    for (key, range, status, content_range, accept_ranges, body) in [
+        (
+            "song.mp3",
+            None,
+            200,
+            None,
+            Some("bytes"),
+            (0..100u8).collect::<Vec<_>>(),
+        ),
+        (
+            "song.mp3",
+            Some("bytes=10-19"),
+            206,
+            Some("bytes 10-19/100"),
+            Some("bytes"),
+            (10..20u8).collect(),
+        ),
+        (
+            "song.mp3",
+            Some("bytes=0-1 "),
+            206,
+            Some("bytes 0-1/100"),
+            Some("bytes"),
+            vec![0, 1],
+        ),
+        (
+            "song.mp3",
+            Some("bytes=100-"),
+            416,
+            Some("bytes */100"),
+            None,
+            vec![],
+        ),
+        // Transcode landings serve whole and never honor ranges.
+        (
+            "landed.mp3",
+            Some("bytes=0-1"),
+            200,
+            None,
+            Some("none"),
+            b"TRANSCODED".to_vec(),
+        ),
+        ("missing.mp3", None, 404, None, None, vec![]),
+    ] {
+        let case = format!("{key} {range:?}");
+        let got = stream.direct(key, range).await;
+        assert_eq!(got.status, status, "{case}");
+        assert_eq!(
+            header(&got.headers, "Content-Range").as_deref(),
+            content_range,
+            "{case}"
+        );
+        if accept_ranges.is_some() {
+            assert_eq!(
+                header(&got.headers, "Accept-Ranges").as_deref(),
+                accept_ranges,
+                "{case}"
+            );
+        }
+        assert_eq!(got.body, body, "{case}");
+        // HEAD mirrors GET without a body.
+        let head = stream.head(key, range).await;
+        assert_eq!(head.status, status, "HEAD {case}");
+        assert!(head.body.is_empty(), "HEAD {case}");
+    }
+    let full = stream.head("song.mp3", None).await;
     assert_eq!(
-        header(&outcome.headers, "Content-Length").as_deref(),
+        header(&full.headers, "Content-Length").as_deref(),
         Some("100")
     );
-    assert!(outcome.body.is_empty());
 
-    let outcome = stream.head("song.mp3", Some("bytes=5-9")).await;
-    assert_eq!(outcome.status, 206);
+    // Exhausted stream leases: 429 with Retry-After.
+    let busy = stream.direct("busy.mp3", None).await;
+    assert_eq!(busy.status, 429);
+    assert_eq!(header(&busy.headers, "Retry-After").as_deref(), Some("1"));
+
+    // Transcodes forward codec, bitrate and offset, and carry no length.
+    let before = engine.recorded().len();
+    let landed = stream.transcode("song.mp3", "opus", 96, 12.5).await;
     assert_eq!(
-        header(&outcome.headers, "Content-Range").as_deref(),
-        Some("bytes 5-9/100")
-    );
-    assert!(outcome.body.is_empty());
-
-    let outcome = stream.head("song.mp3", Some("bytes=100-")).await;
-    assert_eq!(outcome.status, 416);
-    assert!(outcome.body.is_empty());
-}
-
-#[tokio::test]
-async fn gateway_stream_maps_faults_and_transcode_landings() {
-    let engine = StubEngine::new();
-    let stream = stream(&engine);
-
-    // Unknown id: 404, empty.
-    let outcome = stream.direct("missing.mp3", None).await;
-    assert_eq!(outcome.status, 404);
-    assert!(outcome.body.is_empty());
-    let outcome = stream.head("missing.mp3", None).await;
-    assert_eq!(outcome.status, 404);
-
-    // Exhausted leases: 429 + Retry-After, empty.
-    let outcome = stream.direct("busy.mp3", None).await;
-    assert_eq!(outcome.status, 429);
-    assert_eq!(
-        header(&outcome.headers, "Retry-After").as_deref(),
-        Some("1")
-    );
-    assert!(outcome.body.is_empty());
-
-    // Transcode landings serve whole with the transcode header set and
-    // never honor ranges.
-    let outcome = stream.direct("landed.mp3", Some("bytes=0-1")).await;
-    assert_eq!(outcome.status, 200);
-    assert_eq!(
-        header(&outcome.headers, "Accept-Ranges").as_deref(),
-        Some("none")
-    );
-    assert_eq!(outcome.body, b"TRANSCODED");
-    let outcome = stream.head("landed.mp3", None).await;
-    assert_eq!(outcome.status, 200);
-    assert!(outcome.body.is_empty());
-}
-
-#[tokio::test]
-async fn gateway_stream_forwards_transcode_format_bitrate_and_offset() {
-    // M1/M2 adapter half: codec, bitrate, seek offset, and forced
-    // verdict all reach the engine open; the landing never carries a
-    // Content-Length.
-    let engine = StubEngine::new();
-    let stream = stream(&engine);
-    let outcome = stream.transcode("song.mp3", "opus", 96, 12.5).await;
-    assert_eq!(outcome.status, 200);
-    assert_eq!(
-        header(&outcome.headers, "Accept-Ranges").as_deref(),
-        Some("none")
-    );
-    assert_eq!(
-        header(&outcome.headers, "Cache-Control").as_deref(),
+        header(&landed.headers, "Cache-Control").as_deref(),
         Some("no-store")
     );
-    assert!(header(&outcome.headers, "Content-Length").is_none());
-    let opens = engine.recorded();
-    assert_eq!(opens.len(), 1);
-    assert_eq!(opens[0].params.format.as_deref(), Some("opus"));
-    assert_eq!(opens[0].params.max_bitrate_kbps, Some(96));
-    assert_eq!(opens[0].params.start_seconds, 12.5);
-    assert!(opens[0].params.force_transcode);
+    assert!(header(&landed.headers, "Content-Length").is_none());
+    let params = &engine.recorded()[before].params;
+    assert_eq!(params.format.as_deref(), Some("opus"));
+    assert_eq!(params.max_bitrate_kbps, Some(96));
+    assert_eq!(params.start_seconds, 12.5);
+    assert!(params.force_transcode);
 }

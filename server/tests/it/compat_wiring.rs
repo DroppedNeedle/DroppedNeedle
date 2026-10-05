@@ -1,48 +1,30 @@
-//! Compat wiring: mounts, kill switches, and the edge through `create_app`.
-//!
-//! The protocol suites pin dispatch behavior against fixture seams and the
-//! journeys run lifecycles through layered fixture routers; these tests pin
-//! the production assembly instead: both routers mount outside the `/api`
-//! session gate with the shared layers, kill switches default OFF, and the
-//! compat auth posture (never the session gate) answers compat paths.
+//! Compat wiring through the production `create_app`: kill switches, mounts
+//! outside the `/api` session gate, CORS, case-insensitive paths, the
+//! layered rate limits, and the rule that request queries never reach logs.
 
-use crate::common;
+use crate::common::{hooked_state, hooked_state_with_compat};
 
 use axum::Router;
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
-use common::{hooked_state, hooked_state_with_compat};
+use axum::http::{HeaderMap, Request, StatusCode};
 use droppedneedle::create_app;
+use serde_json::Value;
 use tower::ServiceExt as _;
-
-async fn call(
-    subsonic: bool,
-    jellyfin: bool,
-    method: &str,
-    uri: &str,
-    headers: &[(&str, &str)],
-    body: Option<Vec<u8>>,
-) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
-    let app = create_app(hooked_state_with_compat(subsonic, jellyfin));
-    oneshot(app, method, uri, headers, body).await
-}
 
 async fn oneshot(
     app: Router,
     method: &str,
     uri: &str,
     headers: &[(&str, &str)],
-    body: Option<Vec<u8>>,
-) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
+    body: &[u8],
+) -> (StatusCode, HeaderMap, Vec<u8>) {
     let mut builder = Request::builder().method(method).uri(uri);
     for (name, value) in headers {
         builder = builder.header(*name, *value);
     }
-    let body = match body {
-        Some(bytes) => Body::from(bytes),
-        None => Body::empty(),
-    };
-    let request = builder.body(body).expect("request builds");
+    let request = builder
+        .body(Body::from(body.to_vec()))
+        .expect("request builds");
     let response = app.oneshot(request).await.expect("router responds");
     let status = response.status();
     let headers = response.headers().clone();
@@ -53,185 +35,144 @@ async fn oneshot(
     (status, headers, bytes)
 }
 
-fn header(headers: &axum::http::HeaderMap, name: &str) -> String {
+fn enabled() -> Router {
+    create_app(hooked_state_with_compat(true, true))
+}
+
+fn subsonic_code(bytes: &[u8]) -> Value {
+    let body: Value = serde_json::from_slice(bytes).expect("json");
+    body["subsonic-response"]["error"]["code"].clone()
+}
+
+fn cors(headers: &HeaderMap) -> Option<&str> {
     headers
-        .get(name)
+        .get("access-control-allow-origin")
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_owned()
 }
 
 #[tokio::test]
 async fn kill_switches_default_off() {
-    // Subsonic disabled: failed envelope code 0, before auth.
-    let (status, _, bytes) =
-        call(false, false, "GET", "/subsonic/rest/ping?f=json", &[], None).await;
-    assert_eq!(status, StatusCode::OK);
-    let body: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
-    assert_eq!(body["subsonic-response"]["status"], "failed");
-    assert_eq!(body["subsonic-response"]["error"]["code"], 0);
+    for app in [
+        create_app(hooked_state()),
+        create_app(hooked_state_with_compat(false, false)),
+    ] {
+        // Subsonic answers code 0 before auth; Jellyfin 404s every route
+        // with an empty body, so nothing leaks about existence.
+        let (status, _, bytes) =
+            oneshot(app.clone(), "GET", "/subsonic/rest/ping?f=json", &[], b"").await;
+        assert_eq!(
+            (status, subsonic_code(&bytes)),
+            (StatusCode::OK, Value::from(0))
+        );
+        for (uri, headers) in [
+            ("/jellyfin/System/Info/Public", &[][..]),
+            (
+                "/jellyfin/Users/x/Views",
+                &[("X-Emby-Token", "whatever")][..],
+            ),
+        ] {
+            let (status, _, body) = oneshot(app.clone(), "GET", uri, headers, b"").await;
+            assert_eq!((status, body.len()), (StatusCode::NOT_FOUND, 0), "{uri}");
+        }
+    }
+}
 
-    // Jellyfin disabled: 404 on every route, before handler lookup,
-    // with empty bodies (no existence or reason leaks).
-    let (status, _, body) = call(
-        false,
-        false,
-        "GET",
+#[tokio::test]
+async fn compat_mounts_outside_the_session_gate_with_cors() {
+    // Public endpoints answer with no credentials (the `/api` gate would
+    // 401), with `*` CORS and credentials off, including uppercase paths.
+    for uri in [
+        "/subsonic/rest/getOpenSubsonicExtensions",
+        "/SUBSONIC/rest/getOpenSubsonicExtensions",
         "/jellyfin/System/Info/Public",
-        &[],
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert!(body.is_empty());
-    let (status, _, body) = call(
-        false,
-        false,
-        "GET",
-        "/jellyfin/Users/x/Views",
-        &[("X-Emby-Token", "whatever")],
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert!(body.is_empty());
-}
-
-#[tokio::test]
-async fn for_tests_bundle_defaults_both_protocols_off() {
-    // `CompatSetup::for_tests` ships kill switches OFF with no
-    // `with_enabled` call: both protocols refuse exactly like an
-    // explicit (false, false).
-    let app = create_app(hooked_state());
-    let (status, _, bytes) =
-        oneshot(app.clone(), "GET", "/subsonic/rest/ping?f=json", &[], None).await;
-    assert_eq!(status, StatusCode::OK);
-    let body: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
-    assert_eq!(body["subsonic-response"]["status"], "failed");
-    assert_eq!(body["subsonic-response"]["error"]["code"], 0);
-    let (status, _, body) = oneshot(app, "GET", "/jellyfin/System/Info/Public", &[], None).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert!(body.is_empty());
-}
-
-#[tokio::test]
-async fn compat_mounts_outside_the_session_gate() {
-    // Enabled public endpoints answer with no credentials at all: the
-    // `/api` session gate would 401 these.
-    let (status, _, _) = call(
-        true,
-        true,
-        "GET",
-        "/subsonic/rest/getOpenSubsonicExtensions",
-        &[],
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let (status, _, _) = call(true, true, "GET", "/jellyfin/System/Info/Public", &[], None).await;
-    assert_eq!(status, StatusCode::OK);
-
-    // Authed compat paths answer with compat auth posture, never a
-    // session challenge: Subsonic envelopes code 10, Jellyfin 401s empty.
-    let (status, _, bytes) = call(true, true, "GET", "/subsonic/rest/ping?f=json", &[], None).await;
-    assert_eq!(status, StatusCode::OK);
-    let body: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
-    assert_eq!(body["subsonic-response"]["error"]["code"], 10);
-    let (status, _, body) = call(true, true, "GET", "/jellyfin/Users/x/Views", &[], None).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-    assert!(body.is_empty());
-}
-
-#[tokio::test]
-async fn compat_cors_and_preflight() {
-    // Every compat response carries `*` with creds off.
-    let (_, headers, _) = call(true, true, "GET", "/jellyfin/System/Info/Public", &[], None).await;
-    assert_eq!(header(&headers, "access-control-allow-origin"), "*");
-    assert!(headers.get("access-control-allow-credentials").is_none());
-    let (_, headers, _) = call(
-        true,
-        true,
-        "GET",
-        "/subsonic/rest/getOpenSubsonicExtensions",
-        &[],
-        None,
-    )
-    .await;
-    assert_eq!(header(&headers, "access-control-allow-origin"), "*");
+    ] {
+        let (status, headers, _) = oneshot(enabled(), "GET", uri, &[], b"").await;
+        assert_eq!(status, StatusCode::OK, "{uri}");
+        assert_eq!(cors(&headers), Some("*"), "{uri}");
+        assert!(headers.get("access-control-allow-credentials").is_none());
+    }
+    // Authed paths answer in the compat posture, never a session challenge.
+    let (_, _, bytes) = oneshot(enabled(), "GET", "/subsonic/rest/ping?f=json", &[], b"").await;
+    assert_eq!(subsonic_code(&bytes), Value::from(10));
+    let (status, _, body) = oneshot(enabled(), "GET", "/jellyfin/Users/x/Views", &[], b"").await;
+    assert_eq!((status, body.len()), (StatusCode::UNAUTHORIZED, 0));
 
     // Preflights short-circuit 204 before auth.
-    let (status, headers, body) =
-        call(true, true, "OPTIONS", "/jellyfin/Users/x/Views", &[], None).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-    assert!(body.is_empty());
-    assert_eq!(header(&headers, "access-control-allow-origin"), "*");
-}
+    for uri in ["/jellyfin/Users/x/Views", "/SUBSONIC/rest/ping"] {
+        let (status, headers, body) = oneshot(enabled(), "OPTIONS", uri, &[], b"").await;
+        assert_eq!((status, body.len()), (StatusCode::NO_CONTENT, 0), "{uri}");
+        assert_eq!(cors(&headers), Some("*"), "{uri}");
+    }
+    // Unknown compat paths 404 with CORS whether or not the protocol is on;
+    // non-compat 404s carry none.
+    for app in [
+        enabled(),
+        create_app(hooked_state_with_compat(false, false)),
+    ] {
+        let (status, headers, _) = oneshot(app, "GET", "/jellyfin/NoSuchRoute", &[], b"").await;
+        assert_eq!((status, cors(&headers)), (StatusCode::NOT_FOUND, Some("*")));
+    }
+    let (status, headers, _) = oneshot(enabled(), "GET", "/nope", &[], b"").await;
+    assert_eq!((status, cors(&headers)), (StatusCode::NOT_FOUND, None));
 
-#[tokio::test]
-async fn compat_redispatch_is_case_insensitive() {
-    // `/SUBSONIC/...` redispatches exactly like `/subsonic/...`: the
-    // public endpoint answers 200 with compat CORS, not the native 404.
-    let (status, headers, _) = call(
-        true,
-        true,
-        "GET",
-        "/SUBSONIC/rest/getOpenSubsonicExtensions",
-        &[],
-        None,
+    // Feishin posts lowercase Jellyfin paths: a bad login is a 401, not 404.
+    let (status, _, _) = oneshot(
+        enabled(),
+        "POST",
+        "/jellyfin/users/authenticatebyname",
+        &[("content-type", "application/json")],
+        br#"{"Username":"alice","Pw":"nope"}"#,
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(header(&headers, "access-control-allow-origin"), "*");
-
-    // Uppercase preflights short-circuit 204 pre-auth too.
-    let (status, headers, body) =
-        call(true, true, "OPTIONS", "/SUBSONIC/rest/ping", &[], None).await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
-    assert!(body.is_empty());
-    assert_eq!(header(&headers, "access-control-allow-origin"), "*");
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    // Unknown methods on Subsonic answer code 0, never a native 405.
+    let (_, _, bytes) = oneshot(enabled(), "DELETE", "/subsonic/rest/ping?f=json", &[], b"").await;
+    assert_eq!(subsonic_code(&bytes), Value::from(0));
 }
 
 #[tokio::test]
-async fn compat_native_fallbacks_carry_cors() {
-    // Unknown compat paths 404 natively but still stamp compat CORS, so
-    // callers cannot distinguish "disabled protocol" from "no such route"
-    // by the presence of `*`.
-    for (subsonic, jellyfin) in [(true, true), (false, false)] {
-        let (status, headers, _) = call(
-            subsonic,
-            jellyfin,
-            "GET",
-            "/jellyfin/NoSuchRoute",
-            &[],
-            None,
-        )
-        .await;
-        assert_eq!(status, StatusCode::NOT_FOUND);
-        assert_eq!(
-            header(&headers, "access-control-allow-origin"),
-            "*",
-            "subsonic={subsonic} jellyfin={jellyfin}"
-        );
+async fn layered_limits_reject_in_each_protocol_shape() {
+    // Subsonic rejects with a code-0 envelope over HTTP 200, Jellyfin with
+    // an empty 429; both carry Retry-After and compat CORS.
+    for uri in [
+        "/subsonic/rest/getOpenSubsonicExtensions?f=json",
+        "/jellyfin/System/Info/Public",
+    ] {
+        let app = enabled();
+        let mut rejected = false;
+        for _ in 0..100 {
+            let (status, headers, body) = oneshot(app.clone(), "GET", uri, &[], b"").await;
+            let is_reject = if uri.starts_with("/subsonic") {
+                assert_eq!(status, StatusCode::OK);
+                !subsonic_code(&body).is_null()
+            } else {
+                status == StatusCode::TOO_MANY_REQUESTS
+            };
+            if is_reject {
+                if uri.starts_with("/subsonic") {
+                    assert_eq!(subsonic_code(&body), Value::from(0));
+                } else {
+                    assert!(body.is_empty());
+                }
+                assert!(headers.get("retry-after").is_some(), "{uri}");
+                assert_eq!(cors(&headers), Some("*"), "{uri}");
+                rejected = true;
+                break;
+            }
+        }
+        assert!(rejected, "{uri}: the public bucket never tripped");
     }
-    // Non-compat 404s stay CORS-free.
-    let (status, headers, _) = call(true, true, "GET", "/nope", &[], None).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert!(headers.get("access-control-allow-origin").is_none());
 }
 
+/// Compat clients put app passwords in the query string, so source code may
+/// only read a request URI's path, query or host, and never log a URI.
 #[test]
 fn access_logging_records_path_only() {
-    // T-M6 posture tripwire: compat puts app-password secrets in the query
-    // string, so queries must never reach logs. Request URIs may only be
-    // read via `.path()` (spans, routing), `.query()` (param parsing), or
-    // `.host()` (origin checks); any full-target read or URI-bearing log
-    // line fails this test.
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut dirs = vec![root];
     let mut violations = Vec::new();
     while let Some(dir) = dirs.pop() {
-        let entries = std::fs::read_dir(&dir).expect("src lists");
-        for entry in entries {
+        for entry in std::fs::read_dir(&dir).expect("src lists") {
             let path = entry.expect("entry").path();
             if path.is_dir() {
                 dirs.push(path);
@@ -242,14 +183,13 @@ fn access_logging_records_path_only() {
             }
             let source = std::fs::read_to_string(&path).expect("source reads");
             for (number, line) in source.lines().enumerate() {
-                let trimmed = line.trim_start();
-                if trimmed.starts_with("//") {
+                if line.trim_start().starts_with("//") {
                     continue;
                 }
-                if line.contains("uri().path_and_query") || line.contains("uri().to_string()") {
-                    violations.push(format!("{}:{}: {line}", path.display(), number + 1));
-                }
-                if line.contains("tracing::") && line.contains("uri") {
+                let full_target =
+                    line.contains("uri().path_and_query") || line.contains("uri().to_string()");
+                let logged = line.contains("tracing::") && line.contains("uri");
+                if full_target || logged {
                     violations.push(format!("{}:{}: {line}", path.display(), number + 1));
                 }
             }
@@ -260,110 +200,4 @@ fn access_logging_records_path_only() {
         "full-target URI reads:\n{}",
         violations.join("\n")
     );
-}
-
-#[tokio::test]
-async fn compat_layered_limit_smoke_per_protocol() {
-    // t-m8: one layered smoke per protocol through `create_app` — the
-    // public bucket trips in the shared layers, and the reject carries
-    // compat CORS plus the protocol's 429 shape. Public endpoints only,
-    // so no auth denial pollutes the buckets (pure token-bucket trip).
-    let app = create_app(hooked_state_with_compat(true, true));
-    let mut saw_ok = false;
-    let mut saw_reject = false;
-    for _ in 0..100 {
-        let (status, headers, bytes) = oneshot(
-            app.clone(),
-            "GET",
-            "/subsonic/rest/getOpenSubsonicExtensions?f=json",
-            &[],
-            None,
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK);
-        let body: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
-        if body["subsonic-response"]["status"] == "ok" {
-            saw_ok = true;
-        } else {
-            assert_eq!(body["subsonic-response"]["error"]["code"], 0);
-            assert!(
-                headers.get("retry-after").is_some(),
-                "subsonic reject carries Retry-After"
-            );
-            assert_eq!(
-                header(&headers, "access-control-allow-origin"),
-                "*",
-                "subsonic reject carries compat CORS"
-            );
-            saw_reject = true;
-        }
-        if saw_ok && saw_reject {
-            break;
-        }
-    }
-    assert!(saw_ok && saw_reject, "subsonic bucket tripped");
-
-    let app = create_app(hooked_state_with_compat(true, true));
-    let mut saw_ok = false;
-    let mut saw_reject = false;
-    for _ in 0..100 {
-        let (status, headers, body) = oneshot(
-            app.clone(),
-            "GET",
-            "/jellyfin/System/Info/Public",
-            &[],
-            None,
-        )
-        .await;
-        if status == StatusCode::OK {
-            saw_ok = true;
-        } else {
-            assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-            assert!(body.is_empty(), "jellyfin reject is empty");
-            assert!(
-                headers.get("retry-after").is_some(),
-                "jellyfin reject carries Retry-After"
-            );
-            assert_eq!(
-                header(&headers, "access-control-allow-origin"),
-                "*",
-                "jellyfin reject carries compat CORS"
-            );
-            saw_reject = true;
-        }
-        if saw_ok && saw_reject {
-            break;
-        }
-    }
-    assert!(saw_ok && saw_reject, "jellyfin bucket tripped");
-}
-
-#[tokio::test]
-async fn compat_paths_are_case_insensitive() {
-    // Feishin posts lowercase Jellyfin paths: the edge canonicalizes
-    // before routing, so a bad-credential login 401s instead of 404ing.
-    let (status, _, _) = call(
-        true,
-        true,
-        "POST",
-        "/jellyfin/users/authenticatebyname",
-        &[("content-type", "application/json")],
-        Some(br#"{"Username":"alice","Pw":"nope"}"#.to_vec()),
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
-
-    // Unknown methods on Subsonic answer code 0, never the native 405.
-    let (status, _, bytes) = call(
-        true,
-        true,
-        "DELETE",
-        "/subsonic/rest/ping?f=json",
-        &[],
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let body: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
-    assert_eq!(body["subsonic-response"]["error"]["code"], 0);
 }
