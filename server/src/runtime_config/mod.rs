@@ -1,7 +1,8 @@
 //! Typed runtime config (tier 2 of 2) plus the secrets core.
 //!
 //! Deployment values live in tier 1 (the environment via `AppConfig::load`;
-//! see [`deployment`] for the kept/dropped registry). Everything
+//! see [`deployment`](crate::config::deployment) for the kept/dropped
+//! registry). Everything
 //! user-editable at runtime lives here as a typed section with a schema and
 //! a getter on [`ConfigStore`](store::ConfigStore). Secrets follow the
 //! exact-match mask-sentinel rule ([`mask`]) and are encrypted at rest by
@@ -12,7 +13,6 @@
 //! YouTube client around [`QuotaStore`](quota::QuotaStore).
 
 pub mod crypto;
-pub mod deployment;
 pub mod error;
 pub mod mask;
 pub mod quota;

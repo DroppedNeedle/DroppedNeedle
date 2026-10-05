@@ -5,6 +5,8 @@
 //! environment variable. `load` is the single environment accessor; use sites
 //! take `AppConfig` by constructor instead of reading the environment.
 
+pub mod deployment;
+
 use thiserror::Error;
 
 /// Default HTTP port, carried over from v2.

@@ -20,10 +20,10 @@ use serde_json::Value;
 
 use super::envelope::{ENVELOPE_NONCE_LEN, ENVELOPE_SALT_LEN, SEALED_KEY, is_sealed};
 use crate::auth::times::parse_iso;
+use crate::config::deployment::DROPPED_ENV_VARS;
 use crate::export::envelope::{EXPORT_FORMAT, FORMAT_VERSION, REQUIRED_KEYS, RESERVED_SECTIONS};
 use crate::export::seal::{KDF_ALGO, M_COST_KIB, P_COST, SCHEME, T_COST};
 use crate::runtime_config::DROPPED_SECTION_KEYS;
-use crate::runtime_config::deployment::DROPPED_ENV_VARS;
 
 /// Vestigial v2 `Settings` fields (§3.3) that must never cross the cutover.
 const VESTIGIAL_FIELDS: &[&str] = &[

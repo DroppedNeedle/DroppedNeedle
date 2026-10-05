@@ -1,7 +1,7 @@
 //! Deployment-tier registry (tier 1 of 2).
 //!
 //! Deployment and infrastructure values come from the environment via the
-//! ONE accessor (`AppConfig::load` in `config.rs`); use sites take the
+//! ONE accessor ([`AppConfig::load`](super::AppConfig::load)); use sites take the
 //! loaded struct by constructor and never read the environment themselves.
 //! This module is the machine-readable list of which v2 `Settings` fields
 //! survive as environment knobs in v3 after D-hygiene, and which were

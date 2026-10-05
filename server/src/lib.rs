@@ -38,7 +38,6 @@ pub mod provider_policy;
 pub mod providers;
 pub mod reads;
 pub mod remotes;
-#[path = "config/facade.rs"]
 pub mod runtime_config;
 pub mod schema;
 pub mod settings;
