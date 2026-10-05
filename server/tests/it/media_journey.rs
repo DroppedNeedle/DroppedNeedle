@@ -313,17 +313,22 @@ async fn media_connect_browse_play_seek_stop() {
     // Seed one four-minute catalog track behind the playback lifecycle.
     seed_track(&e2e.runtime).await;
 
-    // Connect: the mock Plex accepts its fixed token.
+    // Connect: the admin saves the Plex server; the mock accepts its token.
     let plex = serve_plex().await.expect("mock plex serves");
+    e2e.store
+        .save_secret(droppedneedle::runtime_config::secret_sections::PlexConnection {
+            plex_url: plex.base_url.clone(),
+            plex_token: droppedneedle::runtime_config::Secret::new(PLEX_TOKEN),
+            enabled: true,
+            ..Default::default()
+        })
+        .expect("plex settings save");
     let (status, body, _) = call(
         app.clone(),
-        "PUT",
+        "GET",
         "/api/v3/remotes/plex/connection",
         &[("authorization", auth.as_str())],
-        Some(json!({
-            "base_url": plex.base_url,
-            "credential": PLEX_TOKEN,
-        })),
+        None,
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
