@@ -480,10 +480,10 @@ fn core(
         retry,
     ));
     let mut requests = RequestsState::new(db, quota, dispatch.clone());
-    requests.follow_sink = Some(
-        Arc::new(FollowDecisionBridge::new(collections.follows.clone()))
-            as Arc<dyn super::requests::bridges::FollowDecisionSink>,
-    );
+    requests.follow_sink = Some(Arc::new(FollowDecisionBridge::new(
+        collections.stores.follows.clone(),
+    ))
+        as Arc<dyn super::requests::bridges::FollowDecisionSink>);
     collections.acquire_approvals = Some(Arc::new(RequestsPendingSource::new(
         requests.follows.clone(),
     ))
@@ -643,7 +643,9 @@ impl AcquireSetup {
             http: http.clone(),
             lidarr: LidarrClient::new(http.clone()),
             lidarr_settings,
-            follows: Arc::new(CollectionsFollowBridge::new(collections.follows.clone())),
+            follows: Arc::new(CollectionsFollowBridge::new(
+                collections.stores.follows.clone(),
+            )),
             approvals: Arc::new(RequestsApprovalBridge::new(core.requests.follows.clone())),
             spotify: spotify_client,
             spotify_settings,

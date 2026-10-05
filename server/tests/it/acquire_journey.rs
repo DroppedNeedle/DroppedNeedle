@@ -125,7 +125,11 @@ impl E2e {
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             wrapped_api_key,
             None,
-        );
+        )
+        .with_collections(droppedneedle::reads::collections::db::CollectionsDb::new(
+            self.runtime.pool().clone(),
+            self.runtime.lane().clone(),
+        ));
         let mut app_config = AppConfig::new(DEFAULT_PORT);
         app_config.root_app_dir = self
             .db_path

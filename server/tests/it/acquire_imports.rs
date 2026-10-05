@@ -25,8 +25,7 @@ use imports::health::{
 };
 use imports::jobs::{JobRegistry, QueuedSpotifyImport, TaskExecutor};
 use imports::lidarr::{
-    FollowStore as _, LidarrClient, LidarrImportService, MemoryApprovalSink, MemoryFollowStore,
-    MemoryLidarrSettings,
+    LidarrClient, LidarrImportService, MemoryApprovalSink, MemoryFollowStore, MemoryLidarrSettings,
 };
 use imports::mocks::{
     LIDARR_KEY, LIDARR_MBID_ALL, LIDARR_MBID_NONE, SPOTIFY_TOKEN, serve_lidarr, serve_spotify,

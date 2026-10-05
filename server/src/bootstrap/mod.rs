@@ -32,7 +32,7 @@ use crate::{
     media::MediaSetup,
     plugins::wiring::PluginsSetup,
     providers::{InMemoryProviderCache, Providers, adapters::production_enrichment},
-    reads::{ReadsSetup, platform::wrapped::ConfigWrappedKey},
+    reads::{ReadsSetup, collections::db::CollectionsDb, platform::wrapped::ConfigWrappedKey},
     runtime_config::{
         ConfigStore, Crypto,
         crypto::CryptoError,
@@ -153,7 +153,11 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         ids.clone(),
         ConfigWrappedKey::new(config_store.clone()),
         Some(enrichment),
-    );
+    )
+    .with_collections(CollectionsDb::new(
+        runtime.pool().clone(),
+        runtime.lane().clone(),
+    ));
     let connect_apps = match config_store.get::<ConnectApps>() {
         Ok(settings) => settings,
         Err(error) => {

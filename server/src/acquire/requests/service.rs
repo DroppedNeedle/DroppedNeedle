@@ -1260,7 +1260,9 @@ impl RequestsService {
             return Ok(no_match());
         };
         if let Some(sink) = &self.follow_sink {
-            sink.arm_auto_download(user_id, &row.user_name, &row.artist_mbid, &row.artist_name);
+            sink.arm_auto_download(user_id, &row.artist_mbid, &row.artist_name)
+                .await
+                .map_err(|cause| RequestsError::internal(&cause))?;
         }
         Ok(ActionResponse {
             success: true,
@@ -1292,7 +1294,9 @@ impl RequestsService {
             return Ok(no_match());
         }
         if let Some(sink) = &self.follow_sink {
-            sink.clear_auto_download(user_id, artist_mbid);
+            sink.clear_auto_download(user_id, artist_mbid)
+                .await
+                .map_err(|cause| RequestsError::internal(&cause))?;
         }
         Ok(ActionResponse {
             success: true,
@@ -1318,7 +1322,9 @@ impl RequestsService {
             return Ok(no_match());
         }
         if let Some(sink) = &self.follow_sink {
-            sink.clear_auto_download(user_id, artist_mbid);
+            sink.clear_auto_download(user_id, artist_mbid)
+                .await
+                .map_err(|cause| RequestsError::internal(&cause))?;
         }
         Ok(ActionResponse {
             success: true,
@@ -1384,13 +1390,6 @@ impl RequestsService {
         state: &str,
     ) -> Result<ActionResponse, RequestsError> {
         principal.require_admin()?;
-        let user_name = self
-            .follows
-            .pending_batches()
-            .await?
-            .into_iter()
-            .find(|batch| batch.batch_id == batch_id)
-            .map(|batch| batch.user_name);
         let rows = self
             .follows
             .decide_batch(batch_id, state, reviewer(principal), now_epoch())
@@ -1403,12 +1402,13 @@ impl RequestsService {
         }
         if let Some(sink) = &self.follow_sink {
             for (user_id, artist_mbid, artist_name) in &rows {
-                if state == "approved" {
-                    let name = user_name.as_deref().unwrap_or(user_id.as_str());
-                    sink.arm_auto_download(user_id, name, artist_mbid, artist_name);
+                let applied = if state == "approved" {
+                    sink.arm_auto_download(user_id, artist_mbid, artist_name)
+                        .await
                 } else {
-                    sink.clear_auto_download(user_id, artist_mbid);
-                }
+                    sink.clear_auto_download(user_id, artist_mbid).await
+                };
+                applied.map_err(|cause| RequestsError::internal(&cause))?;
             }
         }
         Ok(ActionResponse {

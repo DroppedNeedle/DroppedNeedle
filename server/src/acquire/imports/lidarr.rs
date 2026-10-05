@@ -11,6 +11,8 @@ use std::collections::{HashMap, HashSet};
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::Mutex;
 
+use futures_util::future::BoxFuture;
+
 use serde::{Deserialize, Serialize};
 
 #[cfg(any(test, feature = "test-support"))]
@@ -168,14 +170,25 @@ impl LidarrClient {
 /// the per-artist follow path.
 pub trait FollowStore: Send + Sync {
     /// Lowercased MBIDs of `candidates` the user already follows.
-    fn existing_followed_lower(&self, user_id: &str, candidates: &[String]) -> HashSet<String>;
+    fn existing_followed_lower<'a>(
+        &'a self,
+        user_id: &'a str,
+        candidates: &'a [String],
+    ) -> BoxFuture<'a, Result<HashSet<String>, String>>;
     /// Follow every `(mbid, name)` pair idempotently, preserving
     /// `auto_download` and `followed_at` on conflicts (as in v2).
-    fn follow_artists_bulk(&self, user_id: &str, pairs: &[(String, String)]);
+    fn follow_artists_bulk<'a>(
+        &'a self,
+        user_id: &'a str,
+        pairs: &'a [(String, String)],
+    ) -> BoxFuture<'a, Result<(), String>>;
     /// Flip auto-download intent for followed rows.
-    fn set_auto_download_intent_bulk(&self, user_id: &str, mbids: &[String], intent: bool);
-    /// Auto-download intent for one followed row.
-    fn auto_download_intent(&self, user_id: &str, mbid_lower: &str) -> bool;
+    fn set_auto_download_intent_bulk<'a>(
+        &'a self,
+        user_id: &'a str,
+        mbids: &'a [String],
+        intent: bool,
+    ) -> BoxFuture<'a, Result<(), String>>;
 }
 
 /// Approval batches for non-admin auto-download mirrors (v2
@@ -216,20 +229,43 @@ impl MemoryFollowStore {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-impl FollowStore for MemoryFollowStore {
-    fn existing_followed_lower(&self, user_id: &str, candidates: &[String]) -> HashSet<String> {
+impl MemoryFollowStore {
+    /// Auto-download intent for one followed row.
+    pub fn auto_download_intent(&self, user_id: &str, mbid_lower: &str) -> bool {
         let inner = self
             .inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        candidates
+        inner
+            .get(&(user_id.to_owned(), mbid_lower.to_owned()))
+            .is_some_and(|auto_download| *auto_download)
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl FollowStore for MemoryFollowStore {
+    fn existing_followed_lower<'a>(
+        &'a self,
+        user_id: &'a str,
+        candidates: &'a [String],
+    ) -> BoxFuture<'a, Result<HashSet<String>, String>> {
+        let inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let found = candidates
             .iter()
             .filter(|candidate| inner.contains_key(&(user_id.to_owned(), (*candidate).clone())))
             .cloned()
-            .collect()
+            .collect();
+        Box::pin(std::future::ready(Ok(found)))
     }
 
-    fn follow_artists_bulk(&self, user_id: &str, pairs: &[(String, String)]) {
+    fn follow_artists_bulk<'a>(
+        &'a self,
+        user_id: &'a str,
+        pairs: &'a [(String, String)],
+    ) -> BoxFuture<'a, Result<(), String>> {
         let mut inner = self
             .inner
             .lock()
@@ -239,9 +275,15 @@ impl FollowStore for MemoryFollowStore {
                 .entry((user_id.to_owned(), mbid.to_lowercase()))
                 .or_insert(false);
         }
+        Box::pin(std::future::ready(Ok(())))
     }
 
-    fn set_auto_download_intent_bulk(&self, user_id: &str, mbids: &[String], intent: bool) {
+    fn set_auto_download_intent_bulk<'a>(
+        &'a self,
+        user_id: &'a str,
+        mbids: &'a [String],
+        intent: bool,
+    ) -> BoxFuture<'a, Result<(), String>> {
         let mut inner = self
             .inner
             .lock()
@@ -251,16 +293,7 @@ impl FollowStore for MemoryFollowStore {
                 *auto_download = intent;
             }
         }
-    }
-
-    fn auto_download_intent(&self, user_id: &str, mbid_lower: &str) -> bool {
-        let inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        inner
-            .get(&(user_id.to_owned(), mbid_lower.to_owned()))
-            .is_some_and(|auto_download| *auto_download)
+        Box::pin(std::future::ready(Ok(())))
     }
 }
 
@@ -426,7 +459,11 @@ impl LidarrImportService {
             .iter()
             .map(|artist| artist.foreign_artist_id.to_lowercase())
             .collect();
-        let existing = self.follows.existing_followed_lower(user_id, &lowers);
+        let existing = self
+            .follows
+            .existing_followed_lower(user_id, &lowers)
+            .await
+            .map_err(ServiceError::Follows)?;
         let artists: Vec<LidarrArtistCandidate> = monitored
             .iter()
             .map(|artist| {
@@ -483,7 +520,9 @@ impl LidarrImportService {
         // counts and the auto-download rule need the prior state.
         let existing = self
             .follows
-            .existing_followed_lower(user_id, &selected_valid_lower);
+            .existing_followed_lower(user_id, &selected_valid_lower)
+            .await
+            .map_err(ServiceError::Follows)?;
         let new_lowers: Vec<&String> = selected_valid_lower
             .iter()
             .filter(|lower| !existing.contains(*lower))
@@ -512,7 +551,10 @@ impl LidarrImportService {
                     .map(|artist| (artist.foreign_artist_id.clone(), artist.artist_name.clone()))
             })
             .collect();
-        self.follows.follow_artists_bulk(user_id, &pairs);
+        self.follows
+            .follow_artists_bulk(user_id, &pairs)
+            .await
+            .map_err(ServiceError::Follows)?;
         let mut approval_batch_id: Option<String> = None;
         if !auto_dl_lowers.is_empty() && !is_admin {
             let auto_pairs: Vec<(String, String)> = auto_dl_lowers
@@ -537,7 +579,9 @@ impl LidarrImportService {
                 .filter_map(|lower| by_lower.get(*lower).map(|a| a.foreign_artist_id.clone()))
                 .collect();
             self.follows
-                .set_auto_download_intent_bulk(user_id, &mbids, true);
+                .set_auto_download_intent_bulk(user_id, &mbids, true)
+                .await
+                .map_err(ServiceError::Follows)?;
         }
 
         Ok(LidarrImportResponse {
@@ -559,4 +603,6 @@ pub enum ServiceError {
     Lidarr(LidarrError),
     /// The approval batch could not be filed.
     Approvals(String),
+    /// The follow store failed. The text goes to the log only.
+    Follows(String),
 }

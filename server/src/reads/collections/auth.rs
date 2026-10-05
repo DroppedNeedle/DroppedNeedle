@@ -94,16 +94,14 @@ impl Principal {
 }
 
 impl<S: Send + Sync> FromRequestParts<S> for Principal {
-    type Rejection = CollectionsError;
+    type Rejection = super::http::CollectionsHttpError;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        parts
-            .extensions
-            .get::<Principal>()
-            .cloned()
-            .ok_or_else(|| CollectionsError::Unauthorized {
+        parts.extensions.get::<Principal>().cloned().ok_or_else(|| {
+            super::http::CollectionsHttpError(CollectionsError::Unauthorized {
                 message: "Authentication required".to_owned(),
             })
+        })
     }
 }
 
@@ -148,9 +146,9 @@ pub async fn gate(mut req: Request, next: Next) -> Response {
             req.extensions_mut().insert(principal);
             next.run(req).await
         }
-        None => CollectionsError::Unauthorized {
+        None => super::http::CollectionsHttpError(CollectionsError::Unauthorized {
             message: "Authentication required".to_owned(),
-        }
+        })
         .into_response(),
     }
 }

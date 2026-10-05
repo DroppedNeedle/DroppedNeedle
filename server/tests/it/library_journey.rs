@@ -164,7 +164,11 @@ impl Lib {
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             wrapped_api_key,
             None,
-        );
+        )
+        .with_collections(droppedneedle::reads::collections::db::CollectionsDb::new(
+            self.runtime.pool().clone(),
+            self.runtime.lane().clone(),
+        ));
         let connect_apps: droppedneedle::runtime_config::sections::ConnectApps =
             self.store.get().unwrap_or_default();
         let mut app_config = AppConfig::new(DEFAULT_PORT);

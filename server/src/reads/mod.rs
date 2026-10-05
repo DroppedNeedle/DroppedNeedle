@@ -43,7 +43,8 @@ pub struct ReadsSetup {
     pub search: search::SearchDeps,
     /// Discover/home/queue/radio deps (still the fakes; no providers wired).
     pub discover: discover::ReadsDeps,
-    /// Collections state (in-memory stores; SQLite ports land later).
+    /// Collections state. Unwired until [`ReadsSetup::with_collections`]
+    /// hands it the database.
     pub collections: collections::CollectionsState,
     /// Covers/version/wrapped states (still the fakes; no providers wired).
     pub platform: platform::PlatformState,
@@ -101,7 +102,7 @@ impl ReadsSetup {
             library,
             search,
             discover: discover_deps(ids.clone()),
-            collections: collections::CollectionsState::new(),
+            collections: collections::CollectionsState::unwired(),
             platform: platform_state(wrapped_key),
         }
     }
@@ -127,9 +128,16 @@ impl ReadsSetup {
                 ids.clone(),
             ),
             discover: discover_deps(ids.clone()),
-            collections: collections::CollectionsState::new(),
+            collections: collections::CollectionsState::unwired(),
             platform: platform_state(String::new()),
         })
+    }
+
+    /// Serve collections from this database (pool plus writer lane).
+    #[must_use]
+    pub fn with_collections(mut self, db: collections::db::CollectionsDb) -> Self {
+        self.collections = collections::CollectionsState::new(db);
+        self
     }
 
     /// Relative-path routers for nesting under `/api/v3` inside the session
@@ -215,10 +223,12 @@ async fn translate_principal(
     next: Next,
 ) -> Response {
     use axum::response::IntoResponse;
-    use collections::{auth::Principal, error::CollectionsError};
+    use collections::{auth::Principal, error::CollectionsError, http::CollectionsHttpError};
 
-    let missing = || CollectionsError::Unauthorized {
-        message: "Authentication required".to_owned(),
+    let missing = || {
+        CollectionsHttpError(CollectionsError::Unauthorized {
+            message: "Authentication required".to_owned(),
+        })
     };
     let Some(session) = request.extensions().get::<CurrentSession>().cloned() else {
         return missing().into_response();
@@ -227,13 +237,13 @@ async fn translate_principal(
         Ok(Some(user)) => user,
         Ok(None) => return missing().into_response(),
         Err(StoreError::Conflict) => {
-            return CollectionsError::Conflict {
+            return CollectionsHttpError(CollectionsError::Conflict {
                 message: "Conflicting state".to_owned(),
-            }
+            })
             .into_response();
         }
         Err(StoreError::Internal(cause)) => {
-            return CollectionsError::internal(&cause).into_response();
+            return CollectionsHttpError(CollectionsError::internal(&cause)).into_response();
         }
     };
     request.extensions_mut().insert(Principal {

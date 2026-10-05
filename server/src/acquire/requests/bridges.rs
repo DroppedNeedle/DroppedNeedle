@@ -9,13 +9,16 @@
 pub trait FollowDecisionSink: Send + Sync {
     /// Arm auto-download for one follow, creating the follow when the
     /// approval came from intake rather than a follow toggle.
-    fn arm_auto_download(
-        &self,
-        user_id: &str,
-        user_name: &str,
-        artist_mbid: &str,
-        artist_name: &str,
-    );
+    fn arm_auto_download<'a>(
+        &'a self,
+        user_id: &'a str,
+        artist_mbid: &'a str,
+        artist_name: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<(), String>>;
     /// Clear auto-download intent, keeping the follow.
-    fn clear_auto_download(&self, user_id: &str, artist_mbid: &str);
+    fn clear_auto_download<'a>(
+        &'a self,
+        user_id: &'a str,
+        artist_mbid: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<(), String>>;
 }

@@ -253,6 +253,11 @@ fn lidarr_failed(error: ServiceError, ids: &dyn crate::ids::IdGenerator) -> Impo
                 message: "Lidarr answered with an error".to_owned(),
             }
         }
+        ServiceError::Follows(cause) => {
+            let error_id = uuid::Uuid::new_v4().to_string();
+            tracing::error!(error_id, %cause, "lidarr import follow write failed");
+            ImportsError::Internal { error_id }
+        }
     }
 }
 

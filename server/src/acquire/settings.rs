@@ -33,9 +33,9 @@ use super::imports::spotify::SpotifySettingsStore;
 use super::requests::bridges::FollowDecisionSink;
 use super::requests::sqlite::FollowApprovalStore;
 use crate::reads::collections::state::{
-    ApprovalSeedSink, AutoDownloadState, FollowRow, FollowStore as CollectionsFollowStore,
-    PendingApproval, PendingApprovalsSource, PendingBatch,
+    ApprovalSeedSink, PendingApproval, PendingApprovalsSource, PendingBatch,
 };
+use crate::reads::collections::store::FollowStore as CollectionsFollowStore;
 use crate::runtime_config::secret_sections::{LidarrImportConnection, SpotifySettings};
 use crate::runtime_config::{ConfigStore, Masked, Secret};
 
@@ -158,109 +158,62 @@ impl SpotifySettingsStore for ConfigSpotifySettings {
     }
 }
 
-/// Find a collections follow row by exact then lowercased MBID. The
-/// collections code keys rows verbatim while the acquire code
-/// canonicalize to lowercase; both spellings resolve to one row.
-fn find_follow_key(
-    rows: &std::collections::HashMap<(String, String), FollowRow>,
-    user_id: &str,
-    artist_mbid: &str,
-) -> Option<(String, String)> {
-    let exact = (user_id.to_owned(), artist_mbid.to_owned());
-    if rows.contains_key(&exact) {
-        return Some(exact);
-    }
-    let lower = (user_id.to_owned(), artist_mbid.to_lowercase());
-    if rows.contains_key(&lower) {
-        return Some(lower);
-    }
-    None
-}
-
 /// Imports follow store over the collections follow rows.
 pub struct CollectionsFollowBridge {
-    follows: Arc<CollectionsFollowStore>,
+    follows: CollectionsFollowStore,
 }
 
 impl CollectionsFollowBridge {
     /// Bridge over the shared collections follow store.
-    pub fn new(follows: Arc<CollectionsFollowStore>) -> Self {
+    pub fn new(follows: CollectionsFollowStore) -> Self {
         Self { follows }
     }
 }
 
 impl FollowStore for CollectionsFollowBridge {
-    fn existing_followed_lower(&self, user_id: &str, candidates: &[String]) -> HashSet<String> {
-        let rows = match self.follows.follows.read() {
-            Ok(rows) => rows,
-            Err(_) => return HashSet::new(),
-        };
-        candidates
-            .iter()
-            .filter(|candidate| find_follow_key(&rows, user_id, candidate).is_some())
-            .map(|candidate| candidate.to_lowercase())
-            .collect()
+    fn existing_followed_lower<'a>(
+        &'a self,
+        user_id: &'a str,
+        candidates: &'a [String],
+    ) -> BoxFuture<'a, Result<HashSet<String>, String>> {
+        Box::pin(async move {
+            self.follows
+                .followed_among(user_id, candidates)
+                .await
+                .map_err(|error| error.to_string())
+        })
     }
 
-    fn follow_artists_bulk(&self, user_id: &str, pairs: &[(String, String)]) {
-        let mut rows = match self.follows.follows.write() {
-            Ok(rows) => rows,
-            Err(_) => return,
-        };
-        for (mbid, name) in pairs {
-            // The import service carries no display name for the importer,
-            // so a fresh follow keeps the user id where the follow toggle
-            // would keep the username.
-            let key = (user_id.to_owned(), mbid.to_lowercase());
-            if find_follow_key(&rows, user_id, mbid).is_none() {
-                rows.insert(
-                    key,
-                    FollowRow {
-                        user_id: user_id.to_owned(),
-                        user_name: user_id.to_owned(),
-                        artist_mbid: mbid.to_lowercase(),
-                        artist_name: name.clone(),
-                        auto_download: false,
-                        auto_download_state: AutoDownloadState::Off,
-                        followed_at: now_epoch(),
-                        requested_at: None,
-                    },
-                );
-            }
-        }
+    fn follow_artists_bulk<'a>(
+        &'a self,
+        user_id: &'a str,
+        pairs: &'a [(String, String)],
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            let artists = pairs
+                .iter()
+                .map(|(mbid, name)| (mbid.clone(), Some(name.clone())))
+                .collect::<Vec<_>>();
+            self.follows
+                .follow(user_id, &artists)
+                .await
+                .map_err(|error| error.to_string())
+        })
     }
 
-    fn set_auto_download_intent_bulk(&self, user_id: &str, mbids: &[String], intent: bool) {
-        let mut rows = match self.follows.follows.write() {
-            Ok(rows) => rows,
-            Err(_) => return,
-        };
-        for mbid in mbids {
-            let key = find_follow_key(&rows, user_id, mbid);
-            if let Some(key) = key
-                && let Some(row) = rows.get_mut(&key)
-            {
-                row.auto_download = intent;
-                row.auto_download_state = if intent {
-                    AutoDownloadState::Active
-                } else {
-                    AutoDownloadState::Off
-                };
-                if intent {
-                    row.requested_at = Some(now_epoch());
-                }
-            }
-        }
-    }
-
-    fn auto_download_intent(&self, user_id: &str, mbid_lower: &str) -> bool {
-        let rows = match self.follows.follows.read() {
-            Ok(rows) => rows,
-            Err(_) => return false,
-        };
-        find_follow_key(&rows, user_id, mbid_lower)
-            .and_then(|key| rows.get(&key))
-            .is_some_and(|row| row.auto_download)
+    fn set_auto_download_intent_bulk<'a>(
+        &'a self,
+        user_id: &'a str,
+        mbids: &'a [String],
+        intent: bool,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            self.follows
+                .set_intent(user_id, mbids, intent)
+                .await
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
     }
 }
 
@@ -295,71 +248,43 @@ impl ApprovalSink for RequestsApprovalBridge {
 
 /// Requests verdict sink over the collections follow rows.
 pub struct FollowDecisionBridge {
-    follows: Arc<CollectionsFollowStore>,
+    follows: CollectionsFollowStore,
 }
 
 impl FollowDecisionBridge {
     /// Sink over the shared collections follow store.
-    pub fn new(follows: Arc<CollectionsFollowStore>) -> Self {
+    pub fn new(follows: CollectionsFollowStore) -> Self {
         Self { follows }
     }
 }
 
 impl FollowDecisionSink for FollowDecisionBridge {
-    fn arm_auto_download(
-        &self,
-        user_id: &str,
-        user_name: &str,
-        artist_mbid: &str,
-        artist_name: &str,
-    ) {
-        let mut rows = match self.follows.follows.write() {
-            Ok(rows) => rows,
-            Err(error) => {
-                tracing::warn!(%error, "follow rows lock failed; auto-download not armed");
-                return;
-            }
-        };
-        let now = now_epoch();
-        if let Some(key) = find_follow_key(&rows, user_id, artist_mbid) {
-            if let Some(row) = rows.get_mut(&key) {
-                row.auto_download = true;
-                row.auto_download_state = AutoDownloadState::Active;
-                row.requested_at = Some(now);
-            }
-            return;
-        }
-        rows.insert(
-            (user_id.to_owned(), artist_mbid.to_lowercase()),
-            FollowRow {
-                user_id: user_id.to_owned(),
-                user_name: user_name.to_owned(),
-                artist_mbid: artist_mbid.to_lowercase(),
-                artist_name: artist_name.to_owned(),
-                auto_download: true,
-                auto_download_state: AutoDownloadState::Active,
-                followed_at: now,
-                requested_at: Some(now),
-            },
-        );
+    fn arm_auto_download<'a>(
+        &'a self,
+        user_id: &'a str,
+        artist_mbid: &'a str,
+        artist_name: &'a str,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            self.follows
+                .arm(user_id, artist_mbid, artist_name)
+                .await
+                .map_err(|error| error.to_string())
+        })
     }
 
-    fn clear_auto_download(&self, user_id: &str, artist_mbid: &str) {
-        let mut rows = match self.follows.follows.write() {
-            Ok(rows) => rows,
-            Err(error) => {
-                tracing::warn!(%error, "follow rows lock failed; auto-download not cleared");
-                return;
-            }
-        };
-        let key = find_follow_key(&rows, user_id, artist_mbid);
-        if let Some(key) = key
-            && let Some(row) = rows.get_mut(&key)
-        {
-            row.auto_download = false;
-            row.auto_download_state = AutoDownloadState::Off;
-            row.requested_at = None;
-        }
+    fn clear_auto_download<'a>(
+        &'a self,
+        user_id: &'a str,
+        artist_mbid: &'a str,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            self.follows
+                .set_intent(user_id, &[artist_mbid.to_owned()], false)
+                .await
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
     }
 }
 
