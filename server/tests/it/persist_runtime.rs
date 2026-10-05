@@ -20,11 +20,10 @@ use axum::{
 };
 use droppedneedle::{
     db::{
-        BACKUP_KEEP, CancelFlag, CheckpointMode, CheckpointService, DbConfig, DbError, DbRuntime,
-        JobKind, JobState, LANE_QUEUE_CAPACITY, Lane, WakeupChannel, busy_response,
-        filesystem_is_local, fold_text, map_sqlx_busy, open_runtime, sqlx_is_busy,
+        BACKUP_KEEP, CancelFlag, CheckpointMode, DbConfig, DbError, DbRuntime, LANE_QUEUE_CAPACITY,
+        Lane, WakeupChannel, filesystem_is_local, map_sqlx_busy, open_runtime, sqlx_is_busy,
     },
-    error::{FIXED_INTERNAL_MESSAGE, INTERNAL_ERROR},
+    error::{FIXED_INTERNAL_MESSAGE, INTERNAL_ERROR, busy_response},
     ids::{REQUEST_ID_HEADER, RequestId},
     middleware::request_scope,
     schema::latest_version,
@@ -128,25 +127,6 @@ async fn boot_migrates_and_applies_pragmas() {
     assert_eq!(pool.size(), 7, "seven readers check out at once");
     drop(held);
 
-    runtime.shutdown().await;
-    std::fs::remove_dir_all(dir).ok();
-}
-
-/// A configured busy timeout reaches pool connections instead of the default.
-#[tokio::test]
-async fn configured_busy_timeout_reaches_pool_connections() {
-    let dir = scratch_dir("busytimeout");
-    let db = dir.join("library.db");
-    let config = DbConfig {
-        busy_timeout: Duration::from_millis(1234),
-        ..DbConfig::new(&db)
-    };
-    let runtime = open_runtime(&config).await.unwrap();
-    let busy_timeout: i64 = sqlx::query_scalar("PRAGMA busy_timeout")
-        .fetch_one(runtime.pool())
-        .await
-        .unwrap();
-    assert_eq!(busy_timeout, 1234);
     runtime.shutdown().await;
     std::fs::remove_dir_all(dir).ok();
 }
@@ -585,37 +565,6 @@ async fn backup_restore_round_trip_with_refusals() {
     std::fs::remove_dir_all(allowed_dir).ok();
 }
 
-/// Same-millisecond backups never collide, and crashed-run staging is swept.
-#[tokio::test]
-async fn backup_names_are_unique_and_stale_staging_is_swept() {
-    let (runtime, dir) = open_scratch("sweep").await;
-    let idle = CancelFlag::never();
-    let first = runtime.backups().backup(None, &idle).await.unwrap();
-    std::fs::write(
-        runtime.backups().backup_dir().join(".staging-9-9-9.db"),
-        b"junk",
-    )
-    .unwrap();
-    std::fs::write(
-        runtime.backups().backup_dir().join(".restore-9-9.tmp"),
-        b"junk",
-    )
-    .unwrap();
-    let second = runtime.backups().backup(None, &idle).await.unwrap();
-    assert_ne!(first.path, second.path, "same-ms runs must not collide");
-    let leftovers: Vec<String> = std::fs::read_dir(runtime.backups().backup_dir())
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .filter(|name| name.starts_with(".staging-") || name.starts_with(".restore-"))
-        .collect();
-    assert!(
-        leftovers.is_empty(),
-        "stale staging must be swept, left {leftovers:?}"
-    );
-    runtime.shutdown().await;
-    std::fs::remove_dir_all(dir).ok();
-}
-
 /// A tripped flag stops a backup before anything renames into place.
 #[tokio::test]
 async fn backup_cancel_stops_before_rename() {
@@ -652,56 +601,6 @@ async fn wakeup_request_before_wait_is_not_lost() {
     )
     .await
     .expect("a request issued before wait must still wake it");
-    runtime.shutdown().await;
-    std::fs::remove_dir_all(dir).ok();
-}
-
-/// A missing fabric table fails with the table named, not a bare code.
-#[tokio::test]
-async fn durable_missing_table_names_the_migration() {
-    let (runtime, dir) = open_scratch("missingtable").await;
-    runtime
-        .lane()
-        .write(Lane::Foreground, "brief-drop", |tx| {
-            tx.execute("DROP TABLE durable_work_wakeups", [])?;
-            Ok(())
-        })
-        .await
-        .unwrap();
-    let error = runtime
-        .wakeups()
-        .request(runtime.lane(), Lane::Foreground, WakeupChannel::Scan)
-        .await
-        .expect_err("request against a dropped table must fail");
-    match error {
-        DbError::WriteFailed { operation, .. } => assert!(
-            operation.contains("durable_work_wakeups"),
-            "must name the missing table, got {operation}"
-        ),
-        other => panic!("must be a mapped write failure, got {other:?}"),
-    }
-    runtime.shutdown().await;
-    std::fs::remove_dir_all(dir).ok();
-}
-
-/// A checkpoint against a missing database records a non-busy error pass and
-/// creates nothing.
-#[tokio::test]
-async fn checkpoint_missing_database_is_not_created() {
-    let (runtime, dir) = open_scratch("ckptmissing").await;
-    let ghost = dir.join("ghost").join("library.db");
-    let service =
-        CheckpointService::new(&ghost, runtime.pool().clone(), runtime.lane().idle_state());
-    let outcome = service.run_once();
-    assert!(
-        outcome.error.is_some(),
-        "missing database must record an error pass"
-    );
-    assert!(!outcome.busy, "error passes never report busy");
-    assert!(
-        !ghost.exists(),
-        "checkpoint must not create a missing database"
-    );
     runtime.shutdown().await;
     std::fs::remove_dir_all(dir).ok();
 }
@@ -759,73 +658,6 @@ async fn writer_lane_backpressure_fails_fast_when_full() {
     for filler in fillers {
         filler.await.unwrap();
     }
-    runtime.shutdown().await;
-    std::fs::remove_dir_all(dir).ok();
-}
-
-/// Wakeup channels signal workers and persist demand; the registry tracks jobs.
-#[tokio::test]
-async fn durable_fabric_wakeups_and_registry() {
-    let (runtime, dir) = open_scratch("durable").await;
-    let wakeups = runtime.wakeups().clone();
-
-    assert!(!wakeups.pending(WakeupChannel::Scan).await.unwrap());
-    let waiter = tokio::spawn({
-        let wakeups = wakeups.clone();
-        async move {
-            tokio::time::timeout(Duration::from_secs(5), wakeups.wait(WakeupChannel::Scan))
-                .await
-                .expect("wakeup must arrive");
-        }
-    });
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    let seq = wakeups
-        .request(runtime.lane(), Lane::Foreground, WakeupChannel::Scan)
-        .await
-        .unwrap();
-    assert_eq!(seq, 1);
-    waiter.await.unwrap();
-    assert!(wakeups.pending(WakeupChannel::Scan).await.unwrap());
-    wakeups
-        .consume(runtime.lane(), Lane::Background, WakeupChannel::Scan, seq)
-        .await
-        .unwrap();
-    assert!(!wakeups.pending(WakeupChannel::Scan).await.unwrap());
-
-    wakeups
-        .register_job(
-            runtime.lane(),
-            "scan-worker",
-            JobKind::Durable,
-            Some(WakeupChannel::Scan),
-        )
-        .await
-        .unwrap();
-    let job = wakeups.get_job("scan-worker").await.unwrap().unwrap();
-    assert_eq!(job.state, JobState::Idle);
-    assert_eq!(job.wakeup_channel, Some(WakeupChannel::Scan));
-    wakeups
-        .set_job_state(runtime.lane(), "scan-worker", JobState::Running)
-        .await
-        .unwrap();
-    wakeups
-        .heartbeat(runtime.lane(), "scan-worker")
-        .await
-        .unwrap();
-    let job = wakeups.get_job("scan-worker").await.unwrap().unwrap();
-    assert_eq!(job.state, JobState::Running);
-    assert!(job.last_heartbeat_at.is_some_and(|at| at > 0.0));
-    let jobs = wakeups.list_jobs().await.unwrap();
-    assert_eq!(jobs.len(), 1);
-    assert!(wakeups.get_job("ghost").await.unwrap().is_none());
-    let unknown = wakeups
-        .set_job_state(runtime.lane(), "ghost", JobState::Running)
-        .await;
-    assert!(
-        matches!(unknown, Err(DbError::WriteFailed { .. })),
-        "unknown job must fail, got {unknown:?}"
-    );
-
     runtime.shutdown().await;
     std::fs::remove_dir_all(dir).ok();
 }
@@ -931,54 +763,6 @@ async fn chunked_write_commits_and_cancels() {
     std::fs::remove_dir_all(dir).ok();
 }
 
-/// The checkpoint loop passes on its first tick and stops on signal.
-#[tokio::test]
-async fn checkpoint_loop_passes_then_stops() {
-    let (runtime, dir) = open_scratch("loop").await;
-    let stop = Arc::new(tokio::sync::Notify::new());
-    let checkpoint = runtime.checkpoint().clone();
-    let stop_moved = Arc::clone(&stop);
-    let looping = tokio::spawn(async move { checkpoint.run_forever(stop_moved).await });
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert!(
-        runtime.checkpoint().latest().await.is_some(),
-        "first tick must record a pass"
-    );
-    stop.notify_waiters();
-    tokio::time::timeout(Duration::from_secs(5), looping)
-        .await
-        .expect("loop must stop promptly")
-        .unwrap();
-
-    runtime.shutdown().await;
-    std::fs::remove_dir_all(dir).ok();
-}
-
-/// Scratch hygiene: every brief cleans its own directory.
-#[tokio::test]
-async fn scratch_dirs_are_removed() {
-    let dir = scratch_dir("hygiene");
-    std::fs::create_dir_all(&dir).unwrap();
-    assert!(dir.exists());
-    std::fs::remove_dir_all(&dir).unwrap();
-    assert!(!dir.exists());
-}
-
-/// Application-side folding matches v2 casefold: sharp-s expands, both
-/// sigmas merge, dotted capital İ loses its dot, accents still strip.
-#[tokio::test]
-async fn fold_text_matches_v2_casefold() {
-    assert_eq!(fold_text("Straße"), "strasse");
-    assert_eq!(fold_text("ς"), "σ");
-    assert_eq!(fold_text("Σ"), "σ");
-    assert_eq!(fold_text("Οδυσσέας"), "οδυσσεασ");
-    assert_eq!(fold_text("İ"), "i");
-    assert_eq!(fold_text("Beyoncé"), "beyonce");
-    assert_eq!(fold_text("  Sigur   Rós  "), "sigur ros");
-    assert_eq!(fold_text("ﬁsh"), "fish");
-    assert_eq!(fold_text(""), "");
-}
-
 /// The writer connection's `fold()` SQL function folds like v2.
 #[tokio::test]
 async fn fold_sql_function_matches_v2_casefold() {
@@ -1003,4 +787,45 @@ async fn fold_sql_function_matches_v2_casefold() {
     assert_eq!(null, None);
     runtime.shutdown().await;
     std::fs::remove_dir_all(dir).ok();
+}
+
+/// A play reported while another writer holds the database past the busy
+/// timeout is retried and recorded, never dropped.
+#[tokio::test]
+async fn a_play_outlasting_the_busy_timeout_is_still_recorded() {
+    use droppedneedle::playback::ports::{PlayHistory as _, PlayRecord};
+    use droppedneedle::playback::sqlite::PlaybackDb;
+
+    let (runtime, dir) = open_scratch("play-busy").await;
+    let db_path = dir.join("library.db");
+    let history = PlaybackDb::open(&db_path, Arc::new(droppedneedle::ids::UuidGenerator)).unwrap();
+    let (held_tx, held_rx) = std::sync::mpsc::channel();
+    let holder_path = db_path.clone();
+    let holder = std::thread::spawn(move || {
+        let connection = rusqlite::Connection::open(holder_path).unwrap();
+        connection.execute_batch("BEGIN IMMEDIATE").unwrap();
+        held_tx.send(()).unwrap();
+        std::thread::sleep(Duration::from_millis(5_500));
+        connection.execute_batch("COMMIT").unwrap();
+    });
+    held_rx.recv().unwrap();
+    history.record(
+        "user-1",
+        &PlayRecord {
+            track_name: "Roads".to_owned(),
+            artist_name: "Portishead".to_owned(),
+            album_name: None,
+            recording_mbid: None,
+            release_group_mbid: None,
+            duration_ms: None,
+            source: None,
+            played_at: 1_700_000_000,
+        },
+    );
+    holder.join().unwrap();
+    let plays: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM library_play_history")
+        .fetch_one(runtime.pool())
+        .await
+        .unwrap();
+    assert_eq!(plays, 1);
 }

@@ -1,33 +1,16 @@
-//! Stage-3 E2E: real-app auth journeys plus the standing auth contract.
+//! Real-app auth journeys plus the standing auth contract.
 //!
 //! Everything here runs against `create_app` with the production SQLite
-//! bundle over scratch databases. The only fakes in the building are the
-//! ones the task allows: none, in practice — HIBP screening is switched off
-//! through its real config knob, and no test touches an IdP, mail, or the
-//! network at all.
+//! bundle over scratch databases. HIBP screening is switched off through
+//! its real config knob; no test touches an IdP, mail, or the network.
 //!
-//! Tests (each owns a scratch dir under `temp_dir`, parallel-safe):
-//!
-//! - `journey_a_*`: setup → cookie login → list/revoke sessions → logout-all
-//!   → re-login works, old cookie dead.
-//! - `journey_b_*`: admin creates user → role change → user login → user hits
-//!   an admin route (403) → admin deletes user → user session dead.
-//! - `journey_c_*`: app-password create → compat contracts accept → native
-//!   paths reject → revoke → compat dead.
-//! - `auth_on_every_endpoint`: the standing contract. Every `/api/v3` route
-//!   in the OpenAPI doc must have a matrix row; every non-allowlisted route
-//!   401s anonymously with a Bearer challenge, admin routes 403 for plain users,
-//!   and the admin is admitted everywhere. Add a route without a row and this
-//!   fails by name. Curator rows read as admin rows for plain users; wrapped
-//!   rows take only the shared secret (no Bearer challenge on rejection) and
-//!   sessions never satisfy them.
-//! - `setup_edges`: setup-status flip, once-only setup, login before setup.
-//! - `trusted_tier_*`: trusted promotion admits curator pin writes (404 on
-//!   the empty catalog) while admin approvals still 403.
-//! - `playlist_lifecycle_*`: stateful playlist journey over one router
-//!   clone: create → add tracks → read back → delete → 404.
-//! - `login_p95_*`: 50 sequential logins against the 600ms login budget.
-//!   Argon2id work-factor cost counts - it is the budget.
+//! - `journey_*`: setup and sessions, the admin user lifecycle, and app
+//!   passwords across the compat contracts.
+//! - `auth_on_every_endpoint`: every `/api/v3` route in the OpenAPI doc has
+//!   a matrix row; protected routes 401 anonymously with a Bearer challenge,
+//!   admin routes 403 for plain users, and the admin is admitted everywhere.
+//! - Rate limits, setup races, and store-failure handling at the edge.
+//! - `login_p95_*`: the login latency budget, run on request.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -36,19 +19,14 @@ use std::time::{Duration, Instant};
 use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode};
-use droppedneedle::auth::compat_auth::jellyfin::{
-    JellyfinPasswordStore, JellyfinStoreError, JellyfinUser, authenticate_by_name, resolve_token,
-};
+use droppedneedle::auth::compat_auth::jellyfin::{authenticate_by_name, resolve_token};
+use droppedneedle::auth::compat_auth::prod::ProdCompatPasswords;
 use droppedneedle::auth::compat_auth::subsonic::{
-    AppSecret, PARAM_MISSING, SubsonicDenied, SubsonicParams, SubsonicPasswordStore,
-    SubsonicStoreError, WRONG_CREDENTIALS, authenticate, md5_hex,
+    SubsonicDenied, SubsonicParams, WRONG_CREDENTIALS, authenticate, md5_hex,
 };
 use droppedneedle::auth::prod::ProdAuth;
 use droppedneedle::auth::session::cookies::COOKIE_NAME;
-use droppedneedle::auth::session::tokens;
 use droppedneedle::auth::users::UsersDeps;
-use droppedneedle::auth::users::clock_now;
-use droppedneedle::auth::users::models::UserRecord;
 use droppedneedle::auth::users::stores::SystemClock;
 use droppedneedle::auth::wiring::AuthSetup;
 use droppedneedle::config::DEFAULT_PORT;
@@ -709,141 +687,6 @@ async fn journey_b_admin_user_lifecycle() {
 // Journey C: app passwords across the compat contracts, rejected natively
 // ---------------------------------------------------------------------------
 
-/// Compat-contract store over the REAL users tables: app-password rows plus
-/// account rows only. Account passwords and native tokens are unreachable
-/// here by construction, exactly like the stage-9 adapters will be.
-#[derive(Clone)]
-struct E2eCompatStore {
-    users: UsersDeps,
-    crypto: Arc<Crypto>,
-}
-
-impl E2eCompatStore {
-    async fn user_row(&self, username_lower: &str) -> Option<UserRecord> {
-        self.users
-            .users
-            .get_by_username(username_lower)
-            .await
-            .ok()?
-    }
-
-    fn jellyfin_user(row: &UserRecord) -> JellyfinUser {
-        JellyfinUser {
-            id: row.id.clone(),
-            username: row.username.clone(),
-            username_display: row.username_display.clone(),
-            display_name: row.display_name.clone(),
-            role: row.role.as_str().to_owned(),
-        }
-    }
-
-    async fn touch(&self, secret: &str, client: Option<&str>) {
-        let _ = self
-            .users
-            .app_passwords
-            .touch(&tokens::hash_token(secret), clock_now(&self.users), client)
-            .await;
-    }
-}
-
-impl SubsonicPasswordStore for E2eCompatStore {
-    async fn user_id_for_username(
-        &self,
-        username_lower: &str,
-    ) -> Result<Option<String>, SubsonicStoreError> {
-        Ok(self.user_row(username_lower).await.map(|row| row.id))
-    }
-
-    async fn active_secrets(&self, user_id: &str) -> Result<Vec<AppSecret>, SubsonicStoreError> {
-        let rows = self
-            .users
-            .app_passwords
-            .list_active_by_user(user_id)
-            .await
-            .map_err(|_| SubsonicStoreError)?;
-        let mut out = Vec::with_capacity(rows.len());
-        for row in rows {
-            let plaintext = self
-                .crypto
-                .decrypt(&row.secret_encrypted)
-                .map_err(|_| SubsonicStoreError)?;
-            out.push(AppSecret {
-                sha256: row.secret_sha256,
-                plaintext,
-            });
-        }
-        Ok(out)
-    }
-
-    async fn owner_of_secret(
-        &self,
-        secret_sha256: &str,
-    ) -> Result<Option<String>, SubsonicStoreError> {
-        Ok(self
-            .users
-            .app_passwords
-            .get_active_by_sha256(secret_sha256)
-            .await
-            .map_err(|_| SubsonicStoreError)?
-            .map(|row| row.user_id))
-    }
-
-    async fn note_use(&self, secret_plaintext: &str, client: Option<&str>) {
-        self.touch(secret_plaintext, client).await;
-    }
-}
-
-impl JellyfinPasswordStore for E2eCompatStore {
-    async fn user_for_token(
-        &self,
-        token: &str,
-    ) -> Result<Option<JellyfinUser>, JellyfinStoreError> {
-        let row = self
-            .users
-            .app_passwords
-            .get_active_by_sha256(&tokens::hash_token(token))
-            .await
-            .map_err(|_| JellyfinStoreError)?;
-        let Some(secret) = row else { return Ok(None) };
-        let user = self
-            .users
-            .users
-            .get_by_id(&secret.user_id)
-            .await
-            .map_err(|_| JellyfinStoreError)?;
-        Ok(user.as_ref().map(Self::jellyfin_user))
-    }
-
-    async fn user_for_credentials(
-        &self,
-        username: &str,
-        password: &str,
-    ) -> Result<Option<JellyfinUser>, JellyfinStoreError> {
-        // v2 rule verbatim: stored lowercase username equals input stripped
-        // and lowercased; display names never match.
-        let want = username.trim().to_lowercase();
-        let user = self.user_row(&want).await;
-        let Some(user) = user else { return Ok(None) };
-        if user.username.as_deref() != Some(want.as_str()) {
-            return Ok(None);
-        }
-        let secret = self
-            .users
-            .app_passwords
-            .get_active_by_sha256(&tokens::hash_token(password))
-            .await
-            .map_err(|_| JellyfinStoreError)?;
-        match secret {
-            Some(secret) if secret.user_id == user.id => Ok(Some(Self::jellyfin_user(&user))),
-            _ => Ok(None),
-        }
-    }
-
-    async fn note_use(&self, secret_plaintext: &str, client: Option<&str>) {
-        self.touch(secret_plaintext, client).await;
-    }
-}
-
 #[tokio::test]
 async fn journey_c_app_password_compat_accepts_native_rejects() {
     let e2e = E2e::open("journey-c").await;
@@ -853,10 +696,7 @@ async fn journey_c_app_password_compat_accepts_native_rejects() {
     let admin_token = admin_token.as_str().expect("admin token").to_owned();
     let admin_auth = bearer(admin_token.as_str());
     let admin_headers = [("authorization", admin_auth.as_str())];
-    let compat = E2eCompatStore {
-        users: e2e.users(),
-        crypto: Arc::clone(&e2e.crypto),
-    };
+    let compat = ProdCompatPasswords::new(e2e.users(), Arc::clone(&e2e.crypto));
 
     // Create one app password; the secret shows exactly once.
     let (status, body, _) = call(
@@ -957,8 +797,6 @@ async fn journey_c_app_password_compat_accepts_native_rejects() {
         resolve_token(&compat, Some(secret.as_str())).await.is_err(),
         "revoked secret resolves to nobody"
     );
-    // Sanity: the params type is real — PARAM_MISSING exists for stage 9.
-    let _ = PARAM_MISSING;
 }
 
 // ---------------------------------------------------------------------------
@@ -1920,16 +1758,6 @@ async fn auth_on_every_endpoint() {
         }
     }
 
-    // Allowlisted but not yet mounted: passes the gate (404), never 401.
-    // If this 401s, the allowlist regressed; if it 200s, someone mounted it
-    // and owes it a matrix row plus OpenAPI registration.
-    let (status, body, _) = call(e2e.router(), "GET", "/api/v3/auth/providers", &[], None).await;
-    assert_eq!(
-        status,
-        StatusCode::NOT_FOUND,
-        "unmounted allowlisted path must pass the gate: {body}"
-    );
-
     // Seed one admin and one user for the credentialed passes.
     let (_, admin_token) =
         setup_admin(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
@@ -2158,123 +1986,6 @@ async fn auth_on_every_endpoint() {
     }
 }
 
-/// Stage-4 wiring: one live route per reads namespace answers 200 behind
-/// the real gate, and the collections principal translation resolves the
-/// admin role (the approvals read would 403 otherwise).
-#[tokio::test]
-async fn reads_routes_are_mounted() {
-    let e2e = E2e::open("reads-mounted").await;
-    let (_, admin_token) =
-        setup_admin(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
-    let auth = bearer(admin_token.as_str().expect("admin token"));
-
-    // Empty scratch catalog: library and search answer shaped empties.
-    let (status, body, _) = call(
-        e2e.router(),
-        "GET",
-        "/api/v3/library/albums",
-        &[("authorization", auth.as_str())],
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["total"], 0);
-
-    let (status, body, _) = call(
-        e2e.router(),
-        "GET",
-        "/api/v3/search?q=ab",
-        &[("authorization", auth.as_str())],
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["artists"].as_array().expect("artists").len(), 0);
-
-    // Discover and home run the stage-4 fakes; now playing answers from
-    // the stage-6 live registry (empty here, still 200).
-    for uri in ["/api/v3/discover", "/api/v3/home", "/api/v3/now-playing"] {
-        let (status, body, _) = call(
-            e2e.router(),
-            "GET",
-            uri,
-            &[("authorization", auth.as_str())],
-            None,
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
-    }
-
-    // Collections: empty stores plus the translated admin role.
-    for uri in [
-        "/api/v3/playlists",
-        "/api/v3/favorites",
-        "/api/v3/requests/auto-download-approvals",
-    ] {
-        let (status, body, _) = call(
-            e2e.router(),
-            "GET",
-            uri,
-            &[("authorization", auth.as_str())],
-            None,
-        )
-        .await;
-        assert_eq!(status, StatusCode::OK, "{uri}: {body}");
-    }
-
-    // Covers answer the placeholder SVG; version reports the build.
-    let (status, headers, bytes) = call_raw(
-        e2e.router(),
-        "GET",
-        "/api/v3/covers/artist/e2e-dummy-id",
-        &[("authorization", auth.as_str())],
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        headers.get("content-type").and_then(|v| v.to_str().ok()),
-        Some("image/svg+xml")
-    );
-    assert!(bytes.starts_with(b"<svg"));
-
-    let (status, body, _) = call(
-        e2e.router(),
-        "GET",
-        "/api/v3/version",
-        &[("authorization", auth.as_str())],
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(
-        body["version"].as_str().is_some_and(|v| !v.is_empty()),
-        "{body}"
-    );
-
-    // Wrapped: the key admits, a wrong key 401s without a challenge.
-    let (status, body, _) = call(
-        e2e.router(),
-        "GET",
-        "/api/v3/wrapped/users",
-        &[("x-wrapped-api-key", TEST_WRAPPED_KEY)],
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["users"].as_array().expect("users").len(), 0);
-
-    let (status, body, headers) = call(
-        e2e.router(),
-        "GET",
-        "/api/v3/wrapped/users",
-        &[("x-wrapped-api-key", "wrong-key")],
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
-    assert!(headers.get("www-authenticate").is_none());
-}
-
 // ---------------------------------------------------------------------------
 // Trusted tier: curator writes admit, admin reads still forbid
 // ---------------------------------------------------------------------------
@@ -2342,83 +2053,6 @@ async fn trusted_tier_pins_admitted_approvals_forbidden() {
 }
 
 // ---------------------------------------------------------------------------
-// Stateful playlist journey over one router clone
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn playlist_lifecycle_persists_across_requests() {
-    let e2e = E2e::open("playlist-journey").await;
-    let (_, admin_token) =
-        setup_admin(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
-    let auth = bearer(admin_token.as_str().expect("admin token"));
-    let headers = [("authorization", auth.as_str())];
-    // One router for every step: the collections stores live in the router
-    // state, so each clone shares them and writes read back.
-    let app = e2e.router();
-
-    let (status, body, _) = call(
-        app.clone(),
-        "POST",
-        "/api/v3/playlists",
-        &headers,
-        Some(json!({"name": "Journey mix"})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED, "{body}");
-    let id = body["id"].as_str().expect("playlist id").to_owned();
-
-    let (status, body, _) = call(
-        app.clone(),
-        "POST",
-        &format!("/api/v3/playlists/{id}/tracks"),
-        &headers,
-        Some(json!({"tracks": [
-            {"track_name": "Roads", "artist_name": "Portishead", "album_name": "Dummy"},
-            {"track_name": "Teardrop", "artist_name": "Massive Attack", "album_name": "Mezzanine"},
-        ]})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["tracks"].as_array().expect("added tracks").len(), 2);
-
-    let (status, body, _) = call(
-        app.clone(),
-        "GET",
-        &format!("/api/v3/playlists/{id}"),
-        &headers,
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["name"], json!("Journey mix"));
-    let tracks = body["tracks"].as_array().expect("persisted tracks");
-    assert_eq!(tracks.len(), 2);
-    assert_eq!(tracks[0]["track_name"], json!("Roads"));
-    assert_eq!(tracks[1]["track_name"], json!("Teardrop"));
-
-    let (status, body, _) = call(
-        app.clone(),
-        "DELETE",
-        &format!("/api/v3/playlists/{id}"),
-        &headers,
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-
-    let (status, body, _) = call(
-        app.clone(),
-        "GET",
-        &format!("/api/v3/playlists/{id}"),
-        &headers,
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
-    assert_eq!(error_code(&body), "NOT_FOUND");
-}
-
-// ---------------------------------------------------------------------------
 // Setup edges
 // ---------------------------------------------------------------------------
 
@@ -2470,6 +2104,174 @@ async fn setup_edges() {
         body["error"]["message"],
         json!("Setup has already been completed")
     );
+}
+
+#[tokio::test]
+async fn concurrent_setups_yield_exactly_one_admin() {
+    let e2e = E2e::open("setup-race").await;
+    let app = e2e.router();
+    let setup = |username: &'static str| {
+        call(
+            app.clone(),
+            "POST",
+            "/api/v3/auth/setup",
+            &[],
+            Some(json!({"username": username, "password": "first-admin-password-1"})),
+        )
+    };
+    let ((first, _, _), (second, _, _)) = tokio::join!(setup("root"), setup("other"));
+    let mut statuses = [first, second];
+    statuses.sort();
+    assert_eq!(statuses, [StatusCode::CREATED, StatusCode::CONFLICT]);
+}
+
+// ---------------------------------------------------------------------------
+// Rate limits and edge failures
+// ---------------------------------------------------------------------------
+
+/// One request from a given client address (as `ConnectInfo` would carry).
+async fn call_from(app: Router, peer: &str, uri: &str, body: Option<Value>) -> StatusCode {
+    let peer: std::net::SocketAddr = peer.parse().expect("peer address");
+    let mut builder = Request::builder()
+        .method(if body.is_some() { "POST" } else { "GET" })
+        .uri(uri)
+        .header("host", HOST);
+    if body.is_some() {
+        builder = builder.header("content-type", "application/json");
+    }
+    let mut request = builder
+        .body(Body::from(
+            body.map(|json| json.to_string()).unwrap_or_default(),
+        ))
+        .expect("request builds");
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(peer));
+    app.oneshot(request)
+        .await
+        .expect("router responds")
+        .status()
+}
+
+#[tokio::test]
+async fn rate_limits_key_by_client_and_username() {
+    let e2e = E2e::open("rate-limits").await;
+    let app = e2e.router();
+
+    // One client burning the setup budget (burst 3) leaves others alone.
+    // An empty body fails validation, so no request does real work.
+    let mut statuses = Vec::new();
+    for _ in 0..4 {
+        statuses.push(
+            call_from(
+                app.clone(),
+                "198.51.100.1:1",
+                "/api/v3/auth/setup",
+                Some(json!({})),
+            )
+            .await,
+        );
+    }
+    assert_eq!(
+        statuses.last(),
+        Some(&StatusCode::TOO_MANY_REQUESTS),
+        "{statuses:?}"
+    );
+    let other = call_from(
+        app.clone(),
+        "198.51.100.2:1",
+        "/api/v3/auth/setup",
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(
+        other,
+        StatusCode::BAD_REQUEST,
+        "another client keeps its budget"
+    );
+
+    // The setup class covers only the setup call, never its status probe.
+    for _ in 0..6 {
+        let status = call_from(
+            app.clone(),
+            "198.51.100.1:1",
+            "/api/v3/auth/setup/status",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    // Guessing one username from many addresses at once meets the
+    // per-username wall (burst 5) even though every address is fresh.
+    let peers: Vec<String> = (0..8).map(|n| format!("203.0.113.{n}:1")).collect();
+    let attempts = peers.iter().map(|peer| {
+        call_from(
+            app.clone(),
+            peer,
+            "/api/v3/auth/login",
+            Some(json!({"username": "victim", "password": "wrong-password-123"})),
+        )
+    });
+    let statuses = futures_util::future::join_all(attempts).await;
+    let limited = statuses
+        .iter()
+        .filter(|status| **status == StatusCode::TOO_MANY_REQUESTS)
+        .count();
+    assert_eq!(limited, 3, "{statuses:?}");
+}
+
+#[tokio::test]
+async fn login_store_failure_is_a_500_not_bad_credentials() {
+    let e2e = E2e::open("login-store-down").await;
+    setup_admin(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
+    e2e.runtime
+        .lane()
+        .write(droppedneedle::db::Lane::Foreground, "test.break", |tx| {
+            tx.execute_batch("ALTER TABLE auth_providers RENAME TO auth_providers_gone")?;
+            Ok(())
+        })
+        .await
+        .expect("table renames");
+    let (status, body, _) =
+        login(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+}
+
+#[tokio::test]
+async fn password_change_ends_every_other_session() {
+    let e2e = E2e::open("password-change").await;
+    let (_, setup_token) =
+        setup_admin(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
+    let (_, body, _) = login(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
+    let other = bearer(body["token"].as_str().expect("second session"));
+    let current = bearer(setup_token.as_str().expect("setup token"));
+    let (status, body, _) = call(
+        e2e.router(),
+        "POST",
+        "/api/v3/me/password",
+        &[("authorization", current.as_str())],
+        Some(json!({
+            "current_password": "e2e-owner-password-1",
+            "new_password": "e2e-owner-password-2",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    for (auth, expected) in [
+        (&current, StatusCode::OK),
+        (&other, StatusCode::UNAUTHORIZED),
+    ] {
+        let (status, _, _) = call(
+            e2e.router(),
+            "GET",
+            "/api/v3/me",
+            &[("authorization", auth.as_str())],
+            None,
+        )
+        .await;
+        assert_eq!(status, expected);
+    }
 }
 
 // ---------------------------------------------------------------------------

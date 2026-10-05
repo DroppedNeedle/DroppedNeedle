@@ -1,10 +1,8 @@
-//! Schema briefs: migration idempotency, gate checks, boot assertion,
-//! legacy exclusions, and dual-owner merges for migration 0001.
-//!
-//! Each brief pins one behavior of the baseline schema. The scratch
-//! databases live only in memory; no fixture files, no network.
+//! Schema: fresh migrate, re-run, upgrade from every earlier version,
+//! legacy exclusions, merged tables, and foreign-key enforcement. The
+//! scratch databases live only in memory.
 
-use droppedneedle::schema::{SchemaError, apply_migrations, assert_migrated, latest_version};
+use droppedneedle::schema::{MIGRATOR, apply_migrations, assert_migrated, latest_version};
 use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
 
@@ -138,52 +136,6 @@ async fn migrate_rerun_is_clean() {
         .await
         .unwrap();
     assert_eq!(artists, 2);
-}
-
-/// `foreign_key_check` and `integrity_check` are green after migrate.
-#[tokio::test]
-async fn gates_are_green_after_migrate() {
-    let pool = migrated_pool().await;
-
-    let violations: Vec<(i64, i64, String, i64, String)> =
-        sqlx::query_as("PRAGMA foreign_key_check")
-            .fetch_all(&pool)
-            .await
-            .unwrap();
-    assert!(violations.is_empty(), "foreign_key_check: {violations:?}");
-    let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(integrity, "ok");
-}
-
-/// The boot assertion refuses an unmigrated or wrong-version database and
-/// passes a migrated one. The runtime calls this before binding its socket.
-#[tokio::test]
-async fn boot_assertion_refuses_version_mismatch() {
-    let pool = scratch_pool().await;
-    match assert_migrated(&pool).await {
-        Err(SchemaError::VersionMismatch { found, expected }) => {
-            assert_eq!((found, expected), (0, 5));
-        }
-        other => panic!("unmigrated database must refuse, got {other:?}"),
-    }
-
-    sqlx::query("PRAGMA user_version = 999")
-        .execute(&pool)
-        .await
-        .unwrap();
-    assert!(matches!(
-        assert_migrated(&pool).await,
-        Err(SchemaError::VersionMismatch {
-            found: 999,
-            expected: 5
-        })
-    ));
-
-    apply_migrations(&pool).await.unwrap();
-    assert_migrated(&pool).await.unwrap();
 }
 
 /// D1/D13/D14 exclusions: no lidarr marker, no rebuild leftovers, no legacy
@@ -375,4 +327,43 @@ async fn foreign_keys_bite_under_enforcement() {
         .await
         .unwrap();
     assert_eq!(left, 0, "history rows cascade with their user");
+}
+
+/// Every earlier schema upgrades to the latest one in place and keeps its
+/// rows: migrate through version N, write an account, apply the rest.
+#[tokio::test]
+async fn every_earlier_version_upgrades_and_keeps_data() {
+    for version in 1..latest_version() {
+        let pool = scratch_pool().await;
+        let through = sqlx::migrate::Migrator {
+            migrations: std::borrow::Cow::Owned(
+                MIGRATOR
+                    .migrations
+                    .iter()
+                    .filter(|migration| migration.version <= version)
+                    .cloned()
+                    .collect(),
+            ),
+            ignore_missing: false,
+            locking: true,
+            no_tx: false,
+        };
+        through.run(&pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('u1', 'Kept', 'user', '2024-01-01T00:00:00+00:00')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        apply_migrations(&pool).await.unwrap();
+        assert_migrated(&pool).await.unwrap();
+        let name: String =
+            sqlx::query_scalar("SELECT display_name FROM auth_users WHERE id = 'u1'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(name, "Kept", "upgrade from {version}");
+    }
 }

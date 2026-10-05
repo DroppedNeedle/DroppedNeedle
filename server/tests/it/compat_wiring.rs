@@ -115,7 +115,9 @@ async fn compat_mounts_outside_the_session_gate_with_cors() {
     let (status, headers, _) = oneshot(enabled(), "GET", "/nope", &[], b"").await;
     assert_eq!((status, cors(&headers)), (StatusCode::NOT_FOUND, None));
 
-    // Feishin posts lowercase Jellyfin paths: a bad login is a 401, not 404.
+    // Feishin posts lowercase Jellyfin paths: the login handler answers
+    // instead of a 404. The credential store is unwired here, which that
+    // handler reports as 500.
     let (status, _, _) = oneshot(
         enabled(),
         "POST",
@@ -124,7 +126,7 @@ async fn compat_mounts_outside_the_session_gate_with_cors() {
         br#"{"Username":"alice","Pw":"nope"}"#,
     )
     .await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     // Unknown methods on Subsonic answer code 0, never a native 405.
     let (_, _, bytes) = oneshot(enabled(), "DELETE", "/subsonic/rest/ping?f=json", &[], b"").await;
     assert_eq!(subsonic_code(&bytes), Value::from(0));

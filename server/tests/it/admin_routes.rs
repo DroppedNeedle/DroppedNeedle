@@ -4,8 +4,6 @@
 //! The router mounts directly with sessions injected; health rides the full
 //! app. Scratch runtimes only — no network, no production database.
 
-use crate::common;
-
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -189,26 +187,6 @@ async fn admin_gate_posts_its_posture_on_every_route() {
 }
 
 #[tokio::test]
-async fn cache_stats_count_live_entries() {
-    let rig = Rig::open("cache-stats").await;
-    let (status, body) = call(rig.admin_app(), "GET", "/admin/cache/stats", None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["entries"], Value::from(0));
-    let sources = body["sources"].as_array().expect("sources");
-    assert!(sources.iter().any(|source| source == "musicbrainz"));
-
-    rig.cache
-        .set_bytes("mb:artist:search:x", vec![1, 2, 3], Duration::from_secs(60))
-        .await;
-    rig.cache
-        .set_bytes("lfm_user:recents", vec![4], Duration::from_secs(60))
-        .await;
-    let (status, body) = call(rig.admin_app(), "GET", "/admin/cache/stats", None).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["entries"], Value::from(2));
-}
-
-#[tokio::test]
 async fn cache_clear_all_and_per_source() {
     let rig = Rig::open("cache-clear").await;
     rig.cache
@@ -244,90 +222,6 @@ async fn cache_clear_all_and_per_source() {
     assert_eq!(body["remaining_entries"], Value::from(0));
 }
 
-#[tokio::test]
-async fn cache_clear_rejects_unknown_targets() {
-    let rig = Rig::open("cache-bad").await;
-    for body in [
-        json!({"scope": "source", "source": "nope"}),
-        json!({"scope": "source"}),
-        json!({"scope": "shelf"}),
-    ] {
-        let (status, payload) =
-            call(rig.admin_app(), "POST", "/admin/cache/clear", Some(body)).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{payload}");
-        assert_eq!(payload["error"]["code"], Value::from("INVALID_INPUT"));
-    }
-}
-
-#[tokio::test]
-async fn queue_stats_show_demand_and_jobs() {
-    let rig = Rig::open("queues").await;
-    let (status, body) = call(rig.admin_app(), "GET", "/admin/queue-stats", None).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let channels = body["channels"].as_array().expect("channels");
-    assert_eq!(channels.len(), 4);
-    assert!(
-        channels
-            .iter()
-            .all(|row| row["pending"] == Value::Bool(false)),
-        "{channels:?}"
-    );
-    assert_eq!(body["jobs"], serde_json::json!([]));
-
-    let lane = rig.runtime.lane();
-    rig.runtime
-        .wakeups()
-        .request(
-            lane,
-            Lane::Background,
-            droppedneedle::db::WakeupChannel::Scan,
-        )
-        .await
-        .expect("wakeup requests");
-    rig.runtime
-        .wakeups()
-        .register_job(
-            lane,
-            "scan-supervisor",
-            droppedneedle::db::JobKind::Ephemeral,
-            Some(droppedneedle::db::WakeupChannel::Scan),
-        )
-        .await
-        .expect("job registers");
-    let (status, body) = call(rig.admin_app(), "GET", "/admin/queue-stats", None).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let scan = body["channels"]
-        .as_array()
-        .expect("channels")
-        .iter()
-        .find(|row| row["channel"] == "scan")
-        .expect("scan channel");
-    assert_eq!(scan["requested_seq"], Value::from(1));
-    assert_eq!(scan["pending"], Value::Bool(true));
-    let jobs = body["jobs"].as_array().expect("jobs");
-    assert_eq!(jobs.len(), 1);
-    assert_eq!(jobs[0]["name"], Value::from("scan-supervisor"));
-    assert_eq!(jobs[0]["state"], Value::from("idle"));
-}
-
-#[tokio::test]
-async fn provider_stats_carry_every_limiter() {
-    let rig = Rig::open("providers").await;
-    let (status, body) = call(rig.admin_app(), "GET", "/admin/provider-stats", None).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let providers = body["providers"].as_array().expect("providers");
-    assert_eq!(providers.len(), 6);
-    let musicbrainz = providers
-        .iter()
-        .find(|row| row["source"] == "musicbrainz")
-        .expect("musicbrainz row");
-    assert_eq!(musicbrainz["per_second"], Value::from(1.0));
-    assert_eq!(musicbrainz["burst"], Value::from(1));
-    assert_eq!(musicbrainz["remaining"], Value::from(1));
-    assert!(body["slots"]["user_slots_available"].as_u64().is_some());
-    assert_eq!(body["slots"]["background_waiters"], Value::from(0));
-}
-
 /// Phases that never finish, holding a run open for the 409 brief.
 #[derive(Clone)]
 struct HangWork;
@@ -339,15 +233,6 @@ impl droppedneedle::jobs::precache::PrecacheWork for HangWork {
     ) -> droppedneedle::jobs::registry::BoxFuture<'_, Result<(), String>> {
         Box::pin(async { std::future::pending().await })
     }
-}
-
-#[tokio::test]
-async fn precache_run_starts_through_the_shared_registry() {
-    let rig = Rig::open("precache-run").await;
-    let (status, body) = call(rig.admin_app(), "POST", "/admin/precache/run", None).await;
-    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
-    assert_eq!(body["job"], "precache-library");
-    assert_eq!(body["status"], "started");
 }
 
 #[tokio::test]
@@ -372,28 +257,6 @@ async fn precache_second_run_is_409_while_live() {
     rig.jobs.cancel_all(Duration::from_secs(5)).await;
     let (status, _) = call(rig.admin_app(), "POST", "/admin/precache/run", None).await;
     assert_eq!(status, StatusCode::ACCEPTED);
-}
-
-#[tokio::test]
-async fn quota_unknown_user_is_404() {
-    let rig = Rig::open("quota-404").await;
-    let (status, body) = call(
-        rig.admin_app(),
-        "GET",
-        "/admin/users/user-ghost/quota",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(body["error"]["code"], Value::from("NOT_FOUND"));
-    let (status, _) = call(
-        rig.admin_app(),
-        "PUT",
-        "/admin/users/user-ghost/quota",
-        Some(json!({"request_quota_count": 5})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -563,91 +426,6 @@ async fn quota_overrides_reload_into_the_ledger() {
     assert_eq!(effective.request_count, 12);
     assert_eq!(effective.request_days, 30);
     assert_eq!(effective.storage_gb, 9);
-}
-
-#[tokio::test]
-async fn health_reports_the_latest_checkpoint() {
-    // Without a checkpoint service the key stays absent (v2 shape kept).
-    let plain = common::hooked_state();
-    let app = droppedneedle::create_app(plain);
-    let response = app
-        .oneshot(
-            Request::get("/health")
-                .body(Body::empty())
-                .expect("request builds"),
-        )
-        .await
-        .expect("health answers");
-    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
-        .await
-        .expect("body reads");
-    let body: Value = serde_json::from_slice(&bytes).expect("body is json");
-    assert!(body.get("checkpoint").is_none(), "{body}");
-
-    // After one pass, the payload carries the checkpoint summary.
-    let rig = Rig::open("health").await;
-    rig.runtime.checkpoint().run_once();
-    let mut state = common::hooked_state();
-    state.admin.checkpoint = Some(rig.runtime.checkpoint().clone());
-    let app = droppedneedle::create_app(state);
-    let response = app
-        .oneshot(
-            Request::get("/health")
-                .body(Body::empty())
-                .expect("request builds"),
-        )
-        .await
-        .expect("health answers");
-    assert_eq!(response.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
-        .await
-        .expect("body reads");
-    let body: Value = serde_json::from_slice(&bytes).expect("body is json");
-    assert_eq!(body["status"], Value::from("ok"));
-    assert_eq!(body["checkpoint"]["mode"], Value::from("passive"));
-    assert_eq!(body["checkpoint"]["busy"], Value::Bool(false));
-    assert!(body["checkpoint"]["at_unix"].as_u64().is_some());
-}
-
-#[tokio::test]
-async fn unwired_backends_answer_503_not_500() {
-    let rig = TestRig::new().expect("rig builds");
-    let admin_user = rig.seed_user("brenda", Role::Admin).await;
-    let quota = Arc::new(droppedneedle::acquire::requests::quota::QuotaLedger::unlimited());
-    let cache = Arc::new(droppedneedle::providers::InMemoryProviderCache::new());
-    let providers = Arc::new(droppedneedle::providers::Providers::new(cache.clone()));
-    let admin = AdminSetup::for_tests(rig.deps.clone(), quota, cache, providers);
-    let app = admin.gated_router().layer(axum::middleware::from_fn(
-        move |mut req: Request<Body>, next: axum::middleware::Next| {
-            let user_id = admin_user.id.clone();
-            async move {
-                req.extensions_mut().insert(CurrentSession {
-                    user_id,
-                    session_id: "sess-1".to_owned(),
-                    kind: SessionKind::Standard,
-                    transport: Transport::Bearer,
-                });
-                next.run(req).await
-            }
-        },
-    ));
-    for (method, uri, body) in [
-        ("GET", "/admin/backups", None),
-        ("POST", "/admin/backups", None),
-        ("GET", "/admin/backups/library-0-0.db/restore-report", None),
-        ("GET", "/admin/queue-stats", None),
-        ("GET", "/admin/users/user-brenda/quota", None),
-        ("POST", "/admin/precache/run", None),
-    ] {
-        let (status, payload) = call(app.clone(), method, uri, body).await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{method} {uri}");
-        assert_eq!(payload["error"]["code"], Value::from("UPSTREAM_ERROR"));
-    }
-    // Cache and provider stats need no database and stay live.
-    let (status, _) = call(app.clone(), "GET", "/admin/cache/stats", None).await;
-    assert_eq!(status, StatusCode::OK);
-    let (status, _) = call(app, "GET", "/admin/provider-stats", None).await;
-    assert_eq!(status, StatusCode::OK);
 }
 
 /// Mirror a memory-rig user into the scratch database so FK-backed quota

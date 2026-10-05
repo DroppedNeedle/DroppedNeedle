@@ -471,8 +471,6 @@ async fn login_rehashes(
     sessions.set_rehash_queue(hasher.rehash_queue().clone());
     let login = LoginService::new(sessions, hasher, SqliteCredentialLookup::new(&auth_db));
     let context = || LoginContext {
-        base_path: String::new(),
-        secure: false,
         user_agent: None,
         now_unix: 1_769_000_000,
     };

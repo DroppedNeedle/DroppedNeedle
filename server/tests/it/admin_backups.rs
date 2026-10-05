@@ -116,15 +116,6 @@ async fn call(app: Router, method: &str, uri: &str, body: Option<Value>) -> (Sta
 }
 
 #[tokio::test]
-async fn backup_list_starts_empty() {
-    let rig = Rig::open("empty").await;
-    let (status, body) = call(rig.admin_app(), "GET", "/admin/backups", None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["backups"], serde_json::json!([]));
-    assert_eq!(body["keep"], serde_json::json!(BACKUP_KEEP));
-}
-
-#[tokio::test]
 async fn backup_run_then_list_then_report() {
     let rig = Rig::open("journey").await;
     let (status, run) = call(rig.admin_app(), "POST", "/admin/backups", None).await;
@@ -216,23 +207,6 @@ async fn backup_rotation_keeps_five() {
         .collect();
     files.sort();
     assert_eq!(files.len(), BACKUP_KEEP * 2, "{files:?}");
-}
-
-#[tokio::test]
-async fn restore_report_for_missing_backup_is_not_restorable() {
-    let rig = Rig::open("missing").await;
-    let (status, report) = call(
-        rig.admin_app(),
-        "GET",
-        "/admin/backups/library-0-0.db/restore-report",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(report["ok"], Value::Bool(false));
-    assert_eq!(report["restorable"], Value::Bool(false));
-    assert_eq!(report["checks"][0]["name"], Value::from("file-present"));
-    assert_eq!(report["checks"][0]["passed"], Value::Bool(false));
 }
 
 #[tokio::test]

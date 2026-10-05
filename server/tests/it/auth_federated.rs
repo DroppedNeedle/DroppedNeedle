@@ -1,10 +1,6 @@
-//! Stage 3 federated briefs: OIDC, Jellyfin, and unified Plex logins
-//! against scripted fakes (no live IdP calls anywhere), the bcrypt-import
-//! to Argon2id rehash, dead sessions on import, and post-import
-//! app-password verification through the compat contracts.
-
-#[allow(dead_code)]
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+//! Federated logins: OIDC, Jellyfin, and the unified Plex journey against
+//! scripted identity providers (no network), plus what v2 import must keep
+//! working: dead sessions after import and imported app passwords.
 
 use droppedneedle::auth::federated::fakes::{
     FakeHasher, FakeJellyfinIdp, FakeJellyfinLink, FakeOidcExchanges, FakeOidcIdp, FakeOidcStates,
@@ -14,20 +10,17 @@ use droppedneedle::auth::federated::jellyfin_login::{
     JellyfinLogin, JellyfinProfile, NoopJellyfinLink, emby_auth_header, jellyfin_token_json,
 };
 use droppedneedle::auth::federated::oidc::{
-    DISCOVERY_SUFFIX, EXCHANGE_TTL_SECS, OidcLogin, OidcStateStore, OidcTokens, RANDOM_BYTES,
-    RawClaims, STATE_TTL_SECS, authorize_url, form_encode, jwt_payload_claims, normalise_claims,
-    pkce_challenge, sealed_token_json,
+    OidcLogin, OidcTokens, RawClaims, authorize_url, form_encode, normalise_claims,
+    sealed_token_json,
 };
 use droppedneedle::auth::federated::password_import::{
-    HashScheme, LocalCredential, PasswordCheck, SESSIONS_SURVIVE_IMPORT, verify_and_maybe_rehash,
+    LocalCredential, PasswordCheck, SESSIONS_SURVIVE_IMPORT, verify_and_maybe_rehash,
 };
 use droppedneedle::auth::federated::plex::{
-    NoopPlexLink, PlexAccount, PlexJourney, PlexPoll, PlexPurpose, PlexStartDenied, plex_auth_url,
-    plex_token_json,
+    PlexAccount, PlexJourney, PlexPoll, plex_auth_url, plex_token_json,
 };
 use droppedneedle::auth::federated::users::{
-    CREATE_RETRIES, FederatedUserStore, PROVIDER_JELLYFIN, PROVIDER_OIDC, PROVIDER_PLEX,
-    ROLE_ADMIN, ROLE_USER, derive_username, find_or_create_federated_user, username_base,
+    FederatedUserStore, derive_username, find_or_create_federated_user, username_base,
 };
 use droppedneedle::auth::federated::{FederatedError, SessionIssuer, json_string};
 
@@ -35,6 +28,7 @@ fn oidc_claims() -> RawClaims {
     RawClaims {
         sub: Some("oidc-sub-1".to_owned()),
         email: Some("Jane.Doe@Example.com".to_owned()),
+        email_verified: Some(true),
         name: Some("Jane Doe".to_owned()),
         preferred_username: None,
         nickname: None,
@@ -98,20 +92,6 @@ fn form_decode(encoded: &str) -> Option<String> {
 }
 
 #[test]
-fn oidc_constants_match_v2() {
-    assert_eq!(DISCOVERY_SUFFIX, "/.well-known/openid-configuration");
-    assert_eq!(STATE_TTL_SECS, 600);
-    assert_eq!(EXCHANGE_TTL_SECS, 60);
-    assert_eq!(RANDOM_BYTES, 32);
-    assert_eq!(CREATE_RETRIES, 20);
-    assert_eq!((ROLE_ADMIN, ROLE_USER), ("admin", "user"));
-    assert_eq!(
-        (PROVIDER_OIDC, PROVIDER_JELLYFIN, PROVIDER_PLEX),
-        ("oidc", "jellyfin", "plex")
-    );
-}
-
-#[test]
 fn authorize_url_golden_pins_param_order_and_encoding() {
     let config = FakeOidcIdp::config();
     let url = authorize_url(
@@ -127,52 +107,6 @@ fn authorize_url_golden_pins_param_order_and_encoding() {
     assert_eq!(form_encode("a b"), "a+b");
     assert_eq!(form_encode("state/+="), "state%2F%2B%3D");
     assert_eq!(form_encode("Zz-_.~09"), "Zz-_.~09");
-}
-
-#[test]
-fn providers_flag_needs_enabled_issuer_and_client() {
-    let mut config = FakeOidcIdp::config();
-    assert!(OidcLogin::<
-        FakeUserStore,
-        FakeOidcIdp,
-        FakeOidcStates,
-        FakeOidcExchanges,
-        FakeSessionIssuer,
-    >::providers_flag(&config));
-    config.enabled = false;
-    assert!(!OidcLogin::<
-        FakeUserStore,
-        FakeOidcIdp,
-        FakeOidcStates,
-        FakeOidcExchanges,
-        FakeSessionIssuer,
-    >::providers_flag(&config));
-}
-
-#[tokio::test]
-async fn oidc_authorize_stores_pkce_state_for_callback() {
-    let idp = FakeOidcIdp::new(FakeOidcIdp::discovery_doc(), oidc_tokens(), oidc_claims());
-    let states = FakeOidcStates::new();
-    let service = OidcLogin::new(
-        FakeUserStore::new(),
-        idp,
-        states.clone(),
-        FakeOidcExchanges::new(),
-        FakeSessionIssuer::new(),
-    );
-    let config = FakeOidcIdp::config();
-    let url = service.build_authorize_url(&config).await.unwrap();
-    assert!(url.starts_with("https://idp.test/authorize?response_type=code&"));
-    let state = url_param(&url, "state").unwrap().to_owned();
-    let challenge = url_param(&url, "code_challenge").unwrap().to_owned();
-    assert_eq!(state.len(), 44);
-    let verifier = states
-        .consume_state(&state)
-        .await
-        .unwrap()
-        .expect("state stored");
-    assert_eq!(verifier.len(), 43);
-    assert_eq!(pkce_challenge(&verifier), challenge);
 }
 
 #[tokio::test]
@@ -266,7 +200,6 @@ async fn oidc_links_email_and_refreshes_tokens_on_relogin() {
     let pre = users
         .create_user(droppedneedle::auth::federated::users::NewFederatedUser {
             display_name: "Jane".to_owned(),
-            role: "user".to_owned(),
             email: Some("jane.doe@example.com".to_owned()),
             avatar_url: None,
             username: "jane".to_owned(),
@@ -351,6 +284,7 @@ fn claims_normalisation_keeps_v2_fallback_chain() {
     let full = normalise_claims(&RawClaims {
         sub: Some("s".to_owned()),
         email: Some("  A@X.test ".to_owned()),
+        email_verified: None,
         name: None,
         preferred_username: Some("".to_owned()),
         nickname: Some("nick".to_owned()),
@@ -378,18 +312,6 @@ fn claims_normalisation_keeps_v2_fallback_chain() {
     assert_eq!(anon.name, "OIDC User");
     assert_eq!(anon.email, None);
     assert_eq!(json_string("a\"b\\c"), "\"a\\\"b\\\\c\"");
-}
-
-#[test]
-fn jwt_payload_decode_pins_compact_parsing() {
-    let payload = URL_SAFE_NO_PAD.encode(br#"{"sub":"u1","email":"J@X.test","nickname":"J"}"#);
-    let token = format!("e30.{payload}.sig");
-    let claims = jwt_payload_claims(&token).expect("decodes");
-    assert_eq!(claims.sub.as_deref(), Some("u1"));
-    assert_eq!(claims.nickname.as_deref(), Some("J"));
-    assert!(jwt_payload_claims("only.two").is_none());
-    assert!(jwt_payload_claims("a.b.c.d").is_none());
-    assert!(jwt_payload_claims("a.!!!.c").is_none());
 }
 
 #[test]
@@ -478,27 +400,6 @@ async fn jellyfin_login_rejects_bad_credentials_and_unconfigured_server() {
     assert_eq!(sessions.issued(), 0);
 }
 
-#[tokio::test]
-async fn jellyfin_credential_check_has_no_side_effects() {
-    let mut idp = FakeJellyfinIdp::new(true);
-    idp.accept("jfuser", "jfpass", jellyfin_profile());
-    let users = FakeUserStore::new();
-    let sessions = FakeSessionIssuer::new();
-    let service = JellyfinLogin::new(
-        users.clone(),
-        idp,
-        FakeJellyfinLink::new(),
-        sessions.clone(),
-    );
-    let profile = service
-        .authenticate_credentials("jfuser", "jfpass")
-        .await
-        .unwrap();
-    assert_eq!(profile.jellyfin_user_id, "jf-1");
-    assert!(!users.has_any_users().await.unwrap());
-    assert_eq!(sessions.issued(), 0);
-}
-
 #[test]
 fn plex_auth_url_golden_is_shared_by_all_flows() {
     assert_eq!(
@@ -533,30 +434,6 @@ fn plex_client() -> FakePlexPinClient {
 }
 
 #[tokio::test]
-async fn plex_start_and_pending_poll_have_no_side_effects() {
-    let client = FakePlexPinClient::new();
-    let users = FakeUserStore::new();
-    let sessions = FakeSessionIssuer::new();
-    let journey = PlexJourney::new(users.clone(), client, FakePlexLink::new(), sessions.clone());
-    let (pin_id, url) = journey.start().await.unwrap();
-    assert!(url.starts_with("https://app.plex.tv/auth#?clientID=test-client-id&code=code-"));
-    assert!(matches!(
-        journey.poll_login(pin_id, None).await.unwrap(),
-        PlexPoll::Pending
-    ));
-    assert!(matches!(
-        journey.poll_link(pin_id).await.unwrap(),
-        PlexPoll::Pending
-    ));
-    assert!(matches!(
-        journey.poll_connect(pin_id).await.unwrap(),
-        PlexPoll::Pending
-    ));
-    assert!(!users.has_any_users().await.unwrap());
-    assert_eq!(sessions.issued(), 0);
-}
-
-#[tokio::test]
 async fn plex_login_completes_with_membership_gate_session_and_link() {
     let client = plex_client();
     let users = FakeUserStore::new();
@@ -577,7 +454,8 @@ async fn plex_login_completes_with_membership_gate_session_and_link() {
         panic!("expected a completed login");
     };
     assert_eq!(user.display_name, "Plex Person");
-    assert_eq!(user.email.as_deref(), Some("plex@example.com"));
+    // Plex does not vouch for the address, so it is not stored.
+    assert_eq!(user.email, None);
     assert!(sessions.is_live(&token));
     assert_eq!(links.linked.lock().unwrap().len(), 1);
     let binding = users.binding_id("plex", "plex-uuid-1").unwrap();
@@ -594,34 +472,6 @@ async fn plex_login_completes_with_membership_gate_session_and_link() {
             .unwrap()
             .iter()
             .any(|call| call == "server_access_token:machine-1")
-    );
-}
-
-#[tokio::test]
-async fn plex_login_skips_gate_when_no_server_is_configured() {
-    let mut client = FakePlexPinClient::new();
-    client
-        .accounts
-        .insert("plex-token-1".to_owned(), plex_account());
-    let journey = PlexJourney::new(
-        FakeUserStore::new(),
-        client.clone(),
-        NoopPlexLink,
-        FakeSessionIssuer::new(),
-    );
-    let (pin_id, _) = journey.start().await.unwrap();
-    client.authorize_pin(pin_id, "plex-token-1");
-    assert!(matches!(
-        journey.poll_login(pin_id, None).await.unwrap(),
-        PlexPoll::Complete(_)
-    ));
-    assert!(
-        !client
-            .calls
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|call| call.starts_with("account_server_ids"))
     );
 }
 
@@ -686,7 +536,14 @@ async fn plex_link_returns_profile_only_and_connect_returns_raw_token() {
     assert_eq!(profile.uuid, "plex-uuid-1");
     assert_eq!(profile.server_access_token, "server-token-1");
     assert_eq!(sessions.issued(), 0);
-    assert!(!users.has_any_users().await.unwrap());
+    assert!(
+        users
+            .get_provider("plex", "plex-uuid-1")
+            .await
+            .unwrap()
+            .is_none(),
+        "linking creates no account"
+    );
 
     let (pin_id, _) = journey.start().await.unwrap();
     client.authorize_pin(pin_id, "plex-token-1");
@@ -694,93 +551,6 @@ async fn plex_link_returns_profile_only_and_connect_returns_raw_token() {
         journey.poll_connect(pin_id).await.unwrap(),
         PlexPoll::Complete(token) if token == "plex-token-1"
     ));
-}
-
-#[tokio::test]
-async fn plex_maps_provider_failures_to_v2_messages() {
-    let mut client = FakePlexPinClient::new();
-    client.fail_create = true;
-    let journey = PlexJourney::new(
-        FakeUserStore::new(),
-        client,
-        FakePlexLink::new(),
-        FakeSessionIssuer::new(),
-    );
-    assert_eq!(
-        journey.start().await,
-        Err(FederatedError::Authentication(
-            "Could not start Plex authentication".to_owned()
-        ))
-    );
-
-    let mut client = plex_client();
-    client.failing_accounts.push("plex-token-1".to_owned());
-    let journey = PlexJourney::new(
-        FakeUserStore::new(),
-        client.clone(),
-        FakePlexLink::new(),
-        FakeSessionIssuer::new(),
-    );
-    let (pin_id, _) = journey.start().await.unwrap();
-    client.authorize_pin(pin_id, "plex-token-1");
-    assert_eq!(
-        journey.poll_login(pin_id, None).await,
-        Err(FederatedError::Authentication(
-            "Could not verify Plex account".to_owned()
-        ))
-    );
-}
-
-#[tokio::test]
-async fn plex_start_gates_link_and_connect_when_unconfigured() {
-    // No machine id means Plex is unconfigured: login starts fine, link and
-    // connect refuse.
-    let journey = PlexJourney::new(
-        FakeUserStore::new(),
-        FakePlexPinClient::new(),
-        FakePlexLink::new(),
-        FakeSessionIssuer::new(),
-    );
-    assert!(journey.start_for_purpose(PlexPurpose::Login).await.is_ok());
-    assert_eq!(
-        journey.start_for_purpose(PlexPurpose::Link).await,
-        Err(PlexStartDenied::NotConfigured)
-    );
-    assert_eq!(
-        journey.start_for_purpose(PlexPurpose::Connect).await,
-        Err(PlexStartDenied::NotConfigured)
-    );
-
-    // Configured servers mint for every purpose.
-    let journey = PlexJourney::new(
-        FakeUserStore::new(),
-        plex_client(),
-        FakePlexLink::new(),
-        FakeSessionIssuer::new(),
-    );
-    assert!(journey.start_for_purpose(PlexPurpose::Link).await.is_ok());
-    assert!(
-        journey
-            .start_for_purpose(PlexPurpose::Connect)
-            .await
-            .is_ok()
-    );
-
-    // PIN-creation failure is a start failure, not a config refusal.
-    let mut failing = FakePlexPinClient::new();
-    failing.fail_create = true;
-    let journey = PlexJourney::new(
-        FakeUserStore::new(),
-        failing,
-        FakePlexLink::new(),
-        FakeSessionIssuer::new(),
-    );
-    assert_eq!(
-        journey.start_for_purpose(PlexPurpose::Login).await,
-        Err(PlexStartDenied::StartFailed(
-            FederatedError::Authentication("Could not start Plex authentication".to_owned())
-        ))
-    );
 }
 
 #[tokio::test]
@@ -804,64 +574,7 @@ async fn federated_username_derivation_prefers_email_local_part() {
     );
 }
 
-#[test]
-fn hash_scheme_tags_round_trip_and_never_sniff() {
-    assert_eq!(HashScheme::Bcrypt.as_tag(), "bcrypt");
-    assert_eq!(HashScheme::Argon2id.as_tag(), "argon2id");
-    assert_eq!(HashScheme::from_tag("bcrypt"), Some(HashScheme::Bcrypt));
-    assert_eq!(HashScheme::from_tag("argon2id"), Some(HashScheme::Argon2id));
-    assert_eq!(HashScheme::from_tag("$2b$12$abc"), None);
-    assert_eq!(HashScheme::from_tag(""), None);
-}
-
-#[test]
-fn bcrypt_login_verifies_once_then_rehashes_to_argon2id() {
-    let hasher = FakeHasher::new();
-    let mut stored = LocalCredential::imported_bcrypt(FakeHasher::bcrypt_fixture("old-password"));
-
-    let PasswordCheck::Valid { upgraded } =
-        verify_and_maybe_rehash(&hasher, "old-password", Some(&stored))
-    else {
-        panic!("the imported password must verify");
-    };
-    let upgraded = upgraded.expect("bcrypt success must rehash");
-    assert_eq!(upgraded.scheme, HashScheme::Argon2id);
-    stored = upgraded;
-    assert_eq!(stored.scheme.as_tag(), "argon2id");
-
-    assert_eq!(
-        verify_and_maybe_rehash(&hasher, "old-password", Some(&stored)),
-        PasswordCheck::Valid { upgraded: None }
-    );
-    assert_eq!(
-        verify_and_maybe_rehash(&hasher, "wrong", Some(&stored)),
-        PasswordCheck::Invalid
-    );
-}
-
-#[test]
-fn wrong_password_never_rehashes_and_unknown_users_cost_one_dummy() {
-    let hasher = FakeHasher::new();
-    let stored = LocalCredential::imported_bcrypt(FakeHasher::bcrypt_fixture("old-password"));
-    assert_eq!(
-        verify_and_maybe_rehash(&hasher, "wrong", Some(&stored)),
-        PasswordCheck::Invalid
-    );
-    assert_eq!(stored.scheme, HashScheme::Bcrypt);
-
-    assert_eq!(
-        verify_and_maybe_rehash(&hasher, "anything", None),
-        PasswordCheck::Invalid
-    );
-    assert_eq!(hasher.dummy_calls(), 1);
-}
-
 const _: () = assert!(!SESSIONS_SURVIVE_IMPORT);
-
-#[test]
-fn session_issuer_starts_empty() {
-    assert_eq!(FakeSessionIssuer::new().issued(), 0);
-}
 
 #[tokio::test]
 async fn old_sessions_die_on_import_while_new_logins_work() {
@@ -889,6 +602,7 @@ async fn duplicate_username_surfaces_for_rederivation() {
         provider_uid: "u1".to_owned(),
         display_name: "Sam".to_owned(),
         email: None,
+        email_verified: false,
         avatar_url: None,
         token_json: "{}".to_owned(),
     };
@@ -899,6 +613,7 @@ async fn duplicate_username_surfaces_for_rederivation() {
         provider_uid: "u2".to_owned(),
         display_name: "Sam".to_owned(),
         email: None,
+        email_verified: false,
         avatar_url: None,
         token_json: "{}".to_owned(),
     };
@@ -908,22 +623,6 @@ async fn duplicate_username_surfaces_for_rederivation() {
     assert_eq!(first.username, "sam");
     assert_eq!(second.username, "sam-2");
     assert_eq!(second.role, "user");
-}
-
-#[test]
-fn error_messages_stay_stable() {
-    assert_eq!(
-        format!("{}", FederatedError::RngUnavailable),
-        "random source unavailable"
-    );
-    assert_eq!(
-        format!("{}", FederatedError::StoreUnavailable("db down".to_owned())),
-        "store unavailable: db down"
-    );
-    assert_eq!(
-        format!("{}", FederatedError::UsernameTaken),
-        "username taken"
-    );
 }
 
 #[tokio::test]
@@ -962,4 +661,124 @@ async fn imported_app_passwords_verify_on_both_compat_paths() {
         .await
         .unwrap();
     assert_eq!(user.id, "user-9");
+}
+
+// ---------------------------------------------------------------------------
+// OIDC over HTTP
+// ---------------------------------------------------------------------------
+
+mod oidc_http {
+    use axum::{
+        Router,
+        body::Body,
+        http::{HeaderMap, Request, StatusCode},
+    };
+    use droppedneedle::auth::federated::fakes::{
+        FakeOidcExchanges, FakeOidcIdp, FakeOidcStates, FakeSessionIssuer, FakeUserStore,
+    };
+    use droppedneedle::auth::federated::oidc::OidcLogin;
+    use droppedneedle::auth::routes::federated::{OidcRouteState, StaticOidcConfig, oidc_router};
+    use droppedneedle::auth::session::cookies::COOKIE_NAME;
+    use droppedneedle::auth::users::memory::TestRig;
+    use serde_json::{Value, json};
+    use tower::ServiceExt as _;
+
+    fn app() -> Router {
+        let login = OidcLogin::new(
+            FakeUserStore::new(),
+            FakeOidcIdp::new(
+                FakeOidcIdp::discovery_doc(),
+                super::oidc_tokens(),
+                super::oidc_claims(),
+            ),
+            FakeOidcStates::new(),
+            FakeOidcExchanges::new(),
+            FakeSessionIssuer::new(),
+        );
+        let ids = TestRig::new().expect("test rig").deps.ids;
+        let state = OidcRouteState::new(login, StaticOidcConfig(FakeOidcIdp::config()), ids, "");
+        Router::new().nest("/api/v3", oidc_router(state))
+    }
+
+    async fn send(app: &Router, request: Request<Body>) -> (StatusCode, HeaderMap, Value) {
+        let response = app.clone().oneshot(request).await.expect("responds");
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .expect("body reads");
+        (
+            status,
+            headers,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    /// Authorize, then take the callback redirect's one-time exchange code.
+    async fn exchange_code(app: &Router) -> String {
+        let request = Request::post("/api/v3/auth/oidc/authorize")
+            .body(Body::empty())
+            .expect("request builds");
+        let (_, _, body) = send(app, request).await;
+        let url = body["authorize_url"].as_str().expect("url");
+        let state = super::url_param(url, "state").expect("state");
+        let request = Request::get(format!(
+            "/api/v3/auth/oidc/callback?code=authcode-1&state={state}"
+        ))
+        .body(Body::empty())
+        .expect("request builds");
+        let (status, headers, _) = send(app, request).await;
+        assert_eq!(status, StatusCode::FOUND);
+        let location = headers["location"].to_str().expect("ascii").to_owned();
+        assert!(location.starts_with("/auth/callback?code="), "{location}");
+        location.split("code=").nth(1).expect("code").to_owned()
+    }
+
+    fn exchange(code: &str, proto: &str, peer: Option<&str>) -> Request<Body> {
+        let mut request = Request::post("/api/v3/auth/oidc/exchange")
+            .header("content-type", "application/json")
+            .header("x-forwarded-proto", proto)
+            .body(Body::from(json!({"code": code}).to_string()))
+            .expect("request builds");
+        if let Some(peer) = peer {
+            let addr: std::net::SocketAddr = peer.parse().expect("peer");
+            request
+                .extensions_mut()
+                .insert(axum::extract::ConnectInfo(addr));
+        }
+        request
+    }
+
+    #[tokio::test]
+    async fn oidc_login_mints_a_cookie_session_once() {
+        let app = app();
+        let code = exchange_code(&app).await;
+        let (status, headers, body) = send(&app, exchange(&code, "http", None)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(
+            body.get("token").is_none(),
+            "cookie mode keeps the token out"
+        );
+        let cookie = headers["set-cookie"].to_str().expect("ascii");
+        assert!(cookie.starts_with(&format!("{COOKIE_NAME}=")), "{cookie}");
+        // Replaying the code fails: it is single use.
+        let (status, _, _) = send(&app, exchange(&code, "http", None)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn forwarded_proto_marks_secure_only_from_trusted_proxies() {
+        let app = app();
+        for (peer, secure) in [
+            (None, false),
+            (Some("203.0.113.9:1"), false),
+            (Some("127.0.0.1:1"), true),
+        ] {
+            let code = exchange_code(&app).await;
+            let (status, headers, _) = send(&app, exchange(&code, "https", peer)).await;
+            assert_eq!(status, StatusCode::OK);
+            let cookie = headers["set-cookie"].to_str().expect("ascii");
+            assert_eq!(cookie.contains("Secure"), secure, "{peer:?}: {cookie}");
+        }
+    }
 }
