@@ -105,13 +105,14 @@ async fn database_one_version_behind_is_backed_up_before_migrating() {
     let dir = scratch("upgrade");
     let db_path = dir.join("cache").join("library.db");
     std::fs::create_dir_all(db_path.parent().unwrap()).unwrap();
-    let older = {
-        let all = &droppedneedle::schema::MIGRATOR;
-        let keep = all.migrations.len() - 1;
-        sqlx::migrate::Migrator {
-            migrations: std::borrow::Cow::Owned(all.migrations[..keep].to_vec()),
-            ..sqlx::migrate::Migrator::DEFAULT
-        }
+    let all = &droppedneedle::schema::MIGRATOR;
+    let keep = all.migrations.len() - 1;
+    // Migration numbers can skip, so the stamp one behind is the version of
+    // the last migration kept, not latest minus one.
+    let behind = all.migrations[keep - 1].version;
+    let older = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(all.migrations[..keep].to_vec()),
+        ..sqlx::migrate::Migrator::DEFAULT
     };
     let options = sqlx::sqlite::SqliteConnectOptions::new()
         .filename(&db_path)
@@ -120,7 +121,6 @@ async fn database_one_version_behind_is_backed_up_before_migrating() {
     let pool = sqlx::SqlitePool::connect_with(options).await.unwrap();
     older.run(&pool).await.unwrap();
     pool.close().await;
-    let behind = droppedneedle::schema::latest_version() - 1;
 
     let runtime = open_runtime(&DbConfig::new(&db_path)).await.unwrap();
     let backups: Vec<PathBuf> = std::fs::read_dir(dir.join("cache").join("backups"))
