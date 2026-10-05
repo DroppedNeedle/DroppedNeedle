@@ -76,6 +76,10 @@ pub fn restore_backup(
             backup_db.display().to_string(),
         ));
     }
+    // Held for the run: a server on this directory refuses to start, and a
+    // running one makes the restore refuse.
+    let _lock = crate::tooling::datalock::DataLock::exclusive(&target_dir.join("library.db"))
+        .map_err(|error| RestoreError::Refused(format!("{error}; stop the server first")))?;
     let mut checks_passed = preflight(backup_db, allow_downgrade)?;
     let parent = backup_db
         .parent()

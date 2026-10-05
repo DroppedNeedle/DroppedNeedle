@@ -45,6 +45,7 @@ use crate::{
         services::SqliteImpactBuckets,
         wiring::SettingsSetup,
     },
+    tooling::datalock::{DataLock, DataLockError},
     web::{WebError, WebUi},
 };
 
@@ -63,6 +64,9 @@ pub enum BootError {
     /// The data-encryption key could not be loaded or created.
     #[error("encryption key: {0}")]
     Key(#[from] CryptoError),
+    /// The offline tool holds the database.
+    #[error("data lock: {0}")]
+    DataLock(#[from] DataLockError),
     /// The settings file could not be opened.
     #[error("settings: {0}")]
     Settings(#[from] crate::runtime_config::ConfigError),
@@ -83,6 +87,11 @@ fn stage(stage: &'static str) -> impl FnOnce(String) -> BootError {
 /// Build the production graph and start its background work.
 pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError> {
     let http = HttpClientFactory::with_settings(&config.http)?;
+    // Held until shutdown, and taken before the database opens (so before
+    // the pre-upgrade backup and the migrations): the offline import and
+    // restore refuse to run while it is held, and a running one keeps the
+    // server from starting.
+    let data_lock = DataLock::shared(&config.library_db_path)?;
     let runtime = open_runtime(&DbConfig::new(&config.library_db_path)).await?;
     let web = prepare_web(&config).await?;
 
@@ -317,7 +326,13 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         plugins,
     );
     let router = create_app_with_web(state, web);
-    Ok((router, background.with_jobs(jobs).with_runtime(runtime)))
+    Ok((
+        router,
+        background
+            .with_jobs(jobs)
+            .with_runtime(runtime)
+            .with_data_lock(data_lock),
+    ))
 }
 
 /// Stamp the shipped web UI into the cache, off the async workers.

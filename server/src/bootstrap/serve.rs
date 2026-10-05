@@ -17,7 +17,9 @@ use axum::Router;
 use thiserror::Error;
 use tokio::{net::TcpListener, sync::watch, task::JoinHandle};
 
-use crate::{config::BindHost, db::DbRuntime, jobs::wiring::JobsSetup};
+use crate::{
+    config::BindHost, db::DbRuntime, jobs::wiring::JobsSetup, tooling::datalock::DataLock,
+};
 
 /// Listen backlog, the usual server default.
 const BACKLOG: i32 = 1024;
@@ -84,6 +86,7 @@ pub struct Background {
     loops: Vec<(&'static str, JoinHandle<()>)>,
     jobs: Option<JobsSetup>,
     runtime: Option<DbRuntime>,
+    data_lock: Option<DataLock>,
 }
 
 impl Background {
@@ -96,6 +99,7 @@ impl Background {
             loops: Vec::new(),
             jobs: None,
             runtime: None,
+            data_lock: None,
         }
     }
 
@@ -125,6 +129,13 @@ impl Background {
     #[must_use]
     pub fn with_runtime(mut self, runtime: DbRuntime) -> Self {
         self.runtime = Some(runtime);
+        self
+    }
+
+    /// Release the shared data lock only after the database has closed.
+    #[must_use]
+    pub fn with_data_lock(mut self, lock: DataLock) -> Self {
+        self.data_lock = Some(lock);
         self
     }
 
@@ -203,6 +214,7 @@ pub async fn serve(
     if let Some(runtime) = background.runtime.take() {
         runtime.shutdown().await;
     }
+    drop(background.data_lock.take());
     tracing::info!("shutdown complete");
     match served {
         Ok(Ok(())) => Ok(()),

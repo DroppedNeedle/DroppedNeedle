@@ -1,9 +1,9 @@
 //! Advisory lock between the server and the offline tool.
 //!
 //! The server holds a shared lock on `<db>.lock` for as long as it runs.
-//! The offline import takes the same lock exclusively before it opens the
-//! database and keeps it for the whole run, so an import refuses a live
-//! server (even an idle one) and a server refuses to start mid-import.
+//! The offline import and restore take the same lock exclusively before
+//! they touch the database and keep it for the whole run, so they refuse a
+//! live server (even an idle one) and a server refuses to start mid-run.
 //! The lock is an OS file lock: it goes away with the process, so a crash
 //! never leaves a stale lock behind.
 
@@ -62,6 +62,9 @@ impl DataLock {
             path: path.clone(),
             reason: error.to_string(),
         };
+        if let Some(parent) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
+            std::fs::create_dir_all(parent).map_err(io)?;
+        }
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -80,6 +83,12 @@ impl DataLock {
             Err(TryLockError::Error(error)) => Err(io(error)),
         }
     }
+}
+
+/// File name of the lock beside a database named `db_name`.
+#[must_use]
+pub fn lock_file_name(db_name: &str) -> String {
+    format!("{db_name}.lock")
 }
 
 /// `<db>.lock` beside the database file.
