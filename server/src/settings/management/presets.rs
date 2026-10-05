@@ -2,7 +2,17 @@
 //! complete organizer profiles, the fresh-tenant settings, preset
 //! migration on load, and the per-group preset diff.
 
-use super::*;
+use std::collections::BTreeSet;
+
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+
+use super::revision::{naming_script_revision, profile_revision};
+use crate::runtime_config::sections::{
+    ArtworkImageType, DEFAULT_NAMING_TEMPLATE, FieldMode, GenreSource, LibraryManagement,
+    LibraryManagementProfile, ManagedField, MetadataManagementSettings, NamingScript,
+    OrganizationManagementSettings, ReplayGainMode, SourceCleanupMode,
+};
 
 /// Management settings schema version.
 pub const MANAGEMENT_SCHEMA_VERSION: i64 = 1;

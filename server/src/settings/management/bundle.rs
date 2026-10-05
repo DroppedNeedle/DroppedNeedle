@@ -1,15 +1,32 @@
 //! Profile sharing: export and import bundles.
+//!
+//! Bundles are deterministic and inert. The portable document carries the
+//! profile with identity fields stripped and script references rewritten to
+//! `naming-N`/`tagging-N` keys; the share code is the same document
+//! zlib-compressed (level 9) and base64url-encoded behind the `DNLP1:`
+//! prefix. Both forms verify against the `sha256:` checksum over the
+//! canonical payload. Byte-compatible with v2: either side reads the
+//! other's exports.
 
-use super::*;
+use std::collections::{BTreeMap, BTreeSet};
 
-//
-// Deterministic, inert profile bundles. The portable document carries the
-// profile with identity fields stripped and script references rewritten to
-// `naming-N`/`tagging-N` keys; the share code is the same document
-// zlib-compressed (level 9) and base64url-encoded behind the `DNLP1:`
-// prefix. Both forms verify against the `sha256:` checksum over the
-// canonical payload. Byte-compatible with v2: either side reads the
-// other's exports.
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+use unicode_normalization::UnicodeNormalization;
+use utoipa::ToSchema;
+use uuid::Uuid;
+
+use super::invalid;
+use super::normalize::normalize;
+use super::script::ScriptCompiler;
+use crate::ids::IdGenerator;
+use crate::runtime_config::sections::{
+    ArtistStandardization, ArtworkProvider, FieldMode, LibraryManagement, LibraryManagementProfile,
+    Mp3ApePolicy, NamingScript, RawAacTagPolicy, ReplayGainMode, SourceCleanupMode, TaggingScript,
+    WavTagPolicy,
+};
+use crate::settings::error::SettingsError;
 
 /// Bundle document format tag.
 pub const PROFILE_BUNDLE_FORMAT: &str = "droppedneedle-library-profile";

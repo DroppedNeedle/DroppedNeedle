@@ -2,7 +2,10 @@
 //! (ASCII-escaped canonical JSON), so migrated activations and CAS
 //! tokens keep working.
 
-use super::*;
+use crate::runtime_config::sections::{
+    LibraryManagement, LibraryManagementProfile, NamingScript, TaggingScript,
+};
+use crate::settings::library_policy::stable_hash;
 
 /// Strip the legacy-compat shims before hashing (v2
 /// `_remove_default_*`): default lyrics preservation, default

@@ -1,7 +1,17 @@
 //! Change-impact classification: which automatic roots gain or lose
 //! file-writing scope under a candidate settings document.
 
-use super::*;
+use std::collections::{BTreeMap, BTreeSet};
+
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+
+use super::activation::{pin_naming_scripts, pin_profile};
+use super::revision::{naming_policy_revision, settings_revision};
+use crate::runtime_config::sections::{
+    LibraryManagement, LibraryManagementProfile, LibraryManagementRootAssignment, NamingScript,
+    TaggingScript,
+};
 
 /// Whether an assignment engages automatic work (custom editions excluded:
 /// gaining custom-edition automation is always destructive on its own).

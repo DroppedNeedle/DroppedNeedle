@@ -1,7 +1,10 @@
 //! The naming and tagging script language port and the shipped
 //! structural compiler.
 
-use super::*;
+use std::collections::BTreeSet;
+
+use super::presets::{MANAGED_FIELD_NAMES, MERGEABLE_MANAGED_FIELD_NAMES};
+use crate::settings::error::SettingsError;
 
 /// Naming variable universe (managed fields plus path-only variables).
 pub fn naming_variables() -> BTreeSet<&'static str> {

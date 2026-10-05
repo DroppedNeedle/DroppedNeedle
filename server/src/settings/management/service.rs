@@ -14,10 +14,30 @@
 //! file and library roots synchronously, so handlers run them on the
 //! blocking pool.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use super::*;
+use uuid::Uuid;
+
+use super::activation::{
+    ActivationHealth, activation_health, activation_is_current, validate_root_assignments,
+};
+use super::bundle::{
+    PROFILE_BUNDLE_MIME_TYPE, PortableScript, export_profile_bundle, materialize_profile_bundle,
+    parse_profile_bundle, preview_materialized_profile, profile_aspects, profile_bundle_filename,
+    profile_import_warnings, resolve_import_names,
+};
+use super::impact::{ChangeImpact, active_automatic, classify};
+use super::invalid;
+use super::normalize::{migration_carry, normalize, validate_preset_provenance};
+use super::presets::{PresetDiff, initial_settings, migrate_presets, preset_diff};
+use super::revision::settings_revision;
+use super::script::ScriptCompiler;
+use crate::ids::IdGenerator;
 use crate::runtime_config::ConfigStore;
+use crate::runtime_config::secret_sections::TypedLibrary;
+use crate::runtime_config::sections::{LibraryManagement, LibraryManagementProfile};
+use crate::settings::error::SettingsError;
 use crate::settings::models::{
     LibraryManagementProfileExportResponse, LibraryManagementProfileImportPreviewResponse,
     LibraryManagementProfileImportResponse, LibraryManagementProfileMutationResponse,

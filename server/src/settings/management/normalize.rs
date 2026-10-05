@@ -1,7 +1,21 @@
 //! Normalize-and-validate for a candidate settings document, plus the
 //! save-time carry of activation pins and migration history.
 
-use super::*;
+use std::collections::{BTreeMap, BTreeSet};
+
+use super::invalid;
+use super::presets::{
+    LEGACY_DEFAULT_SIDECAR_PATTERNS, MANAGED_FIELD_NAMES, MANAGEMENT_SCHEMA_VERSION,
+    MERGEABLE_MANAGED_FIELD_NAMES, PRESET_CATALOG_VERSION,
+};
+use super::revision::{naming_script_revision, profile_revision, tagging_script_revision};
+use super::script::{ScriptCompiler, validate_naming_language, validate_tagging_language};
+use crate::runtime_config::sections::{
+    ArtistStandardization, ArtworkProvider, FieldMode, Id3TextEncoding, Id3Version,
+    LibraryManagement, LibraryManagementProfile, LibraryManagementRootAssignment,
+    LibraryManagementRootOverrides, MultiDiscNamingMode, OrganizationManagementSettings,
+};
+use crate::settings::error::SettingsError;
 
 /// Carry the activation pins and migration history forward on save:
 ///

@@ -1,6 +1,20 @@
 //! Effective profiles per root, activation pins, and activation health.
 
-use super::*;
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+
+use super::impact::active_automatic;
+use super::invalid;
+use super::presets::sidecar_default_history;
+use super::revision::{naming_policy_revision, profile_revision};
+use crate::runtime_config::secret_sections::{LibraryRoot, TypedLibrary};
+use crate::runtime_config::sections::{
+    LibraryManagement, LibraryManagementProfile, LibraryManagementRootAssignment,
+    MultiDiscNamingMode, NamingScript, OrganizationManagementSettings,
+};
+use crate::settings::error::SettingsError;
 
 /// Pin a profile for one root: overlay the assignment overrides onto a
 /// detached copy of the assigned profile (the default profile when none
