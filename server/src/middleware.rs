@@ -88,14 +88,27 @@ pub async fn request_scope(
     response
 }
 
-/// Read a caller-supplied request id, if it is usable as a header value.
+/// Longest caller-supplied request id kept; longer ones are replaced.
+const MAX_REQUEST_ID_LEN: usize = 128;
+
+/// Read a caller-supplied request id. It is echoed into logs and error
+/// bodies, so only short ids of letters, digits, `-`, `_`, `.` and `:` are
+/// kept; anything else gets a minted id instead.
 fn incoming_request_id(request: &Request) -> Option<String> {
     request
         .headers()
         .get(REQUEST_ID_HEADER)
         .and_then(|value| value.to_str().ok())
-        .filter(|value| !value.trim().is_empty())
+        .filter(|value| is_safe_request_id(value))
         .map(str::to_owned)
+}
+
+fn is_safe_request_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_REQUEST_ID_LEN
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
 }
 
 /// Stamp the response with the request id; values we mint are always valid.
@@ -107,7 +120,16 @@ fn set_request_id_header(response: &mut Response, request_id: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::is_compat_path;
+    use super::{is_compat_path, is_safe_request_id};
+
+    #[test]
+    fn request_ids_are_short_and_plain() {
+        assert!(is_safe_request_id("4f1c2a9e-77b0-4d3e-9d1b-2f3a4b5c6d7e"));
+        assert!(!is_safe_request_id(""));
+        assert!(!is_safe_request_id(&"a".repeat(129)));
+        assert!(!is_safe_request_id("id with spaces"));
+        assert!(!is_safe_request_id("line\nbreak"));
+    }
 
     #[test]
     fn compat_paths_skip_the_5xx_rewrite() {
