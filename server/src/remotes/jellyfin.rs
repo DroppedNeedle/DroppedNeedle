@@ -25,8 +25,8 @@ use serde::de::DeserializeOwned;
 
 use super::adapter::{AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse};
 use super::jellyfin_models::{
-    AuthenticationResult, Item, ItemPage, Lyrics, NamedPage, QueryFilters, SearchHints, Session,
-    SystemInfo,
+    AuthenticationResult, Item, ItemPage, Lyrics, NamedPage, PlaybackReport, QueryFilters,
+    SearchHints, Session, SystemInfo,
 };
 use super::models::{
     AlbumView, ArtistIndexEntry, ArtistView, FavoritesView, FilterFacetsView, HistoryPage, HubView,
@@ -906,22 +906,16 @@ impl JellyfinAdapter {
         is_paused: bool,
     ) -> Result<(), AdapterError> {
         self.require_configured()?;
-        let mut body = serde_json::json!({
-            "ItemId": item_id,
-            "PlaySessionId": "",
-            "CanSeek": true,
-        });
-        if let Some(ticks) = position_ticks
-            && let Some(map) = body.as_object_mut()
-        {
-            map.insert("PositionTicks".to_owned(), serde_json::Value::from(ticks));
-        }
-        if endpoint.ends_with("/Progress")
-            && let Some(map) = body.as_object_mut()
-        {
-            map.insert("IsPaused".to_owned(), serde_json::Value::from(is_paused));
-        }
-        self.post_json(endpoint, &body).await
+        let body = PlaybackReport {
+            item_id,
+            play_session_id: "",
+            can_seek: true,
+            position_ticks,
+            is_paused: endpoint.ends_with("/Progress").then_some(is_paused),
+        };
+        let body = serde_json::to_string(&body)
+            .map_err(|_| AdapterError::Api("Jellyfin report body failed to render".to_owned()))?;
+        self.post_json(endpoint, body).await
     }
 
     /// Playlist cover: the first Audio member's primary image, matching the
@@ -1059,11 +1053,7 @@ impl JellyfinAdapter {
 
     /// POST a JSON body, discarding the response. Used only for session
     /// reports; any non-2xx is an API error.
-    async fn post_json(
-        &self,
-        endpoint: &str,
-        body: &serde_json::Value,
-    ) -> Result<(), AdapterError> {
+    async fn post_json(&self, endpoint: &str, body: String) -> Result<(), AdapterError> {
         if !self.is_configured() {
             return Err(AdapterError::NotConfigured);
         }
@@ -1072,7 +1062,7 @@ impl JellyfinAdapter {
             .post(format!("{}{endpoint}", self.base_url))
             .header("Content-Type", "application/json")
             .header("Authorization", self.auth_header())
-            .body(body.to_string())
+            .body(body)
             .timeout(REQUEST_TIMEOUT)
             .send()
             .await

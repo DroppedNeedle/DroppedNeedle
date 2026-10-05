@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// A list of items (`/Items`, `/Artists`, `/Playlists/{id}/Items`,
 /// `/Items/{id}/Similar`, instant mixes).
@@ -314,6 +314,24 @@ pub struct AuthenticatedUser {
     /// Display name.
     #[serde(default)]
     pub name: Option<String>,
+}
+
+/// Body for `/Sessions/Playing`, `/Progress`, and `/Stopped`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct PlaybackReport<'a> {
+    /// Item being played.
+    pub item_id: &'a str,
+    /// Playback session id; empty because v3 never opens one.
+    pub play_session_id: &'a str,
+    /// Whether the client can seek.
+    pub can_seek: bool,
+    /// Position in ticks, when known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position_ticks: Option<i64>,
+    /// Pause state (progress reports only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_paused: Option<bool>,
 }
 
 #[cfg(test)]
