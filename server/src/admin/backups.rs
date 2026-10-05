@@ -5,10 +5,10 @@
 //! always precedes rotation, so a failed run leaves the previous five
 //! untouched.
 //!
-//! Two deliberate simplifications vs stage0 §10: backup runs are
-//! synchronous (a catalog-sized backup finishes in seconds, and no client
-//! needs progress polling yet — revisit on slow-device evidence), and the
-//! restore itself stays an offline CLI (stage 11 owns it). The
+//! Two simplifications on purpose: backup runs are synchronous (a
+//! catalog-sized backup finishes in seconds, and no client needs progress
+//! polling yet; revisit if slow devices show otherwise), and the restore
+//! itself stays an offline CLI (`droppedneedle-tool restore`). The
 //! restore-report route verifies read-only and never moves the live
 //! database.
 
@@ -93,7 +93,7 @@ pub async fn run_backup(service: &BackupService) -> Result<BackupRunResponse, Ad
 /// returns `None` without touching the backups directory. A fresh database
 /// (stamp 0 with no tables yet) also skips: there is nothing to lose.
 /// Otherwise it runs one verified backup (rotating at five) and returns its
-/// report. Boot treats a failure here as fatal — migrating without a safety
+/// report. Boot treats a failure here as fatal: migrating without a safety
 /// net risks the catalog.
 ///
 /// The stamp alone does not prove freshness: a legacy database could carry
@@ -278,7 +278,7 @@ fn manifest_path(backup: &Path) -> PathBuf {
 }
 
 /// Best-effort manifest read: a missing or corrupt sidecar is `None`, never
-/// an error — the listing still shows the file.
+/// an error; the listing still shows the file.
 fn read_manifest(backup: &Path) -> Option<BackupManifest> {
     let bytes = std::fs::read(manifest_path(backup)).ok()?;
     serde_json::from_slice(&bytes).ok()

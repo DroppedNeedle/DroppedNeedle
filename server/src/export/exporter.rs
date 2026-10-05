@@ -3,7 +3,7 @@
 //! The exporter reads a v2 instance read-only (key file, config, database,
 //! plugin manifests), resolves every secret through v2 `decrypt()` semantics
 //! (Fernet or legacy-plaintext passthrough), seals each secret under the
-//! operator passphrase, and assembles the envelope. Only the Q2 set leaves
+//! operator passphrase, and assembles the envelope. Only the migrated set leaves
 //! v2: accounts, settings, follows. Tokens, sessions, derived follow
 //! tables, scan state, history, queues, and jobs stay behind.
 //!
@@ -197,7 +197,7 @@ pub fn utc_now_rfc3339() -> Result<String, ExportError> {
 
 /// Export one v2 instance into a sealed envelope document.
 ///
-/// Order is deliberate: the v2 key check refuses first (a missing key must
+/// Order matters: the v2 key check refuses first (a missing key must
 /// never silently re-key ciphertext), then config, users, follows, and
 /// settings assemble in that order. Nothing is written anywhere; see
 /// [`export_v2_to_file`] for the atomic file form.

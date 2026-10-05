@@ -1,6 +1,6 @@
 //! The `fold()` search function: accent- and case-insensitive matching.
 //!
-//! v1 registers a deterministic `fold()` SQL function on every connection and
+//! v2 registers a deterministic `fold()` SQL function on every connection and
 //! applies it to both column and pattern in library searches, so a keyboard
 //! that cannot type an accent still finds the artist. The v3 baseline schema
 //! keeps no SQL-side `fold()` calls, so only the writer connection registers

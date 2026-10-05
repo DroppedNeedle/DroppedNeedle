@@ -1,12 +1,12 @@
 //! v2 → v3 importer: parse → unlock → settings → users → secrets →
 //! follows/approvals → atomic commit → post-import rebuild.
 //!
-//! Step order follows stage0-export.md §10. Every run, including dry-run,
+//! Every run, including dry-run,
 //! produces exactly one [`ImportReport`]; failures are exit codes, never
 //! panics. Plaintext secrets exist only in memory and are never logged,
 //! reported, or written to temp files.
 //!
-//! Conflict rules (§6), deleted-ID rules (§2.4/§4.2), and idempotent
+//! Conflict rules, deleted-ID rules, and idempotent
 //! re-import all live here. The merge decisions are pure functions over
 //! snapshots so dry-run and real import share them by construction.
 //!
@@ -15,11 +15,12 @@
 //! rows from v2 and re-exporting. The `dropped_unknown_user` branches below
 //! are defense in depth unreachable through [`run_import`]; `dropped_invalid`
 //! fires only for unnamed app passwords, and the `error` counter is schema
-//! reserved with no producer. Merges pin §6 literally: most-permissive state
+//! reserved with no producer. Merges follow the export spec exactly: most-permissive state
 //! wins (a pending import reopens a rejected row), `requested_at` takes the
 //! min, and a nulled reviewer keeps its display name as audit residue.
 //! Unknown settings sections are ignored with a validator warning and never
-//! unsealed. The R8 v2-config carry refuses on instance mismatch. The config
+//! unsealed. The scan-schedule carry from v2's `config.json` refuses on
+//! instance mismatch. The config
 //! write compares secrets decrypted, so idempotent re-imports leave the
 //! config bytes untouched; a post-commit config failure marks its audit row
 //! `FAILED_INTERNAL` after the fact.
@@ -39,7 +40,7 @@ use super::validate::{ValidationIssue, validate_export};
 use crate::export::envelope::SecretEnvelope;
 use crate::runtime_config::Crypto;
 
-/// Sections the export may carry (§3.1 kept + §3.2 partials). Present
+/// Sections the export may carry (kept whole or in part). Present
 /// sections replace the v3 config wholesale; absent ones reset to v3
 /// defaults. v3-only keys outside this set (today: `lyrics_settings`)
 /// are left untouched: the export cannot speak for state v2 never had.
@@ -81,7 +82,7 @@ pub(crate) const REPLACE_UNIVERSE: &[&str] = &[
     "_internal",
 ];
 
-/// Transient `musicbrainz_settings` fields dropped at import (§3.2).
+/// Transient `musicbrainz_settings` fields dropped at import.
 const MUSICBRAINZ_TRANSIENT: &[&str] = &[
     "pending_brainzmash",
     "source_quarantined",
@@ -104,8 +105,8 @@ enum ImportError {
     /// Re-encryption under the v3 key failed.
     #[error("re-encryption failure")]
     Rekey,
-    /// The R8 v2-config read failed.
-    #[error("r8 carry failure: {0}")]
+    /// Reading the scan schedule from v2's `config.json` failed.
+    #[error("v2 scan schedule carry failed: {0}")]
     R8(#[from] super::r8::R8Error),
     /// Simulated crash before commit (tests only).
     #[error("simulated crash before commit")]
@@ -127,7 +128,7 @@ pub struct ImportRequest {
     pub config_path: PathBuf,
     /// v3 data key for re-encryption.
     pub crypto: Crypto,
-    /// v2 `config.json` for the R8 one-shot carry, when available.
+    /// v2 `config.json` for the one-shot scan-schedule carry, when available.
     pub v2_config_path: Option<PathBuf>,
     /// Dry-run: identical decisions and counts, zero writes.
     pub dry_run: bool,
@@ -139,7 +140,7 @@ pub struct ImportRequest {
     pub fault_after_commit: bool,
 }
 
-/// Run the full pipeline and return the §9 report. This function does
+/// Run the full pipeline and return the report. This function does
 /// not print; the CLI prints [`ImportReport::to_json`].
 pub async fn run_import(request: ImportRequest) -> ImportReport {
     let provenance = lenient_provenance(&request.export_bytes);
@@ -416,7 +417,7 @@ fn stage_settings(
         }
     }
 
-    // R8 fires whenever the export lacks the schedule: idempotent across
+    // The schedule carry fires whenever the export lacks the schedule: idempotent across
     // re-imports, and consistent with whole-config replace (the export,
     // plus the one-shot v2 carry, is the source of truth).
     let schedule_present = exported.contains_key("library_scan_schedule");
@@ -441,7 +442,7 @@ fn stage_settings(
 }
 
 /// Drop fields the export spec excludes, before re-encryption:
-/// lastfm keeps only the master switch (R7 decrypt-then-drop), the
+/// lastfm keeps only the master switch (secrets decrypted, then dropped), the
 /// MusicBrainz transient trio goes, plugins keep `enabled` + `settings`.
 fn filter_section(name: &str, value: &Value) -> Value {
     match name {
@@ -1331,7 +1332,7 @@ impl Plan {
         }
         let reviewer = opt_str(approval, "reviewed_by_id");
         // Only the id is nulled; the display name stays verbatim as audit
-        // residue (pinned by brief).
+        // residue (pinned by a test).
         let reviewer_nulled = reviewer
             .as_ref()
             .is_some_and(|id| !known_users.contains(id));
@@ -1375,7 +1376,7 @@ impl Plan {
                         existing.reviewed_at,
                     )
                 };
-                // Earliest request wins. §6 does not name this field; min
+                // Earliest request wins. The spec does not name this field; min
                 // keeps re-imports convergent.
                 let requested_at = existing
                     .requested_at
@@ -1482,9 +1483,9 @@ impl Plan {
     }
 }
 
-/// Approval-state permissiveness, exactly §6: approved beats pending beats
+/// Approval-state permissiveness, as the export spec defines it: approved beats pending beats
 /// the rest. A pending import therefore reopens a rejected row, and unknown
-/// states never win a merge. Pinned by brief, not just convergent.
+/// states never win a merge. Pinned by a test, not just convergent.
 fn permissiveness(state: &str) -> u8 {
     match state {
         "approved" => 2,

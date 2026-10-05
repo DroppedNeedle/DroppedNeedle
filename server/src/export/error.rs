@@ -1,4 +1,4 @@
-//! Typed failures for the stage-11 export slice.
+//! Typed failures for the v2 export.
 //!
 //! Every variant maps to a SCREAMING_SNAKE code. Messages carry key names and
 //! paths (the operator supplied them) but never secret material, passphrases,

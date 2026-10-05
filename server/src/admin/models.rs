@@ -57,7 +57,7 @@ pub struct RestoreCheck {
 }
 
 /// Pre-restore verification report. Read-only: nothing here writes or moves
-/// the live database (the actual restore stays an offline CLI in stage 11).
+/// the live database (the actual restore stays an offline CLI).
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct RestoreReport {
     /// Backup file name the report covers.

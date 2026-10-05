@@ -1,6 +1,6 @@
 //! Export file parsing and sealed-secret unlocking (import side).
 //!
-//! The envelope shape and all sealing crypto live in the export slice
+//! The envelope shape and all sealing crypto live in the export module
 //! (`crate::export::envelope`, `crate::export::seal`); this module only
 //! adapts them to the importer's needs: parse the file, expose the raw
 //! document the validator and the merge walk, and open sealed values
@@ -21,7 +21,7 @@ pub use crate::export::envelope::{
     EXPORT_FORMAT, FORMAT_VERSION as EXPORT_FORMAT_VERSION, RESERVED_SECTIONS,
 };
 
-/// Wire constants, single-sourced from the export slice so the two sides
+/// Wire constants, single-sourced from the export module so the two sides
 /// cannot drift. Names stay import-flavored for the existing callers.
 pub use crate::export::seal::{
     ENVELOPE_NONCE_LEN, MIN_SEALED_BLOB_LEN as MIN_SEALED_LEN, SALT_LEN as ENVELOPE_SALT_LEN,

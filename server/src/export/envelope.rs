@@ -1,11 +1,11 @@
 //! The versioned v2-to-v3 export envelope.
 //!
-//! The envelope carries exactly the Q2 set: user accounts, settings, and
+//! The envelope carries exactly the migrated set: user accounts, settings, and
 //! follows (plus auto-download approvals). Scan state, history, queues, and
 //! jobs stay behind. [`parse_export`] enforces the envelope contract: known
 //! format at version 1, every required key present, reserved sections
 //! ignored with a warning. Deeper semantic checks (section shapes, secret
-//! positions, dangling references) belong to the stage-11 validator, which
+//! positions, dangling references) belong to the import validator, which
 //! builds on these parsed types.
 
 use serde::{Deserialize, Serialize};
@@ -315,7 +315,7 @@ pub struct ParsedExport {
 
 /// Parse and envelope-check one export file.
 ///
-/// Order is deliberate: the format marker first (nothing else is
+/// Order matters: the format marker first (nothing else is
 /// interpretable without it), then the version (fail closed on anything but
 /// 1), then required keys, then typed section shapes. Reserved sections and
 /// unknown top-level keys collect warnings and parse on.

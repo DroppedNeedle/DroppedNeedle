@@ -39,7 +39,7 @@ pub enum FernetError {
     #[error("v2 key is not 32 urlsafe-base64 bytes")]
     InvalidKey,
     /// The token does not decode, fails authentication, or does not unpad
-    /// to UTF-8. Deliberately one variant so callers cannot distinguish
+    /// to UTF-8. One variant on purpose, so callers cannot distinguish
     /// wrong-key from corrupt-token.
     #[error("value is not a valid v2 token")]
     InvalidToken,
@@ -186,8 +186,8 @@ mod tests {
     use super::*;
 
     // Independent golden vector: token assembled with `openssl enc
-    // -aes-128-cbc` (ciphertext) plus stdlib HMAC-SHA256, no shared code
-    // with this module. See /tmp/fernet_golden.py for the generator.
+    // -aes-128-cbc` (ciphertext) plus Python's stdlib HMAC-SHA256, with no
+    // code shared with this module.
     const GOLDEN_KEY: &str = "MDEyMzQ1Njc4OWFiY2RlZmZlZGNiYTk4NzY1NDMyMTA=";
     const GOLDEN_TOKEN: &str = "gAAAAABoyPOAAAECAwQFBgcICQoLDA0OD9Dm7Q99jdGjWIDM23oxtU4pqC6gZHCIkJ1k1uI8HIhkCwTF6gnBz50axjeIceMv-fxH7F6Mr2XNlb8ulVJ3hxc=";
     const GOLDEN_PLAINTEXT: &str = "slskd-api-key-123";

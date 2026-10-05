@@ -13,10 +13,10 @@
 //!   unlimited.
 //! - Usage reads the enforcement view: window counts from the ledger's
 //!   recorded asks, storage from landed download bytes by owner.
-//!   Scan-discovered files stay unowned (the v2 A5 rule). Storage reads 0
-//!   until download tasks record their sizes (a stage-7 follow-up); the
+//!   Scan-discovered files stay unowned (as in v2). Storage reads 0
+//!   until download tasks record their sizes (not recorded yet); the
 //!   query is live so the bars fill in with no admin change.
-//! - `admin`/`trusted` are exempt from per-user quotas (v2 D8).
+//! - `admin`/`trusted` are exempt from per-user quotas (as in v2).
 //!
 //! One clean-slate break: unknown users answer 404 on both routes, matching
 //! the sibling user-admin routes. v2 answered 200-with-zeros on GET and
@@ -101,8 +101,8 @@ pub async fn set_quota(
         storage_gb: body.storage_quota_gb,
     };
     // Persist first: a failed table write answers before the ledger moves,
-    // so the two never diverge. The ledger cannot refuse below — bounds
-    // already passed — except an InvalidInput if the two bound sites ever
+    // so the two never diverge. The ledger cannot refuse below (bounds
+    // already passed) except an InvalidInput if the two bound sites ever
     // drift apart, which stays 400.
     write_override(db, &user.id, &row).await?;
     if let Err(error) = ledger.set_override(&user.id, row.clone()) {
@@ -119,7 +119,7 @@ pub async fn set_quota(
 /// Reload every stored override into the ledger. Boot calls this after
 /// migrations so durable edits survive restarts. Rows that no longer pass
 /// bounds (hand-edited behind the API's back) are skipped with a warning,
-/// never fatal — one bad row must not brick the boot.
+/// never fatal: one bad row must not brick the boot.
 pub async fn reload_overrides(
     pool: &sqlx::SqlitePool,
     ledger: &QuotaLedger,

@@ -25,7 +25,7 @@ const PLUGINS_DIR_NAME: &str = "plugins";
 /// v2 key variable name.
 const DATA_ENC_KEY_VAR: &str = "DATA_ENC_KEY";
 
-/// Expected v2 key-file path, for errors and refusal briefs.
+/// Expected v2 key-file path, for errors and refusal tests.
 #[must_use]
 pub fn key_file_path(v2_root: &Path) -> PathBuf {
     v2_root.join("config").join(KEY_FILE_NAME)

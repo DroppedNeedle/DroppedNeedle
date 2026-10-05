@@ -12,7 +12,7 @@
 //! stays a true single connection, which is what lets the lane enforce the
 //! no-await-inside-write-transaction rule structurally.
 //!
-//! Schema hooks used (owned by the sibling slice, called but never edited):
+//! Schema hooks used (from [`crate::schema`]):
 //! `crate::schema::apply_migrations(&SqlitePool) -> Result<(), SchemaError>`
 //! and `crate::schema::assert_migrated(&SqlitePool) -> Result<(), SchemaError>`.
 
@@ -49,15 +49,15 @@ pub const MAX_READERS: u32 = 7;
 pub const MIN_CONNECTIONS: u32 = 1;
 /// Pool checkout horizon, shared with the busy timeout.
 pub const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
-/// Lock wait on every connection. The v1 AUD-7 value, unchanged.
+/// Lock wait on every connection. The v2 value, unchanged.
 pub const BUSY_TIMEOUT: Duration = Duration::from_millis(5000);
 /// Idle connections older than this are reaped. No max lifetime: SQLite
 /// connections do not go stale.
 pub const IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-/// Memory-mapped I/O window. The v1 catalog-validation value, unchanged.
+/// Memory-mapped I/O window. The v2 catalog-validation value, unchanged.
 pub const MMAP_SIZE: i64 = 67_108_864;
 /// Page cache per connection, in KiB. Negative means KiB in SQLite units.
-/// Stage-13 fix F cut this from 16 MiB: heavy reads held tens of MB of
+/// Cut from 16 MiB after measurement: heavy reads held tens of MB of
 /// cache across connections after the workload, and 2 MiB keeps every
 /// read-latency budget green (seeded 100k artists p95 9.5 ms vs 10 ms).
 pub const CACHE_SIZE_KIB: i64 = -2048;
@@ -186,7 +186,7 @@ impl DbRuntime {
     }
 }
 
-/// Open the reader pool with the pragma set from the stage-0 table.
+/// Open the reader pool with the full connection pragma set.
 /// `after_connect` applies every pragma and fails the connection loudly on
 /// drift; `before_acquire` re-verifies journal mode and FK enforcement at
 /// each checkout and recycles strays. Once `reads_frozen` flips (after boot

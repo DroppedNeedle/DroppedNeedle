@@ -1,7 +1,7 @@
 //! Online backup and restore: verified copies, then rotation.
 //!
 //! Backup uses the SQLite Online Backup API stepped at 256 pages, matching
-//! the v1 capture path: each step holds the source lock briefly and yields
+//! the v2 capture path: each step holds the source lock briefly and yields
 //! between steps, so foreground writes keep their lane while a backup runs.
 //! `VACUUM INTO` is rejected as the mechanism on purpose: it holds a shared
 //! lock for its whole run and would stall the writer lane for seconds on a
@@ -12,7 +12,7 @@
 //! copy, atomic rename into place, then rotate older backups out.
 //! Verification always precedes rotation: a failed backup leaves the previous
 //! five untouched. Restore takes a backup back into an empty directory and
-//! refuses occupied targets and version-newer backups, mirroring the v1
+//! refuses occupied targets and version-newer backups, mirroring the v2
 //! restore guard.
 
 use std::{
@@ -31,7 +31,7 @@ use sha2::{Digest as _, Sha256};
 
 use super::{error::DbError, fs::same_filesystem, writer::CancelFlag};
 
-/// Pages copied per backup step. The v1 `pages=256` value, unchanged.
+/// Pages copied per backup step. The v2 `pages=256` value, unchanged.
 pub const BACKUP_STEP_PAGES: i32 = 256;
 /// Pause between steps so live writers slip through.
 const BACKUP_STEP_PAUSE: Duration = Duration::from_millis(10);

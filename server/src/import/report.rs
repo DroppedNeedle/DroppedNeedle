@@ -1,7 +1,7 @@
-//! Machine-readable import report: the §9 JSON object.
+//! Machine-readable import report: one JSON object per run.
 //!
 //! Import and dry-run both produce exactly one of these; the CLI prints it
-//! to stdout. Counts only, never secret material. Items carry §5 semantic
+//! to stdout. Counts only, never secret material. Items carry semantic
 //! keys; non-`imported` outcomes are itemized in full while imports are
 //! sampled (first 50 per entity, then counts only).
 
@@ -29,7 +29,7 @@ pub const ENTITIES: &[&str] = &[
     "approval",
 ];
 
-/// Import exit code (§9).
+/// Import exit code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum ExitCode {
     /// All imported or idempotent skips.
@@ -49,7 +49,7 @@ pub enum ExitCode {
     FailedInternal,
 }
 
-/// Per-entity outcome counters (§9).
+/// Per-entity outcome counters.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct EntityCounts {
     /// Rows inserted or applied fresh.
@@ -87,7 +87,7 @@ pub struct ReportItem {
     /// findings, `settings` for section notes, `rebuild` for post-import
     /// work).
     pub entity: String,
-    /// §5 semantic key, never secret material.
+    /// Semantic key (an MBID or username), never secret material.
     pub key: String,
     /// Outcome (`imported`, `skipped_identical`, `conflict_kept_existing`,
     /// `dropped_unknown_user`, `dropped_invalid`, `nulled_field`, `error`).
@@ -116,7 +116,7 @@ pub struct ExitStatus {
     pub message: String,
 }
 
-/// The full §9 report object.
+/// The full report object.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ImportReport {
     /// Always `droppedneedle-import-report`.
@@ -242,7 +242,7 @@ impl ReportBuilder {
         self.settings_defaulted.push(section);
     }
 
-    /// Move a section from defaulted to applied (the R8 carry lands
+    /// Move a section from defaulted to applied (the schedule carry lands
     /// after the replace loop already defaulted the missing section).
     pub fn setting_reapplied(&mut self, section: &str) {
         self.settings_defaulted.retain(|listed| listed != section);

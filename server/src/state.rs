@@ -31,21 +31,21 @@ pub struct AppState {
     /// Built once at boot (in-memory cache) and shared with the reads
     /// enrichment pair so production pacing runs through one limiter set.
     pub providers: Arc<Providers>,
-    /// Stage-6 bundle: remote sources, stream gateway, playback reporting.
+    /// Remote sources, stream gateway, playback reporting.
     pub media: MediaSetup,
-    /// Stage-7 bundle: requests, downloads, flows, imports.
+    /// Acquisition: requests, downloads, flows, imports.
     pub acquire: AcquireSetup,
-    /// Stage-8 bundle: library scan, identify, publish, contrib.
+    /// Library: scan, identify, publish, contrib.
     pub library: LibrarySetup,
-    /// Stage-9 bundle: Subsonic/Jellyfin shims (outside the `/api` gate).
+    /// Subsonic/Jellyfin compat (outside the `/api` gate).
     pub compat: CompatSetup,
-    /// Stage-10 bundle: admin UX routes plus checkpoint health.
+    /// Admin routes plus checkpoint health.
     pub admin: AdminSetup,
-    /// Stage-10 bundle: section service with save effects.
+    /// Settings: section service with save effects.
     pub settings: SettingsSetup,
-    /// Stage-10 bundle: job registry, playlist route, boot loops.
+    /// Jobs: registry, playlist route, boot loops.
     pub jobs: JobsSetup,
-    /// Stage-10 bundle: plugin host, routes, scrobble backend, ticks.
+    /// Plugins: host, routes, scrobble backend, ticks.
     pub plugins: PluginsSetup,
 }
 

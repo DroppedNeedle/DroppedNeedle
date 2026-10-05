@@ -46,7 +46,7 @@ const TOOLING_ROUTES_ARG: &str = "--tooling-routes";
 
 /// Bound glibc malloc arenas and trim retained heap promptly.
 ///
-/// Stage-13 fix F measured the default 96-arena layout holding ~100 MB of
+/// Measured: the default 96-arena layout held ~100 MB of
 /// post-scan fragment freelists (8 arenas per core) with wide run-to-run
 /// swings. One arena plus a 128 KiB trim threshold coalesces the scan and
 /// read churn onto a single heap that trims at idle: post-100k-workload
@@ -138,7 +138,7 @@ async fn serve(tooling_routes: bool) -> Result<(), String> {
         .await
         .map_err(|error| error.to_string())?;
     // Pre-upgrade safety net: a verified backup before any schema change.
-    // A failure here is fatal — migrating without one risks the catalog.
+    // A failure here is fatal: migrating without one risks the catalog.
     ensure_pre_upgrade_backup(
         &config.library_db_path,
         &config.root_app_dir.join("backups"),
@@ -311,7 +311,7 @@ async fn serve(tooling_routes: bool) -> Result<(), String> {
         Ok(loaded) => tracing::info!(loaded, "quota overrides reloaded"),
         Err(error) => tracing::warn!(%error, "quota overrides failed to reload; defaults apply"),
     }
-    // Stage-10 jobs: the one registry every background loop registers on.
+    // Jobs: the one registry every background loop registers on.
     let jobs = JobsSetup::build(
         auth.users.clone(),
         runtime.wakeups().clone(),
@@ -322,10 +322,10 @@ async fn serve(tooling_routes: bool) -> Result<(), String> {
     // The precache trigger rides the same registry; the admin route is its
     // only production caller.
     let admin = admin.with_precache(jobs.precache_trigger());
-    // Stage-10 settings: the section service with its save fan-out —
-    // provider-cache invalidation over the shared cache plus the
-    // jobs-owned events kick — plus the admin-gated HTTP surface, the
-    // per-user section prefs, and the policy-impact buckets.
+    // Settings: the section service with its save fan-out (provider-cache
+    // invalidation over the shared cache plus the jobs-owned events kick),
+    // the admin-gated HTTP surface, the per-user section prefs, and the
+    // policy-impact buckets.
     let effects: Arc<dyn SaveEffects> = Arc::new(LiveSaveEffects::new(
         provider_cache.clone(),
         jobs.events_kick(),
@@ -350,7 +350,7 @@ async fn serve(tooling_routes: bool) -> Result<(), String> {
     .with_impact_buckets(Arc::new(SqliteImpactBuckets {
         pool: runtime.pool().clone(),
     }));
-    // Stage-10 plugins: host, routes, and scrobble backend over the shared
+    // Plugins: host, routes, and scrobble backend over the shared
     // jobs registry (one durable mechanism, no duplicate tick loops).
     let plugins = PluginsSetup::build(
         auth.users.clone(),
@@ -383,12 +383,10 @@ async fn serve(tooling_routes: bool) -> Result<(), String> {
     );
     let app = create_app(state);
 
-    // Stage-5 refresh loops (M4 follow-up): the discover and home loops
-    // sleep on their honest intervals behind one shutdown watch. The loop
-    // bodies are provider-cache rebuild hooks: no rebuildable provider
-    // cache exists yet, so each tick is a guarded no-op until the cache
-    // slice lands its work here. Plumbing (intervals, single-flight,
-    // shutdown, await) is live now.
+    // Discover and home refresh loops: they sleep on their intervals behind
+    // one shutdown watch. The loop bodies are provider-cache rebuild hooks;
+    // no rebuildable provider cache exists yet, so each tick is a guarded
+    // no-op. Intervals, single-flight, shutdown and await are live.
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let refresh_registry =
         Arc::new(droppedneedle::reads::discover::refresh::RefreshRegistry::new());
@@ -421,11 +419,10 @@ async fn serve(tooling_routes: bool) -> Result<(), String> {
         })
     };
 
-    // Stage-6 MBID warmup loops (Jellyfin one-shot + Navidrome/Plex 4h
-    // cadence) over the same shutdown watch. The loop bodies are provider
-    // index rebuild hooks: no rebuildable index exists yet, so each tick
-    // is a guarded no-op until the warmup slice lands its work here.
-    // Plumbing (cadences, single-flight, shutdown, await) is live now.
+    // MBID warmup loops (Jellyfin one-shot, Navidrome/Plex every 4h) over
+    // the same shutdown watch. The loop bodies are provider index rebuild
+    // hooks; no rebuildable index exists yet, so each tick is a guarded
+    // no-op. Cadences, single-flight, shutdown and await are live.
     let warmup = {
         use droppedneedle::playback::{TokioSleeper, WarmupStats, spawn_warmup_loops};
 
@@ -462,13 +459,13 @@ async fn serve(tooling_routes: bool) -> Result<(), String> {
         )
     };
 
-    // Stage-6 attribution drain: remote session reports queued by playback
+    // Attribution drain: remote session reports queued by playback
     // handlers. The worker exits once the app drops its queue handles.
     let report_loop = tokio::spawn(async move {
         report_worker.run().await;
     });
 
-    // Stage-7 acquisition loops: the four flows loops, the download
+    // Acquisition loops: the four flows loops, the download
     // worker, and the probe refresh loop over the same shutdown watch.
     let acquire_loops = acquire
         .spawn_loops(
@@ -479,11 +476,11 @@ async fn serve(tooling_routes: bool) -> Result<(), String> {
         .await
         .map_err(|error| format!("acquire loops: {error}"))?;
 
-    // Stage-8 library loops: scan supervisor, filesystem watcher,
+    // Library loops: scan supervisor, filesystem watcher,
     // identify queue, contribution verifier, publish maintenance.
     let library_loops = library.spawn_loops(shutdown_rx.clone());
 
-    // Stage-10 jobs loops: checkpoint, presence, personal-mix, playlist
+    // Jobs loops: checkpoint, presence, personal-mix, playlist
     // sync, and the events watcher on the shared registry. Cancellation
     // runs through the registry at shutdown (below), not the watch.
     jobs.spawn_loops()
@@ -502,7 +499,7 @@ async fn serve(tooling_routes: bool) -> Result<(), String> {
     let _ = shutdown_tx.send(true);
     // The registry-owned loops (boot loops, the kick, precache runs, and
     // plugin ticks) stop through their stop signals, each with the same
-    // grace, before the runtime — and its writer lane — shuts down.
+    // grace, before the runtime and its writer lane shut down.
     jobs.cancel_all(SHUTDOWN_GRACE).await;
     let mut loops = vec![("discover", discover_loop), ("home", home_loop)];
     for (scope, task) in ["warmup-jellyfin", "warmup-navidrome", "warmup-plex"]

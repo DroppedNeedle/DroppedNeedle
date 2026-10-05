@@ -1,12 +1,11 @@
-//! R8 one-shot: `sync_frequency` → `scan_frequency`.
+//! One-shot scan schedule carry: `sync_frequency` → `scan_frequency`.
 //!
-//! The v2 `library_sync_settings` section is dropped (§3.3, D2/R8): it
+//! The v2 `library_sync_settings` section is dropped: it
 //! never appears in the export stream. Instead the importer reads the v2
 //! `config.json` directly and, whenever the export lacks
 //! `library_scan_schedule`, carries the old interval across. Judging on
 //! the export alone keeps re-imports convergent. This mirrors the v2
-//! getter shim in
-//! `backend/services/preferences_service.py:get_library_scan_schedule`.
+//! getter shim in its preferences service (`get_library_scan_schedule`).
 
 use std::path::Path;
 
@@ -18,7 +17,7 @@ const KNOWN_FREQUENCIES: &[&str] = &[
     "manual", "5min", "10min", "30min", "1hr", "6hr", "12hr", "24hr", "3d", "7d",
 ];
 
-/// Every way the R8 carry can fail. A missing or unreadable v2 file is
+/// Every way the schedule carry can fail. A missing or unreadable v2 file is
 /// not an error: the carry simply does not happen.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum R8Error {

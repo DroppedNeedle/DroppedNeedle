@@ -2,13 +2,13 @@
 //!
 //! Steady state is a `PASSIVE` checkpoint every 30 s from a dedicated
 //! connection that fails fast (`busy_timeout=0`): lock contention becomes a
-//! `busy` pass that keeps its progress baseline (the v1 F-181 rule), while
+//! `busy` pass that keeps its progress baseline (as in v2), while
 //! non-lock errors are recorded distinctly and leave backpressure alone.
 //! Backpressure suspends background producers only, never foreground writes,
 //! when active WAL crosses 64 MiB or a checkpoint makes no measurable
 //! progress for 60 s.
 //!
-//! v1 never reclaimed: `PASSIVE` leaves checkpointed frames allocated, so a
+//! v2 never reclaimed: `PASSIVE` leaves checkpointed frames allocated, so a
 //! dead `-wal` of several MB survived graceful restarts. v3 adds `TRUNCATE`
 //! reclaim when three gates hold: the last `PASSIVE` reported zero active
 //! frames, the writer lane is idle and every reader connection is back in
@@ -16,7 +16,7 @@
 //! runs at clean shutdown, so a stopped database leaves no `-wal` behind.
 //!
 //! Every pass records its outcome for the log and keeps the latest one for
-//! the admin health endpoint (stage 10 reads [`CheckpointService::latest`]).
+//! the admin health endpoint (which reads [`CheckpointService::latest`]).
 
 use std::{
     path::{Path, PathBuf},
@@ -54,7 +54,7 @@ pub enum CheckpointMode {
 /// One recorded checkpoint pass. `active_bytes` counts uncheckpointed frames
 /// times the page size; `wal_file_bytes` is the `-wal` allocation on disk,
 /// which may hold dead frames the next `TRUNCATE` reclaims. A `busy` pass
-/// with `active_bytes == -1` carried no frame evidence (F-181) and never
+/// with `active_bytes == -1` carried no frame evidence and never
 /// moves the progress baseline.
 #[derive(Debug, Clone, Serialize)]
 pub struct CheckpointOutcome {
@@ -84,7 +84,7 @@ pub struct CheckpointOutcome {
     pub progress: bool,
 }
 
-/// Pure backpressure machine: the v1 `_update_state` rule. Suspension needs
+/// Pure backpressure machine: the v2 `_update_state` rule. Suspension needs
 /// active WAL over the high water or a stall past the reader bound; resume
 /// needs active WAL at/below the low water or any measurable progress.
 /// Unmeasured passes never feed the baseline and never clear suspension.
@@ -357,7 +357,7 @@ impl CheckpointService {
         outcome
     }
 
-    /// One pragma round-trip with v1's error split: lock errors become an
+    /// One pragma round-trip with v2's error split: lock errors become an
     /// unmeasured busy pass, other errors are recorded and leave
     /// backpressure untouched. Only genuine lock contention reports
     /// `busy`; every error pass reports `busy: false` with its cause.
@@ -365,8 +365,8 @@ impl CheckpointService {
     /// The checkpoint connection is the one pragma exception in the
     /// runtime: it opens read-write without create (it must never conjure
     /// a missing database into being) and sets only `busy_timeout=0` for
-    /// its fail-fast contract. It deliberately applies no other stage-0
-    /// pragma: an observer must not flip journal mode, sync, or FK
+    /// its fail-fast contract. It applies no other connection pragma on
+    /// purpose: an observer must not flip journal mode, sync, or FK
     /// enforcement on the live database.
     fn checkpoint_once(
         &self,

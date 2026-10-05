@@ -4,13 +4,13 @@
 //! `x-request-id` or minting one), serves the request inside a tracing span
 //! carrying that id, method, and path only (never the query: compat puts
 //! app-password secrets in the query string, so queries must never reach
-//! the logs — the wiring suite trips on any full-target logging), and
+//! the logs; the wiring tests fail on any full-target logging), and
 //! guarantees the leak contract on the way out: any
 //! native 5xx response keeps its status and `Retry-After` header but gets
 //! the fixed envelope body naming the request id, and panics become a 500
 //! of that same envelope. Compat (`/subsonic`, `/jellyfin`) 5xx responses
-//! are exempt from the body rewrite — their shapes are protocol-pinned —
-//! though panics there still become the fixed 500. Handler code can
+//! are exempt from the body rewrite (their shapes are fixed by the
+//! protocols), though panics there still become the fixed 500. Handler code can
 //! therefore return raw 5xx bodies only by accident, never to the wire.
 
 use axum::{

@@ -1,4 +1,4 @@
-//! Router assembly. Registration order is load-bearing and documented:
+//! Router assembly. Registration order matters and is documented here:
 //! specific routes first, then the conditional test hooks, then the 404 and
 //! 405 fallbacks. The request-scope layer wraps everything including the
 //! fallbacks.
@@ -85,7 +85,7 @@ pub fn create_app(state: AppState) -> Router {
         .merge(wrapped)
         .merge(acquire_public)
         .merge(state.compat.router());
-    // Dev-only tooling routes (covers-debug, R11). The debug-build gate
+    // Dev-only tooling routes (covers-debug). The debug-build gate
     // compiles this mount out of release binaries entirely, so no
     // production process can serve tooling however it was configured.
     #[cfg(debug_assertions)]

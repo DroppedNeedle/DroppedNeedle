@@ -4,10 +4,10 @@
 //! serialization explicit and fair. Request-path writes arrive on the
 //! foreground lane, job writes on the background lane; while both lanes are
 //! busy the scheduler grants eight foreground admissions, then one
-//! background admission, then repeats. That is the v1
+//! background admission, then repeats. That is the v2
 //! `PriorityWriteLock(foreground_burst=8)` rule, ported to an async
 //! scheduler; the decision itself is the pure [`decide_lane`] function so
-//! the fairness brief pins it without threads.
+//! the fairness test pins it without threads.
 //!
 //! One admission runs one transaction on the single writer connection, which
 //! lives on its own thread. The admitted closure is synchronous
@@ -36,7 +36,7 @@ use super::{
 };
 
 /// Foreground admissions granted before one background admission while both
-/// lanes are busy. The v1 `foreground_burst=8` value, unchanged.
+/// lanes are busy. The v2 `foreground_burst=8` value, unchanged.
 pub const FOREGROUND_BURST: u32 = 8;
 /// Maximum queued admissions per lane. Past this, `write` fails fast with
 /// `Busy` (HTTP 503 with `Retry-After` at the handler layer) instead of
@@ -83,7 +83,7 @@ impl From<rusqlite::Error> for OpError {
 /// Pure fairness step, mirroring `PriorityWriteLock.acquire`.
 ///
 /// `bg_fresh` is true when the background lane went from empty to busy since
-/// the last decision; like v1, a newly arrived background waiter resets the
+/// the last decision; like v2, a newly arrived background waiter resets the
 /// burst counter instead of cutting the line. Returns the lane to admit, if
 /// any, and the updated burst counter.
 pub fn decide_lane(
@@ -504,7 +504,7 @@ fn writer_loop(
     let opened = (|| -> Result<Connection, DbError> {
         let connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_millis(5000))?;
-        // Stage-13 fix F: writer cache 2 MiB, matching the pool diet.
+        // Writer cache 2 MiB, matching the reader pool.
         // The 16 MiB writer cache stayed resident after every 100k scan;
         // 2 MiB keeps scan throughput identical (reindex 42 s either way).
         connection.execute_batch(

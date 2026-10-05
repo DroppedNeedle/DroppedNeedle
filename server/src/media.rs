@@ -3,9 +3,9 @@
 //! [`MediaSetup`] is the single bundle `create_app` mounts: its
 //! [`MediaSetup::gated_router`] nests under `/api/v3` inside the
 //! deny-by-default session gate, next to the reads nest. Connections,
-//! folder preferences, and playlist imports run on the slice memory stores
-//! (durable rows are a later-stage persistence tier); playback catalog,
-//! history, prefs, and display names read the stage-2 schema through a
+//! folder preferences, and playlist imports run on in-memory stores (they
+//! have no durable rows yet); playback catalog, history, prefs, and
+//! display names read the SQLite schema through a
 //! dedicated rusqlite handle. Outbound remote attribution drains through
 //! the [`ReportWorker`] `main` spawns beside the warmup loops.
 
@@ -43,7 +43,8 @@ use crate::stream::transcode::{
 pub type MediaEngine =
     Gateway<RemotesRemoteReader, FfmpegTranscoder<StdFfmpegSpawner, Arc<LocalTranscodeGate>>>;
 
-/// Everything `create_app` needs to mount the stage-6 slices, built once.
+/// Everything `create_app` needs to mount the remote-source, stream and
+/// playback routes, built once.
 #[derive(Clone)]
 pub struct MediaSetup {
     /// Remote-browse deps (memory connections/folders/imports).
@@ -152,8 +153,8 @@ impl MediaSetup {
         ))
     }
 
-    /// Test bundle over memory stores and slice fakes. The catalog is
-    /// empty (honest 404s), attribution drops, and ffmpeg is absent, so
+    /// Test bundle over memory stores and fakes. The catalog is empty (so
+    /// reads 404), attribution drops, and ffmpeg is absent, so
     /// every transcode decision lands direct.
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(users: UsersDeps, ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
@@ -237,7 +238,7 @@ fn transcode_settings(connect_apps: &ConnectApps) -> TranscodeSettings {
 
 /// Local-stream sandbox root for unwired builds (`None` roots, test
 /// bundles): local keys resolve under `<root>/music`, which is
-/// normally absent, so local reads honestly 404. Wired builds
+/// normally absent, so local reads 404. Wired builds
 /// resolve against the live library registry instead.
 fn local_root(config: &AppConfig) -> PathBuf {
     config.root_app_dir.join("music")

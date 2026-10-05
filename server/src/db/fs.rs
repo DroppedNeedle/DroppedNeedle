@@ -25,7 +25,7 @@ use super::error::DbError;
 /// Verified against `linux/magic.h`, `linux/gfs2_ondisk.h`, and `man statfs`
 /// on Linux, except Lustre (out-of-tree; value from the Lustre source) and
 /// FUSEBLK/PVFS2 (stable kernel values, no header on every distro). VxFS is
-/// deliberately absent: it is a local filesystem, not a remote one.
+/// absent on purpose: it is a local filesystem, not a remote one.
 const REMOTE_MAGICS: &[(i64, &str)] = &[
     (0x6969, "nfs"),
     (0xFF534D42, "cifs"),
@@ -47,7 +47,7 @@ const REMOTE_MAGICS: &[(i64, &str)] = &[
 
 /// True when a statfs magic names a filesystem the database may live on.
 ///
-/// Pure and total, so the brief pins the table directly without mounting a
+/// Pure and total, so a test pins the table directly without mounting a
 /// network share.
 pub fn filesystem_is_local(magic: i64) -> bool {
     !REMOTE_MAGICS.iter().any(|(known, _)| *known == magic)

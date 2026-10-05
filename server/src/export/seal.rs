@@ -59,7 +59,7 @@ pub const MIN_SEALED_BLOB_LEN: usize = VALUE_NONCE_LEN + TAG_LEN;
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum SealError {
     /// The blob does not open: wrong passphrase, corrupt data, or a blob
-    /// from another envelope. Deliberately one variant so callers cannot
+    /// from another envelope. One variant on purpose, so callers cannot
     /// distinguish the cases.
     #[error("sealed value does not open under this passphrase")]
     AuthFailed,

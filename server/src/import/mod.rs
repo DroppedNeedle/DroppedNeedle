@@ -1,19 +1,17 @@
-//! v2 → v3 export validation and import (stage 11, validate+import slice).
+//! v2 → v3 export validation and import.
 //!
-//! Rule sources: `build-stage-plan.md` stage 11 plus
-//! `.dev-notes/Plans/RustPort/stage0-export.md`. The pipeline is
-//! [`pipeline::run_import`]; the standalone checker is
+//! The pipeline is [`pipeline::run_import`]; the standalone checker is
 //! [`validate::validate_export`]; every run yields one
 //! [`report::ImportReport`].
 //!
-//! Crypto and envelope shapes are owned by the export slice
+//! Crypto and envelope shapes are owned by the export module
 //! (`crate::export::seal`, `crate::export::envelope`) and reused here, so
 //! the two sides cannot drift: one KDF, one sealed-blob layout. Import
-//! decisions on top: `lastfm_settings` keeps only `enabled` (R7
-//! decrypt-then-drop); v3-only config keys outside the export section
-//! set are preserved, never defaulted. CLI verbs
-//! (validate/import/dry-run/restore) are thin wrappers around this API
-//! and belong to the integrator.
+//! decisions on top: `lastfm_settings` keeps only `enabled` (the secrets
+//! are decrypted, then dropped); v3-only config keys outside the export
+//! section set are preserved, never defaulted. The CLI verbs
+//! (validate/import/dry-run/restore) in `droppedneedle-tool` are thin
+//! wrappers around this API.
 //!
 //! Deleted IDs fail closed: [`validate_export`] refuses the whole file on
 //! a dangling user reference, and the operator repair is dropping the

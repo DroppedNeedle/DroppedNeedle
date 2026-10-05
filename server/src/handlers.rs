@@ -8,8 +8,8 @@ use utoipa::{OpenApi as _, ToSchema};
 use crate::{admin::CheckpointView, db::CheckpointService, docs::ApiDoc, error::ApiError};
 
 /// Health payload. `status` plus the running message keep the v2 shape;
-/// stage 10 adds the latest checkpoint pass (`None` until the checkpoint
-/// loop records one, or on states without a checkpoint service).
+/// `checkpoint` adds the latest checkpoint pass (`None` until the
+/// checkpoint loop records one, or on states without a checkpoint service).
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct HealthResponse {
     /// Service state, `ok` when serving.
@@ -68,7 +68,7 @@ pub async fn fallback_405() -> ApiError {
     ApiError::MethodNotAllowed
 }
 
-/// Failure hooks for the 5xx-leak briefs. Mounted only when the state opts
+/// Failure hooks for the 5xx-leak tests. Mounted only when the state opts
 /// in; the production binary never does.
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_hooks {
@@ -77,8 +77,8 @@ pub mod test_hooks {
     use super::HealthResponse;
     use crate::{error::ApiError, ids::RequestId};
 
-    /// Marker substrings that must never reach a response body. Deliberately
-    /// realistic: a filesystem path, an internal host, and a secret token.
+    /// Marker substrings that must never reach a response body. They look
+    /// real on purpose: a filesystem path, an internal host, a secret token.
     pub const LEAK_MARKERS: &[&str] = &[
         "/srv/secrets/droppedneedle.key",
         "postgres.internal.example.com",

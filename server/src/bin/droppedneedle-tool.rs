@@ -1,9 +1,9 @@
 //! Offline migration tooling: export, validate, import, dry-run, restore.
 //!
-//! Thin operator surface over the stage-11 engines: [`export`](droppedneedle::export)
+//! Thin operator surface over the migration engines: [`export`](droppedneedle::export)
 //! builds sealed envelopes from a v2 instance dir,
 //! [`import`](droppedneedle::import) validates and applies them, and
-//! [`restore`](droppedneedle::tooling::restore) revives stage-10 backups.
+//! [`restore`](droppedneedle::tooling::restore) revives server backups.
 //! Everything is file plus SQLite; nothing here touches the network.
 //!
 //! The operator passphrase never travels as a CLI argument: it comes from

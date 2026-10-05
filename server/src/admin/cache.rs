@@ -1,11 +1,11 @@
 //! Provider-cache admin: stats and clears.
 //!
-//! v3 keeps one cache — the in-memory provider byte cache — where v2 had a
+//! v3 keeps one cache (the in-memory provider byte cache) where v2 had a
 //! shelf of them (memory, disk metadata, covers, library rows, AudioDB).
 //! The stats here cover what exists: live entry counts plus the registered
 //! invalidation roots. Byte totals and hit rates arrive with cache
-//! instrumentation, which is outside stage 10; until then the counts and
-//! the cleared-per-run numbers are the honest picture.
+//! instrumentation, which does not exist yet; until then the counts and
+//! the cleared-per-run numbers are the whole picture.
 
 use std::sync::Arc;
 

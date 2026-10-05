@@ -1,15 +1,15 @@
 //! Standalone export validator: error/warning taxonomy only, no DB access.
 //!
-//! Rule source is `.dev-notes/Plans/RustPort/stage0-export.md` §8. Errors
+//! Errors
 //! refuse the import; warnings ride along in the report. An optional
 //! `--v2-root` cross-check is CLI wiring and lives outside this module.
 //!
 //! Dangling references fail closed: a follow or approval whose `user_id`
 //! has no `users[].id` is a `DANGLING_USER_REF` error, so the whole file is
-//! refused and the operator repairs v2 and re-exports. The spec's §2.4
-//! drop-and-count branch survives in the merge planner as defense in depth,
+//! refused and the operator repairs v2 and re-exports. The drop-and-count
+//! branch survives in the merge planner as defense in depth,
 //! but it cannot fire through `run_import` because validation runs first.
-//! Two rules extend §8: `DUPLICATE_RECOVERY_HASH` (the `code_hash` column
+//! Two rules go beyond the export spec: `DUPLICATE_RECOVERY_HASH` (the `code_hash` column
 //! is UNIQUE, so a mid-import collision would only fail later and ruder)
 //! and the `UNKNOWN_SETTINGS_SECTION` warning (unknown sections are
 //! ignored, never unsealed).
@@ -25,7 +25,7 @@ use crate::export::envelope::{EXPORT_FORMAT, FORMAT_VERSION, REQUIRED_KEYS, RESE
 use crate::export::seal::{KDF_ALGO, M_COST_KIB, P_COST, SCHEME, T_COST};
 use crate::runtime_config::DROPPED_SECTION_KEYS;
 
-/// Vestigial v2 `Settings` fields (§3.3) that must never cross the cutover.
+/// Vestigial v2 `Settings` fields that must never cross the cutover.
 const VESTIGIAL_FIELDS: &[&str] = &[
     "cache_ttl_default",
     "cache_ttl_artist",
@@ -34,7 +34,7 @@ const VESTIGIAL_FIELDS: &[&str] = &[
     "cache_cleanup_interval",
 ];
 
-/// Explicit `advanced_settings` allowlist (§3.2). The `cache_ttl_*` and
+/// Explicit `advanced_settings` allowlist. The `cache_ttl_*` and
 /// `frontend_ttl_*` families are prefix rules handled separately.
 const ADVANCED_SETTINGS_KEPT: &[&str] = &[
     "http_timeout",
@@ -78,7 +78,7 @@ const ADVANCED_SETTINGS_KEPT: &[&str] = &[
     "sync_max_timeout_hours",
 ];
 
-/// `_internal` allowlist (§3.2).
+/// `_internal` allowlist.
 const INTERNAL_KEPT: &[&str] = &[
     "plex_client_id",
     "droppedneedle_device_id",
@@ -873,7 +873,7 @@ fn validate_member_ref(
     }
 }
 
-/// Spec §8 MBID shape: 36 characters of hex or dash after stripping.
+/// MBID shape: 36 characters of hex or dash after stripping.
 fn is_mbid(raw: &str) -> bool {
     let trimmed = raw.trim();
     trimmed.len() == 36

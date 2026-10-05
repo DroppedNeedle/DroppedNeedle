@@ -112,7 +112,7 @@ pub enum DbError {
 
 /// True when a sqlx error is lock contention (SQLITE_BUSY or SQLITE_LOCKED).
 ///
-/// The check mirrors the v1 rule: either the primary result code is busy or
+/// The check mirrors the v2 rule: either the primary result code is busy or
 /// locked, or the message names a lock. Only lock errors convert; anything
 /// else keeps its failure semantics.
 pub fn sqlx_is_busy(error: &sqlx::Error) -> bool {
@@ -160,7 +160,7 @@ pub fn map_sqlx_busy(operation: &str, error: sqlx::Error) -> DbError {
 
 /// Render the busy path: 503 with `Retry-After: 1` and the fixed 5xx envelope.
 ///
-/// The body matches what the stage-1 request-scope middleware writes for any
+/// The body matches what the request-scope middleware writes for any
 /// 5xx, so passing through the middleware is idempotent: same status, same
 /// header, same body. The operation name is logged, never rendered.
 pub fn busy_response(operation: &str, request_id: &str) -> Response {

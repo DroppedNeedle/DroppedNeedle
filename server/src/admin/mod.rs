@@ -1,9 +1,9 @@
-//! Stage-10 admin UX: backups, caches, queues, providers, quotas.
+//! Admin UX: backups, caches, queues, providers, quotas.
 //!
 //! Every route here is admin-only. [`require_admin`] re-reads the caller's
 //! user row on each request (role changes land immediately) and answers 401
-//! for missing or stale sessions, 403 for signed-in non-admins — the same
-//! posture as the sibling users slice, minus its extractor (this router
+//! for missing or stale sessions, 403 for signed-in non-admins: the same
+//! posture as the users routes, minus their extractor (this router
 //! carries [`AdminSetup`] state, not `UsersDeps`).
 //!
 //! Optional backends ([`AdminDb`], backups, checkpoint, precache) are

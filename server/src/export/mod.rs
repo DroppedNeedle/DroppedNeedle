@@ -1,11 +1,10 @@
-//! Stage-11 export slice: the versioned v2-to-v3 envelope, the
-//! passphrase-sealed secrets inside it, and the exporter that builds one
-//! from a v2 instance dir.
+//! v2 export: the versioned v2-to-v3 envelope, the passphrase-sealed
+//! secrets inside it, and the exporter that builds one from a v2 instance
+//! dir.
 //!
 //! The validator (full section rules) and the importer (settings replace,
 //! re-encryption, conflict merge, atomic commit, machine-readable report)
-//! build on these parsed types in later slices; the CLI prompting for the
-//! operator passphrase lives there too.
+//! in [`crate::import`] build on these parsed types.
 
 pub mod envelope;
 pub mod error;
