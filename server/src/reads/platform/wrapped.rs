@@ -498,6 +498,8 @@ mod tests {
             let presented = headers(&[("x-wrapped-api-key", key)]);
             assert!(check_key(&presented, &source.current()), "{key}");
         }
+        let stale = headers(&[("x-wrapped-api-key", "first-key")]);
+        assert!(!check_key(&stale, &source.current()), "old key is refused");
         let _ = std::fs::remove_dir_all(dir);
     }
 
