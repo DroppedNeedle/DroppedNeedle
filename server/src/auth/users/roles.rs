@@ -94,12 +94,14 @@ pub struct AuthContext {
 }
 
 impl AuthContext {
-    /// Reject companion tokens from minting further tokens.
+    /// Reject companion (device) tokens from creating credentials: further
+    /// tokens, app passwords, or a first local password. A stolen device
+    /// token must not turn into a permanent credential.
     pub fn require_standard_session(&self) -> Result<(), UsersError> {
         match self.session_kind {
             SessionKind::Standard => Ok(()),
             SessionKind::Companion => Err(UsersError::Forbidden {
-                message: "Companion tokens cannot mint further tokens".to_owned(),
+                message: "Device tokens cannot create credentials; sign in to do this".to_owned(),
             }),
         }
     }

@@ -403,7 +403,7 @@ pub async fn create_app_password(
     CurrentUser(ctx): CurrentUser,
     ValidJson(body): ValidJson<AppPasswordCreate>,
 ) -> Result<(StatusCode, Json<AppPasswordCreatedResponse>), UsersHttpError> {
-    services::create_app_password(&deps, &ctx.user_id, &body)
+    services::create_app_password(&deps, &ctx, &body)
         .await
         .map(|created| (StatusCode::CREATED, Json(created)))
         .map_err(UsersHttpError::from)

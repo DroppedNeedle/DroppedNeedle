@@ -13,7 +13,7 @@ use crate::auth::session::login::{CredentialLookup, LocalCredential, LoginError}
 use crate::auth::times::{parse_iso, to_iso};
 use crate::auth::users::models::{LocalCredential as UsersLocalCredential, UserRecord};
 use crate::auth::users::roles::Role;
-use crate::auth::users::stores::{BoxFuture, StoreError, UserStore};
+use crate::auth::users::stores::{BoxFuture, RoleChange, StoreError, UserDeletion, UserStore};
 use crate::db::{Lane, map_sqlx_busy};
 
 /// Account and credential rows over `auth_users` plus the `local` rows of
@@ -143,33 +143,31 @@ impl UserStore for SqliteUserStore {
             let Some((_, lane)) = self.db.live() else {
                 return Err(internal("auth user store is not wired"));
             };
-            let outcome: Result<(), crate::db::DbError> = lane
+            let outcome = lane
                 .write(Lane::Foreground, "auth.users.insert", move |tx| {
-                    tx.execute(
-                        "INSERT INTO auth_users (id, display_name, email, avatar_url, role, \
-                         created_at, last_login_at, username, username_display) \
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        rusqlite::params![
-                            user.id,
-                            user.display_name,
-                            user.email,
-                            user.avatar_url,
-                            user.role.as_str(),
-                            to_iso(user.created_at),
-                            user.last_login_at.map(to_iso),
-                            user.username,
-                            user.username_display,
-                        ],
-                    )
-                    .map_err(op_error)?;
-                    Ok(())
+                    insert_user_row(tx, &user)
                 })
                 .await;
-            match outcome {
-                Ok(()) => Ok(()),
-                Err(error) if is_write_conflict(&error) => Err(StoreError::Conflict),
-                Err(error) => Err(internal(error)),
-            }
+            conflict_or_internal(outcome)
+        })
+    }
+
+    fn insert_with_local_credential<'a>(
+        &'a self,
+        user: UserRecord,
+        credential: UsersLocalCredential,
+    ) -> BoxFuture<'a, Result<(), StoreError>> {
+        Box::pin(async move {
+            let Some((_, lane)) = self.db.live() else {
+                return Err(internal("auth user store is not wired"));
+            };
+            let outcome = lane
+                .write(Lane::Foreground, "auth.users.create", move |tx| {
+                    insert_user_row(tx, &user)?;
+                    insert_local_row(tx, &credential)
+                })
+                .await;
+            conflict_or_internal(outcome)
         })
     }
 
@@ -270,19 +268,29 @@ impl UserStore for SqliteUserStore {
         })
     }
 
-    fn set_role<'a>(&'a self, id: &'a str, role: Role) -> BoxFuture<'a, Result<bool, StoreError>> {
+    fn set_role<'a>(
+        &'a self,
+        id: &'a str,
+        role: Role,
+    ) -> BoxFuture<'a, Result<RoleChange, StoreError>> {
         Box::pin(async move {
             let Some((_, lane)) = self.db.live() else {
                 return Err(internal("auth user store is not wired"));
             };
             let id = id.to_owned();
             lane.write(Lane::Foreground, "auth.users.role", move |tx| {
+                let Some(current) = role_of(tx, &id)? else {
+                    return Ok(RoleChange::NotFound);
+                };
+                if current.is_admin() && !role.is_admin() && admin_count(tx)? <= 1 {
+                    return Ok(RoleChange::LastAdmin);
+                }
                 tx.execute(
                     "UPDATE auth_users SET role = ? WHERE id = ?",
                     rusqlite::params![role.as_str(), id],
                 )
                 .map_err(op_error)?;
-                row_exists(tx, "auth_users", &id)
+                Ok(RoleChange::Changed)
             })
             .await
             .map_err(internal)
@@ -308,20 +316,42 @@ impl UserStore for SqliteUserStore {
         })
     }
 
-    fn delete<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<bool, StoreError>> {
+    fn delete<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<UserDeletion, StoreError>> {
         Box::pin(async move {
             let Some((_, lane)) = self.db.live() else {
                 return Err(internal("auth user store is not wired"));
             };
             let id = id.to_owned();
-            let changed: usize = lane
-                .write(Lane::Foreground, "auth.users.delete", move |tx| {
-                    tx.execute("DELETE FROM auth_users WHERE id = ?", rusqlite::params![id])
-                        .map_err(op_error)
-                })
-                .await
-                .map_err(internal)?;
-            Ok(changed > 0)
+            lane.write(Lane::Foreground, "auth.users.delete", move |tx| {
+                let Some(current) = role_of(tx, &id)? else {
+                    return Ok(UserDeletion::NotFound);
+                };
+                if current.is_admin() && admin_count(tx)? <= 1 {
+                    return Ok(UserDeletion::LastAdmin);
+                }
+                let mut holders = Vec::new();
+                for (table, column, label) in RESTRICTING_HISTORY {
+                    let found: Option<i64> = tx
+                        .query_row(
+                            &format!("SELECT 1 FROM {table} WHERE {column} = ? LIMIT 1"),
+                            rusqlite::params![id],
+                            |row| row.get(0),
+                        )
+                        .optional()
+                        .map_err(op_error)?;
+                    if found.is_some() {
+                        holders.push(*label);
+                    }
+                }
+                if !holders.is_empty() {
+                    return Ok(UserDeletion::Referenced(holders));
+                }
+                tx.execute("DELETE FROM auth_users WHERE id = ?", rusqlite::params![id])
+                    .map_err(op_error)?;
+                Ok(UserDeletion::Deleted)
+            })
+            .await
+            .map_err(internal)
         })
     }
 
@@ -348,20 +378,6 @@ impl UserStore for SqliteUserStore {
                 .await
                 .map_err(|error| internal(map_sqlx_busy("auth.users.list", error)))?;
             Ok((rows.iter().map(map_user).collect(), total.max(0) as u64))
-        })
-    }
-
-    fn count_by_role<'a>(&'a self, role: Role) -> BoxFuture<'a, Result<u64, StoreError>> {
-        Box::pin(async move {
-            let Some((pool, _)) = self.db.live() else {
-                return Err(internal("auth user store is not wired"));
-            };
-            let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM auth_users WHERE role = ?")
-                .bind(role.as_str())
-                .fetch_one(pool)
-                .await
-                .map_err(|error| internal(map_sqlx_busy("auth.users.count", error)))?;
-            Ok(total.max(0) as u64)
         })
     }
 
@@ -425,85 +441,41 @@ impl UserStore for SqliteUserStore {
             let Some((_, lane)) = self.db.live() else {
                 return Err(internal("auth user store is not wired"));
             };
-            let outcome: Result<(), crate::db::DbError> = lane
+            let outcome = lane
                 .write(Lane::Foreground, "auth.users.credential", move |tx| {
-                    let username: Option<String> = tx
-                        .query_row(
-                            "SELECT username FROM auth_users WHERE id = ?",
-                            rusqlite::params![credential.user_id],
-                            |row| row.get(0),
-                        )
-                        .optional()
-                        .map_err(op_error)?
-                        .flatten();
-                    let Some(username) = username else {
-                        return Err(crate::db::OpError::Abort(
-                            "cannot set a local password without a username".to_owned(),
-                        ));
-                    };
-                    tx.execute(
-                        "INSERT INTO auth_providers (id, user_id, provider, provider_uid, \
-                         provider_data, created_at) VALUES (?, ?, 'local', ?, ?, ?)",
-                        rusqlite::params![
-                            credential.id,
-                            credential.user_id,
-                            username,
-                            render_local_data(&credential.scheme, &credential.hash),
-                            to_iso(AuthDb::now_unix()),
-                        ],
-                    )
-                    .map_err(op_error)?;
-                    Ok(())
+                    insert_local_row(tx, &credential)
                 })
                 .await;
-            match outcome {
-                Ok(()) => Ok(()),
-                Err(error) if is_write_conflict(&error) => Err(StoreError::Conflict),
-                Err(error) => Err(internal(error)),
-            }
+            conflict_or_internal(outcome)
         })
     }
 
-    fn replace_local_hash<'a>(
+    fn change_local_hash<'a>(
         &'a self,
         id: &'a str,
         expected_hash: &'a str,
         scheme: &'a str,
         new_hash: &'a str,
+        keep_session_id: &'a str,
     ) -> BoxFuture<'a, Result<bool, StoreError>> {
         Box::pin(async move {
             let Some((_, lane)) = self.db.live() else {
                 return Err(internal("auth user store is not wired"));
             };
-            let (id, expected_hash, scheme, new_hash) = (
+            let (id, expected_hash, scheme, new_hash, keep) = (
                 id.to_owned(),
                 expected_hash.to_owned(),
                 scheme.to_owned(),
                 new_hash.to_owned(),
+                keep_session_id.to_owned(),
             );
-            lane.write(Lane::Foreground, "auth.users.rehash", move |tx| {
-                let current: Option<Option<String>> = tx
-                    .query_row(
-                        "SELECT provider_data FROM auth_providers \
-                         WHERE user_id = ? AND provider = 'local'",
-                        rusqlite::params![id],
-                        |row| row.get(0),
-                    )
-                    .optional()
-                    .map_err(op_error)?;
-                let Some(Some(data)) = current else {
-                    return Ok(false);
-                };
-                let Some((_, hash)) = parse_local_data(&data) else {
-                    return Ok(false);
-                };
-                if hash != expected_hash {
+            lane.write(Lane::Foreground, "auth.users.password", move |tx| {
+                if !swap_local_hash(tx, &id, &expected_hash, &scheme, &new_hash)? {
                     return Ok(false);
                 }
                 tx.execute(
-                    "UPDATE auth_providers SET provider_data = ? \
-                     WHERE user_id = ? AND provider = 'local'",
-                    rusqlite::params![render_local_data(&scheme, &new_hash), id],
+                    "UPDATE auth_tokens SET revoked = 1 WHERE user_id = ? AND id != ?",
+                    rusqlite::params![id, keep],
                 )
                 .map_err(op_error)?;
                 Ok(true)
@@ -531,32 +503,11 @@ impl UserStore for SqliteUserStore {
                 new_hash.to_owned(),
             );
             lane.write(Lane::Foreground, "auth.users.recovery_reset", move |tx| {
-                let current: Option<Option<String>> = tx
-                    .query_row(
-                        "SELECT provider_data FROM auth_providers \
-                         WHERE user_id = ? AND provider = 'local'",
-                        rusqlite::params![id],
-                        |row| row.get(0),
-                    )
-                    .optional()
-                    .map_err(op_error)?;
-                let Some(Some(data)) = current else {
-                    return Ok(false);
-                };
-                let Some((_, hash)) = parse_local_data(&data) else {
-                    return Ok(false);
-                };
-                if hash != expected_hash {
-                    return Ok(false);
-                }
                 // One transaction: the new hash, no live sessions, no live
                 // code. A crash mid-reset retries cleanly (same guard).
-                tx.execute(
-                    "UPDATE auth_providers SET provider_data = ? \
-                     WHERE user_id = ? AND provider = 'local'",
-                    rusqlite::params![render_local_data(&scheme, &new_hash), id],
-                )
-                .map_err(op_error)?;
+                if !swap_local_hash(tx, &id, &expected_hash, &scheme, &new_hash)? {
+                    return Ok(false);
+                }
                 tx.execute(
                     "UPDATE auth_tokens SET revoked = 1 WHERE user_id = ?",
                     rusqlite::params![id],
@@ -633,6 +584,156 @@ impl UserStore for SqliteUserStore {
             }
         })
     }
+}
+
+/// Tables that keep a user's name on library history with
+/// `ON DELETE RESTRICT`, as (table, column, readable name).
+const RESTRICTING_HISTORY: &[(&str, &str, &str)] = &[
+    (
+        "library_artist_reconciliation_dismissals",
+        "dismissed_by_user_id",
+        "artist reconciliation dismissals",
+    ),
+    (
+        "library_custom_edition_manifests",
+        "sealed_by_user_id",
+        "custom edition manifests",
+    ),
+    (
+        "library_management_exclusions",
+        "excluded_by_user_id",
+        "library management exclusions",
+    ),
+    (
+        "library_edition_conversion_jobs",
+        "requested_by_user_id",
+        "edition conversion jobs",
+    ),
+];
+
+/// Map a write outcome: constraint conflicts become `Conflict`.
+fn conflict_or_internal(outcome: Result<(), crate::db::DbError>) -> Result<(), StoreError> {
+    match outcome {
+        Ok(()) => Ok(()),
+        Err(error) if is_write_conflict(&error) => Err(StoreError::Conflict),
+        Err(error) => Err(internal(error)),
+    }
+}
+
+/// Insert one `auth_users` row.
+fn insert_user_row(
+    tx: &rusqlite::Transaction,
+    user: &UserRecord,
+) -> Result<(), crate::db::OpError> {
+    tx.execute(
+        "INSERT INTO auth_users (id, display_name, email, avatar_url, role, \
+         created_at, last_login_at, username, username_display) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rusqlite::params![
+            user.id,
+            user.display_name,
+            user.email,
+            user.avatar_url,
+            user.role.as_str(),
+            to_iso(user.created_at),
+            user.last_login_at.map(to_iso),
+            user.username,
+            user.username_display,
+        ],
+    )
+    .map_err(op_error)?;
+    Ok(())
+}
+
+/// Insert the `local` provider row; the binding's uid is the username.
+fn insert_local_row(
+    tx: &rusqlite::Transaction,
+    credential: &UsersLocalCredential,
+) -> Result<(), crate::db::OpError> {
+    let username: Option<String> = tx
+        .query_row(
+            "SELECT username FROM auth_users WHERE id = ?",
+            rusqlite::params![credential.user_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(op_error)?
+        .flatten();
+    let Some(username) = username else {
+        return Err(crate::db::OpError::Abort(
+            "cannot set a local password without a username".to_owned(),
+        ));
+    };
+    tx.execute(
+        "INSERT INTO auth_providers (id, user_id, provider, provider_uid, \
+         provider_data, created_at) VALUES (?, ?, 'local', ?, ?, ?)",
+        rusqlite::params![
+            credential.id,
+            credential.user_id,
+            username,
+            render_local_data(&credential.scheme, &credential.hash),
+            to_iso(AuthDb::now_unix()),
+        ],
+    )
+    .map_err(op_error)?;
+    Ok(())
+}
+
+/// Replace the local hash when it still equals `expected_hash`. Returns
+/// false (writing nothing) when the row is gone or the hash moved on.
+fn swap_local_hash(
+    tx: &rusqlite::Transaction,
+    id: &str,
+    expected_hash: &str,
+    scheme: &str,
+    new_hash: &str,
+) -> Result<bool, crate::db::OpError> {
+    let current: Option<Option<String>> = tx
+        .query_row(
+            "SELECT provider_data FROM auth_providers WHERE user_id = ? AND provider = 'local'",
+            rusqlite::params![id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(op_error)?;
+    let Some(Some(data)) = current else {
+        return Ok(false);
+    };
+    let Some((_, hash)) = parse_local_data(&data) else {
+        return Ok(false);
+    };
+    if hash != expected_hash {
+        return Ok(false);
+    }
+    tx.execute(
+        "UPDATE auth_providers SET provider_data = ? WHERE user_id = ? AND provider = 'local'",
+        rusqlite::params![render_local_data(scheme, new_hash), id],
+    )
+    .map_err(op_error)?;
+    Ok(true)
+}
+
+/// Current role of one user, or `None` when the row is gone.
+fn role_of(tx: &rusqlite::Transaction, id: &str) -> Result<Option<Role>, crate::db::OpError> {
+    let raw: Option<String> = tx
+        .query_row(
+            "SELECT role FROM auth_users WHERE id = ?",
+            rusqlite::params![id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(op_error)?;
+    Ok(raw.as_deref().map(Role::from_stored))
+}
+
+/// Admin accounts right now, read inside the caller's transaction.
+fn admin_count(tx: &rusqlite::Transaction) -> Result<i64, crate::db::OpError> {
+    tx.query_row(
+        "SELECT COUNT(*) FROM auth_users WHERE role = ?",
+        rusqlite::params![Role::Admin.as_str()],
+        |row| row.get(0),
+    )
+    .map_err(op_error)
 }
 
 /// Native login lookup over `auth_users` plus the `local` provider row.

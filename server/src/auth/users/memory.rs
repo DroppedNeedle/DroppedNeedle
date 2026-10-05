@@ -34,8 +34,8 @@ use super::services::COMPANION_LABEL_PREFIX;
 use super::stores::{
     AppPasswordStore, AvatarStore, BoxFuture, Clock, DirectoryError, DirectoryUser,
     FalliblePasswordHasher, HashError, HibpPolicy, LastFmAuthClient, LastFmError, LastFmStore,
-    LastFmSwitch, LoadedAvatar, RecoveryStore, SecurityPolicy, SessionManager, StoreError,
-    UserDirectory, UserStore,
+    LastFmSwitch, LoadedAvatar, RecoveryStore, RoleChange, SecurityPolicy, SessionManager,
+    StoreError, UserDeletion, UserDirectory, UserStore,
 };
 use crate::{ids::IdGenerator, runtime_config::crypto::Crypto};
 
@@ -297,6 +297,17 @@ impl UserStore for MemoryUserStore {
         })
     }
 
+    fn insert_with_local_credential<'a>(
+        &'a self,
+        user: UserRecord,
+        credential: LocalCredential,
+    ) -> BoxFuture<'a, Result<(), StoreError>> {
+        Box::pin(async move {
+            self.insert(user).await?;
+            self.insert_local_credential(credential).await
+        })
+    }
+
     fn update_profile<'a>(
         &'a self,
         id: &'a str,
@@ -365,14 +376,26 @@ impl UserStore for MemoryUserStore {
         })
     }
 
-    fn set_role<'a>(&'a self, id: &'a str, role: Role) -> BoxFuture<'a, Result<bool, StoreError>> {
+    fn set_role<'a>(
+        &'a self,
+        id: &'a str,
+        role: Role,
+    ) -> BoxFuture<'a, Result<RoleChange, StoreError>> {
         Box::pin(async move {
             let mut guard = self.state.write().await;
+            let admins = guard
+                .users
+                .values()
+                .filter(|row| row.role.is_admin())
+                .count();
             let Some(row) = guard.users.get_mut(id) else {
-                return Ok(false);
+                return Ok(RoleChange::NotFound);
             };
+            if row.role.is_admin() && !role.is_admin() && admins <= 1 {
+                return Ok(RoleChange::LastAdmin);
+            }
             row.role = role;
-            Ok(true)
+            Ok(RoleChange::Changed)
         })
     }
 
@@ -385,12 +408,24 @@ impl UserStore for MemoryUserStore {
         })
     }
 
-    fn delete<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<bool, StoreError>> {
+    fn delete<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<UserDeletion, StoreError>> {
         Box::pin(async move {
             let mut guard = self.state.write().await;
+            let admins = guard
+                .users
+                .values()
+                .filter(|row| row.role.is_admin())
+                .count();
+            let Some(row) = guard.users.get(id) else {
+                return Ok(UserDeletion::NotFound);
+            };
+            if row.role.is_admin() && admins <= 1 {
+                return Ok(UserDeletion::LastAdmin);
+            }
             guard.local.remove(id);
             guard.providers.retain(|_, binding| binding.user_id != id);
-            Ok(guard.users.remove(id).is_some())
+            guard.users.remove(id);
+            Ok(UserDeletion::Deleted)
         })
     }
 
@@ -407,19 +442,6 @@ impl UserStore for MemoryUserStore {
             let offset = (offset as usize).min(users.len());
             let end = offset.saturating_add(limit as usize).min(users.len());
             Ok((users[offset..end].to_vec(), total))
-        })
-    }
-
-    fn count_by_role<'a>(&'a self, role: Role) -> BoxFuture<'a, Result<u64, StoreError>> {
-        Box::pin(async move {
-            Ok(self
-                .state
-                .read()
-                .await
-                .users
-                .values()
-                .filter(|row| row.role == role)
-                .count() as u64)
         })
     }
 
@@ -461,16 +483,22 @@ impl UserStore for MemoryUserStore {
         })
     }
 
-    fn replace_local_hash<'a>(
+    fn change_local_hash<'a>(
         &'a self,
         id: &'a str,
         expected_hash: &'a str,
         scheme: &'a str,
         new_hash: &'a str,
+        keep_session_id: &'a str,
     ) -> BoxFuture<'a, Result<bool, StoreError>> {
         Box::pin(async move {
-            let mut guard = self.state.write().await;
-            let Some(row) = guard.local.get_mut(id) else {
+            let Some(peers) = self.reset_peers.get() else {
+                return Err(StoreError::Internal(
+                    "password change peers are not linked".to_owned(),
+                ));
+            };
+            let mut users = self.state.write().await;
+            let Some(row) = users.local.get_mut(id) else {
                 return Ok(false);
             };
             if row.hash != expected_hash {
@@ -478,6 +506,11 @@ impl UserStore for MemoryUserStore {
             }
             row.scheme = scheme.to_owned();
             row.hash = new_hash.to_owned();
+            for (session_id, row) in peers.sessions.state.write().await.sessions.iter_mut() {
+                if row.user_id == id && session_id != keep_session_id {
+                    row.revoked = true;
+                }
+            }
             Ok(true)
         })
     }
@@ -687,7 +720,11 @@ impl SessionManager for MemorySessionManager {
 }
 
 impl AppPasswordStore for MemoryAppPasswordStore {
-    fn insert<'a>(&'a self, row: AppPasswordRecord) -> BoxFuture<'a, Result<(), StoreError>> {
+    fn insert_capped<'a>(
+        &'a self,
+        row: AppPasswordRecord,
+        max_active: u64,
+    ) -> BoxFuture<'a, Result<bool, StoreError>> {
         Box::pin(async move {
             let mut guard = self.state.write().await;
             if guard.rows.contains_key(&row.id)
@@ -698,8 +735,18 @@ impl AppPasswordStore for MemoryAppPasswordStore {
             {
                 return Err(StoreError::Conflict);
             }
+            let active = guard
+                .rows
+                .values()
+                .filter(|existing| {
+                    existing.user_id == row.user_id && !guard.revoked.contains(&existing.id)
+                })
+                .count() as u64;
+            if active >= max_active {
+                return Ok(false);
+            }
             guard.rows.insert(row.id.clone(), row);
-            Ok(())
+            Ok(true)
         })
     }
 
@@ -738,20 +785,6 @@ impl AppPasswordStore for MemoryAppPasswordStore {
                 .collect();
             rows.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
             Ok(rows)
-        })
-    }
-
-    fn count_active_by_user<'a>(
-        &'a self,
-        user_id: &'a str,
-    ) -> BoxFuture<'a, Result<u64, StoreError>> {
-        Box::pin(async move {
-            let guard = self.state.read().await;
-            Ok(guard
-                .rows
-                .values()
-                .filter(|row| row.user_id == user_id && !guard.revoked.contains(&row.id))
-                .count() as u64)
         })
     }
 

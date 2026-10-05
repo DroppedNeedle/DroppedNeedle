@@ -17,7 +17,7 @@ use super::models::{
     RecoveryCode, RecoveryCodeResponse, SessionListResponse, SessionView, UserRecord, UserResponse,
 };
 use super::roles::{AuthContext, Role, SessionKind};
-use super::stores::{LastFmError, StoreError};
+use super::stores::{LastFmError, RoleChange, StoreError, UserDeletion};
 use super::{UsersDeps, clock_now};
 
 // ---------------------------------------------------------------------------
@@ -355,9 +355,17 @@ pub async fn change_password(
     validate_password(new_password)?;
     screen_password(deps, new_password).await?;
     let hash = hash_password(deps, new_password).await?;
+    // One write: the new hash lands and every other session of the account
+    // dies with the old password. The session making the change stays.
     let replaced = deps
         .users
-        .replace_local_hash(&ctx.user_id, &local.hash, native_scheme(), &hash)
+        .change_local_hash(
+            &ctx.user_id,
+            &local.hash,
+            native_scheme(),
+            &hash,
+            &ctx.session_id,
+        )
         .await
         .map_err(|error| store_internal(deps, error))?;
     if !replaced {
@@ -369,12 +377,13 @@ pub async fn change_password(
 }
 
 /// POST /me/local-password: set the first local password on an account
-/// without one (SSO-created accounts).
+/// without one (SSO-created accounts). Needs a standard session.
 pub async fn set_local_password(
     deps: &UsersDeps,
     ctx: &AuthContext,
     new_password: &str,
 ) -> Result<UserResponse, UsersError> {
+    ctx.require_standard_session()?;
     let existing = deps
         .users
         .local_credential(&ctx.user_id)
@@ -691,28 +700,20 @@ pub async fn admin_create_user(
         created_at: now,
         last_login_at: None,
     };
+    // One transaction for the account and its password: a crash between
+    // two writes would leave a passwordless account (fatal for first setup).
     deps.users
-        .insert(user.clone())
+        .insert_with_local_credential(
+            user.clone(),
+            LocalCredential {
+                id: deps.ids.new_id(),
+                user_id,
+                scheme: native_scheme().to_owned(),
+                hash,
+            },
+        )
         .await
         .map_err(|error| create_insert_error(deps, error))?;
-    if let Err(error) = deps
-        .users
-        .insert_local_credential(LocalCredential {
-            id: deps.ids.new_id(),
-            user_id: user_id.clone(),
-            scheme: native_scheme().to_owned(),
-            hash,
-        })
-        .await
-    {
-        // The two writes are not atomic; compensate so a credential failure
-        // never orphans a passwordless row. A failed compensation logs (the
-        // admin list shows the row, so it stays visible, never silent).
-        if let Err(cause) = deps.users.delete(&user_id).await {
-            tracing::warn!(%cause, "admin create compensation failed");
-        }
-        return Err(create_insert_error(deps, error));
-    }
     user_response(deps, &user).await
 }
 
@@ -745,28 +746,22 @@ pub async fn admin_set_role(
             message: "Cannot remove your own admin privileges".to_owned(),
         });
     }
-    let target = deps
+    // The last-admin guard runs inside the role write, so two admins
+    // demoting each other at once cannot both pass it.
+    match deps
         .users
-        .get_by_id(user_id)
+        .set_role(user_id, role)
         .await
         .map_err(|error| store_internal(deps, error))?
-        .ok_or(UsersError::NotFound)?;
-    if target.role.is_admin() && !role.is_admin() {
-        let admins = deps
-            .users
-            .count_by_role(Role::Admin)
-            .await
-            .map_err(|error| store_internal(deps, error))?;
-        if admins <= 1 {
+    {
+        RoleChange::Changed => {}
+        RoleChange::NotFound => return Err(UsersError::NotFound),
+        RoleChange::LastAdmin => {
             return Err(UsersError::Conflict {
                 message: "Cannot remove the last admin account".to_owned(),
             });
         }
     }
-    deps.users
-        .set_role(user_id, role)
-        .await
-        .map_err(|error| store_internal(deps, error))?;
     let updated = deps
         .users
         .get_by_id(user_id)
@@ -777,7 +772,8 @@ pub async fn admin_set_role(
 }
 
 /// DELETE /admin/users/{id}: delete an account. Self-deletion is 403;
-/// deleting the last admin is 409.
+/// deleting the last admin, or an account library history still names, is
+/// 409.
 pub async fn admin_delete_user(
     deps: &UsersDeps,
     ctx: &AuthContext,
@@ -788,29 +784,24 @@ pub async fn admin_delete_user(
             message: "Cannot delete your own account".to_owned(),
         });
     }
-    let target = deps
+    match deps
         .users
-        .get_by_id(user_id)
-        .await
-        .map_err(|error| store_internal(deps, error))?
-        .ok_or(UsersError::NotFound)?;
-    if target.role.is_admin() {
-        let admins = deps
-            .users
-            .count_by_role(Role::Admin)
-            .await
-            .map_err(|error| store_internal(deps, error))?;
-        if admins <= 1 {
-            return Err(UsersError::Conflict {
-                message: "Cannot delete the last admin account".to_owned(),
-            });
-        }
-    }
-    deps.users
         .delete(user_id)
         .await
-        .map_err(|error| store_internal(deps, error))?;
-    Ok(())
+        .map_err(|error| store_internal(deps, error))?
+    {
+        UserDeletion::Deleted => Ok(()),
+        UserDeletion::NotFound => Err(UsersError::NotFound),
+        UserDeletion::LastAdmin => Err(UsersError::Conflict {
+            message: "Cannot delete the last admin account".to_owned(),
+        }),
+        UserDeletion::Referenced(records) => Err(UsersError::Conflict {
+            message: format!(
+                "This account is recorded on {} and cannot be deleted. Change its role instead.",
+                records.join(", ")
+            ),
+        }),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -885,7 +876,6 @@ pub async fn admin_mint_recovery_code(
 /// password. Failures share one message: no username/code oracle.
 pub async fn reset_password(deps: &UsersDeps, body: &PasswordReset) -> Result<(), UsersError> {
     validate_password(&body.new_password)?;
-    screen_password(deps, &body.new_password).await?;
     let canonical = canonicalize_recovery_code(&body.recovery_code);
     let now = clock_now(deps);
     let found = deps
@@ -917,6 +907,9 @@ pub async fn reset_password(deps: &UsersDeps, body: &PasswordReset) -> Result<()
     let Some(local) = local else {
         return Err(invalid());
     };
+    // Only a caller holding a live code reaches the breach screen, so the
+    // public reset route cannot be used to probe the HIBP service.
+    screen_password(deps, &body.new_password).await?;
     let hash = hash_password(deps, &body.new_password).await?;
     // One atomic write: the new hash lands, every prior session dies, and
     // the code is consumed. A reset that left sessions live would hand the
@@ -1226,23 +1219,14 @@ pub async fn list_app_passwords(
 }
 
 /// POST /me/app-passwords: create one. The secret returns once, never again.
+/// Needs a standard session: a device token must not mint a permanent
+/// credential.
 pub async fn create_app_password(
     deps: &UsersDeps,
-    user_id: &str,
+    ctx: &AuthContext,
     body: &AppPasswordCreate,
 ) -> Result<AppPasswordCreatedResponse, UsersError> {
-    let active = deps
-        .app_passwords
-        .count_active_by_user(user_id)
-        .await
-        .map_err(|error| store_internal(deps, error))?;
-    if active >= MAX_ACTIVE_APP_PASSWORDS {
-        return Err(UsersError::Conflict {
-            message: format!(
-                "App-password limit reached ({MAX_ACTIVE_APP_PASSWORDS}). Revoke one before creating another."
-            ),
-        });
-    }
+    ctx.require_standard_session()?;
     let name = body
         .name
         .as_deref()
@@ -1261,7 +1245,7 @@ pub async fn create_app_password(
         .map_err(|cause| UsersError::internal(&cause, deps.ids.as_ref()))?;
     let row = AppPasswordRecord {
         id: deps.ids.new_id(),
-        user_id: user_id.to_owned(),
+        user_id: ctx.user_id.clone(),
         name: name.to_owned(),
         secret_sha256: tokens::hash_token(&secret),
         secret_encrypted: encrypted,
@@ -1269,10 +1253,20 @@ pub async fn create_app_password(
         last_used_at: None,
         last_client: None,
     };
-    deps.app_passwords
-        .insert(row.clone())
+    // The cap is checked inside the insert transaction, so parallel
+    // creates cannot overshoot it.
+    let inserted = deps
+        .app_passwords
+        .insert_capped(row.clone(), MAX_ACTIVE_APP_PASSWORDS)
         .await
         .map_err(|error| store_internal(deps, error))?;
+    if !inserted {
+        return Err(UsersError::Conflict {
+            message: format!(
+                "App-password limit reached ({MAX_ACTIVE_APP_PASSWORDS}). Revoke one before creating another."
+            ),
+        });
+    }
     Ok(AppPasswordCreatedResponse {
         id: row.id,
         name: row.name,

@@ -45,13 +45,29 @@ fn map_app_password(row: &sqlx::sqlite::SqliteRow) -> AppPasswordRecord {
 }
 
 impl AppPasswordStore for SqliteAppPasswordStore {
-    fn insert<'a>(&'a self, row: AppPasswordRecord) -> BoxFuture<'a, Result<(), StoreError>> {
+    fn insert_capped<'a>(
+        &'a self,
+        row: AppPasswordRecord,
+        max_active: u64,
+    ) -> BoxFuture<'a, Result<bool, StoreError>> {
         Box::pin(async move {
             let Some((_, lane)) = self.db.live() else {
                 return Err(internal("auth app-password store is not wired"));
             };
-            let outcome: Result<(), crate::db::DbError> = lane
+            let cap = i64::try_from(max_active).unwrap_or(i64::MAX);
+            let outcome = lane
                 .write(Lane::Foreground, "auth.app_passwords.insert", move |tx| {
+                    let active: i64 = tx
+                        .query_row(
+                            "SELECT COUNT(*) FROM connect_app_passwords \
+                             WHERE user_id = ? AND revoked = 0",
+                            rusqlite::params![row.user_id],
+                            |found| found.get(0),
+                        )
+                        .map_err(op_error)?;
+                    if active >= cap {
+                        return Ok(false);
+                    }
                     tx.execute(
                         "INSERT INTO connect_app_passwords (id, user_id, name, secret_sha256, \
                          secret_encrypted, created_at, last_used_at, last_client, revoked) \
@@ -68,11 +84,11 @@ impl AppPasswordStore for SqliteAppPasswordStore {
                         ],
                     )
                     .map_err(op_error)?;
-                    Ok(())
+                    Ok(true)
                 })
                 .await;
             match outcome {
-                Ok(()) => Ok(()),
+                Ok(inserted) => Ok(inserted),
                 Err(error) if is_write_conflict(&error) => Err(StoreError::Conflict),
                 Err(error) => Err(internal(error)),
             }
@@ -135,25 +151,6 @@ impl AppPasswordStore for SqliteAppPasswordStore {
             .await
             .map_err(|error| internal(map_sqlx_busy("auth.app_passwords.list", error)))?;
             Ok(rows.iter().map(map_app_password).collect())
-        })
-    }
-
-    fn count_active_by_user<'a>(
-        &'a self,
-        user_id: &'a str,
-    ) -> BoxFuture<'a, Result<u64, StoreError>> {
-        Box::pin(async move {
-            let Some((pool, _)) = self.db.live() else {
-                return Err(internal("auth app-password store is not wired"));
-            };
-            let total: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM connect_app_passwords WHERE user_id = ? AND revoked = 0",
-            )
-            .bind(user_id)
-            .fetch_one(pool)
-            .await
-            .map_err(|error| internal(map_sqlx_busy("auth.app_passwords.count", error)))?;
-            Ok(total.max(0) as u64)
         })
     }
 

@@ -33,16 +33,38 @@ pub enum StoreError {
     Internal(String),
 }
 
+/// Outcome of a guarded role change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoleChange {
+    /// The role was written (or already held).
+    Changed,
+    /// No such user.
+    NotFound,
+    /// The change would leave no admin; nothing was written.
+    LastAdmin,
+}
+
+/// Outcome of a guarded user delete.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UserDeletion {
+    /// The row and everything cascading from it are gone.
+    Deleted,
+    /// No such user.
+    NotFound,
+    /// The user is the last admin; nothing was deleted.
+    LastAdmin,
+    /// Library history that must outlive accounts names this user (the
+    /// tables reference it with `ON DELETE RESTRICT`); nothing was deleted.
+    /// Holds a readable name per kind of record.
+    Referenced(Vec<&'static str>),
+}
+
 /// Account and credential rows.
 ///
 /// Table mapping: `auth_users` + `auth_providers` (provider `local`,
-/// `provider_uid` = username, `provider_data` = `{"hash": ...}` plus the
-/// scheme tag column the wiring step adds... see below).
-///
-/// As built, the `scheme` tag lives inside the `provider_data` JSON document
-/// (`{"password_hash", "scheme"}`); no migration added a scheme column. A
-/// missing tag reads as `bcrypt` (v2 rows predate it). See `sqlite.rs`
-/// (`parse_local_data`) and `prod/mod.rs` (pinned choices).
+/// `provider_uid` = username). The local credential lives in the
+/// `provider_data` JSON (`{"password_hash", "scheme"}`); a missing scheme
+/// reads as `bcrypt` (v2 rows predate it).
 pub trait UserStore: Send + Sync {
     /// Fetch one user by id. None is absence, never failure.
     fn get_by_id<'a>(
@@ -66,6 +88,14 @@ pub trait UserStore: Send + Sync {
     ) -> BoxFuture<'a, Result<Vec<UserRecord>, StoreError>>;
     /// Insert a user row. Conflict when the id, username, or email is taken.
     fn insert<'a>(&'a self, user: UserRecord) -> BoxFuture<'a, Result<(), StoreError>>;
+    /// Insert a user row and its local credential in one transaction.
+    /// Conflict when the id, username, or email is taken; nothing is
+    /// written then.
+    fn insert_with_local_credential<'a>(
+        &'a self,
+        user: UserRecord,
+        credential: LocalCredential,
+    ) -> BoxFuture<'a, Result<(), StoreError>>;
     /// Update display name and/or avatar URL. None fields stay untouched.
     fn update_profile<'a>(
         &'a self,
@@ -87,21 +117,25 @@ pub trait UserStore: Send + Sync {
         id: &'a str,
         email: Option<&'a str>,
     ) -> BoxFuture<'a, Result<bool, StoreError>>;
-    /// Set the role. Returns false for unknown ids.
-    fn set_role<'a>(&'a self, id: &'a str, role: Role) -> BoxFuture<'a, Result<bool, StoreError>>;
+    /// Set the role, refusing to demote the last admin. The admin count is
+    /// read inside the same write transaction as the update.
+    fn set_role<'a>(
+        &'a self,
+        id: &'a str,
+        role: Role,
+    ) -> BoxFuture<'a, Result<RoleChange, StoreError>>;
     /// Stamp the last-login time.
     fn touch_login<'a>(&'a self, id: &'a str, at: i64) -> BoxFuture<'a, Result<(), StoreError>>;
-    /// Delete a user. Cascades to providers, tokens, codes, app passwords,
-    /// and connections via the baseline foreign keys.
-    fn delete<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<bool, StoreError>>;
+    /// Delete a user, refusing the last admin and users that library
+    /// history still names. Cascades to providers, tokens, codes, app
+    /// passwords, and connections via the baseline foreign keys.
+    fn delete<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<UserDeletion, StoreError>>;
     /// One page of users (creation order, id tiebreak) plus the total count.
     fn list<'a>(
         &'a self,
         limit: u64,
         offset: u64,
     ) -> BoxFuture<'a, Result<(Vec<UserRecord>, u64), StoreError>>;
-    /// How many accounts hold a role (last-admin guard).
-    fn count_by_role<'a>(&'a self, role: Role) -> BoxFuture<'a, Result<u64, StoreError>>;
     /// Bound provider names for one user, e.g. `["local"]`.
     fn provider_names<'a>(&'a self, id: &'a str) -> BoxFuture<'a, Result<Vec<String>, StoreError>>;
     /// The local credential, when the account has one.
@@ -115,15 +149,18 @@ pub trait UserStore: Send + Sync {
         &'a self,
         credential: LocalCredential,
     ) -> BoxFuture<'a, Result<(), StoreError>>;
-    /// Replace the local hash, guarded by the expected current hash so a
-    /// concurrent change fails instead of silently winning. Returns false
-    /// when the guard mismatches.
-    fn replace_local_hash<'a>(
+    /// Replace the local hash and revoke every other session of the user,
+    /// in one transaction. Guarded by the expected current hash so a
+    /// concurrent change fails instead of silently winning; returns false
+    /// (and writes nothing) when the guard mismatches. `keep_session_id`
+    /// is the session making the change, which stays live.
+    fn change_local_hash<'a>(
         &'a self,
         id: &'a str,
         expected_hash: &'a str,
         scheme: &'a str,
         new_hash: &'a str,
+        keep_session_id: &'a str,
     ) -> BoxFuture<'a, Result<bool, StoreError>>;
     /// Complete a recovery reset atomically: the guarded hash replace plus
     /// revoking every session of the user plus deleting the consumed
@@ -212,8 +249,14 @@ pub trait SessionManager: Send + Sync {
 /// `secret_sha256` carries over verbatim on import while `secret_encrypted`
 /// is re-encrypted under the v3 key.
 pub trait AppPasswordStore: Send + Sync {
-    /// Insert a row. Conflict when the id or secret hash is taken.
-    fn insert<'a>(&'a self, row: AppPasswordRecord) -> BoxFuture<'a, Result<(), StoreError>>;
+    /// Insert a row unless the owner already holds `max_active` live rows;
+    /// the count and the insert share one transaction. Returns false when
+    /// the cap refused it. Conflict when the id or secret hash is taken.
+    fn insert_capped<'a>(
+        &'a self,
+        row: AppPasswordRecord,
+        max_active: u64,
+    ) -> BoxFuture<'a, Result<bool, StoreError>>;
     /// Fetch one row by id, regardless of revocation.
     fn get_by_id<'a>(
         &'a self,
@@ -229,11 +272,6 @@ pub trait AppPasswordStore: Send + Sync {
         &'a self,
         user_id: &'a str,
     ) -> BoxFuture<'a, Result<Vec<AppPasswordRecord>, StoreError>>;
-    /// Live row count for one user (creation cap).
-    fn count_active_by_user<'a>(
-        &'a self,
-        user_id: &'a str,
-    ) -> BoxFuture<'a, Result<u64, StoreError>>;
     /// Every live row across users: owner, then age, then id (admin oversight).
     fn list_all_active<'a>(&'a self) -> BoxFuture<'a, Result<Vec<AppPasswordRecord>, StoreError>>;
     /// Soft-revoke. Returns false for unknown or already-revoked ids.
