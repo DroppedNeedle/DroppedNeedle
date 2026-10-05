@@ -41,6 +41,22 @@ pub struct Container {
     pub friendly_name: Option<String>,
     /// Server version (`/`).
     pub version: Option<String>,
+    /// Server machine id (`/identity`).
+    #[serde(rename = "machineIdentifier")]
+    pub machine_identifier: Option<String>,
+}
+
+/// One plex.tv `/resources` device. Client devices carry no token, so
+/// every field is optional.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Resource {
+    /// Device id; a server's matches its machine id.
+    pub client_identifier: Option<String>,
+    /// Comma-separated roles (`server`, `player`, ...).
+    pub provides: Option<String>,
+    /// The account's token for this server.
+    pub access_token: Option<String>,
 }
 
 /// One `Directory` row.

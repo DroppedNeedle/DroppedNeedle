@@ -7,8 +7,10 @@
 //! `user_connections` (one row per user and service, the JSON document
 //! sealed whole, v2 field names kept). Resolution prefers the caller's own
 //! link (`linked`) and falls back to the admin's credential (`shared`), so
-//! a server the admin configured is usable by every user. Playback
-//! attribution uses the caller's own link only and fails closed.
+//! a server the admin configured is usable by every user. A link that no
+//! longer opens falls back too, as in v2. A Plex link saved without a
+//! server-scoped token looks one up once and stores it (v2
+//! `resolve_plex_playlist`).
 //!
 //! Cache scoping keys off the user id plus a hash of the connection
 //! material, so one user's stale password never poisons another's entries.
@@ -25,7 +27,7 @@ use crate::runtime_config::secret_sections::{
 };
 use crate::runtime_config::sections::InternalState;
 
-use super::adapter::BoxFuture;
+use super::adapter::{AdapterError, BoxFuture};
 use super::models::SourceName;
 
 // ---------------------------------------------------------------------------
@@ -710,11 +712,24 @@ pub struct LinkSummary {
     pub username: String,
 }
 
+/// Looks up the server-scoped token for a Plex account token: the
+/// server's machine id, then its `accessToken` on plex.tv.
+pub trait PlexServerTokens: Send + Sync {
+    /// `Ok(None)` when the server or the account's access to it is not
+    /// found; [`AdapterError::Auth`] when the account token is refused.
+    fn server_token<'a>(
+        &'a self,
+        server: &'a ServerSettings,
+        auth_token: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, AdapterError>>;
+}
+
 /// Resolves a caller's connection for one source, and stores their links.
 pub struct ConnectionResolver {
     rows: Arc<dyn ConnectionStore>,
     coder: Arc<CredentialCoder>,
     servers: Arc<dyn ServerConfig>,
+    plex_tokens: Option<Arc<dyn PlexServerTokens>>,
 }
 
 impl std::fmt::Debug for ConnectionResolver {
@@ -735,7 +750,16 @@ impl ConnectionResolver {
             rows,
             coder,
             servers,
+            plex_tokens: None,
         }
+    }
+
+    /// Look up and store missing Plex server tokens through `probe`.
+    /// Without one, a Plex link lacking a server token uses its account
+    /// token (v2 `resolve_plex`).
+    pub fn with_plex_tokens(mut self, probe: Arc<dyn PlexServerTokens>) -> Self {
+        self.plex_tokens = Some(probe);
+        self
     }
 
     /// The admin's server for one source.
@@ -753,7 +777,7 @@ impl ConnectionResolver {
         source: SourceName,
     ) -> Result<ResolvedConnection, ResolveError> {
         let server = self.server(source)?.ok_or(ResolveError::NotConfigured)?;
-        let stale = match self.link(user_id, source).await {
+        let stale = match self.usable_link(user_id, &server, source).await {
             Ok(Some(link)) => return Ok(linked(user_id, &server, link)),
             Ok(None) => false,
             Err(ResolveError::Stale) => {
@@ -768,6 +792,76 @@ impl ConnectionResolver {
         match shared(user_id, source, &server) {
             Err(ResolveError::NotConfigured) if stale => Err(ResolveError::Stale),
             other => other,
+        }
+    }
+
+    /// The caller's link, ready to use on `server`: a Plex link without a
+    /// server token gets one first. Stale when it cannot be used.
+    pub async fn usable_link(
+        &self,
+        user_id: &str,
+        server: &ServerSettings,
+        source: SourceName,
+    ) -> Result<Option<UserLink>, ResolveError> {
+        match self.link(user_id, source).await? {
+            Some(link) => self.server_scoped(user_id, server, link).await.map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// Port of the v2 machine-id probe: look up the server token for a
+    /// Plex link that has none, and store it so the lookup runs once. A
+    /// refused account or no access to the server means relink; an
+    /// outage keeps the account token for this call.
+    async fn server_scoped(
+        &self,
+        user_id: &str,
+        server: &ServerSettings,
+        link: UserLink,
+    ) -> Result<UserLink, ResolveError> {
+        let Some(probe) = &self.plex_tokens else {
+            return Ok(link);
+        };
+        let UserLink::Plex {
+            auth_token,
+            server_access_token,
+            plex_user_id,
+            username,
+        } = link
+        else {
+            return Ok(link);
+        };
+        if !server_access_token.is_empty() {
+            return Ok(UserLink::Plex {
+                auth_token,
+                server_access_token,
+                plex_user_id,
+                username,
+            });
+        }
+        match probe.server_token(server, &auth_token).await {
+            Ok(Some(token)) if !token.is_empty() => {
+                let link = UserLink::Plex {
+                    auth_token,
+                    server_access_token: token,
+                    plex_user_id,
+                    username,
+                };
+                if let Err(error) = self.save_link(user_id, &link).await {
+                    tracing::warn!(%error, "could not store the Plex server token");
+                }
+                Ok(link)
+            }
+            Ok(_) | Err(AdapterError::Auth) => Err(ResolveError::Stale),
+            Err(error) => {
+                tracing::warn!(%error, "Plex server token lookup failed; using the account token");
+                Ok(UserLink::Plex {
+                    auth_token,
+                    server_access_token,
+                    plex_user_id,
+                    username,
+                })
+            }
         }
     }
 

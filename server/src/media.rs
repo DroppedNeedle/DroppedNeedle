@@ -34,6 +34,7 @@ use crate::remotes::connections::{
 };
 use crate::remotes::folders::SqliteFolderStore;
 use crate::remotes::handlers::{RemotesDeps, remotes_router};
+use crate::remotes::plex::PlexTokenProbe;
 use crate::remotes::reader::RemotesRemoteReader;
 use crate::remotes::service::RemotesService;
 use crate::runtime_config::ConfigStore;
@@ -105,11 +106,14 @@ impl MediaSetup {
         lane: WriteLane,
         config: Arc<ConfigStore>,
     ) -> Result<(Self, MediaWorkers), String> {
-        let resolver = Arc::new(ConnectionResolver::new(
-            Arc::new(SqliteConnectionStore::new(pool.clone(), lane.clone())),
-            Arc::new(CredentialCoder::new(crypto.clone())),
-            Arc::new(ConfigServers::new(config)),
-        ));
+        let resolver = Arc::new(
+            ConnectionResolver::new(
+                Arc::new(SqliteConnectionStore::new(pool.clone(), lane.clone())),
+                Arc::new(CredentialCoder::new(crypto.clone())),
+                Arc::new(ConfigServers::new(config)),
+            )
+            .with_plex_tokens(Arc::new(PlexTokenProbe::new(http.clone()))),
+        );
         let credentials = Arc::new(StoredScrobbleCredentials::new(
             Arc::new(SqliteListenBrainzLinkStore::new(
                 pool.clone(),

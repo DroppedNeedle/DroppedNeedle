@@ -15,9 +15,12 @@
 //!   expands to a comma-separated `2020..=2029` list.
 //! - Playlist art prefers the playlist's own `composite` path and falls
 //!   back to `/playlists/{id}/composite` when empty.
-//! - Plex.tv account calls (OAuth pins, per-server `accessToken` resolution
-//!   per the Plex API 1.2.2 resource contract verified 2026-07-17) belong
-//!   to the login flow, not browse, and live outside this adapter.
+//! - Plex.tv account calls (OAuth pins) belong to the login flow and live
+//!   outside this adapter. The one exception is the per-server
+//!   `accessToken` lookup for links saved without one ([`PlexTokenProbe`]),
+//!   per the Plex API 1.2.2 resource contract verified 2026-07-17: an
+//!   account token authorizes `plex.tv/api/v2/resources`, and each server
+//!   resource's `accessToken` is used for requests to that server.
 //!
 //! Payloads decode into the typed shapes in [`super::plex_models`]; a row
 //! a view needs without its `ratingKey` is an upstream error.
@@ -27,15 +30,18 @@ use std::sync::RwLock;
 use std::time::Duration;
 
 use super::adapter::{AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse};
+use super::connections::{PlexServerTokens, ServerSettings};
 use super::models::{
     AlbumView, ArtistIndexEntry, ArtistView, DiscoveryHubView, DiscoveryView, FavoritesView,
     HistoryEntry, HistoryPage, HubView, InfoView, LyricsView, MatchView, PlaylistDetail,
     PlaylistSummary, SearchResults, SessionView, SessionsView, SourceName, StatsView, TrackView,
 };
-use super::plex_models::{Container, Envelope, Metadata};
+use super::plex_models::{Container, Envelope, Metadata, Resource};
 
 /// Request timeout per upstream call, matching the v2 repository.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+/// plex.tv account API root.
+pub const PLEX_TV_BASE: &str = "https://plex.tv/api/v2";
 
 /// Query pairs, owned.
 type Params = Vec<(String, String)>;
@@ -118,6 +124,63 @@ impl PlexAdapter {
             container.friendly_name.as_deref().unwrap_or("Unknown"),
             container.version.as_deref().unwrap_or("unknown")
         ))
+    }
+
+    /// The server's machine id (`/identity`); `None` when the server does
+    /// not name one or answers with an error (v2 `get_machine_identifier`).
+    pub async fn machine_identifier(&self) -> Result<Option<String>, AdapterError> {
+        match self.request("/identity", &[]).await {
+            Ok(container) => Ok(non_empty(container.machine_identifier.as_deref())),
+            Err(AdapterError::Api(_)) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// The account's token for the server `machine_id`, from plex.tv
+    /// `/resources` under this adapter's token (an account token here).
+    /// `None` when the account has no server device with that id.
+    pub async fn server_access_token(
+        &self,
+        plex_tv: &str,
+        machine_id: &str,
+    ) -> Result<Option<String>, AdapterError> {
+        let response = self
+            .client
+            .get(format!("{}/resources", plex_tv.trim_end_matches('/')))
+            .query(&[("includeHttps", "1"), ("includeRelay", "1")])
+            .headers(self.headers())
+            .timeout(REQUEST_TIMEOUT)
+            .send()
+            .await
+            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(AdapterError::Auth);
+        }
+        if !status.is_success() {
+            return Err(AdapterError::Api(format!(
+                "GET /resources failed ({status})"
+            )));
+        }
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))?;
+        // Lenient per device: client devices without a token still list.
+        let devices: Vec<serde_json::Value> = serde_json::from_slice(&bytes).map_err(|_| {
+            AdapterError::Api("Plex returned an unreadable /resources payload".to_owned())
+        })?;
+        Ok(devices
+            .into_iter()
+            .filter_map(|device| serde_json::from_value::<Resource>(device).ok())
+            .find(|device| {
+                device.client_identifier.as_deref() == Some(machine_id)
+                    && device
+                        .provides
+                        .as_deref()
+                        .is_some_and(|provides| provides.contains("server"))
+            })
+            .and_then(|device| non_empty(device.access_token.as_deref())))
     }
 
     /// Music library sections (`type == "artist"`).
@@ -1308,6 +1371,48 @@ fn non_empty(value: Option<&str>) -> Option<String> {
 /// carry credentials (Subsonic `u`/`t`/`s`, Plex and Jellyfin tokens).
 fn trim_cause(cause: reqwest::Error) -> String {
     cause.without_url().to_string().chars().take(200).collect()
+}
+
+/// The production [`PlexServerTokens`]: probe the admin's server with the
+/// account token, then read the server's token from plex.tv.
+#[derive(Debug, Clone)]
+pub struct PlexTokenProbe {
+    http: reqwest::Client,
+    plex_tv: String,
+}
+
+impl PlexTokenProbe {
+    /// A probe against the real plex.tv.
+    pub fn new(http: reqwest::Client) -> Self {
+        Self::with_plex_tv(http, PLEX_TV_BASE.to_owned())
+    }
+
+    /// A probe against another plex.tv root (tests).
+    pub fn with_plex_tv(http: reqwest::Client, plex_tv: String) -> Self {
+        Self { http, plex_tv }
+    }
+}
+
+impl PlexServerTokens for PlexTokenProbe {
+    fn server_token<'a>(
+        &'a self,
+        server: &'a ServerSettings,
+        auth_token: &'a str,
+    ) -> super::adapter::BoxFuture<'a, Result<Option<String>, AdapterError>> {
+        Box::pin(async move {
+            let probe = PlexAdapter::new(
+                self.http.clone(),
+                server.base_url.clone(),
+                auth_token.to_owned(),
+                server.client_id.clone(),
+                Vec::new(),
+            );
+            let Some(machine_id) = probe.machine_identifier().await? else {
+                return Ok(None);
+            };
+            probe.server_access_token(&self.plex_tv, &machine_id).await
+        })
+    }
 }
 
 /// Validate a Plex part key exactly as v2 `proxy_get_stream` does: a

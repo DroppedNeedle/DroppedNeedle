@@ -683,6 +683,62 @@ async fn linked_connections_survive_a_restart() {
     runtime.shutdown().await;
 }
 
+/// A Plex link saved without a server token (v2 rows from the login flow)
+/// looks the token up once through the server's machine id and plex.tv,
+/// stores it, and browses with it.
+#[tokio::test]
+async fn plex_links_without_a_server_token_look_one_up_and_keep_it() {
+    use remotes::mocks::PLEX_ACCOUNT_TOKEN;
+    use remotes::plex::PlexTokenProbe;
+
+    let mock = serve_plex().await.expect("mock serves");
+    let servers = FixedServers::default().with(
+        SourceName::Plex,
+        ServerSettings {
+            base_url: mock.base_url.clone(),
+            shared: None,
+            client_id: "client-1".to_owned(),
+            section_ids: Vec::new(),
+        },
+    );
+    let resolver = ConnectionResolver::new(
+        Arc::new(MemoryConnectionStore::new()),
+        Arc::new(CredentialCoder::new(Arc::new(test_crypto()))),
+        Arc::new(servers),
+    )
+    .with_plex_tokens(Arc::new(PlexTokenProbe::with_plex_tv(
+        http_client(),
+        format!("{}/api/v2", mock.base_url),
+    )));
+    resolver
+        .save_link(
+            "ada",
+            &UserLink::Plex {
+                auth_token: PLEX_ACCOUNT_TOKEN.to_owned(),
+                server_access_token: String::new(),
+                plex_user_id: "plex-ada".to_owned(),
+                username: "ada".to_owned(),
+            },
+        )
+        .await
+        .expect("link saves");
+
+    let resolved = resolver
+        .resolve("ada", SourceName::Plex)
+        .await
+        .expect("link resolves");
+    assert_eq!(resolved.account_mode, "linked");
+    assert_eq!(resolved.credential, PLEX_TOKEN);
+    let stored = resolver
+        .link("ada", SourceName::Plex)
+        .await
+        .expect("link reads");
+    assert!(
+        matches!(stored, Some(UserLink::Plex { server_access_token, .. }) if server_access_token == PLEX_TOKEN),
+        "server token stored"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Folder preferences
 // ---------------------------------------------------------------------------

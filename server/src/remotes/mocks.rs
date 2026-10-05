@@ -40,6 +40,11 @@ pub const JELLYFIN_KEY: &str = "jf-test-key";
 pub const NAVIDROME_USER: &str = "nd-user";
 /// Plex token the mock accepts.
 pub const PLEX_TOKEN: &str = "plex-token";
+/// Plex account token the mock's plex.tv `/api/v2/resources` accepts; it
+/// resolves to [`PLEX_TOKEN`] for the mock server.
+pub const PLEX_ACCOUNT_TOKEN: &str = "plex-account-token";
+/// The mock server's machine id.
+pub const PLEX_MACHINE_ID: &str = "mock-machine-1";
 
 /// Deterministic canned audio body served by every mock stream endpoint.
 /// 1024 bytes; the first byte tags the source (`J`/`N`/`P`) and the rest
@@ -1097,6 +1102,7 @@ fn plex_router(recorder: MockRecorder) -> axum::Router {
     axum::Router::new()
         .route("/", get(px_root))
         .route("/identity", get(px_identity))
+        .route("/api/v2/resources", get(px_resources))
         .route("/library/sections", get(px_sections))
         .route("/library/sections/{id}/all", get(px_section_all))
         .route("/library/sections/{id}/recentlyAdded", get(px_recently))
@@ -1268,11 +1274,25 @@ async fn px_root(State(recorder): State<MockRecorder>, headers: HeaderMap) -> Re
     px_container(json!({"friendlyName": "Mock Plex", "version": "1.41.0", "size": 0}))
 }
 
-async fn px_identity(State(recorder): State<MockRecorder>, headers: HeaderMap) -> Response {
-    if !px_authorized(&headers, &recorder) {
+/// A real server answers `/identity` without a token.
+async fn px_identity() -> Response {
+    px_container(json!({"machineIdentifier": PLEX_MACHINE_ID, "version": "1.41.0"}))
+}
+
+/// plex.tv `/resources` for [`PLEX_ACCOUNT_TOKEN`]: a player without a
+/// token and the mock server with [`PLEX_TOKEN`].
+async fn px_resources(headers: HeaderMap) -> Response {
+    let token = headers
+        .get("X-Plex-Token")
+        .and_then(|value| value.to_str().ok());
+    if token != Some(PLEX_ACCOUNT_TOKEN) {
         return px_unauthorized();
     }
-    px_container(json!({"machineIdentifier": "mock-machine-1", "version": "1.41.0"}))
+    Json(json!([
+        {"clientIdentifier": "phone-1", "provides": "player"},
+        {"clientIdentifier": PLEX_MACHINE_ID, "provides": "server", "accessToken": PLEX_TOKEN}
+    ]))
+    .into_response()
 }
 
 async fn px_sections(State(recorder): State<MockRecorder>, headers: HeaderMap) -> Response {

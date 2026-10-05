@@ -807,9 +807,11 @@ impl RemotesService {
         // Browsing falls back to the shared account past a stale link, but
         // the status still asks the user to relink their own.
         let mut resolved = self.resolver.resolve(user_id, source).await;
-        if matches!(&resolved, Ok(shared) if shared.account_mode == "shared")
+        if let Ok(shared) = &resolved
+            && shared.account_mode == "shared"
+            && let Ok(Some(server)) = self.resolver.server(source)
             && matches!(
-                self.resolver.link(user_id, source).await,
+                self.resolver.usable_link(user_id, &server, source).await,
                 Err(ResolveError::Stale)
             )
         {
