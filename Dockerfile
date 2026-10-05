@@ -34,6 +34,8 @@ RUN apt-get update \
 WORKDIR /app
 COPY rust-toolchain.toml ./
 COPY server/ ./server/
+# The Python plugin helper is compiled into the binary.
+COPY sdk/ ./sdk/
 
 RUN cargo build --release --locked --manifest-path server/Cargo.toml --bins
 
@@ -56,8 +58,12 @@ WORKDIR /app
 
 # ffmpeg for transcoding, gosu for the PUID/PGID drop in entrypoint.sh,
 # tini as PID 1, curl for the health check, tzdata so TZ resolves.
+# python3 runs Python plugins; build with --build-arg PLUGIN_PYTHON=0 for
+# an image without it (plugins that ship their own program still run).
+ARG PLUGIN_PYTHON=1
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg gosu tini tzdata \
+    && if [ "$PLUGIN_PYTHON" = "1" ]; then apt-get install -y --no-install-recommends python3; fi \
     && rm -rf /var/lib/apt/lists/*
 
 # Bake the user at the entrypoint's default PUID/PGID (1000) so the common
