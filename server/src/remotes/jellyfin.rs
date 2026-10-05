@@ -14,13 +14,20 @@
 //! - Playlist membership comes from `/Playlists/{id}/Items` filtered to
 //!   `Type == "Audio"`; most-played lists sort by `PlayCount` and drop
 //!   zero-play rows client-side.
+//!
+//! Payloads decode into the typed shapes in [`super::jellyfin_models`]; a
+//! payload missing an item id is an upstream error, not an empty item.
 
 use std::collections::HashMap;
 use std::time::Duration;
 
-use serde_json::Value;
+use serde::de::DeserializeOwned;
 
 use super::adapter::{AdapterError, AlbumBrowse, ArtistBrowse, RemotePage, TrackBrowse};
+use super::jellyfin_models::{
+    AuthenticationResult, Item, ItemPage, Lyrics, NamedPage, QueryFilters, SearchHints, Session,
+    SystemInfo,
+};
 use super::models::{
     AlbumView, ArtistIndexEntry, ArtistView, FavoritesView, FilterFacetsView, HistoryPage, HubView,
     InfoView, LyricLine, LyricsView, MatchView, PlaylistDetail, PlaylistSummary, SearchResults,
@@ -33,8 +40,11 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 /// MBID index scan batch size, matching the v2 repository.
 const MBID_BATCH: i64 = 500;
 
-/// Jellyfin browse client. Built per request from the caller's stored
-/// connection; holds no cache (response caching is a wiring concern).
+/// Jellyfin ticks per millisecond (ticks are 100ns).
+const TICKS_PER_MS: i64 = 10_000;
+
+/// Jellyfin browse client. Built per request from the caller's resolved
+/// connection; holds no cache.
 pub struct JellyfinAdapter {
     client: reqwest::Client,
     base_url: String,
@@ -49,6 +59,47 @@ impl std::fmt::Debug for JellyfinAdapter {
             .field("user_id", &self.user_id)
             .finish_non_exhaustive()
     }
+}
+
+/// A Jellyfin user session from `AuthenticateByName`. The `Debug` impl
+/// redacts the token.
+pub struct JellyfinSession {
+    /// Jellyfin-side user id.
+    pub user_id: String,
+    /// Jellyfin display name.
+    pub user_name: String,
+    /// User-scoped access token.
+    pub access_token: String,
+}
+
+impl std::fmt::Debug for JellyfinSession {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("JellyfinSession")
+            .field("user_id", &self.user_id)
+            .field("user_name", &self.user_name)
+            .finish_non_exhaustive()
+    }
+}
+
+/// What seeds a Jellyfin instant mix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MixSeed {
+    /// An item id (`/Items/{id}/InstantMix`).
+    Item(String),
+    /// An artist id (`/Artists/{id}/InstantMix`).
+    Artist(String),
+    /// A genre name (`/MusicGenres/{genre}/InstantMix`).
+    Genre(String),
+}
+
+/// Query pairs, owned.
+type Params = Vec<(String, String)>;
+
+fn params(pairs: &[(&str, &str)]) -> Params {
+    pairs
+        .iter()
+        .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+        .collect()
 }
 
 impl JellyfinAdapter {
@@ -76,61 +127,50 @@ impl JellyfinAdapter {
     /// Connectivity probe against `/System/Info`. Returns the server version
     /// label on success.
     pub async fn validate_connection(&self) -> Result<String, AdapterError> {
-        let value = self.get("/System/Info", &[]).await?.unwrap_or(Value::Null);
-        let name = str_field(&value, "ServerName").unwrap_or("Unknown");
-        let version = str_field(&value, "Version").unwrap_or("Unknown");
-        Ok(format!("Connected to {name} (v{version})"))
+        let info: Option<SystemInfo> = self.get("/System/Info", &[]).await?;
+        let info =
+            info.ok_or_else(|| AdapterError::Api("Jellyfin has no system info".to_owned()))?;
+        Ok(format!(
+            "Connected to {} (v{})",
+            info.server_name.as_deref().unwrap_or("Unknown"),
+            info.version.as_deref().unwrap_or("Unknown")
+        ))
     }
 
     /// Full MBID-to-item index over the album catalog, 500 rows per page.
-    /// The MBID warmup loop is meant to call this; `match_album` prefers the
-    /// cheap search fallback and only scans when search misses.
+    /// `match_album` prefers the cheap search fallback and only scans when
+    /// search misses.
     pub async fn mbid_index(&self) -> Result<HashMap<String, String>, AdapterError> {
         let mut index = HashMap::new();
         let mut offset: i64 = 0;
         loop {
-            let params = self.paged_params(MBID_BATCH, offset);
-            let mut full = vec![
-                ("includeItemTypes".to_owned(), "MusicAlbum".to_owned()),
-                ("recursive".to_owned(), "true".to_owned()),
-                ("Fields".to_owned(), "ProviderIds".to_owned()),
-            ];
-            full.extend(params);
-            let value = self.get("/Items", &full).await?.unwrap_or(Value::Null);
-            let items = value
-                .get("Items")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            if items.is_empty() {
+            let mut query = params(&[
+                ("includeItemTypes", "MusicAlbum"),
+                ("recursive", "true"),
+                ("Fields", "ProviderIds"),
+            ]);
+            query.extend(self.paged_params(MBID_BATCH, offset));
+            let page = self.items("/Items", &query).await?;
+            if page.items.is_empty() {
                 break;
             }
-            for item in &items {
-                let Some(id) = str_field(item, "Id") else {
-                    continue;
-                };
-                let providers = item.get("ProviderIds").cloned().unwrap_or(Value::Null);
+            for item in &page.items {
                 for key in ["MusicBrainzReleaseGroup", "MusicBrainzAlbum"] {
-                    if let Some(mbid) = str_field(&providers, key) {
-                        index.insert(mbid.to_owned(), id.to_owned());
+                    if let Some(mbid) = item.provider(key) {
+                        index.insert(mbid, item.id.clone());
                     }
                 }
             }
-            let total = value
-                .get("TotalRecordCount")
-                .and_then(Value::as_i64)
-                .unwrap_or(0);
             offset += MBID_BATCH;
-            if offset >= total {
+            if offset >= page.total_record_count.unwrap_or(0) {
                 break;
             }
         }
         Ok(index)
     }
 
-    /// Hub highlights. Sections fail open to empty; only an all-empty hub
-    /// on a configured server still returns (Jellyfin sections are cheap and
-    /// independent, so partial failure is normal).
+    /// Hub highlights. Sections fail open to empty: Jellyfin sections are
+    /// cheap and independent, so partial failure is normal.
     pub async fn hub(&self) -> Result<HubView, AdapterError> {
         self.require_configured()?;
         let preview_browse = AlbumBrowse {
@@ -162,90 +202,81 @@ impl JellyfinAdapter {
     /// Library totals via three `limit=0` count queries.
     pub async fn stats(&self) -> Result<StatsView, AdapterError> {
         self.require_configured()?;
-        let mut stats = StatsView {
-            total_albums: 0,
-            total_artists: 0,
-            total_tracks: 0,
-        };
-        for (item_type, slot) in [
-            ("MusicAlbum", &mut stats.total_albums),
-            ("MusicArtist", &mut stats.total_artists),
-            ("Audio", &mut stats.total_tracks),
-        ] {
-            let params = vec![
-                ("includeItemTypes".to_owned(), item_type.to_owned()),
-                ("recursive".to_owned(), "true".to_owned()),
-                ("limit".to_owned(), "0".to_owned()),
-            ];
-            let value = self.get("/Items", &params).await?.unwrap_or(Value::Null);
-            *slot = value
-                .get("TotalRecordCount")
-                .and_then(Value::as_i64)
+        let mut totals = [0_i64; 3];
+        for (item_type, slot) in ["MusicAlbum", "MusicArtist", "Audio"]
+            .into_iter()
+            .zip(totals.iter_mut())
+        {
+            let query = params(&[
+                ("includeItemTypes", item_type),
+                ("recursive", "true"),
+                ("limit", "0"),
+            ]);
+            *slot = self
+                .items("/Items", &query)
+                .await?
+                .total_record_count
                 .unwrap_or(0);
         }
-        Ok(stats)
+        Ok(StatsView {
+            total_albums: totals[0],
+            total_artists: totals[1],
+            total_tracks: totals[2],
+        })
     }
 
-    /// One page of albums with genre/year/tags/studio filters.
+    /// One page of albums with genre and year filters.
     pub async fn albums(
         &self,
         browse: &AlbumBrowse,
     ) -> Result<RemotePage<AlbumView>, AdapterError> {
         self.require_configured()?;
-        let mut params = vec![
-            ("includeItemTypes".to_owned(), "MusicAlbum".to_owned()),
-            ("recursive".to_owned(), "true".to_owned()),
-            (
-                "sortBy".to_owned(),
-                sort_or(browse.sort_by.clone(), "SortName"),
-            ),
-            (
-                "sortOrder".to_owned(),
-                order_word(browse.descending).to_owned(),
-            ),
-            ("limit".to_owned(), browse.limit.to_string()),
-            ("startIndex".to_owned(), browse.offset.to_string()),
-            ("enableUserData".to_owned(), "true".to_owned()),
-            ("Fields".to_owned(), "ProviderIds,ChildCount".to_owned()),
-        ];
+        let mut query = params(&[
+            ("includeItemTypes", "MusicAlbum"),
+            ("recursive", "true"),
+            ("sortBy", sort_or(&browse.sort_by, "SortName")),
+            ("sortOrder", order_word(browse.descending)),
+            ("enableUserData", "true"),
+            ("Fields", "ProviderIds,ChildCount"),
+        ]);
+        query.push(("limit".to_owned(), browse.limit.to_string()));
+        query.push(("startIndex".to_owned(), browse.offset.to_string()));
         if !browse.genre.is_empty() {
-            params.push(("genres".to_owned(), browse.genre.clone()));
+            query.push(("genres".to_owned(), browse.genre.clone()));
         }
         if let Some(year) = browse.year {
-            params.push(("years".to_owned(), year.to_string()));
+            query.push(("years".to_owned(), year.to_string()));
         }
-        let value = self.get("/Items", &params).await?.unwrap_or(Value::Null);
-        Ok(items_page(&value, |item| self.album_view(item)))
+        let page = self.items("/Items", &query).await?;
+        Ok(page_of(page, album_view))
     }
 
     /// One album by id. None is absence (404).
     pub async fn album_detail(&self, id: &str) -> Result<Option<AlbumView>, AdapterError> {
         self.require_configured()?;
-        let params = vec![("Fields".to_owned(), "ProviderIds,ChildCount".to_owned())];
-        let value = self
-            .get(&format!("/Items/{id}"), &params)
-            .await?
-            .unwrap_or(Value::Null);
-        if value.is_null() {
-            return Ok(None);
-        }
-        Ok(Some(self.album_view(&value)))
+        let item: Option<Item> = self
+            .get(
+                &format!("/Items/{id}"),
+                &params(&[("Fields", "ProviderIds,ChildCount")]),
+            )
+            .await?;
+        Ok(item.as_ref().map(album_view))
     }
 
     /// Album tracks in index order.
     pub async fn album_tracks(&self, id: &str) -> Result<Vec<TrackView>, AdapterError> {
         self.require_configured()?;
-        let params = vec![
-            ("albumIds".to_owned(), id.to_owned()),
-            ("includeItemTypes".to_owned(), "Audio".to_owned()),
-            ("sortBy".to_owned(), "IndexNumber".to_owned()),
-            ("sortOrder".to_owned(), "Ascending".to_owned()),
-            ("recursive".to_owned(), "true".to_owned()),
-            ("enableUserData".to_owned(), "true".to_owned()),
-            ("Fields".to_owned(), "ProviderIds,MediaStreams".to_owned()),
-        ];
-        let value = self.get("/Items", &params).await?.unwrap_or(Value::Null);
-        Ok(items_list(&value, |item| self.track_view(item)))
+        let query = params(&[
+            ("albumIds", id),
+            ("includeItemTypes", "Audio"),
+            ("sortBy", "IndexNumber"),
+            ("sortOrder", "Ascending"),
+            ("recursive", "true"),
+            ("enableUserData", "true"),
+            ("Fields", "ProviderIds,MediaStreams"),
+        ]);
+        let page = self.items("/Items", &query).await?;
+        Ok(page.items.iter().map(track_view).collect())
     }
 
     /// One page of artists.
@@ -254,25 +285,19 @@ impl JellyfinAdapter {
         browse: &ArtistBrowse,
     ) -> Result<RemotePage<ArtistView>, AdapterError> {
         self.require_configured()?;
-        let mut params = vec![
-            ("limit".to_owned(), browse.limit.to_string()),
-            ("startIndex".to_owned(), browse.offset.to_string()),
-            (
-                "sortBy".to_owned(),
-                sort_or(browse.sort_by.clone(), "SortName"),
-            ),
-            (
-                "sortOrder".to_owned(),
-                order_word(browse.descending).to_owned(),
-            ),
-            ("enableUserData".to_owned(), "true".to_owned()),
-            ("Fields".to_owned(), "ProviderIds".to_owned()),
-        ];
+        let mut query = params(&[
+            ("sortBy", sort_or(&browse.sort_by, "SortName")),
+            ("sortOrder", order_word(browse.descending)),
+            ("enableUserData", "true"),
+            ("Fields", "ProviderIds"),
+        ]);
+        query.push(("limit".to_owned(), browse.limit.to_string()));
+        query.push(("startIndex".to_owned(), browse.offset.to_string()));
         if !browse.search.is_empty() {
-            params.push(("searchTerm".to_owned(), browse.search.clone()));
+            query.push(("searchTerm".to_owned(), browse.search.clone()));
         }
-        let value = self.get("/Artists", &params).await?.unwrap_or(Value::Null);
-        Ok(items_page(&value, |item| self.artist_view(item)))
+        let page = self.items("/Artists", &query).await?;
+        Ok(page_of(page, artist_view))
     }
 
     /// Full alphabetic artist index, bucketed client-side.
@@ -303,15 +328,13 @@ impl JellyfinAdapter {
     /// One artist by id. None is absence (404).
     pub async fn artist_detail(&self, id: &str) -> Result<Option<ArtistView>, AdapterError> {
         self.require_configured()?;
-        let params = vec![("Fields".to_owned(), "ProviderIds".to_owned())];
-        let value = self
-            .get(&format!("/Items/{id}"), &params)
-            .await?
-            .unwrap_or(Value::Null);
-        if value.is_null() {
-            return Ok(None);
-        }
-        Ok(Some(self.artist_view(&value)))
+        let item: Option<Item> = self
+            .get(
+                &format!("/Items/{id}"),
+                &params(&[("Fields", "ProviderIds")]),
+            )
+            .await?;
+        Ok(item.as_ref().map(artist_view))
     }
 
     /// One page of tracks.
@@ -320,63 +343,46 @@ impl JellyfinAdapter {
         browse: &TrackBrowse,
     ) -> Result<RemotePage<TrackView>, AdapterError> {
         self.require_configured()?;
-        let mut params = vec![
-            ("includeItemTypes".to_owned(), "Audio".to_owned()),
-            ("recursive".to_owned(), "true".to_owned()),
-            (
-                "sortBy".to_owned(),
-                sort_or(browse.sort_by.clone(), "SortName"),
-            ),
-            (
-                "sortOrder".to_owned(),
-                order_word(browse.descending).to_owned(),
-            ),
-            ("limit".to_owned(), browse.limit.to_string()),
-            ("startIndex".to_owned(), browse.offset.to_string()),
-            ("enableUserData".to_owned(), "true".to_owned()),
-            ("Fields".to_owned(), "ProviderIds".to_owned()),
-        ];
+        let mut query = params(&[
+            ("includeItemTypes", "Audio"),
+            ("recursive", "true"),
+            ("sortBy", sort_or(&browse.sort_by, "SortName")),
+            ("sortOrder", order_word(browse.descending)),
+            ("enableUserData", "true"),
+            ("Fields", "ProviderIds"),
+        ]);
+        query.push(("limit".to_owned(), browse.limit.to_string()));
+        query.push(("startIndex".to_owned(), browse.offset.to_string()));
         if !browse.search.is_empty() {
-            params.push(("searchTerm".to_owned(), browse.search.clone()));
+            query.push(("searchTerm".to_owned(), browse.search.clone()));
         }
         if !browse.genre.is_empty() {
-            params.push(("genres".to_owned(), browse.genre.clone()));
+            query.push(("genres".to_owned(), browse.genre.clone()));
         }
-        let value = self.get("/Items", &params).await?.unwrap_or(Value::Null);
-        Ok(items_page(&value, |item| self.track_view(item)))
+        let page = self.items("/Items", &query).await?;
+        Ok(page_of(page, track_view))
     }
 
     /// Free-text search via `/Search/Hints`, bucketed by item type.
     pub async fn search(&self, query: &str, limit: i64) -> Result<SearchResults, AdapterError> {
         self.require_configured()?;
-        let params = vec![
-            ("searchTerm".to_owned(), query.to_owned()),
-            (
-                "includeItemTypes".to_owned(),
-                "MusicAlbum,Audio,MusicArtist".to_owned(),
-            ),
-            ("limit".to_owned(), limit.to_string()),
-            ("Fields".to_owned(), "ProviderIds".to_owned()),
-        ];
-        let value = self
-            .get("/Search/Hints", &params)
-            .await?
-            .unwrap_or(Value::Null);
+        let mut pairs = params(&[
+            ("searchTerm", query),
+            ("includeItemTypes", "MusicAlbum,Audio,MusicArtist"),
+            ("Fields", "ProviderIds"),
+        ]);
+        pairs.push(("limit".to_owned(), limit.to_string()));
+        let hints = self.hints(&pairs).await?;
         let mut results = SearchResults {
             artists: Vec::new(),
             albums: Vec::new(),
             tracks: Vec::new(),
         };
-        let hints = value
-            .get("SearchHints")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
         for hint in &hints {
-            match str_field(hint, "Type").unwrap_or("") {
-                "MusicArtist" => results.artists.push(self.artist_view(hint)),
-                "MusicAlbum" => results.albums.push(self.album_view(hint)),
-                "Audio" => results.tracks.push(self.track_view(hint)),
+            match hint.kind.as_deref().unwrap_or("") {
+                "MusicArtist" => results.artists.push(artist_view(hint)),
+                "MusicAlbum" => results.albums.push(album_view(hint)),
+                "Audio" => results.tracks.push(track_view(hint)),
                 _ => {}
             }
         }
@@ -390,34 +396,36 @@ impl JellyfinAdapter {
         if self.user_id.is_empty() {
             return Ok(Vec::new());
         }
-        let params = vec![
-            ("includeItemTypes".to_owned(), "Audio".to_owned()),
-            ("sortBy".to_owned(), "DatePlayed".to_owned()),
-            ("sortOrder".to_owned(), "Descending".to_owned()),
-            ("isPlayed".to_owned(), "true".to_owned()),
-            ("enableUserData".to_owned(), "true".to_owned()),
-            ("limit".to_owned(), limit.to_string()),
-            ("recursive".to_owned(), "true".to_owned()),
-            ("Fields".to_owned(), "ProviderIds".to_owned()),
-        ];
-        let value = self.get("/Items", &params).await?.unwrap_or(Value::Null);
+        let mut query = params(&[
+            ("includeItemTypes", "Audio"),
+            ("sortBy", "DatePlayed"),
+            ("sortOrder", "Descending"),
+            ("isPlayed", "true"),
+            ("enableUserData", "true"),
+            ("recursive", "true"),
+            ("Fields", "ProviderIds"),
+        ]);
+        query.push(("limit".to_owned(), limit.to_string()));
+        let page = self.items("/Items", &query).await?;
         let mut seen = std::collections::HashSet::new();
         let mut album_ids: Vec<String> = Vec::new();
-        for item in items_array(&value) {
-            let aid = str_field(item, "AlbumId")
-                .or_else(|| str_field(item, "ParentId"))
-                .unwrap_or("");
-            if aid.is_empty() || !seen.insert(aid.to_owned()) {
+        for item in &page.items {
+            let album_id = item
+                .album_id
+                .clone()
+                .or_else(|| item.parent_id.clone())
+                .unwrap_or_default();
+            if album_id.is_empty() || !seen.insert(album_id.clone()) {
                 continue;
             }
-            album_ids.push(aid.to_owned());
+            album_ids.push(album_id);
             if album_ids.len() as i64 >= limit {
                 break;
             }
         }
         let mut albums = Vec::new();
-        for aid in album_ids {
-            if let Some(album) = self.album_detail(&aid).await? {
+        for album_id in album_ids {
+            if let Some(album) = self.album_detail(&album_id).await? {
                 albums.push(album);
             }
         }
@@ -430,63 +438,54 @@ impl JellyfinAdapter {
         if self.user_id.is_empty() {
             return Ok(Vec::new());
         }
-        let params = vec![
-            ("includeItemTypes".to_owned(), "MusicAlbum".to_owned()),
-            ("limit".to_owned(), limit.to_string()),
-            ("enableUserData".to_owned(), "true".to_owned()),
-        ];
-        let value = self
-            .get("/Items/Latest", &params)
-            .await?
-            .unwrap_or(Value::Null);
-        let raw = value.as_array().cloned().unwrap_or_default();
-        Ok(raw.iter().map(|item| self.album_view(item)).collect())
+        let mut query = params(&[
+            ("includeItemTypes", "MusicAlbum"),
+            ("enableUserData", "true"),
+        ]);
+        query.push(("limit".to_owned(), limit.to_string()));
+        let items: Option<Vec<Item>> = self.get("/Items/Latest", &query).await?;
+        Ok(items.unwrap_or_default().iter().map(album_view).collect())
     }
 
     /// Favorite artists, albums, and tracks, up to `limit` of each.
     pub async fn favorites(&self, limit: i64) -> Result<FavoritesView, AdapterError> {
         self.require_configured()?;
         if self.user_id.is_empty() {
-            return Ok(empty_favorites());
+            return Ok(FavoritesView {
+                artists: Vec::new(),
+                albums: Vec::new(),
+                tracks: Vec::new(),
+            });
         }
         let limit = limit.to_string();
-        let artist_params = vec![
-            ("isFavorite".to_owned(), "true".to_owned()),
-            ("enableUserData".to_owned(), "true".to_owned()),
-            ("limit".to_owned(), limit.clone()),
-            ("Fields".to_owned(), "ProviderIds".to_owned()),
-        ];
-        let artists_value = self
-            .get("/Artists", &artist_params)
-            .await?
-            .unwrap_or(Value::Null);
-        let album_params = vec![
-            ("includeItemTypes".to_owned(), "MusicAlbum".to_owned()),
-            ("isFavorite".to_owned(), "true".to_owned()),
-            ("enableUserData".to_owned(), "true".to_owned()),
-            ("limit".to_owned(), limit.clone()),
-            ("recursive".to_owned(), "true".to_owned()),
-        ];
-        let albums_value = self
-            .get("/Items", &album_params)
-            .await?
-            .unwrap_or(Value::Null);
-        let track_params = vec![
-            ("includeItemTypes".to_owned(), "Audio".to_owned()),
-            ("isFavorite".to_owned(), "true".to_owned()),
-            ("enableUserData".to_owned(), "true".to_owned()),
-            ("limit".to_owned(), limit.clone()),
-            ("recursive".to_owned(), "true".to_owned()),
-            ("Fields".to_owned(), "ProviderIds".to_owned()),
-        ];
-        let tracks_value = self
-            .get("/Items", &track_params)
-            .await?
-            .unwrap_or(Value::Null);
+        let mut artist_query = params(&[
+            ("isFavorite", "true"),
+            ("enableUserData", "true"),
+            ("Fields", "ProviderIds"),
+        ]);
+        artist_query.push(("limit".to_owned(), limit.clone()));
+        let mut album_query = params(&[
+            ("includeItemTypes", "MusicAlbum"),
+            ("isFavorite", "true"),
+            ("enableUserData", "true"),
+            ("recursive", "true"),
+        ]);
+        album_query.push(("limit".to_owned(), limit.clone()));
+        let mut track_query = params(&[
+            ("includeItemTypes", "Audio"),
+            ("isFavorite", "true"),
+            ("enableUserData", "true"),
+            ("recursive", "true"),
+            ("Fields", "ProviderIds"),
+        ]);
+        track_query.push(("limit".to_owned(), limit));
+        let artists = self.items("/Artists", &artist_query).await?;
+        let albums = self.items("/Items", &album_query).await?;
+        let tracks = self.items("/Items", &track_query).await?;
         Ok(FavoritesView {
-            artists: items_list(&artists_value, |item| self.artist_view(item)),
-            albums: items_list(&albums_value, |item| self.album_view(item)),
-            tracks: items_list(&tracks_value, |item| self.track_view(item)),
+            artists: artists.items.iter().map(artist_view).collect(),
+            albums: albums.items.iter().map(album_view).collect(),
+            tracks: tracks.items.iter().map(track_view).collect(),
         })
     }
 
@@ -496,17 +495,18 @@ impl JellyfinAdapter {
         if self.user_id.is_empty() {
             return Ok(Vec::new());
         }
-        let params = vec![
-            ("sortBy".to_owned(), "PlayCount".to_owned()),
-            ("sortOrder".to_owned(), "Descending".to_owned()),
-            ("enableUserData".to_owned(), "true".to_owned()),
-            ("limit".to_owned(), limit.to_string()),
-        ];
-        let value = self.get("/Artists", &params).await?.unwrap_or(Value::Null);
-        Ok(items_array(&value)
-            .into_iter()
-            .filter(|item| play_count(item) > 0)
-            .map(|item| self.artist_view(item))
+        let mut query = params(&[
+            ("sortBy", "PlayCount"),
+            ("sortOrder", "Descending"),
+            ("enableUserData", "true"),
+        ]);
+        query.push(("limit".to_owned(), limit.to_string()));
+        let page = self.items("/Artists", &query).await?;
+        Ok(page
+            .items
+            .iter()
+            .filter(|item| item.play_count() > 0)
+            .map(artist_view)
             .collect())
     }
 
@@ -517,19 +517,20 @@ impl JellyfinAdapter {
         if self.user_id.is_empty() {
             return Ok(Vec::new());
         }
-        let params = vec![
-            ("includeItemTypes".to_owned(), "MusicAlbum".to_owned()),
-            ("sortBy".to_owned(), "PlayCount".to_owned()),
-            ("sortOrder".to_owned(), "Descending".to_owned()),
-            ("enableUserData".to_owned(), "true".to_owned()),
-            ("limit".to_owned(), limit.to_string()),
-            ("recursive".to_owned(), "true".to_owned()),
-        ];
-        let value = self.get("/Items", &params).await?.unwrap_or(Value::Null);
-        Ok(items_array(&value)
-            .into_iter()
-            .filter(|item| play_count(item) > 0)
-            .map(|item| self.album_view(item))
+        let mut query = params(&[
+            ("includeItemTypes", "MusicAlbum"),
+            ("sortBy", "PlayCount"),
+            ("sortOrder", "Descending"),
+            ("enableUserData", "true"),
+            ("recursive", "true"),
+        ]);
+        query.push(("limit".to_owned(), limit.to_string()));
+        let page = self.items("/Items", &query).await?;
+        Ok(page
+            .items
+            .iter()
+            .filter(|item| item.play_count() > 0)
+            .map(album_view)
             .collect())
     }
 
@@ -537,40 +538,30 @@ impl JellyfinAdapter {
     /// years newest first, tags and studios sorted, empty studios dropped.
     pub async fn filter_facets(&self) -> Result<FilterFacetsView, AdapterError> {
         self.require_configured()?;
-        let params = vec![("includeItemTypes".to_owned(), "MusicAlbum".to_owned())];
-        let value = self
-            .get("/Items/Filters", &params)
-            .await?
-            .unwrap_or(Value::Null);
-        let strings = |key: &str| -> Vec<String> {
-            value
-                .get(key)
-                .and_then(Value::as_array)
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .filter(|text| !text.is_empty())
-                        .map(str::to_owned)
-                        .collect()
-                })
-                .unwrap_or_default()
-        };
-        let mut years: Vec<i32> = value
-            .get("Years")
-            .and_then(Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(value_to_i64)
-                    .map(|year| year as i32)
-                    .collect()
-            })
-            .unwrap_or_default();
+        let filters: Option<QueryFilters> = self
+            .get(
+                "/Items/Filters",
+                &params(&[("includeItemTypes", "MusicAlbum")]),
+            )
+            .await?;
+        let filters = filters.unwrap_or_default();
+        let mut years: Vec<i32> = filters
+            .years
+            .into_iter()
+            .filter_map(|year| i32::try_from(year).ok())
+            .collect();
         years.sort_unstable_by(|left, right| right.cmp(left));
-        let mut tags = strings("Tags");
+        let mut tags: Vec<String> = filters
+            .tags
+            .into_iter()
+            .filter(|tag| !tag.is_empty())
+            .collect();
         tags.sort();
-        let mut studios = strings("Studios");
+        let mut studios: Vec<String> = filters
+            .studios
+            .into_iter()
+            .filter(|studio| !studio.is_empty())
+            .collect();
         studios.sort();
         Ok(FilterFacetsView {
             years,
@@ -621,30 +612,29 @@ impl JellyfinAdapter {
             .bytes()
             .await
             .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
-        let value: Value = serde_json::from_slice(&bytes)
-            .map_err(|_| AdapterError::Api("Jellyfin returned an invalid response".to_owned()))?;
-        let user = value.get("User").cloned().unwrap_or(Value::Null);
-        let user_id = str_field(&user, "Id").unwrap_or("").to_owned();
-        let access_token = str_field(&value, "AccessToken").unwrap_or("").to_owned();
-        if user_id.is_empty() || access_token.is_empty() {
+        let result: AuthenticationResult = decode("/Users/AuthenticateByName", &bytes)?;
+        if result.user.id.is_empty() || result.access_token.is_empty() {
             return Err(AdapterError::Api(
                 "Jellyfin returned incomplete auth data".to_owned(),
             ));
         }
         Ok(JellyfinSession {
-            user_name: str_field(&user, "Name").unwrap_or(username).to_owned(),
-            user_id,
-            access_token,
+            user_name: result.user.name.unwrap_or_else(|| username.to_owned()),
+            user_id: result.user.id,
+            access_token: result.access_token,
         })
     }
 
     /// Genre labels via `/MusicGenres`.
     pub async fn genres(&self) -> Result<Vec<String>, AdapterError> {
         self.require_configured()?;
-        let value = self.get("/MusicGenres", &[]).await?.unwrap_or(Value::Null);
-        Ok(items_array(&value)
-            .iter()
-            .filter_map(|item| str_field(item, "Name").map(str::to_owned))
+        let page: Option<NamedPage> = self.get("/MusicGenres", &[]).await?;
+        Ok(page
+            .map(|page| page.items)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|genre| genre.name)
+            .filter(|name| !name.is_empty())
             .collect())
     }
 
@@ -669,49 +659,47 @@ impl JellyfinAdapter {
     /// Audio playlists.
     pub async fn playlists(&self) -> Result<Vec<PlaylistSummary>, AdapterError> {
         self.require_configured()?;
-        let params = vec![
-            ("IncludeItemTypes".to_owned(), "Playlist".to_owned()),
-            ("MediaTypes".to_owned(), "Audio".to_owned()),
-            ("Recursive".to_owned(), "true".to_owned()),
-            ("Limit".to_owned(), "50".to_owned()),
-            ("SortBy".to_owned(), "SortName".to_owned()),
-            ("SortOrder".to_owned(), "Ascending".to_owned()),
-            ("Fields".to_owned(), "ChildCount,DateCreated".to_owned()),
-        ];
-        let value = self.get("/Items", &params).await?.unwrap_or(Value::Null);
-        Ok(items_list(&value, |item| self.playlist_summary(item)))
+        let query = params(&[
+            ("IncludeItemTypes", "Playlist"),
+            ("MediaTypes", "Audio"),
+            ("Recursive", "true"),
+            ("Limit", "50"),
+            ("SortBy", "SortName"),
+            ("SortOrder", "Ascending"),
+            ("Fields", "ChildCount,DateCreated"),
+        ]);
+        let page = self.items("/Items", &query).await?;
+        Ok(page.items.iter().map(playlist_summary).collect())
     }
 
     /// One playlist with its Audio tracks. None is absence.
     pub async fn playlist_detail(&self, id: &str) -> Result<Option<PlaylistDetail>, AdapterError> {
         self.require_configured()?;
-        let meta_params = vec![(
-            "Fields".to_owned(),
-            "ChildCount,DateCreated,ProviderIds".to_owned(),
-        )];
-        let meta = self
-            .get(&format!("/Items/{id}"), &meta_params)
-            .await?
-            .unwrap_or(Value::Null);
-        if meta.is_null() {
+        let meta: Option<Item> = self
+            .get(
+                &format!("/Items/{id}"),
+                &params(&[("Fields", "ChildCount,DateCreated,ProviderIds")]),
+            )
+            .await?;
+        let Some(meta) = meta else {
             return Ok(None);
-        }
-        let item_params = vec![
-            ("Limit".to_owned(), "1000".to_owned()),
-            ("Fields".to_owned(), "ProviderIds".to_owned()),
-            ("EnableUserData".to_owned(), "true".to_owned()),
-        ];
-        let value = self
-            .get(&format!("/Playlists/{id}/Items"), &item_params)
-            .await?
-            .unwrap_or(Value::Null);
-        let tracks: Vec<TrackView> = items_array(&value)
-            .into_iter()
-            .filter(|item| str_field(item, "Type").unwrap_or("") == "Audio")
-            .map(|item| self.track_view(item))
+        };
+        let query = params(&[
+            ("Limit", "1000"),
+            ("Fields", "ProviderIds"),
+            ("EnableUserData", "true"),
+        ]);
+        let page = self
+            .items(&format!("/Playlists/{id}/Items"), &query)
+            .await?;
+        let tracks = page
+            .items
+            .iter()
+            .filter(|item| item.kind.as_deref() == Some("Audio"))
+            .map(track_view)
             .collect();
         Ok(Some(PlaylistDetail {
-            playlist: self.playlist_summary(&meta),
+            playlist: playlist_summary(&meta),
             tracks,
         }))
     }
@@ -734,36 +722,23 @@ impl JellyfinAdapter {
     /// no lyrics for the item.
     pub async fn lyrics(&self, id: &str) -> Result<Option<LyricsView>, AdapterError> {
         self.require_configured()?;
-        let value = self
-            .get(&format!("/Audio/{id}/Lyrics"), &[])
-            .await?
-            .unwrap_or(Value::Null);
-        let raw = value
-            .get("Lyrics")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let lyrics: Option<Lyrics> = self.get(&format!("/Audio/{id}/Lyrics"), &[]).await?;
+        let raw = lyrics.map(|lyrics| lyrics.lyrics).unwrap_or_default();
         if raw.is_empty() {
             return Ok(None);
         }
-        let mut lines = Vec::new();
-        for line in &raw {
-            lines.push(LyricLine {
-                text: str_field(line, "Text").unwrap_or("").to_owned(),
-                start_ms: line.get("Start").and_then(value_to_i64),
-            });
-        }
+        let lines: Vec<LyricLine> = raw
+            .into_iter()
+            .map(|line| LyricLine {
+                text: line.text.unwrap_or_default(),
+                start_ms: line.start.map(|ticks| ticks / TICKS_PER_MS),
+            })
+            .collect();
         let text = lines
             .iter()
-            .map(|line| line.text.clone())
+            .map(|line| line.text.as_str())
             .collect::<Vec<_>>()
             .join("\n");
-        // Ticks are 100ns; lyric starts arrive in ticks, so ms needs /10_000.
-        for line in &mut lines {
-            if let Some(ticks) = line.start_ms {
-                line.start_ms = Some(ticks / 10_000);
-            }
-        }
         let is_synced = lines.iter().any(|line| line.start_ms.is_some());
         Ok(Some(LyricsView {
             source: SourceName::Jellyfin,
@@ -798,31 +773,18 @@ impl JellyfinAdapter {
         Ok(page.items)
     }
 
-    /// Similar items via `/Items/{id}/Similar`, audio rows mapped to tracks
-    /// and album rows to their tracks is the caller's job; here similar
-    /// albums resolve to their first-page tracks is wrong, so only Audio
-    /// rows map directly and album rows resolve via album detail tracks.
+    /// Similar items via `/Items/{id}/Similar`: Audio rows map directly,
+    /// album rows contribute their tracks, up to `limit` tracks.
     pub async fn similar(&self, id: &str, limit: i64) -> Result<Vec<TrackView>, AdapterError> {
         self.require_configured()?;
-        let params = vec![
-            ("Limit".to_owned(), limit.to_string()),
-            ("Fields".to_owned(), "ProviderIds".to_owned()),
-            ("EnableUserData".to_owned(), "true".to_owned()),
-        ];
-        let value = self
-            .get(&format!("/Items/{id}/Similar"), &params)
-            .await?
-            .unwrap_or(Value::Null);
+        let mut query = params(&[("Fields", "ProviderIds"), ("EnableUserData", "true")]);
+        query.push(("Limit".to_owned(), limit.to_string()));
+        let page = self.items(&format!("/Items/{id}/Similar"), &query).await?;
         let mut tracks = Vec::new();
-        for item in items_array(&value) {
-            match str_field(item, "Type").unwrap_or("") {
-                "Audio" => tracks.push(self.track_view(item)),
-                "MusicAlbum" => {
-                    if let Some(album_id) = str_field(item, "Id") {
-                        let mut album_tracks = self.album_tracks(album_id).await?;
-                        tracks.append(&mut album_tracks);
-                    }
-                }
+        for item in &page.items {
+            match item.kind.as_deref().unwrap_or("") {
+                "Audio" => tracks.push(track_view(item)),
+                "MusicAlbum" => tracks.append(&mut self.album_tracks(&item.id).await?),
                 _ => {}
             }
             if tracks.len() as i64 >= limit {
@@ -837,11 +799,8 @@ impl JellyfinAdapter {
     /// routes); genre names escape `/` as `%2F` before hitting the path.
     pub async fn mix(&self, seed: &MixSeed, limit: i64) -> Result<Vec<TrackView>, AdapterError> {
         self.require_configured()?;
-        let params = vec![
-            ("Limit".to_owned(), limit.to_string()),
-            ("Fields".to_owned(), "ProviderIds".to_owned()),
-            ("EnableUserData".to_owned(), "true".to_owned()),
-        ];
+        let mut query = params(&[("Fields", "ProviderIds"), ("EnableUserData", "true")]);
+        query.push(("Limit".to_owned(), limit.to_string()));
         let endpoint = match seed {
             MixSeed::Item(id) => format!("/Items/{id}/InstantMix"),
             MixSeed::Artist(id) => format!("/Artists/{id}/InstantMix"),
@@ -849,70 +808,54 @@ impl JellyfinAdapter {
                 format!("/MusicGenres/{}/InstantMix", name.replace('/', "%2F"))
             }
         };
-        let value = self.get(&endpoint, &params).await?.unwrap_or(Value::Null);
-        Ok(items_list(&value, |item| self.track_view(item)))
+        let page = self.items(&endpoint, &query).await?;
+        Ok(page.items.iter().map(track_view).collect())
     }
 
-    /// Audio-only sessions with an active NowPlayingItem.
+    /// Audio-only sessions with an active `NowPlayingItem`.
     pub async fn sessions(&self) -> Result<SessionsView, AdapterError> {
         self.require_configured()?;
-        let value = self.get("/Sessions", &[]).await?.unwrap_or(Value::Null);
-        let raw = value.as_array().cloned().unwrap_or_default();
-        let mut sessions = Vec::new();
-        for entry in &raw {
-            let Some(now_playing) = entry.get("NowPlayingItem") else {
-                continue;
-            };
-            if str_field(now_playing, "Type").unwrap_or("") != "Audio" {
-                continue;
-            }
-            let artists = now_playing
-                .get("Artists")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            let mut artist_names: Vec<String> = artists
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect();
-            if artist_names.is_empty() {
-                artist_names.push(
-                    str_field(now_playing, "AlbumArtist")
-                        .unwrap_or("")
-                        .to_owned(),
-                );
-            }
-            let play_state = entry.get("PlayState").cloned().unwrap_or(Value::Null);
-            let image_url = str_field(now_playing, "AlbumId")
-                .filter(|id| !id.is_empty())
-                .or_else(|| str_field(now_playing, "Id"))
-                .and_then(|id| image_url_for(SourceName::Jellyfin, id, None));
-            sessions.push(SessionView {
-                image_url,
-                source: SourceName::Jellyfin,
-                session_id: str_field(entry, "Id").unwrap_or("").to_owned(),
-                user_name: str_field(entry, "UserName").unwrap_or("").to_owned(),
-                device_name: str_field(entry, "DeviceName").unwrap_or("").to_owned(),
-                track_title: str_field(now_playing, "Name").unwrap_or("").to_owned(),
-                artist_name: artist_names.join(", "),
-                album_name: str_field(now_playing, "Album").unwrap_or("").to_owned(),
-                progress_ms: play_state
-                    .get("PositionTicks")
-                    .and_then(value_to_i64)
-                    .unwrap_or(0)
-                    / 10_000,
-                duration_ms: now_playing
-                    .get("RunTimeTicks")
-                    .and_then(value_to_i64)
-                    .unwrap_or(0)
-                    / 10_000,
-                is_paused: play_state
-                    .get("IsPaused")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-            });
-        }
+        let raw: Option<Vec<Session>> = self.get("/Sessions", &[]).await?;
+        let sessions = raw
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|session| {
+                let item = session.now_playing_item.as_ref()?;
+                if item.kind.as_deref() != Some("Audio") {
+                    return None;
+                }
+                let artist_name = if item.artists.is_empty() {
+                    item.album_artist.clone().unwrap_or_default()
+                } else {
+                    item.artists.join(", ")
+                };
+                let art = item
+                    .album_id
+                    .as_deref()
+                    .filter(|id| !id.is_empty())
+                    .unwrap_or(&item.id);
+                let state = session.play_state.as_ref();
+                Some(SessionView {
+                    source: SourceName::Jellyfin,
+                    session_id: session.id.clone(),
+                    user_name: session.user_name.clone().unwrap_or_default(),
+                    device_name: session
+                        .device_name
+                        .clone()
+                        .filter(|name| !name.is_empty())
+                        .or_else(|| session.client.clone())
+                        .unwrap_or_default(),
+                    track_title: item.name.clone().unwrap_or_default(),
+                    artist_name,
+                    album_name: item.album.clone().unwrap_or_default(),
+                    progress_ms: state.and_then(|state| state.position_ticks).unwrap_or(0)
+                        / TICKS_PER_MS,
+                    duration_ms: item.run_time_ticks.unwrap_or(0) / TICKS_PER_MS,
+                    is_paused: state.and_then(|state| state.is_paused).unwrap_or(false),
+                    image_url: image_url_for(art, None),
+                })
+            })
+            .collect();
         Ok(SessionsView {
             source: SourceName::Jellyfin,
             sessions,
@@ -933,17 +876,10 @@ impl JellyfinAdapter {
         size: i64,
     ) -> Result<(Vec<u8>, String), AdapterError> {
         self.require_configured()?;
-        let params = vec![
-            ("maxWidth".to_owned(), size.to_string()),
-            ("maxHeight".to_owned(), size.to_string()),
-            ("quality".to_owned(), "90".to_owned()),
-        ];
-        self.get_bytes(
-            &format!("/Items/{id}/Images/Primary"),
-            &params,
-            "image/jpeg",
-        )
-        .await
+        let size = size.to_string();
+        let query = params(&[("maxWidth", &size), ("maxHeight", &size), ("quality", "90")]);
+        self.get_bytes(&format!("/Items/{id}/Images/Primary"), &query, "image/jpeg")
+            .await
     }
 
     /// Direct audio bytes for one item (`/Audio/{id}/stream?static=true`,
@@ -951,11 +887,11 @@ impl JellyfinAdapter {
     /// trip; server-side transcode is not supported here).
     pub async fn audio_bytes(&self, id: &str) -> Result<(Vec<u8>, String), AdapterError> {
         self.require_configured()?;
-        let mut params = vec![("static".to_owned(), "true".to_owned())];
+        let mut query = params(&[("static", "true")]);
         if !self.user_id.is_empty() {
-            params.push(("userId".to_owned(), self.user_id.clone()));
+            query.push(("userId".to_owned(), self.user_id.clone()));
         }
-        self.get_bytes(&format!("/Audio/{id}/stream"), &params, "audio/mpeg")
+        self.get_bytes(&format!("/Audio/{id}/stream"), &query, "audio/mpeg")
             .await
     }
 
@@ -1008,54 +944,35 @@ impl JellyfinAdapter {
     /// full paged index scan when search misses.
     pub async fn match_album(&self, mbid: &str) -> Result<MatchView, AdapterError> {
         self.require_configured()?;
-        let params = vec![
-            ("searchTerm".to_owned(), mbid.to_owned()),
-            ("includeItemTypes".to_owned(), "MusicAlbum".to_owned()),
-            ("limit".to_owned(), "50".to_owned()),
-            ("Fields".to_owned(), "ProviderIds".to_owned()),
-        ];
-        let value = self
-            .get("/Search/Hints", &params)
-            .await?
-            .unwrap_or(Value::Null);
-        let hints = value
-            .get("SearchHints")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        for hint in &hints {
-            let providers = hint.get("ProviderIds").cloned().unwrap_or(Value::Null);
-            let release_group = str_field(&providers, "MusicBrainzReleaseGroup").unwrap_or("");
-            let release = str_field(&providers, "MusicBrainzAlbum").unwrap_or("");
-            if release_group == mbid || release == mbid {
-                let id = str_field(hint, "Id")
-                    .or_else(|| str_field(hint, "ItemId"))
-                    .unwrap_or("")
-                    .to_owned();
-                let tracks = self.album_tracks(&id).await?;
-                return Ok(MatchView {
-                    source: SourceName::Jellyfin,
-                    found: true,
-                    remote_album_id: Some(id),
-                    tracks,
-                });
-            }
-        }
-        let index = self.mbid_index().await?;
-        if let Some(id) = index.get(mbid) {
-            let tracks = self.album_tracks(id).await?;
+        let query = params(&[
+            ("searchTerm", mbid),
+            ("includeItemTypes", "MusicAlbum"),
+            ("limit", "50"),
+            ("Fields", "ProviderIds"),
+        ]);
+        let hints = self.hints(&query).await?;
+        let hit = hints.iter().find(|hint| {
+            hint.provider("MusicBrainzReleaseGroup").as_deref() == Some(mbid)
+                || hint.provider("MusicBrainzAlbum").as_deref() == Some(mbid)
+        });
+        let album_id = match hit {
+            Some(hint) => Some(hint.id.clone()),
+            None => self.mbid_index().await?.get(mbid).cloned(),
+        };
+        let Some(album_id) = album_id else {
             return Ok(MatchView {
                 source: SourceName::Jellyfin,
-                found: true,
-                remote_album_id: Some(id.clone()),
-                tracks,
+                found: false,
+                remote_album_id: None,
+                tracks: Vec::new(),
             });
-        }
+        };
+        let tracks = self.album_tracks(&album_id).await?;
         Ok(MatchView {
             source: SourceName::Jellyfin,
-            found: false,
-            remote_album_id: None,
-            tracks: Vec::new(),
+            found: true,
+            remote_album_id: Some(album_id),
+            tracks,
         })
     }
 
@@ -1067,27 +984,44 @@ impl JellyfinAdapter {
         }
     }
 
-    fn paged_params(&self, limit: i64, offset: i64) -> Vec<(String, String)> {
-        let mut params = vec![
+    fn paged_params(&self, limit: i64, offset: i64) -> Params {
+        vec![
             ("limit".to_owned(), limit.to_string()),
             ("startIndex".to_owned(), offset.to_string()),
-        ];
-        if !self.user_id.is_empty() {
-            params.push(("userId".to_owned(), self.user_id.clone()));
-        }
-        params
+        ]
     }
 
-    /// GET a JSON endpoint. 404 maps to `None`; 401/403 map to auth failure.
-    async fn get(
+    /// An item list; a 404 or empty answer reads as an empty page.
+    async fn items(
         &self,
         endpoint: &str,
-        params: &[(String, String)],
-    ) -> Result<Option<Value>, AdapterError> {
+        query: &[(String, String)],
+    ) -> Result<ItemPage, AdapterError> {
+        let page: Option<ItemPage> = self.get(endpoint, query).await?;
+        Ok(page.unwrap_or(ItemPage {
+            items: Vec::new(),
+            total_record_count: Some(0),
+        }))
+    }
+
+    /// Search hints; a 404 or empty answer reads as no hints.
+    async fn hints(&self, query: &[(String, String)]) -> Result<Vec<Item>, AdapterError> {
+        let hints: Option<SearchHints> = self.get("/Search/Hints", query).await?;
+        Ok(hints.map(|hints| hints.search_hints).unwrap_or_default())
+    }
+
+    /// GET a JSON endpoint and decode it. 404, 204 and an empty body map to
+    /// `None`; 401/403 map to auth failure; an undecodable body is an
+    /// upstream error.
+    async fn get<T: DeserializeOwned>(
+        &self,
+        endpoint: &str,
+        query: &[(String, String)],
+    ) -> Result<Option<T>, AdapterError> {
         if !self.is_configured() {
             return Err(AdapterError::NotConfigured);
         }
-        let mut query: Vec<(String, String)> = params.to_vec();
+        let mut query: Params = query.to_vec();
         if !self.user_id.is_empty() && !query.iter().any(|(key, _)| key == "userId") {
             query.push(("userId".to_owned(), self.user_id.clone()));
         }
@@ -1095,31 +1029,23 @@ impl JellyfinAdapter {
             .client
             .get(format!("{}{endpoint}", self.base_url))
             .header("Accept", "application/json")
-            .header(
-                "Authorization",
-                format!("MediaBrowser Token=\"{}\"", self.api_key),
-            )
+            .header("Authorization", self.auth_header())
             .query(&query)
             .timeout(REQUEST_TIMEOUT)
             .send()
             .await
             .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
-        if response.status() == reqwest::StatusCode::UNAUTHORIZED
-            || response.status() == reqwest::StatusCode::FORBIDDEN
-        {
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(AdapterError::Auth);
         }
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
+        if status == reqwest::StatusCode::NOT_FOUND || status == reqwest::StatusCode::NO_CONTENT {
             return Ok(None);
         }
-        if !response.status().is_success() {
+        if !status.is_success() {
             return Err(AdapterError::Api(format!(
-                "GET {endpoint} failed ({})",
-                response.status()
+                "GET {endpoint} failed ({status})"
             )));
-        }
-        if response.status() == reqwest::StatusCode::NO_CONTENT {
-            return Ok(None);
         }
         let bytes = response
             .bytes()
@@ -1128,9 +1054,7 @@ impl JellyfinAdapter {
         if bytes.is_empty() {
             return Ok(None);
         }
-        serde_json::from_slice::<Value>(&bytes)
-            .map(Some)
-            .map_err(|_| AdapterError::Api("Jellyfin returned an invalid response".to_owned()))
+        decode(endpoint, &bytes).map(Some)
     }
 
     /// POST a JSON body, discarding the response. Used only for session
@@ -1143,30 +1067,23 @@ impl JellyfinAdapter {
         if !self.is_configured() {
             return Err(AdapterError::NotConfigured);
         }
-        let payload = serde_json::to_vec(body)
-            .map_err(|_| AdapterError::Api("Jellyfin report body failed to render".to_owned()))?;
         let response = self
             .client
             .post(format!("{}{endpoint}", self.base_url))
             .header("Content-Type", "application/json")
-            .header(
-                "Authorization",
-                format!("MediaBrowser Token=\"{}\"", self.api_key),
-            )
-            .body(payload)
+            .header("Authorization", self.auth_header())
+            .body(body.to_string())
             .timeout(REQUEST_TIMEOUT)
             .send()
             .await
             .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
-        if response.status() == reqwest::StatusCode::UNAUTHORIZED
-            || response.status() == reqwest::StatusCode::FORBIDDEN
-        {
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(AdapterError::Auth);
         }
-        if !response.status().is_success() {
+        if !status.is_success() {
             return Err(AdapterError::Api(format!(
-                "POST {endpoint} failed ({})",
-                response.status()
+                "POST {endpoint} failed ({status})"
             )));
         }
         Ok(())
@@ -1177,7 +1094,7 @@ impl JellyfinAdapter {
     async fn get_bytes(
         &self,
         endpoint: &str,
-        params: &[(String, String)],
+        query: &[(String, String)],
         fallback_content_type: &str,
     ) -> Result<(Vec<u8>, String), AdapterError> {
         if !self.is_configured() {
@@ -1186,24 +1103,19 @@ impl JellyfinAdapter {
         let response = self
             .client
             .get(format!("{}{endpoint}", self.base_url))
-            .header(
-                "Authorization",
-                format!("MediaBrowser Token=\"{}\"", self.api_key),
-            )
-            .query(params)
+            .header("Authorization", self.auth_header())
+            .query(query)
             .timeout(REQUEST_TIMEOUT)
             .send()
             .await
             .map_err(|cause| AdapterError::Transport(trim_cause(&cause)))?;
-        if response.status() == reqwest::StatusCode::UNAUTHORIZED
-            || response.status() == reqwest::StatusCode::FORBIDDEN
-        {
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(AdapterError::Auth);
         }
-        if !response.status().is_success() {
+        if !status.is_success() {
             return Err(AdapterError::Api(format!(
-                "GET {endpoint} failed ({})",
-                response.status()
+                "GET {endpoint} failed ({status})"
             )));
         }
         let content_type = response
@@ -1219,126 +1131,105 @@ impl JellyfinAdapter {
         Ok((bytes.to_vec(), content_type))
     }
 
-    fn album_view(&self, item: &Value) -> AlbumView {
-        let providers = item.get("ProviderIds").cloned().unwrap_or(Value::Null);
-        let id = item_id(item);
-        AlbumView {
-            source: SourceName::Jellyfin,
-            image_url: image_url_for(SourceName::Jellyfin, &id, image_tag(item)),
-            id,
-            title: str_field(item, "Name").unwrap_or("Unknown").to_owned(),
-            artist_name: item_artist_name(item).unwrap_or_default(),
-            artist_id: item_artist_id(item).map(str::to_owned),
-            year: item
-                .get("ProductionYear")
-                .and_then(value_to_i64)
-                .map(|year| year as i32),
-            genre: None,
-            track_count: item
-                .get("ChildCount")
-                .and_then(value_to_i64)
-                .map(|count| count as i32),
-            release_mbid: str_field(&providers, "MusicBrainzAlbum").map(str::to_owned),
-            release_group_mbid: str_field(&providers, "MusicBrainzReleaseGroup").map(str::to_owned),
-            artist_mbid: str_field(&providers, "MusicBrainzArtist").map(str::to_owned),
-        }
-    }
-
-    fn artist_view(&self, item: &Value) -> ArtistView {
-        let providers = item.get("ProviderIds").cloned().unwrap_or(Value::Null);
-        let id = item_id(item);
-        ArtistView {
-            source: SourceName::Jellyfin,
-            image_url: image_url_for(SourceName::Jellyfin, &id, image_tag(item)),
-            id,
-            name: str_field(item, "Name").unwrap_or("Unknown").to_owned(),
-            album_count: item
-                .get("AlbumCount")
-                .and_then(value_to_i64)
-                .map(|count| count as i32),
-            artist_mbid: str_field(&providers, "MusicBrainzArtist").map(str::to_owned),
-        }
-    }
-
-    fn track_view(&self, item: &Value) -> TrackView {
-        let providers = item.get("ProviderIds").cloned().unwrap_or(Value::Null);
-        let id = item_id(item);
-        TrackView {
-            source: SourceName::Jellyfin,
-            image_url: image_url_for(SourceName::Jellyfin, &id, image_tag(item)),
-            id,
-            title: str_field(item, "Name").unwrap_or("Unknown").to_owned(),
-            album_name: str_field(item, "Album").unwrap_or("").to_owned(),
-            album_id: str_field(item, "AlbumId").map(str::to_owned),
-            artist_name: item_artist_name(item).unwrap_or_default(),
-            artist_id: item_artist_id(item).map(str::to_owned),
-            track_number: item
-                .get("IndexNumber")
-                .and_then(value_to_i64)
-                .map(|number| number as i32),
-            disc_number: item
-                .get("ParentIndexNumber")
-                .and_then(value_to_i64)
-                .map(|number| number as i32),
-            duration_secs: item
-                .get("RunTimeTicks")
-                .and_then(value_to_i64)
-                .map(|ticks| ticks / 10_000_000),
-            year: item
-                .get("ProductionYear")
-                .and_then(value_to_i64)
-                .map(|year| year as i32),
-            recording_mbid: str_field(&providers, "MusicBrainzTrack").map(str::to_owned),
-            part_key: None,
-        }
-    }
-
-    fn playlist_summary(&self, item: &Value) -> PlaylistSummary {
-        let id = item_id(item);
-        PlaylistSummary {
-            source: SourceName::Jellyfin,
-            image_url: Some(format!("/api/v3/remotes/jellyfin/covers/playlists/{id}")),
-            id,
-            name: str_field(item, "Name").unwrap_or("").to_owned(),
-            track_count: item.get("ChildCount").and_then(value_to_i64).unwrap_or(0),
-            duration_secs: item
-                .get("RunTimeTicks")
-                .and_then(value_to_i64)
-                .map(|ticks| ticks / 10_000_000)
-                .unwrap_or(0),
-        }
+    fn auth_header(&self) -> String {
+        format!("MediaBrowser Token=\"{}\"", self.api_key)
     }
 }
 
-/// A Jellyfin user session from `AuthenticateByName`. The `Debug` impl
-/// redacts the token.
-pub struct JellyfinSession {
-    /// Jellyfin-side user id.
-    pub user_id: String,
-    /// Jellyfin display name.
-    pub user_name: String,
-    /// User-scoped access token.
-    pub access_token: String,
+/// Decode one payload. A shape we cannot read (a missing id included) is
+/// an upstream contract error; the detail stays in the log.
+fn decode<T: DeserializeOwned>(endpoint: &str, bytes: &[u8]) -> Result<T, AdapterError> {
+    serde_json::from_slice(bytes).map_err(|error| {
+        AdapterError::Api(format!(
+            "Jellyfin returned an unreadable {endpoint} payload: {error}"
+        ))
+    })
 }
 
-impl std::fmt::Debug for JellyfinSession {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("JellyfinSession")
-            .field("user_id", &self.user_id)
-            .field("user_name", &self.user_name)
-            .finish_non_exhaustive()
+fn page_of<T>(page: ItemPage, map: impl Fn(&Item) -> T) -> RemotePage<T> {
+    let items: Vec<T> = page.items.iter().map(map).collect();
+    let total = page.total_record_count.unwrap_or(items.len() as i64);
+    RemotePage { items, total }
+}
+
+fn album_view(item: &Item) -> AlbumView {
+    AlbumView {
+        source: SourceName::Jellyfin,
+        image_url: image_url_for(&item.id, item.primary_tag()),
+        id: item.id.clone(),
+        title: item.name.clone().unwrap_or_else(|| "Unknown".to_owned()),
+        artist_name: artist_name(item).unwrap_or_default(),
+        artist_id: item.artist_items.first().map(|artist| artist.id.clone()),
+        year: item
+            .production_year
+            .and_then(|year| i32::try_from(year).ok()),
+        genre: None,
+        track_count: item.child_count.and_then(|count| i32::try_from(count).ok()),
+        release_mbid: item.provider("MusicBrainzAlbum"),
+        release_group_mbid: item.provider("MusicBrainzReleaseGroup"),
+        artist_mbid: item.provider("MusicBrainzArtist"),
     }
 }
 
-/// What seeds a Jellyfin instant mix.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MixSeed {
-    /// An item id (`/Items/{id}/InstantMix`).
-    Item(String),
-    /// An artist id (`/Artists/{id}/InstantMix`).
-    Artist(String),
-    /// A genre name (`/MusicGenres/{genre}/InstantMix`).
-    Genre(String),
+fn artist_view(item: &Item) -> ArtistView {
+    ArtistView {
+        source: SourceName::Jellyfin,
+        image_url: image_url_for(&item.id, item.primary_tag()),
+        id: item.id.clone(),
+        name: item.name.clone().unwrap_or_else(|| "Unknown".to_owned()),
+        album_count: item.album_count.and_then(|count| i32::try_from(count).ok()),
+        artist_mbid: item.provider("MusicBrainzArtist"),
+    }
+}
+
+fn track_view(item: &Item) -> TrackView {
+    TrackView {
+        source: SourceName::Jellyfin,
+        image_url: image_url_for(&item.id, item.primary_tag()),
+        id: item.id.clone(),
+        title: item.name.clone().unwrap_or_else(|| "Unknown".to_owned()),
+        album_name: item.album.clone().unwrap_or_default(),
+        album_id: item.album_id.clone(),
+        artist_name: artist_name(item).unwrap_or_default(),
+        artist_id: item.artist_items.first().map(|artist| artist.id.clone()),
+        track_number: item
+            .index_number
+            .and_then(|number| i32::try_from(number).ok()),
+        disc_number: item
+            .parent_index_number
+            .and_then(|number| i32::try_from(number).ok()),
+        duration_secs: item.run_time_ticks.map(|ticks| ticks / 10_000_000),
+        year: item
+            .production_year
+            .and_then(|year| i32::try_from(year).ok()),
+        recording_mbid: item.provider("MusicBrainzTrack"),
+        part_key: None,
+    }
+}
+
+fn playlist_summary(item: &Item) -> PlaylistSummary {
+    PlaylistSummary {
+        source: SourceName::Jellyfin,
+        image_url: Some(format!(
+            "/api/v3/remotes/jellyfin/covers/playlists/{}",
+            item.id
+        )),
+        id: item.id.clone(),
+        name: item.name.clone().unwrap_or_default(),
+        track_count: item.child_count.unwrap_or(0),
+        duration_secs: item
+            .run_time_ticks
+            .map(|ticks| ticks / 10_000_000)
+            .unwrap_or(0),
+    }
+}
+
+/// First linked artist name, else the album artist.
+fn artist_name(item: &Item) -> Option<String> {
+    item.artist_items
+        .first()
+        .and_then(|artist| artist.name.clone())
+        .or_else(|| item.album_artist.clone())
 }
 
 fn order_word(descending: bool) -> &'static str {
@@ -1349,90 +1240,20 @@ fn order_word(descending: bool) -> &'static str {
     }
 }
 
-fn sort_or(value: String, fallback: &str) -> String {
-    if value.is_empty() {
-        fallback.to_owned()
-    } else {
-        value
-    }
+fn sort_or<'a>(value: &'a str, fallback: &'a str) -> &'a str {
+    if value.is_empty() { fallback } else { value }
 }
 
-fn item_id(item: &Value) -> String {
-    str_field(item, "Id")
-        .or_else(|| str_field(item, "ItemId"))
-        .unwrap_or("")
-        .to_owned()
-}
-
-fn image_tag(item: &Value) -> Option<&str> {
-    item.get("ImageTags")
-        .and_then(|tags| tags.get("Primary"))
-        .and_then(Value::as_str)
-}
-
-fn image_url_for(source: SourceName, id: &str, tag: Option<&str>) -> Option<String> {
+fn image_url_for(id: &str, tag: Option<&str>) -> Option<String> {
     if id.is_empty() {
         return None;
     }
-    let mut url = format!("/api/v3/remotes/{}/images/{id}", source.as_str());
+    let mut url = format!("/api/v3/remotes/jellyfin/images/{id}");
     if let Some(tag) = tag {
         url.push_str("?tag=");
         url.push_str(tag);
     }
     Some(url)
-}
-
-fn item_artist_name(item: &Value) -> Option<String> {
-    if let Some(artists) = item.get("ArtistItems").and_then(Value::as_array)
-        && let Some(first) = artists.first()
-        && let Some(name) = str_field(first, "Name")
-    {
-        return Some(name.to_owned());
-    }
-    str_field(item, "AlbumArtist").map(str::to_owned)
-}
-
-fn item_artist_id(item: &Value) -> Option<&str> {
-    item.get("ArtistItems")
-        .and_then(Value::as_array)
-        .and_then(|artists| artists.first())
-        .and_then(|first| str_field(first, "Id"))
-}
-
-fn play_count(item: &Value) -> i64 {
-    item.get("UserData")
-        .and_then(|data| data.get("PlayCount"))
-        .and_then(value_to_i64)
-        .unwrap_or(0)
-}
-
-fn items_array(value: &Value) -> Vec<&Value> {
-    value
-        .get("Items")
-        .and_then(Value::as_array)
-        .map(|items| items.iter().collect())
-        .unwrap_or_default()
-}
-
-fn items_list<T>(value: &Value, map: impl Fn(&Value) -> T) -> Vec<T> {
-    items_array(value).into_iter().map(map).collect()
-}
-
-fn items_page<T>(value: &Value, map: impl Fn(&Value) -> T) -> RemotePage<T> {
-    let items = items_list(value, map);
-    let total = value
-        .get("TotalRecordCount")
-        .and_then(value_to_i64)
-        .unwrap_or(items.len() as i64);
-    RemotePage { items, total }
-}
-
-fn empty_favorites() -> FavoritesView {
-    FavoritesView {
-        artists: Vec::new(),
-        albums: Vec::new(),
-        tracks: Vec::new(),
-    }
 }
 
 fn bucket_index(mut artists: Vec<ArtistView>) -> Vec<ArtistIndexEntry> {
@@ -1456,22 +1277,7 @@ fn bucket_index(mut artists: Vec<ArtistView>) -> Vec<ArtistIndexEntry> {
     buckets
 }
 
-fn str_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-    value.get(key).and_then(Value::as_str)
-}
-
-fn value_to_i64(value: &Value) -> Option<i64> {
-    if let Some(number) = value.as_i64() {
-        return Some(number);
-    }
-    value.as_u64().and_then(|number| i64::try_from(number).ok())
-}
-
 fn trim_cause(cause: &reqwest::Error) -> String {
     let text = cause.to_string();
-    if text.len() > 200 {
-        text[..200].to_owned()
-    } else {
-        text
-    }
+    text.chars().take(200).collect()
 }

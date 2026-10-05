@@ -30,6 +30,7 @@ pub mod error;
 pub mod folders;
 pub mod handlers;
 pub mod jellyfin;
+pub mod jellyfin_models;
 #[cfg(any(test, feature = "test-support"))]
 pub mod mocks;
 pub mod models;
