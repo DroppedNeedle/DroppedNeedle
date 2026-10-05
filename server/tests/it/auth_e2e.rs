@@ -2483,6 +2483,7 @@ fn percentile(sorted: &[Duration], pct: f64) -> Duration {
 }
 
 #[tokio::test]
+#[ignore = "login timing budget; run explicitly with --release: cargo test --release --test it login_p95 -- --ignored"]
 async fn login_p95_within_login_budget() {
     const N: usize = 50;
     const BUDGET: Duration = Duration::from_millis(600);
