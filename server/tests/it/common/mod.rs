@@ -10,7 +10,7 @@ use droppedneedle::{
     AppConfig, AppState, config::DEFAULT_PORT, http_client::HttpClientFactory, ids::IdGenerator,
 };
 
-/// Fixed id used across briefs. A valid UUID so id-format assertions hold.
+/// Fixed id used across tests. A valid UUID so id-format assertions hold.
 pub const FIXED_ID: &str = "123e4567-e89b-12d3-a456-426614174000";
 
 /// Fake id generator returning one fixed value.
@@ -190,7 +190,7 @@ fn test_acquire(
         .expect("test acquire bundle builds")
 }
 
-/// Unwired stage-6 bundle over the test auth deps.
+/// Unwired media bundle over the test auth deps.
 fn test_media(
     auth: &droppedneedle::auth::wiring::AuthSetup,
     ids: Arc<dyn IdGenerator>,

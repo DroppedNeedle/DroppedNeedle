@@ -134,13 +134,13 @@ fn error_code(body: &Value) -> &str {
 }
 
 // ---------------------------------------------------------------------------
-// Auth matrix rows: every slice route needs a session
+// Auth matrix: every discover route needs a session
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn anonymous_discover_read_is_401_with_bearer_challenge() {
     let rig = rig();
-    // GET /now-playing is deliberately absent: stage 6 serves it from the
+    // GET /now-playing is absent here: playback serves it from the
     // live playback registry, and the standing auth matrix pins its 401.
     for (method, uri, body) in [
         ("GET", "/api/v3/discover", None),
@@ -271,8 +271,8 @@ async fn foreign_batch_reads_as_missing() {
 
 #[tokio::test]
 async fn now_playing_snapshot_keeps_redacted_rows() {
-    // Stage-6 note: the app mounts GET /now-playing from the playback
-    // slice now, so this pins the retired reads handler through its own
+    // The app mounts GET /now-playing from playback, so this pins the
+    // retired reads handler through its own
     // router until the dead plumbing is deleted.
     let rig = rig();
     let router = Router::new().nest(
@@ -291,7 +291,7 @@ async fn now_playing_snapshot_keeps_redacted_rows() {
 }
 
 // ---------------------------------------------------------------------------
-// Leak briefs: 5xx bodies are fixed strings plus an error id
+// Leaks: 5xx bodies are fixed strings plus an error id
 // ---------------------------------------------------------------------------
 
 /// Markers that must never reach a response body: a path, a host, a token.
@@ -350,7 +350,7 @@ async fn failing_charts_render_fixed_502_without_leaks() {
 }
 
 // ---------------------------------------------------------------------------
-// Cache-loop briefs: single-flight, error-continue, honest intervals
+// Refresh loop: honest intervals and shutdown
 // ---------------------------------------------------------------------------
 
 #[tokio::test]

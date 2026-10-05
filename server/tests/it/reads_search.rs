@@ -28,7 +28,7 @@ use sqlx::sqlite::SqlitePoolOptions;
 use tower::ServiceExt as _;
 
 /// Bearer token the rig mints a session for.
-const TEST_TOKEN: &str = "dn-search-brief-token-000000000001";
+const TEST_TOKEN: &str = "dn-search-test-token-0000000000001";
 
 /// Provider fakes: a dead provider that must degrade, never 500.
 #[derive(Debug, Clone)]
@@ -60,7 +60,7 @@ async fn migrated_pool() -> SqlitePool {
 }
 
 /// Fixture catalog: two artists plus an album each plus one track.
-/// Queries in the briefs avoid the `various artists` / `unknown artist`
+/// Queries in these tests avoid the `various artists` / `unknown artist`
 /// sentinel rows, so every hit below is a fixture row.
 async fn seed_catalog(pool: &SqlitePool) {
     for (id, name, folded) in [

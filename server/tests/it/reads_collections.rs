@@ -1,5 +1,5 @@
 //! Collections routes (playlists, favorites, follows, edition pins) mounted
-//! directly with the slice principal header: private playlists redact for
+//! directly with the test principal header: private playlists redact for
 //! other users, rows never leak across users, auto-download approvals are
 //! admin-only, pins never write identity, and store faults stay hidden.
 
@@ -856,7 +856,7 @@ async fn pin_auth_matrix() {
 }
 
 #[tokio::test]
-async fn pin_hint_only_brief() {
+async fn pins_are_display_hints_never_identity() {
     let state = CollectionsState::new();
     seed_catalog(&state);
     seed_identity(&state);
@@ -940,7 +940,7 @@ async fn pin_hint_only_brief() {
 // Leaks.
 
 #[tokio::test]
-async fn leak_briefs_fixed_500_and_envelopes() {
+async fn store_faults_render_fixed_500_envelopes() {
     let state = CollectionsState::new();
     seed_catalog(&state);
     let app = app(&state);

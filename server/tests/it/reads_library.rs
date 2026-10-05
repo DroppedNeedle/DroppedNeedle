@@ -115,7 +115,7 @@ fn track(
     }
 }
 
-/// Seeded catalog matching the briefs below.
+/// Seeded catalog matching the tests below.
 fn seeded_catalog() -> MemoryCatalog {
     let mut al1 = album("al1", "First Light", "a1", "Aurora", Some(1994), 1000.0);
     al1.release_group_mbid = Some("rg-first-light".to_owned());
@@ -276,7 +276,7 @@ async fn get(app: Router, path: &str) -> (StatusCode, Value) {
     (status, json)
 }
 
-/// Every slice route with concrete ids. The auth and leak loops walk this.
+/// Every library route with concrete ids. The auth and leak loops walk this.
 const ROUTES: &[&str] = &[
     "/library/albums",
     "/library/albums/al1",
@@ -459,7 +459,7 @@ async fn auth_matrix_every_route_401s_anonymous_and_admits_users() {
 }
 
 #[tokio::test]
-async fn leak_brief_every_route_hides_store_faults() {
+async fn every_route_hides_store_faults() {
     let (rig, user_id) = auth_bundle().await;
     let app = app(
         deps(
@@ -502,7 +502,7 @@ async fn leak_brief_every_route_hides_store_faults() {
     }
 }
 
-// SQLite briefs: the real adapters over a scratch migrated database,
+// SQLite: the real adapters over a scratch migrated database,
 // including a missing and an excluded track proving streamable-only counts.
 
 struct SqliteFixture {

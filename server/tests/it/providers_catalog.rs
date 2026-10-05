@@ -543,7 +543,7 @@ fn archive_client(http: &ScriptArchive) -> archive::ArchiveClient<'_, ScriptArch
 
 #[test]
 fn archive_contract_licence_table() {
-    // The v2 brief table, ported case for case.
+    // The v2 licence table, ported case for case.
     for (value, expected) in [
         (Some(ARCHIVE_CC), true),
         (Some(ARCHIVE_PD), true),

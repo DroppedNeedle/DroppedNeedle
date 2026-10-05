@@ -492,7 +492,7 @@ async fn youtube_search_tolerates_unknown_fields() {
     let _ = std::fs::remove_file(&path);
 }
 
-/// The governor brief: the first search reserves durably, the second (on a
+/// The quota governor: the first search reserves durably, the second (on a
 /// fresh key) is refused before any HTTP, and the status snapshot matches.
 #[tokio::test]
 async fn youtube_quota_exhaustion_blocks_second_search() {

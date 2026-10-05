@@ -150,7 +150,7 @@ fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
         .map(|(_, v)| v.as_str())
 }
 
-// Covers briefs.
+// Covers.
 
 #[tokio::test]
 async fn release_group_cover_hit_serves_bytes_with_headers() {
@@ -230,9 +230,7 @@ async fn release_group_cover_warming_answers_202() {
     assert_eq!(header(&headers, "x-cover-source"), Some("warming"));
 }
 
-// Version briefs.
-
-// Wrapped briefs.
+// Wrapped.
 
 #[tokio::test]
 async fn wrapped_trio_shapes_with_valid_key() {
@@ -314,7 +312,7 @@ async fn wrapped_rejects_padded_values_without_trimming() {
     }
 }
 
-// Leak briefs.
+// Leaks.
 
 #[tokio::test]
 async fn wrapped_rejection_echoes_no_key_material() {

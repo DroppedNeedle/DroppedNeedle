@@ -111,7 +111,7 @@ impl E2e {
     }
 
     /// One router over the scratch database. The journey reuses a single
-    /// build so the in-memory stage-6 connections persist across calls.
+    /// build so the in-memory remote connections persist across calls.
     fn router(&self) -> Router {
         let auth = AuthSetup::build(
             self.bundle.clone(),
@@ -573,7 +573,7 @@ async fn media_transcode_estimate_round_trip() {
     );
 }
 
-/// Transcoder that never runs: the caps briefs only open remote keys.
+/// Transcoder that never runs: the caps test only opens remote keys.
 struct NeverBody;
 
 impl TranscodeBody for NeverBody {

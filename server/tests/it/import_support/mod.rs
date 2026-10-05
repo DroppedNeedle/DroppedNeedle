@@ -30,7 +30,7 @@ pub struct Fixture {
 }
 
 impl Fixture {
-    /// Build a sealer. One Argon2id derivation; briefs share the
+    /// Build a sealer. One Argon2id derivation; tests share the
     /// fixture across their seals.
     pub fn new() -> Self {
         Self {
@@ -153,8 +153,8 @@ pub async fn migrated_pool() -> SqlitePool {
     pool
 }
 
-/// Deterministic v3 key for briefs. `Crypto` is not cloneable by
-/// design (it wipes on drop), so briefs mint one per import.
+/// Deterministic v3 key for tests. `Crypto` is not cloneable by
+/// design (it wipes on drop), so tests mint one per import.
 pub fn test_crypto() -> Crypto {
     Crypto::from_key_bytes(&[7u8; 32]).unwrap()
 }
@@ -189,7 +189,7 @@ pub fn import_request(
     }
 }
 
-/// Row count helper for atomicity briefs.
+/// Row count helper for atomicity tests.
 pub async fn count(pool: &SqlitePool, table: &str) -> i64 {
     sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {table}"))
         .fetch_one(pool)

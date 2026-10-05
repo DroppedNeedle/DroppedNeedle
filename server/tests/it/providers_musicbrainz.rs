@@ -21,7 +21,7 @@ const ARTIST_MBID: &str = "5441c29d-3602-4898-b1a1-b77fa23b8e50";
 const GROUP_MBID: &str = "dcff25f1-702d-3b5e-b0da-d48172e6e62a";
 
 /// Scripted MusicBrainz transport: outcomes queue per request URL, every
-/// request recorded. Unscripted URLs fail loudly so briefs stay explicit.
+/// request recorded. Unscripted URLs fail loudly so tests stay explicit.
 struct FakeMb {
     scripts: Mutex<HashMap<String, VecDeque<Result<musicbrainz::RawResponse, String>>>>,
     seen: Mutex<Vec<musicbrainz::MbRequest>>,
@@ -130,7 +130,7 @@ impl VecSink {
     }
 }
 
-/// Shared sink handle: the client records through this while the brief
+/// Shared sink handle: the client records through this while the test
 /// reads the same `Arc`. A newtype because the orphan rule forbids
 /// implementing the foreign sink for `Arc` directly.
 #[derive(Clone)]
@@ -159,7 +159,7 @@ fn fast_mb(
     (fake, sink)
 }
 
-/// Reference-counted fake so client and brief share one script.
+/// Reference-counted fake so client and test share one script.
 struct SharedFakeMb {
     inner: FakeMb,
 }
@@ -189,7 +189,7 @@ impl musicbrainz::MbTransport for SharedFakeMb {
     }
 }
 
-/// Shared fake transport: the client and the brief hold clones of one
+/// Shared fake transport: the client and the test hold clones of one
 /// script. A newtype because the orphan rule forbids implementing the
 /// foreign port for `Arc` directly.
 #[derive(Clone)]
@@ -253,7 +253,7 @@ fn query_value(request: &musicbrainz::MbRequest, key: &str) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Contract briefs: tolerant wire, strict identity, honest absence.
+// Contract: tolerant wire, strict identity, honest absence.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -557,7 +557,7 @@ async fn rate_limit_surfaces_retry_after_and_degrades_best_effort() {
 }
 
 // ---------------------------------------------------------------------------
-// Quirk briefs: every live-cited behavior, with its citation.
+// Quirks: every live-cited behavior, with its citation.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -867,7 +867,7 @@ async fn foreign_and_browse_redirects_are_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// BrainzMash lifecycle briefs.
+// BrainzMash mirror.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -977,7 +977,7 @@ fn brainzmash_cooldown_honors_retry_after_then_backs_off() {
 }
 
 // ---------------------------------------------------------------------------
-// Cover Art Archive briefs (live provider boundary 2026-07-21).
+// Cover Art Archive (live provider boundary 2026-07-21).
 // ---------------------------------------------------------------------------
 
 fn caa_listing_url(entity: &str, mbid: &str) -> String {

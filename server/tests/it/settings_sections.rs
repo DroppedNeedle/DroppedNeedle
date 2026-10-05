@@ -79,7 +79,7 @@ fn scratch_service() -> (SettingsService, Arc<RecorderEffects>, ScratchDir) {
 }
 
 /// Scripted verify probes: canned verdicts plus a call log. HTTP
-/// briefs run against this, never the network.
+/// tests run against this, never the network.
 struct FakeProbes {
     calls: Mutex<Vec<String>>,
     valid: bool,
@@ -1074,7 +1074,7 @@ async fn section_prefs_http() {
     );
 }
 
-// --- probe-unit briefs ---------------------------------------------------------
+// --- probe helpers ---------------------------------------------------------------
 
 /// Service URLs are required, http(s), and slash-trimmed.
 #[test]

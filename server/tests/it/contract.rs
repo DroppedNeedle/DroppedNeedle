@@ -17,8 +17,8 @@ fn committed_openapi_snapshot_matches_code() {
 }
 
 /// The equality check above cannot catch a mounted route nobody told utoipa
-/// about, so the trigger routes mounted outside their slices' handlers pin
-/// their documented paths here by name.
+/// about, so the trigger routes mounted outside the modules that document
+/// them pin their paths here by name.
 #[test]
 fn openapi_covers_routes_mounted_outside_their_slices() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/openapi/openapi.json");

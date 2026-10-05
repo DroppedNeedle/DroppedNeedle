@@ -161,7 +161,7 @@ async fn shipped_example_manifests_all_validate() {
 
 #[tokio::test]
 async fn install_tick_state_journey() {
-    // The stage-10 journey: install -> enable -> tick fires through the
+    // The journey: install -> enable -> tick fires through the
     // jobs adapter -> persisted state reads back from the jobs store, and
     // the loop registers under the jobs registry.
     let rig = rig("journey");
