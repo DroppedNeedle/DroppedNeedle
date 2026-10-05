@@ -60,7 +60,7 @@ impl ContributionClock for TestClock {
 }
 
 // ---------------------------------------------------------------------------
-// Sibling fakes
+// Fakes for the identity, evidence and catalog seams
 // ---------------------------------------------------------------------------
 
 #[cfg(any(test, feature = "test-support"))]

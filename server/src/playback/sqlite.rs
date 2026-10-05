@@ -75,8 +75,8 @@ impl TrackCatalog for PlaybackDb {
                 .get::<_, Option<String>>("embedded_recording_mbid")
                 .ok()?
                 .filter(|mbid| !mbid.is_empty()),
-            // Release-group MBIDs live in the identity tables, which stage
-            // 8 owns; presence covers stay empty until then.
+            // Release-group MBIDs live in the library identity tables, which
+            // this store does not read yet, so presence covers stay empty.
             rg_mbid: None,
         })
     }

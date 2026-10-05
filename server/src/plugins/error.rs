@@ -1,4 +1,4 @@
-//! Slice errors rendered into the shared envelope.
+//! Typed errors rendered into the shared envelope.
 //!
 //! Status mapping for the plugin and scrobble-settings routes lives here
 //! in the handler layer. Services return domain failures that handlers

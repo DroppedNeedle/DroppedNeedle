@@ -1,4 +1,4 @@
-//! Sibling seams: tag reads, identification, and the scan checkpoint.
+//! Scan seams: tag reads, identification, and the scan checkpoint.
 //!
 //! Tag parsing and provider identification live in `library::tags` and
 //! `library::identify`. This

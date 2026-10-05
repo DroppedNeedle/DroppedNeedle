@@ -2,7 +2,7 @@
 //!
 //! Following an artist is instant. Enabling auto-download files a request:
 //! trusted and admin accounts auto-approve, regular users wait in `pending`
-//! for the admin approval reads in the sibling approvals module. Auto-download
+//! for the admin approval reads in the approvals module. Auto-download
 //! needs a follow first; unfollowing withdraws any pending request.
 //! New-release sightings are fixture-seeded; no provider feeds them yet.
 

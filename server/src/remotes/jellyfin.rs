@@ -814,7 +814,7 @@ impl JellyfinAdapter {
 
     /// Direct audio bytes for one item (`/Audio/{id}/stream?static=true`,
     /// v2 `get_playback_url` direct landing without the playback-info round
-    /// trip; server-side transcode stays a later-stage concern).
+    /// trip; server-side transcode is not supported here).
     pub async fn audio_bytes(&self, id: &str) -> Result<(Vec<u8>, String), AdapterError> {
         self.require_configured()?;
         let mut params = vec![("static".to_owned(), "true".to_owned())];

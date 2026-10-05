@@ -3,7 +3,7 @@
 //! Ports the v2 download-status halves (the download client `/status`,
 //! `/sabnzbd/status`, and the status service): saved-config probes whose verdicts
 //! travel in the body, never as leaked 5xx. The smoke answers one question:
-//! Free OR slskd OR Usenet readiness. The four release gates (slskd,
+//! Free or slskd or Usenet readiness. The four release gates (slskd,
 //! SABnzbd, Newznab, Lidarr import) each gate independently: one red gate
 //! never flips another.
 //!
@@ -319,7 +319,7 @@ pub struct HealthProbes {
     pub free: std::sync::Arc<dyn FreeMusicProbe>,
 }
 
-/// Build the acquisition health smoke: `ready` is Free OR slskd OR Usenet
+/// Build the acquisition health smoke: `ready` is Free or slskd or Usenet
 /// readiness, and each release gate reports independently. Usenet readiness
 /// means the SABnzbd client probes clean; Newznab indexers gate Usenet
 /// *search* separately, so a bare client still counts the path ready while

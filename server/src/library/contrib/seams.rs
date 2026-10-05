@@ -103,7 +103,7 @@ pub trait ContributionIdentity: Send + Sync {
         album_id: &'a str,
     ) -> BoxFuture<'a, Option<AlbumIdentificationContext>>;
 
-    /// Sibling-owned input revisions (v2 `album_input_revisions`):
+    /// Input revisions owned by scan and identify (v2 `album_input_revisions`):
     /// tag, file, policy. The contribution input revision is the
     /// colon-joined triple.
     fn input_revisions(&self, tracks: &[IdentityTrack]) -> (String, String, String);
@@ -115,7 +115,7 @@ pub trait ContributionIdentity: Send + Sync {
 
 /// Catalog invalidation plus the post-identify hook.
 pub trait ContributionCatalog: Send + Sync {
-    /// ST1 (v2): delete exactly the touched identity-bearing keys BEFORE the
+    /// Delete exactly the touched identity-bearing keys before the
     /// commit path returns; lists still sweep.
     fn invalidate_identity_scope<'a>(
         &'a self,
@@ -327,7 +327,7 @@ pub struct VerificationJobRow {
 pub type CallbackConsumption = Option<(String, Option<String>)>;
 
 /// Minimal attempt record (v2 `IdentificationAttempt`, trigger fixed to
-/// `contribution_submission`; the full evidence shape stays sibling-owned).
+/// `contribution_submission`; the full evidence shape stays with identify).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContributionVerificationAttempt {
     pub id: String,

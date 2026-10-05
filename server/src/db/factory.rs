@@ -2,7 +2,7 @@
 //!
 //! [`open_runtime`] runs the boot checks in order: create the parent
 //! directory, refuse symlinks and network filesystems, open the reader pool
-//! with the full pragma set, run the sibling schema migrations and assert
+//! with the full pragma set, run the schema migrations and assert
 //! `user_version`, then start the writer lane and wire the checkpoint,
 //! wakeup, and backup services.
 //!

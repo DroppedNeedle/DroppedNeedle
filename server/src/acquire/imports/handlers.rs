@@ -162,7 +162,7 @@ pub fn imports_callback_router(deps: ImportsDeps) -> axum::Router {
 }
 
 /// Any authenticated user. Missing session or a session whose account is
-/// gone reads as 401, mirroring the sibling role extractors.
+/// gone reads as 401, mirroring the users role extractors.
 pub struct ImportsUser(pub AuthContext);
 
 impl FromRequestParts<ImportsDeps> for ImportsUser {
@@ -601,7 +601,7 @@ pub async fn get_spotify_job(
     }
 }
 
-/// Acquisition health smoke: Free OR slskd OR Usenet readiness plus the
+/// Acquisition health smoke: Free or slskd or Usenet readiness plus the
 /// independent per-source release gates.
 #[utoipa::path(get, path = "/api/v3/acquire/health",
     responses((status = 200, description = "Acquisition health", body = AcquireHealth)))]

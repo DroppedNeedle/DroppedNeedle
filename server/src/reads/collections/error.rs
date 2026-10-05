@@ -1,4 +1,4 @@
-//! Slice-local typed errors rendering the shared envelope.
+//! Collections errors rendering the shared envelope.
 //!
 //! Shapes are byte-compatible with the crate `error` module: every failure
 //! renders as `{"error": {code, message, details}}`. Server faults carry the

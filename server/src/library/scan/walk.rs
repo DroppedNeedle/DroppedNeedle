@@ -918,7 +918,7 @@ impl<S: ScanStore> InventoryScanner<S> {
                     // persisted in this generation.
                     let key = inventory_key(&file.resolved, root);
                     if !seen.insert(key.clone()) {
-                        // Load-bearing collision rule: first wins, the
+                        // Collision rule: first wins, the
                         // loser gets an inventory-phase failure row naming
                         // its own on-disk form, and the run stays green.
                         self.record_failure(

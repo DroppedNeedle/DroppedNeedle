@@ -655,7 +655,7 @@ impl Section for GetIt {
 
 // --- security_settings ----------------------------------------------------
 
-/// Who may download library files. `trusted` admits trusted AND admin.
+/// Who may download library files. `trusted` admits trusted and admin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DownloadAccess {
@@ -732,7 +732,7 @@ pub enum DiscoverMode {
     UseScrobbleTargets,
 }
 
-/// Inbound Connect Apps config. Both protocols default OFF.
+/// Inbound Connect Apps config. Both protocols default off.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ConnectApps {

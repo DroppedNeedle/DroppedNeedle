@@ -407,7 +407,7 @@ impl<T: SlskdHttp> SlskdRepository<T> {
         }
     }
 
-    /// Resolve a finished transfer to its on-disk path, OFF the async
+    /// Resolve a finished transfer to its on-disk path, off the async
     /// runtime (v2 runs the lookup in a thread: the bounded but potentially
     /// large walks froze the whole loop (polling, SSE, every request)
     /// whenever the mount was big or misconfigured).

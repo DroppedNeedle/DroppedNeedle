@@ -1,6 +1,6 @@
 //! Roles and the request principal.
 //!
-//! The sibling session middleware authenticates every `/api/v3/*` request
+//! The session middleware authenticates every `/api/v3/*` request
 //! and stashes [`CurrentSession`] in the request extensions. The extractors
 //! here read it, resolve the account role fresh from the user store (so
 //! role changes take effect on the next request), and add role gating.
@@ -75,7 +75,7 @@ impl Role {
 }
 
 /// The authenticated principal for one request, built by the extractors
-/// from the sibling [`CurrentSession`] plus a fresh user-row lookup.
+/// from the session middleware's [`CurrentSession`] plus a fresh user-row lookup.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuthContext {
     /// Owning user id.
@@ -123,7 +123,7 @@ fn missing_session() -> UsersError {
     }
 }
 
-/// Resolve the principal: sibling session plus a fresh user-row lookup.
+/// Resolve the principal: the stashed session plus a fresh user-row lookup.
 /// A session whose account is gone is stale, hence 401.
 async fn resolve(parts: &Parts, deps: &UsersDeps) -> Result<AuthContext, UsersError> {
     let session = parts

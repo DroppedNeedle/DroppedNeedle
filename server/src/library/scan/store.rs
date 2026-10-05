@@ -721,7 +721,7 @@ impl ScanStore for MemoryScanStore {
     }
 
     fn latest_filesystem_terminal(&self) -> Option<ScanRun> {
-        // v2: terminal runs where kind != policy_reconcile OR the run
+        // v2: terminal runs where kind != policy_reconcile or the run
         // covered everything; newest first.
         self.list_history(usize::MAX)
             .into_iter()

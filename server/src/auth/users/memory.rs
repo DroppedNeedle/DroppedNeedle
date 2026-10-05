@@ -50,7 +50,7 @@ pub struct MemoryUserStore {
     reset_peers: OnceLock<ResetPeers>,
 }
 
-/// Sibling stores the atomic recovery reset writes to. Linked once by the
+/// Peer stores the atomic recovery reset writes to. Linked once by the
 /// rig; an unlinked store fails the reset loudly instead of half-applying it.
 #[derive(Debug, Clone)]
 struct ResetPeers {
@@ -134,7 +134,7 @@ impl MemoryUserStore {
         Self::default()
     }
 
-    /// Link the sibling stores the atomic recovery reset writes to. The
+    /// Link the peer stores the atomic recovery reset writes to. The
     /// rig calls this once at build; first link wins.
     pub fn link_reset_peers(
         &self,
@@ -1181,7 +1181,7 @@ pub struct TestRig {
     pub deps: UsersDeps,
     /// User store handle for seeding and assertions.
     pub users: Arc<MemoryUserStore>,
-    /// Session store handle (stands in for the sibling store).
+    /// Session store handle (stands in for the SQLite session store).
     pub sessions: Arc<MemorySessionManager>,
     /// Last.fm store handle.
     pub lastfm: Arc<MemoryLastFmStore>,
@@ -1290,7 +1290,7 @@ impl TestRig {
     }
 }
 
-/// Session for `user` on `session_id`, mimicking what the sibling
+/// Session for `user` on `session_id`, mimicking what the session
 /// middleware stashes after resolving a token.
 pub fn test_principal(user: &UserRecord, session_id: &str, companion: bool) -> CurrentSession {
     CurrentSession {
@@ -1315,7 +1315,7 @@ async fn insert_test_principal(
 }
 
 /// Wrap a router with the test principal layer, standing in for the
-/// sibling session middleware (session resolution only, no origin check).
+/// session middleware (session resolution only, no origin check).
 pub fn with_test_principal(router: Router, session: CurrentSession) -> Router {
     router.layer(middleware::from_fn_with_state(
         session,

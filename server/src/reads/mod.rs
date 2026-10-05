@@ -204,7 +204,7 @@ fn platform_state(wrapped_api_key: String) -> platform::PlatformState {
 }
 
 /// Resolve the collections principal from the stashed session, mirroring
-/// the sibling role extractors: the role rereads the user row every request
+/// the users role extractors: the role rereads the user row every request
 /// so role changes take effect immediately. A session whose account is gone
 /// reads as stale (401), never as its last-known role.
 async fn translate_principal(

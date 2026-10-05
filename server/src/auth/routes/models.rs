@@ -11,7 +11,7 @@ use crate::auth::session::login::TransportParam;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-/// Credential handoff for session-issuing routes. Mirrors the sibling
+/// Credential handoff for session-issuing routes. Mirrors the session login
 /// `TransportParam` (which owns the mechanism) so this layer stays the only
 /// place that needs `ToSchema`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize, ToSchema)]
@@ -25,7 +25,7 @@ pub enum TransportDto {
 }
 
 impl TransportDto {
-    /// The sibling mechanism value.
+    /// The session login mechanism value.
     pub fn as_param(self) -> TransportParam {
         match self {
             Self::Cookie => TransportParam::Cookie,

@@ -3,7 +3,7 @@
 //! Ports v2 `LibraryContributionVerificationWorker`. The worker claims queued
 //! jobs under a 90s lease, re-reads the release from MusicBrainz on the
 //! [`RequestPriority::BackgroundSync`] lane (never the user lane), runs the
-//! sibling-owned evidence decision, and finishes the job as linked or
+//! identify-owned evidence decision, and finishes the job as linked or
 //! needs-review. Shutdown is a `watch` flag; `LibrarySetup::spawn_loops`
 //! starts the worker through [`spawn_verification_worker`].
 

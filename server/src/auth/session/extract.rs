@@ -38,7 +38,7 @@ pub const FORBIDDEN: &str = "FORBIDDEN";
 /// and the transport that carried it.
 ///
 /// A present Bearer token wins outright (v2 parity): when the `Authorization`
-/// header carries the Bearer token, an empty value yields `None` with NO cookie
+/// header carries the Bearer token, an empty value yields `None` with no cookie
 /// fallthrough. Only a missing or non-Bearer token falls through to the cookie.
 pub fn extract(headers: &HeaderMap) -> Option<(String, Transport)> {
     if has_bearer_scheme(headers) {

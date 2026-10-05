@@ -682,7 +682,7 @@ impl<S: ScanStore, T: TagReader + 'static, Q: IdentifyQueue> LibraryScanCoordina
                 Err(_) => {
                     // A racing writer keeps moving the revision.
                     // Bounded retries, then the stop-signal path: return
-                    // unsettled WITHOUT discarding the pending entry, so
+                    // unsettled without discarding the pending entry, so
                     // checkpoint keeps returning false.
                     stale_retries += 1;
                     if stale_retries >= SETTLE_STALE_MAX_RETRIES {

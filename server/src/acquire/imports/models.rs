@@ -206,7 +206,7 @@ pub struct SourceGate {
 }
 
 /// Acquisition health smoke (v2 `StatusReport` shape, extended). `ready`
-/// is Free OR slskd OR Usenet readiness; the gates unpack per source.
+/// is Free or slskd or Usenet readiness; the gates unpack per source.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct AcquireHealth {
     /// Overall verdict: `ok`, `degraded`, or `error`.

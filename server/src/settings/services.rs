@@ -696,7 +696,7 @@ impl SettingsService {
         Ok(masked.into())
     }
 
-    /// Read the slskd connection with the key DECRYPTED (verify probes
+    /// Read the slskd connection with the key decrypted (verify probes
     /// only; never leaves the server).
     pub fn get_slskd_raw(&self) -> Result<SlskdConnection, SettingsError> {
         self.store.get_raw().map_err(|e| self.config(e))
@@ -728,7 +728,7 @@ impl SettingsService {
         Ok(masked.sabnzbd.into())
     }
 
-    /// Read the SABnzbd connection with the key DECRYPTED (verify probes
+    /// Read the SABnzbd connection with the key decrypted (verify probes
     /// only; never leaves the server).
     pub fn get_sabnzbd_raw(&self) -> Result<SabnzbdConnection, SettingsError> {
         let stored: DownloadClients = self.store.get_raw().map_err(|e| self.config(e))?;
@@ -759,7 +759,7 @@ impl SettingsService {
         Ok(masked.into())
     }
 
-    /// Read the Prowlarr connection with the key DECRYPTED (verify probes
+    /// Read the Prowlarr connection with the key decrypted (verify probes
     /// only; never leaves the server).
     pub fn get_prowlarr_raw(&self) -> Result<ProwlarrConnection, SettingsError> {
         self.store.get_raw().map_err(|e| self.config(e))
@@ -789,7 +789,7 @@ impl SettingsService {
         Ok(masked.into())
     }
 
-    /// Read the Jellyfin connection with the key DECRYPTED (verify probes
+    /// Read the Jellyfin connection with the key decrypted (verify probes
     /// only; never leaves the server).
     pub fn get_jellyfin_raw(&self) -> Result<JellyfinConnection, SettingsError> {
         self.store.get_raw().map_err(|e| self.config(e))
@@ -819,7 +819,7 @@ impl SettingsService {
         Ok(masked.into())
     }
 
-    /// Read the Navidrome connection with the password DECRYPTED (verify
+    /// Read the Navidrome connection with the password decrypted (verify
     /// probes only; never leaves the server).
     pub fn get_navidrome_raw(&self) -> Result<NavidromeConnection, SettingsError> {
         self.store.get_raw().map_err(|e| self.config(e))
@@ -849,7 +849,7 @@ impl SettingsService {
         Ok(masked.into())
     }
 
-    /// Read the Plex connection with the token DECRYPTED (verify probes
+    /// Read the Plex connection with the token decrypted (verify probes
     /// only; never leaves the server).
     pub fn get_plex_raw(&self) -> Result<PlexConnection, SettingsError> {
         self.store.get_raw().map_err(|e| self.config(e))
@@ -881,7 +881,7 @@ impl SettingsService {
         Ok(masked.into())
     }
 
-    /// Read the ListenBrainz connection with the token DECRYPTED (verify
+    /// Read the ListenBrainz connection with the token decrypted (verify
     /// probes only; never leaves the server).
     pub fn get_listenbrainz_raw(&self) -> Result<ListenBrainzConnection, SettingsError> {
         self.store.get_raw().map_err(|e| self.config(e))
@@ -911,7 +911,7 @@ impl SettingsService {
         Ok(masked.into())
     }
 
-    /// Read the YouTube connection with the key DECRYPTED (verify probes
+    /// Read the YouTube connection with the key decrypted (verify probes
     /// only; never leaves the server).
     pub fn get_youtube_raw(&self) -> Result<YouTubeConnection, SettingsError> {
         self.store.get_raw().map_err(|e| self.config(e))
@@ -942,7 +942,7 @@ impl SettingsService {
         Ok(masked.into())
     }
 
-    /// Read the events sources with keys DECRYPTED (test probes only;
+    /// Read the events sources with keys decrypted (test probes only;
     /// never leaves the server).
     pub fn get_events_raw(&self) -> Result<EventsSettings, SettingsError> {
         self.store.get_raw().map_err(|e| self.config(e))
@@ -972,7 +972,7 @@ impl SettingsService {
         Ok(masked.into())
     }
 
-    /// Read the wrapped settings with the key DECRYPTED (verify probes
+    /// Read the wrapped settings with the key decrypted (verify probes
     /// only; never leaves the server).
     pub fn get_wrapped_raw(&self) -> Result<WrappedSettings, SettingsError> {
         self.store.get_raw().map_err(|e| self.config(e))
@@ -1002,7 +1002,7 @@ impl SettingsService {
         Ok(masked.into())
     }
 
-    /// Read the OIDC connection with the secret DECRYPTED (verify probes
+    /// Read the OIDC connection with the secret decrypted (verify probes
     /// only; never leaves the server).
     pub fn get_oidc_raw(&self) -> Result<OidcConnection, SettingsError> {
         self.store.get_raw().map_err(|e| self.config(e))
@@ -1275,7 +1275,7 @@ impl SettingsService {
         })
     }
 
-    /// Admin impact preview of an UNSAVED policy body against persisted
+    /// Admin impact preview of an unsaved policy body against persisted
     /// rows: persisted-state bucket counts only. Shares the strict
     /// validation with the save path.
     pub async fn policy_impact(
@@ -1379,7 +1379,7 @@ impl SettingsService {
         Ok(())
     }
 
-    /// Read one indexer with its key DECRYPTED (test probes only; never
+    /// Read one indexer with its key decrypted (test probes only; never
     /// leaves the server).
     pub fn get_indexer_raw(
         &self,

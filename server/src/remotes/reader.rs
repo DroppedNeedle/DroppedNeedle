@@ -4,7 +4,7 @@
 //! it resolves the caller's stored connection for the requested source,
 //! builds that source's adapter, and fetches whole audio bytes. Folder
 //! scoping does not apply (byte reads address ids, not catalogs), and
-//! server-side transcode stays a later-stage concern, so transcode hints
+//! server-side transcode is not supported for remotes, so transcode hints
 //! never reach this layer.
 
 use std::sync::Arc;

@@ -57,7 +57,7 @@ pub const PLEX_NOT_CONFIGURED: &str = "Plex is not configured by the administrat
 /// Session guard for the Plex link/connect polls: the middleware stashes
 /// [`CurrentSession`] on every authenticated request, and these polls hand
 /// out account Bearer tokens, which a PIN id alone must never unlock. This is the same
-/// contract as the sibling [`CurrentUser`] extractor minus the role lookup
+/// contract as the users [`CurrentUser`] extractor minus the role lookup
 /// (the polls need no role, and this router's state is not `UsersDeps`, so
 /// `CurrentUser` cannot apply here); the allowlist is the outer gate and
 /// this is the inner one.
@@ -682,7 +682,7 @@ struct Handoff<'a> {
 /// One login-shaped federated response: the user JSON plus the session under
 /// the login transport rule (cookie or Bearer), `no-store` always. The session row already exists
 /// (the `SessionIssuer` wrote it); this only hands the token over. In Bearer mode
-/// the sibling renderer adds the `token` field to the object body.
+/// the session login renderer adds the `token` field to the object body.
 fn federated_login_response(
     handoff: &Handoff<'_>,
     user_id: &str,
@@ -722,7 +722,7 @@ fn user_agent_of(headers: &HeaderMap) -> Option<String> {
 }
 
 /// Stamp `no-store` when the value parses (it always does; the guard keeps
-/// the helper total like the sibling renderer).
+/// the helper total like the session login renderer).
 fn insert_no_store(headers: &mut HeaderMap) {
     if let Ok(value) = crate::auth::session::login::NO_STORE.parse() {
         headers.insert(axum::http::header::CACHE_CONTROL, value);

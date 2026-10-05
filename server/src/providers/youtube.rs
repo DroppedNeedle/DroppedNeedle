@@ -18,7 +18,7 @@
 //!
 //! Charging rules, kept from v2's quota tests:
 //!
-//! - Quota exhaustion and a disabled/misconfigured client fail BEFORE any
+//! - Quota exhaustion and a disabled/misconfigured client fail before any
 //!   HTTP, leaving the file untouched.
 //! - A reservation that never dispatches (disabled mid-flight, limit
 //!   lowered) is refunded.

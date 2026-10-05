@@ -3,8 +3,8 @@
 //! real crypto. Clones share state through `Arc`, so a test can hold one
 //! handle while the service under test holds another.
 //!
-//! Test-only by convention (same precedent as the sibling in-memory
-//! session store): production adapters replace every fake at wiring.
+//! Test-only, like the in-memory session store: production wiring binds the
+//! SQLite adapters instead.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

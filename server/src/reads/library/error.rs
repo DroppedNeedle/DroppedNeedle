@@ -1,4 +1,4 @@
-//! Slice errors rendered into the shared envelope.
+//! Typed errors rendered into the shared envelope.
 //!
 //! Status mapping for the library reads lives here in the handler layer.
 //! Services return [`LibraryFailure`](super::services::LibraryFailure);

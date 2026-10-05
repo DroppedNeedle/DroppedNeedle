@@ -87,7 +87,7 @@ pub struct LoginSuccess {
 /// Login failure. Both variants render identically on the wire.
 #[derive(Debug, Error)]
 pub enum LoginError {
-    /// Unknown user OR wrong password: one uniform message, no oracle.
+    /// Unknown user or wrong password: one uniform message, no oracle.
     #[error("Invalid username or password")]
     InvalidCredentials,
     /// Storage or entropy failure: 500 without detail.

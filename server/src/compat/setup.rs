@@ -135,7 +135,7 @@ impl CompatSetup {
     }
 
     /// Minimal bundle for unit-style app tests: real seam types, an unused
-    /// engine over an empty root, kill switches OFF. Tests that serve
+    /// engine over an empty root, kill switches off. Tests that serve
     /// compat use [`CompatSetup::with_enabled`] plus fixture routers.
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(

@@ -1431,7 +1431,7 @@ impl SabnzbdQueue {
         handle: &TaskHandle,
     ) -> Result<Option<HistorySlot>, SabnzbdError> {
         // Query by nzo_id alone when we have it: also passing
-        // search=job_name risks an AND that drops the row when SAB renamed
+        // search=job_name risks a logical AND that drops the row when SAB renamed
         // the job (category sorting, `.1` dedup), making a completed job
         // read as never-completed and falsely blocklisting a good release
         // (v2 `_find_history_slot`). job_name search is only the

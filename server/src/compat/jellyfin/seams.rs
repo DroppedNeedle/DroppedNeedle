@@ -34,7 +34,7 @@ use super::models::UserDto;
 /// `get_connect_apps_settings`).
 #[derive(Debug, Clone)]
 pub struct JellyfinSettings {
-    /// Kill switch, default OFF (v2 `jellyfin_enabled`). Disabled → HTTP 404
+    /// Kill switch, default off (v2 `jellyfin_enabled`). Disabled → HTTP 404
     /// on every route, before handler lookup (no method enumeration).
     pub enabled: bool,
     /// User-editable advertised name, default "DroppedNeedle".
@@ -332,7 +332,7 @@ pub trait LibraryRead: Clone + Send + Sync + 'static {
         add: bool,
     ) -> impl Future<Output = ()> + Send;
     /// Release art bytes (`size` is the 250/500/1200 bucket); `None` renders
-    /// 404 with NO placeholder, unlike Subsonic (v2 `_image`).
+    /// 404 with no placeholder, unlike Subsonic (v2 `_image`).
     fn cover(&self, rg_mbid: &str, size: &str) -> impl Future<Output = Option<CoverBytes>> + Send;
     fn artist_image(&self, mbid: &str) -> impl Future<Output = Option<CoverBytes>> + Send;
     /// Etags for `ImageTags.Primary` / `AlbumPrimaryImageTag`.

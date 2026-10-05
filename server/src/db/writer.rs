@@ -157,8 +157,8 @@ impl CancelFlag {
 
 /// The single writer. A cloneable handle over shared state: the scheduler
 /// task and the writer thread are owned jointly, and every write in the
-/// process funnels through them. Clones are cheap; stages share one lane
-/// through `AppState`.
+/// process funnels through them. Clones are cheap; every module shares one
+/// lane through `AppState`.
 #[derive(Clone, Debug)]
 pub struct WriteLane {
     shared: Arc<Shared>,

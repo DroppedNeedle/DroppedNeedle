@@ -285,7 +285,7 @@ fn validate_local_provenance(
         &draft.barcode,
         &draft.packaging,
     ] {
-        // Quirk (v2): optional fields have no local value, so ANY value with
+        // Quirk (v2): optional fields have no local value, so any value with
         // `local` provenance is rejected - even an empty string counts as set
         // only when it is Some; None passes.
         if field.source == ContributionFieldSource::Local && field.value.is_some() {
@@ -461,7 +461,7 @@ fn trim_draft(draft: &mut ReleaseDraft) -> Result<(), DraftError> {
     for field in draft_fields_mut(draft) {
         if let Some(value) = field.value.take() {
             let stripped = value.trim().to_string();
-            // Quirk (v2): length is enforced AFTER trimming, on every string.
+            // Quirk (v2): length is enforced after trimming, on every string.
             if stripped.len() > MAX_TEXT_LENGTH {
                 return Err(DraftError("A contribution value is too long.".into()));
             }

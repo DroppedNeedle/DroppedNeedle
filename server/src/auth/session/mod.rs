@@ -4,7 +4,7 @@
 //! over the same opaque sessions, the cookie-mutation origin check, and the
 //! rate-limit class table. Role extractors, session/device management
 //! routes, OIDC/Jellyfin/Plex handshakes, and compat auth live in the
-//! sibling modules.
+//! other auth modules.
 //!
 //! Mechanism choices, recorded here so they are not reopened:
 //!

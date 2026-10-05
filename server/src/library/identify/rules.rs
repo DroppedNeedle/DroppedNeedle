@@ -54,7 +54,7 @@ pub struct SubstitutionCase {
 /// name match alone never merges artists.
 ///
 /// Preconditions, all required:
-/// 1. An accepted MusicBrainz release MBID on the source album, OR a
+/// 1. An accepted MusicBrainz release MBID on the source album, or a
 ///    durable revision-valid credit proof row agreeing on the expected MBID.
 /// 2. No contradictory proof: a current proof row naming anyone else vetoes.
 /// 3. No composite or ambiguous credits.

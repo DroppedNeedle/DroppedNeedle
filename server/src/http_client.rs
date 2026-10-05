@@ -3,8 +3,7 @@
 //! The factory owns timeouts, pool behavior, and the DroppedNeedle
 //! User-Agent. Separate client instances appear only when that behavior
 //! genuinely differs per upstream; per-provider rate policy lives in
-//! `provider_policy`, and per-upstream resilience arrives with the clients
-//! in a later stage.
+//! `provider_policy`, and per-upstream resilience lives with each client.
 
 use std::time::Duration;
 

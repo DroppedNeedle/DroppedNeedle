@@ -246,7 +246,7 @@ fn local_root(config: &AppConfig) -> PathBuf {
 
 /// Scrobble sinks with no linked accounts: every forward answers empty,
 /// which the services already read as "unlinked, history still records".
-/// v3 native Last.fm/ListenBrainz linkage lands in a later stage.
+/// Native Last.fm/ListenBrainz forwarding is not wired yet.
 struct UnlinkedSinks;
 
 impl ScrobbleSinks for UnlinkedSinks {

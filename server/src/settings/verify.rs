@@ -1,6 +1,6 @@
 //! Connection probes behind the verify endpoints.
 //!
-//! Every verify endpoint tests the SUBMITTED values, not the stored
+//! Every verify endpoint tests the submitted values, not the stored
 //! config, so Test works before the first save and reflects edits. A
 //! masked secret resolves to the stored one in the handler; these
 //! probes only ever see concrete values. Verdicts carry the
@@ -615,7 +615,7 @@ impl VerifyProbes for LiveProbes {
                 .await
                 .ok()
                 .filter(|dir| !dir.is_empty());
-            // The SUBMITTED mount is diagnosed, not the stored one, so an
+            // The submitted mount is diagnosed, not the stored one, so an
             // unsaved correction already shows the fixed verdict.
             let raw = queue.diagnose_downloads_mount().await;
             let mount_message =

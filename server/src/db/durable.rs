@@ -7,8 +7,8 @@
 //! durable or ephemeral, with its liveness. Workers consume sequence numbers
 //! so a wakeup is never lost between request and pickup.
 //!
-//! Consumers live in stages 7, 8, and 10; this module is the fabric they
-//! share. All table writes go through the [`WriteLane`]; reads use the pool.
+//! Consumers live in `acquire`, `library`, and `jobs`; this module is the
+//! fabric they share. All table writes go through the [`WriteLane`]; reads use the pool.
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};

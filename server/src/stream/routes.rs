@@ -151,7 +151,7 @@ impl AudioSource {
 }
 
 // ---------------------------------------------------------------------------
-// Engine seam (stand-in; the sibling gateway.rs owns the real engine)
+// Engine seam (implemented by `super::gateway::Gateway`)
 // ---------------------------------------------------------------------------
 
 /// Transcode hints from the query string, mapped 1:1 for the engine.
@@ -355,7 +355,7 @@ impl<E> Clone for StreamState<E> {
 
 /// Any authenticated session. The session gate already ran, so presence of
 /// the stashed session is the whole check; the user id feeds per-principal
-/// leases. Missing session reads as 401, mirroring the sibling extractors.
+/// leases. Missing session reads as 401, mirroring the users extractors.
 pub struct StreamUser {
     /// Lease principal.
     pub user_id: String,

@@ -11,7 +11,7 @@ use thiserror::Error;
 /// Every way typed-config load, validation, or save can fail.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ConfigError {
-    /// The config file cannot be read (missing file is NOT this error; a
+    /// The config file cannot be read (missing file is not this error; a
     /// missing file means every section reads as its default).
     #[error("cannot read config file {}: {reason}", .path.display())]
     ReadFailed {

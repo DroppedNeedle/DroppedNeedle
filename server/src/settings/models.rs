@@ -77,7 +77,7 @@ pub enum AudioFormatDto {
     Opus,
 }
 
-/// Who may download library files. `trusted` admits trusted AND admin.
+/// Who may download library files. `trusted` admits trusted and admin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum DownloadAccessDto {
@@ -406,7 +406,7 @@ impl Default for SecuritySettingsDto {
 
 // --- connect_apps ------------------------------------------------------------
 
-/// Inbound Connect Apps config. Both protocols default OFF.
+/// Inbound Connect Apps config. Both protocols default off.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(default)]
 pub struct ConnectAppsDto {
@@ -535,7 +535,7 @@ impl Default for SlskdConnectionDto {
 
 // --- download_clients (sabnzbd sub-object) -----------------------------------
 
-/// SABnzbd connection. `api_key` is the FULL key (the add-only nzbkey
+/// SABnzbd connection. `api_key` is the full key (the add-only nzbkey
 /// cannot do queue/history/delete); masked on read, preserved on a masked
 /// save.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

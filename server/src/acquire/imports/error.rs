@@ -1,4 +1,4 @@
-//! Slice errors rendered into the shared envelope.
+//! Typed errors rendered into the shared envelope.
 //!
 //! Every failure renders as `{"error": {code, message, details}}` with a
 //! SCREAMING_SNAKE code. Statuses match the other modules: 401 carries

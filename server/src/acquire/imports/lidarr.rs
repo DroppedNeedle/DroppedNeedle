@@ -164,13 +164,13 @@ impl LidarrClient {
 }
 
 /// Follow rows the import reads and writes. The bulk store method keeps the
-/// zero-MusicBrainz-call guarantee (v2 DR2): names come from Lidarr, never
+/// zero-MusicBrainz-call guarantee (as in v2): names come from Lidarr, never
 /// the per-artist follow path.
 pub trait FollowStore: Send + Sync {
     /// Lowercased MBIDs of `candidates` the user already follows.
     fn existing_followed_lower(&self, user_id: &str, candidates: &[String]) -> HashSet<String>;
     /// Follow every `(mbid, name)` pair idempotently, preserving
-    /// `auto_download` and `followed_at` on conflicts (v2 DR4).
+    /// `auto_download` and `followed_at` on conflicts (as in v2).
     fn follow_artists_bulk(&self, user_id: &str, pairs: &[(String, String)]);
     /// Flip auto-download intent for followed rows.
     fn set_auto_download_intent_bulk(&self, user_id: &str, mbids: &[String], intent: bool);
@@ -444,7 +444,7 @@ impl LidarrImportService {
         selected_mbids: &[String],
     ) -> Result<LidarrImportResponse, ServiceError> {
         let monitored = self.monitored_artists().await?;
-        // Authoritative map from the re-fetch (v2 DR3): a selected MBID not
+        // Authoritative map from the re-fetch (as in v2): a selected MBID not
         // currently monitored in Lidarr is silently ignored.
         let by_lower: HashMap<String, &LidarrArtist> = monitored
             .iter()
@@ -468,7 +468,7 @@ impl LidarrImportService {
             }
         }
 
-        // Pre-read existing follows BEFORE any write (v2 DR6): the bulk
+        // Pre-read existing follows before any write (as in v2): the bulk
         // upsert cannot tell a fresh insert from a conflict, so both the
         // counts and the auto-download rule need the prior state.
         let existing = self
@@ -491,7 +491,7 @@ impl LidarrImportService {
             .collect();
 
         // Write order matters (v2): (a) bulk-follow the whole valid
-        // selection, (b) approvals for the auto-download subset BEFORE
+        // selection, (b) approvals for the auto-download subset before
         // flipping intent, (c) flip intent. A mid-sequence crash fails safe
         // with intent off rather than intent-on-without-approval.
         let pairs: Vec<(String, String)> = selected_valid_lower

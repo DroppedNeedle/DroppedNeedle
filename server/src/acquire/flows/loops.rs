@@ -788,7 +788,7 @@ pub struct SweepDeps {
 }
 
 /// Run one background-upgrade sweep when due: while upgrades are allowed
-/// AND the scan is enabled, walk the cutoff-unmet worklist and enqueue at
+/// and the scan is enabled, walk the cutoff-unmet worklist and enqueue at
 /// most `max_per_run` origin-`upgrade` grabs owned by the oldest admin.
 /// `AlreadyInLibrary` answers never count as enqueued; a poison item never
 /// starves its siblings (v2 `run_background_upgrade_sweep`).

@@ -1,4 +1,4 @@
-//! Slice state: in-memory stores behind one handle.
+//! Collections state: in-memory stores behind one handle.
 //!
 //! Each collection owns a small store; services take narrow references to the
 //! stores they need (the pin service notably never sees the identity store).

@@ -373,7 +373,7 @@ async fn login_user(users: &UsersDeps, user_id: &str) -> Result<UserResponse, Au
     })
 }
 
-/// Render a login success through the sibling renderer: cookie in cookie
+/// Render a login success through the session login renderer: cookie in cookie
 /// mode, `token` field only in Bearer mode, `no-store` always. The cookie value
 /// is derived here because setup and login share this renderer while only
 /// login mints through the service. `secure` is resolved by the caller from

@@ -38,7 +38,7 @@ use crate::ids::IdGenerator;
 /// delegates to the users error.
 #[derive(Debug)]
 pub enum ImportError {
-    /// Slice failure (store fault, bad input, conflict).
+    /// Users failure (store fault, bad input, conflict).
     Users(UsersError),
     /// The directory is unconfigured or unreachable. Fixed body plus id.
     Unavailable {

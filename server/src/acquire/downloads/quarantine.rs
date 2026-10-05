@@ -96,7 +96,7 @@ pub fn canonical_soulseek_identity(identity: &str) -> String {
 /// Soulseek identifies by peer + filename (canonicalized, so older rows
 /// cannot evade the match), one row per enqueued file; usenet identifies
 /// by the deterministic job name, which scopes the row to this task's
-/// failover walk until release identity rides the handle (later stage).
+/// failover walk; the handle does not carry the release identity yet.
 /// Empty handles yield no identities and are never recorded.
 pub fn failover_identities(
     source: &str,

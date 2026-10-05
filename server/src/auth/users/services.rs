@@ -74,7 +74,7 @@ fn random_bytes<const N: usize>(deps: &UsersDeps) -> Result<[u8; N], UsersError>
     Ok(buf)
 }
 
-/// A fresh opaque secret from the sibling token mint (32 random bytes,
+/// A fresh opaque secret from the session token mint (32 random bytes,
 /// urlsafe base64, v2 format kept byte for byte).
 fn fresh_secret(deps: &UsersDeps) -> Result<String, UsersError> {
     tokens::mint_token().map_err(|cause| UsersError::internal(&cause, deps.ids.as_ref()))
@@ -1175,7 +1175,7 @@ pub async fn lastfm_unlink(deps: &UsersDeps, user_id: &str) -> Result<(), UsersE
     Ok(())
 }
 
-/// Wiring point for scrobbling (stages 5-6): the linked session for one
+/// Wiring point for scrobble forwarding (not called yet): the linked session for one
 /// user, or None when disabled, unlinked, or undecryptable. Scrobbling is
 /// optional enrichment, so every miss degrades to None with a log line.
 pub async fn lastfm_scrobble_session(deps: &UsersDeps, user_id: &str) -> Option<(String, String)> {

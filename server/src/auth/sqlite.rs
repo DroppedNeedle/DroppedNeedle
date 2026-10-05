@@ -371,7 +371,7 @@ fn apply_pending_rehash(
     Ok(unmatched)
 }
 
-/// Absolute expiry for a session issued now (30 days, the sibling rule).
+/// Absolute expiry for a session issued now (30 days, the session rule).
 pub fn session_expires_at(now_unix: i64) -> i64 {
     expires_at(now_unix)
 }

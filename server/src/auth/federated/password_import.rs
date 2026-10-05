@@ -73,8 +73,8 @@ impl LocalCredential {
 
 /// Password primitives. Synchronous by design: hashing is pure CPU work
 /// and the production caller runs it on the blocking pool. The production
-/// impl delegates to the sibling `session::login::PasswordVerifier` (new
-/// deps at wiring: `bcrypt`, `argon2`); tests use the fake in [`super::fakes`].
+/// impl is [`crate::auth::passwords`] over the `bcrypt` and `argon2`
+/// crates; tests use the fake in [`super::fakes`].
 pub trait PasswordHasher: Send + Sync + 'static {
     /// Check a password against a v2 bcrypt hash.
     fn verify_bcrypt(&self, password: &str, hash: &str) -> bool;

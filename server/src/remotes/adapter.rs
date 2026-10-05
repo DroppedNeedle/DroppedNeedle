@@ -23,7 +23,7 @@ use super::navidrome::NavidromeAdapter;
 use super::plex::PlexAdapter;
 
 /// Boxed future for object-safe async ports. Hand-boxed because `async fn`
-/// is not `dyn`-compatible; mirrors the sibling store traits.
+/// is not `dyn`-compatible; mirrors the other store traits.
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Every way a remote call can fail. Handlers map these to the wire; only

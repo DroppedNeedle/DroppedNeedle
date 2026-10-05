@@ -67,7 +67,7 @@ pub enum FederatedError {
 }
 
 /// Issues a native opaque session after a federated login succeeds.
-/// Assumed sibling API: the production impl mints via
+/// The production impl mints via
 /// `session::tokens`, stores a `Standard` row through
 /// `session::SessionStore`, and updates `last_login_at`.
 pub trait SessionIssuer: Clone + Send + Sync + 'static {

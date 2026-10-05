@@ -91,7 +91,7 @@ pub struct FederatedProfile {
 }
 
 /// Persistence port for federated user import. The production adapter is
-/// the sibling auth tables adapter; id generation is adapter-owned.
+/// the auth tables adapter; id generation is adapter-owned.
 pub trait FederatedUserStore: Clone + Send + Sync + 'static {
     /// Look up a provider binding by `(provider, provider_uid)`.
     fn get_provider(

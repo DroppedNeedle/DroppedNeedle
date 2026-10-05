@@ -93,7 +93,7 @@ impl Pacer for CorePacer {
 ///
 /// Records into the current request's [`DegradationContext`](super::degradation::DegradationContext)
 /// (a no-op outside a request scope) and keeps the cause on the log line.
-/// Slice sinks report failures only, so every record lands as `Error`; the
+/// Client sinks report failures only, so every record lands as `Error`; the
 /// deterministic flag stays false because these stringly notes cannot prove
 /// a deterministic failure the way a typed [`CoreError`] can.
 #[derive(Debug, Clone, Copy, Default)]

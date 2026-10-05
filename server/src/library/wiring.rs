@@ -2143,7 +2143,7 @@ fn baseline_block_label(block: &super::publish::undo::BaselineBlock) -> &'static
 }
 
 /// Resolve the library principal from the stashed session, mirroring
-/// the sibling role extractors: the role rereads the user row every
+/// the users role extractors: the role rereads the user row every
 /// request. A session whose account is gone reads as stale (401).
 async fn translate_principal(
     axum::extract::State(users): axum::extract::State<UsersDeps>,

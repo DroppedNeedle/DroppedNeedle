@@ -5,7 +5,7 @@
 //! rate-limited). The discrete calls retry the 429 "only one concurrent
 //! operation" with backoff (v2
 //! retries it because `RateLimitedError` is an `ExternalServiceError`);
-//! the search-poll helpers are NOT retried, because the repository's poll
+//! the search-poll helpers are not retried, because the repository's poll
 //! loop owns its own deadline.
 
 use std::time::Duration;

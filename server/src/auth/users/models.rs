@@ -67,7 +67,7 @@ pub struct ManagedSession {
     pub expires_at: i64,
 }
 
-/// What the native session lookup resolves a token hash to. The sibling
+/// What the native session lookup resolves a token hash to. The session
 /// middleware resolves through its own store; this shape exists so the
 /// management port can pin native/compat credential separation.
 #[derive(Debug, Clone, PartialEq, Eq)]

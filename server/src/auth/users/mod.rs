@@ -8,7 +8,7 @@
 //! ## Wiring (as built)
 //!
 //! The routers below mount through [`AuthSetup`][wiring-setup] (`wiring.rs`),
-//! nested under `/api/v3` inside the sibling session middleware (it stashes
+//! nested under `/api/v3` inside the session middleware (it stashes
 //! `session::middleware::CurrentSession`, which the role extractors read).
 //! `POST /api/v3/auth/password-recovery/reset` is allowlisted public; the
 //! origin check guards cookie mutations. Stores are the `sqlite.rs`
@@ -87,7 +87,7 @@ pub fn clock_now(deps: &UsersDeps) -> i64 {
     deps.clock.now_unix()
 }
 
-/// Authenticated user routes. The sibling middleware authenticates before
+/// Authenticated user routes. The session middleware authenticates before
 /// these run; the extractors add role gating only.
 pub fn users_router(deps: UsersDeps) -> Router {
     Router::new()
@@ -164,7 +164,7 @@ pub fn admin_router(deps: UsersDeps) -> Router {
         .with_state(deps)
 }
 
-/// Public routes. The sibling middleware must allowlist these; they carry
+/// Public routes. The session middleware must allowlist these; they carry
 /// their own credential (the recovery code).
 pub fn public_router(deps: UsersDeps) -> Router {
     Router::new()

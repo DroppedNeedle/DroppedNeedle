@@ -1,7 +1,7 @@
 //! Contribution service: draft lifecycle plus the MusicBrainz submission
 //! path (duplicate check -> seed -> callback/manual result -> verify).
 //!
-//! Ports v2 `LibraryContributionService`. Submission performs NO provider
+//! Ports v2 `LibraryContributionService`. Submission performs no provider
 //! write: `create_seed` returns a form the curator's browser POSTs to the
 //! release editor, and the editor calls back here. Tests post that form to a
 //! scripted fake editor instead (see `memory::FakeReleaseEditor`).
@@ -144,7 +144,7 @@ impl ContributionService {
             Some(row) => row,
             None => return Ok(None),
         };
-        // Quirk (v2): unlike `get`, this path marks stale WITHOUT the
+        // Quirk (v2): unlike `get`, this path marks stale without the
         // terminal-state guard (the store no-ops terminal rows itself).
         let row = if row_is_stale(&row) {
             self.store
@@ -636,7 +636,7 @@ impl ContributionService {
             )
             .await?;
         let row = self.maybe_purge_row(&row, now).await?;
-        // ST1: scoped invalidation BEFORE returning; then the identified hook.
+        // Scoped invalidation before returning (as in v2); then the identified hook.
         if let Some(catalog) = self.catalog.as_ref() {
             let groups = vec![verified.release_group_mbid.clone()];
             let artists: Vec<String> = verified.artist_mbid.clone().into_iter().collect();
@@ -737,7 +737,7 @@ impl ContributionService {
             &callback_url,
         );
         // Quirk (v2): the persisted snapshot omits redirect_uri (token
-        // secrecy); the hash covers the FULL field list.
+        // secrecy); the hash covers the full field list.
         let safe_snapshot = serde_json::json!({
             "schema_version": 1,
             "input_revision": current.input_revision,

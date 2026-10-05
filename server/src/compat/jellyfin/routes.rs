@@ -2,7 +2,7 @@
 //! `api/compat/jellyfin/router.py`.
 //!
 //! Wire contract: PascalCase JSON, real HTTP statuses, empty error bodies
-//! (NOT the native envelope). Streaming is anonymous: real Jellyfin audio
+//! (not the native envelope). Streaming is anonymous: real Jellyfin audio
 //! routes have no `[Authorize]`, and native players (Jellify, Finamp, Manet)
 //! fetch with no auth header. Still gated by protocol-enabled + a valid
 //! opaque item id (v2 `_handle(auth=False)`: players fetch audio URLs
@@ -1161,7 +1161,7 @@ where
                 },
             );
         }
-        // Appears-on: albums whose artist is NOT the contributor but whose
+        // Appears-on: albums whose artist is not the contributor but whose
         // tracks credit them (in-memory approximation of the discover call).
         let tracks = state.library.tracks(user_id).await;
         let mut appears_on: Vec<String> = tracks

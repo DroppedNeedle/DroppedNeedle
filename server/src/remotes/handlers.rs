@@ -125,7 +125,7 @@ pub fn remotes_router(deps: RemotesDeps) -> axum::Router {
 }
 
 /// Any authenticated user. Missing session or a session whose account is
-/// gone reads as 401, mirroring the sibling role extractors.
+/// gone reads as 401, mirroring the users role extractors.
 pub struct RemotesUser(pub AuthContext);
 
 impl FromRequestParts<RemotesDeps> for RemotesUser {

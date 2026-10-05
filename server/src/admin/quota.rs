@@ -19,7 +19,7 @@
 //! - `admin`/`trusted` are exempt from per-user quotas (as in v2).
 //!
 //! One clean-slate break: unknown users answer 404 on both routes, matching
-//! the sibling user-admin routes. v2 answered 200-with-zeros on GET and
+//! the user-admin routes. v2 answered 200-with-zeros on GET and
 //! blew up on the FK on PUT; neither helps an admin editor.
 
 use std::time::{SystemTime, UNIX_EPOCH};

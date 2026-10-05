@@ -1,6 +1,6 @@
 //! Debug-only CORS data.
 //!
-//! Production serves same-origin with NO CORS middleware (v2 parity). Debug
+//! Production serves same-origin with no CORS middleware (v2 parity). Debug
 //! builds layer an explicit localhost-origins allowlist with credentials. The
 //! origins below are the v2 dev list verbatim. Enforcement is one wiring line
 //! (see below); this module pins the list and its predicate so a test can

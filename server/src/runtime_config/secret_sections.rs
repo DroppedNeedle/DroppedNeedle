@@ -45,7 +45,7 @@ pub struct SecretField<'a> {
 pub trait SecretSection: Section {
     /// Every secret field in struct order. Order is part of the contract:
     /// the store pairs incoming and stored fields positionally, which is
-    /// why variable-length lists (indexers) do NOT implement this trait.
+    /// why variable-length lists (indexers) do not implement this trait.
     fn secret_fields(&mut self) -> Vec<SecretField<'_>>;
 }
 
@@ -212,7 +212,7 @@ impl SecretSection for SlskdConnection {
 
 // --- download_clients (sabnzbd sub-object) ---------------------------------
 
-/// SABnzbd connection. The key is the FULL key (the add-only nzbkey cannot
+/// SABnzbd connection. The key is the full key (the add-only nzbkey cannot
 /// do queue/history/delete).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -374,7 +374,7 @@ impl SecretSection for ProwlarrConnection {
 // --- lidarr_import (read-only import connection) ----------------------------
 
 /// Read-only Lidarr import connection: a single admin-configured Lidarr the
-/// monitored-artist importer reads from. NOT a management integration.
+/// monitored-artist importer reads from. Not a management integration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct LidarrImportConnection {
