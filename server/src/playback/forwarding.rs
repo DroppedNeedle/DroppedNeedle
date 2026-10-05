@@ -3,8 +3,10 @@
 //!
 //! The reporting services are synchronous and must never wait on the
 //! network, so [`ScrobbleForwarder`] checks which services the user linked,
-//! queues one job per wanted service on a bounded channel, and answers at
-//! once; [`ForwardWorker`] (spawned at boot) delivers the jobs. The name
+//! queues one job per wanted service on that service's bounded channel, and
+//! answers at once; [`ForwardWorker`] (spawned at boot) delivers each
+//! service's jobs in its own lane, so a slow service never holds up the
+//! other. The name
 //! dedup and the history write happen before a job is queued, so a retry
 //! never records a play twice.
 //!
@@ -30,7 +32,7 @@ use crate::runtime_config::crypto::Crypto;
 use super::ports::{ReportTrack, ScrobbleLinks, ScrobbleSinks, ScrobbleTargets, ServiceOutcome};
 use super::scrobble_models::{AdditionalInfo, LastFmError, Listen, SubmitListens, TrackMetadata};
 
-/// Jobs waiting for the worker. A burst past this answers "queue full".
+/// Jobs waiting per service. A burst past this answers "queue full".
 pub const FORWARD_QUEUE_DEPTH: usize = 512;
 /// Tries per scrobble, the first one included.
 pub const SCROBBLE_ATTEMPTS: u32 = 4;
@@ -110,26 +112,38 @@ pub struct ForwardJob {
 
 /// The production sink: queue a job per wanted, linked service.
 pub struct ScrobbleForwarder {
-    tx: tokio::sync::mpsc::Sender<ForwardJob>,
+    lastfm_tx: tokio::sync::mpsc::Sender<ForwardJob>,
+    listenbrainz_tx: tokio::sync::mpsc::Sender<ForwardJob>,
     links: Arc<dyn ScrobbleLinks>,
     lastfm_switch: Arc<dyn LastFmSwitch>,
 }
 
+/// The per-service queues the worker drains.
+pub struct ForwardQueues {
+    lastfm: tokio::sync::mpsc::Receiver<ForwardJob>,
+    listenbrainz: tokio::sync::mpsc::Receiver<ForwardJob>,
+}
+
 impl ScrobbleForwarder {
-    /// Build the sink and the receiver its worker drains. Last.fm forwards
+    /// Build the sink and the queues its worker drains. Last.fm forwards
     /// also need the admin's Last.fm master switch on.
     pub fn channel(
         links: Arc<dyn ScrobbleLinks>,
         lastfm_switch: Arc<dyn LastFmSwitch>,
-    ) -> (Self, tokio::sync::mpsc::Receiver<ForwardJob>) {
-        let (tx, rx) = tokio::sync::mpsc::channel(FORWARD_QUEUE_DEPTH);
+    ) -> (Self, ForwardQueues) {
+        let (lastfm_tx, lastfm) = tokio::sync::mpsc::channel(FORWARD_QUEUE_DEPTH);
+        let (listenbrainz_tx, listenbrainz) = tokio::sync::mpsc::channel(FORWARD_QUEUE_DEPTH);
         (
             Self {
-                tx,
+                lastfm_tx,
+                listenbrainz_tx,
                 links,
                 lastfm_switch,
             },
-            rx,
+            ForwardQueues {
+                lastfm,
+                listenbrainz,
+            },
         )
     }
 
@@ -161,7 +175,11 @@ impl ScrobbleForwarder {
                 track: track.clone(),
                 attempt: 0,
             };
-            let outcome = match self.tx.try_send(job) {
+            let tx = match service {
+                Service::LastFm => &self.lastfm_tx,
+                Service::ListenBrainz => &self.listenbrainz_tx,
+            };
+            let outcome = match tx.try_send(job) {
                 Ok(()) => ServiceOutcome {
                     success: true,
                     error: None,
@@ -320,92 +338,112 @@ enum Delivery {
     Drop(String),
 }
 
-/// Drains the forward queue until every sink handle drops.
+/// Drains the forward queues until every sink handle drops.
 pub struct ForwardWorker {
-    rx: tokio::sync::mpsc::Receiver<ForwardJob>,
+    queues: ForwardQueues,
+    courier: Courier,
+}
+
+/// Makes the upstream calls; shared by both service lanes.
+struct Courier {
     http: reqwest::Client,
     credentials: Arc<dyn ScrobbleCredentials>,
     endpoints: Endpoints,
 }
 
 impl ForwardWorker {
-    /// Build the worker over the forwarder's receiver.
+    /// Build the worker over the forwarder's queues.
     pub fn new(
-        rx: tokio::sync::mpsc::Receiver<ForwardJob>,
+        queues: ForwardQueues,
         http: reqwest::Client,
         credentials: Arc<dyn ScrobbleCredentials>,
         endpoints: Endpoints,
     ) -> Self {
         Self {
-            rx,
-            http,
-            credentials,
-            endpoints,
+            queues,
+            courier: Courier {
+                http,
+                credentials,
+                endpoints,
+            },
         }
     }
 
-    /// Deliver jobs, holding retries until they come due.
-    pub async fn run(mut self) {
-        let mut retries: Vec<(Instant, ForwardJob)> = Vec::new();
-        let mut next_slot: HashMap<Service, Instant> = HashMap::new();
-        loop {
-            let next_due = retries.iter().map(|(due, _)| *due).min();
-            let job = tokio::select! {
-                received = self.rx.recv() => match received {
-                    Some(job) => job,
-                    None => break,
-                },
-                () = sleep_until(next_due), if next_due.is_some() => {
-                    let now = Instant::now();
-                    let Some(index) = retries.iter().position(|(due, _)| *due <= now) else {
-                        continue;
-                    };
-                    retries.swap_remove(index).1
-                }
-            };
-            let slot = next_slot
-                .get(&job.service)
-                .copied()
-                .unwrap_or_else(Instant::now);
-            tokio::time::sleep_until(slot).await;
-            next_slot.insert(job.service, Instant::now() + job.service.spacing());
-            let mut job = job;
-            job.attempt += 1;
-            match self.deliver(&job).await {
-                Delivery::Done => {}
-                Delivery::Retry(hint, cause) if job.attempt < job.kind.attempts() => {
-                    let delay = hint.unwrap_or_else(|| backoff(job.attempt));
-                    tracing::debug!(
-                        service = job.service.as_str(),
-                        attempt = job.attempt,
-                        %cause,
-                        "scrobble forward failed; retrying"
-                    );
-                    retries.push((Instant::now() + delay, job));
-                }
-                Delivery::Retry(_, cause) => tracing::warn!(
-                    service = job.service.as_str(),
-                    attempts = job.attempt,
-                    kind = ?job.kind,
-                    %cause,
-                    "scrobble forward failed; giving up"
-                ),
-                Delivery::Drop(cause) => tracing::warn!(
-                    service = job.service.as_str(),
-                    kind = ?job.kind,
-                    %cause,
-                    "scrobble forward refused; dropping it"
-                ),
+    /// Deliver both services' jobs side by side, each paced on its own.
+    pub async fn run(self) {
+        let Self { queues, courier } = self;
+        tokio::join!(
+            lane(&courier, Service::LastFm, queues.lastfm),
+            lane(&courier, Service::ListenBrainz, queues.listenbrainz),
+        );
+    }
+}
+
+/// One service's delivery loop: jobs in order, paced by the service's
+/// policy, retries held until they come due.
+async fn lane(
+    courier: &Courier,
+    service: Service,
+    mut rx: tokio::sync::mpsc::Receiver<ForwardJob>,
+) {
+    let mut retries: Vec<(Instant, ForwardJob)> = Vec::new();
+    let mut next_slot = Instant::now();
+    loop {
+        let next_due = retries.iter().map(|(due, _)| *due).min();
+        let job = tokio::select! {
+            received = rx.recv() => match received {
+                Some(job) => job,
+                None => break,
+            },
+            () = sleep_until(next_due), if next_due.is_some() => {
+                let now = Instant::now();
+                let Some(index) = retries.iter().position(|(due, _)| *due <= now) else {
+                    continue;
+                };
+                retries.swap_remove(index).1
             }
-        }
-        if !retries.is_empty() {
-            tracing::warn!(
-                pending = retries.len(),
-                "scrobble forwarding stopped with retries pending; they are dropped"
-            );
+        };
+        tokio::time::sleep_until(next_slot).await;
+        next_slot = Instant::now() + service.spacing();
+        let mut job = job;
+        job.attempt += 1;
+        match courier.deliver(&job).await {
+            Delivery::Done => {}
+            Delivery::Retry(hint, cause) if job.attempt < job.kind.attempts() => {
+                let delay = hint.unwrap_or_else(|| backoff(job.attempt));
+                tracing::debug!(
+                    service = job.service.as_str(),
+                    attempt = job.attempt,
+                    %cause,
+                    "scrobble forward failed; retrying"
+                );
+                retries.push((Instant::now() + delay, job));
+            }
+            Delivery::Retry(_, cause) => tracing::warn!(
+                service = job.service.as_str(),
+                attempts = job.attempt,
+                kind = ?job.kind,
+                %cause,
+                "scrobble forward failed; giving up"
+            ),
+            Delivery::Drop(cause) => tracing::warn!(
+                service = job.service.as_str(),
+                kind = ?job.kind,
+                %cause,
+                "scrobble forward refused; dropping it"
+            ),
         }
     }
+    if !retries.is_empty() {
+        tracing::warn!(
+            service = service.as_str(),
+            pending = retries.len(),
+            "scrobble forwarding stopped with retries pending; they are dropped"
+        );
+    }
+}
 
+impl Courier {
     async fn deliver(&self, job: &ForwardJob) -> Delivery {
         match job.service {
             Service::ListenBrainz => {
