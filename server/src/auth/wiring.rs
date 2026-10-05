@@ -15,7 +15,6 @@
 //! to 502. Same fixed body and error-id shape on both.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -35,7 +34,6 @@ use super::session::middleware::SessionAuth;
 use super::session::rate_limit::RateLimiterSet;
 use super::users::stores::{
     BoxFuture, Clock, HibpPolicy, LastFmAuthClient, LastFmError, LastFmSwitch, SecurityPolicy,
-    SystemClock,
 };
 use super::users::{UsersDeps, admin_router, public_router, users_router};
 use crate::ids::IdGenerator;
@@ -417,7 +415,10 @@ impl AuthSetup {
     /// credential-less v3 requests 401 at the gate while any credentialed
     /// v3 request 500s on the unwired store lookup). Auth behavior tests
     /// build the real bundle instead.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests() -> Result<Self, String> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
         use super::prod::{
             Argon2idHasher, AuthDb, FileAvatarStore, SqliteAppPasswordStore,
             SqliteCredentialLookup, SqliteFederatedStore, SqliteLastFmStore, SqliteOidcStateStore,
@@ -425,6 +426,7 @@ impl AuthSetup {
             SqliteUserStore,
         };
         use super::users::hibp::{HibpScreen, PwnedPasswordsHttp};
+        use super::users::stores::SystemClock;
         use crate::ids::UuidGenerator;
 
         static COUNTER: AtomicU64 = AtomicU64::new(0);

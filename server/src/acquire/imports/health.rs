@@ -13,6 +13,7 @@
 //! readiness reads the policy slice; each swaps its scripted probe below
 //! for the live one without touching the handlers.
 
+#[cfg(any(test, feature = "test-support"))]
 use std::sync::Mutex;
 
 use super::models::{AcquireHealth, SabnzbdStatusResponse, SlskdStatusResponse, SourceGate};
@@ -95,18 +96,21 @@ pub trait FreeMusicProbe: Send + Sync {
 }
 
 /// Scripted slskd probe for briefs and the pre-client tier.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct ScriptedSlskd {
     inner: Mutex<ClientProbe>,
 }
 
 /// Scripted SABnzbd probe.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct ScriptedSabnzbd {
     inner: Mutex<ScriptedSabnzbdState>,
 }
 
 /// Scripted SABnzbd state.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 struct ScriptedSabnzbdState {
     status: ClientProbe,
@@ -115,18 +119,21 @@ struct ScriptedSabnzbdState {
 }
 
 /// Scripted Newznab probes.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct ScriptedNewznab {
     inner: Mutex<Vec<IndexerProbe>>,
 }
 
 /// Scripted Lidarr readiness.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct ScriptedLidarr {
     inner: Mutex<ClientProbe>,
 }
 
 /// Scripted Free Music readiness.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct ScriptedFree {
     inner: Mutex<FreeReadiness>,
@@ -153,6 +160,7 @@ impl Default for FreeReadiness {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ScriptedSlskd {
     /// Unconfigured probe.
     pub fn new() -> Self {
@@ -168,6 +176,7 @@ impl ScriptedSlskd {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl SlskdProbe for ScriptedSlskd {
     fn status(&self) -> ClientProbe {
         self.inner
@@ -177,6 +186,7 @@ impl SlskdProbe for ScriptedSlskd {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ScriptedSabnzbd {
     /// Unconfigured probe.
     pub fn new() -> Self {
@@ -196,6 +206,7 @@ impl ScriptedSabnzbd {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl SabnzbdProbe for ScriptedSabnzbd {
     fn status(&self) -> ClientProbe {
         self.inner
@@ -222,6 +233,7 @@ impl SabnzbdProbe for ScriptedSabnzbd {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ScriptedNewznab {
     /// No indexers.
     pub fn new() -> Self {
@@ -237,6 +249,7 @@ impl ScriptedNewznab {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl NewznabProbe for ScriptedNewznab {
     fn indexers(&self) -> Vec<IndexerProbe> {
         self.inner
@@ -246,6 +259,7 @@ impl NewznabProbe for ScriptedNewznab {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ScriptedLidarr {
     /// Unconfigured probe.
     pub fn new() -> Self {
@@ -261,6 +275,7 @@ impl ScriptedLidarr {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl LidarrReadinessProbe for ScriptedLidarr {
     fn status(&self) -> ClientProbe {
         self.inner
@@ -270,6 +285,7 @@ impl LidarrReadinessProbe for ScriptedLidarr {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ScriptedFree {
     /// Default-on Free Music.
     pub fn new() -> Self {
@@ -285,6 +301,7 @@ impl ScriptedFree {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl FreeMusicProbe for ScriptedFree {
     fn readiness(&self) -> FreeReadiness {
         self.inner

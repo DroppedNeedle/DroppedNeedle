@@ -221,6 +221,7 @@ impl MemoryImportSink {
     }
 
     /// Tracks stored under one local playlist id, for tests.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn stored(&self, local_playlist_id: &str) -> Vec<TrackView> {
         self.inner
             .lock()

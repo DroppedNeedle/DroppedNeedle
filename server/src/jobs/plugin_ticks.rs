@@ -177,11 +177,13 @@ pub struct MemoryTickStore {
 
 impl MemoryTickStore {
     /// Empty store knowing no plugins yet.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Empty store with the named plugins registered.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn with_plugins(names: &[&str]) -> Self {
         let store = Self::new();
         {

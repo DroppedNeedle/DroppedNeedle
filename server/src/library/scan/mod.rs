@@ -62,9 +62,11 @@ pub mod supervisor;
 pub mod walk;
 pub mod watcher;
 
+#[cfg(any(test, feature = "test-support"))]
+pub use coordinator::StaticResolver;
 pub use coordinator::{
     IndexCounts, LibraryScanCoordinator, ResolverSource, ScanEvent, ScanEventPublisher,
-    ScanRequestError, SharedResolver, StaticResolver,
+    ScanRequestError, SharedResolver,
 };
 pub use fs::{FsCoordinator, ReadGuard, WriteGuard, is_management_artifact};
 pub use models::{
@@ -85,14 +87,18 @@ pub use roots::{
     LibraryRoot, PolicyResolver, RootRegistry, RootSeamError, StreamRootSeam, fingerprint_roots,
 };
 pub use scheduler::{InclusionRule, ScheduleSettings, scheduled_scopes, seconds_until_due};
+#[cfg(any(test, feature = "test-support"))]
+pub use seams::NullIdentifyQueue;
 pub use seams::{
     AllowAll, ArmableDeferTagReader, Checkpoint, DeferOnceTagReader, FnCheckpoint, IdentifyQueue,
-    NullIdentifyQueue, NullTagReader, ScannedTags, TagReadError, TagReader,
+    NullTagReader, ScannedTags, TagReadError, TagReader,
 };
 pub use sqlite_store::SqliteScanStore;
+#[cfg(any(test, feature = "test-support"))]
+pub use store::MemoryScanStore;
 pub use store::{
-    CatalogEntry, ClassifyInput, CommitIndexedItem, InventoryPage, MemoryScanStore, RevisionKind,
-    ScanStore, ScanStoreError,
+    CatalogEntry, ClassifyInput, CommitIndexedItem, InventoryPage, RevisionKind, ScanStore,
+    ScanStoreError,
 };
 pub use supervisor::SupervisorInputs;
 pub use walk::{InventoryScanner, inventory_key, is_audio_file, relativize, text_safe_posix};

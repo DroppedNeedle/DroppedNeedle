@@ -50,5 +50,10 @@ hmac = "0.12"
 toml = "1"
 time = { version = "0.3", default-features = false, features = ["std", "formatting"] }
 
+[features]
+# Fakes, mocks, memory stores and test constructors for the test suite.
+test-support = []
+
 [dev-dependencies]
+droppedneedle = { path = ".", features = ["test-support"] }
 regex = "1.13.1"

@@ -6,7 +6,9 @@
 //! fetch's state for status sync. Another slice implements the durable side;
 //! this slice ships only the [`ScriptedDispatch`] fake for briefs.
 
+#[cfg(any(test, feature = "test-support"))]
 use std::collections::{HashMap, HashSet, VecDeque};
+#[cfg(any(test, feature = "test-support"))]
 use std::sync::{Arc, Mutex};
 
 /// What triggered a dispatch. Origins decide quota exemptions, never routing.
@@ -144,6 +146,7 @@ pub trait DownloadDispatch: Send + Sync {
 
 /// Scripted fake for briefs: canned outcomes in call order, every call
 /// recorded, task states flipped by hand to simulate landing.
+#[cfg(any(test, feature = "test-support"))]
 pub struct ScriptedDispatch {
     /// Queued outcomes, first call takes the front.
     script: Mutex<VecDeque<DispatchOutcome>>,
@@ -161,6 +164,7 @@ pub struct ScriptedDispatch {
     next_task: Mutex<u64>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ScriptedDispatch {
     /// Fake that dispatches every call as a fresh active task.
     pub fn new() -> Arc<Self> {
@@ -230,6 +234,7 @@ impl ScriptedDispatch {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl Default for ScriptedDispatch {
     fn default() -> Self {
         Self {
@@ -244,6 +249,7 @@ impl Default for ScriptedDispatch {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl DownloadDispatch for ScriptedDispatch {
     fn dispatch(&self, request: &DispatchRequest) -> Result<DispatchOutcome, DispatchError> {
         if let Ok(mut calls) = self.calls.lock() {

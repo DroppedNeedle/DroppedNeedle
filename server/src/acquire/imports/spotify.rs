@@ -17,9 +17,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(any(test, feature = "test-support"))]
+use super::models::SPOTIFY_SECRET_MASK;
 use super::models::{
-    SPOTIFY_SECRET_MASK, SpotifyAuthUrlResponse, SpotifyPlaylistItem, SpotifyPlaylistListResponse,
-    SpotifySettings,
+    SpotifyAuthUrlResponse, SpotifyPlaylistItem, SpotifyPlaylistListResponse, SpotifySettings,
 };
 
 /// OAuth scopes (v2 `_SPOTIFY_SCOPES`, verbatim).
@@ -196,6 +197,7 @@ impl FixedMbidResolver {
     }
 
     /// Teach one `(artist, album) -> mbid` row.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn seed(&self, artist: &str, album: &str, mbid: &str) {
         self.inner
             .lock()
@@ -215,11 +217,13 @@ impl AlbumMbidResolver for FixedMbidResolver {
 }
 
 /// In-memory Spotify settings rows.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct MemorySpotifySettings {
     inner: Mutex<SpotifySettings>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemorySpotifySettings {
     /// Empty rows.
     pub fn new() -> Self {
@@ -227,6 +231,7 @@ impl MemorySpotifySettings {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl SpotifySettingsStore for MemorySpotifySettings {
     fn get(&self) -> SpotifySettings {
         let inner = self

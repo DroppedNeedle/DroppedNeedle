@@ -7,10 +7,7 @@
 
 use std::{
     collections::HashMap,
-    sync::{
-        Arc, RwLock,
-        atomic::{AtomicBool, AtomicU64},
-    },
+    sync::{Arc, RwLock, atomic::AtomicU64},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -324,7 +321,8 @@ pub struct CollectionsState {
     /// Identity-table stub. Pins must never write here.
     pub identities: Arc<IdentityStore>,
     /// Failure injection for the leak briefs. While set, services fail.
-    pub fail_stores: Arc<AtomicBool>,
+    #[cfg(any(test, feature = "test-support"))]
+    pub fail_stores: Arc<std::sync::atomic::AtomicBool>,
     /// Acquire-owned pending approvals, when wired. Reads prefer this over
     /// the follow rows so reads and mutations share one store.
     pub acquire_approvals: Option<Arc<dyn PendingApprovalsSource>>,
@@ -340,6 +338,7 @@ impl CollectionsState {
 
     /// Fail the request when failure injection is armed.
     pub fn check_injection(&self) -> Result<(), CollectionsError> {
+        #[cfg(any(test, feature = "test-support"))]
         if self.fail_stores.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(CollectionsError::internal(&"injected store failure"));
         }

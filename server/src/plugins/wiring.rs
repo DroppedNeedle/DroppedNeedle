@@ -18,18 +18,15 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::Router;
 
 use crate::auth::users::{UsersDeps, roles::Role};
 use crate::db::WriteLane;
-use crate::http_client::HttpClientFactory;
 use crate::ids::IdGenerator;
-use crate::jobs::plugin_ticks::{MemoryTickStore, SqliteTickStore};
+use crate::jobs::plugin_ticks::SqliteTickStore;
 use crate::jobs::registry::JobRegistry;
 use crate::jobs::wiring::StoreKind;
-use crate::providers::InMemoryProviderCache;
 use crate::providers::cache::{ProviderCache, invalidate_source};
 use crate::runtime_config::{ConfigStore, Crypto};
 
@@ -43,14 +40,11 @@ use super::host::{
 use super::manifest::PluginManifest;
 use super::runtime::{ModuleLoader, PluginModule};
 use super::scrobble::{
-    ConnectionChangedHook, HttpListenBrainzVerifier, ListenBrainzLinkStore,
-    MemoryListenBrainzLinkStore, MemoryScrobblePrefsStore, NoopMixApprovalHook, ScrobbleDeps,
-    ScrobblePrefsStore, SqliteListenBrainzLinkStore, SqliteScrobblePrefsStore, StaticMixState,
+    ConnectionChangedHook, HttpListenBrainzVerifier, ListenBrainzLinkStore, NoopMixApprovalHook,
+    ScrobbleDeps, ScrobblePrefsStore, SqliteListenBrainzLinkStore, SqliteScrobblePrefsStore,
+    StaticMixState,
 };
 use super::ticks::{PluginTickLoops, TICK_CANCEL_GRACE, TickLoopSync, TickStoreKind};
-
-/// Scratch-dir sequence so parallel test states never share a store.
-static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Role lookups over the user store. The plugins routes call this
 /// synchronously while the store is async, so the lookup bridges with
@@ -232,11 +226,22 @@ impl PluginsSetup {
     /// and scrobble stores, the production verifier and zip reader, and
     /// tick loops over the caller's registry (usually the test jobs
     /// setup's).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(
         users: UsersDeps,
         ids: Arc<dyn IdGenerator>,
         registry: JobRegistry<StoreKind>,
     ) -> Result<Self, String> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        use super::scrobble::{MemoryListenBrainzLinkStore, MemoryScrobblePrefsStore};
+        use crate::http_client::HttpClientFactory;
+        use crate::jobs::plugin_ticks::MemoryTickStore;
+        use crate::providers::InMemoryProviderCache;
+
+        /// Scratch-dir sequence so parallel test states never share a store.
+        static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
+
         let http = HttpClientFactory::new().map_err(|error| error.to_string())?;
         let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(

@@ -49,6 +49,7 @@
 //! session-driven scrobble entry with their own thresholds.
 
 pub mod error;
+#[cfg(any(test, feature = "test-support"))]
 pub mod fakes;
 pub mod handlers;
 pub mod models;

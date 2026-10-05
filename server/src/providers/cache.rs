@@ -109,6 +109,7 @@ impl InMemoryProviderCache {
     }
 
     /// Drop expired entries, returning how many went.
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn cleanup_expired(&self) -> usize {
         let mut entries = self.entries.lock().await;
         let now = tokio::time::Instant::now();

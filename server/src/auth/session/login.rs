@@ -20,6 +20,7 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+#[cfg(any(test, feature = "test-support"))]
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -263,12 +264,14 @@ fn uuid_simple(raw_token: &str, now_unix: i64) -> String {
 
 /// Fake verifier for tests: SHA-256 compare plus a counted dummy path.
 /// Stored fake hashes are `fake$<sha256-hex>`.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone)]
 pub struct FakePasswordVerifier {
     dummy_calls: Arc<AtomicUsize>,
     verify_calls: Arc<AtomicUsize>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl FakePasswordVerifier {
     /// Fresh fake with zeroed counters.
     pub fn new() -> Self {
@@ -294,12 +297,14 @@ impl FakePasswordVerifier {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl Default for FakePasswordVerifier {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl PasswordVerifier for FakePasswordVerifier {
     fn verify(&self, candidate: &str, stored: &str) -> bool {
         self.verify_calls.fetch_add(1, Ordering::SeqCst);
@@ -316,11 +321,13 @@ impl PasswordVerifier for FakePasswordVerifier {
 }
 
 /// Fake user table for tests: map of lowercased username to credential.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone, Default)]
 pub struct FakeUserTable {
     users: Arc<std::collections::HashMap<String, LocalCredential>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl FakeUserTable {
     /// Table with one user.
     pub fn with_user(username: &str, password: &str, user_id: &str, display_name: &str) -> Self {
@@ -339,6 +346,7 @@ impl FakeUserTable {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl CredentialLookup for FakeUserTable {
     async fn local_user(&self, username_lc: &str) -> Option<LocalCredential> {
         self.users.get(username_lc).cloned()

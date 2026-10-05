@@ -353,6 +353,7 @@ impl LibrarySetup {
     /// scan store is an ephemeral SQLite database and the publish
     /// cell opens under the first added root, so sandbox-only tests
     /// stay hermetic.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(users: UsersDeps, ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
         let scripted = Arc::new(FakeProviders::default());
         let scan_store = Arc::new(
@@ -370,6 +371,7 @@ impl LibrarySetup {
     /// Test bundle over caller-supplied identify providers. Focused
     /// shutdown briefs script provider timing here; the shared
     /// `for_tests` shape stays the default everywhere else.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests_with_providers(
         users: UsersDeps,
         ids: Arc<dyn IdGenerator>,

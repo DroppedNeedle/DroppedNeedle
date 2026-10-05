@@ -10,13 +10,18 @@
 //! Cover and transition rules cite the v2 functions they port.
 
 use std::collections::{HashMap, HashSet};
+#[cfg(any(test, feature = "test-support"))]
 use std::sync::Mutex;
 
 use super::models::{
-    Counters, Disposition, RequestedControl, ScanControl, ScanFailureRecord, ScanInventoryItem,
-    ScanKind, ScanPhase, ScanRequest, ScanRequestResult, ScanRun, ScanScope, ScanState,
-    ScopeDiscoveryState, Verdict, counter_names, failure_codes, scope_covers_path,
+    Counters, ScanControl, ScanFailureRecord, ScanInventoryItem, ScanRequest, ScanRequestResult,
+    ScanRun, ScanScope, ScanState, ScopeDiscoveryState, Verdict, scope_covers_path,
 };
+#[cfg(any(test, feature = "test-support"))]
+use super::models::{
+    Disposition, RequestedControl, ScanKind, ScanPhase, counter_names, failure_codes,
+};
+#[cfg(any(test, feature = "test-support"))]
 use super::revision::{exact_stat_revision, legacy_mtime_eps_seconds};
 
 /// Stat-revision lineage for one catalog row. `exact` rows compare the
@@ -295,6 +300,7 @@ pub trait ScanStore: Send + Sync {
     fn recover_stopping(&self, now: f64) -> Vec<ScanRun>;
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone)]
 struct ScopeDiscovery {
     state: ScopeDiscoveryState,
@@ -302,12 +308,14 @@ struct ScopeDiscovery {
     generation: u64,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone)]
 struct StoredInventoryItem {
     item: ScanInventoryItem,
     generation: u64,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug)]
 struct StoredRun {
     run: ScanRun,
@@ -317,6 +325,7 @@ struct StoredRun {
     cleanup_pending: bool,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 struct MemoryState {
     runs: HashMap<String, StoredRun>,
@@ -331,11 +340,13 @@ struct MemoryState {
 
 /// In-memory [`ScanStore`]. Honest about every disposition and transition;
 /// persistence across restarts is the one thing it does not offer.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct MemoryScanStore {
     state: Mutex<MemoryState>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemoryScanStore {
     pub fn new() -> Self {
         Self::default()
@@ -348,6 +359,7 @@ impl MemoryScanStore {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn empty_counters() -> Counters {
     [
         counter_names::TOTAL,
@@ -370,16 +382,19 @@ fn empty_counters() -> Counters {
 /// True when a stored scope covers a requested one: same root, same policy
 /// revision, and the stored path is the requested path or an ancestor of it
 /// (v2 `_scan_scope_covers` plus the revision check in `covers`).
+#[cfg(any(test, feature = "test-support"))]
 fn scope_covers(existing: &ScanScope, requested_root: &str, requested: &ScanScope) -> bool {
     existing.root_id == requested_root
         && existing.policy_revision == requested.policy_revision
         && scope_covers_path(&existing.relative_path, &requested.relative_path)
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn bump_counters(run: &mut ScanRun, name: &str, delta: i64) {
     *run.counters.entry(name.to_owned()).or_insert(0) += delta;
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn normalize_key(raw: &str) -> String {
     // Step 4.13 / F-16 belt-and-braces: NFC-normalize incoming keys so the
     // catalog join matches the walker's normalized keys.
@@ -387,6 +402,7 @@ fn normalize_key(raw: &str) -> String {
     raw.nfc().collect()
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ScanStore for MemoryScanStore {
     fn request_run(
         &self,
@@ -1561,6 +1577,7 @@ impl ScanStore for MemoryScanStore {
 }
 
 /// Seed helper for tests: insert a catalog row directly.
+#[cfg(any(test, feature = "test-support"))]
 pub fn seed_catalog_entry(
     store: &MemoryScanStore,
     root_id: &str,

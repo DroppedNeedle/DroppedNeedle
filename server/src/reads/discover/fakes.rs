@@ -42,6 +42,7 @@ impl ManualClock {
     }
 
     /// Move the clock forward by `secs`.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn advance(&self, secs: i64) {
         if let Ok(mut now) = self.now.lock() {
             *now += secs;
@@ -158,6 +159,7 @@ impl FakeContent {
     }
 
     /// Arm every fallible read to fail with `cause` (log-only).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn fail_content(&self, cause: &str) {
         if let Ok(mut fail) = self.fail_with.lock() {
             *fail = Some(cause.to_owned());
@@ -165,6 +167,7 @@ impl FakeContent {
     }
 
     /// Users a refresh was triggered for, in order.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn refreshes_for(&self) -> Vec<String> {
         self.refreshes
             .lock()
@@ -173,6 +176,7 @@ impl FakeContent {
     }
 
     /// Recorded (user, feature) activity pairs, in order.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn activities(&self) -> Vec<(String, String)> {
         self.activities
             .lock()
@@ -589,6 +593,7 @@ impl FakeCharts {
     }
 
     /// Arm every read to fail with `cause` (log-only).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn fail_charts(&self, cause: &str) {
         if let Ok(mut fail) = self.fail_with.lock() {
             *fail = Some(cause.to_owned());
@@ -596,6 +601,7 @@ impl FakeCharts {
     }
 
     /// Recorded calls (`trending:this_week:listenbrainz`, ...), in order.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn calls(&self) -> Vec<String> {
         self.calls
             .lock()
@@ -796,6 +802,7 @@ pub struct FakeYouTube {
 
 impl FakeYouTube {
     /// Build a configured fake with one cached pair.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn configured() -> Self {
         Self {
             configured: true,

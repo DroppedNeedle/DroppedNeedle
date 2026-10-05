@@ -22,6 +22,7 @@ pub mod handlers;
 pub mod health;
 pub mod jobs;
 pub mod lidarr;
+#[cfg(any(test, feature = "test-support"))]
 pub mod mocks;
 pub mod models;
 pub mod spotify;

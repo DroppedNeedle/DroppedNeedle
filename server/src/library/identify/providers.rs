@@ -191,6 +191,7 @@ pub struct FakeProviders {
 }
 
 impl FakeProviders {
+    #[cfg(any(test, feature = "test-support"))]
     pub fn with_recall(result: RecallResult) -> Self {
         Self {
             recall: std::sync::Mutex::new(Some(result)),
@@ -198,6 +199,7 @@ impl FakeProviders {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn criticalities(&self) -> Vec<Criticality> {
         self.criticality_seen
             .lock()
@@ -207,6 +209,7 @@ impl FakeProviders {
 
     /// Replace the scripted recall. The stage-8 wiring uses this to
     /// seed case-specific recall after scan assigns real track ids.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_recall(&self, result: RecallResult) {
         if let Ok(mut slot) = self.recall.lock() {
             *slot = Some(result);

@@ -17,6 +17,7 @@ fn fail() -> StoreError {
 /// In-memory catalog with deterministic ordering. Seeds mirror the SQLite
 /// adapter's semantics (streamable-only, folded matching) so handler briefs
 /// pin behavior, not SQL.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct MemoryCatalog {
     albums: Mutex<Vec<AlbumRecord>>,
@@ -31,6 +32,7 @@ pub struct MemoryCatalog {
     genre_tracks: Mutex<HashMap<String, (String, Vec<TrackRecord>)>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemoryCatalog {
     /// Empty catalog: every list is empty, every lookup misses.
     pub fn new() -> Self {
@@ -106,10 +108,12 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 /// Case-folded substring match, mirroring the SQL LIKE on folded columns.
+#[cfg(any(test, feature = "test-support"))]
 fn matches(haystack: &str, q: &str) -> bool {
     crate::db::fold_text(haystack).contains(&crate::db::fold_text(q))
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn paged<T: Clone>(items: &[T], limit: u64, offset: u64) -> (Vec<T>, u64) {
     let total = items.len() as u64;
     let start = offset.min(total) as usize;
@@ -117,6 +121,7 @@ fn paged<T: Clone>(items: &[T], limit: u64, offset: u64) -> (Vec<T>, u64) {
     (items[start..end].to_vec(), total)
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn album_matches(record: &AlbumRecord, filter: &AlbumFilter) -> bool {
     if let Some(artist_id) = filter.artist_id.as_deref()
         && record.artist_id != artist_id
@@ -144,6 +149,7 @@ fn album_matches(record: &AlbumRecord, filter: &AlbumFilter) -> bool {
         .is_none_or(|q| matches(&record.title, q) || matches(&record.artist_name, q))
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn sort_albums(records: &mut [AlbumRecord], sort: AlbumSort, descending: bool) {
     match sort {
         AlbumSort::Name => records.sort_by(|a, b| a.title.cmp(&b.title).then(a.id.cmp(&b.id))),
@@ -173,6 +179,7 @@ fn sort_albums(records: &mut [AlbumRecord], sort: AlbumSort, descending: bool) {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn track_matches(record: &TrackRecord, filter: &TrackFilter) -> bool {
     if let Some(album_id) = filter.album_id.as_deref()
         && record.album_id != album_id
@@ -199,6 +206,7 @@ fn track_matches(record: &TrackRecord, filter: &TrackFilter) -> bool {
     })
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl LibraryCatalog for MemoryCatalog {
     fn list_albums<'a>(
         &'a self,
@@ -570,11 +578,13 @@ impl LibraryCatalog for MemoryCatalog {
 }
 
 /// Scriptable favorite flags: user -> kind -> ids.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct MemoryFavorites {
     flags: Mutex<HashMap<(String, String), HashSet<String>>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemoryFavorites {
     /// No favorites for anyone.
     pub fn new() -> Self {
@@ -594,6 +604,7 @@ impl MemoryFavorites {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl FavoriteReads for MemoryFavorites {
     fn filter_favorites<'a>(
         &'a self,
@@ -641,6 +652,7 @@ impl MemoryLyrics {
     }
 
     /// Store one doc.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn with_doc(self, track_id: &str, doc: LyricDoc) -> Self {
         self.docs
             .lock()

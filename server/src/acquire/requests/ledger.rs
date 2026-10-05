@@ -722,6 +722,7 @@ impl WantedStore {
     }
 
     /// Seed one watch (fixtures only).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn seed_watch(&self, watch: WantedWatch) {
         if let Ok(mut watches) = self.watches.write() {
             watches.insert(watch.key.to_lowercase(), watch);
@@ -729,6 +730,7 @@ impl WantedStore {
     }
 
     /// Seed one retrying entry (fixtures only).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn seed_retrying(&self, entry: WantedRetrying) {
         if let Ok(mut retrying) = self.retrying.write() {
             retrying.insert(entry.key.to_lowercase(), entry);
@@ -1076,6 +1078,7 @@ impl PersonalMixStore {
     }
 
     /// Seed one pending approval (fixtures only).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn seed_pending(&self, approval: MixApproval) {
         if let Ok(mut approvals) = self.approvals.write() {
             approvals.insert(approval.user_id.clone(), approval);
@@ -1083,6 +1086,7 @@ impl PersonalMixStore {
     }
 
     /// Mark one user unlinked (fixtures only).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn seed_unlinked(&self, user_id: &str) {
         if let Ok(mut unlinked) = self.unlinked.write() {
             unlinked.insert(user_id.to_owned());

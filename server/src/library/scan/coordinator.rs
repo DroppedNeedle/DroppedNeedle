@@ -109,10 +109,12 @@ pub trait ResolverSource: Send + Sync {
 }
 
 /// Fixed resolver for tests and single-config runtimes.
+#[cfg(any(test, feature = "test-support"))]
 pub struct StaticResolver {
     resolver: PolicyResolver,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl StaticResolver {
     pub fn new(registry: RootRegistry) -> Self {
         Self {
@@ -121,6 +123,7 @@ impl StaticResolver {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ResolverSource for StaticResolver {
     fn resolver(&self) -> PolicyResolver {
         self.resolver.clone()

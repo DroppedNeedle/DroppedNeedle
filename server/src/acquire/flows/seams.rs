@@ -12,8 +12,9 @@
 //! code. Time flows through [`Clock`] so cadence tests pin a [`ManualClock`]
 //! instead of sleeping.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
+#[cfg(any(test, feature = "test-support"))]
+use std::{collections::HashMap, sync::Arc};
 
 use futures_util::future::BoxFuture;
 
@@ -37,11 +38,13 @@ impl Clock for SystemClock {
 }
 
 /// Manual clock for briefs: time moves only when a test advances it.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone, Default)]
 pub struct ManualClock {
     now: Arc<Mutex<i64>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ManualClock {
     /// Pin the clock at `at` (unix seconds).
     pub fn new(at: i64) -> Self {
@@ -65,6 +68,7 @@ impl ManualClock {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl Clock for ManualClock {
     fn now_unix(&self) -> i64 {
         self.now.lock().map(|now| *now).unwrap_or(0)
@@ -140,11 +144,13 @@ pub trait DownloadDispatch: Send + Sync {
 
 /// Scripted downloads double: statuses are pinned per task id, dispatches
 /// are recorded for assertions.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct ScriptedDownloads {
     inner: Mutex<ScriptedDownloadsInner>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 struct ScriptedDownloadsInner {
     dispatched: Vec<DispatchRequest>,
@@ -156,6 +162,7 @@ struct ScriptedDownloadsInner {
     fail_dispatch: Option<String>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ScriptedDownloads {
     /// Fresh double with no tasks.
     pub fn new() -> Self {
@@ -207,6 +214,7 @@ impl ScriptedDownloads {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl DownloadDispatch for ScriptedDownloads {
     fn dispatch(&self, request: &DispatchRequest) -> Result<String, String> {
         let mut inner = self
@@ -279,17 +287,20 @@ pub trait CandidateSearch: Send + Sync {
 }
 
 /// Scripted search double: pinned candidates per `artist\x00title` key.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct ScriptedSearch {
     inner: Mutex<ScriptedSearchInner>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 struct ScriptedSearchInner {
     candidates: HashMap<String, Result<Vec<Candidate>, String>>,
     queries: Vec<(String, String)>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ScriptedSearch {
     /// Fresh double answering no candidates everywhere.
     pub fn new() -> Self {
@@ -314,6 +325,7 @@ impl ScriptedSearch {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl CandidateSearch for ScriptedSearch {
     fn search_album<'a>(
         &'a self,
@@ -359,17 +371,20 @@ pub trait ReleasePoll: Send + Sync {
 }
 
 /// Scripted poll double: pinned pages per artist MBID.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct ScriptedPoll {
     inner: Mutex<ScriptedPollInner>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 struct ScriptedPollInner {
     pages: HashMap<String, Result<Vec<ObservedRelease>, String>>,
     polls: Vec<String>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ScriptedPoll {
     /// Fresh double answering empty pages everywhere.
     pub fn new() -> Self {
@@ -392,6 +407,7 @@ impl ScriptedPoll {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ReleasePoll for ScriptedPoll {
     fn poll_releases<'a>(
         &'a self,
@@ -443,6 +459,7 @@ impl MemoryTicks {
     }
 
     /// Ticks recorded so far, in order.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn ticks(&self) -> Vec<Tick> {
         self.ticks
             .lock()
@@ -451,6 +468,7 @@ impl MemoryTicks {
     }
 
     /// Ticks of one kind, in order.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn of_kind(&self, kind: &str) -> Vec<Tick> {
         self.ticks
             .lock()
@@ -503,6 +521,7 @@ impl MemoryHandoff {
     }
 
     /// Landings recorded so far: `(op_id, user_id, files)`.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn landings(&self) -> Vec<(String, String, Vec<String>)> {
         self.landings
             .lock()
@@ -552,11 +571,13 @@ pub trait DropVerify: Send + Sync {
 }
 
 /// Scripted verify double: pinned verdicts per file name, `Ok` by default.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct ScriptedVerify {
     verdicts: Mutex<HashMap<String, VerifyVerdict>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ScriptedVerify {
     /// Fresh double verifying everything as good.
     pub fn new() -> Self {
@@ -571,6 +592,7 @@ impl ScriptedVerify {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl DropVerify for ScriptedVerify {
     fn verify(&self, file_name: &str) -> VerifyVerdict {
         self.verdicts
@@ -589,11 +611,13 @@ pub trait LibraryOrganise: Send + Sync {
 }
 
 /// Memory organise double recording placements.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct MemoryOrganise {
     placements: Mutex<Vec<(String, String)>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemoryOrganise {
     /// Fresh double.
     pub fn new() -> Self {
@@ -609,6 +633,7 @@ impl MemoryOrganise {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl LibraryOrganise for MemoryOrganise {
     fn organise(&self, job_id: &str, staged_path: &str) -> Result<String, String> {
         let mut placements = self
@@ -621,6 +646,7 @@ impl LibraryOrganise for MemoryOrganise {
 }
 
 /// Base name of a path, for the fake library layout.
+#[cfg(any(test, feature = "test-support"))]
 fn file_name_of(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }

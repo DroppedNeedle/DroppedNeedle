@@ -135,6 +135,7 @@ impl QuotaLedger {
     }
 
     /// Attribute library bytes to one user and the whole library.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn seed_usage(&self, user_id: &str, user_bytes: u64, library_bytes: u64) {
         if let Ok(mut bytes) = self.user_bytes.write() {
             bytes.insert(user_id.to_owned(), user_bytes);

@@ -12,9 +12,10 @@
 //! below target them in production, and the memory stores keep the same
 //! shapes for tests.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
+#[cfg(any(test, feature = "test-support"))]
+use std::{collections::HashMap, sync::Mutex};
 
 use crate::auth::times::to_iso;
 use crate::db::{WriteLane, writer::Lane};
@@ -112,11 +113,13 @@ fn apply_patch(entry: &mut ScrobblePrefs, patch: &ScrobblePrefsPatch) {
 }
 
 /// In-memory prefs store.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct MemoryScrobblePrefsStore {
     prefs: Mutex<HashMap<String, ScrobblePrefs>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemoryScrobblePrefsStore {
     /// Empty store.
     pub fn new() -> Self {
@@ -124,6 +127,7 @@ impl MemoryScrobblePrefsStore {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ScrobblePrefsStore for MemoryScrobblePrefsStore {
     fn get(&self, user_id: &str) -> BoxFuture<'_, ScrobblePrefs> {
         let prefs = self
@@ -317,17 +321,20 @@ fn open_link(
 }
 
 /// One sealed link row: the `{user_token, username}` JSON, encrypted.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone)]
 struct SealedLink {
     sealed: String,
 }
 
 /// In-memory link store with sealed tokens.
+#[cfg(any(test, feature = "test-support"))]
 pub struct MemoryListenBrainzLinkStore {
     crypto: Arc<crate::runtime_config::crypto::Crypto>,
     links: Mutex<HashMap<String, SealedLink>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl std::fmt::Debug for MemoryListenBrainzLinkStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MemoryListenBrainzLinkStore")
@@ -335,6 +342,7 @@ impl std::fmt::Debug for MemoryListenBrainzLinkStore {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemoryListenBrainzLinkStore {
     /// Empty store under one stage-2 key.
     pub fn new(crypto: Arc<crate::runtime_config::crypto::Crypto>) -> Self {
@@ -353,6 +361,7 @@ impl MemoryListenBrainzLinkStore {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ListenBrainzLinkStore for MemoryListenBrainzLinkStore {
     fn save(
         &self,
@@ -832,9 +841,11 @@ pub trait ConnectionChangedHook: Send + Sync {
 }
 
 /// No-op hook for tests.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct NoopConnectionChangedHook;
 
+#[cfg(any(test, feature = "test-support"))]
 impl ConnectionChangedHook for NoopConnectionChangedHook {
     fn on_listenbrainz_connection_changed(&self) {}
 }

@@ -40,6 +40,7 @@ pub struct AppConfig {
     pub base_path: String,
     /// Mounts the `__test__` failure hooks. Constructor-only on purpose: no
     /// environment variable can switch these on in a production binary.
+    #[cfg(any(test, feature = "test-support"))]
     pub test_hooks: bool,
     /// Mounts the debug-only localhost CORS layer. Constructor-only, and
     /// `main` only enables it in debug builds: release binaries never
@@ -65,6 +66,7 @@ impl AppConfig {
             library_db_path,
             config_file,
             base_path: String::new(),
+            #[cfg(any(test, feature = "test-support"))]
             test_hooks: false,
             debug_cors: false,
             tooling_routes: false,
@@ -72,6 +74,7 @@ impl AppConfig {
     }
 
     /// Test configuration with the failure hooks mounted.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn with_test_hooks(mut self) -> Self {
         self.test_hooks = true;
         self
@@ -107,6 +110,7 @@ impl AppConfig {
             library_db_path,
             config_file,
             base_path,
+            #[cfg(any(test, feature = "test-support"))]
             test_hooks: false,
             debug_cors: false,
             tooling_routes: false,

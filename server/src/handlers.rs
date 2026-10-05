@@ -1,13 +1,11 @@
 //! Thin Axum handlers. Each handler answers one route and returns typed
 //! errors; status mapping lives in `error::ApiError`.
 
-use axum::{Extension, Json, extract::State, http::StatusCode, response::IntoResponse};
+use axum::{Json, extract::State};
 use serde::Serialize;
 use utoipa::{OpenApi as _, ToSchema};
 
-use crate::{
-    admin::CheckpointView, db::CheckpointService, docs::ApiDoc, error::ApiError, ids::RequestId,
-};
+use crate::{admin::CheckpointView, db::CheckpointService, docs::ApiDoc, error::ApiError};
 
 /// Health payload. `status` plus the running message keep the v2 shape;
 /// stage 10 adds the latest checkpoint pass (`None` until the checkpoint
@@ -72,8 +70,12 @@ pub async fn fallback_405() -> ApiError {
 
 /// Failure hooks for the 5xx-leak briefs. Mounted only when the state opts
 /// in; the production binary never does.
+#[cfg(any(test, feature = "test-support"))]
 pub mod test_hooks {
-    use super::*;
+    use axum::{Extension, Json, http::StatusCode, response::IntoResponse};
+
+    use super::HealthResponse;
+    use crate::{error::ApiError, ids::RequestId};
 
     /// Marker substrings that must never reach a response body. Deliberately
     /// realistic: a filesystem path, an internal host, and a secret token.

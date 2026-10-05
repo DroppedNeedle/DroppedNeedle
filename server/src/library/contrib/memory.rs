@@ -20,11 +20,13 @@ use super::seams::*;
 // Clock
 // ---------------------------------------------------------------------------
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct TestClock {
     now: Mutex<f64>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl TestClock {
     pub fn new(now: f64) -> Self {
         Self {
@@ -47,6 +49,7 @@ impl TestClock {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ContributionClock for TestClock {
     fn now_seconds(&self) -> f64 {
         *self
@@ -60,12 +63,14 @@ impl ContributionClock for TestClock {
 // Sibling fakes
 // ---------------------------------------------------------------------------
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct MemoryIdentity {
     contexts: Mutex<HashMap<String, AlbumIdentificationContext>>,
     revisions: Mutex<(String, String, String)>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemoryIdentity {
     pub fn new() -> Self {
         Self {
@@ -94,6 +99,7 @@ impl MemoryIdentity {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ContributionIdentity for MemoryIdentity {
     fn album_context<'a>(
         &'a self,
@@ -116,6 +122,7 @@ impl ContributionIdentity for MemoryIdentity {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct MemoryCatalog {
     identity_scopes: Mutex<Vec<(Vec<String>, Vec<String>)>>,
@@ -123,6 +130,7 @@ pub struct MemoryCatalog {
     identified: Mutex<Vec<(String, String)>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemoryCatalog {
     pub fn new() -> Self {
         Self::default()
@@ -150,6 +158,7 @@ impl MemoryCatalog {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ContributionCatalog for MemoryCatalog {
     fn invalidate_identity_scope<'a>(
         &'a self,
@@ -190,6 +199,7 @@ impl ContributionCatalog for MemoryCatalog {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug)]
 pub struct ScriptedEvidence {
     decision: Mutex<AttachmentDecision>,
@@ -197,6 +207,7 @@ pub struct ScriptedEvidence {
     matcher_version: String,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ScriptedEvidence {
     pub fn new(decision: AttachmentDecision) -> Self {
         Self {
@@ -241,6 +252,7 @@ impl ScriptedEvidence {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl AttachmentEvidence for ScriptedEvidence {
     fn matcher_version(&self) -> String {
         self.matcher_version.clone()
@@ -277,6 +289,7 @@ pub struct ProviderCall {
     pub bypass_cache: bool,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct ScriptedDiscogs {
     releases: Mutex<HashMap<String, DiscogsRelease>>,
@@ -285,6 +298,7 @@ pub struct ScriptedDiscogs {
     queries: Mutex<Vec<String>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ScriptedDiscogs {
     pub fn new() -> Self {
         Self::default()
@@ -319,6 +333,7 @@ impl ScriptedDiscogs {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl DiscogsContrib for ScriptedDiscogs {
     fn search_releases<'a>(
         &'a self,
@@ -374,6 +389,7 @@ impl DiscogsContrib for ScriptedDiscogs {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct ScriptedMusicBrainz {
     resolutions: Mutex<HashMap<(String, UrlRelation), MusicBrainzUrlResolution>>,
@@ -383,6 +399,7 @@ pub struct ScriptedMusicBrainz {
     calls: Mutex<Vec<ProviderCall>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ScriptedMusicBrainz {
     pub fn new() -> Self {
         Self::default()
@@ -433,6 +450,7 @@ impl ScriptedMusicBrainz {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MusicBrainzContrib for ScriptedMusicBrainz {
     fn resolve_url<'a>(
         &'a self,
@@ -518,6 +536,7 @@ impl MusicBrainzContrib for ScriptedMusicBrainz {
 // Mocked submission endpoint (replaces the live MusicBrainz release editor)
 // ---------------------------------------------------------------------------
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone)]
 pub struct FakeSubmission {
     pub fields: Vec<(String, String)>,
@@ -526,12 +545,14 @@ pub struct FakeSubmission {
     pub release_mbid: String,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct FakeReleaseEditor {
     submissions: Mutex<Vec<FakeSubmission>>,
     next_release_mbid: Mutex<Option<String>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl FakeReleaseEditor {
     pub fn new() -> Self {
         Self::default()
@@ -646,6 +667,7 @@ impl MemoryStore {
     }
 
     /// Register the live album row the freshness join reads.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_freshness(
         &self,
         album_id: &str,
@@ -669,6 +691,7 @@ impl MemoryStore {
             );
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn raw(&self, contribution_id: &str) -> Option<ContributionRow> {
         self.inner
             .lock()
@@ -678,6 +701,7 @@ impl MemoryStore {
             .cloned()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn jobs_for(&self, contribution_id: &str) -> Vec<VerificationJobRow> {
         let inner = self
             .inner
@@ -693,6 +717,7 @@ impl MemoryStore {
         jobs
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn attempts(&self) -> Vec<ContributionVerificationAttempt> {
         self.inner
             .lock()
@@ -701,6 +726,7 @@ impl MemoryStore {
             .clone()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn live_tokens(&self) -> usize {
         self.inner
             .lock()
@@ -711,6 +737,7 @@ impl MemoryStore {
             .count()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn album_identity(&self, album_id: &str) -> Option<(String, String)> {
         self.inner
             .lock()

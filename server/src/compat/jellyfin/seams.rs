@@ -379,6 +379,7 @@ impl MemoryLibrary {
     }
 
     /// Seed one track.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn add_track(&self, track: TrackView) {
         if let Ok(mut rows) = self.rows.lock() {
             rows.tracks.push(track);
@@ -386,6 +387,7 @@ impl MemoryLibrary {
     }
 
     /// Seed one album.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn add_album(&self, album: AlbumView) {
         if let Ok(mut rows) = self.rows.lock() {
             rows.albums.push(album);
@@ -393,6 +395,7 @@ impl MemoryLibrary {
     }
 
     /// Seed one artist (`album_artist` lists it under `/Artists/AlbumArtists`).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn add_artist(&self, artist: ArtistView, album_artist: bool) {
         if let Ok(mut rows) = self.rows.lock() {
             if album_artist {
@@ -403,6 +406,7 @@ impl MemoryLibrary {
     }
 
     /// Seed one genre.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn add_genre(&self, genre: GenreView) {
         if let Ok(mut rows) = self.rows.lock() {
             rows.genres.push(genre);
@@ -410,6 +414,7 @@ impl MemoryLibrary {
     }
 
     /// Seed release art for one size bucket (`250`, `500`, `1200`).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn add_cover(&self, rg_mbid: &str, size: &str, bytes: Vec<u8>, content_type: &str) {
         if let Ok(mut rows) = self.rows.lock() {
             rows.covers.insert(
@@ -423,6 +428,7 @@ impl MemoryLibrary {
     }
 
     /// Seed one artist image.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn add_artist_image(&self, mbid: &str, bytes: Vec<u8>, content_type: &str) {
         if let Ok(mut rows) = self.rows.lock() {
             rows.artist_images.insert(
@@ -859,13 +865,16 @@ pub fn content_type_for_format(format: Option<&str>) -> &'static str {
 /// multi-range, malformed, empty, or unsatisfiable → 416 with
 /// `Content-Range: bytes */N` and no body).
 /// Seeded file bytes plus lowercase container per file id.
+#[cfg(any(test, feature = "test-support"))]
 type SeededFiles = std::sync::Arc<Mutex<HashMap<String, (Vec<u8>, Option<String>)>>>;
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone, Default)]
 pub struct MemoryEngine {
     files: SeededFiles,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemoryEngine {
     /// Empty engine.
     pub fn new() -> Self {
@@ -886,6 +895,7 @@ impl MemoryEngine {
 
 /// Resolve a `Range` header against `size`: `Ok(None)` is the full body,
 /// `Ok(Some((start, end)))` an inclusive byte span, `Err(())` a 416.
+#[cfg(any(test, feature = "test-support"))]
 fn resolve_range(range: Option<&str>, size: usize) -> Result<Option<(usize, usize)>, ()> {
     let Some(header) = range else {
         return Ok(None);
@@ -923,6 +933,7 @@ fn resolve_range(range: Option<&str>, size: usize) -> Result<Option<(usize, usiz
     Ok(Some((start, end.min(size - 1))))
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn unsatisfied(size: usize) -> ByteOutcome {
     ByteOutcome {
         status: 416,
@@ -931,6 +942,7 @@ fn unsatisfied(size: usize) -> ByteOutcome {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl StreamEngine for MemoryEngine {
     async fn direct(&self, file_id: &str, range: Option<&str>) -> ByteOutcome {
         let Some((bytes, format)) = self.lookup(file_id) else {
@@ -1131,12 +1143,14 @@ pub enum SessionCall {
 }
 
 /// Recording [`PlaybackSessions`] for tests.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone, Default)]
 pub struct MemorySessions {
     started: std::sync::Arc<Mutex<HashSet<(String, String)>>>,
     calls: std::sync::Arc<Mutex<Vec<SessionCall>>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemorySessions {
     /// Empty recorder.
     pub fn new() -> Self {
@@ -1158,6 +1172,7 @@ impl MemorySessions {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl PlaybackSessions for MemorySessions {
     async fn mark_started(&self, user_id: &str, key: &str) {
         if let Ok(mut started) = self.started.lock() {

@@ -110,6 +110,7 @@ impl ReadsSetup {
     /// Test bundle over unwired adapters. Library answers from empty memory
     /// stores, search from a lazy pool, and wrapped denies everything; the
     /// hooked-state suites that use this never touch reads routes.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(users: UsersDeps, ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
         let pool = sqlx::SqlitePool::connect_lazy("sqlite::memory:")
             .map_err(|error| format!("test reads pool: {error}"))?;

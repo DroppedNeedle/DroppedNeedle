@@ -580,11 +580,13 @@ pub async fn save_page(
 /// In-memory disabled sets, one per user page. Test wiring only: the
 /// settings test bundle mounts the prefs routes over this so briefs
 /// round-trip without a database.
+#[cfg(any(test, feature = "test-support"))]
 pub struct MemorySectionPrefsStore {
     /// Disabled keys by `(user id, page)`.
     pub disabled: std::sync::Mutex<HashMap<(String, String), HashSet<String>>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemorySectionPrefsStore {
     /// Empty store.
     pub fn new() -> Self {
@@ -594,12 +596,14 @@ impl MemorySectionPrefsStore {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl Default for MemorySectionPrefsStore {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl SectionPrefsStore for MemorySectionPrefsStore {
     fn get_disabled<'a>(
         &'a self,
@@ -637,6 +641,7 @@ impl SectionPrefsStore for MemorySectionPrefsStore {
 
 /// Fixed link state. Test wiring only: briefs pin availability both
 /// ways without seeding connection rows.
+#[cfg(any(test, feature = "test-support"))]
 pub struct StaticLinkStatus {
     /// Reported ListenBrainz link state.
     pub listenbrainz: bool,
@@ -644,6 +649,7 @@ pub struct StaticLinkStatus {
     pub lastfm: bool,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl LinkStatus for StaticLinkStatus {
     fn is_listenbrainz_linked<'a>(&'a self, _user_id: &'a str) -> BoxFuture<'a, bool> {
         Box::pin(async move { self.listenbrainz })

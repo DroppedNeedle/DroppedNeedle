@@ -15,7 +15,6 @@
 //! gate only.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::{
     Router,
@@ -30,20 +29,13 @@ use crate::auth::{
     users::{UsersDeps, roles::Role},
 };
 use crate::ids::IdGenerator;
-use crate::providers::InMemoryProviderCache;
-use crate::providers::cache::ProviderCache;
-use crate::runtime_config::{ConfigStore, Crypto};
-use crate::settings::effects::{LiveSaveEffects, NoopKick, SaveEffects};
+use crate::runtime_config::ConfigStore;
+use crate::settings::effects::SaveEffects;
 use crate::settings::error::SettingsError;
 use crate::settings::musicbrainz::MusicBrainzLifecycle;
-use crate::settings::section_prefs::{
-    LinkStatus, MemorySectionPrefsStore, SectionPrefsStore, StaticLinkStatus,
-};
+use crate::settings::section_prefs::{LinkStatus, SectionPrefsStore};
 use crate::settings::services::{PolicyImpactBuckets, SettingsService};
 use crate::settings::verify::{LiveProbes, VerifyProbes};
-
-/// Scratch-dir sequence so parallel test states never share a store.
-static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Section-prefs backends: the toggle store plus per-user link state.
 pub struct SectionPrefsDeps {
@@ -111,17 +103,30 @@ impl SettingsSetup {
     /// entries), live probes, and memory prefs. Tests that verify
     /// connections use [`SettingsSetup::for_tests_with_probes`] with a
     /// scripted fake instead, so no test touches live networks.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(ids: Arc<dyn IdGenerator>, users: UsersDeps) -> Result<Self, String> {
         let http = reqwest::Client::new();
         Self::for_tests_with_probes(ids, users, Arc::new(LiveProbes::new(http)))
     }
 
     /// Test bundle with scripted verify probes.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests_with_probes(
         ids: Arc<dyn IdGenerator>,
         users: UsersDeps,
         probes: Arc<dyn VerifyProbes>,
     ) -> Result<Self, String> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        use crate::providers::InMemoryProviderCache;
+        use crate::providers::cache::ProviderCache;
+        use crate::runtime_config::Crypto;
+        use crate::settings::effects::{LiveSaveEffects, NoopKick};
+        use crate::settings::section_prefs::{MemorySectionPrefsStore, StaticLinkStatus};
+
+        /// Scratch-dir sequence so parallel test states never share a store.
+        static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
+
         let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
             "droppedneedle-settings-test-{}-{seq}",

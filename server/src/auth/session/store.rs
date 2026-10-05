@@ -8,12 +8,13 @@
 //! Throttled `last_seen_at` writes (at most one per ~5 min per token) and the
 //! R6 list/revoke surface belong to the session-management slice, not here.
 
-use std::collections::HashMap;
-use std::sync::RwLock;
+#[cfg(any(test, feature = "test-support"))]
+use std::{collections::HashMap, sync::RwLock};
 
 use serde::Serialize;
 use thiserror::Error;
 
+#[cfg(any(test, feature = "test-support"))]
 use super::tokens::constant_time_eq;
 
 /// Session kind, v2 `session_kind` values kept verbatim.
@@ -90,11 +91,13 @@ pub fn now_unix() -> i64 {
 /// In-memory store for tests and scratch harnesses. Never production: sessions
 /// must survive restarts, which needs the SQLite adapter. Clones share the
 /// same rows, like a connection pool handle.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone, Default)]
 pub struct MemorySessionStore {
     rows: std::sync::Arc<RwLock<HashMap<String, SessionRecord>>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemorySessionStore {
     /// Empty store.
     pub fn new() -> Self {
@@ -102,6 +105,7 @@ impl MemorySessionStore {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl SessionStore for MemorySessionStore {
     async fn insert(&self, record: SessionRecord) -> Result<(), SessionStoreError> {
         let mut rows = self

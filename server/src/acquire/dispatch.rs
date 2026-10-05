@@ -56,6 +56,7 @@ impl Journal {
     /// Foreign keys stay off, so dispatches for not-yet-created users
     /// still insert in unit-style tests. The pragma is explicit: the
     /// bundled SQLite enables enforcement by default.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn memory() -> Result<Self, String> {
         let conn =
             Connection::open_in_memory().map_err(|error| format!("acquire journal: {error}"))?;

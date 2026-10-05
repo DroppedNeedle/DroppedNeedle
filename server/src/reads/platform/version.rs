@@ -92,6 +92,7 @@ pub struct FakeReleases {
 
 impl FakeReleases {
     /// Build a fake from its parts.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn new(
         current: VersionInfo,
         latest: Option<GitHubRelease>,

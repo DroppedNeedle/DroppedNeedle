@@ -14,7 +14,6 @@
 //! `compat:jellyfin`. Per-user lease fairness needs a seam parameter and
 //! is a recorded follow-up.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::Router;
@@ -36,7 +35,6 @@ use crate::playback::services::PlaybackDeps;
 use crate::runtime_config::Crypto;
 use crate::runtime_config::sections::{AudioFormat, ConnectApps};
 use crate::stage6::Stage6Engine;
-use crate::stream::transcode::{FfmpegTranscoder, LocalTranscodeGate, StdFfmpegSpawner};
 
 /// Stage-3-backed Subsonic verifier.
 pub type CompatVerifier = SubsonicVerifier<ProdCompatPasswords, UsersDeps>;
@@ -139,11 +137,14 @@ impl CompatSetup {
     /// Minimal bundle for unit-style app tests: real seam types, an unused
     /// engine over an empty root, kill switches OFF. Tests that serve
     /// compat use [`CompatSetup::with_enabled`] plus fixture routers.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(
         users: UsersDeps,
         scan: LibrarySetup,
         ids: Arc<dyn crate::ids::IdGenerator>,
     ) -> Result<Self, String> {
+        use std::path::PathBuf;
+
         use crate::playback::fakes::{FakeCatalog, FakeHistory, FakeNames, FakePrefs, FakeSinks};
         use crate::playback::ports::SystemClock;
         use crate::playback::reports::ReportQueue;
@@ -154,6 +155,7 @@ impl CompatSetup {
         use crate::remotes::reader::RemotesRemoteReader;
         use crate::stream::gateway::Gateway;
         use crate::stream::transcode::TranscodeSettings;
+        use crate::stream::transcode::{FfmpegTranscoder, LocalTranscodeGate, StdFfmpegSpawner};
 
         let crypto = Arc::new(
             Crypto::from_key_bytes(&[7u8; 32]).map_err(|error| format!("test key: {error}"))?,

@@ -195,12 +195,14 @@ pub trait IdentifyQueue: Send + Sync {
 }
 
 /// Null identify queue: counts offers, queues nothing.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct NullIdentifyQueue {
     tracks: Mutex<usize>,
     albums: Mutex<Vec<String>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl NullIdentifyQueue {
     pub fn new() -> Self {
         Self::default()
@@ -214,6 +216,7 @@ impl NullIdentifyQueue {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl IdentifyQueue for NullIdentifyQueue {
     fn enqueue(&self, album_key: &str, track_ids: &[String]) -> usize {
         *self

@@ -75,7 +75,7 @@ pub fn create_app(state: AppState) -> Router {
             state.auth.limits.clone(),
             rate_limit,
         ));
-    let mut app = Router::new()
+    let app = Router::new()
         .route(
             "/health",
             get(handlers::health).with_state(state.admin.checkpoint.clone()),
@@ -89,24 +89,28 @@ pub fn create_app(state: AppState) -> Router {
     // compiles this mount out of release binaries entirely, so no
     // production process can serve tooling however it was configured.
     #[cfg(debug_assertions)]
-    if crate::tooling::covers_debug::tooling_routes_enabled(&state.config) {
-        app = app.merge(crate::tooling::covers_debug::router(
+    let app = if crate::tooling::covers_debug::tooling_routes_enabled(&state.config) {
+        app.merge(crate::tooling::covers_debug::router(
             state.reads.platform.covers.clone(),
-        ));
-    }
-    if state.config.test_hooks {
-        app = app
-            .route(
-                "/__test__/typed-error",
-                get(handlers::test_hooks::typed_error),
-            )
-            .route(
-                "/__test__/panic",
-                get(handlers::test_hooks::panicking_handler),
-            )
-            .route("/__test__/raw-500", get(handlers::test_hooks::raw_500))
-            .route("/__test__/raw-503", get(handlers::test_hooks::raw_503));
-    }
+        ))
+    } else {
+        app
+    };
+    #[cfg(any(test, feature = "test-support"))]
+    let app = if state.config.test_hooks {
+        app.route(
+            "/__test__/typed-error",
+            get(handlers::test_hooks::typed_error),
+        )
+        .route(
+            "/__test__/panic",
+            get(handlers::test_hooks::panicking_handler),
+        )
+        .route("/__test__/raw-500", get(handlers::test_hooks::raw_500))
+        .route("/__test__/raw-503", get(handlers::test_hooks::raw_503))
+    } else {
+        app
+    };
     // Compat-aware fallbacks: preflights and case-variant compat paths
     // redispatch into the compat router; everything else answers natively.
     // Closures carry the compat router (fallbacks take handlers, and the

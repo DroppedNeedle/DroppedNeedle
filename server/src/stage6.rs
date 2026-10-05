@@ -18,7 +18,6 @@ use axum::Router;
 use crate::auth::users::UsersDeps;
 use crate::config::AppConfig;
 use crate::ids::IdGenerator;
-use crate::playback::fakes::{FakeCatalog, FakeHistory, FakeNames, FakePrefs, FakeSinks};
 use crate::playback::ports::{ReportTrack, ScrobbleSinks, ServiceOutcome, SystemClock};
 use crate::playback::reports::{ReportQueue, run_report_worker};
 use crate::playback::services::{
@@ -156,7 +155,10 @@ impl Stage6Setup {
     /// Test bundle over memory stores and slice fakes. The catalog is
     /// empty (honest 404s), attribution drops, and ffmpeg is absent, so
     /// every transcode decision lands direct.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(users: UsersDeps, ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
+        use crate::playback::fakes::{FakeCatalog, FakeHistory, FakeNames, FakePrefs, FakeSinks};
+
         let http = crate::http_client::HttpClientFactory::new()
             .map_err(|error| format!("test stage6 http: {error}"))?
             .shared()

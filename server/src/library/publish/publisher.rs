@@ -177,11 +177,13 @@ impl Catalog for SqliteCatalog {
 }
 
 /// No-op catalog for briefs that never reach commit.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone, Default)]
 pub struct NullCatalog {
     revision: std::cell::Cell<u64>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl Catalog for NullCatalog {
     fn revision(&self, _conn: &Connection) -> Result<u64, PublishError> {
         Ok(self.revision.get())

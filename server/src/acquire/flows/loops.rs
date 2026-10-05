@@ -90,17 +90,20 @@ impl Sleeper for TokioSleeper {
 /// Manual sleeper for briefs: `wake` releases one waiter, `shut_down`
 /// releases all with false. Requested durations are recorded so briefs can
 /// assert the honest intervals.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone)]
 pub struct ManualSleeper {
     inner: Arc<ManualSleeperInner>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug)]
 struct ManualSleeperInner {
     state: Mutex<ManualSleepState>,
     wake: tokio::sync::Notify,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 struct ManualSleepState {
     waits: usize,
@@ -108,6 +111,7 @@ struct ManualSleepState {
     requested: Vec<Duration>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ManualSleeper {
     /// Fresh manual sleeper.
     pub fn new() -> Self {
@@ -151,12 +155,14 @@ impl ManualSleeper {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl Default for ManualSleeper {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl Sleeper for ManualSleeper {
     async fn sleep(&self, duration: Duration) -> bool {
         if let Ok(mut state) = self.inner.state.lock() {

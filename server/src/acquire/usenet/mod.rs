@@ -19,6 +19,7 @@
 //! Newznab's XML-only feed with the 202 `t=music` → `t=search` fallback,
 //! and Prowlarr 2.3.5.5327's header auth with the never-logged key.
 
+#[cfg(any(test, feature = "test-support"))]
 pub mod mocks;
 pub mod newznab;
 pub mod policy;

@@ -141,6 +141,7 @@ impl AdminSetup {
 
     /// Test bundle: always-present handles only, backends unwired. Suites
     /// that need a database attach it with the `with_*` builders.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(
         users: UsersDeps,
         quota: Arc<crate::acquire::requests::quota::QuotaLedger>,

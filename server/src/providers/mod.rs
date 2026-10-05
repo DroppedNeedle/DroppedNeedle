@@ -99,7 +99,9 @@ pub use degradation::{
 pub use error::{MAX_RETRY_AFTER, ProviderError, classify_status, parse_retry_after};
 pub use limiter::{LimiterSet, OverCapacity, Pacer, RateLimiter, RatePolicy, policy_for};
 pub use matrix::{OperationKind, SourceRole, apply, outcome_from, role};
-pub use retry::{Clock, ManualClock, RetryPolicy, TokioClock, execute};
+#[cfg(any(test, feature = "test-support"))]
+pub use retry::ManualClock;
+pub use retry::{Clock, RetryPolicy, TokioClock, execute};
 pub use singleflight::Singleflight;
 pub use slots::{RequestPriority, SlotError, SlotManager, SlotStats, USER_QUIET_WINDOW};
 

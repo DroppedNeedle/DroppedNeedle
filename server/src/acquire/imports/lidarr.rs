@@ -9,13 +9,15 @@
 //! no method here issues any Lidarr management call.
 
 use std::collections::{HashMap, HashSet};
+#[cfg(any(test, feature = "test-support"))]
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(any(test, feature = "test-support"))]
+use super::models::LIDARR_API_KEY_MASK;
 use super::models::{
-    LIDARR_API_KEY_MASK, LidarrArtistCandidate, LidarrArtistListResponse, LidarrConnectionSettings,
-    LidarrImportResponse,
+    LidarrArtistCandidate, LidarrArtistListResponse, LidarrConnectionSettings, LidarrImportResponse,
 };
 
 /// True for a well-formed MusicBrainz id: `8-4-4-4-12` lowercase-or-upper
@@ -195,6 +197,7 @@ pub trait LidarrSettingsStore: Send + Sync {
 }
 
 /// In-memory follow rows for tests and the pre-persistence tier.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct MemoryFollowStore {
     inner: Mutex<HashMap<(String, String), MemoryFollow>>,
@@ -202,6 +205,7 @@ pub struct MemoryFollowStore {
 
 /// One in-memory follow row. The descriptive fields mirror the durable
 /// row shape; only intent is read back.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 struct MemoryFollow {
@@ -211,6 +215,7 @@ struct MemoryFollow {
     seq: u64,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemoryFollowStore {
     /// Empty store.
     pub fn new() -> Self {
@@ -218,6 +223,7 @@ impl MemoryFollowStore {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl FollowStore for MemoryFollowStore {
     fn existing_followed_lower(&self, user_id: &str, candidates: &[String]) -> HashSet<String> {
         let inner = self
@@ -273,14 +279,17 @@ impl FollowStore for MemoryFollowStore {
 }
 
 /// One recorded approval batch: owning user plus the auto-download pairs.
+#[cfg(any(test, feature = "test-support"))]
 type ApprovalBatch = (String, Vec<(String, String)>);
 
 /// In-memory approval batches.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct MemoryApprovalSink {
     inner: Mutex<Vec<ApprovalBatch>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemoryApprovalSink {
     /// Empty sink.
     pub fn new() -> Self {
@@ -296,6 +305,7 @@ impl MemoryApprovalSink {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ApprovalSink for MemoryApprovalSink {
     fn create_import_batch(&self, user_id: &str, pairs: &[(String, String)]) -> String {
         let mut inner = self
@@ -309,11 +319,13 @@ impl ApprovalSink for MemoryApprovalSink {
 }
 
 /// In-memory Lidarr settings rows.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct MemoryLidarrSettings {
     inner: Mutex<LidarrConnectionSettings>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemoryLidarrSettings {
     /// Empty rows.
     pub fn new() -> Self {
@@ -331,6 +343,7 @@ impl MemoryLidarrSettings {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl LidarrSettingsStore for MemoryLidarrSettings {
     fn get(&self) -> LidarrConnectionSettings {
         let inner = self

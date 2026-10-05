@@ -27,6 +27,7 @@ pub mod error;
 pub mod folders;
 pub mod handlers;
 pub mod jellyfin;
+#[cfg(any(test, feature = "test-support"))]
 pub mod mocks;
 pub mod models;
 pub mod navidrome;

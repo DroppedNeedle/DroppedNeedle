@@ -22,9 +22,11 @@ use std::{
     collections::hash_map::RandomState,
     future::Future,
     hash::{BuildHasher as _, Hasher as _},
-    sync::Mutex,
     time::Duration,
 };
+
+#[cfg(any(test, feature = "test-support"))]
+use std::sync::Mutex;
 
 use super::error::ProviderError;
 
@@ -129,17 +131,20 @@ impl Clock for TokioClock {
 
 /// A scripted clock for tests: `sleep` records the delay and advances the
 /// fake clock instead of waiting.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct ManualClock {
     state: Mutex<ManualState>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 struct ManualState {
     now: Duration,
     sleeps: Vec<Duration>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ManualClock {
     /// A clock starting at zero with no recorded sleeps.
     #[must_use]
@@ -167,6 +172,7 @@ impl ManualClock {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl Clock for ManualClock {
     type Mark = Duration;
 

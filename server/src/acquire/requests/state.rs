@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use super::bridges::{FollowDecisionSink, WatchView};
-use super::dispatch::{DownloadDispatch, ScriptedDispatch};
+use super::dispatch::DownloadDispatch;
 use super::ledger::{
     EditionStore, FollowApprovalStore, PersonalMixStore, RequestStore, WantedStore,
 };
@@ -57,7 +57,10 @@ impl RequestsState {
 
     /// Test state over the scripted fake. Returns the state plus the fake so
     /// briefs can script outcomes and flip task states.
-    pub fn for_tests() -> (Self, Arc<ScriptedDispatch>) {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn for_tests() -> (Self, Arc<super::dispatch::ScriptedDispatch>) {
+        use super::dispatch::ScriptedDispatch;
+
         let dispatch = ScriptedDispatch::new();
         (Self::new(dispatch.clone()), dispatch)
     }

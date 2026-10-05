@@ -115,6 +115,7 @@ pub mod stream;
 pub mod value;
 pub mod views;
 
+#[cfg(any(test, feature = "test-support"))]
 pub mod fake;
 
 use std::collections::HashMap;

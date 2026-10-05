@@ -32,6 +32,7 @@ pub enum StoreError {
 /// Tests only: production applies migrations at boot through the sqlx
 /// migrator. Running the same files here keeps the briefs honest about
 /// the schema they exercise.
+#[cfg(any(test, feature = "test-support"))]
 pub fn apply_test_schema(conn: &Connection) -> Result<(), StoreError> {
     conn.execute_batch(include_str!("../../../migrations/0001_baseline.sql"))?;
     conn.execute_batch(include_str!(

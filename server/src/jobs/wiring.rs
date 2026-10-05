@@ -379,6 +379,7 @@ impl JobsSetup {
     /// live admin gate over the caller's user store. Route tests exercise the
     /// playlist route through this; loop tests bind the memory stores
     /// directly.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(users: UsersDeps) -> Self {
         Self {
             registry: JobRegistry::new(StoreKind::Memory(MemoryRegistryStore::new())),

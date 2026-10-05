@@ -287,9 +287,11 @@ impl<S: RegistryStore, T: JobsTickStore + TickStoreAdmin> TickLoopSync for Plugi
 }
 
 /// No-op sync for handlers under test that never assert loops.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct NoopTickSync;
 
+#[cfg(any(test, feature = "test-support"))]
 impl TickLoopSync for NoopTickSync {
     fn sync_host<'a>(&'a self, _host: &'a Arc<PluginHost>) -> BoxFuture<'a, ()> {
         Box::pin(async {})

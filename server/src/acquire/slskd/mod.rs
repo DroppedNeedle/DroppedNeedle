@@ -12,6 +12,7 @@ pub mod client;
 pub mod error;
 pub mod http;
 pub mod locate;
+#[cfg(any(test, feature = "test-support"))]
 pub mod mock;
 pub mod models;
 pub mod policy;
@@ -22,6 +23,7 @@ pub use client::SlskdClient;
 pub use error::SlskdError;
 pub use http::{HttpFault, HttpReply, ReqwestSlskdHttp, SlskdHttp};
 pub use locate::Locator;
+#[cfg(any(test, feature = "test-support"))]
 pub use mock::{MOCK_API_KEY, MockSlskd, REJECT_MARKER};
 pub use models::{
     SlskdEnqueueResponse, SlskdFile, SlskdOptions, SlskdSearchResponse, SlskdTransfer,

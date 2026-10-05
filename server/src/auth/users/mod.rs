@@ -26,6 +26,7 @@ pub mod error;
 pub mod handlers;
 pub mod hibp;
 pub mod import;
+#[cfg(any(test, feature = "test-support"))]
 pub mod memory;
 pub mod models;
 pub mod roles;

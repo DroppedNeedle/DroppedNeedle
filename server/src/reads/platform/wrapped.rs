@@ -188,6 +188,7 @@ pub struct FakeWrappedData {
 
 impl FakeWrappedData {
     /// Build a fake from its parts.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn new(
         year: i32,
         users: Vec<WrappedUserSummary>,

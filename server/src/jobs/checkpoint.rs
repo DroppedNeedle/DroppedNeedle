@@ -46,11 +46,13 @@ impl CheckpointRunner for CheckpointService {
 }
 
 /// A cycle counter for tests: records each pass without touching SQLite.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default, Clone)]
 pub struct FakeCheckpointRunner {
     passes: Arc<std::sync::Mutex<u64>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl FakeCheckpointRunner {
     /// A runner that has run nothing yet.
     pub fn new() -> Self {
@@ -66,6 +68,7 @@ impl FakeCheckpointRunner {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl CheckpointRunner for FakeCheckpointRunner {
     fn cycle(&self) -> BoxFuture<'_, ()> {
         let passes = Arc::clone(&self.passes);

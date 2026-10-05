@@ -36,6 +36,7 @@
 //!
 //! New deps at wiring: `bcrypt`, `argon2` (password primitives only).
 
+#[cfg(any(test, feature = "test-support"))]
 pub mod fakes;
 pub mod jellyfin_login;
 pub mod oidc;

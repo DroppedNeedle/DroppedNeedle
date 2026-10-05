@@ -63,6 +63,7 @@ pub struct MemoryRegistryStore {
 
 impl MemoryRegistryStore {
     /// Empty registry.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn new() -> Self {
         Self::default()
     }

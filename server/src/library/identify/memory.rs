@@ -21,6 +21,7 @@ pub struct MemoryIdentityStore {
 }
 
 impl MemoryIdentityStore {
+    #[cfg(any(test, feature = "test-support"))]
     pub fn seed_accepted_release(&self, source_local_artist_id: &str, release_mbid: &str) {
         if let Ok(mut accepted) = self.accepted.lock() {
             accepted.insert(source_local_artist_id.to_owned(), release_mbid.to_owned());
@@ -120,12 +121,14 @@ pub struct MemoryProofStore {
 }
 
 impl MemoryProofStore {
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_album_revision(&self, local_album_id: &str, revision: u64) {
         if let Ok(mut revisions) = self.album_revisions.lock() {
             revisions.insert(local_album_id.to_owned(), revision);
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_track_revision(&self, local_track_id: &str, revision: u64) {
         if let Ok(mut revisions) = self.track_revisions.lock() {
             revisions.insert(local_track_id.to_owned(), revision);
@@ -179,22 +182,26 @@ pub struct MemoryAliasStore {
 }
 
 impl MemoryAliasStore {
+    #[cfg(any(test, feature = "test-support"))]
     pub fn add_playlist_ref(&self, playlist_id: &str, album_id: &str) {
         if let Ok(mut playlists) = self.playlists.lock() {
             playlists.insert(playlist_id.to_owned(), album_id.to_owned());
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn playlist_ref(&self, playlist_id: &str) -> Option<String> {
         self.playlists.lock().ok()?.get(playlist_id).cloned()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn add_history_ref(&self, row_id: &str, album_id: &str) {
         if let Ok(mut history) = self.history.lock() {
             history.insert(row_id.to_owned(), album_id.to_owned());
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn history_ref(&self, row_id: &str) -> Option<String> {
         self.history.lock().ok()?.get(row_id).cloned()
     }

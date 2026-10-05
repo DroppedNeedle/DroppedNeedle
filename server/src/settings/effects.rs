@@ -42,9 +42,11 @@ pub trait EventsKick: Send + Sync {
 }
 
 /// No-op kick. Used until the integrator wires the jobs-owned sweep.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct NoopKick;
 
+#[cfg(any(test, feature = "test-support"))]
 impl EventsKick for NoopKick {
     fn kick(&self) {}
 }

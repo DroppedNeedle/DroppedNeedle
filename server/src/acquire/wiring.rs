@@ -32,16 +32,11 @@ use super::flows::stores::{
     RequestLedger, UpgradePolicy, UpgradeWorklist, WantedStore as FlowsWantedStore,
 };
 use super::imports::handlers::{ImportsDeps, imports_callback_router, imports_gated_router};
-use super::imports::health::{
-    HealthProbes, ScriptedFree, ScriptedLidarr, ScriptedNewznab, ScriptedSabnzbd, ScriptedSlskd,
-};
 use super::imports::jobs::{JobRegistry, QueuedSpotifyImport, TaskExecutor};
-use super::imports::lidarr::{
-    LidarrClient, MemoryApprovalSink, MemoryFollowStore, MemoryLidarrSettings,
-};
+use super::imports::lidarr::LidarrClient;
 use super::imports::spotify::{
-    FixedMbidResolver, MemoryPlaylistIndex, MemorySpotifyConnections, MemorySpotifySettings,
-    MemorySpotifyStates, MemoryTrackSink, SpotifyClient, SpotifyImportService,
+    FixedMbidResolver, MemoryPlaylistIndex, MemorySpotifyConnections, MemorySpotifyStates,
+    MemoryTrackSink, SpotifyClient, SpotifyImportService,
 };
 use super::mirror::mirror_requests_into_flows;
 use super::probes::{LiveProbes, ProbeCache, ProbeInputs, refresh_probes, seed_from_config};
@@ -451,11 +446,19 @@ impl AcquireSetup {
     /// Test bundle over memory stores and a scratch journal. Bridges stay
     /// connected (collections reads share the requests approval store) so
     /// hooked-state apps behave like production.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(
         users: UsersDeps,
         ids: Arc<dyn IdGenerator>,
         collections: &mut CollectionsState,
     ) -> Result<Self, String> {
+        use super::imports::health::{
+            HealthProbes, ScriptedFree, ScriptedLidarr, ScriptedNewznab, ScriptedSabnzbd,
+            ScriptedSlskd,
+        };
+        use super::imports::lidarr::{MemoryApprovalSink, MemoryFollowStore, MemoryLidarrSettings};
+        use super::imports::spotify::MemorySpotifySettings;
+
         let staging_root = std::env::temp_dir().join(format!(
             "dn-acquire-test-{}-{}",
             std::process::id(),
@@ -936,6 +939,7 @@ fn flows_bundle(
 }
 
 /// Flows bundle with static defaults (tests).
+#[cfg(any(test, feature = "test-support"))]
 fn flows_bundle_memory(search: Arc<FanoutSearch>, dispatch: Arc<UnifiedDispatch>) -> FlowsBundle {
     let watches = Arc::new(FlowsWantedStore::new());
     let ledger = Arc::new(RequestLedger::new());

@@ -95,7 +95,9 @@ pub use planner::{
     FileFingerprint, PlanBundle, PlanItem, PlanKind, ReleaseIdentity, SealError, SealedPreview,
     SpaceProbe, TrackMapping,
 };
-pub use publisher::{Catalog, CrashPoint, NullCatalog, PublishOutcome, Publisher, SqliteCatalog};
+#[cfg(any(test, feature = "test-support"))]
+pub use publisher::NullCatalog;
+pub use publisher::{Catalog, CrashPoint, PublishOutcome, Publisher, SqliteCatalog};
 pub use recovery::{BundleRecovery, RecoveryAction, reconcile, startup_gate};
 pub use snapshots::{BaselineStore, BlobStore, SnapshotRef, SnapshotStore};
 pub use tags_seam::TagDocument;

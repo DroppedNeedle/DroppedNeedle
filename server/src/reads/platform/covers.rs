@@ -138,6 +138,7 @@ impl FakeCoverArt {
     }
 
     /// Preload one release-group cover.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn with_release_group(
         mut self,
         id: &str,
@@ -154,6 +155,7 @@ impl FakeCoverArt {
     }
 
     /// Preload one release cover.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn with_release(
         mut self,
         id: &str,
@@ -170,6 +172,7 @@ impl FakeCoverArt {
     }
 
     /// Preload one artist image.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn with_artist(
         mut self,
         id: &str,
@@ -186,6 +189,7 @@ impl FakeCoverArt {
     }
 
     /// Mark one release-group cover as warming.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn warming_release_group(mut self, id: &str, size: Option<&str>) -> Self {
         self.warming_release_groups
             .insert((id.to_owned(), size.map(str::to_owned)));
@@ -193,12 +197,14 @@ impl FakeCoverArt {
     }
 
     /// Mark one release cover as warming.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn warming_release(mut self, id: &str) -> Self {
         self.warming_releases.insert(id.to_owned());
         self
     }
 
     /// Mark one artist image as warming.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn warming_artist(mut self, id: &str, size_px: Option<u32>) -> Self {
         self.warming_artists.insert((id.to_owned(), size_px));
         self

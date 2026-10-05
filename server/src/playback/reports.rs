@@ -64,6 +64,7 @@ impl ReportQueue {
 
     /// Build a queue with no worker: every report drops immediately. For
     /// tests that never assert upstream attribution.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn detached() -> Self {
         let (queue, _) = Self::channel();
         queue
