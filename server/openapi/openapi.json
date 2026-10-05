@@ -20820,7 +20820,7 @@
           "enabled": {
             "type": "boolean",
             "description": "Master switch.",
-            "default": false
+            "default": true
           },
           "fields": {
             "type": "array",

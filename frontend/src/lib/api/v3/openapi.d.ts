@@ -10088,7 +10088,7 @@ export interface components {
             artist_credits: components["schemas"]["ArtistCreditSettings"];
             /**
              * @description Master switch.
-             * @default false
+             * @default true
              */
             enabled: boolean;
             /**

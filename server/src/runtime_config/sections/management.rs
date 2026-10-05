@@ -448,12 +448,12 @@ pub struct MetadataManagementSettings {
     pub format_compatibility: FormatCompatibilitySettings,
 }
 
-/// v2 defaults: embedded art survives a scrub unless the profile says
-/// otherwise.
+/// v2 defaults: metadata management is on and embedded art survives a
+/// scrub unless the profile says otherwise.
 impl Default for MetadataManagementSettings {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             fields: Vec::new(),
             artist_credits: ArtistCreditSettings::default(),
             relationships: RelationshipCreditSettings::default(),
