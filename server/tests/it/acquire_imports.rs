@@ -1,9 +1,9 @@
-//! Stage-7 imports + health parity briefs.
+//! Imports and acquisition health.
 //!
-//! Brief-first coverage of the Lidarr read-only import (monitored artists
+//! Coverage of the Lidarr read-only import (monitored artists
 //! become follows), the Spotify OAuth/playlist import plus settings rows,
 //! the `spotify:import` durable job, and the acquisition health smoke with
-//! its independent per-source release gates. Every brief runs against the
+//! its independent per-source release gates. Every test runs against the
 //! in-repo loopback mocks or scripted probes; nothing touches a live
 //! Lidarr, Spotify, slskd, SABnzbd, or indexer.
 
@@ -65,7 +65,7 @@ fn no_redirect_client() -> reqwest::Client {
         .clone()
 }
 
-/// Fully wired slice bundle over memory stores for briefs.
+/// Fully wired module bundle over memory stores for tests.
 #[allow(dead_code)]
 struct Rig {
     deps: ImportsDeps,
@@ -261,7 +261,7 @@ fn open_client(version: &str, message: &str) -> ClientProbe {
     }
 }
 
-// --- Pure-semantics briefs: MBID, URL, track-count, image, redirect URI ---
+// --- Pure-semantics tests: MBID, URL, track-count, image, redirect URI ---
 
 #[test]
 fn redirect_uri_prefers_origin_and_mounts_base_path_once() {
@@ -295,10 +295,10 @@ fn cover_allowlist_blocks_non_cdn_and_plain_http() {
     assert!(!is_allowed_cover_url("not a url"));
 }
 
-// --- Lidarr import briefs ---
+// --- Lidarr import tests ---
 
 #[tokio::test]
-async fn lidarr_import_becomes_follows_with_d9_counts() {
+async fn lidarr_import_becomes_follows_with_counts() {
     let (rig, admin_id, _) = seed_rig().await;
     let (server, _) = serve_lidarr().await.expect("mock serves");
     let bundle = rig_for(
@@ -493,7 +493,7 @@ async fn lidarr_routes_gate_anonymous_and_non_admin() {
     assert_eq!(status, StatusCode::OK);
 }
 
-// --- Spotify briefs ---
+// --- Spotify tests ---
 
 /// Seed the admin Spotify app via the settings route.
 async fn seed_spotify_app(bundle_deps: ImportsDeps, admin_id: &str) {
@@ -892,7 +892,7 @@ async fn spotify_expired_tokens_refresh_transparently() {
     );
 }
 
-// --- Health smoke + per-source gate briefs ---
+// --- Health smoke + per-source gate tests ---
 
 async fn seed_scripted_bases() -> (TestRig, String, String, Rig) {
     let (rig, admin_id, user_id) = seed_rig().await;

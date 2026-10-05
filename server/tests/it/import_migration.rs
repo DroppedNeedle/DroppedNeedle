@@ -1,7 +1,7 @@
-//! Stage-11 migration briefs: the import-application migration.
+//! Migration tests: the import-application migration.
 //!
 //! The stage plan reserved the 0002 slot for this; 0002 and 0003 landed
-//! first, so the import record is migration 0004. Briefs cover a fresh
+//! first, so the import record is migration 0004. Tests cover a fresh
 //! migrate plus an upgrade over a database migrated through 0003.
 
 use sqlx::SqlitePool;

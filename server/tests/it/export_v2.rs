@@ -1,5 +1,5 @@
-//! Exporter briefs: the exporter refuses a v2 instance without its key
-//! file, and otherwise carries exactly the Q2 set (accounts, settings,
+//! Exporter tests: the exporter refuses a v2 instance without its key
+//! file, and otherwise carries exactly the migrated set (accounts, settings,
 //! follows) into a sealed envelope.
 
 use std::collections::HashMap;

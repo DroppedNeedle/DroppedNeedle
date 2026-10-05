@@ -1,4 +1,4 @@
-//! Stage-11 safety briefs: atomic rollback, kill-mid-import recovery,
+//! Safety tests: atomic rollback, kill-mid-import recovery,
 //! dry-run parity, and zero-write failures.
 //!
 //! Scratch state only: in-memory databases, temp-dir configs.

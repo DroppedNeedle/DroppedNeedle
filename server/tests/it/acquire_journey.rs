@@ -351,7 +351,7 @@ async fn acquire_request_approve_land() {
 
     // The worker lands the download (simulated through the journal: the
     // loop would write exactly these columns, then the scan picks them
-    // up in stage 8).
+    // up later).
     rusqlite::Connection::open(&e2e.db_path)
         .expect("journal opens")
         .execute(

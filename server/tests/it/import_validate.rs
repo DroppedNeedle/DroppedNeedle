@@ -1,6 +1,6 @@
-//! Stage-11 validator briefs: one behavior per §8 rule.
+//! Validator tests: one behavior per rule.
 //!
-//! Each brief pins one error or warning of the standalone export
+//! Each test pins one error or warning of the standalone export
 //! validator. No database, no passphrase, no filesystem.
 
 use crate::import_support as support;

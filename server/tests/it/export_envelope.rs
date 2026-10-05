@@ -1,4 +1,4 @@
-//! Envelope briefs: the stage-11 export envelope parses only
+//! Envelope tests: the export envelope parses only
 //! `droppedneedle-export` at `format_version` 1, requires every top-level
 //! key, and ignores reserved sections with a warning instead of failing.
 

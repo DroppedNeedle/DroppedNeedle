@@ -1,4 +1,4 @@
-//! Stage-11 tooling CLI briefs: every `droppedneedle-tool` subcommand runs
+//! Tooling CLI tests: every `droppedneedle-tool` subcommand runs
 //! as the real binary, plus the conflict-merge decisions, the offline
 //! restore guards, and the dev-only covers-debug gate.
 //!

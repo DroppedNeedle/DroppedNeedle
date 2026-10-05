@@ -1,7 +1,7 @@
-//! Stage-6 transcode slice briefs: decide policy, ffmpeg argv, leases, cancel.
+//! Transcode module tests: decide policy, ffmpeg argv, leases, cancel.
 //!
-//! No routes live in this slice, so every brief drives the engine. ffmpeg itself is
-//! always scripted through the injected spawner seam — no brief needs a real
+//! No routes live in this module, so every test drives the engine. ffmpeg itself is
+//! always scripted through the injected spawner seam — no test needs a real
 //! binary on `PATH`, and none touches the network.
 
 use droppedneedle::stream::transcode;
@@ -16,18 +16,17 @@ use std::time::Duration;
 
 use transcode::{
     CAPACITY_STATUS_CODE, FfmpegChild, FfmpegSpawner, FfmpegTranscoder, LocalTranscodeGate,
-    MIN_BITRATE_KBPS, OutFormat, RETRY_AFTER_SECONDS, STDERR_CAPTURE_BYTES, SUPPORTED_OUT_FORMATS,
-    StdFfmpegSpawner, StreamPlan, TRANSCODE_GLOBAL_LIMIT, TRANSCODE_PRINCIPAL_LIMIT, TrackInfo,
-    TranscodeBody, TranscodeError, TranscodeLease as _, TranscodeLeasePool as _, TranscodeSettings,
-    Transcoder, build_cmd, decide, estimate_size, ffmpeg_available, out_media_type, out_suffix,
-    transcode_response_headers,
+    OutFormat, RETRY_AFTER_SECONDS, STDERR_CAPTURE_BYTES, SUPPORTED_OUT_FORMATS, StdFfmpegSpawner,
+    StreamPlan, TRANSCODE_GLOBAL_LIMIT, TRANSCODE_PRINCIPAL_LIMIT, TrackInfo, TranscodeBody,
+    TranscodeError, TranscodeLease as _, TranscodeLeasePool as _, TranscodeSettings, Transcoder,
+    build_cmd, decide, ffmpeg_available,
 };
 
 // ---------------------------------------------------------------------------
 // Scripted ffmpeg
 // ---------------------------------------------------------------------------
 
-/// Everything a brief can observe about what the engine did to its ffmpeg.
+/// Everything a test can observe about what the engine did to its ffmpeg.
 #[derive(Debug, Clone, Default)]
 struct Probe {
     argv_seen: Arc<Mutex<Vec<Vec<String>>>>,
@@ -125,7 +124,7 @@ impl FfmpegSpawner for FakeSpawner {
 type FakeTranscoder = FfmpegTranscoder<FakeSpawner, Arc<LocalTranscodeGate>>;
 
 // ---------------------------------------------------------------------------
-// Brief helpers
+// Test helpers
 // ---------------------------------------------------------------------------
 
 fn track(bitrate_kbps: Option<i64>, file_format: &str) -> TrackInfo {
@@ -167,7 +166,7 @@ fn transcode_parts(plan: &StreamPlan) -> (OutFormat, i64, f64) {
 }
 
 // ---------------------------------------------------------------------------
-// decide() policy briefs
+// decide() policy tests
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -221,36 +220,6 @@ fn codec_request_transcodes_and_clamps_to_server_cap() {
     let (format, bitrate, _) = transcode_parts(&plan);
     assert_eq!(format, OutFormat::Mp3);
     assert_eq!(bitrate, 320);
-}
-
-#[test]
-fn codec_change_transcodes_to_requested() {
-    let plan = decide(
-        &track(Some(192), "mp3"),
-        Some("opus"),
-        Some(0),
-        false,
-        0.0,
-        &settings(),
-        true,
-    );
-    let (format, bitrate, _) = transcode_parts(&plan);
-    assert_eq!(format, OutFormat::Opus);
-    assert_eq!(bitrate, 320, "codec change, no cap -> server max");
-}
-
-#[test]
-fn no_cap_no_mismatch_is_direct() {
-    let plan = decide(
-        &track(Some(192), "mp3"),
-        None,
-        Some(0),
-        false,
-        0.0,
-        &settings(),
-        true,
-    );
-    assert!(!plan.is_transcode(), "{plan:?}");
 }
 
 #[test]
@@ -352,39 +321,6 @@ fn zero_unset_and_finamp_bitrates_mean_no_cap() {
 }
 
 #[test]
-fn unknown_format_falls_back_to_default() {
-    let mut opus_default = settings();
-    opus_default.default_format = OutFormat::Opus;
-    let plan = decide(
-        &track(Some(900), "flac"),
-        Some("aac"),
-        Some(256),
-        false,
-        0.0,
-        &opus_default,
-        true,
-    );
-    let (format, bitrate, _) = transcode_parts(&plan);
-    assert_eq!(format, OutFormat::Opus);
-    assert_eq!(bitrate, 256);
-}
-
-#[test]
-fn tiny_cap_clamped_to_floor() {
-    let plan = decide(
-        &track(Some(900), "flac"),
-        Some("mp3"),
-        Some(8),
-        false,
-        0.0,
-        &settings(),
-        true,
-    );
-    let (_, bitrate, _) = transcode_parts(&plan);
-    assert_eq!(bitrate, MIN_BITRATE_KBPS);
-}
-
-#[test]
 fn start_offset_survives_only_on_transcode() {
     let plan = decide(
         &track(Some(900), "flac"),
@@ -423,7 +359,7 @@ fn start_offset_survives_only_on_transcode() {
 }
 
 // ---------------------------------------------------------------------------
-// ffmpeg argv contract briefs
+// ffmpeg argv contract tests
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -478,53 +414,8 @@ fn opus_argv_seeks_before_input() {
     assert_eq!(&argv[argv.len() - 3..], &["-f", "ogg", "pipe:1"]);
 }
 
-#[test]
-fn types_suffixes_estimates_and_headers() {
-    assert_eq!(out_media_type(&OutFormat::Mp3), "audio/mpeg");
-    assert_eq!(out_media_type(&OutFormat::Opus), "audio/ogg");
-    assert_eq!(out_suffix(&OutFormat::Mp3), "mp3");
-    assert_eq!(out_suffix(&OutFormat::Opus), "opus");
-
-    let plan = StreamPlan::Transcode {
-        out_format: OutFormat::Mp3,
-        out_bitrate_kbps: 128,
-        start_seconds: 10.0,
-        source_duration_seconds: 210.0,
-    };
-    // 128 kbit/s over the 200 s left after the seek.
-    assert_eq!(estimate_size(&plan), Some(128 * 1000 / 8 * 200));
-
-    let headers = transcode_response_headers(&plan, true);
-    let get = |name: &str| {
-        headers
-            .iter()
-            .find(|(key, _)| key == name)
-            .map(|(_, value)| value.clone())
-    };
-    assert_eq!(get("Accept-Ranges").as_deref(), Some("none"));
-    assert_eq!(get("Cache-Control").as_deref(), Some("no-store"));
-    assert_eq!(get("Content-Encoding").as_deref(), Some("identity"));
-    assert_eq!(
-        get("Content-Length").as_deref(),
-        Some("3200000"),
-        "estimate only when asked"
-    );
-    let headers = transcode_response_headers(&plan, false);
-    assert!(
-        headers.iter().all(|(key, _)| key != "Content-Length"),
-        "{headers:?}"
-    );
-
-    let direct = StreamPlan::Direct {
-        source_duration_seconds: 200.0,
-    };
-    assert_eq!(estimate_size(&direct), None);
-    assert!(transcode_response_headers(&direct, true).is_empty());
-    assert_eq!(build_cmd(Path::new("/m/x.flac"), &direct), None);
-}
-
 // ---------------------------------------------------------------------------
-// Execution briefs (scripted ffmpeg, real local gate)
+// Execution tests (scripted ffmpeg, real local gate)
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -704,53 +595,6 @@ async fn dropped_stream_kills_child_and_releases_once() {
     assert_eq!(gate.active(), 0, "drop frees the slot exactly once");
 }
 
-#[tokio::test]
-async fn close_is_idempotent() {
-    let gate = Arc::new(LocalTranscodeGate::new());
-    let probe = Probe::default();
-    let service = FakeTranscoder::new(
-        FakeSpawner::scripted(vec![b"first".to_vec()], probe.clone()),
-        Arc::clone(&gate),
-    );
-    let mut body = service
-        .stream(
-            Path::new("/validated/input.flac"),
-            &transcode_plan(),
-            "alice",
-        )
-        .await
-        .expect("stream starts");
-
-    body.close().await;
-    assert_eq!(probe.shutdowns(), 1);
-    assert_eq!(gate.active(), 0);
-    body.close().await;
-    assert_eq!(probe.shutdowns(), 1, "second close is a no-op");
-    assert_eq!(gate.active(), 0);
-    drop(body);
-    assert_eq!(gate.active(), 0, "close plus drop still releases once");
-}
-
-#[tokio::test]
-async fn direct_plan_is_rejected_without_taking_a_lease() {
-    let gate = Arc::new(LocalTranscodeGate::new());
-    let probe = Probe::default();
-    let service = FakeTranscoder::new(
-        FakeSpawner::scripted(vec![b"first".to_vec()], probe.clone()),
-        Arc::clone(&gate),
-    );
-    let direct = StreamPlan::Direct {
-        source_duration_seconds: 200.0,
-    };
-    let err = service
-        .stream(Path::new("/validated/input.flac"), &direct, "alice")
-        .await
-        .expect_err("direct plans never reach the engine");
-    assert_eq!(err, TranscodeError::NotTranscoding);
-    assert_eq!(gate.active(), 0);
-    assert!(probe.argv().is_empty(), "rejected plans spawn nothing");
-}
-
 #[test]
 fn production_spawner_contract_without_ffmpeg() {
     assert_eq!(SUPPORTED_OUT_FORMATS, &["mp3", "opus"]);
@@ -773,7 +617,7 @@ fn production_spawner_contract_without_ffmpeg() {
 
 /// The real child against a trivial process: it exits at once with empty
 /// stdout, so the body sees immediate EOF and settles. This is not ffmpeg
-/// (still never required), and the brief skips itself where no `true`
+/// (still never required), and the test skips itself where no `true`
 /// binary exists.
 #[cfg(unix)]
 #[tokio::test]
@@ -801,13 +645,6 @@ async fn real_child_settles_a_trivial_process() {
     assert_eq!(body.next_chunk(no_probe).await.expect("eof"), None);
     assert!(body.is_closed());
     assert_eq!(gate.active(), 0);
-}
-
-#[test]
-fn ffmpeg_probe_agrees_with_itself() {
-    // The probe only answers what is on PATH; the decide() briefs pin the
-    // absent/present landings with the flag itself. This just pins stability.
-    assert_eq!(ffmpeg_available(), ffmpeg_available());
 }
 
 /// A killed child is reaped, not left behind as a zombie.

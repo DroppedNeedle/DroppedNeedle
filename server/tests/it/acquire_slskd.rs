@@ -1,13 +1,13 @@
-//! slskd/Soulseek per-client contract briefs.
+//! slskd/Soulseek per-client contract tests.
 //!
-//! Brief-first coverage of the stage-7 slskd slice against the in-repo mock
-//! server on loopback: wire-shape briefs (bitRate-absent lossless,
+//! Coverage of the slskd module against the in-repo mock
+//! server on loopback: wire-shape tests (bitRate-absent lossless,
 //! extension-from-filename, comma-joined state flags, PascalCase enqueue,
-//! searchTimeout milliseconds), single-op briefs (429 retry, semaphore
-//! serialization), search fan-out briefs (ladder fallback past silent
-//! specific rungs, multi-peer fan-out), correlation briefs
+//! searchTimeout milliseconds), single-op tests (429 retry, semaphore
+//! serialization), search fan-out tests (ladder fallback past silent
+//! specific rungs, multi-peer fan-out), correlation tests
 //! (accepted-filenames handles, latest-attempt status, truncated stubs),
-//! and policy briefs (recipe validation/ranking, lossless ladder, query
+//! and policy tests (recipe validation/ranking, lossless ladder, query
 //! construction). No live contact ever.
 
 use droppedneedle::acquire::slskd;
@@ -51,7 +51,7 @@ fn temp_mount(tag: &str) -> droppedneedle::tooling::scratch::ScratchDir {
     droppedneedle::tooling::scratch::ScratchDir::new(tag).expect("mount creates")
 }
 
-// Wire-shape briefs.
+// Wire-shape tests.
 
 #[tokio::test]
 async fn bitrate_absent_lossless_stays_none_and_extension_comes_from_filename() {
@@ -163,7 +163,7 @@ async fn all_downloads_preserves_usernames_across_peers() {
     assert_eq!(owners, vec!["alice".to_owned(), "bob".to_owned()]);
 }
 
-// Single-op briefs (v2 C3).
+// Single-op tests (v2 C3).
 
 #[tokio::test]
 async fn enqueue_429_is_retried_with_backoff() {
@@ -208,7 +208,7 @@ async fn concurrent_enqueues_serialize_through_semaphore_one() {
     assert_eq!(mock.max_in_flight(), 1);
 }
 
-// Search fan-out briefs.
+// Search fan-out tests.
 
 #[tokio::test]
 async fn album_ladder_falls_back_past_silent_specific_rungs() {
@@ -236,13 +236,13 @@ async fn album_ladder_falls_back_past_silent_specific_rungs() {
         "a broader rung answered: {texts:?}"
     );
 
-    // Reset clears the recorded searches between briefs (v2 `reset_state`).
+    // Reset clears the recorded searches between tests (v2 `reset_state`).
     mock.reset();
     assert!(mock.search_texts().is_empty());
     assert!(mock.search_timeouts().is_empty());
 }
 
-// Correlation + status briefs.
+// Correlation + status tests.
 
 #[tokio::test]
 async fn handle_correlates_accepted_filenames_only() {
@@ -410,7 +410,7 @@ async fn abort_removes_matched_transfer_records() {
     );
 }
 
-// Auth + health briefs.
+// Auth + health tests.
 
 #[tokio::test]
 async fn wrong_key_health_message_is_uniform_and_leaks_nothing() {
@@ -427,7 +427,7 @@ async fn wrong_key_health_message_is_uniform_and_leaks_nothing() {
     assert!(!health.message.contains("127.0.0.1"));
 }
 
-// Policy briefs (tiers, recipe, timeouts).
+// Policy tests (tiers, recipe, timeouts).
 
 #[test]
 fn recipe_validation_rejects_duplicates_and_overlaps() {
@@ -499,7 +499,7 @@ fn recipe_ranking_prefers_flac_then_320_with_dsd_rejected() {
     );
 }
 
-// Query-construction briefs.
+// Query-construction tests.
 
 #[test]
 fn album_ladder_escalates_specific_first_with_wildcard_siblings() {
@@ -523,7 +523,7 @@ fn album_ladder_escalates_specific_first_with_wildcard_siblings() {
     }
 }
 
-// Locator briefs.
+// Locator tests.
 
 #[test]
 fn locator_resolves_leaf_flat_and_username_layouts() {
@@ -632,7 +632,7 @@ async fn repository_partial_lookup_uses_the_incomplete_mount() {
     assert_eq!(hit.file_name().unwrap(), "stranded.flac");
 }
 
-// Mount-diagnosis briefs.
+// Mount-diagnosis tests.
 
 #[tokio::test]
 async fn diagnosis_resolves_a_sample_under_a_correct_mount() {

@@ -1,7 +1,7 @@
-//! Stage-11 pipeline briefs: conflicts, deleted IDs, idempotency,
+//! Pipeline tests: conflicts, deleted IDs, idempotency,
 //! settings replace, and the R8 one-shot carry.
 //!
-//! Every brief imports into scratch state only: in-memory databases
+//! Every test imports into scratch state only: in-memory databases
 //! and temp-dir config files.
 
 use crate::import_support as support;

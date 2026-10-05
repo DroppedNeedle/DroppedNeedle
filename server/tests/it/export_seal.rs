@@ -1,4 +1,4 @@
-//! Seal briefs: each secret seals under a passphrase-derived key with a
+//! Seal tests: each secret seals under a passphrase-derived key with a
 //! fresh nonce, and only the same passphrase opens the envelope again.
 
 use droppedneedle::export::{SealError, Sealer, secret_envelope_params, unseal};

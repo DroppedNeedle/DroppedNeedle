@@ -1,8 +1,8 @@
-//! Stage-7 Usenet contract briefs: SABnzbd, Newznab, Prowlarr.
+//! Usenet contract tests: SABnzbd, Newznab, Prowlarr.
 //!
-//! Brief-first coverage of the Usenet slice against the in-repo loopback
-//! mocks: per-client contract briefs plus the live-version-cited quirk
-//! briefs (SABnzbd 5.0.4 suffix params, the addurl fallback, and the
+//! Coverage of the Usenet module against the in-repo loopback
+//! mocks: per-client contract tests plus the live-version-cited quirk
+//! tests (SABnzbd 5.0.4 suffix params, the addurl fallback, and the
 //! multipart add; Newznab's 202 fallback; Prowlarr's never-logged key).
 //! Transport is real HTTP over `127.0.0.1` only: no live contact, ever.
 

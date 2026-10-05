@@ -1,6 +1,6 @@
-//! Durability briefs for the downloads slice.
+//! Durability tests for the downloads module.
 //!
-//! Each brief pins one crash-safety behavior against a scratch database
+//! Each test pins one crash-safety behavior against a scratch database
 //! and throwaway directories: restarts resume without a duplicate fetch,
 //! manifest-absent restarts come up clean, failover hands work over only
 //! past the lease, and orphan/quarantine sweeps fail closed. Nothing here

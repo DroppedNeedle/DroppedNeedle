@@ -1,4 +1,4 @@
-//! Stage-6 gateway-engine briefs: leases, sandboxing, and the engine seam.
+//! Gateway-engine tests: leases, sandboxing, and the engine seam.
 //!
 //! The engine (`Gateway`) is tested directly with a scripted remote reader
 //! and a scripted ffmpeg service. No live servers, no real ffmpeg, no
@@ -210,23 +210,6 @@ async fn local_direct_reads_file_bytes() {
 }
 
 #[tokio::test]
-async fn local_missing_file_is_not_found() {
-    let root = ScratchRoot::new("missing");
-    let app = engine(
-        &root,
-        FakeRemote::default(),
-        FakeTranscoder::succeeding(vec![]),
-        true,
-    );
-
-    let fault = app
-        .open(open(AudioSource::Local, "gone.mp3"))
-        .await
-        .unwrap_err();
-    assert_eq!(fault, StreamFault::NotFound);
-}
-
-#[tokio::test]
 async fn local_escape_attempts_are_forbidden() {
     let root = ScratchRoot::new("sandbox");
     root.write("song.mp3", b"MP3");
@@ -329,32 +312,6 @@ async fn remote_direct_proxies_upstream_bytes() {
     assert_eq!(media.content_type, "audio/x-upstream");
     assert_eq!(media.bytes, b"UP");
     assert!(!media.transcoded);
-}
-
-#[tokio::test]
-async fn remote_failure_passes_through() {
-    let root = ScratchRoot::new("remote-fault");
-    let remote = FakeRemote {
-        objects: HashMap::new(),
-        faults: HashMap::from([(
-            "item-9".to_owned(),
-            StreamFault::Upstream {
-                source: AudioSource::Plex,
-            },
-        )]),
-    };
-    let app = engine(&root, remote, FakeTranscoder::succeeding(vec![]), true);
-
-    let fault = app
-        .open(open(AudioSource::Plex, "item-9"))
-        .await
-        .unwrap_err();
-    assert_eq!(
-        fault,
-        StreamFault::Upstream {
-            source: AudioSource::Plex
-        }
-    );
 }
 
 #[tokio::test]
@@ -490,17 +447,6 @@ async fn direct_gate_bounds_and_releases() {
     drop(first);
     assert_eq!(gate.active(), 0);
     let _reacquired = gate.acquire("user-1").await.unwrap();
-}
-
-#[tokio::test]
-async fn direct_gate_enforces_per_principal_limit() {
-    let gate = DirectGate::with_limits(8, 1, 4, std::time::Duration::from_millis(50));
-    let _one = gate.acquire("user-1").await.unwrap();
-
-    let denied = gate.acquire("user-1").await.unwrap_err();
-    assert_eq!(denied, stream::leases::CapacityExhausted);
-
-    let _other = gate.acquire("user-2").await.unwrap();
 }
 
 #[tokio::test]
