@@ -301,6 +301,16 @@ impl Session {
     fn send(&self, line: String) -> bool {
         self.input.try_send(line).is_ok()
     }
+
+    /// Queue an answer to one of the plugin's own requests, waiting for
+    /// room in the input queue for a while. A plugin that never reads its
+    /// input loses the answer, which is logged.
+    async fn reply(&self, plugin: &str, line: String) {
+        let queued = tokio::time::timeout(HOST_REQUEST_TIMEOUT, self.input.send(line)).await;
+        if !matches!(queued, Ok(Ok(()))) {
+            tracing::warn!(plugin = %plugin, "plugin is not reading its input; a host answer was dropped");
+        }
+    }
 }
 
 /// Removes a call's pending entry if the caller gives up or is dropped,
@@ -668,9 +678,19 @@ async fn run_child(shared: &Arc<Shared>, spec: &ChildSpec) -> RunEnd {
 
     let end = tokio::select! {
         ended = &mut reader => {
+            // The output is gone (exit, closed stdout, or a line over the
+            // cap): the child cannot be talked to any more, so it goes now.
+            // Never wait on it unbounded; a child that closed stdout but
+            // keeps running would wedge the supervisor.
             let reason = ended.unwrap_or_else(|error| error.to_string());
-            let status = child.wait().await.map(|status| status.to_string()).unwrap_or_default();
-            RunEnd::Crashed(format!("{reason} {status}").trim().to_owned())
+            let status = match tokio::time::timeout(SHUTDOWN_GRACE, child.wait()).await {
+                Ok(Ok(status)) => status.to_string(),
+                _ => {
+                    kill_group(&mut child).await;
+                    "killed".to_owned()
+                }
+            };
+            RunEnd::Crashed(format!("{reason} ({status})"))
         }
         _ = shared.restart_now.notified() => RunEnd::Crashed("plugin stopped answering".to_owned()),
         _ = shared.stop_now.notified() => {
@@ -781,13 +801,13 @@ async fn write_input(mut stdin: tokio::process::ChildStdin, mut lines: mpsc::Rec
 /// the plugin's name. A leading `ERROR`/`WARNING`/`DEBUG` level word (the
 /// Python helper's log format) picks the log level.
 async fn pump_stderr(name: String, stderr: tokio::process::ChildStderr) {
-    let mut lines = BufReader::new(stderr).lines();
-    loop {
-        let line = match lines.next_line().await {
-            Ok(Some(line)) => line,
-            Ok(None) | Err(_) => break,
-        };
-        let line = truncate(&line, STDERR_LINE_MAX);
+    let mut reader = BufReader::new(stderr);
+    let mut buf = Vec::new();
+    // Drain to the end whatever arrives: a blocked stderr would block the
+    // plugin itself.
+    while let Ok(true) = read_log_line(&mut reader, &mut buf, STDERR_LINE_MAX).await {
+        let text = String::from_utf8_lossy(&buf);
+        let line = text.trim_end_matches('\r');
         let (level, text) = match line.split_once(' ') {
             Some(("ERROR" | "CRITICAL", rest)) => (tracing::Level::ERROR, rest),
             Some(("WARNING", rest)) => (tracing::Level::WARN, rest),
@@ -817,6 +837,35 @@ fn truncate(text: &str, max: usize) -> &str {
         end -= 1;
     }
     &text[..end]
+}
+
+/// Read one `\n`-terminated log line, keeping at most `max` bytes and
+/// dropping the rest of a longer line. `Ok(false)` at end of stream.
+async fn read_log_line<R: tokio::io::AsyncBufRead + Unpin>(
+    reader: &mut R,
+    buf: &mut Vec<u8>,
+    max: usize,
+) -> std::io::Result<bool> {
+    buf.clear();
+    let mut seen_any = false;
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            return Ok(seen_any);
+        }
+        seen_any = true;
+        let (chunk, found) = match available.iter().position(|byte| *byte == b'\n') {
+            Some(index) => (&available[..index], Some(index + 1)),
+            None => (available, None),
+        };
+        let room = max.saturating_sub(buf.len());
+        buf.extend_from_slice(&chunk[..chunk.len().min(room)]);
+        let used = found.unwrap_or(available.len());
+        reader.consume(used);
+        if found.is_some() {
+            return Ok(true);
+        }
+    }
 }
 
 /// Read one `\n`-terminated line of at most `max` bytes. `Ok(false)` at
@@ -913,13 +962,17 @@ async fn read_output(
             }
             Incoming::Request { id, method, params } => {
                 let Ok(permit) = Arc::clone(&limit).try_acquire_owned() else {
-                    session.send(protocol::response_line(
-                        &id,
-                        &Err(RpcError::new(
+                    let session = Arc::clone(&session);
+                    let name = name.clone();
+                    tokio::spawn(async move {
+                        let refused = Err(RpcError::new(
                             codes::HOST_REFUSED,
                             "too many host requests in flight",
-                        )),
-                    ));
+                        ));
+                        session
+                            .reply(&name, protocol::response_line(&id, &refused))
+                            .await;
+                    });
                     continue;
                 };
                 let session = Arc::clone(&session);
@@ -938,7 +991,9 @@ async fn read_output(
                             "host request timed out",
                         )),
                     };
-                    session.send(protocol::response_line(&id, &outcome));
+                    session
+                        .reply(&name, protocol::response_line(&id, &outcome))
+                        .await;
                     drop(permit);
                 });
             }
@@ -966,6 +1021,21 @@ mod tests {
         let flood = vec![b'x'; 100];
         let mut reader = BufReader::new(flood.as_slice());
         assert!(read_capped_line(&mut reader, &mut buf, 64).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn log_lines_are_capped_lossy_and_keep_draining() {
+        let mut input = vec![b'x'; 100];
+        input.extend_from_slice(b"\n\xff\xfe ok\nlast");
+        let mut reader = BufReader::new(input.as_slice());
+        let mut buf = Vec::new();
+        assert!(read_log_line(&mut reader, &mut buf, 10).await.unwrap());
+        assert_eq!(buf.len(), 10);
+        assert!(read_log_line(&mut reader, &mut buf, 10).await.unwrap());
+        assert!(String::from_utf8_lossy(&buf).ends_with(" ok"));
+        assert!(read_log_line(&mut reader, &mut buf, 10).await.unwrap());
+        assert_eq!(buf, b"last");
+        assert!(!read_log_line(&mut reader, &mut buf, 10).await.unwrap());
     }
 
     #[test]

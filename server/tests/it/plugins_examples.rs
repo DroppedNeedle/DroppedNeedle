@@ -358,7 +358,7 @@ const PROBE_MANIFEST: &str = "[plugin]\n\
      interval_minutes = 5\n";
 
 const PROBE_CODE: &str = r#"
-import asyncio, os
+import asyncio, os, time
 
 class Probe:
     def __init__(self, context):
@@ -367,6 +367,11 @@ class Probe:
     async def purchase_links(self, artist, album, mbid):
         if artist == "crash":
             os._exit(3)
+        if artist == "close":
+            # Close the protocol stream (and everything else past stderr),
+            # then keep the process alive and stuck.
+            os.closerange(3, 4096)
+            time.sleep(3600)
         if artist == "env":
             return [{"label": key, "url": "https://x.test/" + value[:50].replace(" ", "")}
                     for key, value in [("cwd", os.getcwd()), ("home", os.environ.get("HOME", "")),
@@ -417,16 +422,25 @@ async fn crashes_restart_hangs_time_out_and_the_environment_is_scrubbed() {
             .await
             .is_empty()
     );
-    wait_for(&rig, "probe", RuntimeState::Running).await;
-    for _ in 0..100 {
-        if rig
-            .host
-            .get("probe")
-            .unwrap()
-            .runtime_status()
-            .unwrap()
-            .restarts
-            >= 1
+    wait_until_back(&rig, 1).await;
+
+    // A plugin that closes its output but keeps running is killed and
+    // started again, not waited on forever.
+    assert!(
+        rig.host
+            .gather_purchase_links("close", "", "")
+            .await
+            .is_empty()
+    );
+    wait_until_back(&rig, 2).await;
+}
+
+/// Wait until the probe has restarted `restarts` times and answers again.
+async fn wait_until_back(rig: &Rig, restarts: u64) {
+    for _ in 0..200 {
+        let status = rig.host.get("probe").unwrap().runtime_status().unwrap();
+        if status.restarts >= restarts
+            && status.state == RuntimeState::Running
             && !rig
                 .host
                 .gather_purchase_links("ok", "", "")
@@ -437,5 +451,5 @@ async fn crashes_restart_hangs_time_out_and_the_environment_is_scrubbed() {
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    panic!("the plugin did not come back after crashing");
+    panic!("the plugin did not come back after restart {restarts}");
 }
