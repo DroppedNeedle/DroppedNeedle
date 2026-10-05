@@ -32,7 +32,7 @@ export interface SessionUserLike {
 }
 
 /** Login/setup success body, inferred from the contract (user plus the raw
- * session token only in Bearer [REDACTED] Jellyfin and OIDC logins answer the same
+ * session token only in Bearer mode. Jellyfin and OIDC logins answer the same
  * shape, but their spec entries carry no response schema, so those two
  * mutations name this type explicitly until the backend annotates them. */
 export type AuthSessionResponse = V3Response<'/api/v3/auth/login', 'post'>;

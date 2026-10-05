@@ -39,7 +39,7 @@ use sqlx::SqlitePool;
 use sqlx::sqlite::SqlitePoolOptions;
 use tower::ServiceExt as _;
 
-/// Bearer [REDACTED] the rig mints a session for.
+/// Bearer token the rig mints a session for.
 const TEST_TOKEN: &str = "dn-search-brief-token-000000000001";
 
 /// Provider fakes: canned counts from a healthy provider.

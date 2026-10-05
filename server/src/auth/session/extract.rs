@@ -20,7 +20,7 @@ use axum::{
 use crate::error::{ErrorBody, ErrorEnvelope};
 
 /// Which transport carried the credential. Cookie sessions are ambient (CSRF
-/// exposure, hence the origin check); Bearer [REDACTED] explicit and exempt.
+/// exposure, hence the origin check); Bearer is explicit and exempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
     /// `Authorization: Bearer` header.

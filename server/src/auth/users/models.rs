@@ -260,7 +260,7 @@ pub struct DeviceSessionResponse {
     pub id: String,
     /// Device label.
     pub label: String,
-    /// Raw Bearer [REDACTED] Shown once.
+    /// Raw Bearer token. Shown once.
     pub token: String,
     /// Absolute expiry, unix seconds.
     pub expires_at: i64,

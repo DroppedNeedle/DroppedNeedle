@@ -253,7 +253,7 @@ async fn cookie_session_authenticates_and_bearer_still_wins() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(body_json(response).await["user_id"], "user-1");
 
-    // Bearer-then-cookie: a valid Bearer [REDACTED] beside a junk cookie still passes.
+    // Bearer-then-cookie: a valid Bearer token beside a junk cookie still passes.
     let response = app
         .oneshot(
             Request::builder()
@@ -365,7 +365,7 @@ async fn origin_check_rejects_cross_origin_cookie_but_exempts_bearer() {
     assert!(response.headers().get("www-authenticate").is_none());
     assert_eq!(body_json(response).await["error"]["code"], "FORBIDDEN");
 
-    // Bearer [REDACTED] the same foreign origin -> passes.
+    // Bearer from the same foreign origin -> passes.
     let response = app
         .clone()
         .oneshot(
@@ -489,7 +489,7 @@ async fn allowlist_is_open_and_everything_else_is_401() {
         );
     }
 
-    // Protected paths without creds -> 401 envelope + Bearer [REDACTED]
+    // Protected paths without creds -> 401 envelope + Bearer challenge.
     for (method, path) in [
         ("GET", "/api/v3/me"),
         ("POST", "/api/v3/things"),

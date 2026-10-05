@@ -8,7 +8,7 @@
 //! - `transport` selects the credential handoff. Cookie mode (default) puts
 //!   the raw token only inside the `Set-Cookie` value and the body carries no
 //!   token field (v2 returned it alongside the cookie; that leak is closed).
-//!   Bearer [REDACTED] returns the raw token once in the body and sets no cookie.
+//!   Bearer mode returns the raw token once in the body and sets no cookie.
 //! - Every login response (and every token mint) carries
 //!   `Cache-Control: no-store`.
 //!
@@ -33,7 +33,7 @@ use super::{
     tokens,
 };
 
-/// Login transport: cookie (browser default) or Bearer [REDACTED] and scripts).
+/// Login transport: cookie (browser default) or Bearer (devices and scripts).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TransportParam {
@@ -80,7 +80,7 @@ pub struct LoginSuccess {
     pub transport: Transport,
     /// Raw token; cookie mode embeds it only in `set_cookie`.
     pub raw_token: String,
-    /// `Set-Cookie` value in cookie mode, `None` in Bearer [REDACTED]
+    /// `Set-Cookie` value in cookie mode, `None` in Bearer mode.
     pub set_cookie: Option<String>,
 }
 
@@ -212,7 +212,7 @@ where
 }
 
 /// Render a login success. `user_json` is the caller-supplied user object (its
-/// shape is API-design scope); this adds the token ONLY in Bearer [REDACTED] sets
+/// shape is API-design scope); this adds the token ONLY in Bearer mode, sets
 /// the cookie ONLY in cookie mode, and always stamps `no-store`.
 pub fn login_response(
     user_json: serde_json::Value,

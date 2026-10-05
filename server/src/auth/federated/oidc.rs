@@ -61,7 +61,7 @@ pub struct DiscoveryDoc {
 /// Tokens from the token endpoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OidcTokens {
-    /// Bearer [REDACTED] userinfo calls.
+    /// Bearer token for userinfo calls.
     pub access_token: String,
     /// Stored for later refresh; may be empty.
     pub refresh_token: String,

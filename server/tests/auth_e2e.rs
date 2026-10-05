@@ -16,7 +16,7 @@
 //!   paths reject → revoke → compat dead.
 //! - `auth_on_every_endpoint`: the standing contract. Every `/api/v3` route
 //!   in the OpenAPI doc must have a matrix row; every non-allowlisted route
-//!   401s anonymously with a Bearer [REDACTED] admin routes 403 for plain users,
+//!   401s anonymously with a Bearer challenge, admin routes 403 for plain users,
 //!   and the admin is admitted everywhere. Add a route without a row and this
 //!   fails by name. Curator rows read as admin rows for plain users; wrapped
 //!   rows take only the shared secret (no Bearer challenge on rejection) and
@@ -26,8 +26,8 @@
 //!   the empty catalog) while admin approvals still 403.
 //! - `playlist_lifecycle_*`: stateful playlist journey over one router
 //!   clone: create → add tracks → read back → delete → 404.
-//! - `login_p95_*`: 50 sequential logins against the 600ms login budget
-//!   (BUDGETS.md). Argon2id work-factor cost counts - it is the budget.
+//! - `login_p95_*`: 50 sequential logins against the 600ms login budget.
+//!   Argon2id work-factor cost counts - it is the budget.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -620,7 +620,7 @@ async fn journey_a_setup_login_sessions_logoutall_relogin() {
 #[tokio::test]
 async fn journey_b_admin_user_lifecycle() {
     let e2e = E2e::open("journey-b").await;
-    // Bearer [REDACTED] the admin leg: no Origin juggling, same real sessions.
+    // Bearer tokens for the admin leg: no Origin juggling, same real sessions.
     let (admin, admin_token) =
         setup_admin(e2e.router(), "e2e-owner", "e2e-owner-password-1", "bearer").await;
     let admin_id = admin["id"].as_str().expect("admin id").to_owned();
@@ -928,7 +928,7 @@ async fn journey_c_app_password_compat_accepts_native_rejects() {
     assert_eq!(
         status,
         StatusCode::UNAUTHORIZED,
-        "no native Bearer [REDACTED] it"
+        "no native Bearer use of it"
     );
 
     // Revoke: compat goes dead on both protocols.
@@ -976,7 +976,7 @@ enum Posture {
     Admin,
     /// Curator (admin or trusted) only; anonymous 401, plain user 403.
     Curator,
-    /// Wrapped shared-secret only: anonymous 401 with no Bearer [REDACTED]
+    /// Wrapped shared-secret only: anonymous 401 with no Bearer challenge;
     /// sessions never satisfy these, the key admits (keyed pass below).
     WrappedKey,
 }
@@ -998,7 +998,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("POST", "/api/v3/auth/jellyfin/login", Posture::Public),
     ("POST", "/api/v3/auth/plex/start", Posture::Public),
     ("POST", "/api/v3/auth/plex/poll/login", Posture::Public),
-    // Link/connect polls hand out account Bearer [REDACTED] session-gated (B1 fix).
+    // Link/connect polls hand out account Bearer tokens, so they stay session-gated (B1 fix).
     ("POST", "/api/v3/auth/plex/poll/link", Posture::User),
     ("POST", "/api/v3/auth/plex/poll/connect", Posture::User),
     (
@@ -1858,7 +1858,7 @@ async fn auth_on_every_endpoint() {
 
     let e2e = E2e::open("matrix").await;
 
-    // Anonymous pass: protected rows 401 with the Bearer [REDACTED] public
+    // Anonymous pass: protected rows 401 with the Bearer challenge; public
     // rows answer anything but 401.
     for (method, template, posture) in MATRIX {
         let uri = concretize(template);
@@ -1914,7 +1914,7 @@ async fn auth_on_every_endpoint() {
                         .get("www-authenticate")
                         .and_then(|v| v.to_str().ok()),
                     Some("Bearer"),
-                    "{method} {uri}: Bearer [REDACTED]"
+                    "{method} {uri}: Bearer challenge"
                 );
             }
         }
@@ -2473,7 +2473,7 @@ async fn setup_edges() {
 }
 
 // ---------------------------------------------------------------------------
-// Login p95 probe against the login budget (BUDGETS.md)
+// Login p95 probe against the login budget
 // ---------------------------------------------------------------------------
 
 /// Nearest-rank percentile over ascending samples.
@@ -2531,7 +2531,7 @@ async fn login_p95_within_login_budget() {
     assert!(
         p95 <= BUDGET,
         "FINDING: login p95 {p95:?} exceeds the 600ms login budget \
-         (tools/perf-harness/BUDGETS.md) over {N} sequential logins \
+         over {N} sequential logins \
          (p50 {p50:?}, max {max:?}); Argon2id work-factor verify cost counts \
          and dominates by design - slowness here is the security feature"
     );

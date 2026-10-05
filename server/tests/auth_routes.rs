@@ -311,7 +311,7 @@ async fn login_bearer_returns_token_without_cookie() {
     assert!(no_store(&headers));
     assert!(
         headers.get(axum::http::header::SET_COOKIE).is_none(),
-        "Bearer [REDACTED] no cookie"
+        "Bearer mode sets no cookie"
     );
     let token = body["token"].as_str().expect("token in body");
     assert_eq!(body["user"]["id"], json!("user-1"));
@@ -894,7 +894,7 @@ async fn plex_link_and_connect_polls_401_without_session() {
         assert_eq!(
             headers.get(axum::http::header::WWW_AUTHENTICATE),
             Some(&"Bearer".parse().expect("challenge parses")),
-            "{path} carries the Bearer [REDACTED]"
+            "{path} carries the Bearer challenge"
         );
     }
 }
@@ -1115,7 +1115,7 @@ async fn public_auth_routes_answer_without_credentials() {
     assert_eq!(status, StatusCode::OK, "login poll reachable");
     assert_eq!(body["completed"], json!(false), "login poll pending");
 
-    // The link and connect polls hand out account Bearer [REDACTED] stay behind the
+    // The link and connect polls hand out account Bearer tokens and stay behind the
     // session gate: the middleware answers before the handler runs.
     for path in [
         "/api/v3/auth/plex/poll/link",

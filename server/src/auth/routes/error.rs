@@ -44,7 +44,7 @@ pub const WWW_AUTHENTICATE_BEARER: &str = "Bearer";
 /// Every failure these routes can return.
 #[derive(Debug)]
 pub enum AuthRouteError {
-    /// No valid credential. Login routes add the Bearer [REDACTED] the
+    /// No valid credential. Login routes add the Bearer challenge header; the
     /// browser-redirect OIDC steps omit it (v2 parity).
     Unauthorized {
         /// User-safe reason.
@@ -84,7 +84,7 @@ pub enum AuthRouteError {
 }
 
 impl AuthRouteError {
-    /// 401 with the Bearer [REDACTED] (credential-carrying routes).
+    /// 401 with the Bearer challenge header (credential-carrying routes).
     pub fn unauthorized(message: impl Into<String>) -> Self {
         Self::Unauthorized {
             message: message.into(),

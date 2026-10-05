@@ -56,7 +56,7 @@ pub const PLEX_NOT_CONFIGURED: &str = "Plex is not configured by the administrat
 
 /// Session guard for the Plex link/connect polls: the middleware stashes
 /// [`CurrentSession`] on every authenticated request, and these polls hand
-/// out account Bearer [REDACTED] a PIN id alone must never unlock. This is the same
+/// out account Bearer tokens, which a PIN id alone must never unlock. This is the same
 /// contract as the sibling [`CurrentUser`] extractor minus the role lookup
 /// (the polls need no role, and this router's state is not `UsersDeps`, so
 /// `CurrentUser` cannot apply here); the allowlist is the outer gate and
@@ -239,13 +239,13 @@ where
 
 /// OIDC exchange: swaps the one-time callback code for a session. Cookie
 /// mode (default) sets the session cookie and the body carries no token;
-/// Bearer [REDACTED] the raw token once.
+/// Bearer mode returns the raw token once.
 #[utoipa::path(
     post,
     path = "/api/v3/auth/oidc/exchange",
     request_body = OidcExchangeBody,
     responses(
-        (status = 200, description = "Authenticated user; token only in Bearer [REDACTED]"),
+        (status = 200, description = "Authenticated user; token only in Bearer mode"),
         (status = 401, description = "Invalid or expired code")
     )
 )]
@@ -344,7 +344,7 @@ where
     path = "/api/v3/auth/jellyfin/login",
     request_body = JellyfinLoginBody,
     responses(
-        (status = 200, description = "Authenticated user; token only in Bearer [REDACTED]"),
+        (status = 200, description = "Authenticated user; token only in Bearer mode"),
         (status = 401, description = "Invalid credentials"),
         (status = 503, description = "Jellyfin unavailable")
     )
@@ -682,7 +682,7 @@ struct Handoff<'a> {
 
 /// One login-shaped federated response: the user JSON plus the session under
 /// the D1 transport rule, `no-store` always. The session row already exists
-/// (the `SessionIssuer` wrote it); this only hands the token over. In Bearer [REDACTED]
+/// (the `SessionIssuer` wrote it); this only hands the token over. In Bearer mode
 /// the sibling renderer adds the `token` field to the object body.
 fn federated_login_response(
     handoff: &Handoff<'_>,

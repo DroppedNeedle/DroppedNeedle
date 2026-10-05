@@ -674,7 +674,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Mint a named companion Bearer [REDACTED] Standard sessions only. */
+        /** Mint a named companion Bearer token. Standard sessions only. */
         post: operations["mint_device_session"];
         delete?: never;
         options?: never;
@@ -810,7 +810,7 @@ export interface paths {
         /**
          * OIDC exchange: swaps the one-time callback code for a session. Cookie
          *     mode (default) sets the session cookie and the body carries no token;
-         *     Bearer [REDACTED] the raw token once.
+         *     Bearer mode returns the raw token once.
          */
         post: operations["oidc_exchange_handler"];
         delete?: never;
@@ -6923,7 +6923,7 @@ export interface components {
             id: string;
             /** @description Device label. */
             label: string;
-            /** @description Raw Bearer [REDACTED] Shown once. */
+            /** @description Raw Bearer token. Shown once. */
             token: string;
         };
         /** @description Body recording one discover interaction for personalization. */
@@ -9578,13 +9578,13 @@ export interface components {
         };
         /**
          * @description Login-completion poll answer. Pending carries only the flag; a completed
-         *     poll carries the user (plus the token in Bearer [REDACTED] the session cookie
+         *     poll carries the user (plus the token in Bearer mode, or the session cookie
          *     in cookie mode, like every login).
          */
         PlexLoginPollResult: {
             /** @description True once the user authorized the PIN. */
             completed: boolean;
-            /** @description Present only when completed in Bearer [REDACTED] */
+            /** @description Present only when completed in Bearer mode. */
             token?: string | null;
             user?: null | components["schemas"]["FederatedUserView"];
         };
@@ -13504,7 +13504,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Authenticated user; token only in Bearer [REDACTED] */
+            /** @description Authenticated user; token only in Bearer mode */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -13676,7 +13676,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Authenticated user; token only in Bearer [REDACTED] */
+            /** @description Authenticated user; token only in Bearer mode */
             200: {
                 headers: {
                     [name: string]: unknown;

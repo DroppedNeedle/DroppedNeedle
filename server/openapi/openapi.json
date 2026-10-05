@@ -1094,7 +1094,7 @@
         "tags": [
           "crate::auth::users::handlers"
         ],
-        "summary": "Mint a named companion Bearer [REDACTED] Standard sessions only.",
+        "summary": "Mint a named companion Bearer token. Standard sessions only.",
         "operationId": "mint_device_session",
         "requestBody": {
           "content": {
@@ -1139,7 +1139,7 @@
         },
         "responses": {
           "200": {
-            "description": "Authenticated user; token only in Bearer [REDACTED]"
+            "description": "Authenticated user; token only in Bearer mode"
           },
           "401": {
             "description": "Invalid credentials"
@@ -1298,7 +1298,7 @@
         "tags": [
           "crate::auth::routes::federated"
         ],
-        "summary": "OIDC exchange: swaps the one-time callback code for a session. Cookie\nmode (default) sets the session cookie and the body carries no token;\nBearer [REDACTED] the raw token once.",
+        "summary": "OIDC exchange: swaps the one-time callback code for a session. Cookie\nmode (default) sets the session cookie and the body carries no token;\nBearer mode returns the raw token once.",
         "operationId": "oidc_exchange_handler",
         "requestBody": {
           "content": {
@@ -1312,7 +1312,7 @@
         },
         "responses": {
           "200": {
-            "description": "Authenticated user; token only in Bearer [REDACTED]"
+            "description": "Authenticated user; token only in Bearer mode"
           },
           "401": {
             "description": "Invalid or expired code"
@@ -14453,7 +14453,7 @@
           },
           "token": {
             "type": "string",
-            "description": "Raw Bearer [REDACTED] Shown once."
+            "description": "Raw Bearer token. Shown once."
           }
         }
       },
@@ -20021,7 +20021,7 @@
       },
       "PlexLoginPollResult": {
         "type": "object",
-        "description": "Login-completion poll answer. Pending carries only the flag; a completed\npoll carries the user (plus the token in Bearer [REDACTED] the session cookie\nin cookie mode, like every login).",
+        "description": "Login-completion poll answer. Pending carries only the flag; a completed\npoll carries the user (plus the token in Bearer mode, or the session cookie\nin cookie mode, like every login).",
         "required": [
           "completed"
         ],
@@ -20035,7 +20035,7 @@
               "string",
               "null"
             ],
-            "description": "Present only when completed in Bearer [REDACTED]"
+            "description": "Present only when completed in Bearer mode."
           },
           "user": {
             "oneOf": [

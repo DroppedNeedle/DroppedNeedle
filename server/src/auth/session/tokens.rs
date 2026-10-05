@@ -3,7 +3,7 @@
 //! v2 format preserved byte for byte: `urlsafe_b64encode(os.urandom(32))`
 //! (padded, 44 chars) with `sha256(raw).hexdigest()` stored in
 //! `auth_tokens.token_hash`. Tokens are never logged and never rendered
-//! except once at mint (Bearer [REDACTED] Set-Cookie value).
+//! except once at mint (Bearer response body or Set-Cookie value).
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE};
 use sha2::{Digest, Sha256};

@@ -248,7 +248,7 @@ async fn call(
     (status, json)
 }
 
-/// Setup the owner admin plus one plain user; answer both Bearer [REDACTED]
+/// Setup the owner admin plus one plain user; return both Bearer tokens.
 async fn seed_users(app: &Router) -> (String, String, String) {
     let (status, body) = call(
         app.clone(),

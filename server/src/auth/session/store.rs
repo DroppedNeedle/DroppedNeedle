@@ -20,9 +20,9 @@ use super::tokens::constant_time_eq;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SessionKind {
-    /// Browser cookie session or Bearer [REDACTED] login session; may mint device sessions.
+    /// Browser cookie session or Bearer-mode login session; may mint device sessions.
     Standard,
-    /// Named companion Bearer [REDACTED] one trusted device; must never mint (403).
+    /// Named companion Bearer token for one trusted device; must never mint (403).
     Companion,
 }
 

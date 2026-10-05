@@ -9,7 +9,7 @@
 //!
 //! Plex keeps exactly the v2 shape: only the login start and login poll are
 //! public (v2 `/auth/plex/pin` + `/auth/plex/poll`). The link and connect
-//! polls hand out account Bearer [REDACTED] a PIN id alone, so they stay session-gated
+//! polls hand out account Bearer tokens, which a PIN id alone must never unlock, so they stay session-gated
 //! like their v2 parents (link under `/me`, settings under `/plex`).
 
 /// Exact public paths under `/api/v3`. Logout is public so a stale client can

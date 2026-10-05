@@ -5,7 +5,7 @@
 //! must present `Origin` (or `Referer` fallback) whose host matches the
 //! request host, else 403. Bearer-authenticated requests are exempt (explicit,
 //! non-ambient). Safe methods skip the check; missing `Origin` on an unsafe
-//! cookie request fails closed (scripted callers use Bearer [REDACTED]
+//! cookie request fails closed (scripted callers use Bearer tokens).
 //!
 //! Host comparison ignores case and port: proxies and browsers disagree on
 //! default-port rendering, and the host is the security-relevant part.

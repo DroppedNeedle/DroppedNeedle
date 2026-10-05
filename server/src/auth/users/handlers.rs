@@ -231,7 +231,7 @@ pub async fn list_sessions(
     services::list_sessions(&deps, &ctx).await.map(Json)
 }
 
-/// Mint a named companion Bearer [REDACTED] Standard sessions only.
+/// Mint a named companion Bearer token. Standard sessions only.
 #[utoipa::path(
     post,
     path = "/api/v3/auth/device-sessions",

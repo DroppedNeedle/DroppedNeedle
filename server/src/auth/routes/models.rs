@@ -2,7 +2,7 @@
 //!
 //! Clean-slate `/api/v3` shapes (snake_case). The session-issuing responses
 //! share one rule from spec D1: cookie mode sets the session cookie and the
-//! body carries no token; Bearer [REDACTED] the raw token once in the body and
+//! body carries no token; Bearer mode returns the raw token once in the body and
 //! sets no cookie. Every token-mint response carries `no-store`.
 
 use crate::auth::federated::plex::PlexProfile;
@@ -168,7 +168,7 @@ pub struct PlexLoginPollBody {
 }
 
 /// Login-completion poll answer. Pending carries only the flag; a completed
-/// poll carries the user (plus the token in Bearer [REDACTED] the session cookie
+/// poll carries the user (plus the token in Bearer mode, or the session cookie
 /// in cookie mode, like every login).
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct PlexLoginPollResult {
@@ -177,7 +177,7 @@ pub struct PlexLoginPollResult {
     /// Present only when completed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user: Option<FederatedUserView>,
-    /// Present only when completed in Bearer [REDACTED]
+    /// Present only when completed in Bearer mode.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token: Option<String>,
 }
