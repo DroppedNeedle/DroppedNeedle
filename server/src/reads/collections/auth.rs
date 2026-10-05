@@ -63,13 +63,6 @@ pub struct Principal {
 }
 
 impl Principal {
-    /// Display name for ownership fields. Falls back to the user id.
-    pub fn display_name(&self) -> String {
-        self.username
-            .clone()
-            .unwrap_or_else(|| self.user_id.clone())
-    }
-
     /// Reject non-admins with 403.
     pub fn require_admin(&self) -> Result<(), CollectionsError> {
         if self.role.is_admin() {
