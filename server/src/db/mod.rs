@@ -42,4 +42,5 @@ pub use fs::{filesystem_is_local, reject_remote_filesystem, reject_symlink, same
 pub use writer::{
     BACKGROUND_CHUNK_ROWS, CancelFlag, FOREGROUND_BURST, FOREGROUND_SOFT_BUDGET,
     LANE_QUEUE_CAPACITY, Lane, LaneIdle, OpError, WRITE_HARD_BUDGET, WriteLane, decide_lane,
+    open_connection,
 };

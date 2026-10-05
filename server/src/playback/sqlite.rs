@@ -1,12 +1,18 @@
 //! Production playback ports over the SQLite schema.
 //!
-//! The reporting traits are synchronous, so these stores open their own
-//! rusqlite handle on the runtime database instead of sharing the async
-//! pool: catalog reads hit `local_tracks`, plays land in
-//! `library_play_history`, prefs read `user_listening_prefs`, and display
-//! names resolve from `auth_users`. Every failure is fail-closed (misses
-//! and defaults, never an error to the player), matching the
-//! never-fail-the-player rule.
+//! The reporting traits are synchronous, so these stores use one rusqlite
+//! handle on the runtime database instead of the async pool. The handle is
+//! opened through [`crate::db::open_connection`], so it carries the same
+//! pragmas as every other connection. Catalog reads hit `local_tracks`,
+//! plays land in `library_play_history`, prefs read
+//! `user_listening_prefs`, and display names resolve from `auth_users`.
+//!
+//! Every call runs through [`off_worker`], which moves a multi-threaded
+//! runtime's other tasks off the current thread before touching SQLite, so a
+//! busy database never stalls unrelated requests. Reads fail closed (misses
+//! and defaults, never an error to the player). A play is retried while the
+//! database is busy and logged at error level with its details if it still
+//! cannot be written, so no play disappears silently.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -27,14 +33,10 @@ pub struct PlaybackDb {
 }
 
 impl PlaybackDb {
-    /// Open the runtime database for playback reads and writes. The lock
-    /// wait mirrors the pool's busy timeout so history writes never wedge
-    /// behind the writer lane.
+    /// Open the runtime database for playback reads and writes.
     pub fn open(path: &Path, ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
         let conn =
-            rusqlite::Connection::open(path).map_err(|error| format!("playback db: {error}"))?;
-        conn.busy_timeout(Duration::from_secs(5))
-            .map_err(|error| format!("playback db: {error}"))?;
+            crate::db::open_connection(path).map_err(|error| format!("playback db: {error}"))?;
         Ok(Self {
             conn: Mutex::new(conn),
             ids,
@@ -46,8 +48,31 @@ impl PlaybackDb {
     }
 }
 
+/// Attempts at one play write while the database stays busy.
+const PLAY_WRITE_ATTEMPTS: u32 = 3;
+/// Pause between busy retries of a play write.
+const PLAY_WRITE_BACKOFF: Duration = Duration::from_millis(200);
+
+/// Run blocking SQLite work. On a multi-threaded runtime the worker hands
+/// its other tasks to the rest of the pool first (`block_in_place`); on a
+/// current-thread runtime (tests) or outside a runtime it runs inline.
+fn off_worker<R>(work: impl FnOnce() -> R) -> R {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(work)
+        }
+        _ => work(),
+    }
+}
+
 impl TrackCatalog for PlaybackDb {
     fn get_track(&self, track_id: &str) -> Option<TrackInfo> {
+        off_worker(|| self.read_track(track_id))
+    }
+}
+
+impl PlaybackDb {
+    fn read_track(&self, track_id: &str) -> Option<TrackInfo> {
         let guard = self.lock()?;
         let mut query = guard
             .prepare(
@@ -84,35 +109,76 @@ impl TrackCatalog for PlaybackDb {
 
 impl PlayHistory for PlaybackDb {
     fn record(&self, user_id: &str, record: &PlayRecord) {
-        let Some(guard) = self.lock() else {
-            return;
+        off_worker(|| self.write_play(user_id, record));
+    }
+}
+
+impl PlaybackDb {
+    /// Insert one play, retrying while SQLite reports busy. A play that
+    /// still fails is logged with what it was, never dropped silently.
+    fn write_play(&self, user_id: &str, record: &PlayRecord) {
+        let id = self.ids.new_id();
+        let mut attempt = 1;
+        let outcome = loop {
+            let Some(guard) = self.lock() else {
+                break Err("playback db lock poisoned".to_owned());
+            };
+            let result = guard.execute(
+                "INSERT INTO library_play_history \
+                 (id, user_id, track_name, artist_name, album_name, recording_mbid, \
+                  release_group_mbid, duration_ms, source, played_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                rusqlite::params![
+                    id,
+                    user_id,
+                    record.track_name,
+                    record.artist_name,
+                    record.album_name,
+                    record.recording_mbid,
+                    record.release_group_mbid,
+                    record.duration_ms,
+                    record.source,
+                    to_iso(record.played_at),
+                ],
+            );
+            drop(guard);
+            match result {
+                Ok(_) => break Ok(()),
+                Err(error)
+                    if crate::db::rusqlite_is_busy(&error) && attempt < PLAY_WRITE_ATTEMPTS =>
+                {
+                    tracing::warn!(attempt, %error, "play history busy; retrying");
+                    attempt += 1;
+                    std::thread::sleep(PLAY_WRITE_BACKOFF);
+                }
+                Err(error) => break Err(error.to_string()),
+            }
         };
-        let outcome = guard.execute(
-            "INSERT INTO library_play_history \
-             (id, user_id, track_name, artist_name, album_name, recording_mbid, \
-              release_group_mbid, duration_ms, source, played_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            rusqlite::params![
-                self.ids.new_id(),
-                user_id,
-                record.track_name,
-                record.artist_name,
-                record.album_name,
-                record.recording_mbid,
-                record.release_group_mbid,
-                record.duration_ms,
-                record.source,
-                to_iso(record.played_at),
-            ],
-        );
         if let Err(error) = outcome {
-            tracing::warn!(%error, "play history write failed; continuing");
+            tracing::error!(
+                %error,
+                user_id,
+                track = %record.track_name,
+                artist = %record.artist_name,
+                played_at = record.played_at,
+                "play history write failed; the play is not recorded"
+            );
         }
     }
 }
 
 impl ListeningPrefs for PlaybackDb {
     fn scrobble_prefs(&self, user_id: &str) -> ScrobblePrefs {
+        off_worker(|| self.read_scrobble_prefs(user_id))
+    }
+
+    fn visibility(&self, user_id: &str) -> Result<String, ProviderFailure> {
+        off_worker(|| self.read_visibility(user_id))
+    }
+}
+
+impl PlaybackDb {
+    fn read_scrobble_prefs(&self, user_id: &str) -> ScrobblePrefs {
         let defaults = || ScrobblePrefs {
             scrobble_to_lastfm: false,
             scrobble_to_listenbrainz: false,
@@ -144,7 +210,7 @@ impl ListeningPrefs for PlaybackDb {
         }
     }
 
-    fn visibility(&self, user_id: &str) -> Result<String, ProviderFailure> {
+    fn read_visibility(&self, user_id: &str) -> Result<String, ProviderFailure> {
         let Some(guard) = self.lock() else {
             return Err(ProviderFailure("prefs store unavailable".to_owned()));
         };
@@ -166,6 +232,12 @@ impl ListeningPrefs for PlaybackDb {
 
 impl DisplayNames for PlaybackDb {
     fn display_name(&self, user_id: &str) -> String {
+        off_worker(|| self.read_display_name(user_id))
+    }
+}
+
+impl PlaybackDb {
+    fn read_display_name(&self, user_id: &str) -> String {
         let Some(guard) = self.lock() else {
             return user_id.to_owned();
         };

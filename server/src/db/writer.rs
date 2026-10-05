@@ -493,6 +493,31 @@ async fn dispatch(
     idle.active.store(false, Ordering::Release);
 }
 
+/// Open a dedicated rusqlite connection with the same pragma set as the
+/// reader pool: WAL, `synchronous=NORMAL`, foreign keys on, the 5 s busy
+/// timeout, and the shared mmap, temp-store, cache and autocheckpoint sizes.
+/// Every rusqlite handle in the process goes through here so none of them
+/// drifts from the factory's settings.
+pub fn open_connection(path: &Path) -> Result<Connection, DbError> {
+    let connection = Connection::open(path)?;
+    connection.busy_timeout(crate::db::BUSY_TIMEOUT)?;
+    // Cache 2 MiB, matching the reader pool. A 16 MiB writer cache stayed
+    // resident after every 100k scan; 2 MiB keeps scan throughput identical.
+    connection.execute_batch(&format!(
+        "PRAGMA journal_mode=WAL;
+         PRAGMA synchronous=NORMAL;
+         PRAGMA foreign_keys=ON;
+         PRAGMA mmap_size={mmap};
+         PRAGMA temp_store=MEMORY;
+         PRAGMA cache_size={cache};
+         PRAGMA wal_autocheckpoint={checkpoint};",
+        mmap = crate::db::MMAP_SIZE,
+        cache = crate::db::CACHE_SIZE_KIB,
+        checkpoint = crate::db::WAL_AUTOCHECKPOINT,
+    ))?;
+    Ok(connection)
+}
+
 /// Writer thread: open the single write connection, arm the abort clock, and
 /// run one `IMMEDIATE` transaction per admission until the scheduler leaves.
 fn writer_loop(
@@ -502,20 +527,7 @@ fn writer_loop(
 ) {
     let clock = Box::new(AbortClock::new());
     let opened = (|| -> Result<Connection, DbError> {
-        let connection = Connection::open(path)?;
-        connection.busy_timeout(Duration::from_millis(5000))?;
-        // Writer cache 2 MiB, matching the reader pool.
-        // The 16 MiB writer cache stayed resident after every 100k scan;
-        // 2 MiB keeps scan throughput identical (reindex 42 s either way).
-        connection.execute_batch(
-            "PRAGMA journal_mode=WAL;
-             PRAGMA synchronous=NORMAL;
-             PRAGMA foreign_keys=ON;
-             PRAGMA mmap_size=67108864;
-             PRAGMA temp_store=MEMORY;
-             PRAGMA cache_size=-2048;
-             PRAGMA wal_autocheckpoint=1000;",
-        )?;
+        let connection = open_connection(path)?;
         register_fold(&connection)?;
         Ok(connection)
     })();
