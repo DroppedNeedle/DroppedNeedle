@@ -518,7 +518,7 @@ impl LibraryRead for FakeLibrary {
         .flatten()
     }
 
-    async fn create_playlist(&self, user_id: &str, name: &str) -> String {
+    async fn create_playlist(&self, user_id: &str, name: &str) -> Result<String, WriteRefusal> {
         let mut id = String::new();
         self.mutate(|rows| {
             rows.next_playlist += 1;
@@ -531,10 +531,15 @@ impl LibraryRead for FakeLibrary {
                 next_entry: 0,
             });
         });
-        id
+        Ok(id)
     }
 
-    async fn add_playlist_entry(&self, user_id: &str, playlist_id: &str, file_id: &str) {
+    async fn add_playlist_entry(
+        &self,
+        user_id: &str,
+        playlist_id: &str,
+        file_id: &str,
+    ) -> Result<(), WriteRefusal> {
         self.mutate(|rows| {
             if let Some(p) = rows
                 .playlists
@@ -548,6 +553,7 @@ impl LibraryRead for FakeLibrary {
                 });
             }
         });
+        Ok(())
     }
 
     async fn remove_playlist_entries(
@@ -555,7 +561,7 @@ impl LibraryRead for FakeLibrary {
         user_id: &str,
         playlist_id: &str,
         entry_ids: &[String],
-    ) {
+    ) -> Result<(), WriteRefusal> {
         self.mutate(|rows| {
             if let Some(p) = rows
                 .playlists
@@ -565,6 +571,7 @@ impl LibraryRead for FakeLibrary {
                 p.entries.retain(|e| !entry_ids.contains(&e.id));
             }
         });
+        Ok(())
     }
 
     async fn move_playlist_entry(
@@ -573,7 +580,7 @@ impl LibraryRead for FakeLibrary {
         playlist_id: &str,
         entry_id: &str,
         index: usize,
-    ) {
+    ) -> Result<(), WriteRefusal> {
         self.mutate(|rows| {
             if let Some(p) = rows
                 .playlists
@@ -586,6 +593,7 @@ impl LibraryRead for FakeLibrary {
                 p.entries.insert(at, entry);
             }
         });
+        Ok(())
     }
 
     async fn favorites(&self, user_id: &str, kind: &str) -> Vec<String> {
@@ -602,7 +610,13 @@ impl LibraryRead for FakeLibrary {
         .unwrap_or_default()
     }
 
-    async fn set_favorite(&self, user_id: &str, kind: &str, internal: &str, add: bool) {
+    async fn set_favorite(
+        &self,
+        user_id: &str,
+        kind: &str,
+        internal: &str,
+        add: bool,
+    ) -> Result<(), WriteRefusal> {
         self.mutate(|rows| {
             let key = (user_id.to_owned(), kind.to_owned(), internal.to_owned());
             if add {
@@ -611,6 +625,7 @@ impl LibraryRead for FakeLibrary {
                 rows.favorites.remove(&key);
             }
         });
+        Ok(())
     }
 
     async fn cover(&self, rg_mbid: &str, size: &str) -> Option<CoverBytes> {

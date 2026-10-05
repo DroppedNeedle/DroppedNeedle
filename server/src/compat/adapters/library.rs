@@ -23,32 +23,93 @@ use crate::reads::library::stores::{
 };
 use crate::reads::platform::covers::CoverArt;
 
-/// A compat read or write failed. The text goes to the log only; the
-/// protocol layers answer with their fixed internal message.
+/// A compat read or write failed. Client faults keep their kind so each
+/// protocol answers its own code (Subsonic 70/50/10/0, Jellyfin
+/// 404/403/400/409); server faults go to the log only and answer the
+/// fixed internal message.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompatError(pub String);
+pub enum CompatError {
+    /// The item does not exist (or is another user's private playlist).
+    NotFound,
+    /// The item is not the caller's to change.
+    Forbidden,
+    /// Bad input; the message is user-safe.
+    Invalid(String),
+    /// Valid input against the wrong state; the message is user-safe.
+    Conflict(String),
+    /// Server fault; the text is for the log only.
+    Internal(String),
+}
 
 impl std::fmt::Display for CompatError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        match self {
+            Self::NotFound => f.write_str("not found"),
+            Self::Forbidden => f.write_str("not allowed"),
+            Self::Invalid(message) | Self::Conflict(message) | Self::Internal(message) => {
+                f.write_str(message)
+            }
+        }
     }
 }
 
 impl From<StoreError> for CompatError {
     fn from(error: StoreError) -> Self {
-        Self(error.to_string())
+        Self::Internal(error.to_string())
     }
 }
 
 impl From<crate::reads::collections::db::StoreError> for CompatError {
     fn from(error: crate::reads::collections::db::StoreError) -> Self {
-        Self(error.to_string())
+        Self::Internal(error.to_string())
     }
 }
 
 impl From<CollectionsError> for CompatError {
     fn from(error: CollectionsError) -> Self {
-        Self(format!("collections refused: {error:?}"))
+        match error {
+            CollectionsError::NotFound => Self::NotFound,
+            CollectionsError::Forbidden { .. } | CollectionsError::Unauthorized { .. } => {
+                Self::Forbidden
+            }
+            CollectionsError::InvalidInput { message } => Self::Invalid(message),
+            CollectionsError::Conflict { message } => Self::Conflict(message),
+            CollectionsError::Busy { error_id } | CollectionsError::Internal { error_id } => {
+                Self::Internal(format!("collections failed (error id {error_id})"))
+            }
+        }
+    }
+}
+
+impl crate::compat::subsonic::store::StoreFailure for CompatError {
+    fn client_error(&self) -> Option<(u8, String)> {
+        use crate::compat::subsonic::error::{GENERIC, NOT_AUTHORIZED, NOT_FOUND, PARAM_MISSING};
+        match self {
+            Self::NotFound => Some((NOT_FOUND, "The requested data was not found.".to_owned())),
+            Self::Forbidden => Some((
+                NOT_AUTHORIZED,
+                "User is not authorized for the given operation.".to_owned(),
+            )),
+            Self::Invalid(message) => Some((PARAM_MISSING, message.clone())),
+            Self::Conflict(message) => Some((GENERIC, message.clone())),
+            Self::Internal(_) => None,
+        }
+    }
+}
+
+impl From<CompatError> for crate::compat::jellyfin::seams::WriteRefusal {
+    fn from(error: CompatError) -> Self {
+        use crate::compat::jellyfin::seams::WriteRefusal;
+        match error {
+            CompatError::NotFound => WriteRefusal::NotFound,
+            CompatError::Forbidden => WriteRefusal::Forbidden,
+            CompatError::Invalid(_) => WriteRefusal::Invalid,
+            CompatError::Conflict(_) => WriteRefusal::Conflict,
+            CompatError::Internal(cause) => {
+                tracing::error!(%cause, "jellyfin library write failed");
+                WriteRefusal::Failed
+            }
+        }
     }
 }
 
@@ -398,14 +459,15 @@ impl CompatLibrary {
 
     /// Append library files to a playlist the user owns. Each entry keeps
     /// the file's names so the web UI shows it too (v2 `add_file_id_entry`).
-    /// Unknown files are skipped.
+    /// A file asked twice is added twice, as v2 appends each; unknown files
+    /// are skipped.
     pub async fn add_files(
         &self,
         user_id: &str,
         playlist_id: &str,
         file_ids: &[String],
     ) -> Result<(), CompatError> {
-        let mut by_id = self
+        let by_id = self
             .tracks_by_ids(file_ids)
             .await?
             .into_iter()
@@ -413,7 +475,7 @@ impl CompatLibrary {
             .collect::<HashMap<_, _>>();
         let entries = file_ids
             .iter()
-            .filter_map(|id| by_id.remove(id))
+            .filter_map(|id| by_id.get(id).cloned())
             .map(|track| NewEntry {
                 track_name: track.title,
                 artist_name: track.artist_name,

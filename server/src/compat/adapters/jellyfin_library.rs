@@ -19,7 +19,7 @@ use crate::compat::jellyfin::builders::LIBRARY_INTERNAL_ID;
 use crate::compat::jellyfin::params::SortKey;
 use crate::compat::jellyfin::seams::{
     AlbumFilter, AlbumView, ArtistScope, ArtistView, CoverBytes, GenreView, IdMap, ItemSort,
-    LibraryRead, PlaylistDetail, PlaylistEntry, PlaylistView, TrackFilter, TrackView,
+    LibraryRead, PlaylistDetail, PlaylistEntry, PlaylistView, TrackFilter, TrackView, WriteRefusal,
 };
 use crate::compat::subsonic::views::genre_slug;
 use crate::reads::library::player::{
@@ -206,12 +206,6 @@ impl JellyfinLibrary {
             name: visible.row.name,
             entries,
         }))
-    }
-
-    async fn write(&self, operation: &str, outcome: impl Future<Output = Result<(), CompatError>>) {
-        if let Err(error) = outcome.await {
-            tracing::warn!(operation, %error, "jellyfin library write refused");
-        }
     }
 }
 
@@ -439,20 +433,20 @@ impl LibraryRead for JellyfinLibrary {
         logged("playlist", self.readable_entries(user_id, id).await)
     }
 
-    async fn create_playlist(&self, user_id: &str, name: &str) -> String {
-        logged(
-            "create_playlist",
-            self.library.create_playlist(user_id, name).await,
-        )
+    async fn create_playlist(&self, user_id: &str, name: &str) -> Result<String, WriteRefusal> {
+        Ok(self.library.create_playlist(user_id, name).await?)
     }
 
-    async fn add_playlist_entry(&self, user_id: &str, playlist_id: &str, file_id: &str) {
-        self.write(
-            "add_playlist_entry",
-            self.library
-                .add_files(user_id, playlist_id, &[file_id.to_owned()]),
-        )
-        .await;
+    async fn add_playlist_entry(
+        &self,
+        user_id: &str,
+        playlist_id: &str,
+        file_id: &str,
+    ) -> Result<(), WriteRefusal> {
+        Ok(self
+            .library
+            .add_files(user_id, playlist_id, &[file_id.to_owned()])
+            .await?)
     }
 
     async fn remove_playlist_entries(
@@ -460,12 +454,11 @@ impl LibraryRead for JellyfinLibrary {
         user_id: &str,
         playlist_id: &str,
         entry_ids: &[String],
-    ) {
-        self.write(
-            "remove_playlist_entries",
-            self.library.remove_entries(user_id, playlist_id, entry_ids),
-        )
-        .await;
+    ) -> Result<(), WriteRefusal> {
+        Ok(self
+            .library
+            .remove_entries(user_id, playlist_id, entry_ids)
+            .await?)
     }
 
     async fn move_playlist_entry(
@@ -474,13 +467,11 @@ impl LibraryRead for JellyfinLibrary {
         playlist_id: &str,
         entry_id: &str,
         index: usize,
-    ) {
-        self.write(
-            "move_playlist_entry",
-            self.library
-                .move_entry(user_id, playlist_id, entry_id, index),
-        )
-        .await;
+    ) -> Result<(), WriteRefusal> {
+        Ok(self
+            .library
+            .move_entry(user_id, playlist_id, entry_id, index)
+            .await?)
     }
 
     async fn favorites(&self, user_id: &str, kind: &str) -> Vec<String> {
@@ -492,13 +483,17 @@ impl LibraryRead for JellyfinLibrary {
         logged("favorites", outcome)
     }
 
-    async fn set_favorite(&self, user_id: &str, kind: &str, internal: &str, add: bool) {
-        self.write(
-            "set_favorite",
-            self.library
-                .set_favorites(user_id, &[(kind.to_owned(), internal.to_owned())], add),
-        )
-        .await;
+    async fn set_favorite(
+        &self,
+        user_id: &str,
+        kind: &str,
+        internal: &str,
+        add: bool,
+    ) -> Result<(), WriteRefusal> {
+        Ok(self
+            .library
+            .set_favorites(user_id, &[(kind.to_owned(), internal.to_owned())], add)
+            .await?)
     }
 
     async fn cover(&self, rg_mbid: &str, size: &str) -> Option<CoverBytes> {

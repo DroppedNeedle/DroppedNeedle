@@ -23,7 +23,8 @@ use droppedneedle::reads::collections::service::CollectionsService;
 use crate::common::ScratchDir;
 
 const SEED: &str = "INSERT INTO auth_users (id, display_name, role, created_at) \
-    VALUES ('u1', 'User', 'user', '2024-01-01T00:00:00Z'); \
+    VALUES ('u1', 'User', 'user', '2024-01-01T00:00:00Z'), \
+    ('u2', 'Other', 'user', '2024-01-01T00:00:00Z'); \
     INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
     VALUES ('art-1', 'Portishead', 'portishead', 'group', 1, 1); \
     INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, album_artist_name, \
@@ -254,4 +255,50 @@ async fn playlists_and_stars_are_shared_with_the_native_routes() {
             .await
             .unwrap();
     assert_eq!(saved, 1);
+}
+
+#[tokio::test]
+async fn playlist_refusals_keep_their_codes_and_repeats_stay() {
+    let rig = Rig::open().await;
+    let native = CollectionsService::new(&rig.reads.collections);
+    let theirs = native
+        .create_playlist(
+            "u2",
+            &CreatePlaylistBody {
+                name: "Theirs".to_owned(),
+                source_ref: None,
+            },
+        )
+        .await
+        .unwrap();
+    let id = format!("pl-{}", theirs.id);
+
+    // Private to someone else: not found (70), never a server fault.
+    let hidden = rig.subsonic("getPlaylist", &[("id", &id)]).await;
+    assert!(hidden.contains("\"code\":70"), "{hidden}");
+    // Public but not ours to change: not authorized (50).
+    native.set_visibility("u2", &theirs.id, true).await.unwrap();
+    let refused = rig
+        .subsonic("updatePlaylist", &[("playlistId", &id), ("name", "Mine")])
+        .await;
+    assert!(refused.contains("\"code\":50"), "{refused}");
+
+    // The same song asked twice is added twice (v2 appends each).
+    let created = rig.subsonic("createPlaylist", &[("name", "Twice")]).await;
+    let ours: serde_json::Value = serde_json::from_str(&created).unwrap();
+    let ours = ours["subsonic-response"]["playlist"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    rig.subsonic(
+        "updatePlaylist",
+        &[
+            ("playlistId", &ours),
+            ("songIdToAdd", "tr-trk-1"),
+            ("songIdToAdd", "tr-trk-1"),
+        ],
+    )
+    .await;
+    let listed = rig.subsonic("getPlaylist", &[("id", &ours)]).await;
+    assert!(listed.contains("\"songCount\":2"), "{listed}");
 }

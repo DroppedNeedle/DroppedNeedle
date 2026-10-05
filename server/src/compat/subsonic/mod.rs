@@ -333,8 +333,11 @@ impl<P: Principal, S: Store, B: AudioBackend> Ctx<'_, P, S, B> {
 
     /// Storage errors surface as code 0 (generic), never an auth code. The
     /// cause is logged; the client sees only the fixed internal message.
-    pub fn store_err<E: std::fmt::Display>(err: E) -> SubsonicError {
-        store_failure(err)
+    pub fn store_err<E: store::StoreFailure>(err: E) -> SubsonicError {
+        match err.client_error() {
+            Some((code, message)) => SubsonicError::new(code, message),
+            None => store_failure(err),
+        }
     }
 }
 

@@ -32,7 +32,9 @@ use super::builders::Builder;
 use super::images::*;
 use super::playlists::*;
 use super::playstate::*;
-use super::seams::{ByteOutcome, IdMap, LibraryRead, PlaybackSessions, Principal, StreamEngine};
+use super::seams::{
+    ByteOutcome, IdMap, LibraryRead, PlaybackSessions, Principal, StreamEngine, WriteRefusal,
+};
 use super::system::*;
 
 // ===== State + registration =====
@@ -244,6 +246,18 @@ pub(super) fn raw_json(status: StatusCode, body: &str) -> Response {
 
 pub(super) fn no_content() -> Response {
     error(StatusCode::NO_CONTENT)
+}
+
+/// Map a refused library write to its status (v2 maps not-found to 404
+/// and permission errors to 403).
+pub(super) fn refused(refusal: WriteRefusal) -> Response {
+    error(match refusal {
+        WriteRefusal::NotFound => StatusCode::NOT_FOUND,
+        WriteRefusal::Forbidden => StatusCode::FORBIDDEN,
+        WriteRefusal::Invalid => StatusCode::BAD_REQUEST,
+        WriteRefusal::Conflict => StatusCode::CONFLICT,
+        WriteRefusal::Failed => StatusCode::INTERNAL_SERVER_ERROR,
+    })
 }
 
 /// Map an engine byte outcome to a response (200/206 bytes, 416 range-only,

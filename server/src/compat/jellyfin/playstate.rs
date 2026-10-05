@@ -48,10 +48,13 @@ where
     if kind != "artist" && kind != "album" && kind != "track" {
         return error(StatusCode::BAD_REQUEST);
     }
-    state
+    if let Err(refusal) = state
         .library
         .set_favorite(user_id, &kind, &internal, add)
-        .await;
+        .await
+    {
+        return refused(refusal);
+    }
     json(StatusCode::OK, &marker(item_id, add, false))
 }
 

@@ -656,7 +656,7 @@ impl Store for SubsonicStore {
             .library
             .playlist(user_id, &id)
             .await?
-            .ok_or_else(|| CompatError("created playlist vanished".to_owned()))?;
+            .ok_or_else(|| CompatError::Internal("created playlist vanished".to_owned()))?;
         Ok(record(&visible))
     }
 
@@ -851,7 +851,7 @@ impl Store for SubsonicStore {
             .avatars
             .load(user_id)
             .await
-            .map_err(|error| CompatError(format!("avatar load failed: {error:?}")))
+            .map_err(|error| CompatError::Internal(format!("avatar load failed: {error:?}")))
     }
 
     async fn scan_status(&self) -> Result<(bool, Option<i64>), CompatError> {

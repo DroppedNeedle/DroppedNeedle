@@ -203,11 +203,24 @@ pub struct ClientInfo {
     pub codec_profiles: Vec<super::media::client_info::CodecProfile>,
 }
 
+/// What a store failure tells the client.
+pub trait StoreFailure: std::fmt::Display + Send {
+    /// The code and user-safe message for a client fault (not found, not
+    /// allowed, bad input); `None` for a server fault, which is logged and
+    /// answered with code 0 and the fixed message.
+    fn client_error(&self) -> Option<(u8, String)> {
+        None
+    }
+}
+
+impl StoreFailure for std::convert::Infallible {}
+
 /// The library/services backing store. Every method reads or mutates
 /// one v2 `CompatServices` field; names follow the v2 call sites.
 pub trait Store: Clone + Send + Sync {
-    /// Storage error; surfaced as code 0 (generic).
-    type Error: std::fmt::Display + Send;
+    /// Storage error: client faults answer their own code, server faults
+    /// code 0 with the fixed message.
+    type Error: StoreFailure;
 
     /// The store scoped to one authenticated caller, so catalog reads can
     /// carry the caller's starred dates and play counts. Stores without

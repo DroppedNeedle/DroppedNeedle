@@ -235,6 +235,22 @@ pub enum ArtistScope {
     Album,
 }
 
+/// Why a library write was refused. The routes answer 404, 403, 400, 409
+/// or 500.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteRefusal {
+    /// The item does not exist for this caller.
+    NotFound,
+    /// The item is not the caller's to change.
+    Forbidden,
+    /// Bad input.
+    Invalid,
+    /// Valid input against the wrong state.
+    Conflict,
+    /// Server fault (already logged).
+    Failed,
+}
+
 /// Track filters for one page; every set field narrows.
 #[derive(Debug, Clone, Default)]
 pub struct TrackFilter {
@@ -330,26 +346,30 @@ pub trait LibraryRead: Clone + Send + Sync + 'static {
         user_id: &str,
         id: &str,
     ) -> impl Future<Output = Option<PlaylistDetail>> + Send;
-    fn create_playlist(&self, user_id: &str, name: &str) -> impl Future<Output = String> + Send;
+    fn create_playlist(
+        &self,
+        user_id: &str,
+        name: &str,
+    ) -> impl Future<Output = Result<String, WriteRefusal>> + Send;
     fn add_playlist_entry(
         &self,
         user_id: &str,
         playlist_id: &str,
         file_id: &str,
-    ) -> impl Future<Output = ()> + Send;
+    ) -> impl Future<Output = Result<(), WriteRefusal>> + Send;
     fn remove_playlist_entries(
         &self,
         user_id: &str,
         playlist_id: &str,
         entry_ids: &[String],
-    ) -> impl Future<Output = ()> + Send;
+    ) -> impl Future<Output = Result<(), WriteRefusal>> + Send;
     fn move_playlist_entry(
         &self,
         user_id: &str,
         playlist_id: &str,
         entry_id: &str,
         index: usize,
-    ) -> impl Future<Output = ()> + Send;
+    ) -> impl Future<Output = Result<(), WriteRefusal>> + Send;
     /// Favorited internal ids of one kind for one caller.
     fn favorites(&self, user_id: &str, kind: &str) -> impl Future<Output = Vec<String>> + Send;
     fn set_favorite(
@@ -358,7 +378,7 @@ pub trait LibraryRead: Clone + Send + Sync + 'static {
         kind: &str,
         internal: &str,
         add: bool,
-    ) -> impl Future<Output = ()> + Send;
+    ) -> impl Future<Output = Result<(), WriteRefusal>> + Send;
     /// Release art bytes (`size` is the 250/500/1200 bucket); `None` renders
     /// 404 with no placeholder, unlike Subsonic (v2 `_image`).
     fn cover(&self, rg_mbid: &str, size: &str) -> impl Future<Output = Option<CoverBytes>> + Send;

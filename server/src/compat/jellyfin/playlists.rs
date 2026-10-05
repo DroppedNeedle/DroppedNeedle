@@ -65,16 +65,22 @@ where
     } else {
         params::ids_param(&q, &["ids"])
     };
-    let internal = state
+    let internal = match state
         .library
         .create_playlist(&authed.principal.id, &name)
-        .await;
+        .await
+    {
+        Ok(internal) => internal,
+        Err(refusal) => return refused(refusal),
+    };
     for jf_id in &track_ids {
-        if let Some(file_id) = report_file_id(&state, jf_id).await {
-            state
+        if let Some(file_id) = report_file_id(&state, jf_id).await
+            && let Err(refusal) = state
                 .library
                 .add_playlist_entry(&authed.principal.id, &internal, &file_id)
-                .await;
+                .await
+        {
+            return refused(refusal);
         }
     }
     json(
@@ -241,11 +247,13 @@ where
     };
     let q = CiParams::parse(raw_query.as_deref());
     for jf_id in params::ids_param(&q, &["ids", "Ids"]) {
-        if let Some(file_id) = report_file_id(&state, &jf_id).await {
-            state
+        if let Some(file_id) = report_file_id(&state, &jf_id).await
+            && let Err(refusal) = state
                 .library
                 .add_playlist_entry(&authed.principal.id, &internal, &file_id)
-                .await;
+                .await
+        {
+            return refused(refusal);
         }
     }
     no_content()
@@ -278,11 +286,13 @@ where
     };
     let q = CiParams::parse(raw_query.as_deref());
     let entry_ids = params::ids_param(&q, &["entryIds", "EntryIds"]);
-    if !entry_ids.is_empty() {
-        state
+    if !entry_ids.is_empty()
+        && let Err(refusal) = state
             .library
             .remove_playlist_entries(&authed.principal.id, &internal, &entry_ids)
-            .await;
+            .await
+    {
+        return refused(refusal);
     }
     no_content()
 }
@@ -315,9 +325,12 @@ where
         Ok(internal) => internal,
         Err(denied) => return denied,
     };
-    state
+    if let Err(refusal) = state
         .library
         .move_playlist_entry(&authed.principal.id, &internal, &entry_id, index)
-        .await;
+        .await
+    {
+        return refused(refusal);
+    }
     no_content()
 }
