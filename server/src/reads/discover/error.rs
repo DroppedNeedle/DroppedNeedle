@@ -1,6 +1,6 @@
-//! Reads-discover slice errors rendered into the shared envelope.
+//! Discover errors rendered into the shared envelope.
 //!
-//! Status mapping for this slice lives here in the handler layer. Services
+//! Status mapping for the discover routes lives here in the handler layer. Services
 //! return domain failures that handlers convert; anything unexpected becomes
 //! a fixed 5xx body naming an error id, with the cause going to the log only.
 
@@ -31,7 +31,7 @@ pub const FIXED_UPSTREAM_MESSAGE: &str = "Upstream service error";
 /// Challenge sent on every 401.
 pub const WWW_AUTHENTICATE_BEARER: &str = "Bearer";
 
-/// Every failure this slice can return to a caller.
+/// Every failure the discover routes can return to a caller.
 #[derive(Debug)]
 pub enum ReadsError {
     /// No valid session. Carries the `WWW-Authenticate` challenge.
@@ -62,14 +62,14 @@ impl ReadsError {
     /// Build a 500, logging the real cause with its id.
     pub fn internal(cause: &dyn std::fmt::Display, ids: &dyn IdGenerator) -> Self {
         let error_id = ids.new_id();
-        tracing::error!(error_id, %cause, "reads discover slice failed");
+        tracing::error!(error_id, %cause, "reads discover request failed");
         Self::Internal { error_id }
     }
 
     /// Build a 502, logging the real cause with its id.
     pub fn upstream(cause: &dyn std::fmt::Display, ids: &dyn IdGenerator) -> Self {
         let error_id = ids.new_id();
-        tracing::error!(error_id, %cause, "reads discover slice upstream failed");
+        tracing::error!(error_id, %cause, "reads discover request upstream failed");
         Self::Upstream { error_id }
     }
 

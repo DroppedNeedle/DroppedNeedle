@@ -1,10 +1,9 @@
 //! Unified search: native `/api/v3/search` read surface.
 //!
-//! Clean-slate stage-4 slice over the 0001 `local_*` catalog tables (no
-//! migration): unified search, typeahead suggest, per-bucket drill-down,
-//! and one single-method enrich-batch. Provider-backed search and
-//! enrichment land in stage 5 behind these same handlers through the
-//! [`ports::EnrichmentPort`] seam.
+//! Search over the 0001 `local_*` catalog tables: unified search,
+//! typeahead suggest, per-bucket drill-down, and one single-method
+//! enrich-batch. Provider-backed enrichment runs behind these same
+//! handlers through the [`ports::EnrichmentPort`] seam.
 //!
 //! Wiring: [`router`] is mounted under `/api/v3` inside the session gate
 //! via `ReadsSetup::search_router`, with the handler paths and model
@@ -35,12 +34,12 @@ pub const MAX_SUGGEST_LIMIT: u32 = 10;
 
 /// Search dependencies, built once and injected by constructor. The pool
 /// serves local catalog reads; the port answers enrichment (unconfigured
-/// until stage 5 wires providers); the ids mint error ids.
+/// when no providers are wired); the ids mint error ids.
 #[derive(Clone)]
 pub struct SearchDeps {
     /// Local catalog search over the baseline pool.
     pub service: service::SearchService,
-    /// Enrichment seam (stage-5 providers implement this).
+    /// Enrichment seam (the provider adapters implement this).
     pub enrichment: Arc<dyn ports::EnrichmentPort>,
     /// Fresh ids for error correlation.
     pub ids: Arc<dyn crate::ids::IdGenerator>,
@@ -61,7 +60,7 @@ impl SearchDeps {
     }
 }
 
-/// Mount the search routes. Registration order is load-bearing: the static
+/// Mount the search routes. Registration order matters: the static
 /// `suggest` and `enrich/batch` segments must win over the `{bucket}`
 /// capture, which Axum's router guarantees by preferring static segments.
 /// The session gate and 405 fallback are applied by the app, not here.

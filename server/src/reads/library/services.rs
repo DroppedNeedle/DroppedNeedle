@@ -1,4 +1,4 @@
-//! Domain logic for the library slice. Every function answers one route:
+//! Domain logic for the library reads. Every function answers one route:
 //! validate, read through the ports, shape the view. Failures are domain
 //! typed; handlers map them to HTTP in `error`.
 

@@ -34,7 +34,7 @@ use crate::auth::session::middleware::CurrentSession;
 
 /// The authenticated caller. The deny-by-default session middleware stashes
 /// the session; this extractor reads it without a store round-trip (all
-/// slice routes are plain authenticated-user routes, no role gating).
+/// discover routes are plain authenticated-user routes, no role gating).
 ///
 /// Stale sessions need no user-row re-read here: `auth_tokens.user_id`
 /// references `auth_users(id)` ON DELETE CASCADE (migration 0001), so
@@ -875,8 +875,8 @@ pub async fn your_top_albums(
 // Now playing
 // ---------------------------------------------------------------------------
 
-/// The live now-playing snapshot across users. Presence writes
-/// (POST/DELETE) land in stage 6; this slice only reads.
+/// The now-playing snapshot across users. Presence writes (POST/DELETE)
+/// live in `playback`; this only reads.
 #[utoipa::path(
     get,
     path = "/api/v3/now-playing",
@@ -955,7 +955,7 @@ pub fn home_router(deps: ReadsDeps) -> axum::Router {
         .with_state(deps)
 }
 
-/// Now-playing snapshot route. Presence writes are stage 6, not here.
+/// Now-playing snapshot route. Presence writes live in `playback`.
 pub fn now_playing_router(deps: ReadsDeps) -> axum::Router {
     use axum::routing::get;
 
@@ -964,10 +964,10 @@ pub fn now_playing_router(deps: ReadsDeps) -> axum::Router {
         .with_state(deps)
 }
 
-/// Every route in this slice. Mount under `/api/v3` behind the session
+/// Every discover route. Mount under `/api/v3` behind the session
 /// gate; see `mod.rs` for the wiring note.
 ///
-/// `GET /now-playing` is deliberately absent: stage 6 serves it from the
+/// `GET /now-playing` is absent on purpose: `playback` serves it from the
 /// live presence registry (same JSON shape), and merging both routers
 /// would panic on the duplicate route.
 pub fn reads_router(deps: ReadsDeps) -> axum::Router {

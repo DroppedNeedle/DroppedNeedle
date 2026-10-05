@@ -1,18 +1,18 @@
 //! Cover art reads: release-group, release, and artist images.
 //!
-//! Carried over from v2 `covers.py` (trace A:69-71): size validation with the
+//! Carried over from v2's covers routes: size validation with the
 //! same allowed sizes and `original` aliases, ETag + `If-None-Match` handling
 //! (strong, weak, and `*`), the 202 warming answer while art resolves in the
 //! background, and distinct album/artist placeholders. The v2 debug route
-//! (A:72) is deliberately absent here.
+//! is absent here on purpose (it lives in `tooling::covers_debug`).
 //!
-//! Cover bytes come from the [`CoverArt`] port. Stage 4 ships the
-//! [`FakeCoverArt`] only; real art providers land in stage 5 behind the same
-//! trait. Thumbnailing is a no-op here: the fake returns final bytes and stage
-//! 5 applies the size after fetching.
+//! Cover bytes come from the [`CoverArt`] port. Only [`FakeCoverArt`]
+//! exists so far; real art providers belong behind the same trait.
+//! Thumbnailing is a no-op here: the fake returns final bytes, and a real
+//! provider would apply the size after fetching.
 //!
 //! Self-contained on purpose: no `crate::` imports, so this module compiles
-//! both inside the wired tree and standalone in the slice tests. The error
+//! both inside the wired tree and standalone in the tests. The error
 //! envelope mirrors `crate::error` exactly.
 
 use std::collections::{HashMap, HashSet};
@@ -48,7 +48,7 @@ const FALLBACK_CACHE_CONTROL: &str = "public, max-age=300";
 /// Source label marking CAA bytes for the short cache window.
 const FALLBACK_SOURCE: &str = "cover-art-archive";
 
-/// Machine code for a bad `size` query value, matching the auth slices.
+/// Machine code for a bad `size` query value, matching the auth routes.
 const INVALID_INPUT: &str = "INVALID_INPUT";
 
 /// Album placeholder, v2 SVG kept so cold covers look the same.
@@ -90,8 +90,8 @@ impl CoverBytes {
     }
 }
 
-/// Cover art port. Stage 5 implements the real providers; stage 4 tests and
-/// handlers run against [`FakeCoverArt`].
+/// Cover art port. Tests and, for now, production run against
+/// [`FakeCoverArt`].
 pub trait CoverArt: Send + Sync + 'static {
     /// Release-group cover, or `None` when no art is cached yet.
     fn release_group_cover(
@@ -119,7 +119,7 @@ pub trait CoverArt: Send + Sync + 'static {
     fn is_artist_warming(&self, artist_id: &str, size_px: Option<u32>) -> bool;
 }
 
-/// Fake art source for stage 4. Entries are keyed exactly as the handlers
+/// Fake art source. Entries are keyed exactly as the handlers
 /// query them; anything missing reads as absent (placeholder or warming).
 #[derive(Debug, Clone, Default)]
 pub struct FakeCoverArt {
@@ -264,7 +264,7 @@ impl CoverArt for FakeCoverArt {
 /// for utoipa.
 #[derive(Clone)]
 pub struct CoversState {
-    /// Art source (fake in stage 4, providers in stage 5).
+    /// Art source (the fake until a provider is wired).
     pub covers: std::sync::Arc<dyn CoverArt>,
 }
 
@@ -275,7 +275,7 @@ impl CoversState {
     }
 }
 
-/// Routes for this slice, relative paths for nesting under `/api/v3`.
+/// Cover routes, relative paths for nesting under `/api/v3`.
 pub fn routes(state: CoversState) -> Router {
     Router::new()
         .route(

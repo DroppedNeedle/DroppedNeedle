@@ -1,15 +1,15 @@
-//! Stage-4 platform read slice: covers, version, and wrapped.
+//! Platform reads: covers, version, and wrapped.
 //!
-//! Clean-slate `/api/v3` handlers over trait ports with stage-4 fakes; real
-//! art providers, the GitHub client, and ListenBrainz aggregation arrive in
-//! stage 5 behind the same traits. Posture at wiring:
+//! Clean-slate `/api/v3` handlers over trait ports that still run on fakes;
+//! real art providers, the GitHub client, and ListenBrainz aggregation
+//! belong behind the same traits. Mounting:
 //!
 //! - `/covers/*` and `/version*` nest inside the session-gated v3 router
-//!   (trace `U*`: any signed-in user, no role gate).
+//!   (any signed-in user, no role gate).
 //! - `/wrapped/*` mounts outside the session middleware with only the
-//!   `X-Wrapped-API-Key` gate (trace `W`). Never add these paths to the
-//!   session allowlist: allowlisted means public.
-//! - The v2 covers debug route stays out (trace A:72, dropped).
+//!   `X-Wrapped-API-Key` gate. Never add these paths to the session
+//!   allowlist: allowlisted means public.
+//! - The v2 covers debug route stays out of this router.
 
 pub mod covers;
 pub mod version;
@@ -17,7 +17,7 @@ pub mod wrapped;
 
 use axum::Router;
 
-/// Bundle of the three slice states for one-shot assembly.
+/// Bundle of the three platform states for one-shot assembly.
 #[derive(Clone)]
 pub struct PlatformState {
     /// Cover art state.
@@ -29,7 +29,7 @@ pub struct PlatformState {
 }
 
 impl PlatformState {
-    /// Bundle the three slice states.
+    /// Bundle the three platform states.
     pub fn new(
         covers: covers::CoversState,
         version: version::VersionState,

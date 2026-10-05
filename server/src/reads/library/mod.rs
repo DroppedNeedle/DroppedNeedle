@@ -1,11 +1,11 @@
 //! Library reads: catalog, local-library browse, genres, lyrics.
 //!
-//! The stage-4 library slice. Clean-slate `/api/v3` read handlers over the
+//! Clean-slate `/api/v3` read handlers over the
 //! 0001 baseline `local_*` tables plus `library_user_favorites` for the
-//! caller's favorite flags. No migration: this slice reads existing tables
+//! caller's favorite flags. These routes read existing tables
 //! only, and every route is a GET behind the caller's session.
 //!
-//! Layout mirrors the users slice: `handlers` are thin, `services` hold the
+//! Layout mirrors the users routes: `handlers` are thin, `services` hold the
 //! domain logic and return [`services::LibraryFailure`], `stores` defines
 //! the ports, `sqlite` implements them over the reader pool, and `memory`
 //! carries the test fakes. Status mapping lives only in `error`.
@@ -32,14 +32,14 @@ use axum::{Router, routing::get};
 
 use stores::{FavoriteReads, LibraryCatalog, LyricsPort};
 
-/// Every dependency this slice needs, injected by constructor.
+/// Every dependency the library reads need, injected by constructor.
 #[derive(Clone)]
 pub struct LibraryDeps {
     /// Catalog reads over the `local_*` tables.
     pub catalog: Arc<dyn LibraryCatalog>,
     /// Favorite flags and counts for the caller.
     pub favorites: Arc<dyn FavoriteReads>,
-    /// Stored-lyrics reads. Provider fetch lands in stage 5 behind this port.
+    /// Stored-lyrics reads; the provider fetch sits behind this port too.
     pub lyrics: Arc<dyn LyricsPort>,
     /// Auth bundle, used only to resolve the caller for favorite flags.
     pub auth: UsersDeps,
@@ -48,7 +48,7 @@ pub struct LibraryDeps {
 }
 
 /// Authenticated read routes. The session middleware authenticates before
-/// these run; every handler takes the slice-local user extractor, so every
+/// these run; every handler takes the library user extractor, so every
 /// route 401s anonymously and admits any signed-in role.
 pub fn library_router(deps: LibraryDeps) -> Router {
     Router::new()

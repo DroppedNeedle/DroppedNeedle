@@ -1,4 +1,4 @@
-//! Transport DTOs for the collections slice. Wire format is snake_case.
+//! Transport DTOs for the collections routes. Wire format is snake_case.
 
 use std::collections::HashMap;
 

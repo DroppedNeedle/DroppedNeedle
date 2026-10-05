@@ -6,7 +6,7 @@
 //! use, so a keyboard without accents still finds the artist. Retired
 //! (merged-away) artists and albums never match, and tracks outside the
 //! `indexed` availability never match. Empty results are absence, never
-//! failure. Provider-backed results join these same handlers in stage 5.
+//! failure.
 
 use sqlx::{Row, SqlitePool};
 

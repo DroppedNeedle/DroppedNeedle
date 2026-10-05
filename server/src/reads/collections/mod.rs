@@ -1,10 +1,9 @@
-//! Stage-4 collections slice: playlists, favorites, follows, pins.
+//! Collections: playlists, favorites, follows, pins.
 //!
 //! Clean-slate `/api/v3` surface. The router below mounts paths relative to
-//! `/api/v3`; wiring nests it there behind the session middleware and swaps
-//! the slice-local [`auth::gate`] plus [`auth::Principal`] for the real
-//! session gate and role extractors. Handler utoipa annotations already carry
-//! the full `/api/v3` paths for the contract document.
+//! `/api/v3`; the app nests it there behind the session middleware and
+//! builds [`auth::Principal`] from the session. Handler utoipa annotations
+//! carry the full `/api/v3` paths for the contract document.
 
 pub mod approvals;
 pub mod auth;

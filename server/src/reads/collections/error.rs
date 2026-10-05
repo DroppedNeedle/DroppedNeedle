@@ -3,8 +3,6 @@
 //! Shapes are byte-compatible with the crate `error` module: every failure
 //! renders as `{"error": {code, message, details}}`. Server faults carry the
 //! fixed generic message plus an error id; the cause goes to the log only.
-//! Wiring note: when this slice mounts into the app router, swap these
-//! variants for the crate-level error type and keep the codes.
 
 use axum::{
     Json,
@@ -24,7 +22,7 @@ pub const NOT_FOUND: &str = "NOT_FOUND";
 /// Known route hit with the wrong method.
 pub const METHOD_NOT_ALLOWED: &str = "METHOD_NOT_ALLOWED";
 /// Bad input. Safe to show the message. The code matches the other reads
-/// slices (`INVALID_INPUT` everywhere).
+/// routes (`INVALID_INPUT` everywhere).
 pub const INVALID_INPUT: &str = "INVALID_INPUT";
 /// State conflict (e.g. auto-download without a follow).
 pub const CONFLICT: &str = "CONFLICT";
@@ -75,8 +73,8 @@ pub enum CollectionsError {
 
 impl CollectionsError {
     /// Build a server fault, logging the real cause with a fresh id. The id
-    /// is minted here because the slice router has no request-scope layer;
-    /// wiring passes the request id instead.
+    /// is minted here because these routes have no request-scope id of
+    /// their own.
     pub fn internal(cause: &dyn std::fmt::Display) -> Self {
         let error_id = uuid::Uuid::new_v4().to_string();
         tracing::error!(error_id, %cause, "collections request failed");

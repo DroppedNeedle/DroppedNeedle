@@ -1,6 +1,6 @@
-//! Stage-4 native reads: library, search, discover, collections, platform.
+//! Native reads: library, search, discover, collections, platform.
 //!
-//! Each slice owns its handlers, services, and state; this module only
+//! Each area owns its handlers, services, and state; this module only
 //! composes them. [`ReadsSetup`] is the single bundle `create_app` mounts:
 //! [`ReadsSetup::gated_router`] plus [`ReadsSetup::search_router`] nest
 //! inside the deny-by-default session gate (search carries full `/api/v3`
@@ -9,10 +9,9 @@
 //! with only its `X-Wrapped-API-Key` extractor. Sessions never satisfy the
 //! wrapped routes and the wrapped key never satisfies the session gate.
 //!
-//! The collections slice ships a slice-local principal header for its
-//! standalone briefs; [`translate_principal`] swaps it for the real session
-//! at wiring by resolving the role fresh from the user store, mirroring
-//! the sibling role extractors.
+//! Collections and requests take a local `Principal`; [`translate_principal`]
+//! builds it from the real session by resolving the role fresh from the
+//! user store, mirroring the users role extractors.
 
 pub mod collections;
 pub mod discover;
@@ -32,21 +31,21 @@ use crate::{
     ids::IdGenerator,
 };
 
-/// Seconds in a mean Gregorian year, for the stage-4 wrapped-year stamp.
+/// Seconds in a mean Gregorian year, for the wrapped-year stamp.
 const SECS_PER_YEAR: i64 = 31_556_952;
 
-/// Everything `create_app` needs to mount the reads slices, built once.
+/// Everything `create_app` needs to mount the reads routes, built once.
 #[derive(Clone)]
 pub struct ReadsSetup {
     /// Library catalog deps (SQLite catalog over the reader pool).
     pub library: library::LibraryDeps,
     /// Unified search deps (SQLite search over the reader pool).
     pub search: search::SearchDeps,
-    /// Discover/home/queue/radio deps (stage-4 fakes; providers land in 5).
+    /// Discover/home/queue/radio deps (still the fakes; no providers wired).
     pub discover: discover::ReadsDeps,
     /// Collections state (in-memory stores; SQLite ports land later).
     pub collections: collections::CollectionsState,
-    /// Covers/version/wrapped states (stage-4 fakes; providers land in 5).
+    /// Covers/version/wrapped states (still the fakes; no providers wired).
     pub platform: platform::PlatformState,
 }
 
@@ -55,7 +54,7 @@ impl ReadsSetup {
     /// `users` resolves library favorites and collections roles;
     /// `wrapped_api_key` is the decrypted `wrapped_settings` secret (empty
     /// denies every wrapped request, the fail-closed rule); `enrichment`
-    /// carries the live stage-5 provider pair (`None` keeps the honest
+    /// carries the live provider pair (`None` keeps the
     /// unconfigured ports: bare enrichment echoes and empty lyrics).
     pub fn build(
         pool: &sqlx::SqlitePool,
@@ -67,9 +66,9 @@ impl ReadsSetup {
         let library_db = library::sqlite::LibraryDb::new(pool);
         let catalog: Arc<dyn library::stores::LibraryCatalog> =
             Arc::new(library::sqlite::SqliteCatalog::new(&library_db));
-        // No stored-lyrics table exists in the stage-2 schema, so without
-        // the provider pair lyrics reads stay on the empty port (honest
-        // 404s); with it, catalog tracks resolve through live LRCLIB when
+        // No stored-lyrics table exists in the schema, so without the
+        // provider pair lyrics reads stay on the empty port (404s); with
+        // it, catalog tracks resolve through live LRCLIB when
         // lyrics are enabled, and stay on the empty port otherwise.
         let lyrics: Arc<dyn library::stores::LyricsPort> = match &enrichment {
             Some(pair) => match pair.lyrics.clone() {
@@ -161,9 +160,9 @@ impl ReadsSetup {
     }
 }
 
-/// Stage-4 discover deps: every port runs its slice fake. Clocks pin at
-/// build time (fakes stamp from them) while staleness reads the system
-/// clock; stage 5 replaces the ports with providers and real stores.
+/// Discover deps: every port still runs its fake. Clocks pin at build time
+/// (fakes stamp from them) while staleness reads the system clock. Real
+/// providers and stores would replace the ports here.
 fn discover_deps(ids: Arc<dyn IdGenerator>) -> discover::ReadsDeps {
     use discover::fakes::{
         FakeBatches, FakeCharts, FakeContent, FakeNowPlaying, FakePreviews, FakeQueues, FakeRadio,
@@ -185,7 +184,7 @@ fn discover_deps(ids: Arc<dyn IdGenerator>) -> discover::ReadsDeps {
     }
 }
 
-/// Stage-4 platform states: empty art, tagged version with no known
+/// Platform states: empty art, tagged version with no known
 /// releases, and empty wrapped data behind the configured key.
 fn platform_state(wrapped_api_key: String) -> platform::PlatformState {
     use platform::{
@@ -195,7 +194,7 @@ fn platform_state(wrapped_api_key: String) -> platform::PlatformState {
     };
 
     // Mean-year math is approximate by days at most; the fake only needs a
-    // plausible stats year until stage 5 aggregates real data.
+    // plausible stats year until real data is aggregated.
     let year = (1970 + now_unix() / SECS_PER_YEAR) as i32;
     platform::PlatformState::new(
         CoversState::new(Arc::new(FakeCoverArt::empty())),

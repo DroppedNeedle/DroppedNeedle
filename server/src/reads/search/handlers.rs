@@ -2,8 +2,8 @@
 //!
 //! Each handler answers one route: extract, validate, call the service,
 //! render. Status mapping lives in [`SearchError`](super::error::SearchError).
-//! Authentication is the deny-by-default middleware alone (v2 `U*`
-//! semantics): these routes take no principal because every role sees the
+//! Authentication is the deny-by-default middleware alone (any signed-in
+//! user, as in v2): these routes take no principal because every role sees the
 //! same catalog and no per-user data is read or written.
 
 use axum::{

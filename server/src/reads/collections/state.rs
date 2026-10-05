@@ -150,7 +150,7 @@ pub struct FollowStore {
     pub follows: RwLock<HashMap<(String, String), FollowRow>>,
 }
 
-/// One new-release sighting (fixture-seeded until providers land in stage 5).
+/// One new-release sighting (fixture-seeded; no provider feeds them yet).
 #[derive(Debug, Clone)]
 pub struct NewReleaseRow {
     /// Release-group MBID.
@@ -178,7 +178,7 @@ pub struct NewReleaseStore {
     pub seen_at: RwLock<HashMap<String, u64>>,
 }
 
-/// One edition catalog entry (fixture-seeded until providers land in stage 5).
+/// One edition catalog entry (fixture-seeded; no provider feeds them yet).
 #[derive(Debug, Clone)]
 pub struct EditionCatalogRow {
     /// Known release MBIDs for the album.
@@ -212,8 +212,8 @@ pub struct PinHintStore {
     pub pins: RwLock<HashMap<String, PinHintRow>>,
 }
 
-/// One accepted external identity. Owned by the library engine (stage 8);
-/// this stub exists so the pin-hint-only brief can assert pins never write it.
+/// One accepted external identity. Owned by the library engine; this stub
+/// exists so the pin-hint test can assert pins never write it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalIdentityRow {
     /// Album id.
@@ -225,7 +225,7 @@ pub struct ExternalIdentityRow {
 }
 
 /// Identity-table stub with a write counter. Every identity write bumps the
-/// counter; the pin-hint brief asserts it stays at zero across pin ops.
+/// counter; the pin-hint test asserts it stays at zero across pin ops.
 #[derive(Debug, Default)]
 pub struct IdentityStore {
     /// Rows by album id.
@@ -283,9 +283,9 @@ pub struct PendingBatch {
     pub requested_at: u64,
 }
 
-/// Pending approvals owned by the acquire slice. Wiring connects this so
-/// the approval reads share one store with the approval mutations; the
-/// stage-4 briefs leave it empty and read the follow rows.
+/// Pending approvals owned by `acquire::requests`. Wiring connects this so
+/// the approval reads share one store with the approval mutations; tests
+/// leave it empty and read the follow rows.
 pub trait PendingApprovalsSource: Send + Sync {
     /// Pending approvals, oldest first.
     fn pending_approvals(&self) -> Vec<PendingApproval>;
@@ -293,9 +293,9 @@ pub trait PendingApprovalsSource: Send + Sync {
     fn pending_batches(&self) -> Vec<PendingBatch>;
 }
 
-/// Seed sink into the acquire slice's approval store. Wiring connects this
-/// so follow toggles that land Pending also file the approval the admin
-/// mutations decide; the stage-4 briefs leave it empty.
+/// Seed sink into the requests approval store. Wiring connects this so
+/// follow toggles that land Pending also file the approval the admin
+/// mutations decide; tests leave it empty.
 pub trait ApprovalSeedSink: Send + Sync {
     /// File one pending approval.
     fn seed_approval(&self, user_id: &str, user_name: &str, artist_mbid: &str, artist_name: &str);
@@ -303,7 +303,7 @@ pub trait ApprovalSeedSink: Send + Sync {
     fn withdraw_approval(&self, user_id: &str, artist_mbid: &str);
 }
 
-/// All slice state. Handlers receive this via the `State` extractor and pass
+/// All collections state. Handlers receive this via the `State` extractor and pass
 /// narrow store references into services.
 #[derive(Clone, Default)]
 pub struct CollectionsState {
@@ -321,7 +321,7 @@ pub struct CollectionsState {
     pub pins: Arc<PinHintStore>,
     /// Identity-table stub. Pins must never write here.
     pub identities: Arc<IdentityStore>,
-    /// Failure injection for the leak briefs. While set, services fail.
+    /// Failure injection for the leak tests. While set, services fail.
     #[cfg(any(test, feature = "test-support"))]
     pub fail_stores: Arc<std::sync::atomic::AtomicBool>,
     /// Acquire-owned pending approvals, when wired. Reads prefer this over

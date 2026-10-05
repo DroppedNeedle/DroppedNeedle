@@ -1,7 +1,7 @@
-//! Ports behind the discover slice: content, charts, previews, and stores.
+//! Ports behind discover: content, charts, previews, and stores.
 //!
-//! Stage 4 runs these on fakes (see `fakes.rs`); stage 5 wires real
-//! providers behind the same traits without touching the handlers. Every
+//! These still run on fakes (see `fakes.rs`); real providers can plug in
+//! behind the same traits without touching the handlers. Every
 //! fallible method returns a plain string cause: provider detail stays in
 //! the log, never on the wire.
 

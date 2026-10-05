@@ -9,10 +9,10 @@
 //! Production wiring: `serve()` spawns the discover and home loops with
 //! [`TokioSleeper`] over a shutdown watch, flips the watch after axum
 //! serves, and awaits both tasks. The loop bodies are still guarded no-ops:
-//! stage-4 ports are static scripted fakes with no rebuild work to run (a
+//! the ports are static scripted fakes with no rebuild work to run (a
 //! rebuild needs provider fetches plus user enumeration, neither of which
-//! exists behind these traits), so each tick waits out its honest interval
-//! and runs an empty rebuild until provider caches land their work here.
+//! exists behind these traits), so each tick waits out its interval and
+//! runs an empty rebuild.
 
 use std::{
     collections::HashSet,
@@ -48,7 +48,7 @@ impl RefreshScope {
         }
     }
 
-    /// Honest rebuild interval for the scope.
+    /// Rebuild interval for the scope.
     pub fn interval(self) -> Duration {
         match self {
             Self::Discover => DISCOVER_REFRESH_INTERVAL,
@@ -124,8 +124,8 @@ impl Sleeper for TokioSleeper {
 }
 
 /// Manual sleeper for tests: `wake` releases one waiter, `shut_down`
-/// releases all with false. Requested durations are recorded so briefs
-/// can assert the honest intervals.
+/// releases all with false. Requested durations are recorded so tests
+/// can assert the intervals.
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone)]
 pub struct ManualSleeper {
@@ -264,7 +264,7 @@ pub async fn run_refresh_loop<S, F, Fut>(
 }
 
 /// One guarded loop iteration over borrowed work (the loop body factored
-/// for direct brief coverage).
+/// for direct test coverage).
 pub async fn refresh_once<F, Fut>(registry: &RefreshRegistry, scope: RefreshScope, work: F) -> bool
 where
     F: FnOnce() -> Fut,

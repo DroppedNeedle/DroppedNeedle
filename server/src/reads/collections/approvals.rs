@@ -1,8 +1,8 @@
 //! Auto-download approval reads. Admin only.
 //!
 //! These are the read paths over pending auto-download requests filed through
-//! the follow toggles. Approve, reject, and revoke mutations are out of the
-//! stage-4 slice; they land with acquisition.
+//! the follow toggles. Approve, reject, and revoke mutations live in
+//! `acquire::requests`.
 
 use axum::{Json, extract::State};
 

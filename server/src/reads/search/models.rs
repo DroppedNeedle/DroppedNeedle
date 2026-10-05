@@ -2,7 +2,7 @@
 //!
 //! Clean-slate v3 shapes (v2 wire is not preserved). Everything is
 //! snake_case. Search reads the local `local_*` catalog tables only;
-//! provider-backed results land in stage 5 behind the same handlers, which
+//! provider-backed results would join behind the same handlers, which
 //! is why items already carry `in_library`/`requested` (local rows are
 //! always in-library and never requested).
 
@@ -21,10 +21,10 @@ pub enum SearchKind {
     Track,
 }
 
-/// Per-bucket provider health for one search call. The values mirror v1's
+/// Per-bucket provider health for one search call. The values mirror v2's
 /// `SearchRemoteStatus` exactly so the same notice and stale-time logic
-/// applies. The local-only stage always emits `Ok`; stage-5 provider
-/// fan-out fills in the real values.
+/// applies. Local-only search always emits `Ok`; a provider fan-out would
+/// fill in the real values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum SearchRemoteStatus {
@@ -40,7 +40,7 @@ pub enum SearchRemoteStatus {
     Stale,
 }
 
-/// One search hit. Cover art is deliberately absent: the covers endpoints
+/// One search hit. Cover art is absent on purpose: the covers endpoints
 /// serve art by id, so search never duplicates those URLs.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct SearchResultItem {
@@ -57,9 +57,9 @@ pub struct SearchResultItem {
     /// Provider id from the external-identity tables, when the row has an
     /// accepted identity. Absent means unidentified, never failure.
     pub musicbrainz_id: Option<String>,
-    /// True for every local hit; provider hits in stage 5 vary.
+    /// True for every local hit; provider hits would vary.
     pub in_library: bool,
-    /// Always false in stage 4; the requests slice owns this flag.
+    /// Always false here; the requests module owns this flag.
     pub requested: bool,
     /// Match score, 0-100. Exact folded match is 100, folded prefix is 90,
     /// folded substring is 70. Ranks hits, never filters them.

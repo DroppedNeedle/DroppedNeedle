@@ -1,4 +1,4 @@
-//! Wire shapes for the library slice. All snake_case, all generated into
+//! Wire shapes for the library reads. All snake_case, all generated into
 //! the OpenAPI doc; the frontend consumes the generated client, never copies.
 //!
 //! Counts are streamable-only throughout: tracks whose file is missing or

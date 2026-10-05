@@ -1,4 +1,4 @@
-//! The enrichment port: the seam stage 5 implements providers behind.
+//! The enrichment port: the seam providers implement.
 //!
 //! The trait has exactly one method, matching the single HTTP method on
 //! the enrich-batch route. Both enrichable buckets (artists, albums)
@@ -46,8 +46,9 @@ impl std::fmt::Display for EnrichmentPortError {
     }
 }
 
-/// The single enrichment seam. Stage 5 implements this for ListenBrainz
-/// and Last.fm; stage 4 wires [`UnconfiguredEnrichment`].
+/// The single enrichment seam. `providers::enrich` implements it for
+/// ListenBrainz and Last.fm; [`UnconfiguredEnrichment`] serves when no
+/// provider is wired.
 pub trait EnrichmentPort: Send + Sync {
     /// Enrich one mixed batch of artists and albums.
     fn enrich_batch(
@@ -56,10 +57,9 @@ pub trait EnrichmentPort: Send + Sync {
     ) -> BoxFuture<'_, Result<EnrichmentResponse, EnrichmentPortError>>;
 }
 
-/// Stage-4 production enrichment: no provider is wired yet, so every id
-/// echoes back with absent counts and source `none`. This is honest
-/// behavior, not a fake: absence means unknown, and nothing is zero-filled
-/// to look real. Stage 5 replaces this behind the same handlers.
+/// Enrichment with no provider wired: every id echoes back with absent
+/// counts and source `none`. This is real behavior, not a fake: absence
+/// means unknown, and nothing is zero-filled to look real.
 #[derive(Debug, Clone, Default)]
 pub struct UnconfiguredEnrichment;
 

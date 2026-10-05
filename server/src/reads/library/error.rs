@@ -1,6 +1,6 @@
 //! Slice errors rendered into the shared envelope.
 //!
-//! Status mapping for the library slice lives here in the handler layer.
+//! Status mapping for the library reads lives here in the handler layer.
 //! Services return [`LibraryFailure`](super::services::LibraryFailure);
 //! handlers convert. Server faults carry the fixed generic body plus an
 //! error id; the cause goes to the structured log only.
@@ -24,7 +24,7 @@ pub const INVALID_INPUT: &str = "INVALID_INPUT";
 /// Challenge sent on every 401.
 pub const WWW_AUTHENTICATE_BEARER: &str = "Bearer";
 
-/// Every failure this slice can return to a caller.
+/// Every failure the library reads can return to a caller.
 #[derive(Debug)]
 pub enum LibraryError {
     /// No valid session. Carries the `WWW-Authenticate` challenge.
@@ -50,7 +50,7 @@ impl LibraryError {
     /// Build a 500, logging the real cause with its id.
     pub fn internal(cause: &dyn std::fmt::Display, ids: &dyn IdGenerator) -> Self {
         let error_id = ids.new_id();
-        tracing::error!(error_id, %cause, "library slice failed");
+        tracing::error!(error_id, %cause, "library request failed");
         Self::Internal { error_id }
     }
 

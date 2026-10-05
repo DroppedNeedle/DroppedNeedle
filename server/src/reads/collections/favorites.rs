@@ -1,7 +1,7 @@
 //! Native favorites: albums, artists, and tracks by id.
 //!
-//! v2 has no native favorites endpoints (only remote-server ones, which stage
-//! 6 owns), so this is new v3 surface. Favorites are strictly per-user: the
+//! v2 has no native favorites endpoints (only remote-server ones, which
+//! `remotes` serves), so this is new v3 surface. Favorites are strictly per-user: the
 //! list shows only the caller's rows, and counts cover all kinds.
 
 use axum::{

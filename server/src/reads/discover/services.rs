@@ -36,7 +36,7 @@ pub const CHART_RANGE_LIMIT_MAX: i64 = 100;
 pub const ALBUM_PREVIEW_MAX: i64 = 8;
 /// Max pairs per cache-check call.
 pub const CACHE_CHECK_MAX_ITEMS: usize = 100;
-/// Max artist/track string length accepted anywhere in this slice.
+/// Max artist/track string length accepted anywhere in discover.
 pub const NAME_MAX_LEN: usize = 200;
 /// Max radio plan tracks.
 pub const RADIO_PLAN_MAX: i64 = 100;
@@ -75,7 +75,7 @@ impl From<ProviderFailure> for ServiceError {
     }
 }
 
-/// All dependencies behind the discover slice, injected by constructor.
+/// All dependencies behind discover, injected by constructor.
 #[derive(Clone)]
 pub struct ReadsDeps {
     /// Shelf content.
@@ -650,7 +650,7 @@ fn batch_detail(row: &crate::reads::discover::ports::BatchRow) -> DiscoveryBatch
     }
 }
 
-/// Create a batch: one request per album lands in stage 7; here the rows
+/// Create a batch: here the rows
 /// are stored and echoed with their initial outcomes.
 pub fn create_batch(
     deps: &ReadsDeps,

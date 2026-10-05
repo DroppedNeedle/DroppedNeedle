@@ -1,9 +1,9 @@
-//! Fake ports for stage 4: deterministic content, charts, previews,
-//! and stores over in-memory state. Stage 5 swaps these for real providers
-//! behind the same traits; handlers never know.
+//! Fake discover ports: deterministic content, charts, previews, and stores
+//! over in-memory state. Production still runs these; real providers
+//! belong behind the same traits, and handlers never know.
 //!
 //! Fakes fail only when armed to: `fail_content` / `fail_charts` take a
-//! log-only cause the leak briefs assert never reaches the wire.
+//! log-only cause the leak tests assert never reaches the wire.
 
 use std::{
     collections::HashMap,
@@ -760,8 +760,8 @@ impl ChartsSource for FakeCharts {
 pub struct FakePreviews;
 
 impl PreviewSource for FakePreviews {
-    /// Empty until stage 5 hangs real providers behind this port: no fake
-    /// may invent provider names or preview URLs.
+    /// Empty until real providers sit behind this port: no fake may invent
+    /// provider names or preview URLs.
     fn track_preview(
         &self,
         _artist: &str,
@@ -775,7 +775,7 @@ impl PreviewSource for FakePreviews {
         })
     }
 
-    /// Empty until stage 5 hangs real providers behind this port.
+    /// Empty until real providers sit behind this port.
     fn album_preview(
         &self,
         _artist: &str,
@@ -813,8 +813,8 @@ impl FakeYouTube {
 
 /// Deterministic stand-in video id. The `fake-` prefix keeps it visibly
 /// canned (it pins handler mapping, never provider data), while hashing the
-/// inputs keeps distinct lookups distinct. Stage 5 replaces this with the
-/// YouTube Data API.
+/// inputs keeps distinct lookups distinct. The YouTube Data API client
+/// would replace this.
 fn fake_video_id(artist: &str, name: &str) -> String {
     use sha2::{Digest, Sha256};
 

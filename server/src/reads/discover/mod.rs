@@ -1,13 +1,13 @@
-//! Stage-4 discover slice: discover + queue + radio + batches, and home
+//! Discover: discover + queue + radio + batches, and home
 //! shelves with the range-pair redesign.
 //!
-//! Provider data arrives through the [`ports`] traits; stage 4 runs the
-//! [`fakes`], stage 5 wires real providers behind the same handlers.
+//! Provider data arrives through the [`ports`] traits; production still
+//! runs the [`fakes`], and real providers belong behind the same handlers.
 //!
 //! Wiring: mounted as `reads::discover` under `/api/v3` via
 //! [`reads_router`] (with [`discover_router`] and [`home_router`]), and
 //! its paths and schemas are registered in the utoipa document. The
-//! stage-4 now-playing snapshot moved to the `playback` slice in stage 6.
+//! now-playing route is served by `playback`.
 
 pub mod error;
 pub mod fakes;

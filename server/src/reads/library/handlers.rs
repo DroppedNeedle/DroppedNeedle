@@ -1,4 +1,4 @@
-//! Thin Axum handlers and the slice-local auth extractor.
+//! Thin Axum handlers and the library reads auth extractor.
 //!
 //! Every handler answers one route: extract, call the service, render.
 //! Status mapping lives in [`LibraryError`](super::error::LibraryError).
@@ -27,8 +27,8 @@ use super::models::{
 use super::services::{self, LibraryFailure};
 
 /// Any authenticated user. Missing session or a session whose account is
-/// gone reads as 401, mirroring the sibling role extractors (whose state
-/// type cannot compose with this slice's deps, hence the local copy).
+/// gone reads as 401, mirroring the users role extractors (whose state
+/// type cannot compose with these deps, hence the local copy).
 pub struct LibraryUser(pub AuthContext);
 
 impl FromRequestParts<LibraryDeps> for LibraryUser {

@@ -1,11 +1,11 @@
-//! Stage-13 fix C briefs: the six standard reads hold the 10 ms p95
-//! budget on a 100k catalog (stage-13 row 10 + F3).
+//! Read budget tests: the six standard reads hold the 10 ms p95 budget on
+//! a 100k catalog.
 //!
 //! The rewritten shapes prove equal to the legacy SQL they replace on an
-//! adversarial fixture (differential briefs), the maintained totals prove
+//! adversarial fixture (differential tests), the maintained totals prove
 //! equal to live aggregation across a mutation battery, the miss oracle
 //! proves equal to LIKE across a hostile query matrix, the hot plans prove
-//! index-driven via EXPLAIN, and the ignored acceptance brief times all six
+//! index-driven via EXPLAIN, and the ignored acceptance test times all six
 //! endpoints on a seeded 100k catalog. Nothing here touches the network;
 //! every database is a scratch file.
 
@@ -138,7 +138,7 @@ fn seed_small_sql() -> String {
 }
 
 // Legacy oracles: independent copies of the pre-0005 query shapes. The
-// differential briefs run these beside the rewritten adapters and demand
+// differential tests run these beside the rewritten adapters and demand
 // identical pages and totals. If the reads ever change shape again, these
 // fail loudly and force a conscious oracle review.
 
@@ -1373,8 +1373,8 @@ fn percentile(sorted: &mut [f64], pct: f64) -> f64 {
 /// Acceptance: every standard read holds the 10 ms p95 budget on a seeded
 /// 100k catalog, 50 samples after 3 warmup per endpoint. Ignored by
 /// default: timing is machine-dependent, so CI guards the mechanisms
-/// (differential, totals, and plan briefs above) while this runs explicitly
-/// with --release on reference hardware, matching the stage-1 HTTP bench
+/// (differential, totals, and plan tests above) while this runs explicitly
+/// with --release on reference hardware, matching the HTTP bench
 /// shape (checkpointed store, optimized sqlx). Debug runs only report
 /// timings: unoptimized sqlx adds milliseconds per call there.
 #[tokio::test]

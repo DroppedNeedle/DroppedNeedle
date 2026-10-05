@@ -90,7 +90,7 @@ fn in_placeholders(len: usize) -> String {
 /// queries of 3 or more characters (shorter queries silently match
 /// nothing), and a NUL byte would truncate the bind and break the phrase
 /// quoting, so both fall back to LIKE.
-/// Visible to the plan briefs, which assemble the same statements.
+/// Visible to the plan tests, which assemble the same statements.
 pub(crate) fn fts_match_phrase(raw: &str) -> Option<String> {
     let folded = crate::db::fold_text(raw);
     if folded.chars().count() < 3 || folded.contains('\0') {
@@ -100,7 +100,7 @@ pub(crate) fn fts_match_phrase(raw: &str) -> Option<String> {
 }
 
 /// One album's aggregate columns, shared by every album SELECT.
-/// Visible to the plan briefs, which assemble the same statements.
+/// Visible to the plan tests, which assemble the same statements.
 pub(crate) const ALBUM_COLUMNS: &str = "a.id AS id, a.title AS title, \
     COALESCE(an.display_name, a.album_artist_name, '') AS artist_name, \
     a.album_artist_id AS artist_id, \
@@ -118,7 +118,7 @@ pub(crate) const ALBUM_COLUMNS: &str = "a.id AS id, a.title AS title, \
     a.created_at AS date_added";
 
 /// Joins shared by every album SELECT. Track joins filter to streamable.
-/// Visible to the plan briefs, which assemble the same statements.
+/// Visible to the plan tests, which assemble the same statements.
 pub(crate) const ALBUM_JOINS: &str = "FROM local_albums a \
     LEFT JOIN local_artists an ON an.id = a.album_artist_id \
     LEFT JOIN local_album_external_identities ae ON ae.local_album_id = a.id \
@@ -127,7 +127,7 @@ pub(crate) const ALBUM_JOINS: &str = "FROM local_albums a \
     LEFT JOIN local_tracks t ON t.local_album_id = a.id AND t.availability = 'indexed'";
 
 /// Filters shared by the album list and its count.
-/// Visible to the plan briefs, which assemble the same statements.
+/// Visible to the plan tests, which assemble the same statements.
 pub(crate) const ALBUM_FILTER: &str = "(? IS NULL OR a.title_folded LIKE ? ESCAPE '\\' \
     OR a.album_artist_name_folded LIKE ? ESCAPE '\\') \
     AND (? IS NULL OR a.album_artist_id = ?) \
@@ -136,7 +136,7 @@ pub(crate) const ALBUM_FILTER: &str = "(? IS NULL OR a.title_folded LIKE ? ESCAP
      WHERE t2.local_album_id = a.id AND t2.availability = 'indexed' \
      GROUP BY t2.file_format ORDER BY COUNT(*) DESC, t2.file_format LIMIT 1)) = ?)";
 
-/// Visible to the plan briefs, which assemble the same statements.
+/// Visible to the plan tests, which assemble the same statements.
 pub(crate) fn album_order(sort: AlbumSort, descending: bool) -> &'static str {
     match (sort, descending) {
         (AlbumSort::Name, false) => "a.title_folded ASC, a.id ASC",
@@ -278,7 +278,7 @@ const ARTIST_ALBUM_COUNTS: &str = "SELECT la.album_artist_id AS id, COUNT(*) AS 
 /// Streamable credited tracks and appearance albums per artist id, one
 /// grouped pass over the page's credits. The CASE keeps the legacy
 /// appearance definition: distinct albums whose leader is someone else.
-/// Visible to the plan briefs, which assemble the same statements.
+/// Visible to the plan tests, which assemble the same statements.
 pub(crate) const ARTIST_CREDIT_COUNTS: &str = "SELECT ata.local_artist_id AS id, \
     COUNT(DISTINCT at.id) AS tracks, \
     COUNT(DISTINCT CASE WHEN aa.album_artist_id != ata.local_artist_id \
@@ -299,7 +299,7 @@ const CREDITED_PREDICATE: &str = "(EXISTS (SELECT 1 FROM local_album_artists laa
     OR EXISTS (SELECT 1 FROM local_track_artists lta WHERE lta.local_artist_id = r.id) \
     OR EXISTS (SELECT 1 FROM local_albums la WHERE la.album_artist_id = r.id))";
 
-/// Visible to the plan briefs, which assemble the same statements.
+/// Visible to the plan tests, which assemble the same statements.
 pub(crate) fn artist_scope_predicate(scope: ArtistScope) -> &'static str {
     match scope {
         ArtistScope::All => "1 = 1",
@@ -308,7 +308,7 @@ pub(crate) fn artist_scope_predicate(scope: ArtistScope) -> &'static str {
     }
 }
 
-/// Visible to the plan briefs, which assemble the same statements.
+/// Visible to the plan tests, which assemble the same statements.
 pub(crate) fn artist_order(sort: ArtistSort, descending: bool) -> &'static str {
     match (sort, descending) {
         (ArtistSort::Name, false) => "r.folded_name ASC, r.id ASC",

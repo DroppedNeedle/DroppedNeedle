@@ -1,9 +1,9 @@
 //! Version reads: current version, update check, release history.
 //!
-//! Carried over from v2 `version.py` + `VersionService` (trace A:630-632),
+//! Carried over from v2's version route and `VersionService`,
 //! read-only: the check logic is pure over the [`ReleaseSource`] port, and
-//! there are no publish paths. [`FakeReleases`] feeds stage 4; the GitHub
-//! client lands in stage 5 behind the same trait.
+//! there are no publish paths. [`FakeReleases`] feeds the route for now; the
+//! GitHub client belongs behind the same trait.
 //!
 //! Comparison rules, v2 kept: strip leading `v`s, compare numeric release
 //! cores; anything else fails closed as `comparison_failed`. Dev builds
@@ -13,7 +13,7 @@
 //! version alone.
 //!
 //! Self-contained on purpose: no `crate::` imports, so this module compiles
-//! both inside the wired tree and standalone in the slice tests.
+//! both inside the wired tree and standalone in the tests.
 
 use std::sync::Arc;
 
@@ -72,7 +72,7 @@ pub struct UpdateCheckResponse {
 }
 
 /// Release-data port. Production reads the baked-in version plus the GitHub
-/// client; stage 4 runs against [`FakeReleases`].
+/// client; tests (and production, for now) run against [`FakeReleases`].
 pub trait ReleaseSource: Send + Sync + 'static {
     /// Running build identity.
     fn current_version(&self) -> VersionInfo;
@@ -82,7 +82,7 @@ pub trait ReleaseSource: Send + Sync + 'static {
     fn release_history(&self) -> BoxFuture<'_, Vec<GitHubRelease>>;
 }
 
-/// Fake release data for stage 4.
+/// Fake release data.
 #[derive(Debug, Clone)]
 pub struct FakeReleases {
     current: VersionInfo,
@@ -138,7 +138,7 @@ impl ReleaseSource for FakeReleases {
 /// non-generic for utoipa.
 #[derive(Clone)]
 pub struct VersionState {
-    /// Release data (fake in stage 4, GitHub client in stage 5).
+    /// Release data (the fake until the GitHub client is wired).
     pub releases: Arc<dyn ReleaseSource>,
 }
 
@@ -149,7 +149,7 @@ impl VersionState {
     }
 }
 
-/// Routes for this slice, relative paths for nesting under `/api/v3`.
+/// Version routes, relative paths for nesting under `/api/v3`.
 pub fn routes(state: VersionState) -> Router {
     Router::new()
         .route("/version", get(get_version))

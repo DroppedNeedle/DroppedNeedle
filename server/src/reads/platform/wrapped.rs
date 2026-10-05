@@ -1,12 +1,12 @@
 //! Wrapped reads: the keyed external-consumer trio.
 //!
-//! Carried over from v2 `wrapped.py` (trace A:633-635): user listing, per-user
+//! Carried over from v2's wrapped routes: user listing, per-user
 //! year-in-review, and the server-wide summary. The `X-Wrapped-API-Key`
 //! contract is preserved exactly (see [`check_key`]): exact header name,
 //! exact value match with no trimming, 401 on missing/wrong/unconfigured,
 //! and the v2 rejection message verbatim. Year-in-review data comes from the
-//! [`WrappedData`] port; stage 4 ships [`FakeWrappedData`] only, since the
-//! ListenBrainz-backed aggregation is stage 5.
+//! [`WrappedData`] port; only [`FakeWrappedData`] exists so far, since the
+//! ListenBrainz-backed aggregation is not built.
 //!
 //! Unknown users answer 200 with an empty `has_data: false` payload (v2
 //! `get_user_wrapped` rule kept, display name falls back to the user id) -
@@ -14,7 +14,7 @@
 //! credential, so they mount outside the session middleware.
 //!
 //! Self-contained on purpose: no `crate::` imports, so this module compiles
-//! both inside the wired tree and standalone in the slice tests. The error
+//! both inside the wired tree and standalone in the tests. The error
 //! envelope mirrors `crate::error` exactly.
 
 use std::collections::HashMap;
@@ -164,8 +164,8 @@ pub struct ServerWrappedResponse {
     pub top_album_sitewide: Option<WrappedAlbum>,
 }
 
-/// Wrapped-data port. Stage 5 aggregates ListenBrainz stats; stage 4 runs
-/// against [`FakeWrappedData`].
+/// Wrapped-data port. A ListenBrainz aggregation belongs here; for now
+/// everything runs against [`FakeWrappedData`].
 pub trait WrappedData: Send + Sync + 'static {
     /// Year the stats cover.
     fn current_year(&self) -> i32;
@@ -177,7 +177,7 @@ pub trait WrappedData: Send + Sync + 'static {
     fn server_wrapped(&self) -> BoxFuture<'_, ServerWrappedResponse>;
 }
 
-/// Fake wrapped data for stage 4.
+/// Fake wrapped data.
 #[derive(Debug, Clone)]
 pub struct FakeWrappedData {
     year: i32,
@@ -249,7 +249,7 @@ impl WrappedData for FakeWrappedData {
 pub struct WrappedState {
     /// Expected shared secret; empty means unconfigured (deny all).
     pub api_key: String,
-    /// Wrapped data (fake in stage 4, ListenBrainz aggregation in stage 5).
+    /// Wrapped data (the fake until an aggregation is wired).
     pub data: Arc<dyn WrappedData>,
 }
 
@@ -260,7 +260,7 @@ impl WrappedState {
     }
 }
 
-/// Routes for this slice, relative paths for nesting under `/api/v3`.
+/// Wrapped routes, relative paths for nesting under `/api/v3`.
 /// Mount outside the session middleware: the shared secret is the only
 /// credential and must never ride the session allowlist (allowlisted means
 /// public, which these routes are not).
@@ -301,7 +301,7 @@ struct WrappedErrorEnvelope {
 }
 
 /// Key-gate rejection. Status 401 with the v2 message verbatim, and
-/// deliberately no `WWW-Authenticate` header: v2 sends none, and a Bearer
+/// no `WWW-Authenticate` header on purpose: v2 sends none, and a Bearer
 /// challenge would misdescribe a shared-secret header scheme.
 fn wrapped_rejection() -> Response {
     let body = WrappedErrorEnvelope {

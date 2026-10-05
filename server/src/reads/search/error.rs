@@ -10,7 +10,7 @@ use axum::{
 };
 
 /// Client sent a blank query, an out-of-range limit, or a bad bucket filter.
-/// The code matches the other reads slices (`INVALID_INPUT` everywhere).
+/// The code matches the other reads routes (`INVALID_INPUT` everywhere).
 pub const INVALID_INPUT: &str = "INVALID_INPUT";
 
 /// Handler-layer search errors.

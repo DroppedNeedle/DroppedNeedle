@@ -4,11 +4,12 @@
 //! release when set, else the catalog default. It never becomes catalog
 //! identity. Enforcement is structural: the pin service takes only the pin
 //! store plus the read-only edition catalog, so no pin code path can even
-//! name the identity store. The pin-hint brief then asserts the identity
+//! name the identity store. The pin-hint test then asserts the identity
 //! table stays byte-identical with zero writes across pin set and clear.
 //!
 //! Setting and clearing are curator-gated (v2 parity); reading is open to
-//! any authenticated user. Edition acquisition dispatch is stage 7, not here.
+//! any authenticated user. Edition acquisition dispatch lives in
+//! `acquire::requests`.
 
 use axum::{
     Json,

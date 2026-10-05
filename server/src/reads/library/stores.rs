@@ -1,9 +1,9 @@
-//! Ports: the seams this slice depends on.
+//! Ports: the seams the library reads depend on.
 //!
 //! Every external behavior sits behind one of these traits so tests inject
 //! fakes (see `memory.rs`). The SQLite implementations in `sqlite.rs` read
 //! the 0001 baseline tables. Futures are boxed by hand because `async fn`
-//! is not object-safe and this slice adds no new dependencies.
+//! is not object-safe.
 //!
 //! Absence is `None` or an empty page, never failure. Counts are
 //! streamable-only: tracks with `availability` other than `indexed` are
@@ -418,9 +418,9 @@ pub trait FavoriteReads: Send + Sync {
 
 /// Stored-lyrics reads for one track.
 ///
-/// No baseline table holds lyrics: the v3 library engine (stage 8) owns
-/// embedded-tag extraction and the provider fetch lands in stage 5. This
-/// port is the seam both implement behind. None is absence (the handler
+/// No baseline table holds lyrics: the library engine owns embedded-tag
+/// extraction and the provider fetch is a separate client. This port is
+/// the seam both implement behind. None is absence (the handler
 /// answers 404), never failure.
 pub trait LyricsPort: Send + Sync {
     /// Stored lyrics for one streamable track id.

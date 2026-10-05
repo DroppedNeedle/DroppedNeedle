@@ -22,7 +22,7 @@ fn fail() -> StoreError {
 }
 
 /// In-memory catalog with deterministic ordering. Seeds mirror the SQLite
-/// adapter's semantics (streamable-only, folded matching) so handler briefs
+/// adapter's semantics (streamable-only, folded matching) so handler tests
 /// pin behavior, not SQL.
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
