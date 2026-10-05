@@ -1415,7 +1415,21 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("GET", "/api/v3/wrapped/users", Posture::WrappedKey),
     ("GET", "/api/v3/wrapped/user/{user_id}", Posture::WrappedKey),
     ("GET", "/api/v3/wrapped/server", Posture::WrappedKey),
-    // Stage-6 remote sources.
+    // Remote sources.
+    ("GET", "/api/v3/me/connections", Posture::User),
+    ("GET", "/api/v3/remotes/{source}/moods", Posture::User),
+    ("GET", "/api/v3/remotes/{source}/filters", Posture::User),
+    (
+        "GET",
+        "/api/v3/remotes/{source}/most-played/albums",
+        Posture::User,
+    ),
+    (
+        "GET",
+        "/api/v3/remotes/{source}/most-played/artists",
+        Posture::User,
+    ),
+    ("GET", "/api/v3/remotes/{source}/analytics", Posture::User),
     ("GET", "/api/v3/remotes/{source}/hub", Posture::User),
     ("GET", "/api/v3/remotes/{source}/stats", Posture::User),
     ("GET", "/api/v3/remotes/{source}/albums", Posture::User),
