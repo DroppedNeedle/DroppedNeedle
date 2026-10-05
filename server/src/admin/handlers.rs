@@ -94,10 +94,15 @@ impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidJson<T> {
 pub async fn list_backups(
     State(admin): State<AdminSetup>,
 ) -> Result<Json<BackupListResponse>, AdminHttpError> {
-    let backups = admin.backups.as_ref().ok_or_else(unwired_backups)?;
-    super::backups::list_backups(backups.backup_dir())
+    let dir = admin
+        .backups
+        .as_ref()
+        .ok_or_else(unwired_backups)?
+        .backup_dir()
+        .to_owned();
+    blocking(move || super::backups::list_backups(&dir))
+        .await
         .map(Json)
-        .map_err(AdminHttpError::from)
 }
 
 /// Run one backup now.
@@ -125,10 +130,15 @@ pub async fn restore_report(
     State(admin): State<AdminSetup>,
     Path(name): Path<String>,
 ) -> Result<Json<RestoreReport>, AdminHttpError> {
-    let backups = admin.backups.as_ref().ok_or_else(unwired_backups)?;
-    super::backups::restore_report(backups.backup_dir(), &name)
+    let dir = admin
+        .backups
+        .as_ref()
+        .ok_or_else(unwired_backups)?
+        .backup_dir()
+        .to_owned();
+    blocking(move || super::backups::restore_report(&dir, &name))
+        .await
         .map(Json)
-        .map_err(AdminHttpError::from)
 }
 
 /// Provider-cache counters.
@@ -267,4 +277,14 @@ fn unwired_db() -> AdminError {
     AdminError::Unavailable {
         message: "Admin database handles are not wired on this state".to_owned(),
     }
+}
+
+/// Run blocking backup-directory work on the blocking pool.
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, AdminError> + Send + 'static,
+) -> Result<T, AdminHttpError> {
+    let outcome = tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|cause| AdminError::internal(&format_args!("backup task failed: {cause}")))?;
+    Ok(outcome?)
 }

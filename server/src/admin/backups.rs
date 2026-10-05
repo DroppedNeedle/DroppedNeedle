@@ -18,7 +18,6 @@ use std::{
 };
 
 use rusqlite::{Connection, OpenFlags};
-use sha2::{Digest as _, Sha256};
 
 use super::{
     error::AdminError,
@@ -28,7 +27,7 @@ use crate::db::{
     BACKUP_KEEP, BackupManifest, BackupReport, BackupService, backup::MANIFEST_SUFFIX,
 };
 
-/// List the backups on disk, oldest first. Files without a manifest sidecar
+/// List the backups on disk, oldest first. Blocking file IO. Files without a manifest sidecar
 /// still list with their on-disk size; only the manifest fields stay empty.
 pub fn list_backups(backup_dir: &Path) -> Result<BackupListResponse, AdminError> {
     let mut names: Vec<String> = Vec::new();
@@ -128,7 +127,8 @@ pub async fn ensure_pre_upgrade_backup(
 }
 
 /// Verify a backup read-only and report whether an offline restore should
-/// succeed. `ok` means every check passed; `restorable` means the file is
+/// succeed. Blocking (it hashes and opens the file): handlers call it on a
+/// blocking thread. `ok` means every check passed; `restorable` means the file is
 /// intact and its schema is not newer than this binary (a missing manifest
 /// fails `ok` but a hand-placed backup can still restore).
 pub fn restore_report(backup_dir: &Path, name: &str) -> Result<RestoreReport, AdminError> {
@@ -187,7 +187,8 @@ pub fn restore_report(backup_dir: &Path, name: &str) -> Result<RestoreReport, Ad
                 )
             },
         });
-        let sha_ok = file_sha256(&path).as_deref() == Some(found.sha256.as_str());
+        let sha_ok =
+            crate::db::backup::file_sha256(&path).is_ok_and(|(sha256, _)| sha256 == found.sha256);
         checks.push(RestoreCheck {
             name: "manifest-sha256".to_owned(),
             passed: sha_ok,
@@ -289,21 +290,6 @@ fn unix_secs(at: SystemTime) -> Option<u64> {
     at.duration_since(UNIX_EPOCH)
         .ok()
         .map(|span| span.as_secs())
-}
-
-/// Lowercase hex SHA-256 of a file, or `None` when it cannot be read.
-fn file_sha256(path: &Path) -> Option<String> {
-    let bytes = std::fs::read(path).ok()?;
-    let mut hasher = Sha256::new();
-    hasher.update(&bytes);
-    let digest = hasher.finalize();
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut text = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        text.push(HEX[(byte >> 4) as usize] as char);
-        text.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    Some(text)
 }
 
 /// `integrity_check` must read `ok` and `foreign_key_check` must be empty.

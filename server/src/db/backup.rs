@@ -162,15 +162,27 @@ impl BackupService {
                 chunks: copied as usize,
             });
         }
-        fold_staging(staging)?;
-        let manifest = verify_staging(staging)?;
-        remove_staging_sidecars(staging);
-        std::fs::rename(staging, &final_path)?;
-        let sidecar = manifest_path(&final_path);
-        std::fs::write(&sidecar, serde_json::to_string_pretty(&manifest)?)?;
-        rotate_backups(&self.backup_dir, BACKUP_KEEP)?;
+        // Verify, hash, publish and rotate are file and SQLite work: keep
+        // them off the async workers like the copy itself.
+        let staging = staging.to_owned();
+        let backup_dir = self.backup_dir.clone();
+        let (path, manifest) = tokio::task::spawn_blocking(move || {
+            fold_staging(&staging)?;
+            let manifest = verify_staging(&staging)?;
+            remove_staging_sidecars(&staging);
+            std::fs::rename(&staging, &final_path)?;
+            let sidecar = manifest_path(&final_path);
+            std::fs::write(&sidecar, serde_json::to_string_pretty(&manifest)?)?;
+            rotate_backups(&backup_dir, BACKUP_KEEP)?;
+            Ok::<_, DbError>((final_path, manifest))
+        })
+        .await
+        .map_err(|_| DbError::WriteFailed {
+            operation: "backup".to_owned(),
+            cause: "backup verify task failed to join".to_owned(),
+        })??;
         Ok(BackupReport {
-            path: final_path,
+            path,
             manifest,
             duration: started.elapsed(),
         })
@@ -363,17 +375,34 @@ fn verify_staging(staging: &Path) -> Result<BackupManifest, DbError> {
     }
     let user_version = user_version(&connection)?;
     drop(connection);
-    let bytes = std::fs::read(staging)?;
-    let mut hasher = Sha256::new();
-    hasher.update(&bytes);
-    let digest = hasher.finalize();
+    let (sha256, size_bytes) = file_sha256(staging)?;
     Ok(BackupManifest {
         format_version: 1,
-        sha256: hex_digest(&digest),
-        size_bytes: bytes.len() as u64,
+        sha256,
+        size_bytes,
         user_version,
         created_at: SystemTime::now(),
     })
+}
+
+/// Lowercase hex SHA-256 and byte length of a file, read in 64 KiB chunks
+/// so a catalog-sized database never sits in memory whole. Blocking: call
+/// from a blocking thread.
+pub fn file_sha256(path: &Path) -> std::io::Result<(String, u64)> {
+    use std::io::Read as _;
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = vec![0u8; 64 * 1024];
+    let mut total = 0u64;
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+        total += read as u64;
+    }
+    Ok((hex_digest(&hasher.finalize()), total))
 }
 
 /// `integrity_check` must read `ok` and `foreign_key_check` must be empty.
@@ -461,6 +490,17 @@ fn hex_digest(digest: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn streamed_hash_matches_the_whole_file_hash() {
+        let path = std::env::temp_dir().join(format!("dn-hash-{}.bin", std::process::id()));
+        let bytes: Vec<u8> = (0..200_000u32).map(|n| (n % 251) as u8).collect();
+        std::fs::write(&path, &bytes).unwrap();
+        let (sha256, size) = file_sha256(&path).unwrap();
+        assert_eq!(size, bytes.len() as u64);
+        assert_eq!(sha256, hex_digest(&Sha256::digest(&bytes)));
+        let _ = std::fs::remove_file(path);
+    }
 
     #[test]
     fn backup_names_sort_in_creation_order() {
