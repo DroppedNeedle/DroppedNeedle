@@ -5,17 +5,17 @@ on:
     branches: [v3]
     paths:
       - 'server/**'
-      - 'frontend/src/lib/api/v3/**'
-      - 'Dockerfile.v3'
-      - 'docker-compose.v3.yml'
+      - 'frontend/**'
+      - 'Dockerfile'
+      - 'entrypoint.sh'
       - 'rust-toolchain.toml'
       - '.github/workflows/v3-ci.yml'
   pull_request:
     paths:
       - 'server/**'
-      - 'frontend/src/lib/api/v3/**'
-      - 'Dockerfile.v3'
-      - 'docker-compose.v3.yml'
+      - 'frontend/**'
+      - 'Dockerfile'
+      - 'entrypoint.sh'
       - 'rust-toolchain.toml'
       - '.github/workflows/v3-ci.yml'
   workflow_dispatch:

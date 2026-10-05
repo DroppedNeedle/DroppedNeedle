@@ -4,13 +4,11 @@ on:
   push:
     branches: [main]
     paths:
-      - 'backend/**'
+      - 'server/**'
       - 'frontend/**'
       - 'Dockerfile'
       - 'entrypoint.sh'
-      - 'backend/requirements.txt'
-      - 'frontend/package.json'
-      - 'frontend/pnpm-lock.yaml'
+      - 'rust-toolchain.toml'
       - '.github/workflows/dev-image.yml'
 
 permissions:
