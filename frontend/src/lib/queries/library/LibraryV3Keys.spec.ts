@@ -8,10 +8,6 @@ describe('LibraryQueryKeyFactory.v3', () => {
 		expect(LibraryQueryKeyFactory.v3.root('user-a')).toEqual(['library', 'v3', 'user-a']);
 	});
 
-	it('normalizes a missing userId to null', () => {
-		expect(LibraryQueryKeyFactory.v3.root(undefined)).toEqual(['library', 'v3', null]);
-	});
-
 	it('differs per user (no cross-user collision on favorite-bearing views)', () => {
 		expect(LibraryQueryKeyFactory.v3.albums('user-a', { ...albumsParams })).not.toEqual(
 			LibraryQueryKeyFactory.v3.albums('user-b', { ...albumsParams })

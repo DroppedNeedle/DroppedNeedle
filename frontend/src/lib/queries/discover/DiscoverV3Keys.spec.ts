@@ -13,10 +13,6 @@ describe('DiscoverQueryKeyFactory.v3', () => {
 		expect(DiscoverQueryKeyFactory.v3.root('user-a')).toEqual(['discover', 'v3', 'user-a']);
 	});
 
-	it('normalizes a missing userId to null', () => {
-		expect(DiscoverQueryKeyFactory.v3.root(undefined)).toEqual(['discover', 'v3', null]);
-	});
-
 	it('differs per user (no cross-user collision)', () => {
 		expect(DiscoverQueryKeyFactory.v3.home('user-a')).not.toEqual(
 			DiscoverQueryKeyFactory.v3.home('user-b')

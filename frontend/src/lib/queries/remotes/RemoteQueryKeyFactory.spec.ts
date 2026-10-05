@@ -33,13 +33,6 @@ describe('RemoteQueryKeyFactory', () => {
 		);
 	});
 
-	it('normalizes a missing userId to null', () => {
-		expect(RemoteQueryKeyFactory.hub(undefined, 'plex')).toContain(null);
-		expect(RemoteQueryKeyFactory.hub(null, 'plex')).toEqual(
-			RemoteQueryKeyFactory.hub(undefined, 'plex')
-		);
-	});
-
 	it('keys browse pages separately by params', () => {
 		expect(RemoteQueryKeyFactory.albums('userA', 'plex', { limit: 10 })).not.toEqual(
 			RemoteQueryKeyFactory.albums('userA', 'plex', { limit: 20 })

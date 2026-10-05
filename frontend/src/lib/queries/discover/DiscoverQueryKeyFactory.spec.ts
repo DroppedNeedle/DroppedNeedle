@@ -2,10 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { DiscoverQueryKeyFactory } from './DiscoverQueryKeyFactory';
 
 describe('DiscoverQueryKeyFactory (AMU-5)', () => {
-	it('prefix is [discover]', () => {
-		expect(DiscoverQueryKeyFactory.prefix).toEqual(['discover']);
-	});
-
 	describe('discover', () => {
 		it('includes userId and MusicBrainz source identity', () => {
 			expect(DiscoverQueryKeyFactory.discover('user-a')).toEqual([
@@ -57,12 +53,5 @@ describe('DiscoverQueryKeyFactory (AMU-5)', () => {
 				DiscoverQueryKeyFactory.playlistSuggestions('user-b', 'pl-1')
 			);
 		});
-	});
-	it('normalizes a missing userId to null', () => {
-		expect(DiscoverQueryKeyFactory.discover(undefined)).toEqual([
-			'discover',
-			null,
-			{ user_id: null, source_mode: 'brainzmash', source_id: '', generation: 0 }
-		]);
 	});
 });

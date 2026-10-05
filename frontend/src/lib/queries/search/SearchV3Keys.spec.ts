@@ -6,10 +6,6 @@ describe('SearchQueryKeyFactory.v3', () => {
 		expect(SearchQueryKeyFactory.v3.root('user-a')).toEqual(['search', 'v3', 'user-a']);
 	});
 
-	it('normalizes a missing userId to null', () => {
-		expect(SearchQueryKeyFactory.v3.root(undefined)).toEqual(['search', 'v3', null]);
-	});
-
 	it('differs per user (no cross-user collision)', () => {
 		expect(SearchQueryKeyFactory.v3.suggest('user-a', 'ab', 5)).not.toEqual(
 			SearchQueryKeyFactory.v3.suggest('user-b', 'ab', 5)

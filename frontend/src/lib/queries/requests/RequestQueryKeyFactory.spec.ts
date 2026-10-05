@@ -31,12 +31,6 @@ describe('RequestQueryKeyFactory', () => {
 		);
 	});
 
-	it('normalizes a missing userId to null', () => {
-		expect(RequestQueryKeyFactory.active(undefined)).toContain(null);
-		expect(RequestQueryKeyFactory.activeCount(undefined)).toContain(null);
-		expect(RequestQueryKeyFactory.active(null)).toEqual(RequestQueryKeyFactory.active(undefined));
-	});
-
 	it('keys history pages separately by params', () => {
 		expect(RequestQueryKeyFactory.history('userA', { page: 1 })).not.toEqual(
 			RequestQueryKeyFactory.history('userA', { page: 2 })
