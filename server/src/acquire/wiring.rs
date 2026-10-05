@@ -28,8 +28,8 @@ use super::flows::loops::{
 };
 use super::flows::operations::{DropImportDeps, OpStore, register_durable_ops};
 use super::flows::seams::{
-    Candidate, CandidateSearch, Clock, DropVerify, LibraryOrganise, MemoryHandoff, MemoryTicks,
-    SystemClock, VerifyVerdict,
+    Candidate, CandidateSearch, Clock, DropVerify, LibraryOrganise, LogTicks, MemoryHandoff,
+    SystemClock, TickSink, VerifyVerdict,
 };
 use super::flows::stores::{
     AdminDirectory, FollowStore as FlowsFollowStore, LibraryPresence, QuarantineStore,
@@ -341,7 +341,7 @@ pub struct FlowsBundle {
     /// Sweep ownership directory (refreshed from auth at boot).
     pub admins: Arc<AdminDirectory>,
     /// Plugin ticks.
-    pub ticks: Arc<MemoryTicks>,
+    pub ticks: Arc<dyn TickSink>,
     /// Free-music landing handoff (memory records; file staging waits on
     /// the path-carrying handoff).
     pub handoff: Arc<MemoryHandoff>,
@@ -1095,7 +1095,7 @@ fn flows_bundle(
     let quarantine = QuarantineStore::new(db.clone());
     let library = Arc::new(LibraryPresence::new());
     let admins = Arc::new(AdminDirectory::new());
-    let ticks = Arc::new(MemoryTicks::new());
+    let ticks: Arc<dyn TickSink> = Arc::new(LogTicks);
     let handoff = Arc::new(MemoryHandoff::new());
     let ops = OpStore::new(db.clone());
     let wanted_deps = Arc::new(WantedDeps {

@@ -485,12 +485,25 @@ pub trait TickSink: Send + Sync {
     fn emit(&self, kind: &str, detail: &str, at: i64);
 }
 
-/// Memory tick sink recording every tick in order.
+/// Production tick sink: there is no plugin host to forward to yet, so
+/// each tick is a structured log line and nothing accumulates in memory.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct LogTicks;
+
+impl TickSink for LogTicks {
+    fn emit(&self, kind: &str, detail: &str, at: i64) {
+        tracing::debug!(kind, detail, at, "flow tick");
+    }
+}
+
+/// Memory tick sink recording every tick in order (tests).
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct MemoryTicks {
     ticks: Mutex<Vec<Tick>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemoryTicks {
     /// Fresh sink.
     pub fn new() -> Self {
@@ -498,7 +511,6 @@ impl MemoryTicks {
     }
 
     /// Ticks recorded so far, in order.
-    #[cfg(any(test, feature = "test-support"))]
     pub fn ticks(&self) -> Vec<Tick> {
         self.ticks
             .lock()
@@ -507,7 +519,6 @@ impl MemoryTicks {
     }
 
     /// Ticks of one kind, in order.
-    #[cfg(any(test, feature = "test-support"))]
     pub fn of_kind(&self, kind: &str) -> Vec<Tick> {
         self.ticks
             .lock()
@@ -522,6 +533,7 @@ impl MemoryTicks {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl TickSink for MemoryTicks {
     fn emit(&self, kind: &str, detail: &str, at: i64) {
         if let Ok(mut ticks) = self.ticks.lock() {
