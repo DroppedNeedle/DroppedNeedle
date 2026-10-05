@@ -11351,7 +11351,10 @@ export interface components {
         };
         /** @description One plugin as the admin UI sees it. */
         PluginInfo: {
-            /** @description Declared capabilities the module actually implements. */
+            /**
+             * @description Declared capabilities the server sends calls for while the plugin is
+             *     enabled (those active for its `api_version`).
+             */
             active_capabilities?: string[];
             /** @description Author string. */
             author?: string;
@@ -11510,7 +11513,10 @@ export interface components {
             has_client?: boolean;
             /** @description Whether the plugin serves searches for this source. */
             has_indexer?: boolean;
-            /** @description `ok`, `degraded`, or `unknown`. */
+            /**
+             * @description `ok` (running), `degraded` (restarting), `error` (cannot start) or
+             *     `unknown` (starting or stopped).
+             */
             health?: string;
             /** @description Source key (`plugin:<name>` or `usenet`). */
             key: string;

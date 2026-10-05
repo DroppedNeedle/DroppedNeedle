@@ -39,7 +39,8 @@ pub struct PluginInfo {
     /// Declared capability ids.
     #[serde(default)]
     pub capabilities: Vec<String>,
-    /// Declared capabilities the module actually implements.
+    /// Declared capabilities the server sends calls for while the plugin is
+    /// enabled (those active for its `api_version`).
     #[serde(default)]
     pub active_capabilities: Vec<String>,
     /// Short description.
@@ -235,7 +236,8 @@ pub struct PluginSource {
     /// Whether the source is ready to use.
     #[serde(default)]
     pub configured: bool,
-    /// `ok`, `degraded`, or `unknown`.
+    /// `ok` (running), `degraded` (restarting), `error` (cannot start) or
+    /// `unknown` (starting or stopped).
     #[serde(default)]
     pub health: String,
 }

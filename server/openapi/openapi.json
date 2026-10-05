@@ -24194,7 +24194,7 @@
             "items": {
               "type": "string"
             },
-            "description": "Declared capabilities the module actually implements."
+            "description": "Declared capabilities the server sends calls for while the plugin is\nenabled (those active for its `api_version`)."
           },
           "author": {
             "type": "string",
@@ -24582,7 +24582,7 @@
           },
           "health": {
             "type": "string",
-            "description": "`ok`, `degraded`, or `unknown`."
+            "description": "`ok` (running), `degraded` (restarting), `error` (cannot start) or\n`unknown` (starting or stopped)."
           },
           "key": {
             "type": "string",
