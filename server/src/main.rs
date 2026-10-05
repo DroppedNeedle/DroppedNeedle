@@ -10,7 +10,7 @@ use droppedneedle::{
     admin::{AdminDb, AdminSetup, quota::reload_overrides},
     auth::{prod::ProdAuth, users::stores::SystemClock, wiring::AuthSetup},
     compat::CompatSetup,
-    create_app,
+    create_app_with_web,
     db::{BackupService, DbConfig, open_runtime},
     docs::ApiDoc,
     http_client::HttpClientFactory,
@@ -137,6 +137,21 @@ async fn serve(tooling_routes: bool) -> Result<(), String> {
     let runtime = open_runtime(&DbConfig::new(&config.library_db_path))
         .await
         .map_err(|error| error.to_string())?;
+    // Stamp BASE_PATH into a copy of the shipped web UI, off the workers.
+    let web = {
+        let template = config.static_dir.clone();
+        let served = config.served_static_dir();
+        let base_path = config.base_path.clone();
+        tokio::task::spawn_blocking(move || {
+            droppedneedle::web::WebUi::prepare(&template, &served, &base_path)
+        })
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?
+    };
+    if web.is_none() {
+        tracing::warn!("no web UI build found; serving the API only");
+    }
     // Two handles over one key file: the store owns its copy outright, so
     // the adapters load a second handle rather than sharing state.
     let crypto = Arc::new(
@@ -371,7 +386,7 @@ async fn serve(tooling_routes: bool) -> Result<(), String> {
         jobs.clone(),
         plugins,
     );
-    let app = create_app(state);
+    let app = create_app_with_web(state, web);
 
     // Discover and home refresh loops: they sleep on their intervals behind
     // one shutdown watch. The loop bodies are provider-cache rebuild hooks;

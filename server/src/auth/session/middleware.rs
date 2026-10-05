@@ -218,8 +218,8 @@ fn prefix_mask_u128(prefix: u8) -> u128 {
 pub struct SessionAuth<S> {
     /// Token store.
     pub store: S,
-    /// Deployment base path (`""` at the domain root); scopes the gate to
-    /// `{base}/api/v3` so proxied mounts gate on their real paths.
+    /// Deployment base path (`""` at the domain root). The router strips
+    /// it before this layer runs.
     pub base_path: String,
     /// Proxies trusted to set `X-Forwarded-*`; loopback by default (v2
     /// parity). Off-host proxies are set from deployment config at wiring.
@@ -254,12 +254,13 @@ pub async fn require_session<S>(
 where
     S: SessionStore,
 {
+    // The router strips the base path before any layer runs, so this is the
+    // same base-relative path the routes match on.
     let path = request.uri().path().to_owned();
-    let scoped = strip_base_path(&auth.base_path, &path);
-    if !scoped.starts_with("/api/v3") {
+    if !path.starts_with("/api/v3") {
         return next.run(request).await;
     }
-    if is_public(scoped) {
+    if is_public(&path) {
         return next.run(request).await;
     }
     let Some((raw_token, transport)) = super::extract::extract(request.headers()) else {
@@ -328,22 +329,6 @@ pub fn effective_host(request: &Request, trusted: &TrustedProxies) -> String {
     request.uri().host().unwrap_or("").to_owned()
 }
 
-/// Strip the deployment base path for gate decisions, on a segment boundary
-/// only (`/music` strips `/music/api/v3/x` but not `/musicx`). An empty base
-/// is a no-op; the gate then sees paths exactly as routed.
-fn strip_base_path<'a>(base_path: &str, path: &'a str) -> &'a str {
-    let base = base_path.trim_end_matches('/');
-    if base.is_empty() {
-        return path;
-    }
-    if path == base {
-        return "";
-    }
-    path.strip_prefix(base)
-        .filter(|rest| rest.starts_with('/'))
-        .unwrap_or(path)
-}
-
 /// Fixed 500 body for store outages (the request-scope layer rewrites 5xx
 /// bodies anyway; this keeps the contract if layered standalone).
 fn internal_error() -> Response {
@@ -383,18 +368,6 @@ mod tests {
         assert!(loopback.is_trusted(peer("127.0.0.1:9")));
         assert!(!loopback.is_trusted(peer("192.168.1.2:9")));
         assert!(loopback.is_trusted(peer("[::ffff:127.0.0.1]:9")));
-    }
-
-    #[test]
-    fn base_path_strips_on_segment_boundaries_only() {
-        assert_eq!(strip_base_path("", "/api/v3/x"), "/api/v3/x");
-        assert_eq!(strip_base_path("/music", "/music/api/v3/x"), "/api/v3/x");
-        assert_eq!(strip_base_path("/music/", "/music/api/v3/x"), "/api/v3/x");
-        assert_eq!(
-            strip_base_path("/music", "/musicx/api/v3"),
-            "/musicx/api/v3"
-        );
-        assert_eq!(strip_base_path("/music", "/music"), "");
     }
 
     #[test]

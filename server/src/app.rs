@@ -20,6 +20,13 @@
 //! rewrite) before answering natively. Native OPTIONS preflights on
 //! existing paths land in the 405 fallback too, so under debug CORS it
 //! answers them directly with the pinned localhost headers.
+//!
+//! The web UI is the last stop of the 404 fallback: after the compat
+//! redispatch, a GET that is not an API path gets a static file or the
+//! SPA `index.html`. Everything above sits under `BASE_PATH` when one is
+//! set: the prefix is stripped once, up front, so routes, the session gate
+//! and the UI all see the same base-relative path, and requests outside
+//! the base get the 404 envelope.
 
 use axum::{Router, extract::Request, middleware, response::IntoResponse, routing::get};
 
@@ -29,10 +36,65 @@ use crate::{
     handlers,
     middleware::request_scope,
     state::AppState,
+    web::WebUi,
 };
 
-/// Build the full application router from explicit state.
+/// Build the application router without a web UI.
 pub fn create_app(state: AppState) -> Router {
+    create_app_with_web(state, None)
+}
+
+/// Build the full application router, serving `web` as the fallback when
+/// given.
+pub fn create_app_with_web(state: AppState, web: Option<WebUi>) -> Router {
+    let base_path = state.config.base_path.clone();
+    let outside_base = Router::new()
+        .fallback(handlers::fallback_404)
+        .layer(middleware::from_fn_with_state(state.clone(), request_scope));
+    let app = base_relative_app(state, web);
+    if base_path.is_empty() {
+        app
+    } else {
+        // Strip the base by hand rather than with `Router::nest`, which
+        // does not route `{base}/` (the SPA's own root URL) into the app.
+        Router::new().fallback(move |request: Request| async move {
+            use tower::ServiceExt as _;
+
+            let target = match base_relative_uri(&base_path, request.uri()) {
+                Some(uri) => {
+                    let (mut parts, body) = request.into_parts();
+                    parts.uri = uri;
+                    app.oneshot(Request::from_parts(parts, body)).await
+                }
+                None => outside_base.oneshot(request).await,
+            };
+            match target {
+                Ok(response) => response,
+                Err(never) => match never {},
+            }
+        })
+    }
+}
+
+/// `uri` with the base path removed, on a segment boundary: `{base}` and
+/// `{base}/` become `/`, `{base}/x` becomes `/x`. `None` when the request
+/// is outside the base.
+fn base_relative_uri(base_path: &str, uri: &axum::http::Uri) -> Option<axum::http::Uri> {
+    let rest = uri.path().strip_prefix(base_path)?;
+    let path = match rest {
+        "" => "/",
+        rest if rest.starts_with('/') => rest,
+        _ => return None,
+    };
+    let target = match uri.query() {
+        Some(query) => format!("{path}?{query}"),
+        None => path.to_owned(),
+    };
+    target.parse().ok()
+}
+
+/// Every route, fallback and layer, at base-relative paths.
+fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
     let mut v3 = Router::new()
         .nest(
             "/api/v3",
@@ -122,10 +184,18 @@ pub fn create_app(state: AppState) -> Router {
     let fallback_404 = {
         let compat_router = compat_router.clone();
         move |request: Request| async move {
-            let compat_path =
-                crate::compat::shared::path_case::is_compat_path(request.uri().path());
+            let path = request.uri().path().to_owned();
+            let compat_path = crate::compat::shared::path_case::is_compat_path(&path);
+            let method = request.method().clone();
+            let headers = web.as_ref().map(|_| request.headers().clone());
             if let Some(redispatch) = fallback_redispatch(&compat_router, request).await {
                 return redispatch;
+            }
+            if !compat_path
+                && let (Some(web), Some(headers)) = (&web, &headers)
+                && let Some(page) = web.respond(&method, &path, headers).await
+            {
+                return page;
             }
             let mut response = handlers::fallback_404().await.into_response();
             if compat_path {

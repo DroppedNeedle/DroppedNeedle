@@ -78,3 +78,4 @@ mod stream_gateway;
 mod stream_gateway_engine;
 mod stream_transcode;
 mod tooling_cli;
+mod web;

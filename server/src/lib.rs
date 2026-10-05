@@ -44,7 +44,8 @@ pub mod settings;
 pub mod state;
 pub mod stream;
 pub mod tooling;
+pub mod web;
 
-pub use app::create_app;
+pub use app::{create_app, create_app_with_web};
 pub use config::AppConfig;
 pub use state::AppState;
