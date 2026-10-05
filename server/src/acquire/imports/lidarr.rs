@@ -182,7 +182,11 @@ pub trait FollowStore: Send + Sync {
 /// `FollowService.create_import_batch`).
 pub trait ApprovalSink: Send + Sync {
     /// Open one batch over the auto-download subset; returns its id.
-    fn create_import_batch(&self, user_id: &str, pairs: &[(String, String)]) -> String;
+    fn create_import_batch<'a>(
+        &'a self,
+        user_id: &'a str,
+        pairs: &'a [(String, String)],
+    ) -> futures_util::future::BoxFuture<'a, Result<String, String>>;
 }
 
 /// Lidarr connection settings rows (v2 `PreferencesService` lidarr block).
@@ -289,14 +293,20 @@ impl MemoryApprovalSink {
 
 #[cfg(any(test, feature = "test-support"))]
 impl ApprovalSink for MemoryApprovalSink {
-    fn create_import_batch(&self, user_id: &str, pairs: &[(String, String)]) -> String {
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let id = format!("batch-{}", inner.len() + 1);
-        inner.push((user_id.to_owned(), pairs.to_vec()));
-        id
+    fn create_import_batch<'a>(
+        &'a self,
+        user_id: &'a str,
+        pairs: &'a [(String, String)],
+    ) -> futures_util::future::BoxFuture<'a, Result<String, String>> {
+        Box::pin(async move {
+            let mut inner = self
+                .inner
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let id = format!("batch-{}", inner.len() + 1);
+            inner.push((user_id.to_owned(), pairs.to_vec()));
+            Ok(id)
+        })
     }
 }
 
@@ -513,7 +523,12 @@ impl LidarrImportService {
                     })
                 })
                 .collect();
-            approval_batch_id = Some(self.approvals.create_import_batch(user_id, &auto_pairs));
+            approval_batch_id = Some(
+                self.approvals
+                    .create_import_batch(user_id, &auto_pairs)
+                    .await
+                    .map_err(ServiceError::Approvals)?,
+            );
         }
         let auto_download_enabled = auto_dl_lowers.len() as i64;
         if !auto_dl_lowers.is_empty() {
@@ -542,4 +557,6 @@ pub enum ServiceError {
     NotConnected,
     /// Lidarr fetch failed.
     Lidarr(LidarrError),
+    /// The approval batch could not be filed.
+    Approvals(String),
 }

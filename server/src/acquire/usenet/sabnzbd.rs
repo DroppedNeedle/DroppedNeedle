@@ -1187,8 +1187,10 @@ impl SabnzbdQueue {
         })
     }
 
-    /// Poll queue, then history; missing in both means just-added (or
-    /// gone), reported as `queued` with no matched transfers.
+    /// Poll queue, then history. A job in neither reads `missing` with no
+    /// matched transfers: just added and not listed yet, or gone. Callers
+    /// tell the two apart by time (the materialize watchdog) and never
+    /// treat a missing job as live.
     pub async fn get_status(&self, handle: &TaskHandle) -> Result<TaskStatus, SabnzbdError> {
         let queue = self.client.queue(self.policy.poll_timeout).await?;
         if let Some(slot) = unique_queue_slot(&queue.slots, handle)? {
@@ -1198,7 +1200,7 @@ impl SabnzbdQueue {
             return Ok(history_status(&slot));
         }
         Ok(TaskStatus {
-            status: "queued".to_owned(),
+            status: "missing".to_owned(),
             ..TaskStatus::default()
         })
     }

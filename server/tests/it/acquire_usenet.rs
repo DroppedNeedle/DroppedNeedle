@@ -468,9 +468,9 @@ async fn sab_status_walk() {
     assert_eq!(status.status, "processing");
     assert_eq!(status.progress_percent, 100.0);
 
-    // Missing everywhere: just-added (or gone), queued with no transfers.
+    // Missing everywhere: just added or gone, never reported as live.
     let status = status_for(&mock, &queue, "job-?", "nzo-?").await;
-    assert_eq!(status.status, "queued");
+    assert_eq!(status.status, "missing");
     assert_eq!(status.matched_transfers, 0);
 
     // Ambiguous identity: two rows, one handle, no guessing.

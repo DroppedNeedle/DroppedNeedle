@@ -27,17 +27,15 @@ pub enum StoreError {
     InvalidTransition(String),
 }
 
-/// Run the real migration SQL against a scratch connection.
+/// Run every embedded migration against a scratch connection.
 ///
 /// Tests only: production applies migrations at boot through the sqlx
-/// migrator. Running the same files here keeps the tests on the real
-/// schema.
+/// migrator. Running the same SQL here keeps the tests on the real schema.
 #[cfg(any(test, feature = "test-support"))]
 pub fn apply_test_schema(conn: &Connection) -> Result<(), StoreError> {
-    conn.execute_batch(include_str!("../../../migrations/0001_baseline.sql"))?;
-    conn.execute_batch(include_str!(
-        "../../../migrations/0002_download_idempotency.sql"
-    ))?;
+    for migration in crate::schema::MIGRATOR.iter() {
+        conn.execute_batch(&migration.sql)?;
+    }
     Ok(())
 }
 
@@ -511,7 +509,7 @@ impl<'conn> DownloadStore<'conn> {
     pub fn reimport_task(&self, task_id: &str, now: f64) -> Result<Option<TaskRow>, StoreError> {
         let changed = self.conn.execute(
             "UPDATE download_tasks SET status = 'queued', error_message = NULL, \
-                 last_polled_at = ?, updated_at = ? WHERE id = ? \
+                 completed_at = NULL, last_polled_at = ?, updated_at = ? WHERE id = ? \
              AND status IN ('failed', 'partial') \
              AND source_username IS NOT NULL \
              AND search_job_id IS NOT NULL \
@@ -809,7 +807,7 @@ impl<'conn> DownloadStore<'conn> {
             } else {
                 AttemptState::CleanupPending
             };
-            self.transition_attempt(
+            let moved = self.transition_attempt(
                 id,
                 row.row_revision,
                 state,
@@ -822,8 +820,44 @@ impl<'conn> DownloadStore<'conn> {
                 None,
                 true,
             )?;
+            if moved.is_none() {
+                // Another writer moved the attempt between the read and the
+                // write. Refuse, so the caller's transaction rolls back the
+                // task settle too instead of leaving a terminal task with an
+                // in-use attempt.
+                return Err(StoreError::InvalidTransition(format!(
+                    "attempt {id} changed while settling task {task_id}"
+                )));
+            }
         }
         Ok(())
+    }
+
+    /// Cancel one task: a live task goes `cancelled` and every attempt still
+    /// acquiring or in use moves to `cleanup_pending` with a discard
+    /// disposition, so the cleanup pass aborts the client transfer and
+    /// drops its records. Answers false when the task is missing or already
+    /// terminal (nothing to stop).
+    pub fn cancel_task(&self, task_id: &str, now: f64) -> Result<bool, StoreError> {
+        let changed = self.conn.execute(
+            "UPDATE download_tasks \
+             SET status = 'cancelled', last_polled_at = ?, completed_at = ?, \
+                 cancelled_at = ?, updated_at = ? \
+             WHERE id = ? AND status NOT IN ('completed', 'partial', 'failed', 'cancelled')",
+            rusqlite::params![now, now, now, now, task_id],
+        )?;
+        if changed == 0 {
+            return Ok(false);
+        }
+        self.conn.execute(
+            "UPDATE download_attempts \
+             SET state = 'cleanup_pending', disposition = 'discard', \
+                 lease_owner = NULL, lease_expires_at = NULL, next_retry_at = ?, \
+                 updated_at = ?, row_revision = row_revision + 1 \
+             WHERE task_id = ? AND state IN ('acquiring', 'in_use')",
+            rusqlite::params![now, now, task_id],
+        )?;
+        Ok(true)
     }
 
     /// Blocklist a release by source identity, pruning expired rows first.

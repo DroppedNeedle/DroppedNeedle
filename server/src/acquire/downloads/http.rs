@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use crate::acquire::dispatch::Journal;
-use crate::acquire::requests::{auth::Principal, error::RequestsError};
+use crate::acquire::requests::{auth::Principal, error::RequestsError, http::HttpError};
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -45,15 +45,16 @@ pub async fn reimport_task_handler(
     State(journal): State<Arc<Journal>>,
     principal: Principal,
     Path(task_id): Path<String>,
-) -> Result<impl IntoResponse, RequestsError> {
+) -> Result<impl IntoResponse, HttpError> {
     principal.require_admin()?;
-    let row = Journal::with_store_async(&journal, move |store| {
-        store.reimport_task(&task_id, now_unix_f64())
-    })
-    .await
-    .map_err(|cause| RequestsError::internal(&cause))?;
+    let row = journal
+        .run_foreground("downloads.reimport", move |store| {
+            store.reimport_task(&task_id, now_unix_f64())
+        })
+        .await
+        .map_err(|cause| RequestsError::internal(&cause))?;
     let Some(row) = row else {
-        return Err(RequestsError::NotFound);
+        return Err(RequestsError::NotFound.into());
     };
     Ok(Json(ReimportResponse {
         success: true,

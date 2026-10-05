@@ -5,36 +5,24 @@
 //! the `Bearer` challenge, 4xx messages are user-safe, and 5xx bodies stay
 //! fixed with only an error id while the cause goes to the structured log.
 
-use crate::error::{ErrorBody, ErrorEnvelope};
+use crate::error::{
+    ApiError, CONFLICT, FORBIDDEN, INVALID_INPUT, NOT_FOUND, NOT_FOUND_MESSAGE, envelope_response,
+    unauthorized_response,
+};
 use crate::ids::IdGenerator;
 use axum::{
-    Json,
     extract::{FromRequest, Query, Request},
-    http::{HeaderValue, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde::de::DeserializeOwned;
-use serde_json::json;
 
-/// Missing or invalid session.
-pub const UNAUTHORIZED: &str = "UNAUTHORIZED";
-/// Admin-only route hit by a lesser role.
-pub const FORBIDDEN: &str = "FORBIDDEN";
-/// Unknown id. Always the same fixed message.
-pub const NOT_FOUND: &str = "NOT_FOUND";
-/// The request itself is wrong. The message is user-facing.
-pub const INVALID_INPUT: &str = "INVALID_INPUT";
-/// Valid input against the wrong state (duplicate import batch, bad origin).
-pub const CONFLICT: &str = "CONFLICT";
 /// No connection or settings stored for this import (Lidarr/Spotify).
 pub const IMPORT_NOT_CONFIGURED: &str = "IMPORT_NOT_CONFIGURED";
 /// The stored credential was rejected upstream (Lidarr 401/403).
 pub const IMPORT_AUTH_FAILED: &str = "IMPORT_AUTH_FAILED";
 /// The upstream answered with an error or garbage.
 pub const IMPORT_UNAVAILABLE: &str = "IMPORT_UNAVAILABLE";
-
-/// Challenge sent on every 401.
-pub const WWW_AUTHENTICATE_BEARER: &str = "Bearer";
 
 /// Every failure the imports routes can return to a caller.
 #[derive(Debug)]
@@ -106,51 +94,30 @@ impl ImportsError {
             Self::Internal { .. } => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
-
-    fn envelope(&self) -> ErrorEnvelope {
-        let (code, message, details) = match self {
-            Self::Unauthorized { message } => (UNAUTHORIZED.to_owned(), message.clone(), None),
-            Self::Forbidden { message } => (FORBIDDEN.to_owned(), message.clone(), None),
-            Self::NotFound => (
-                NOT_FOUND.to_owned(),
-                crate::error::NOT_FOUND_MESSAGE.to_owned(),
-                None,
-            ),
-            Self::InvalidInput { message } => (INVALID_INPUT.to_owned(), message.clone(), None),
-            Self::Conflict { message } => (CONFLICT.to_owned(), message.clone(), None),
-            Self::NotConfigured { message } => {
-                (IMPORT_NOT_CONFIGURED.to_owned(), message.clone(), None)
-            }
-            Self::AuthFailed { message } => (IMPORT_AUTH_FAILED.to_owned(), message.clone(), None),
-            Self::Unavailable { message } => (IMPORT_UNAVAILABLE.to_owned(), message.clone(), None),
-            Self::Internal { error_id } => (
-                crate::error::INTERNAL_ERROR.to_owned(),
-                crate::error::FIXED_INTERNAL_MESSAGE.to_owned(),
-                Some(json!({ "error_id": error_id })),
-            ),
-        };
-        ErrorEnvelope {
-            error: ErrorBody {
-                code,
-                message,
-                details,
-            },
-        }
-    }
 }
 
 impl IntoResponse for ImportsError {
     fn into_response(self) -> Response {
         let status = self.status();
-        let mut response = (status, Json(self.envelope())).into_response();
-        if status == StatusCode::UNAUTHORIZED
-            && let Ok(challenge) = HeaderValue::from_str(WWW_AUTHENTICATE_BEARER)
-        {
-            response
-                .headers_mut()
-                .insert(axum::http::header::WWW_AUTHENTICATE, challenge);
+        match self {
+            Self::Unauthorized { message } => unauthorized_response(message),
+            Self::Forbidden { message } => envelope_response(status, FORBIDDEN, message, None),
+            Self::NotFound => envelope_response(status, NOT_FOUND, NOT_FOUND_MESSAGE, None),
+            Self::InvalidInput { message } => {
+                envelope_response(status, INVALID_INPUT, message, None)
+            }
+            Self::Conflict { message } => envelope_response(status, CONFLICT, message, None),
+            Self::NotConfigured { message } => {
+                envelope_response(status, IMPORT_NOT_CONFIGURED, message, None)
+            }
+            Self::AuthFailed { message } => {
+                envelope_response(status, IMPORT_AUTH_FAILED, message, None)
+            }
+            Self::Unavailable { message } => {
+                envelope_response(status, IMPORT_UNAVAILABLE, message, None)
+            }
+            Self::Internal { error_id } => ApiError::server_error_response(status, &error_id),
         }
-        response
     }
 }
 

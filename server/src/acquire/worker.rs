@@ -11,11 +11,15 @@
 //! - poll: live attempts report progress through the [`Watchdog`], whose
 //!   verdicts complete, fail over, or requeue their tasks;
 //! - retry: terminal tasks whose backoff elapsed spawn successors;
-//! - cleanup: claimed journal rows discard client records and settle;
+//! - cleanup: claimed journal rows abort and discard client records and
+//!   settle;
 //! - orphans (hourly): complete-dir debris with no owner is removed.
 //!
-//! The loop registers as the durable `download-worker` job and heartbeats
-//! every pass and stops on the shared shutdown watch.
+//! Sources and tuning are resolved at the start of every pass, so saved
+//! settings take effect on the next pass without a restart. The loop
+//! registers as the durable `download-worker` job, heartbeats every pass
+//! and stops on the shared shutdown watch. Journal failures are logged and
+//! skip the affected item; a read error never stands in for "no rows".
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -37,7 +41,7 @@ use super::downloads::recovery::{
 use super::downloads::sources::OrphanOwnership;
 use super::downloads::sources::{DownloadSource, SourceError, SourceHandle};
 use super::downloads::state::{AttemptState, TaskStatus};
-use super::downloads::store::{AttemptRow, TaskRow};
+use super::downloads::store::{AttemptRow, NewTask, StoreError, TaskRow};
 use super::downloads::watchdog::{PollSample, RetryPolicy, Watchdog, WatchdogConfig};
 use super::sources::{JournalOwnership, SabnzbdSource, SlskdSource};
 use crate::db::{DurableWorkWakeups, JobKind, JobState, WriteLane};
@@ -77,33 +81,49 @@ pub struct RecoveryReport {
 /// task: queued rows stay queued for the first pass, manifest-backed rows
 /// keep polling, and anything else returns to queued under its existing
 /// idempotency keys. Re-running after a clean shutdown is a no-op.
-pub fn run_startup_recovery(
+pub async fn run_startup_recovery(
     journal: &Journal,
     staging_root: &Path,
 ) -> Result<RecoveryReport, String> {
-    let tasks = journal.with_store(|store| {
-        store.list_active(&[
-            TaskStatus::Queued,
-            TaskStatus::Downloading,
-            TaskStatus::Processing,
-        ])
-    })?;
+    let tasks = journal
+        .run("downloads.recovery.list", |store| {
+            store.list_active(&[
+                TaskStatus::Queued,
+                TaskStatus::Downloading,
+                TaskStatus::Processing,
+            ])
+        })
+        .await?;
     let mut report = RecoveryReport::default();
     for task in tasks {
-        let manifest_path = ManifestCodec::path(staging_root, &task.id);
-        let manifest_present = manifest_path.is_file();
-        let manifest_matches_attempt = manifest_attempt_match(journal, staging_root, &task);
+        let manifest = read_manifest(staging_root, &task.id).await;
+        let manifest_matches_attempt = match manifest.as_ref().and_then(|m| m.attempt_id.clone()) {
+            None => None,
+            Some(linked) => {
+                let task_id = task.id.clone();
+                journal
+                    .run("downloads.recovery.attempts", move |store| {
+                        store.list_attempts(&task_id)
+                    })
+                    .await
+                    .ok()
+                    .map(|attempts| attempts.iter().any(|attempt| attempt.id == linked))
+            }
+        };
         match classify_startup(StartupCtx {
             status: task.status,
-            manifest_present,
+            manifest_present: manifest.is_some(),
             manifest_matches_attempt,
         }) {
             StartupAction::Redispatch => report.redispatched += 1,
             StartupAction::ResumePoll => report.resumed += 1,
             StartupAction::RestartClean => {
-                journal.with_store(|store| {
-                    store.transition_task(&task.id, TaskStatus::Queued, now_unix_f64(), None)
-                })?;
+                let task_id = task.id.clone();
+                journal
+                    .run("downloads.recovery.restart", move |store| {
+                        store.transition_task(&task_id, TaskStatus::Queued, now_unix_f64(), None)
+                    })
+                    .await?;
                 report.restarted += 1;
             }
             StartupAction::Noop => {}
@@ -112,17 +132,11 @@ pub fn run_startup_recovery(
     Ok(report)
 }
 
-/// Compare the manifest's attempt link against the journal, when both
-/// sides exist. Anything unreadable answers `None` (unknown), which
-/// classifies toward resuming rather than restarting.
-fn manifest_attempt_match(journal: &Journal, staging_root: &Path, task: &TaskRow) -> Option<bool> {
-    let bytes = std::fs::read(ManifestCodec::path(staging_root, &task.id)).ok()?;
-    let manifest = ManifestCodec.decode(&bytes).ok()?;
-    let linked = manifest.attempt_id?;
-    let attempts = journal
-        .with_store(|store| store.list_attempts(&task.id))
-        .ok()?;
-    Some(attempts.iter().any(|attempt| attempt.id == linked))
+/// A task's manifest, when present and readable.
+async fn read_manifest(staging_root: &Path, task_id: &str) -> Option<DownloadManifest> {
+    let path = ManifestCodec::checked_path(staging_root, task_id)?;
+    let bytes = tokio::fs::read(path).await.ok()?;
+    ManifestCodec.decode(&bytes).ok()
 }
 
 /// One bundled download source behind the fetch seam.
@@ -177,12 +191,19 @@ impl Source {
         }
     }
 
+    async fn abort(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
+        match self {
+            Self::Slskd(source) => source.abort(handle).await,
+            Self::Sab(source) => source.abort(handle).await,
+        }
+    }
+
     /// Whether the client still owns one job (orphan evidence). `None`
     /// means the lookup failed and the folder must stay.
     async fn job_active(&self, handle: &SourceHandle) -> Option<bool> {
-        match self.poll(handle).await {
-            Ok(progress) => Some(!progress.all_terminal),
-            Err(_) => None,
+        match self {
+            Self::Slskd(_) => None,
+            Self::Sab(source) => source.job_present(handle).await.ok(),
         }
     }
 
@@ -201,14 +222,14 @@ impl Source {
     }
 }
 
-/// Worker tuning, bound from config at boot.
+/// Worker tuning, read at the start of every pass.
 #[derive(Debug, Clone)]
 pub struct WorkerConfig {
     /// Pass cadence.
     pub interval: Duration,
     /// Concurrent live downloads.
     pub max_concurrent_downloads: usize,
-    /// Failover attempts per task (candidate-index ceiling).
+    /// Failover attempts per task across all sources.
     pub max_failover_attempts: i64,
     /// Auto-retry timing.
     pub retry: RetryPolicy,
@@ -243,6 +264,56 @@ impl Default for WorkerConfig {
     }
 }
 
+/// The configured sources for one pass.
+pub type SourceSet = Arc<Vec<Source>>;
+/// Resolves the configured sources; called once per pass.
+pub type SourceProvider = Arc<dyn Fn() -> SourceSet + Send + Sync>;
+/// Resolves the worker tuning; called once per pass.
+pub type ConfigProvider = Arc<dyn Fn() -> WorkerConfig + Send + Sync>;
+
+/// Everything one pass works with: settings and sources resolved once at
+/// the start of the pass.
+struct Pass {
+    config: WorkerConfig,
+    sources: SourceSet,
+    watchdog: Watchdog,
+    now: f64,
+}
+
+impl Pass {
+    /// Sources in configured try order.
+    fn ordered_sources(&self) -> Vec<&Source> {
+        let mut ordered = Vec::with_capacity(self.sources.len());
+        for wanted in &self.config.source_order {
+            for source in self.sources.iter() {
+                if source.journal_source() == wanted {
+                    ordered.push(source);
+                }
+            }
+        }
+        for source in self.sources.iter() {
+            if !ordered.iter().any(|placed| std::ptr::eq(*placed, source)) {
+                ordered.push(source);
+            }
+        }
+        ordered
+    }
+
+    /// The adapter for one journal source tag.
+    fn source_for(&self, tag: &str) -> Option<&Source> {
+        self.sources
+            .iter()
+            .find(|source| source.journal_source() == tag)
+    }
+}
+
+/// One attempt plus its decoded client handle, when it has one.
+#[derive(Debug, Clone)]
+struct Attempt {
+    row: AttemptRow,
+    handle: Option<SourceHandle>,
+}
+
 /// Per-task poll memory: byte progress across passes.
 #[derive(Debug, Clone)]
 struct PollMemory {
@@ -255,92 +326,143 @@ struct PollMemory {
 /// isolated: one bad task never stops its siblings.
 pub struct DownloadWorker {
     journal: Arc<Journal>,
-    sources: Vec<Source>,
+    sources: SourceProvider,
+    config: ConfigProvider,
     ownership: JournalOwnership,
-    config: WorkerConfig,
-    watchdog: Watchdog,
     poll_cache: Mutex<HashMap<String, PollMemory>>,
     enqueue_not_before: Mutex<HashMap<String, f64>>,
     unsearchable_warned: Mutex<HashSet<String>>,
 }
 
 impl DownloadWorker {
-    /// Wire the worker over the shared journal and sources.
-    pub fn new(journal: Arc<Journal>, sources: Vec<Source>, config: WorkerConfig) -> Self {
-        let watchdog = Watchdog::new(config.watchdog.clone());
+    /// Wire the worker over the shared journal plus live source and config
+    /// resolvers.
+    pub fn new(journal: Arc<Journal>, sources: SourceProvider, config: ConfigProvider) -> Self {
         let ownership = JournalOwnership::new(journal.clone());
         Self {
             journal,
             sources,
-            ownership,
             config,
-            watchdog,
+            ownership,
             poll_cache: Mutex::new(HashMap::new()),
             enqueue_not_before: Mutex::new(HashMap::new()),
             unsearchable_warned: Mutex::new(HashSet::new()),
         }
     }
 
-    /// Sources in configured try order.
-    fn ordered_sources(&self) -> Vec<&Source> {
-        let mut ordered = Vec::with_capacity(self.sources.len());
-        for wanted in &self.config.source_order {
-            for source in &self.sources {
-                if source.journal_source() == wanted {
-                    ordered.push(source);
-                }
-            }
-        }
-        for source in &self.sources {
-            if !ordered.iter().any(|placed| std::ptr::eq(*placed, source)) {
-                ordered.push(source);
-            }
-        }
-        ordered
+    /// Worker over a fixed source list and fixed tuning.
+    pub fn fixed(journal: Arc<Journal>, sources: Vec<Source>, config: WorkerConfig) -> Self {
+        let sources: SourceSet = Arc::new(sources);
+        Self::new(
+            journal,
+            Arc::new(move || sources.clone()),
+            Arc::new(move || config.clone()),
+        )
     }
 
     /// Run every steady-state pass once, in order. The orphan sweep only
     /// runs when `pass` hits its hourly slot.
     pub async fn run_once(&self, pass: u64) {
-        let now = now_unix_f64();
-        self.enqueue_pass(now).await;
-        self.poll_pass(now).await;
-        self.retry_pass(now).await;
-        self.cleanup_pass(now).await;
+        let config = (self.config)();
+        let pass_ctx = Pass {
+            watchdog: Watchdog::new(config.watchdog.clone()),
+            sources: (self.sources)(),
+            config,
+            now: now_unix_f64(),
+        };
+        self.enqueue_pass(&pass_ctx).await;
+        self.poll_pass(&pass_ctx).await;
+        self.retry_pass(&pass_ctx).await;
+        self.cleanup_pass(&pass_ctx).await;
         if pass.is_multiple_of(ORPHAN_EVERY_NTH_PASS) {
-            self.orphan_pass().await;
+            self.orphan_pass(&pass_ctx).await;
         }
     }
 
-    /// Enqueue queued tasks while under the concurrency cap.
-    async fn enqueue_pass(&self, now: f64) {
-        let live = Journal::with_store_async(&self.journal, |store| {
-            store.list_active(&[TaskStatus::Downloading, TaskStatus::Processing])
-        })
-        .await
-        .unwrap_or_default()
-        .len();
-        let mut budget = self.config.max_concurrent_downloads.saturating_sub(live);
-        if budget == 0 {
-            return;
+    /// Run one journal step, logging a failure with its name.
+    async fn step<R, F>(&self, name: &'static str, op: F) -> Option<R>
+    where
+        R: Send + 'static,
+        F: for<'a, 'b> FnOnce(
+                &'a super::downloads::store::DownloadStore<'b>,
+            ) -> Result<R, StoreError>
+            + Send
+            + 'static,
+    {
+        match self.journal.run(name, op).await {
+            Ok(value) => Some(value),
+            Err(error) => {
+                tracing::warn!(step = name, %error, "download journal step failed");
+                None
+            }
         }
-        let queued = Journal::with_store_async(&self.journal, |store| {
-            store.list_active(&[TaskStatus::Queued])
+    }
+
+    /// A task's attempts with their decoded handles, in one read.
+    async fn attempts(&self, task_id: &str) -> Option<Vec<Attempt>> {
+        let task_id = task_id.to_owned();
+        self.step("downloads.attempts", move |store| {
+            let rows = store.list_attempts(&task_id)?;
+            let mut out = Vec::with_capacity(rows.len());
+            for row in rows {
+                let handle = store
+                    .attempt_handle_json(&row.id)?
+                    .and_then(|json| serde_json::from_str::<SourceHandle>(&json).ok());
+                out.push(Attempt { row, handle });
+            }
+            Ok(out)
         })
         .await
-        .unwrap_or_default();
+    }
+
+    /// Enqueue queued tasks while under the concurrency cap.
+    async fn enqueue_pass(&self, pass: &Pass) {
+        let Some(live) = self
+            .step("downloads.live", |store| {
+                store.list_active(&[TaskStatus::Downloading, TaskStatus::Processing])
+            })
+            .await
+        else {
+            // Without the live count the cap cannot hold; skip this pass.
+            return;
+        };
+        let Some(queued) = self
+            .step("downloads.queued", |store| {
+                store.list_active(&[TaskStatus::Queued])
+            })
+            .await
+        else {
+            return;
+        };
+        self.prune_queue_memory(&queued);
+        let mut budget = pass
+            .config
+            .max_concurrent_downloads
+            .saturating_sub(live.len());
         for task in queued {
             if budget == 0 {
                 break;
             }
-            if self.enqueue_one(&task, now).await {
+            if self.enqueue_one(pass, &task).await {
                 budget -= 1;
             }
         }
     }
 
+    /// Forget backoff and warning marks for tasks that left the queue.
+    fn prune_queue_memory(&self, queued: &[TaskRow]) {
+        let ids: HashSet<&str> = queued.iter().map(|task| task.id.as_str()).collect();
+        if let Ok(mut backoff) = self.enqueue_not_before.lock() {
+            backoff.retain(|task_id, _| ids.contains(task_id.as_str()));
+        }
+        if let Ok(mut warned) = self.unsearchable_warned.lock() {
+            warned.retain(|task_id| ids.contains(task_id.as_str()));
+        }
+    }
+
     /// Enqueue one queued task. Answers whether a fetch started.
-    async fn enqueue_one(&self, task: &TaskRow, now: f64) -> bool {
+    async fn enqueue_one(&self, pass: &Pass, task: &TaskRow) -> bool {
+        let now = pass.now;
         if task.artist_name.trim().is_empty() && task.album_title.trim().is_empty() {
             // Edition asks carry no searchable names until the catalog
             // port lands; warn once per task and leave the row queued.
@@ -366,53 +488,52 @@ impl DownloadWorker {
         {
             return false;
         }
-        let task_id = task.id.clone();
-        let attempts =
-            Journal::with_store_async(&self.journal, move |store| store.list_attempts(&task_id))
-                .await
-                .unwrap_or_default();
-        if self.live_attempt(&attempts).await.is_some() {
+        let Some(attempts) = self.attempts(&task.id).await else {
+            // Without the attempt list the next index is unknown; never
+            // guess index 0 and re-post a transfer.
+            return false;
+        };
+        if live_attempt(&attempts).is_some() {
             // A pollable attempt exists; the poll pass owns this task.
             // Queued rows in that state just missed their transition.
             let task_id = task.id.clone();
-            let _ = Journal::with_store_async(&self.journal, move |store| {
+            self.step("downloads.resume_live", move |store| {
                 store.transition_task(&task_id, TaskStatus::Downloading, now, None)
             })
             .await;
             return false;
         }
-        let index = handled_count(&self.journal, &attempts).await;
-        if failover_exhausted(index, self.config.max_failover_attempts) {
-            let task_id = task.id.clone();
-            let last_attempt = attempts.last().map(|attempt| attempt.id.clone());
-            let _ = Journal::with_store_async(&self.journal, move |store| {
-                store.finalize_task_and_attempt(
-                    &task_id,
-                    TaskStatus::Failed,
-                    now,
-                    Some("no source could serve this release"),
-                    last_attempt.as_deref(),
-                    true,
-                )
-            })
-            .await;
+        let handled = handled_count(&attempts, None);
+        if failover_exhausted(handled, pass.config.max_failover_attempts) {
+            self.fail_unserved(task, &attempts, now).await;
             return false;
         }
-        let key = format!("enqueue:{}:{index}", task.id);
-        // A repeat claim means a crash between the client add and the
-        // journal write: the enqueue below re-attaches instead of
-        // double-adding (usenet probes queue/history by the deterministic
-        // job name; slskd re-enqueue re-attaches by content), and the
-        // attempt insert stays single-winner on its id.
+        // The key marks the window between the client add and the attempt
+        // journal write. A repeat claim means a crash landed in it: the
+        // enqueue below re-attaches (usenet probes queue and history by the
+        // deterministic job name; slskd re-enqueues by content) instead of
+        // starting a second transfer.
+        let key = format!("enqueue:{}:{handled}", task.id);
         let task_id = task.id.clone();
-        let _ = Journal::with_store_async(&self.journal, move |store| {
-            store.claim_key(&key, &task_id, "enqueue", now)
-        })
-        .await;
-        for source in self.ordered_sources() {
-            match source.enqueue(&task.id, index).await {
+        let Some(fresh) = self
+            .step("downloads.enqueue_key", move |store| {
+                store.claim_key(&key, &task_id, "enqueue", now)
+            })
+            .await
+        else {
+            return false;
+        };
+        if !fresh {
+            tracing::info!(task_id = %task.id, attempt = handled, "resuming an interrupted enqueue");
+        }
+        let mut every_source_refused = true;
+        for source in pass.ordered_sources() {
+            // Each source walks its own candidate list: the index is the
+            // number of attempts this source already handled.
+            let source_index = handled_count(&attempts, Some(source.journal_source()));
+            match source.enqueue(&task.id, source_index).await {
                 Ok(handle) => {
-                    self.journal_enqueued(task, source, index, &handle, now)
+                    self.journal_enqueued(pass, task, source, handled, source_index, &handle)
                         .await;
                     return true;
                 }
@@ -425,6 +546,9 @@ impl DownloadWorker {
                     return false;
                 }
                 Err(error) => {
+                    if !matches!(error, SourceError::Rejected(_)) {
+                        every_source_refused = false;
+                    }
                     tracing::warn!(
                         task_id = %task.id,
                         source = source.name(),
@@ -434,71 +558,83 @@ impl DownloadWorker {
                 }
             }
         }
+        if every_source_refused && !pass.sources.is_empty() {
+            // Every configured source answered that it has nothing for
+            // this release: the candidate lists are spent.
+            self.fail_unserved(task, &attempts, now).await;
+            return false;
+        }
         self.backoff(&task.id, now);
         false
     }
 
-    /// Newest attempt with a journaled client handle, if any.
-    async fn live_attempt<'a>(&self, attempts: &'a [AttemptRow]) -> Option<&'a AttemptRow> {
-        for attempt in attempts.iter().rev() {
-            if !matches!(attempt.state, AttemptState::Acquiring | AttemptState::InUse) {
-                continue;
-            }
-            let attempt_id = attempt.id.clone();
-            let handled = Journal::with_store_async(&self.journal, move |store| {
-                store.attempt_handle_json(&attempt_id)
-            })
-            .await
-            .unwrap_or(None)
-            .is_some();
-            if handled {
-                return Some(attempt);
-            }
-        }
-        None
+    /// Fail a task no source can serve, keeping its last attempt.
+    async fn fail_unserved(&self, task: &TaskRow, attempts: &[Attempt], now: f64) {
+        let task_id = task.id.clone();
+        let last_attempt = attempts.last().map(|attempt| attempt.row.id.clone());
+        self.step("downloads.fail_unserved", move |store| {
+            store.finalize_task_and_attempt(
+                &task_id,
+                TaskStatus::Failed,
+                now,
+                Some("no source could serve this release"),
+                last_attempt.as_deref(),
+                true,
+            )
+        })
+        .await;
     }
 
-    /// Journal one successful enqueue: the attempt row, the manifest
-    /// handle plus target files, the Downloading transition, and fresh
-    /// poll memory.
+    /// Journal one successful enqueue: the attempt row plus the
+    /// Downloading transition in one write, then the manifest handle and
+    /// fresh poll memory. If the attempt id is already taken (another
+    /// writer journaled this slot), the new client job is aborted so it
+    /// never runs untracked.
     async fn journal_enqueued(
         &self,
+        pass: &Pass,
         task: &TaskRow,
         source: &Source,
-        index: i64,
+        attempt_number: i64,
+        source_index: i64,
         handle: &SourceHandle,
-        now: f64,
     ) {
-        let handle_json = serde_json::to_string(handle).unwrap_or_default();
-        let attempt_id = format!("{}-a{index}", task.id);
+        let now = pass.now;
+        let handle_json = match serde_json::to_string(handle) {
+            Ok(json) => json,
+            Err(error) => {
+                tracing::error!(task_id = %task.id, %error, "client handle encode failed");
+                return;
+            }
+        };
+        let attempt_id = format!("{}-a{attempt_number}", task.id);
         let task_id = task.id.clone();
         let journal_source = source.journal_source();
         let job_name = handle.job_name.clone();
-        let journaled = Journal::with_store_async(&self.journal, move |store| {
-            store.insert_attempt(
-                &attempt_id,
-                &task_id,
-                journal_source,
-                index,
-                &job_name,
-                &handle_json,
-                AttemptState::Acquiring,
-                now,
-            )
-        })
-        .await
-        .is_ok();
-        if !journaled {
-            // A concurrent worker won the same index; the poll pass will
-            // pick up whichever attempt journaled first.
+        let row_id = attempt_id.clone();
+        let journaled = self
+            .step("downloads.enqueued", move |store| {
+                store.insert_attempt(
+                    &row_id,
+                    &task_id,
+                    journal_source,
+                    source_index,
+                    &job_name,
+                    &handle_json,
+                    AttemptState::Acquiring,
+                    now,
+                )?;
+                store.transition_task(&task_id, TaskStatus::Downloading, now, None)
+            })
+            .await;
+        if journaled.is_none() {
+            if let Err(error) = source.abort(handle).await {
+                tracing::warn!(task_id = %task.id, %error, "untracked client job abort failed");
+            }
             return;
         }
-        self.write_manifest_handle(task, handle).await;
-        let task_id = task.id.clone();
-        let _ = Journal::with_store_async(&self.journal, move |store| {
-            store.transition_task(&task_id, TaskStatus::Downloading, now, None)
-        })
-        .await;
+        self.write_manifest_handle(pass, task, handle, &attempt_id)
+            .await;
         if let Ok(mut cache) = self.poll_cache.lock() {
             cache.insert(
                 task.id.clone(),
@@ -511,18 +647,19 @@ impl DownloadWorker {
         }
     }
 
-    /// Merge the client handle and target files into the task manifest.
-    /// Best-effort: a missing manifest only steers recovery toward a
-    /// clean restart.
-    async fn write_manifest_handle(&self, task: &TaskRow, handle: &SourceHandle) {
-        let Some(path) = ManifestCodec::checked_path(&self.config.staging_root, &task.id) else {
-            tracing::warn!(task_id = %task.id, "manifest handle write refused: unsafe task id");
-            return;
-        };
-        let mut manifest: DownloadManifest = tokio::fs::read(&path)
+    /// Merge the client handle, target files and attempt link into the
+    /// task manifest. Best-effort: a missing manifest only steers recovery
+    /// toward a clean restart.
+    async fn write_manifest_handle(
+        &self,
+        pass: &Pass,
+        task: &TaskRow,
+        handle: &SourceHandle,
+        attempt_id: &str,
+    ) {
+        let staging_root = pass.config.staging_root.clone();
+        let mut manifest = read_manifest(&staging_root, &task.id)
             .await
-            .ok()
-            .and_then(|bytes| ManifestCodec.decode(&bytes).ok())
             .unwrap_or_else(|| DownloadManifest {
                 task_id: task.id.clone(),
                 release_group_mbid: task.release_group_mbid.clone(),
@@ -548,6 +685,7 @@ impl DownloadWorker {
             filenames: handle.filenames.clone(),
             job_name: handle.job_name.clone(),
         });
+        manifest.attempt_id = Some(attempt_id.to_owned());
         if manifest.target_files.is_empty() {
             manifest.target_files = handle
                 .filenames
@@ -559,20 +697,17 @@ impl DownloadWorker {
                 })
                 .collect();
         }
-        match ManifestCodec.encode(&manifest) {
-            Ok(bytes) => {
-                if let Some(parent) = path.parent()
-                    && let Err(error) = tokio::fs::create_dir_all(parent).await
-                {
-                    tracing::warn!(task_id = %task.id, %error, "manifest handle dir failed");
-                    return;
-                }
-                if let Err(error) = tokio::fs::write(&path, bytes).await {
-                    tracing::warn!(task_id = %task.id, %error, "manifest handle write failed");
-                }
+        let task_id = task.id.clone();
+        let written =
+            tokio::task::spawn_blocking(move || ManifestCodec.write(&staging_root, &manifest))
+                .await;
+        match written {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(task_id, %error, "manifest handle write failed");
             }
             Err(error) => {
-                tracing::warn!(task_id = %task.id, %error, "manifest handle encode failed");
+                tracing::warn!(task_id, %error, "manifest handle write join failed");
             }
         }
     }
@@ -585,62 +720,49 @@ impl DownloadWorker {
     }
 
     /// Poll every live task through the watchdog.
-    async fn poll_pass(&self, now: f64) {
-        let tasks = Journal::with_store_async(&self.journal, |store| {
-            store.list_active(&[TaskStatus::Downloading, TaskStatus::Processing])
-        })
-        .await
-        .unwrap_or_default();
-        for task in tasks {
-            self.poll_one(&task, now).await;
+    async fn poll_pass(&self, pass: &Pass) {
+        let Some(tasks) = self
+            .step("downloads.live", |store| {
+                store.list_active(&[TaskStatus::Downloading, TaskStatus::Processing])
+            })
+            .await
+        else {
+            return;
+        };
+        let live: HashSet<&str> = tasks.iter().map(|task| task.id.as_str()).collect();
+        if let Ok(mut cache) = self.poll_cache.lock() {
+            cache.retain(|task_id, _| live.contains(task_id.as_str()));
+        }
+        for task in &tasks {
+            self.poll_one(pass, task).await;
         }
     }
 
     /// Poll one live task: judge the sample, then complete, fail over, or
     /// keep waiting. Poll errors never fail the task directly; the stall
     /// math ages a dead client out into failover instead.
-    async fn poll_one(&self, task: &TaskRow, now: f64) {
-        let task_id = task.id.clone();
-        let attempts =
-            Journal::with_store_async(&self.journal, move |store| store.list_attempts(&task_id))
-                .await
-                .unwrap_or_default();
-        let Some(attempt) = self.live_attempt(&attempts).await.cloned() else {
+    async fn poll_one(&self, pass: &Pass, task: &TaskRow) {
+        let now = pass.now;
+        let Some(attempts) = self.attempts(&task.id).await else {
+            // A read failure is not "no attempt": leave the task alone.
+            return;
+        };
+        let Some(attempt) = live_attempt(&attempts).cloned() else {
             // No pollable attempt: back to queued for a fresh enqueue.
             let task_id = task.id.clone();
-            let _ = Journal::with_store_async(&self.journal, move |store| {
+            self.step("downloads.requeue", move |store| {
                 store.transition_task(&task_id, TaskStatus::Queued, now, None)
             })
             .await;
             return;
         };
-        let attempt_id = attempt.id.clone();
-        let handle_json = Journal::with_store_async(&self.journal, move |store| {
-            store.attempt_handle_json(&attempt_id)
-        })
-        .await
-        .unwrap_or(None)
-        .unwrap_or_default();
-        let handle: SourceHandle = match serde_json::from_str(&handle_json) {
-            Ok(handle) => handle,
-            Err(_) => {
-                let task_id = task.id.clone();
-                let _ = Journal::with_store_async(&self.journal, move |store| {
-                    store.transition_task(&task_id, TaskStatus::Queued, now, None)
-                })
-                .await;
-                return;
-            }
+        let Some(handle) = attempt.handle.clone() else {
+            return;
         };
-        let source = match self
-            .sources
-            .iter()
-            .find(|source| source.journal_source() == attempt.source)
-        {
-            Some(source) => source,
+        let Some(source) = pass.source_for(&attempt.row.source) else {
             // Plugin sources have no adapter yet; leave the row for a
             // worker that knows them rather than failing it here.
-            None => return,
+            return;
         };
         let mut memory = self.poll_memory(&task.id, task, now);
         match source.poll(&handle).await {
@@ -665,11 +787,11 @@ impl DownloadWorker {
                     },
                 };
                 self.store_poll_memory(&task.id, &memory);
-                self.apply_verdict(task, &attempt, source, &handle, progress, sample, now)
+                self.apply_verdict(pass, task, &attempt.row, source, &handle, progress, sample)
                     .await;
             }
             Err(SourceError::Rejected(detail)) => {
-                self.fail_over(task, &attempt, source, &handle, &detail, now)
+                self.fail_over(pass, task, &attempt.row, source, &handle, &detail)
                     .await;
             }
             Err(error) => {
@@ -678,7 +800,7 @@ impl DownloadWorker {
                 // not fail a healthy transfer.
                 tracing::warn!(task_id = %task.id, %error, "download poll failed");
                 let task_id = task.id.clone();
-                let _ = Journal::with_store_async(&self.journal, move |store| {
+                self.step("downloads.touch_poll", move |store| {
                     store.touch_poll(&task_id, now)
                 })
                 .await;
@@ -711,26 +833,29 @@ impl DownloadWorker {
     #[allow(clippy::too_many_arguments)]
     async fn apply_verdict(
         &self,
+        pass: &Pass,
         task: &TaskRow,
         attempt: &AttemptRow,
         source: &Source,
         handle: &SourceHandle,
         progress: super::downloads::sources::TransferProgress,
         sample: PollSample,
-        now: f64,
     ) {
-        match self.watchdog.evaluate(&sample) {
-            super::downloads::watchdog::WatchdogOutcome::Continue => {
+        use super::downloads::watchdog::WatchdogOutcome;
+        let now = pass.now;
+        let reason = match pass.watchdog.evaluate(&sample) {
+            WatchdogOutcome::Continue => {
                 let task_id = task.id.clone();
-                let _ = Journal::with_store_async(&self.journal, move |store| {
+                self.step("downloads.touch_poll", move |store| {
                     store.touch_poll(&task_id, now)
                 })
                 .await;
+                return;
             }
-            super::downloads::watchdog::WatchdogOutcome::Completed => {
+            WatchdogOutcome::Completed => {
                 let task_id = task.id.clone();
                 let attempt_id = attempt.id.clone();
-                let _ = Journal::with_store_async(&self.journal, move |store| {
+                self.step("downloads.complete", move |store| {
                     store.finalize_task_and_attempt(
                         &task_id,
                         TaskStatus::Completed,
@@ -744,101 +869,60 @@ impl DownloadWorker {
                 if let Ok(mut cache) = self.poll_cache.lock() {
                     cache.remove(&task.id);
                 }
+                return;
             }
-            super::downloads::watchdog::WatchdogOutcome::Terminal => {
-                let detail = format!(
-                    "source batch terminal ({} files succeeded)",
-                    progress.succeeded_filenames.len()
-                );
-                self.fail_over(task, attempt, source, handle, &detail, now)
-                    .await;
+            WatchdogOutcome::Terminal => format!(
+                "source batch terminal ({} files succeeded)",
+                progress.succeeded_filenames.len()
+            ),
+            WatchdogOutcome::Stalled => "transfer stalled".to_owned(),
+            WatchdogOutcome::QueuedTimeout => "stuck in the remote queue".to_owned(),
+            WatchdogOutcome::MaterializeTimeout => {
+                "no transfer materialized after enqueue".to_owned()
             }
-            super::downloads::watchdog::WatchdogOutcome::Stalled => {
-                self.fail_over(task, attempt, source, handle, "transfer stalled", now)
-                    .await;
-            }
-            super::downloads::watchdog::WatchdogOutcome::QueuedTimeout => {
-                self.fail_over(
-                    task,
-                    attempt,
-                    source,
-                    handle,
-                    "stuck in the remote queue",
-                    now,
-                )
-                .await;
-            }
-            super::downloads::watchdog::WatchdogOutcome::MaterializeTimeout => {
-                self.fail_over(
-                    task,
-                    attempt,
-                    source,
-                    handle,
-                    "no transfer materialized after enqueue",
-                    now,
-                )
-                .await;
-            }
-            super::downloads::watchdog::WatchdogOutcome::Deadline => {
-                self.fail_over(task, attempt, source, handle, "poll deadline hit", now)
-                    .await;
-            }
-        }
+            WatchdogOutcome::Deadline => "poll deadline hit".to_owned(),
+        };
+        self.fail_over(pass, task, attempt, source, handle, &reason)
+            .await;
     }
 
-    /// Fail one attempt over to the next candidate: discard client
-    /// records best-effort, settle the attempt row, blocklist the failed
-    /// release (never on a local fault), and requeue the task so the next
-    /// pass enqueues the following index.
+    /// Fail one attempt over to the next candidate: blocklist the failed
+    /// release (never on a local fault), discard client records, then
+    /// settle the attempt and requeue the task in one write so the next
+    /// pass enqueues the following candidate.
     async fn fail_over(
         &self,
+        pass: &Pass,
         task: &TaskRow,
         attempt: &AttemptRow,
         source: &Source,
         handle: &SourceHandle,
         reason: &str,
-        now: f64,
     ) {
+        let now = pass.now;
         self.quarantine_failed(task, attempt, handle, reason, now)
             .await;
-        match source.discard(handle).await {
-            Ok(_) => {
-                let attempt_id = attempt.id.clone();
-                let revision = attempt.row_revision;
-                let _ = Journal::with_store_async(&self.journal, move |store| {
-                    store.transition_attempt(
-                        &attempt_id,
-                        revision,
-                        AttemptState::Complete,
-                        now,
-                        Some("discard"),
-                        None,
-                        true,
-                    )
-                })
-                .await;
-            }
+        let settled_state = match source.discard(handle).await {
+            Ok(_) => AttemptState::Complete,
             Err(error) => {
                 tracing::warn!(task_id = %task.id, %error, "discard failed; cleanup will retry");
-                let attempt_id = attempt.id.clone();
-                let revision = attempt.row_revision;
-                let _ = Journal::with_store_async(&self.journal, move |store| {
-                    store.transition_attempt(
-                        &attempt_id,
-                        revision,
-                        AttemptState::CleanupPending,
-                        now,
-                        Some("discard"),
-                        None,
-                        true,
-                    )
-                })
-                .await;
+                AttemptState::CleanupPending
             }
-        }
+        };
+        let attempt_id = attempt.id.clone();
+        let revision = attempt.row_revision;
         let task_id = task.id.clone();
         let reason = reason.to_owned();
-        let _ = Journal::with_store_async(&self.journal, move |store| {
+        self.step("downloads.fail_over", move |store| {
+            store.transition_attempt(
+                &attempt_id,
+                revision,
+                settled_state,
+                now,
+                Some("discard"),
+                None,
+                true,
+            )?;
             store.transition_task(&task_id, TaskStatus::Queued, now, Some(&reason))
         })
         .await;
@@ -850,8 +934,7 @@ impl DownloadWorker {
     /// Blocklist a failed release by source identity, scoped to the album
     /// for retry-clearing. Local faults (disk, mount) are never
     /// quarantined: the backoff'd retry re-grabs once the environment
-    /// recovers. Best-effort: a journal hiccup here must not fail the
-    /// failover itself.
+    /// recovers.
     async fn quarantine_failed(
         &self,
         task: &TaskRow,
@@ -878,7 +961,7 @@ impl DownloadWorker {
         } else {
             Some(task.release_group_mbid.clone())
         };
-        let _ = Journal::with_store_async(&self.journal, move |store| {
+        self.step("downloads.quarantine", move |store| {
             for identity in &identities {
                 store.record_quarantine(
                     &source,
@@ -889,39 +972,37 @@ impl DownloadWorker {
                     QUARANTINE_TTL_SECONDS,
                 )?;
             }
-            Ok::<_, super::downloads::store::StoreError>(())
+            Ok(())
         })
         .await;
     }
 
     /// Spawn successors for terminal tasks whose retry backoff elapsed.
-    /// Held tracks gate their task: re-downloading a held track loops.
-    async fn retry_pass(&self, now: f64) {
-        let max = self.config.retry.auto_retry_max() as i64;
+    /// The successor id is deterministic per (task, generation), and the
+    /// existence check, detail copy and insert share one write, so a crash
+    /// or a failed insert simply retries on the next pass.
+    async fn retry_pass(&self, pass: &Pass) {
+        let now = pass.now;
+        let max = i64::from(pass.config.retry.auto_retry_max());
         if max == 0 {
             return;
         }
-        let retryable =
-            Journal::with_store_async(&self.journal, move |store| store.list_retryable(max))
-                .await
-                .unwrap_or_default();
+        let Some(retryable) = self
+            .step("downloads.retryable", move |store| {
+                store.list_retryable(max)
+            })
+            .await
+        else {
+            return;
+        };
         for task in retryable {
             let anchor = task.completed_at.unwrap_or(task.updated_at);
-            let due = self.config.retry.next_retry_at(
-                task.retry_count.max(0) as u32,
+            let due = pass.config.retry.next_retry_at(
+                u32::try_from(task.retry_count.max(0)).unwrap_or(u32::MAX),
                 anchor,
                 task.status.as_str(),
             );
             if due.is_none_or(|at| at > now) {
-                continue;
-            }
-            let held_task = task.id.clone();
-            let held = Journal::with_store_async(&self.journal, move |store| {
-                store.has_unresolved_held_for_task(&held_task)
-            })
-            .await
-            .unwrap_or(true);
-            if held {
                 continue;
             }
             let Some(spawn) = plan_retry(&task.id, task.status, &task.origin, task.retry_count)
@@ -931,25 +1012,7 @@ impl DownloadWorker {
             // Successor ids keep the 32-hex shape the orphan parser
             // recognises; the retry generation rides in `retry_count`.
             let successor = hex_task_id(&spawn.task_id);
-            // One successor per (task, generation): a crash between the
-            // insert and the next pass must not spawn twins.
-            let retry_key = format!("retry:{}:{}", task.id, spawn.retry_count);
-            let successor_key = successor.clone();
-            let claimed = Journal::with_store_async(&self.journal, move |store| {
-                store.claim_key(&retry_key, &successor_key, "retry", now)
-            })
-            .await
-            .unwrap_or(false);
-            if !claimed {
-                continue;
-            }
-            let details_task = task.id.clone();
-            let details = Journal::with_store_async(&self.journal, move |store| {
-                store.task_details(&details_task)
-            })
-            .await
-            .unwrap_or_default();
-            let row = super::downloads::store::NewTask {
+            let row = NewTask {
                 id: successor.clone(),
                 user_id: task.user_id.clone(),
                 artist_name: task.artist_name.clone(),
@@ -958,86 +1021,111 @@ impl DownloadWorker {
                 origin: spawn.origin.clone(),
                 retry_count: spawn.retry_count,
             };
+            let source_task = task.id.clone();
             let is_track = task.download_type == "track";
             let recording = task.recording_mbid.clone().unwrap_or_default();
-            let successor_id = successor.clone();
-            let inserted = Journal::with_store_async(&self.journal, move |store| {
-                if is_track {
-                    store.insert_track_task(&row, &recording, now)?;
-                } else {
-                    store.insert_task(&row, now)?;
-                }
-                // Edition pins and track identity ride onto the successor;
-                // without them a retried edition loses its pinned release.
-                store.set_task_details(&successor_id, &details, now)
-            })
-            .await;
-            if inserted.is_err() {
-                continue;
+            let spawned = self
+                .step("downloads.retry", move |store| {
+                    // Held tracks gate their task: re-downloading a held
+                    // track loops.
+                    if store.has_unresolved_held_for_task(&source_task)?
+                        || store.get_task(&row.id)?.is_some()
+                    {
+                        return Ok(false);
+                    }
+                    // Edition pins and track identity ride onto the
+                    // successor; without them a retried edition loses its
+                    // pinned release.
+                    let details = store.task_details(&source_task)?;
+                    if is_track {
+                        store.insert_track_task(&row, &recording, now)?;
+                    } else {
+                        store.insert_task(&row, now)?;
+                    }
+                    store.set_task_details(&row.id, &details, now)?;
+                    Ok(true)
+                })
+                .await;
+            if spawned == Some(true) {
+                tracing::info!(
+                    task_id = %task.id,
+                    successor = %successor,
+                    "download auto-retry spawned"
+                );
             }
-            tracing::info!(
-                task_id = %task.id,
-                successor = %successor,
-                "download auto-retry spawned"
-            );
         }
     }
 
-    /// Claim due cleanup rows and settle them: discard client records,
-    /// then mark complete; a discard failure defers with backoff.
-    async fn cleanup_pass(&self, now: f64) {
-        let worker_id = self.config.worker_id.clone();
-        let claimed = Journal::with_store_async(&self.journal, move |store| {
-            store.claim_cleanup_attempts(
-                &worker_id,
-                now,
-                FAILOVER_CLAIM_LIMIT,
-                FAILOVER_LEASE_SECONDS,
-            )
-        })
-        .await
-        .unwrap_or_default();
+    /// Claim due cleanup rows and settle them: abort a cancelled task's
+    /// live transfer, discard client records, then mark complete; a
+    /// failure defers with backoff.
+    async fn cleanup_pass(&self, pass: &Pass) {
+        let now = pass.now;
+        let worker_id = pass.config.worker_id.clone();
+        let Some(claimed) = self
+            .step("downloads.cleanup_claim", move |store| {
+                store.claim_cleanup_attempts(
+                    &worker_id,
+                    now,
+                    FAILOVER_CLAIM_LIMIT,
+                    FAILOVER_LEASE_SECONDS,
+                )
+            })
+            .await
+        else {
+            return;
+        };
         for attempt in claimed {
-            self.cleanup_one(&attempt, now).await;
+            self.cleanup_one(pass, &attempt).await;
         }
     }
 
     /// Settle one claimed cleanup row.
-    async fn cleanup_one(&self, attempt: &AttemptRow, now: f64) {
+    async fn cleanup_one(&self, pass: &Pass, attempt: &AttemptRow) {
+        let now = pass.now;
         let attempt_id = attempt.id.clone();
-        let handle_json = Journal::with_store_async(&self.journal, move |store| {
-            store.attempt_handle_json(&attempt_id)
-        })
-        .await
-        .unwrap_or(None)
-        .unwrap_or_default();
-        let handle: SourceHandle = serde_json::from_str(&handle_json).unwrap_or(SourceHandle {
-            source: attempt.source.clone(),
-            username: String::new(),
-            filenames: Vec::new(),
-            job_name: attempt.job_name.clone(),
-        });
-        let Some(source) = self
-            .sources
-            .iter()
-            .find(|source| source.journal_source() == attempt.source)
-        else {
-            // No adapter for this source: defer with backoff rather than
-            // spinning on a row this worker can never settle.
-            let attempt_id = attempt.id.clone();
-            let revision = attempt.row_revision;
-            let _ = Journal::with_store_async(&self.journal, move |store| {
-                store.record_cleanup_failure(&attempt_id, revision, "no_adapter", now)
+        let task_id = attempt.task_id.clone();
+        let Some((handle_json, task)) = self
+            .step("downloads.cleanup_read", move |store| {
+                Ok((
+                    store.attempt_handle_json(&attempt_id)?,
+                    store.get_task(&task_id)?,
+                ))
             })
-            .await;
+            .await
+        else {
             return;
         };
+        let handle: SourceHandle = handle_json
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or(SourceHandle {
+                source: attempt.source.clone(),
+                username: String::new(),
+                filenames: Vec::new(),
+                job_name: attempt.job_name.clone(),
+                nzo_id: String::new(),
+            });
+        let Some(source) = pass.source_for(&attempt.source) else {
+            // No adapter for this source: defer with backoff rather than
+            // spinning on a row this worker can never settle.
+            self.defer_cleanup(attempt, "no_adapter", now).await;
+            return;
+        };
+        let cancelled = task.is_some_and(|task| task.status == TaskStatus::Cancelled);
+        if cancelled
+            && attempt.disposition == "discard"
+            && let Err(error) = source.abort(&handle).await
+        {
+            tracing::warn!(attempt_id = %attempt.id, %error, "cancelled transfer abort failed");
+            self.defer_cleanup(attempt, "abort_failed", now).await;
+            return;
+        }
         match source.discard(&handle).await {
             Ok(_) => {
                 let attempt_id = attempt.id.clone();
                 let revision = attempt.row_revision;
                 let disposition = attempt.disposition.clone();
-                let _ = Journal::with_store_async(&self.journal, move |store| {
+                self.step("downloads.cleanup_done", move |store| {
                     store.transition_attempt(
                         &attempt_id,
                         revision,
@@ -1052,23 +1140,28 @@ impl DownloadWorker {
             }
             Err(error) => {
                 tracing::warn!(attempt_id = %attempt.id, %error, "cleanup discard failed");
-                let attempt_id = attempt.id.clone();
-                let revision = attempt.row_revision;
-                let _ = Journal::with_store_async(&self.journal, move |store| {
-                    store.record_cleanup_failure(&attempt_id, revision, "discard_failed", now)
-                })
-                .await;
+                self.defer_cleanup(attempt, "discard_failed", now).await;
             }
         }
     }
 
+    /// Push one cleanup row out with backoff.
+    async fn defer_cleanup(&self, attempt: &AttemptRow, code: &'static str, now: f64) {
+        let attempt_id = attempt.id.clone();
+        let revision = attempt.row_revision;
+        self.step("downloads.cleanup_defer", move |store| {
+            store.record_cleanup_failure(&attempt_id, revision, code, now)
+        })
+        .await;
+    }
+
     /// Walk the complete dirs and remove proven debris. Every ambiguous
     /// answer keeps the folder; the recycle bin prunes expired entries.
-    async fn orphan_pass(&self) {
-        for (source_tag, root) in &self.config.orphan_roots {
-            self.orphan_root(source_tag, root).await;
+    async fn orphan_pass(&self, pass: &Pass) {
+        for (source_tag, root) in &pass.config.orphan_roots {
+            self.orphan_root(pass, source_tag, root).await;
         }
-        if let Some(bin) = &self.config.recycle {
+        if let Some(bin) = &pass.config.recycle {
             let bin = bin.clone();
             let pruned = tokio::task::spawn_blocking(move || bin.prune(SystemTime::now())).await;
             if let Err(error) = pruned
@@ -1081,16 +1174,22 @@ impl DownloadWorker {
     }
 
     /// Reconcile one complete dir.
-    async fn orphan_root(&self, source_tag: &str, root: &Path) {
+    async fn orphan_root(&self, pass: &Pass, source_tag: &str, root: &Path) {
         let mut entries = match tokio::fs::read_dir(root).await {
             Ok(entries) => entries,
-            Err(_) => return,
+            Err(error) => {
+                tracing::warn!(root = %root.display(), %error, "orphan sweep cannot read root");
+                return;
+            }
         };
         loop {
             let entry = match entries.next_entry().await {
                 Ok(Some(entry)) => entry,
                 Ok(None) => break,
-                Err(_) => continue,
+                Err(error) => {
+                    tracing::warn!(root = %root.display(), %error, "orphan sweep entry failed");
+                    continue;
+                }
             };
             let name = entry.file_name().to_string_lossy().into_owned();
             let is_symlink = entry
@@ -1102,11 +1201,11 @@ impl DownloadWorker {
                 continue;
             };
             let evidence = self
-                .orphan_evidence(source_tag, &task_id, &job_name, root, &entry.path())
+                .orphan_evidence(pass, source_tag, &task_id, &job_name, root, &entry.path())
                 .await;
             match evaluate_orphan(&name, is_symlink, evidence) {
                 OrphanDecision::Remove => {
-                    self.remove_orphan(source_tag, &task_id, &job_name, root, &entry.path())
+                    self.remove_orphan(pass, source_tag, &task_id, &job_name, root, &entry.path())
                         .await;
                 }
                 OrphanDecision::Keep | OrphanDecision::Ignore => {}
@@ -1118,6 +1217,7 @@ impl DownloadWorker {
     /// closed (the folder stays).
     async fn orphan_evidence(
         &self,
+        pass: &Pass,
         source_tag: &str,
         task_id: &str,
         job_name: &str,
@@ -1134,15 +1234,13 @@ impl DownloadWorker {
             matches!(status.as_str(), "queued" | "downloading" | "processing")
         });
         let bundles_settled = self.ownership.bundles_settled(task_id).await.ok()?;
-        let source = self
-            .sources
-            .iter()
-            .find(|source| source.journal_source() == source_tag)?;
+        let source = pass.source_for(source_tag)?;
         let handle = SourceHandle {
             source: source_tag.to_owned(),
             username: String::new(),
             filenames: Vec::new(),
             job_name: job_name.to_owned(),
+            nzo_id: String::new(),
         };
         // Soulseek handles need the peer plus filenames, which the folder
         // name does not carry: without them the client check cannot run,
@@ -1189,6 +1287,7 @@ impl DownloadWorker {
     /// walked root and must not be a symlink.
     async fn remove_orphan(
         &self,
+        pass: &Pass,
         source_tag: &str,
         task_id: &str,
         job_name: &str,
@@ -1203,11 +1302,7 @@ impl DownloadWorker {
             tracing::warn!(task_id, path = %path.display(), "orphan remove refused");
             return;
         }
-        let Some(source) = self
-            .sources
-            .iter()
-            .find(|source| source.journal_source() == source_tag)
-        else {
+        let Some(source) = pass.source_for(source_tag) else {
             return;
         };
         let handle = SourceHandle {
@@ -1215,8 +1310,10 @@ impl DownloadWorker {
             username: String::new(),
             filenames: Vec::new(),
             job_name: job_name.to_owned(),
+            nzo_id: String::new(),
         };
-        if source.discard(&handle).await.is_err() {
+        if let Err(error) = source.discard(&handle).await {
+            tracing::warn!(task_id, %error, "orphan client discard failed; folder kept");
             return;
         }
         if let Err(error) = tokio::fs::remove_dir_all(path).await {
@@ -1227,22 +1324,24 @@ impl DownloadWorker {
     }
 }
 
-/// Attempts with a journaled handle: the next candidate index. Handle-less
-/// rows (a crash between journaling and enqueue) do not consume indices.
-async fn handled_count(journal: &Arc<Journal>, attempts: &[AttemptRow]) -> i64 {
-    let mut handled = 0;
-    for attempt in attempts {
-        let attempt_id = attempt.id.clone();
-        let has_handle =
-            Journal::with_store_async(journal, move |store| store.attempt_handle_json(&attempt_id))
-                .await
-                .unwrap_or(None)
-                .is_some();
-        if has_handle {
-            handled += 1;
-        }
-    }
-    handled
+/// Newest attempt with a client handle that is still acquiring or in use.
+fn live_attempt(attempts: &[Attempt]) -> Option<&Attempt> {
+    attempts.iter().rev().find(|attempt| {
+        matches!(
+            attempt.row.state,
+            AttemptState::Acquiring | AttemptState::InUse
+        ) && attempt.handle.is_some()
+    })
+}
+
+/// Attempts with a client handle, optionally for one source only.
+/// Handle-less rows never reached the client and do not consume a slot.
+fn handled_count(attempts: &[Attempt], source: Option<&str>) -> i64 {
+    attempts
+        .iter()
+        .filter(|attempt| attempt.handle.is_some())
+        .filter(|attempt| source.is_none_or(|tag| attempt.row.source == tag))
+        .count() as i64
 }
 
 /// Whether the failover walk is spent: `max` attempts occupy indices
@@ -1284,23 +1383,21 @@ pub async fn spawn_download_worker(
         .register_job(&lane, DOWNLOAD_WORKER_JOB, JobKind::Durable, None)
         .await
         .map_err(|error| error.to_string())?;
-    let interval = worker.config.interval;
     let task = tokio::spawn(async move {
         // A pre-signaled shutdown skips the first pass entirely.
         if *shutdown.borrow() {
-            let _ = wakeups
-                .set_job_state(&lane, DOWNLOAD_WORKER_JOB, JobState::Stopped)
-                .await;
+            mark(&wakeups, &lane, JobState::Stopped).await;
             return;
         }
-        let _ = wakeups
-            .set_job_state(&lane, DOWNLOAD_WORKER_JOB, JobState::Running)
-            .await;
+        mark(&wakeups, &lane, JobState::Running).await;
         let mut pass: u64 = 0;
         loop {
             worker.run_once(pass).await;
-            let _ = wakeups.heartbeat(&lane, DOWNLOAD_WORKER_JOB).await;
+            if let Err(error) = wakeups.heartbeat(&lane, DOWNLOAD_WORKER_JOB).await {
+                tracing::warn!(%error, "download worker heartbeat failed");
+            }
             pass += 1;
+            let interval = (worker.config)().interval;
             tokio::select! {
                 () = tokio::time::sleep(jittered_interval(interval)) => {}
                 _ = shutdown.changed() => break,
@@ -1309,11 +1406,19 @@ pub async fn spawn_download_worker(
                 break;
             }
         }
-        let _ = wakeups
-            .set_job_state(&lane, DOWNLOAD_WORKER_JOB, JobState::Stopped)
-            .await;
+        mark(&wakeups, &lane, JobState::Stopped).await;
     });
     Ok(task)
+}
+
+/// Record the worker job's state, logging a failed write.
+async fn mark(wakeups: &DurableWorkWakeups, lane: &WriteLane, state: JobState) {
+    if let Err(error) = wakeups
+        .set_job_state(lane, DOWNLOAD_WORKER_JOB, state)
+        .await
+    {
+        tracing::warn!(%error, "download worker state write failed");
+    }
 }
 
 /// Pure removal gate: the folder must sit strictly under the walked
@@ -1344,14 +1449,6 @@ mod tests {
         assert!(first.bytes().all(|b| b.is_ascii_hexdigit()));
         assert_eq!(first, hex_task_id("task-r1"));
         assert_ne!(first, hex_task_id("task-r2"));
-    }
-
-    #[test]
-    fn failover_cap_fails_at_the_ceiling() {
-        assert!(!failover_exhausted(0, 3));
-        assert!(!failover_exhausted(2, 3));
-        assert!(failover_exhausted(3, 3));
-        assert!(failover_exhausted(4, 3));
     }
 
     #[test]

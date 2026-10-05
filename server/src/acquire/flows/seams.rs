@@ -132,14 +132,24 @@ pub enum UpgradeDispatch {
 /// Downloads dispatch seam, implemented by the orchestrator.
 pub trait DownloadDispatch: Send + Sync {
     /// Queue a download; answers the new task id.
-    fn dispatch(&self, request: &DispatchRequest) -> Result<String, String>;
+    fn dispatch<'a>(
+        &'a self,
+        request: &'a DispatchRequest,
+    ) -> BoxFuture<'a, Result<String, String>>;
     /// Current status of one task, or `None` when unknown.
-    fn task_status(&self, task_id: &str) -> Option<String>;
+    fn task_status<'a>(&'a self, task_id: &'a str)
+    -> BoxFuture<'a, Result<Option<String>, String>>;
     /// Newest active task for an album across users, for the album-row
     /// fallback in the status sync.
-    fn active_task_for_album(&self, rg_mbid: &str) -> Option<DownloadTaskView>;
+    fn active_task_for_album<'a>(
+        &'a self,
+        rg_mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<DownloadTaskView>, String>>;
     /// Queue an origin-`upgrade` grab with active-task dedup.
-    fn dispatch_upgrade(&self, request: &DispatchRequest) -> Result<UpgradeDispatch, String>;
+    fn dispatch_upgrade<'a>(
+        &'a self,
+        request: &'a DispatchRequest,
+    ) -> BoxFuture<'a, Result<UpgradeDispatch, String>>;
 }
 
 /// Scripted downloads double: statuses are pinned per task id, dispatches
@@ -215,8 +225,8 @@ impl ScriptedDownloads {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-impl DownloadDispatch for ScriptedDownloads {
-    fn dispatch(&self, request: &DispatchRequest) -> Result<String, String> {
+impl ScriptedDownloads {
+    fn dispatch_now(&self, request: &DispatchRequest) -> Result<String, String> {
         let mut inner = self
             .inner
             .lock()
@@ -233,21 +243,7 @@ impl DownloadDispatch for ScriptedDownloads {
         Ok(task_id)
     }
 
-    fn task_status(&self, task_id: &str) -> Option<String> {
-        self.inner
-            .lock()
-            .ok()
-            .and_then(|inner| inner.statuses.get(task_id).cloned())
-    }
-
-    fn active_task_for_album(&self, rg_mbid: &str) -> Option<DownloadTaskView> {
-        self.inner
-            .lock()
-            .ok()
-            .and_then(|inner| inner.album_tasks.get(rg_mbid).cloned())
-    }
-
-    fn dispatch_upgrade(&self, request: &DispatchRequest) -> Result<UpgradeDispatch, String> {
+    fn upgrade_now(&self, request: &DispatchRequest) -> Result<UpgradeDispatch, String> {
         let mut inner = self
             .inner
             .lock()
@@ -262,6 +258,49 @@ impl DownloadDispatch for ScriptedDownloads {
             .insert(task_id.clone(), "downloading".to_owned());
         inner.upgrades.push(request.clone());
         Ok(UpgradeDispatch::Enqueued(task_id))
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl DownloadDispatch for ScriptedDownloads {
+    fn dispatch<'a>(
+        &'a self,
+        request: &'a DispatchRequest,
+    ) -> BoxFuture<'a, Result<String, String>> {
+        Box::pin(async move { self.dispatch_now(request) })
+    }
+
+    fn task_status<'a>(
+        &'a self,
+        task_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, String>> {
+        Box::pin(async move {
+            Ok(self
+                .inner
+                .lock()
+                .ok()
+                .and_then(|inner| inner.statuses.get(task_id).cloned()))
+        })
+    }
+
+    fn active_task_for_album<'a>(
+        &'a self,
+        rg_mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<DownloadTaskView>, String>> {
+        Box::pin(async move {
+            Ok(self
+                .inner
+                .lock()
+                .ok()
+                .and_then(|inner| inner.album_tasks.get(rg_mbid).cloned()))
+        })
+    }
+
+    fn dispatch_upgrade<'a>(
+        &'a self,
+        request: &'a DispatchRequest,
+    ) -> BoxFuture<'a, Result<UpgradeDispatch, String>> {
+        Box::pin(async move { self.upgrade_now(request) })
     }
 }
 

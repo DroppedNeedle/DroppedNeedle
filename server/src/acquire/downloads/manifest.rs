@@ -198,7 +198,10 @@ impl ManifestCodec {
         Ok(manifest)
     }
 
-    /// Write a task's manifest, creating the task directory first.
+    /// Write a task's manifest atomically: the bytes land in a temp file
+    /// in the task directory, are synced, then renamed over the manifest, so
+    /// a crash leaves either the old manifest or the new one, never a torn
+    /// file.
     pub fn write(
         &self,
         staging_root: &Path,
@@ -216,10 +219,21 @@ impl ManifestCodec {
             })?;
         }
         let bytes = self.encode(manifest)?;
-        std::fs::write(&path, bytes).map_err(|source| ManifestError::Io {
-            path: path.clone(),
-            detail: source.to_string(),
-        })?;
+        let temp = path.with_extension("json.tmp");
+        let io = |path: &Path| {
+            let path = path.to_path_buf();
+            move |source: std::io::Error| ManifestError::Io {
+                path,
+                detail: source.to_string(),
+            }
+        };
+        {
+            use std::io::Write as _;
+            let mut file = std::fs::File::create(&temp).map_err(io(&temp))?;
+            file.write_all(&bytes).map_err(io(&temp))?;
+            file.sync_all().map_err(io(&temp))?;
+        }
+        std::fs::rename(&temp, &path).map_err(io(&path))?;
         Ok(path)
     }
 }

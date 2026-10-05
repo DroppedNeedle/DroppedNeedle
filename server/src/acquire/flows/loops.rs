@@ -24,9 +24,13 @@ use super::seams::{
     CandidateSearch, Clock, DispatchKind, DispatchRequest, DownloadDispatch, ReleasePoll, TickSink,
 };
 use super::stores::{
-    AdminDirectory, FollowCursor, FollowStore, LibraryPresence, PendingRelease, RequestLedger,
-    UpgradePolicy, UpgradeWorklist, WantedStore, is_terminal,
+    AdminDirectory, FollowCursor, FollowStore, LibraryPresence, PendingRelease, UpgradePolicy,
+    UpgradeWorklist,
 };
+use crate::acquire::requests::error::RequestsError;
+use crate::acquire::requests::ledger::{RequestRecord, WATCH_WATCHING, WantedWatch};
+use crate::acquire::requests::models::RequestKind;
+use crate::acquire::requests::sqlite::{RequestStore, WantedStore};
 
 /// Wanted-watcher sweep cadence in seconds (v2 `_WANTED_WATCHER_INTERVAL`).
 pub const WANTED_INTERVAL: Duration = Duration::from_secs(900);
@@ -332,10 +336,10 @@ pub struct WantedSummary {
 pub struct WantedDeps {
     /// Settings source, read fresh every sweep.
     pub settings: Arc<dyn Fn() -> WantedSettings + Send + Sync>,
-    /// Watch registry.
-    pub watches: Arc<WantedStore>,
+    /// Watch registry (shared with the wanted view).
+    pub watches: WantedStore,
     /// Request ledger for enrolment.
-    pub ledger: Arc<RequestLedger>,
+    pub ledger: RequestStore,
     /// Candidate search.
     pub search: Arc<dyn CandidateSearch>,
     /// Download dispatch.
@@ -344,6 +348,11 @@ pub struct WantedDeps {
     pub library: Arc<LibraryPresence>,
     /// Durable ticks.
     pub ticks: Arc<dyn TickSink>,
+}
+
+/// Epoch seconds as the watch store keeps them.
+fn epoch(now: i64) -> u64 {
+    u64::try_from(now).unwrap_or(0)
 }
 
 /// Run one wanted sweep when due: enrol availability-dead requests, then
@@ -358,161 +367,218 @@ pub async fn wanted_tick(now: i64, state: &mut LoopState, deps: &WantedDeps) -> 
     if !settings.enabled {
         return WantedSummary::default();
     }
-    let enrolled = enrol_watches(now, &settings, deps);
     let mut summary = WantedSummary {
-        enrolled,
+        enrolled: enrol_watches(now, &settings, deps).await,
         ..WantedSummary::default()
     };
-    for watch in deps.watches.list_due(now, settings.max_checks_per_sweep) {
-        if deps.library.contains(&watch.rg_mbid) {
-            deps.watches.remove(&watch.rg_mbid);
-            deps.ledger
-                .update_status(&watch.rg_mbid, "imported", Some(now), None);
-            deps.ticks.emit(
-                "request_fulfilled",
-                &format!("wanted {} satisfied from the library", watch.rg_mbid),
-                now,
-            );
-            summary.checked += 1;
-            summary.fulfilled += 1;
-            continue;
+    let due = match deps
+        .watches
+        .list_due(epoch(now), settings.max_checks_per_sweep)
+        .await
+    {
+        Ok(due) => due,
+        Err(error) => {
+            tracing::warn!(?error, "wanted sweep could not list due watches");
+            summary.errors += 1;
+            return summary;
         }
-        match deps.search.search_album(&watch.artist, &watch.title).await {
-            Ok(candidates) if !candidates.is_empty() => {
-                if !settings.auto_download_on_find {
-                    deps.watches.record_check(
-                        &watch.rg_mbid,
-                        watch.quiet_streak,
-                        now + interval_seconds(
-                            watch.first_release_date.as_deref(),
-                            watch.quiet_streak,
-                            now,
-                        ),
-                    );
-                    deps.ticks.emit(
-                        "wanted.found",
-                        &format!(
-                            "wanted {} has {} candidate(s) (badge-only)",
-                            watch.rg_mbid,
-                            candidates.len()
-                        ),
-                        now,
-                    );
-                    summary.checked += 1;
-                    continue;
-                }
-                let dispatch = DispatchRequest {
-                    user_id: watch.user_id.clone(),
-                    kind: DispatchKind::Album,
-                    mbid: watch.rg_mbid.clone(),
-                    artist: watch.artist.clone(),
-                    title: watch.title.clone(),
-                    origin: "wanted".to_owned(),
-                    idempotency_key: None,
-                };
-                match deps.downloads.dispatch(&dispatch) {
-                    Ok(task_id) => {
-                        deps.ledger.link_task(&watch.rg_mbid, &task_id);
-                        deps.watches.record_check(
-                            &watch.rg_mbid,
-                            0,
-                            now + interval_seconds(watch.first_release_date.as_deref(), 0, now),
-                        );
-                        deps.ticks.emit(
-                            "wanted.dispatched",
-                            &format!("wanted {} auto-dispatched as {task_id}", watch.rg_mbid),
-                            now,
-                        );
-                        summary.checked += 1;
-                        summary.dispatched += 1;
-                    }
-                    Err(_) => {
-                        reschedule_after_error(deps, &watch, now);
-                        summary.checked += 1;
-                        summary.errors += 1;
-                    }
-                }
-            }
-            Ok(_) => {
-                let streak = watch.quiet_streak.saturating_add(1);
-                deps.watches.record_check(
-                    &watch.rg_mbid,
-                    streak,
-                    now + interval_seconds(watch.first_release_date.as_deref(), streak, now),
-                );
-                summary.checked += 1;
-            }
-            Err(_) => {
-                reschedule_after_error(deps, &watch, now);
-                summary.checked += 1;
-                summary.errors += 1;
-            }
+    };
+    for watch in due {
+        summary.checked += 1;
+        if let Err(error) = check_watch(now, &settings, deps, &watch, &mut summary).await {
+            tracing::warn!(key = %watch.key, ?error, "wanted check failed");
+            summary.errors += 1;
         }
     }
     summary
 }
 
-/// Enrol availability-dead album requests as watches: `failed` rows, plus
-/// `incomplete` rows when the partial toggle is on. Never auto-revives an
-/// existing watch, skips rows with no requester, and skips rows whose
-/// linked task is still active (v2 `_maybe_enrol` guards).
-fn enrol_watches(now: i64, settings: &WantedSettings, deps: &WantedDeps) -> usize {
-    let mut statuses = vec!["failed"];
-    if settings.watch_partial_albums {
-        statuses.push("incomplete");
+/// Check one due watch: satisfied from the library, dispatched on a find,
+/// badged on a find when auto-download is off, or rescheduled quietly.
+async fn check_watch(
+    now: i64,
+    settings: &WantedSettings,
+    deps: &WantedDeps,
+    watch: &WantedWatch,
+    summary: &mut WantedSummary,
+) -> Result<(), RequestsError> {
+    let at = epoch(now);
+    if deps.library.contains(&watch.key) {
+        deps.watches
+            .mark_fulfilled(&watch.key, "in_library", at)
+            .await?;
+        deps.ledger
+            .update_status(RequestKind::Album, &watch.key, "imported", Some(at), None)
+            .await?;
+        deps.ticks.emit(
+            "request_fulfilled",
+            &format!("wanted {} satisfied from the library", watch.key),
+            now,
+        );
+        summary.fulfilled += 1;
+        return Ok(());
     }
-    let mut enrolled = 0;
-    for status in statuses {
-        for row in deps.ledger.with_status(status) {
-            if row.kind != "album" || row.user_id.is_empty() {
-                continue;
-            }
-            if deps.watches.get(&row.mbid).is_some() {
-                continue;
-            }
-            if deps.library.contains(&row.mbid) {
-                continue;
-            }
-            let task_active = row.task_id.as_deref().is_some_and(|task_id| {
-                matches!(
-                    deps.downloads.task_status(task_id).as_deref(),
-                    Some("downloading" | "processing")
-                )
-            });
-            if task_active {
-                continue;
-            }
-            let first_release_date: Option<String> = None;
-            let next_check_at = now + interval_seconds(first_release_date.as_deref(), 0, now);
-            if deps.watches.enrol(super::stores::Watch {
-                rg_mbid: row.mbid.clone(),
-                user_id: row.user_id.clone(),
-                artist: row.artist.clone(),
-                title: row.title.clone(),
-                first_release_date,
-                quiet_streak: 0,
-                next_check_at,
-            }) {
+    let next = |streak: u32| {
+        at + u64::try_from(interval_seconds(
+            watch.first_release_date.as_deref(),
+            streak,
+            now,
+        ))
+        .unwrap_or(0)
+    };
+    match deps
+        .search
+        .search_album(&watch.artist_name, &watch.album_title)
+        .await
+    {
+        Ok(candidates) if !candidates.is_empty() => {
+            if !settings.auto_download_on_find {
+                deps.watches
+                    .record_check(
+                        &watch.key,
+                        watch.quiet_streak,
+                        next(watch.quiet_streak),
+                        at,
+                        "found",
+                    )
+                    .await?;
                 deps.ticks.emit(
-                    "wanted.enrolled",
-                    &format!("wanted {} enrolled from {} request", row.mbid, status),
+                    "wanted.found",
+                    &format!(
+                        "wanted {} has {} candidate(s) (badge-only)",
+                        watch.key,
+                        candidates.len()
+                    ),
                     now,
                 );
-                enrolled += 1;
+                return Ok(());
+            }
+            let dispatch = DispatchRequest {
+                user_id: watch.user_id.clone(),
+                kind: DispatchKind::Album,
+                mbid: watch.key.clone(),
+                artist: watch.artist_name.clone(),
+                title: watch.album_title.clone(),
+                origin: "wanted".to_owned(),
+                // One dispatch per check slot: a crash between the dispatch
+                // and the reschedule answers the same task next time.
+                idempotency_key: Some(format!("wanted:{}:{}", watch.key, watch.check_count)),
+            };
+            match deps.downloads.dispatch(&dispatch).await {
+                Ok(task_id) => {
+                    deps.ledger
+                        .link_task(RequestKind::Album, &watch.key, &task_id, None)
+                        .await?;
+                    deps.watches
+                        .record_check(&watch.key, 0, next(0), at, "dispatched")
+                        .await?;
+                    deps.ticks.emit(
+                        "wanted.dispatched",
+                        &format!("wanted {} auto-dispatched as {task_id}", watch.key),
+                        now,
+                    );
+                    summary.dispatched += 1;
+                }
+                Err(cause) => {
+                    tracing::warn!(key = %watch.key, %cause, "wanted dispatch failed");
+                    deps.watches
+                        .record_check(&watch.key, 0, next(0), at, "error")
+                        .await?;
+                    summary.errors += 1;
+                }
+            }
+        }
+        Ok(_) => {
+            let streak = watch.quiet_streak.saturating_add(1);
+            deps.watches
+                .record_check(&watch.key, streak, next(streak), at, "quiet")
+                .await?;
+        }
+        Err(cause) => {
+            // A per-want failure reschedules normally with a reset streak:
+            // one bad want never kills the sweep (v2 `_record_error_cycle`).
+            tracing::warn!(key = %watch.key, %cause, "wanted search failed");
+            deps.watches
+                .record_check(&watch.key, 0, next(0), at, "error")
+                .await?;
+            summary.errors += 1;
+        }
+    }
+    Ok(())
+}
+
+/// Enrol availability-dead album requests as watches: `failed` rows, plus
+/// `incomplete` rows when the partial toggle is on. Never auto-revives a
+/// stopped watch, skips rows with no requester, and skips rows whose
+/// linked task is still active (v2 `_maybe_enrol` guards).
+async fn enrol_watches(now: i64, settings: &WantedSettings, deps: &WantedDeps) -> usize {
+    let mut statuses = vec![("failed", "missing")];
+    if settings.watch_partial_albums {
+        statuses.push(("incomplete", "partial"));
+    }
+    let mut enrolled = 0;
+    for (status, kind) in statuses {
+        let rows = match deps.ledger.with_status(RequestKind::Album, status).await {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::warn!(status, ?error, "wanted enrolment could not read requests");
+                continue;
+            }
+        };
+        for row in rows {
+            let Some(user_id) = row.user_id.clone().filter(|user| !user.is_empty()) else {
+                continue;
+            };
+            if deps.library.contains(&row.key) {
+                continue;
+            }
+            if let Some(task_id) = row.task_id.as_deref() {
+                match deps.downloads.task_status(task_id).await {
+                    Ok(Some(status)) if matches!(status.as_str(), "downloading" | "processing") => {
+                        continue;
+                    }
+                    Ok(_) => {}
+                    Err(cause) => {
+                        tracing::warn!(task_id, %cause, "wanted enrolment task read failed");
+                        continue;
+                    }
+                }
+            }
+            let watch = WantedWatch {
+                key: row.key.clone(),
+                user_id,
+                user_name: None,
+                artist_name: row.artist_name.clone(),
+                album_title: row.album_title.clone(),
+                artist_mbid: row.artist_mbid.clone(),
+                year: row.year,
+                cover_url: None,
+                kind: kind.to_owned(),
+                state: WATCH_WATCHING.to_owned(),
+                created_at: epoch(now),
+                first_release_date: None,
+                check_count: 0,
+                quiet_streak: 0,
+                next_check_at: epoch(now + interval_seconds(None, 0, now)),
+                new_candidate_count: 0,
+            };
+            match deps.watches.enrol(watch).await {
+                Ok(true) => {
+                    deps.ticks.emit(
+                        "wanted.enrolled",
+                        &format!("wanted {} enrolled from {status} request", row.key),
+                        now,
+                    );
+                    enrolled += 1;
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::warn!(key = %row.key, ?error, "wanted enrolment write failed");
+                }
             }
         }
     }
     enrolled
-}
-
-/// A per-want failure reschedules normally with a reset streak: one bad
-/// want never kills the sweep (v2 `_record_error_cycle`).
-fn reschedule_after_error(deps: &WantedDeps, watch: &super::stores::Watch, now: i64) {
-    deps.watches.record_check(
-        &watch.rg_mbid,
-        0,
-        now + interval_seconds(watch.first_release_date.as_deref(), 0, now),
-    );
 }
 
 /// Quiet streak at which old releases back off from 14 to 28 days (v2
@@ -587,7 +653,7 @@ pub struct FollowSummary {
 /// Follow-poll dependencies.
 pub struct FollowDeps {
     /// Cursor store.
-    pub follows: Arc<FollowStore>,
+    pub follows: FollowStore,
     /// Release-page provider seam.
     pub poll: Arc<dyn ReleasePoll>,
     /// Download dispatch.
@@ -613,12 +679,27 @@ pub async fn follow_tick(now: i64, state: &mut LoopState, deps: &FollowDeps) -> 
     state.ran(now);
     let mut summary = FollowSummary::default();
     let today = (deps.today)();
-    for mut cursor in deps.follows.list_due(now, FOLLOW_MAX_ARTISTS_PER_TICK) {
+    let due = match deps
+        .follows
+        .list_due(now, FOLLOW_MAX_ARTISTS_PER_TICK)
+        .await
+    {
+        Ok(due) => due,
+        Err(error) => {
+            tracing::warn!(?error, "follow poll could not list due artists");
+            summary.errors += 1;
+            return summary;
+        }
+    };
+    for mut cursor in due {
         summary.artists_polled += 1;
         match deps.poll.poll_releases(&cursor.artist_mbid).await {
             Ok(releases) => {
                 if !cursor.baselined {
-                    cursor.known = releases.iter().map(|row| row.rg_mbid.clone()).collect();
+                    cursor.known = releases
+                        .iter()
+                        .map(|row| row.rg_mbid.to_lowercase())
+                        .collect();
                     cursor.baselined = true;
                     cursor.cursor_date = Some(today.clone());
                     summary.baselined += 1;
@@ -626,26 +707,15 @@ pub async fn follow_tick(now: i64, state: &mut LoopState, deps: &FollowDeps) -> 
                     let seen = follow_new_releases(&cursor, &releases, &today, &deps.include_types);
                     summary.new_releases += seen.emitted.len() + seen.pending.len();
                     for release in &seen.emitted {
-                        for follower in &cursor.followers {
-                            let dispatch = DispatchRequest {
-                                user_id: follower.clone(),
-                                kind: DispatchKind::Album,
-                                mbid: release.rg_mbid.clone(),
-                                artist: String::new(),
-                                title: release.title.clone(),
-                                origin: "follow".to_owned(),
-                                idempotency_key: None,
-                            };
-                            if deps.downloads.dispatch(&dispatch).is_ok() {
-                                summary.enqueued += 1;
-                                deps.ticks.emit(
-                                    "follow.enqueued",
-                                    &format!("follow {} enqueued for {follower}", release.rg_mbid),
-                                    now,
-                                );
-                            }
-                        }
-                        cursor.known.insert(release.rg_mbid.clone());
+                        summary.enqueued += enqueue_for_followers(
+                            deps,
+                            &cursor,
+                            &release.rg_mbid,
+                            &release.title,
+                            now,
+                        )
+                        .await;
+                        cursor.known.insert(release.rg_mbid.to_lowercase());
                     }
                     for held in seen.pending {
                         if !cursor.pending.iter().any(|row| row.rg_mbid == held.rg_mbid) {
@@ -656,36 +726,69 @@ pub async fn follow_tick(now: i64, state: &mut LoopState, deps: &FollowDeps) -> 
                         cursor.pending.drain(..).partition(|row| row.date <= today);
                     cursor.pending = waiting;
                     for release in ready {
-                        for follower in &cursor.followers {
-                            let dispatch = DispatchRequest {
-                                user_id: follower.clone(),
-                                kind: DispatchKind::Album,
-                                mbid: release.rg_mbid.clone(),
-                                artist: String::new(),
-                                title: release.title.clone(),
-                                origin: "follow".to_owned(),
-                                idempotency_key: None,
-                            };
-                            if deps.downloads.dispatch(&dispatch).is_ok() {
-                                summary.enqueued += 1;
-                            }
-                        }
-                        cursor.known.insert(release.rg_mbid.clone());
+                        summary.enqueued += enqueue_for_followers(
+                            deps,
+                            &cursor,
+                            &release.rg_mbid,
+                            &release.title,
+                            now,
+                        )
+                        .await;
+                        cursor.known.insert(release.rg_mbid.to_lowercase());
                         summary.new_releases += 1;
                     }
                     cursor.cursor_date = Some(today.clone());
                 }
-                cursor.next_poll_at = now + FOLLOW_INTERVAL.as_secs() as i64;
-                deps.follows.record_poll(&cursor);
             }
-            Err(_) => {
+            Err(cause) => {
+                tracing::warn!(artist = %cursor.artist_mbid, %cause, "follow poll failed");
                 summary.errors += 1;
-                cursor.next_poll_at = now + FOLLOW_INTERVAL.as_secs() as i64;
-                deps.follows.record_poll(&cursor);
             }
+        }
+        cursor.next_poll_at = now + FOLLOW_INTERVAL.as_secs() as i64;
+        if let Err(error) = deps.follows.record_poll(&cursor).await {
+            tracing::warn!(artist = %cursor.artist_mbid, ?error, "follow cursor write failed");
+            summary.errors += 1;
         }
     }
     summary
+}
+
+/// Dispatch one new release for every approved follower; answers how many
+/// dispatched. The key pins one task per (follower, release).
+async fn enqueue_for_followers(
+    deps: &FollowDeps,
+    cursor: &FollowCursor,
+    rg_mbid: &str,
+    title: &str,
+    now: i64,
+) -> usize {
+    let mut enqueued = 0;
+    for follower in &cursor.followers {
+        let dispatch = DispatchRequest {
+            user_id: follower.clone(),
+            kind: DispatchKind::Album,
+            mbid: rg_mbid.to_owned(),
+            artist: String::new(),
+            title: title.to_owned(),
+            origin: "follow".to_owned(),
+            idempotency_key: Some(format!("follow:{follower}:{}", rg_mbid.to_lowercase())),
+        };
+        match deps.downloads.dispatch(&dispatch).await {
+            Ok(_) => {
+                enqueued += 1;
+                deps.ticks.emit(
+                    "follow.enqueued",
+                    &format!("follow {rg_mbid} enqueued for {follower}"),
+                    now,
+                );
+            }
+            Err(cause) => {
+                tracing::warn!(rg_mbid, follower, %cause, "follow dispatch failed");
+            }
+        }
+    }
+    enqueued
 }
 
 /// Releases split into those emitting now and those held pending.
@@ -710,7 +813,7 @@ fn follow_new_releases(
         pending: Vec::new(),
     };
     for row in releases {
-        if cursor.known.contains(&row.rg_mbid) {
+        if cursor.known.contains(&row.rg_mbid.to_lowercase()) {
             continue;
         }
         if !include_types.is_empty()
@@ -778,7 +881,7 @@ pub struct SweepDeps {
     /// Policy source, re-read every pass so enabling needs no restart.
     pub policy: Arc<dyn Fn() -> UpgradePolicy + Send + Sync>,
     /// Cutoff-unmet worklist.
-    pub worklist: Arc<UpgradeWorklist>,
+    pub worklist: UpgradeWorklist,
     /// Admin directory for sweep ownership.
     pub admins: Arc<AdminDirectory>,
     /// Download dispatch.
@@ -809,7 +912,15 @@ pub async fn sweep_tick(now: i64, state: &mut LoopState, deps: &SweepDeps) -> Sw
         };
     };
     let mut summary = SweepSummary::default();
-    for item in deps.worklist.list_cutoff_unmet() {
+    let items = match deps.worklist.list_cutoff_unmet().await {
+        Ok(items) => items,
+        Err(error) => {
+            tracing::warn!(?error, "upgrade sweep could not read the worklist");
+            summary.errors += 1;
+            return summary;
+        }
+    };
+    for item in items {
         if summary.enqueued >= policy.max_per_run {
             break;
         }
@@ -822,7 +933,7 @@ pub async fn sweep_tick(now: i64, state: &mut LoopState, deps: &SweepDeps) -> Sw
             origin: "upgrade".to_owned(),
             idempotency_key: None,
         };
-        match deps.downloads.dispatch_upgrade(&dispatch) {
+        match deps.downloads.dispatch_upgrade(&dispatch).await {
             Ok(super::seams::UpgradeDispatch::Enqueued(task_id)) => {
                 deps.ticks.emit(
                     "upgrade.enqueued",
@@ -832,7 +943,8 @@ pub async fn sweep_tick(now: i64, state: &mut LoopState, deps: &SweepDeps) -> Sw
                 summary.enqueued += 1;
             }
             Ok(super::seams::UpgradeDispatch::AlreadyInLibrary) => {}
-            Err(_) => {
+            Err(cause) => {
+                tracing::warn!(rg_mbid = %item.rg_mbid, %cause, "upgrade dispatch failed");
                 summary.errors += 1;
             }
         }
@@ -854,7 +966,7 @@ pub struct SyncSummary {
 /// Status-sync dependencies.
 pub struct SyncDeps {
     /// Request ledger.
-    pub ledger: Arc<RequestLedger>,
+    pub ledger: RequestStore,
     /// Download dispatch for task lookups.
     pub downloads: Arc<dyn DownloadDispatch>,
     /// Library presence for the album fallback.
@@ -876,6 +988,14 @@ pub fn map_task_status(task_status: &str) -> Option<&'static str> {
     }
 }
 
+/// Terminal request statuses: nothing left to reconcile.
+pub fn is_terminal(status: &str) -> bool {
+    matches!(
+        status,
+        "imported" | "incomplete" | "failed" | "cancelled" | "ignored"
+    )
+}
+
 /// Run one request-status-sync pass when due: reconcile every active row
 /// with its native download task. Track rows resolve only through their
 /// linked task id (a recording MBID is not a library key), while album
@@ -888,64 +1008,98 @@ pub async fn sync_tick(now: i64, state: &mut LoopState, deps: &SyncDeps) -> Sync
     }
     state.ran(now);
     let mut summary = SyncSummary::default();
-    for row in deps.ledger.active() {
-        let task = row
-            .task_id
-            .as_deref()
-            .and_then(|task_id| deps.downloads.task_status(task_id))
-            .map(|status| (row.task_id.clone(), status))
-            .or_else(|| {
-                if row.kind == "track" {
-                    return None;
-                }
-                deps.downloads
-                    .active_task_for_album(&row.mbid)
-                    .map(|view| (Some(view.task_id), view.status))
-            });
-        if let Some((_, task_status)) = task {
-            let Some(mapped) = map_task_status(&task_status) else {
-                continue;
-            };
-            if mapped == row.status {
-                continue;
-            }
-            let terminal = is_terminal(mapped) && mapped != "incomplete";
-            let completed_at = if terminal { Some(now) } else { None };
-            let won =
-                deps.ledger
-                    .update_status(&row.mbid, mapped, completed_at, Some(row.generation));
-            if won {
-                summary.reconciled += 1;
-                if mapped == "imported" {
-                    summary.imported += 1;
-                    deps.ticks.emit(
-                        "request_fulfilled",
-                        &format!("request {} imported (task {task_status})", row.mbid),
-                        now,
-                    );
-                }
-            }
-            continue;
+    let rows = match deps.ledger.active(None, None).await {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(?error, "status sync could not read live requests");
+            summary.errors += 1;
+            return summary;
         }
-        if row.kind == "track" {
-            continue;
+    };
+    for row in rows {
+        if let Err(cause) = sync_one(now, deps, &row, &mut summary).await {
+            tracing::warn!(key = %row.key, %cause, "status sync failed for one request");
+            summary.errors += 1;
         }
-        if deps.library.contains(&row.mbid) {
-            let won =
-                deps.ledger
-                    .update_status(&row.mbid, "imported", Some(now), Some(row.generation));
-            if won {
-                summary.reconciled += 1;
+    }
+    summary
+}
+
+/// Reconcile one live request row.
+async fn sync_one(
+    now: i64,
+    deps: &SyncDeps,
+    row: &RequestRecord,
+    summary: &mut SyncSummary,
+) -> Result<(), String> {
+    let at = epoch(now);
+    let mut task_status = None;
+    if let Some(task_id) = row.task_id.as_deref() {
+        task_status = deps.downloads.task_status(task_id).await?;
+    }
+    if task_status.is_none() && row.kind == RequestKind::Album {
+        task_status = deps
+            .downloads
+            .active_task_for_album(&row.key)
+            .await?
+            .map(|view| view.status);
+    }
+    if let Some(task_status) = task_status {
+        let Some(mapped) = map_task_status(&task_status) else {
+            return Ok(());
+        };
+        if mapped == row.status {
+            return Ok(());
+        }
+        let terminal = is_terminal(mapped) && mapped != "incomplete";
+        let won = deps
+            .ledger
+            .update_status(
+                row.kind,
+                &row.key,
+                mapped,
+                terminal.then_some(at),
+                Some(row.generation),
+            )
+            .await
+            .map_err(|error| format!("{error:?}"))?;
+        if won {
+            summary.reconciled += 1;
+            if mapped == "imported" {
                 summary.imported += 1;
                 deps.ticks.emit(
                     "request_fulfilled",
-                    &format!("request {} imported (library presence)", row.mbid),
+                    &format!("request {} imported (task {task_status})", row.key),
                     now,
                 );
             }
         }
+        return Ok(());
     }
-    summary
+    if row.kind == RequestKind::Track || !deps.library.contains(&row.key) {
+        return Ok(());
+    }
+    let won = deps
+        .ledger
+        .update_status(
+            row.kind,
+            &row.key,
+            "imported",
+            Some(at),
+            Some(row.generation),
+        )
+        .await
+        .map_err(|error| format!("{error:?}"))?;
+    if won {
+        summary.reconciled += 1;
+        summary.imported += 1;
+        deps.ticks.emit(
+            "request_fulfilled",
+            &format!("request {} imported (library presence)", row.key),
+            now,
+        );
+    }
+    Ok(())
 }
 
 /// Handle for one spawned loop: its registry name plus the task `main`
@@ -969,38 +1123,24 @@ pub async fn register_ephemeral_loop(
         .map_err(|error| error.to_string())
 }
 
-/// One loop pass behind the shared run skeleton: async work plus an
-/// optional sync hook ahead of every pass. Wiring uses the hook to mirror
-/// the requests ledger into the flows ledger; tests leave it empty.
+/// One loop pass behind the shared run skeleton.
 pub trait FlowPass: Send {
     /// Run one pass when due. Per-item failures stay inside the tick.
     fn run(&mut self, now: i64, state: &mut LoopState) -> impl Future<Output = ()> + Send;
-    /// Sync hook ahead of every pass. Defaults to nothing.
-    fn pre_pass(&self) {}
-}
-
-/// Run one pre-pass hook, when set.
-fn run_hook(hook: &Option<Arc<dyn Fn() + Send + Sync>>) {
-    if let Some(hook) = hook {
-        hook();
-    }
 }
 
 /// Wanted-watcher pass over shared deps.
 pub struct WantedPass {
     /// Tick deps.
     pub deps: Arc<WantedDeps>,
-    /// Optional pre-pass hook.
-    pub pre_hook: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl FlowPass for WantedPass {
     async fn run(&mut self, now: i64, state: &mut LoopState) {
-        let _ = wanted_tick(now, state, &self.deps).await;
-    }
-
-    fn pre_pass(&self) {
-        run_hook(&self.pre_hook);
+        let summary = wanted_tick(now, state, &self.deps).await;
+        if summary.errors > 0 {
+            tracing::warn!(?summary, "wanted sweep finished with errors");
+        }
     }
 }
 
@@ -1008,17 +1148,14 @@ impl FlowPass for WantedPass {
 pub struct FollowPass {
     /// Tick deps.
     pub deps: Arc<FollowDeps>,
-    /// Optional pre-pass hook.
-    pub pre_hook: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl FlowPass for FollowPass {
     async fn run(&mut self, now: i64, state: &mut LoopState) {
-        let _ = follow_tick(now, state, &self.deps).await;
-    }
-
-    fn pre_pass(&self) {
-        run_hook(&self.pre_hook);
+        let summary = follow_tick(now, state, &self.deps).await;
+        if summary.errors > 0 {
+            tracing::warn!(?summary, "follow poll finished with errors");
+        }
     }
 }
 
@@ -1026,17 +1163,14 @@ impl FlowPass for FollowPass {
 pub struct SweepPass {
     /// Tick deps.
     pub deps: Arc<SweepDeps>,
-    /// Optional pre-pass hook.
-    pub pre_hook: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl FlowPass for SweepPass {
     async fn run(&mut self, now: i64, state: &mut LoopState) {
-        let _ = sweep_tick(now, state, &self.deps).await;
-    }
-
-    fn pre_pass(&self) {
-        run_hook(&self.pre_hook);
+        let summary = sweep_tick(now, state, &self.deps).await;
+        if summary.errors > 0 {
+            tracing::warn!(?summary, "upgrade sweep finished with errors");
+        }
     }
 }
 
@@ -1044,17 +1178,14 @@ impl FlowPass for SweepPass {
 pub struct SyncPass {
     /// Tick deps.
     pub deps: Arc<SyncDeps>,
-    /// Optional pre-pass hook.
-    pub pre_hook: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl FlowPass for SyncPass {
     async fn run(&mut self, now: i64, state: &mut LoopState) {
-        let _ = sync_tick(now, state, &self.deps).await;
-    }
-
-    fn pre_pass(&self) {
-        run_hook(&self.pre_hook);
+        let summary = sync_tick(now, state, &self.deps).await;
+        if summary.errors > 0 {
+            tracing::warn!(?summary, "status sync finished with errors");
+        }
     }
 }
 
@@ -1067,41 +1198,23 @@ pub async fn spawn_wanted_loop<S, J>(
     lane: WriteLane,
     clock: Arc<dyn Clock>,
     deps: Arc<WantedDeps>,
-    pre_pass: Option<Arc<dyn Fn() + Send + Sync>>,
 ) -> Result<(FlowHandle, Arc<FlowRegistry>), String>
 where
     S: Sleeper + Clone + Send + 'static,
     J: Jitter + Clone + Send + 'static,
 {
-    register_ephemeral_loop(&wakeups, &lane, WANTED_JOB).await?;
-    let registry = Arc::new(FlowRegistry::new());
-    let task_registry = registry.clone();
-    let mut pass = WantedPass {
-        deps,
-        pre_hook: pre_pass,
-    };
-    let task = tokio::spawn(async move {
-        run_loop(
-            &task_registry,
-            WANTED_JOB,
-            sleeper,
-            Some(Box::new(jitter)),
-            WANTED_INITIAL_DELAY,
-            WANTED_INTERVAL,
-            &wakeups,
-            &lane,
-            clock.as_ref(),
-            &mut pass,
-        )
-        .await;
-    });
-    Ok((
-        FlowHandle {
-            name: WANTED_JOB,
-            task,
-        },
-        registry,
-    ))
+    spawn_flow(
+        WANTED_JOB,
+        sleeper,
+        Some(Box::new(jitter)),
+        WANTED_INITIAL_DELAY,
+        WANTED_INTERVAL,
+        wakeups,
+        lane,
+        clock,
+        WantedPass { deps },
+    )
+    .await
 }
 
 /// Spawn the follow new-release poll: startup delay, then a jittered
@@ -1113,41 +1226,23 @@ pub async fn spawn_follow_loop<S, J>(
     lane: WriteLane,
     clock: Arc<dyn Clock>,
     deps: Arc<FollowDeps>,
-    pre_pass: Option<Arc<dyn Fn() + Send + Sync>>,
 ) -> Result<(FlowHandle, Arc<FlowRegistry>), String>
 where
     S: Sleeper + Clone + Send + 'static,
     J: Jitter + Clone + Send + 'static,
 {
-    register_ephemeral_loop(&wakeups, &lane, FOLLOW_JOB).await?;
-    let registry = Arc::new(FlowRegistry::new());
-    let task_registry = registry.clone();
-    let mut pass = FollowPass {
-        deps,
-        pre_hook: pre_pass,
-    };
-    let task = tokio::spawn(async move {
-        run_loop(
-            &task_registry,
-            FOLLOW_JOB,
-            sleeper,
-            Some(Box::new(jitter)),
-            FOLLOW_INITIAL_DELAY,
-            FOLLOW_INTERVAL,
-            &wakeups,
-            &lane,
-            clock.as_ref(),
-            &mut pass,
-        )
-        .await;
-    });
-    Ok((
-        FlowHandle {
-            name: FOLLOW_JOB,
-            task,
-        },
-        registry,
-    ))
+    spawn_flow(
+        FOLLOW_JOB,
+        sleeper,
+        Some(Box::new(jitter)),
+        FOLLOW_INITIAL_DELAY,
+        FOLLOW_INTERVAL,
+        wakeups,
+        lane,
+        clock,
+        FollowPass { deps },
+    )
+    .await
 }
 
 /// Spawn the background upgrade sweep: startup delay, then the policy
@@ -1158,41 +1253,23 @@ pub async fn spawn_sweep_loop<S>(
     lane: WriteLane,
     clock: Arc<dyn Clock>,
     deps: Arc<SweepDeps>,
-    pre_pass: Option<Arc<dyn Fn() + Send + Sync>>,
 ) -> Result<(FlowHandle, Arc<FlowRegistry>), String>
 where
     S: Sleeper + Clone + Send + 'static,
 {
-    register_ephemeral_loop(&wakeups, &lane, UPGRADE_JOB).await?;
-    let registry = Arc::new(FlowRegistry::new());
-    let task_registry = registry.clone();
     let hours = (deps.policy)().interval_hours.max(1);
-    let mut pass = SweepPass {
-        deps,
-        pre_hook: pre_pass,
-    };
-    let task = tokio::spawn(async move {
-        run_loop(
-            &task_registry,
-            UPGRADE_JOB,
-            sleeper,
-            None,
-            UPGRADE_INITIAL_DELAY,
-            Duration::from_secs(hours * 3600),
-            &wakeups,
-            &lane,
-            clock.as_ref(),
-            &mut pass,
-        )
-        .await;
-    });
-    Ok((
-        FlowHandle {
-            name: UPGRADE_JOB,
-            task,
-        },
-        registry,
-    ))
+    spawn_flow(
+        UPGRADE_JOB,
+        sleeper,
+        None,
+        UPGRADE_INITIAL_DELAY,
+        Duration::from_secs(hours * 3600),
+        wakeups,
+        lane,
+        clock,
+        SweepPass { deps },
+    )
+    .await
 }
 
 /// Spawn the request-status sync: startup delay, then a plain 1-minute
@@ -1203,26 +1280,52 @@ pub async fn spawn_sync_loop<S>(
     lane: WriteLane,
     clock: Arc<dyn Clock>,
     deps: Arc<SyncDeps>,
-    pre_pass: Option<Arc<dyn Fn() + Send + Sync>>,
 ) -> Result<(FlowHandle, Arc<FlowRegistry>), String>
 where
     S: Sleeper + Clone + Send + 'static,
 {
-    register_ephemeral_loop(&wakeups, &lane, SYNC_JOB).await?;
+    spawn_flow(
+        SYNC_JOB,
+        sleeper,
+        None,
+        SYNC_INITIAL_DELAY,
+        SYNC_INTERVAL,
+        wakeups,
+        lane,
+        clock,
+        SyncPass { deps },
+    )
+    .await
+}
+
+/// Register one loop and spawn its task.
+#[allow(clippy::too_many_arguments)]
+async fn spawn_flow<S, P>(
+    job: &'static str,
+    sleeper: S,
+    jitter: Option<Box<dyn Jitter>>,
+    initial_delay: Duration,
+    interval: Duration,
+    wakeups: DurableWorkWakeups,
+    lane: WriteLane,
+    clock: Arc<dyn Clock>,
+    mut pass: P,
+) -> Result<(FlowHandle, Arc<FlowRegistry>), String>
+where
+    S: Sleeper + Clone + Send + 'static,
+    P: FlowPass + 'static,
+{
+    register_ephemeral_loop(&wakeups, &lane, job).await?;
     let registry = Arc::new(FlowRegistry::new());
     let task_registry = registry.clone();
-    let mut pass = SyncPass {
-        deps,
-        pre_hook: pre_pass,
-    };
     let task = tokio::spawn(async move {
         run_loop(
             &task_registry,
-            SYNC_JOB,
+            job,
             sleeper,
-            None,
-            SYNC_INITIAL_DELAY,
-            SYNC_INTERVAL,
+            jitter,
+            initial_delay,
+            interval,
             &wakeups,
             &lane,
             clock.as_ref(),
@@ -1230,13 +1333,7 @@ where
         )
         .await;
     });
-    Ok((
-        FlowHandle {
-            name: SYNC_JOB,
-            task,
-        },
-        registry,
-    ))
+    Ok((FlowHandle { name: job, task }, registry))
 }
 
 /// Shared loop body: sleep the startup delay, run one guarded pass, then
@@ -1259,25 +1356,26 @@ async fn run_loop<S, P>(
     S: Sleeper,
     P: FlowPass,
 {
-    if !sleeper.sleep(initial_delay).await {
-        let _ = wakeups.set_job_state(lane, job, JobState::Stopped).await;
-        return;
-    }
-    let mut state = LoopState::new();
-    loop {
-        let now = clock.now_unix();
-        pass.pre_pass();
-        if registry.begin(job) {
-            pass.run(now, &mut state).await;
-            registry.finish(job);
-            let _ = wakeups.heartbeat(lane, job).await;
+    if sleeper.sleep(initial_delay).await {
+        let mut state = LoopState::new();
+        loop {
+            let now = clock.now_unix();
+            if registry.begin(job) {
+                pass.run(now, &mut state).await;
+                registry.finish(job);
+                if let Err(error) = wakeups.heartbeat(lane, job).await {
+                    tracing::warn!(job, %error, "flow heartbeat failed");
+                }
+            }
+            let wait = jitter
+                .as_deref()
+                .map_or(interval, |jitter| jittered(interval, jitter));
+            if !sleeper.sleep(wait).await {
+                break;
+            }
         }
-        let wait = jitter
-            .as_deref()
-            .map_or(interval, |jitter| jittered(interval, jitter));
-        if !sleeper.sleep(wait).await {
-            break;
-        }
     }
-    let _ = wakeups.set_job_state(lane, job, JobState::Stopped).await;
+    if let Err(error) = wakeups.set_job_state(lane, job, JobState::Stopped).await {
+        tracing::warn!(job, %error, "flow stop state write failed");
+    }
 }

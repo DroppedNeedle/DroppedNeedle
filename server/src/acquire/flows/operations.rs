@@ -6,8 +6,8 @@
 //! durable job registry ([`FREE_MUSIC_JOB`], [`DROP_IMPORT_JOB`]) as
 //! [`JobKind::Durable`](crate::db::JobKind), moves through
 //! running/heartbeat/stopped states on the registry, persists its own
-//! record in the [`OpStore`], and emits its plugin ticks beside those
-//! writes.
+//! record in the [`OpStore`] (SQLite), and emits its plugin ticks beside
+//! those writes.
 //!
 //! The drop path runs folder → quarantine → resolve: files land in staging,
 //! bad sources quarantine with their reason, and each item resolves to the
@@ -15,18 +15,20 @@
 //! bad sources quarantine; local faults fail open (v2 `file_processor.py`
 //! non-quarantine reasons).
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
 
+use rusqlite::params;
+
+use crate::acquire::db::AcquireDb;
+use crate::acquire::requests::models::RequestKind;
+use crate::acquire::requests::sqlite::RequestStore;
 use crate::db::{DurableWorkWakeups, JobKind, JobState, WriteLane};
 
 use super::seams::{
     CandidateSearch, Clock, DispatchKind, DispatchRequest, DownloadDispatch, DropVerify,
     LandedHandoff, LibraryOrganise, TickSink, VerifyVerdict,
 };
-use super::stores::{QuarantineEntry, QuarantineStore, RequestLedger};
+use super::stores::{QuarantineEntry, QuarantineStore};
 
 /// Registry name for the free-music durable operation.
 pub const FREE_MUSIC_JOB: &str = "free-music";
@@ -64,6 +66,31 @@ pub enum OpState {
     Cancelled,
 }
 
+impl OpState {
+    /// Stored form.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Running => "running",
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+
+    /// Parse the stored form.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "queued" => Some(Self::Queued),
+            "running" => Some(Self::Running),
+            "succeeded" => Some(Self::Succeeded),
+            "failed" => Some(Self::Failed),
+            "cancelled" => Some(Self::Cancelled),
+            _ => None,
+        }
+    }
+}
+
 /// One operation record: idempotency key, attempts, timestamps, outcome.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpRecord {
@@ -85,81 +112,160 @@ pub struct OpRecord {
     pub detail: String,
 }
 
-/// Operation record store. In memory for now; it has no durable rows yet.
-#[derive(Debug, Default)]
+/// What startup recovery did to unfinished operations.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OpRecovery {
+    /// Free-music operations left running: their download task keeps
+    /// going and [`settle_free_music`] lands or fails them.
+    pub resumed: usize,
+    /// Drop-import operations interrupted mid-run and marked failed. Their
+    /// staged files stay where they are; nothing is moved twice.
+    pub interrupted: usize,
+}
+
+/// Columns every operation read selects.
+const OP_SELECT: &str = "SELECT id, kind, op_key, state, attempts, created_at, updated_at, detail \
+     FROM acquire_operations";
+
+type OpRow = (String, String, String, String, i64, i64, i64, String);
+
+fn op_from_row(row: OpRow) -> Result<OpRecord, String> {
+    let (id, kind, key, state, attempts, created_at, updated_at, detail) = row;
+    let state = OpState::parse(&state).ok_or_else(|| format!("unknown operation state {state}"))?;
+    Ok(OpRecord {
+        id,
+        kind,
+        key,
+        state,
+        attempts: u32::try_from(attempts).unwrap_or(0),
+        created_at,
+        updated_at,
+        detail,
+    })
+}
+
+fn op_from_rusqlite(row: &rusqlite::Row<'_>) -> rusqlite::Result<OpRow> {
+    Ok((
+        row.get(0)?,
+        row.get(1)?,
+        row.get(2)?,
+        row.get(3)?,
+        row.get(4)?,
+        row.get(5)?,
+        row.get(6)?,
+        row.get(7)?,
+    ))
+}
+
+/// Durable operation records over `acquire_operations`.
+#[derive(Clone)]
 pub struct OpStore {
-    ops: Mutex<HashMap<String, OpRecord>>,
-    seq: AtomicU64,
+    db: AcquireDb,
 }
 
 impl OpStore {
-    /// Empty store.
-    pub fn new() -> Self {
-        Self::default()
+    /// Records over one database.
+    pub fn new(db: AcquireDb) -> Self {
+        Self { db }
     }
 
     /// Register a queued operation under its idempotency key. When the key
     /// already exists, the existing record is returned untouched: a retried
-    /// request reuses its operation instead of queuing a duplicate.
-    pub fn register(&self, kind: &str, key: &str, now: i64) -> OpRecord {
-        if let Ok(ops) = self.ops.lock()
-            && let Some(existing) = ops.values().find(|op| op.kind == kind && op.key == key)
-        {
-            return existing.clone();
-        }
-        let id = format!("op-{}", self.seq.fetch_add(1, Ordering::Relaxed) + 1);
-        let record = OpRecord {
-            id: id.clone(),
-            kind: kind.to_owned(),
-            key: key.to_owned(),
-            state: OpState::Queued,
-            attempts: 0,
-            created_at: now,
-            updated_at: now,
-            detail: String::new(),
-        };
-        if let Ok(mut ops) = self.ops.lock() {
-            ops.insert(id, record.clone());
-        }
-        record
+    /// request reuses its operation instead of queuing a duplicate. The
+    /// lookup and the insert share one write.
+    pub async fn register(&self, kind: &str, key: &str, now: i64) -> Result<OpRecord, String> {
+        let (kind, key) = (kind.to_owned(), key.to_owned());
+        let id = format!("op-{}", uuid::Uuid::new_v4().simple());
+        let row = self
+            .db
+            .write("operations.register", move |tx| {
+                tx.execute(
+                    "INSERT INTO acquire_operations (id, kind, op_key, state, attempts, \
+                     created_at, updated_at, detail) VALUES (?1, ?2, ?3, 'queued', 0, ?4, ?4, '') \
+                     ON CONFLICT (kind, op_key) DO NOTHING",
+                    params![id, kind, key, now],
+                )?;
+                let sql = format!("{OP_SELECT} WHERE kind = ?1 AND op_key = ?2");
+                Ok(tx.query_row(&sql, params![kind, key], op_from_rusqlite)?)
+            })
+            .await
+            .map_err(|error| error.to_string())?;
+        op_from_row(row)
     }
 
     /// Transition one operation, stamping the time and detail.
-    pub fn transition(&self, id: &str, state: OpState, now: i64, detail: &str) {
-        if let Ok(mut ops) = self.ops.lock()
-            && let Some(op) = ops.get_mut(id)
-        {
-            op.state = state;
-            op.updated_at = now;
-            op.detail = detail.to_owned();
-        }
+    pub async fn transition(
+        &self,
+        id: &str,
+        state: OpState,
+        now: i64,
+        detail: &str,
+    ) -> Result<(), String> {
+        let (id, detail) = (id.to_owned(), detail.to_owned());
+        self.db
+            .write("operations.transition", move |tx| {
+                tx.execute(
+                    "UPDATE acquire_operations SET state = ?2, updated_at = ?3, detail = ?4 \
+                     WHERE id = ?1",
+                    params![id, state.as_str(), now, detail],
+                )?;
+                Ok(())
+            })
+            .await
+            .map_err(|error| error.to_string())
     }
 
     /// Count one attempt on an operation.
-    pub fn count_attempt(&self, id: &str) {
-        if let Ok(mut ops) = self.ops.lock()
-            && let Some(op) = ops.get_mut(id)
-        {
-            op.attempts += 1;
-        }
+    pub async fn count_attempt(&self, id: &str) -> Result<(), String> {
+        let id = id.to_owned();
+        self.db
+            .write("operations.attempt", move |tx| {
+                tx.execute(
+                    "UPDATE acquire_operations SET attempts = attempts + 1 WHERE id = ?1",
+                    params![id],
+                )?;
+                Ok(())
+            })
+            .await
+            .map_err(|error| error.to_string())
     }
 
     /// One record, if present.
-    pub fn get(&self, id: &str) -> Option<OpRecord> {
-        self.ops.lock().ok().and_then(|ops| ops.get(id).cloned())
+    pub async fn get(&self, id: &str) -> Result<Option<OpRecord>, String> {
+        let row: Option<OpRow> = sqlx::query_as(&format!("{OP_SELECT} WHERE id = ?1"))
+            .bind(id)
+            .fetch_optional(self.db.pool())
+            .await
+            .map_err(|error| error.to_string())?;
+        row.map(op_from_row).transpose()
     }
 
-    /// Records not yet terminal, for startup recovery.
-    pub fn unfinished(&self) -> Vec<OpRecord> {
-        self.ops
-            .lock()
-            .map(|ops| {
-                ops.values()
-                    .filter(|op| matches!(op.state, OpState::Queued | OpState::Running))
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default()
+    /// Records not yet terminal, oldest first.
+    pub async fn unfinished(&self) -> Result<Vec<OpRecord>, String> {
+        let rows: Vec<OpRow> = sqlx::query_as(&format!(
+            "{OP_SELECT} WHERE state IN ('queued', 'running') ORDER BY created_at, id"
+        ))
+        .fetch_all(self.db.pool())
+        .await
+        .map_err(|error| error.to_string())?;
+        rows.into_iter().map(op_from_row).collect()
+    }
+
+    /// Startup recovery: drop-import runs interrupted by the restart fail
+    /// (their in-memory item list is gone, and re-running would move files
+    /// twice); free-music runs stay open for their settle.
+    pub async fn recover(&self, now: i64) -> Result<OpRecovery, String> {
+        let mut report = OpRecovery::default();
+        for op in self.unfinished().await? {
+            if op.kind == DROP_IMPORT_JOB && op.state == OpState::Running {
+                self.transition(&op.id, OpState::Failed, now, "interrupted by restart")
+                    .await?;
+                report.interrupted += 1;
+            } else {
+                report.resumed += 1;
+            }
+        }
+        Ok(report)
     }
 }
 
@@ -182,14 +288,18 @@ pub async fn register_durable_ops(
 
 /// Move a job to running and beat its heart once.
 async fn mark_running(wakeups: &DurableWorkWakeups, lane: &WriteLane, job: &str) {
-    if wakeups
-        .set_job_state(lane, job, JobState::Running)
-        .await
-        .is_err()
-    {
+    if let Err(error) = wakeups.set_job_state(lane, job, JobState::Running).await {
+        tracing::warn!(job, %error, "operation running state write failed");
         return;
     }
-    let _ = wakeups.heartbeat(lane, job).await;
+    heartbeat(wakeups, lane, job).await;
+}
+
+/// Beat one job's heart, logging a failed write.
+async fn heartbeat(wakeups: &DurableWorkWakeups, lane: &WriteLane, job: &str) {
+    if let Err(error) = wakeups.heartbeat(lane, job).await {
+        tracing::warn!(job, %error, "operation heartbeat failed");
+    }
 }
 
 /// Finish a job's liveness: stopped on success, failed otherwise.
@@ -199,8 +309,10 @@ async fn mark_finished(wakeups: &DurableWorkWakeups, lane: &WriteLane, job: &str
     } else {
         JobState::Failed
     };
-    let _ = wakeups.set_job_state(lane, job, state).await;
-    let _ = wakeups.heartbeat(lane, job).await;
+    if let Err(error) = wakeups.set_job_state(lane, job, state).await {
+        tracing::warn!(job, %error, "operation finish state write failed");
+    }
+    heartbeat(wakeups, lane, job).await;
 }
 
 /// True when a progress write is due: at most one per
@@ -302,7 +414,7 @@ pub async fn run_free_music(
         request.mbid,
         kind_key(request.kind)
     );
-    let op = ops.register("free-music", &key, now);
+    let op = ops.register("free-music", &key, now).await?;
     if op.state == OpState::Succeeded {
         return Ok(FreeMusicOutcome::Landed {
             op_id: op.id.clone(),
@@ -310,8 +422,8 @@ pub async fn run_free_music(
         });
     }
     mark_running(wakeups, lane, FREE_MUSIC_JOB).await;
-    ops.transition(&op.id, OpState::Running, now, "");
-    ops.count_attempt(&op.id);
+    ops.transition(&op.id, OpState::Running, now, "").await?;
+    ops.count_attempt(&op.id).await?;
 
     if !deps.enabled {
         return fail_free_music(wakeups, lane, ops, deps, &op, "free music disabled").await;
@@ -336,10 +448,10 @@ pub async fn run_free_music(
         origin: "free-music".to_owned(),
         idempotency_key: None,
     };
-    let task_id = deps.downloads.dispatch(&dispatch)?;
-    let _ = wakeups.heartbeat(lane, FREE_MUSIC_JOB).await;
+    let task_id = deps.downloads.dispatch(&dispatch).await?;
+    heartbeat(wakeups, lane, FREE_MUSIC_JOB).await;
 
-    match deps.downloads.task_status(&task_id).as_deref() {
+    match deps.downloads.task_status(&task_id).await?.as_deref() {
         Some("completed") => {
             let files = vec![format!("{} - {}.flac", request.artist, pick.title)];
             land_free_music(wakeups, lane, ops, deps, &op, request, &task_id, &files).await
@@ -348,7 +460,8 @@ pub async fn run_free_music(
             fail_free_music(wakeups, lane, ops, deps, &op, "download failed").await
         }
         _ => {
-            ops.transition(&op.id, OpState::Running, now, &task_id);
+            ops.transition(&op.id, OpState::Running, now, &task_id)
+                .await?;
             Ok(FreeMusicOutcome::Pending {
                 op_id: op.id.clone(),
                 task_id,
@@ -368,7 +481,7 @@ pub async fn settle_free_music(
     op_id: &str,
     request: &FreeMusicRequest,
 ) -> Result<FreeMusicOutcome, String> {
-    let Some(op) = ops.get(op_id) else {
+    let Some(op) = ops.get(op_id).await? else {
         return Err("unknown free-music operation".to_owned());
     };
     match op.state {
@@ -379,7 +492,7 @@ pub async fn settle_free_music(
         OpState::Failed | OpState::Cancelled => Err(op.detail.clone()),
         OpState::Queued | OpState::Running => {
             let task_id = op.detail.clone();
-            match deps.downloads.task_status(&task_id).as_deref() {
+            match deps.downloads.task_status(&task_id).await?.as_deref() {
                 Some("completed") => {
                     let files = vec![format!("{} - {}.flac", request.artist, request.title)];
                     land_free_music(wakeups, lane, ops, deps, &op, request, &task_id, &files).await
@@ -411,7 +524,8 @@ async fn land_free_music(
 ) -> Result<FreeMusicOutcome, String> {
     let now = deps.clock.now_unix();
     let job_id = deps.handoff.land(&op.id, &request.user_id, files).await?;
-    ops.transition(&op.id, OpState::Succeeded, now, &job_id);
+    ops.transition(&op.id, OpState::Succeeded, now, &job_id)
+        .await?;
     deps.ticks.emit(
         "request_fulfilled",
         &format!(
@@ -437,7 +551,7 @@ async fn fail_free_music(
     cause: &str,
 ) -> Result<FreeMusicOutcome, String> {
     let now = deps.clock.now_unix();
-    ops.transition(&op.id, OpState::Failed, now, cause);
+    ops.transition(&op.id, OpState::Failed, now, cause).await?;
     deps.ticks.emit(
         "free_music.failed",
         &format!("free-music {} failed: {cause}", op.key),
@@ -448,18 +562,23 @@ async fn fail_free_music(
 }
 
 /// Cancel a free-music operation. Terminal records stay as they are.
-pub fn cancel_free_music(ops: &OpStore, clock: &dyn Clock, op_id: &str) -> bool {
-    let Some(op) = ops.get(op_id) else {
-        return false;
+pub async fn cancel_free_music(
+    ops: &OpStore,
+    clock: &dyn Clock,
+    op_id: &str,
+) -> Result<bool, String> {
+    let Some(op) = ops.get(op_id).await? else {
+        return Ok(false);
     };
     if matches!(
         op.state,
         OpState::Succeeded | OpState::Failed | OpState::Cancelled
     ) {
-        return false;
+        return Ok(false);
     }
-    ops.transition(&op.id, OpState::Cancelled, clock.now_unix(), "cancelled");
-    true
+    ops.transition(&op.id, OpState::Cancelled, clock.now_unix(), "cancelled")
+        .await?;
+    Ok(true)
 }
 
 /// Idempotency-key fragment for the request kind.
@@ -518,9 +637,9 @@ pub struct DropImportDeps {
     /// Library organise seam.
     pub organise: std::sync::Arc<dyn LibraryOrganise>,
     /// Quarantine registry.
-    pub quarantine: std::sync::Arc<QuarantineStore>,
+    pub quarantine: QuarantineStore,
     /// Request ledger for resolve marks.
-    pub ledger: std::sync::Arc<RequestLedger>,
+    pub ledger: RequestStore,
     /// Durable ticks.
     pub ticks: std::sync::Arc<dyn TickSink>,
     /// Clock.
@@ -598,7 +717,7 @@ pub async fn create_drop_job(
     } else {
         format!("{} +{} more", uploads[0].0, uploads.len() - 1)
     };
-    ops.register("drop-import", &job_id, now);
+    ops.register("drop-import", &job_id, now).await?;
     mark_running(wakeups, lane, DROP_IMPORT_JOB).await;
     Ok(DropJob {
         id: job_id,
@@ -623,8 +742,8 @@ pub async fn process_drop_job(
     rg_mbid: Option<&str>,
 ) -> Result<(), String> {
     let now = deps.clock.now_unix();
-    let op_id = ops.register("drop-import", &job.id, now).id.clone();
-    ops.transition(&op_id, OpState::Running, now, "");
+    let op_id = ops.register("drop-import", &job.id, now).await?.id;
+    ops.transition(&op_id, OpState::Running, now, "").await?;
     tokio::fs::create_dir_all(quarantine_dir(staging_root))
         .await
         .map_err(|error| format!("cannot open quarantine: {error}"))?;
@@ -639,7 +758,7 @@ pub async fn process_drop_job(
                 let final_path = deps.organise.organise(&job.id, &item.staged_path)?;
                 item.outcome = Some(DropItemOutcome::Resolved(final_path.clone()));
                 if let Some(rg) = rg_mbid {
-                    deps.ledger.update_status(rg, "imported", Some(at), None);
+                    mark_imported(&deps.ledger, rg, at).await;
                 }
                 deps.ticks.emit(
                     "drop_import.resolved",
@@ -648,18 +767,33 @@ pub async fn process_drop_job(
                 );
             }
             VerifyVerdict::BadSource(reason) => {
-                let held = quarantine_dir(staging_root).join(safe_component(&item.name));
+                // Job-prefixed so a second job's same-name file never lands
+                // on top of this one.
+                let held = quarantine_dir(staging_root).join(format!(
+                    "{}_{}",
+                    job.id,
+                    safe_component(&item.name)
+                ));
+                if tokio::fs::try_exists(&held).await.unwrap_or(true) {
+                    return Err(format!(
+                        "quarantine destination for {} is occupied",
+                        item.name
+                    ));
+                }
                 tokio::fs::rename(&item.staged_path, &held)
                     .await
                     .map_err(|error| format!("cannot quarantine {}: {error}", item.name))?;
                 item.staged_path = held.to_string_lossy().into_owned();
                 item.outcome = Some(DropItemOutcome::Quarantined(reason.clone()));
-                deps.quarantine.quarantine(QuarantineEntry {
-                    key: format!("{}:{}", job.id, item.name),
-                    album_key: rg_mbid.map(str::to_owned),
-                    reason: reason.clone(),
-                    at,
-                });
+                deps.quarantine
+                    .quarantine(QuarantineEntry {
+                        key: format!("{}:{}", job.id, item.name),
+                        album_key: rg_mbid.map(str::to_owned),
+                        reason: reason.clone(),
+                        at,
+                    })
+                    .await
+                    .map_err(|error| error.to_string())?;
                 deps.ticks.emit(
                     "drop_import.quarantined",
                     &format!("{} quarantined: {reason}", item.name),
@@ -675,7 +809,7 @@ pub async fn process_drop_job(
                 );
             }
         }
-        let _ = wakeups.heartbeat(lane, DROP_IMPORT_JOB).await;
+        heartbeat(wakeups, lane, DROP_IMPORT_JOB).await;
     }
     let done = deps.clock.now_unix();
     ops.transition(
@@ -683,7 +817,8 @@ pub async fn process_drop_job(
         OpState::Succeeded,
         done,
         &format!("{} items", job.items.len()),
-    );
+    )
+    .await?;
     mark_finished(wakeups, lane, DROP_IMPORT_JOB, true).await;
     Ok(())
 }
@@ -701,7 +836,7 @@ pub enum ResolveDecision {
 /// Matching clears the quarantine entry, organises the file, and ticks the
 /// resolve; discarding deletes both. Answers false when the item is not
 /// quarantined.
-pub fn resolve_quarantined_item(
+pub async fn resolve_quarantined_item(
     deps: &DropImportDeps,
     job: &mut DropJob,
     file_name: &str,
@@ -721,10 +856,13 @@ pub fn resolve_quarantined_item(
     match decision {
         ResolveDecision::Match => {
             let final_path = deps.organise.organise(&job.id, &item.staged_path)?;
-            deps.quarantine.clear(&key);
+            deps.quarantine
+                .clear(&key)
+                .await
+                .map_err(|error| error.to_string())?;
             item.outcome = Some(DropItemOutcome::Resolved(final_path.clone()));
             if let Some(rg) = rg_mbid {
-                deps.ledger.update_status(rg, "imported", Some(at), None);
+                mark_imported(&deps.ledger, rg, at).await;
             }
             deps.ticks.emit(
                 "drop_import.resolved",
@@ -733,9 +871,13 @@ pub fn resolve_quarantined_item(
             );
         }
         ResolveDecision::Discard => {
-            std::fs::remove_file(&item.staged_path)
+            tokio::fs::remove_file(&item.staged_path)
+                .await
                 .map_err(|error| format!("cannot discard {}: {error}", item.name))?;
-            deps.quarantine.clear(&key);
+            deps.quarantine
+                .clear(&key)
+                .await
+                .map_err(|error| error.to_string())?;
             item.outcome = Some(DropItemOutcome::Discarded);
             deps.ticks.emit(
                 "drop_import.discarded",
@@ -745,6 +887,22 @@ pub fn resolve_quarantined_item(
         }
     }
     Ok(true)
+}
+
+/// Mark one album request imported after a drop resolved it. A failed
+/// write is logged; the status sync reconciles the row later.
+async fn mark_imported(ledger: &RequestStore, rg_mbid: &str, at: i64) {
+    let at = u64::try_from(at).unwrap_or(0);
+    if let Err(error) = ledger
+        .update_status(RequestKind::Album, rg_mbid, "imported", Some(at), None)
+        .await
+    {
+        tracing::warn!(
+            rg_mbid,
+            ?error,
+            "drop import could not mark the request imported"
+        );
+    }
 }
 
 /// Strip path separators and control characters from a staged name.

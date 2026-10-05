@@ -3,25 +3,29 @@
 //!
 //! Requests (`requests::dispatch::DownloadDispatch`) and flows
 //! (`flows::seams::DownloadDispatch`) each define the narrow surface they
-//! need from downloads. Both stay (their tests pin them); production
-//! unifies behind [`UnifiedDispatch`], which
-//! implements both over the durable [`Journal`]. One struct, one task-id
-//! mint, one insert path, one status vocabulary mapping.
+//! need from downloads. Production unifies both behind [`UnifiedDispatch`]
+//! over the durable [`Journal`]: one task-id mint, one insert path, one
+//! status vocabulary mapping.
 //!
 //! Task ids are 32 lowercase hex chars (a UUID without dashes): the
 //! orphan reconciler's `job_name_parts` only recognises that shape, so
 //! anything else would make debris invisible to the sweep.
 
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use rusqlite::Connection;
+use futures_util::future::BoxFuture;
+use sqlx::Row;
 
+use super::db::AcquireDb;
 use super::downloads::manifest::{DownloadManifest, ManifestCodec};
-use super::downloads::store::{DownloadStore, NewTask, StoreError, TaskDetails, TaskRow};
+use super::downloads::state::TaskStatus;
+use super::downloads::store::{DownloadStore, NewTask, StoreError, TaskDetails};
+use super::downloads::watchdog::RetryPolicy;
 use super::flows::seams as flows;
 use super::requests::dispatch as requests;
+use crate::db::{DbError, Lane, OpError};
 use crate::ids::IdGenerator;
 
 /// Current unix time as the float seconds the journal stores.
@@ -32,86 +36,99 @@ fn now_unix_f64() -> f64 {
         .unwrap_or(0.0)
 }
 
-/// Sync journal over one rusqlite connection. The app also holds a sqlx
-/// pool on the same file; the busy timeout absorbs lock contention and
-/// every borrow is short.
+/// The download journal. Every operation is one transaction on the shared
+/// writer lane, so multi-statement steps (claim a key and insert its task,
+/// settle a task and its attempt) commit together or not at all.
 pub struct Journal {
-    conn: Mutex<Connection>,
+    db: AcquireDb,
 }
 
 impl Journal {
-    /// Open the journal on a database file. Migrations already applied at
-    /// boot; this only tunes the connection.
-    pub fn open(db_path: &Path) -> Result<Self, String> {
-        let conn =
-            Connection::open(db_path).map_err(|error| format!("acquire journal: {error}"))?;
-        conn.busy_timeout(Duration::from_secs(5))
-            .map_err(|error| format!("acquire journal: {error}"))?;
-        Ok(Self {
-            conn: Mutex::new(conn),
-        })
+    /// Journal over the application database.
+    pub fn new(db: AcquireDb) -> Self {
+        Self { db }
     }
 
-    /// Scratch journal over `:memory:` with the real migration SQL applied.
-    /// Foreign keys stay off, so dispatches for not-yet-created users
-    /// still insert in unit-style tests. The pragma is explicit: the
-    /// bundled SQLite enables enforcement by default.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn memory() -> Result<Self, String> {
-        let conn =
-            Connection::open_in_memory().map_err(|error| format!("acquire journal: {error}"))?;
-        conn.execute_batch("PRAGMA foreign_keys = OFF")
-            .map_err(|error| format!("acquire journal: {error}"))?;
-        super::downloads::store::apply_test_schema(&conn)
-            .map_err(|error| format!("acquire journal: {error}"))?;
-        Ok(Self {
-            conn: Mutex::new(conn),
-        })
+    /// Database handle, for the read-only queries that use the pool.
+    pub fn db(&self) -> &AcquireDb {
+        &self.db
     }
 
-    /// Run one closure against the download store.
-    pub fn with_store<R>(
-        &self,
-        op: impl FnOnce(&DownloadStore<'_>) -> Result<R, StoreError>,
-    ) -> Result<R, String> {
-        let conn = self
-            .conn
-            .lock()
-            .map_err(|_| "acquire journal lock lost".to_owned())?;
-        let store = DownloadStore::new(&conn);
-        op(&store).map_err(|error| error.to_string())
-    }
-
-    /// Run one closure against the download store off the async runtime.
-    /// Async callers must use this (never [`Self::with_store`]): rusqlite
-    /// is synchronous, so running it inline would stall the executor.
-    pub async fn with_store_async<R, F>(journal: &Arc<Journal>, op: F) -> Result<R, String>
+    /// Run one closure against the download store inside one background
+    /// write transaction. A store error rolls the whole closure back.
+    pub async fn run<R, F>(&self, name: &'static str, op: F) -> Result<R, String>
     where
         R: Send + 'static,
         F: for<'a, 'b> FnOnce(&'a DownloadStore<'b>) -> Result<R, StoreError> + Send + 'static,
     {
-        let journal = Arc::clone(journal);
-        tokio::task::spawn_blocking(move || journal.with_store(op))
+        self.run_on(Lane::Background, name, op).await
+    }
+
+    /// Same as [`Self::run`] on the request-path lane.
+    pub async fn run_foreground<R, F>(&self, name: &'static str, op: F) -> Result<R, String>
+    where
+        R: Send + 'static,
+        F: for<'a, 'b> FnOnce(&'a DownloadStore<'b>) -> Result<R, StoreError> + Send + 'static,
+    {
+        self.run_on(Lane::Foreground, name, op).await
+    }
+
+    async fn run_on<R, F>(&self, lane: Lane, name: &'static str, op: F) -> Result<R, String>
+    where
+        R: Send + 'static,
+        F: for<'a, 'b> FnOnce(&'a DownloadStore<'b>) -> Result<R, StoreError> + Send + 'static,
+    {
+        self.db
+            .lane()
+            .write(lane, name, move |tx| {
+                let store = DownloadStore::new(tx);
+                op(&store).map_err(|error| match error {
+                    StoreError::Sqlite(error) => OpError::Sql(error),
+                    other => OpError::Abort(other.to_string()),
+                })
+            })
             .await
-            .map_err(|error| format!("acquire journal join failed: {error}"))?
+            .map_err(|error: DbError| error.to_string())
     }
 }
+
+/// Live retry policy, read on every use.
+pub type RetryPolicySource = Arc<dyn Fn() -> RetryPolicy + Send + Sync>;
 
 /// One production dispatch behind both trait spellings.
 pub struct UnifiedDispatch {
     journal: Arc<Journal>,
     ids: Arc<dyn IdGenerator>,
     staging_root: PathBuf,
+    retry: RetryPolicySource,
+}
+
+/// The task columns the request-path reads need.
+struct TaskSnapshot {
+    status: TaskStatus,
+    progress_percent: i64,
+    total_size_bytes: Option<i64>,
+    downloaded_bytes: i64,
+    error_message: Option<String>,
+    quality_format: Option<String>,
+    source: String,
 }
 
 impl UnifiedDispatch {
     /// Wire dispatch over a shared journal. `staging_root` holds the
-    /// per-task manifest skeletons written at dispatch time.
-    pub fn new(journal: Arc<Journal>, ids: Arc<dyn IdGenerator>, staging_root: PathBuf) -> Self {
+    /// per-task manifest skeletons written at dispatch time; `retry` reads
+    /// the auto-retry policy for the wanted view's retrying rows.
+    pub fn new(
+        journal: Arc<Journal>,
+        ids: Arc<dyn IdGenerator>,
+        staging_root: PathBuf,
+        retry: RetryPolicySource,
+    ) -> Self {
         Self {
             journal,
             ids,
             staging_root,
+            retry,
         }
     }
 
@@ -128,9 +145,12 @@ impl UnifiedDispatch {
     /// Insert one queued task row plus its manifest skeleton. Track rows
     /// key on the recording MBID; album and edition rows on the
     /// release-group MBID (editions carry the pinned release MBID in the
-    /// row and the manifest for the library importer).
+    /// row and the manifest for the library importer). The idempotency
+    /// claim and the insert share one transaction: a repeat dispatch either
+    /// finds the original task or nothing at all, never a key without a
+    /// task.
     #[allow(clippy::too_many_arguments)]
-    fn insert(
+    async fn insert(
         &self,
         user_id: &str,
         artist: &str,
@@ -143,22 +163,6 @@ impl UnifiedDispatch {
     ) -> Result<String, String> {
         let task_id = self.mint_task_id();
         let now = now_unix_f64();
-        let claimed_key = if let Some(caller_key) = idempotency_key {
-            let namespaced = format!("dispatch:{caller_key}");
-            let claimed = self
-                .journal
-                .with_store(|store| store.claim_key(&namespaced, &task_id, "dispatch", now))?;
-            if !claimed {
-                // Repeat dispatch: answer the original task, never a twin.
-                return self
-                    .journal
-                    .with_store(|store| store.task_id_for_key(&namespaced))?
-                    .ok_or_else(|| "duplicate dispatch; original task unknown".to_owned());
-            }
-            Some(namespaced)
-        } else {
-            None
-        };
         let (release_group_mbid, recording_mbid) = if is_track {
             (String::new(), key.to_owned())
         } else {
@@ -173,51 +177,56 @@ impl UnifiedDispatch {
             origin: origin.to_owned(),
             retry_count: 0,
         };
-        let inserted = self.journal.with_store(|store| {
-            if is_track {
-                store.insert_track_task(&task, &recording_mbid, now)?;
-            } else {
-                store.insert_task(&task, now)?;
+        let details = TaskDetails {
+            release_mbid: release_mbid.map(str::to_owned),
+            track_title: is_track.then(|| title.to_owned()),
+            ..TaskDetails::default()
+        };
+        let namespaced = idempotency_key.map(|caller_key| format!("dispatch:{caller_key}"));
+        let inserted = self
+            .journal
+            .run_foreground("downloads.dispatch", move |store| {
+                if let Some(key) = &namespaced
+                    && !store.claim_key(key, &task.id, "dispatch", now)?
+                {
+                    // Repeat dispatch: answer the original task, never a twin.
+                    return Ok((store.task_id_for_key(key)?, false));
+                }
+                if is_track {
+                    store.insert_track_task(&task, &recording_mbid, now)?;
+                } else {
+                    store.insert_task(&task, now)?;
+                }
+                store.set_task_details(&task.id, &details, now)?;
+                Ok((Some(task.id.clone()), true))
+            })
+            .await?;
+        match inserted {
+            (Some(existing), false) => Ok(existing),
+            (None, _) => Err("duplicate dispatch; original task unknown".to_owned()),
+            (Some(task_id), true) => {
+                self.write_manifest_skeleton(
+                    &task_id,
+                    &release_group_mbid,
+                    artist,
+                    title,
+                    is_track,
+                    origin,
+                    release_mbid,
+                )
+                .await;
+                Ok(task_id)
             }
-            store.set_task_details(
-                &task.id,
-                &TaskDetails {
-                    release_mbid: release_mbid.map(str::to_owned),
-                    track_title: is_track.then(|| title.to_owned()),
-                    ..TaskDetails::default()
-                },
-                now,
-            )
-        });
-        if let Err(error) = inserted {
-            // The insert failed after the claim: release the key so a
-            // repeat dispatches fresh instead of pointing at a task id
-            // that was never written.
-            if let Some(namespaced) = &claimed_key {
-                let _ = self
-                    .journal
-                    .with_store(|store| store.release_key(namespaced));
-            }
-            return Err(error);
         }
-        self.write_manifest_skeleton(
-            &task_id,
-            &release_group_mbid,
-            artist,
-            title,
-            is_track,
-            origin,
-            release_mbid,
-        );
-        Ok(task_id)
     }
 
-    /// Best-effort manifest skeleton. A staging failure must not fail the
-    /// dispatch (the task still queues and the worker still polls); the
-    /// missing manifest only steers startup recovery toward a clean
-    /// restart, which is the safe direction.
+    /// Best-effort manifest skeleton, written atomically (temp file, then
+    /// rename). A staging failure must not fail the dispatch (the task
+    /// still queues and the worker still polls); the missing manifest only
+    /// steers startup recovery toward a clean restart, which is the safe
+    /// direction.
     #[allow(clippy::too_many_arguments)]
-    fn write_manifest_skeleton(
+    async fn write_manifest_skeleton(
         &self,
         task_id: &str,
         release_group_mbid: &str,
@@ -246,258 +255,343 @@ impl UnifiedDispatch {
             requested_by_user_id: None,
             attempt_id: None,
         };
-        let path = ManifestCodec::path(&self.staging_root, task_id);
-        let bytes = match ManifestCodec.encode(&manifest) {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                tracing::warn!(task_id, %error, "dispatch manifest encode failed");
-                return;
-            }
-        };
-        if let Some(parent) = path.parent()
-            && let Err(error) = std::fs::create_dir_all(parent)
-        {
-            tracing::warn!(task_id, %error, "dispatch staging dir failed");
-            return;
-        }
-        if let Err(error) = std::fs::write(&path, bytes) {
+        let staging_root = self.staging_root.clone();
+        let task_id = task_id.to_owned();
+        let written = tokio::task::spawn_blocking(move || {
+            ManifestCodec
+                .write(&staging_root, &manifest)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
+        .await
+        .map_err(|error| error.to_string())
+        .and_then(|result| result);
+        if let Err(error) = written {
             tracing::warn!(task_id, %error, "dispatch manifest write failed");
         }
     }
 
-    /// Read one task row, if it exists.
-    fn get_task(&self, task_id: &str) -> Option<TaskRow> {
+    /// Request-path read of one task's state and progress columns.
+    async fn snapshot(&self, task_id: &str) -> Result<Option<TaskSnapshot>, String> {
+        let row = sqlx::query(
+            "SELECT status, progress_percent, total_size_bytes, downloaded_bytes, \
+             error_message, quality_format, source FROM download_tasks WHERE id = ?1",
+        )
+        .bind(task_id)
+        .fetch_optional(self.journal.db().pool())
+        .await
+        .map_err(|error| error.to_string())?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let decode = |error: sqlx::Error| error.to_string();
+        let status: String = row.try_get(0).map_err(decode)?;
+        let status =
+            TaskStatus::parse(&status).ok_or_else(|| format!("unknown task status {status}"))?;
+        Ok(Some(TaskSnapshot {
+            status,
+            progress_percent: row.try_get(1).map_err(decode)?,
+            total_size_bytes: row.try_get(2).map_err(decode)?,
+            downloaded_bytes: row.try_get(3).map_err(decode)?,
+            error_message: row.try_get(4).map_err(decode)?,
+            quality_format: row.try_get(5).map_err(decode)?,
+            source: row.try_get(6).map_err(decode)?,
+        }))
+    }
+
+    /// Cancel one task: it goes terminal and its live attempts move to
+    /// cleanup with a discard disposition in the same transaction, so the
+    /// worker's cleanup pass aborts the transfer and discards the client
+    /// record.
+    async fn cancel(&self, task_id: &str) -> Result<(), String> {
+        let task_id = task_id.to_owned();
         self.journal
-            .with_store(|store| store.get_task(task_id))
-            .unwrap_or(None)
+            .run_foreground("downloads.cancel", move |store| {
+                store.cancel_task(&task_id, now_unix_f64()).map(|_| ())
+            })
+            .await
     }
 }
 
+/// Map a journal failure onto the requests seam.
+fn failed(error: String) -> requests::DispatchError {
+    requests::DispatchError::Failed(error)
+}
+
 impl requests::DownloadDispatch for UnifiedDispatch {
-    fn dispatch(
-        &self,
-        request: &requests::DispatchRequest,
-    ) -> Result<requests::DispatchOutcome, requests::DispatchError> {
-        // Editions dispatch as album fetches; the pinned release MBID rides
-        // in the row and the manifest for the library importer.
-        let is_track = request.kind == "track";
-        let origin = match request.origin {
-            requests::DispatchOrigin::User
-            | requests::DispatchOrigin::Approval
-            | requests::DispatchOrigin::Edition => "user",
-            requests::DispatchOrigin::Retry | requests::DispatchOrigin::Wanted => "retry",
-            requests::DispatchOrigin::Upgrade => "upgrade",
-        };
-        self.insert(
-            &request.user_id,
-            &request.artist_name,
-            &request.title,
-            is_track,
-            &request.key,
-            origin,
-            request.release_mbid.as_deref(),
-            request.idempotency_key.as_deref(),
-        )
-        .map(|task_id| requests::DispatchOutcome::Dispatched { task_id })
-        .map_err(requests::DispatchError::Failed)
-    }
-
-    fn cancel_task(&self, task_id: &str) {
-        let active = self
-            .get_task(task_id)
-            .is_some_and(|row| !row.status.is_terminal());
-        if !active {
-            return;
-        }
-        let _ = self.journal.with_store(|store| {
-            store.transition_task(
-                task_id,
-                super::downloads::state::TaskStatus::Cancelled,
-                now_unix_f64(),
-                None,
+    fn dispatch<'a>(
+        &'a self,
+        request: &'a requests::DispatchRequest,
+    ) -> BoxFuture<'a, Result<requests::DispatchOutcome, requests::DispatchError>> {
+        Box::pin(async move {
+            // Editions dispatch as album fetches; the pinned release MBID
+            // rides in the row and the manifest for the library importer.
+            let is_track = request.kind == "track";
+            let origin = match request.origin {
+                requests::DispatchOrigin::User
+                | requests::DispatchOrigin::Approval
+                | requests::DispatchOrigin::Edition => "user",
+                requests::DispatchOrigin::Retry | requests::DispatchOrigin::Wanted => "retry",
+                requests::DispatchOrigin::Upgrade => "upgrade",
+            };
+            self.insert(
+                &request.user_id,
+                &request.artist_name,
+                &request.title,
+                is_track,
+                &request.key,
+                origin,
+                request.release_mbid.as_deref(),
+                request.idempotency_key.as_deref(),
             )
-        });
-    }
-
-    fn task_state(&self, task_id: &str) -> requests::DispatchTaskState {
-        use super::downloads::state::TaskStatus as Db;
-        match self.get_task(task_id).map(|row| row.status) {
-            None => requests::DispatchTaskState::Missing,
-            Some(Db::Queued | Db::Downloading | Db::Processing) => {
-                requests::DispatchTaskState::Active
-            }
-            Some(Db::Completed) => requests::DispatchTaskState::Imported,
-            // The requests seam has no partial state; a short landing reads
-            // as failed here while the flows sync maps it precisely.
-            Some(Db::Partial | Db::Failed) => requests::DispatchTaskState::Failed,
-            Some(Db::Cancelled) => requests::DispatchTaskState::Cancelled,
-        }
-    }
-
-    fn task_progress(&self, task_id: &str) -> Option<requests::TaskProgress> {
-        self.get_task(task_id).map(|row| requests::TaskProgress {
-            status: row.status.as_str().to_owned(),
-            progress_percent: row.progress_percent,
-            total_size_bytes: row.total_size_bytes,
-            downloaded_bytes: row.downloaded_bytes,
-            error_message: row.error_message,
-            quality: row.quality_format,
-            protocol: row.source,
+            .await
+            .map(|task_id| requests::DispatchOutcome::Dispatched { task_id })
+            .map_err(failed)
         })
     }
 
-    fn reimportable(&self, task_id: &str) -> bool {
-        self.journal
-            .with_store(|store| store.is_reimportable(task_id))
-            .unwrap_or(false)
+    fn cancel_task<'a>(
+        &'a self,
+        task_id: &'a str,
+    ) -> BoxFuture<'a, Result<(), requests::DispatchError>> {
+        Box::pin(async move { self.cancel(task_id).await.map_err(failed) })
+    }
+
+    fn task_state<'a>(
+        &'a self,
+        task_id: &'a str,
+    ) -> BoxFuture<'a, Result<requests::DispatchTaskState, requests::DispatchError>> {
+        Box::pin(async move {
+            use requests::DispatchTaskState as State;
+            let snapshot = self.snapshot(task_id).await.map_err(failed)?;
+            Ok(match snapshot.map(|row| row.status) {
+                None => State::Missing,
+                Some(TaskStatus::Queued | TaskStatus::Downloading | TaskStatus::Processing) => {
+                    State::Active
+                }
+                Some(TaskStatus::Completed) => State::Imported,
+                Some(TaskStatus::Partial) => State::Incomplete,
+                Some(TaskStatus::Failed) => State::Failed,
+                Some(TaskStatus::Cancelled) => State::Cancelled,
+            })
+        })
+    }
+
+    fn task_progress<'a>(
+        &'a self,
+        task_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<requests::TaskProgress>, requests::DispatchError>> {
+        Box::pin(async move {
+            let snapshot = self.snapshot(task_id).await.map_err(failed)?;
+            Ok(snapshot.map(|row| requests::TaskProgress {
+                status: row.status.as_str().to_owned(),
+                progress_percent: row.progress_percent,
+                total_size_bytes: row.total_size_bytes,
+                downloaded_bytes: row.downloaded_bytes,
+                error_message: row.error_message,
+                quality: row.quality_format,
+                protocol: row.source,
+            }))
+        })
+    }
+
+    fn reimportable<'a>(
+        &'a self,
+        task_id: &'a str,
+    ) -> BoxFuture<'a, Result<bool, requests::DispatchError>> {
+        Box::pin(async move {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (SELECT 1 FROM download_tasks WHERE id = ?1 \
+                 AND status IN ('failed', 'partial') AND source_username IS NOT NULL \
+                 AND search_job_id IS NOT NULL AND candidate_index IS NOT NULL)",
+            )
+            .bind(task_id)
+            .fetch_one(self.journal.db().pool())
+            .await
+            .map_err(|error| failed(error.to_string()))
+        })
+    }
+
+    fn retry_schedule<'a>(
+        &'a self,
+        task_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<requests::RetrySchedule>, requests::DispatchError>> {
+        Box::pin(async move {
+            let policy = (self.retry)();
+            if policy.auto_retry_max() == 0 {
+                return Ok(None);
+            }
+            // The newest task for its target is the one the retry sweep
+            // acts on; once a successor exists this task is no longer
+            // waiting on a retry.
+            let row: Option<(String, i64, Option<f64>, f64)> = sqlx::query_as(
+                "SELECT t.status, t.retry_count, t.completed_at, t.updated_at \
+                 FROM download_tasks t WHERE t.id = ?1 AND t.origin != 'upgrade' \
+                 AND NOT EXISTS (SELECT 1 FROM download_tasks n \
+                   WHERE n.user_id = t.user_id AND n.download_type = t.download_type \
+                     AND n.release_group_mbid = t.release_group_mbid \
+                     AND COALESCE(n.recording_mbid, '') = COALESCE(t.recording_mbid, '') \
+                     AND n.origin != 'upgrade' \
+                     AND (n.created_at > t.created_at \
+                          OR (n.created_at = t.created_at AND n.rowid > t.rowid)))",
+            )
+            .bind(task_id)
+            .fetch_optional(self.journal.db().pool())
+            .await
+            .map_err(|error| failed(error.to_string()))?;
+            let Some((status, retry_count, completed_at, updated_at)) = row else {
+                return Ok(None);
+            };
+            let retry_count = u32::try_from(retry_count).unwrap_or(0);
+            let anchor = completed_at.unwrap_or(updated_at);
+            Ok(policy
+                .next_retry_at(retry_count, anchor, &status)
+                .map(|at| requests::RetrySchedule {
+                    retry_count,
+                    max_attempts: policy.max_attempts,
+                    next_retry_at: at.max(0.0) as u64,
+                }))
+        })
+    }
+
+    fn find_task_since<'a>(
+        &'a self,
+        owner: &'a str,
+        kind: &'a str,
+        key: &'a str,
+        since: u64,
+    ) -> BoxFuture<'a, Result<Option<String>, requests::DispatchError>> {
+        Box::pin(async move {
+            UnifiedDispatch::find_task_since(self, owner, kind, key, since)
+                .await
+                .map_err(failed)
+        })
+    }
+}
+
+impl UnifiedDispatch {
+    /// Newest task one owner started for an album or recording since a
+    /// time (epoch seconds).
+    async fn find_task_since(
+        &self,
+        owner: &str,
+        kind: &str,
+        key: &str,
+        since: u64,
+    ) -> Result<Option<String>, String> {
+        sqlx::query_scalar(
+            "SELECT id FROM download_tasks WHERE user_id = ?1 \
+             AND ((?2 = 'track' AND recording_mbid = ?3) \
+                  OR (?2 != 'track' AND release_group_mbid = ?3)) \
+             AND created_at >= ?4 ORDER BY created_at DESC, rowid DESC LIMIT 1",
+        )
+        .bind(owner)
+        .bind(kind)
+        .bind(key)
+        .bind(since as f64)
+        .fetch_optional(self.journal.db().pool())
+        .await
+        .map_err(|error| error.to_string())
     }
 }
 
 impl flows::DownloadDispatch for UnifiedDispatch {
-    fn dispatch(&self, request: &flows::DispatchRequest) -> Result<String, String> {
-        let origin = match request.origin.as_str() {
-            "upgrade" => "upgrade",
-            "wanted" => "retry",
-            _ => "user",
-        };
-        self.insert(
-            &request.user_id,
-            &request.artist,
-            &request.title,
-            request.kind == flows::DispatchKind::Track,
-            &request.mbid,
-            origin,
-            None,
-            request.idempotency_key.as_deref(),
-        )
-    }
-
-    fn task_status(&self, task_id: &str) -> Option<String> {
-        use super::downloads::state::TaskStatus as Db;
-        self.get_task(task_id).map(|row| {
-            match row.status {
-                // v2's download_task.status has no queued state; a queued
-                // task is a live download-in-progress to its requester.
-                Db::Queued | Db::Downloading => "downloading",
-                Db::Processing => "processing",
-                Db::Completed => "completed",
-                Db::Partial => "partial",
-                Db::Failed => "failed",
-                Db::Cancelled => "cancelled",
-            }
-            .to_owned()
+    fn dispatch<'a>(
+        &'a self,
+        request: &'a flows::DispatchRequest,
+    ) -> BoxFuture<'a, Result<String, String>> {
+        Box::pin(async move {
+            let origin = match request.origin.as_str() {
+                "upgrade" => "upgrade",
+                "wanted" => "retry",
+                _ => "user",
+            };
+            self.insert(
+                &request.user_id,
+                &request.artist,
+                &request.title,
+                request.kind == flows::DispatchKind::Track,
+                &request.mbid,
+                origin,
+                None,
+                request.idempotency_key.as_deref(),
+            )
+            .await
         })
     }
 
-    fn active_task_for_album(&self, rg_mbid: &str) -> Option<flows::DownloadTaskView> {
-        self.journal
-            .with_store(|store| store.newest_active_for_album(rg_mbid))
-            .unwrap_or(None)
-            .map(|row| flows::DownloadTaskView {
-                task_id: row.id,
-                status: row.status.as_str().to_owned(),
-                album_mbid: Some(row.release_group_mbid),
-            })
+    fn task_status<'a>(
+        &'a self,
+        task_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, String>> {
+        Box::pin(async move {
+            Ok(self.snapshot(task_id).await?.map(|row| {
+                match row.status {
+                    // v2's download_task.status has no queued state; a
+                    // queued task is a live download-in-progress to its
+                    // requester.
+                    TaskStatus::Queued | TaskStatus::Downloading => "downloading",
+                    TaskStatus::Processing => "processing",
+                    TaskStatus::Completed => "completed",
+                    TaskStatus::Partial => "partial",
+                    TaskStatus::Failed => "failed",
+                    TaskStatus::Cancelled => "cancelled",
+                }
+                .to_owned()
+            }))
+        })
     }
 
-    fn dispatch_upgrade(
-        &self,
-        request: &flows::DispatchRequest,
-    ) -> Result<flows::UpgradeDispatch, String> {
-        // Active-task dedup: an album already fetching gets nothing new.
-        // The seam spells "nothing queued" as AlreadyInLibrary (the sweep
-        // only needs to not count it); a true library-cutoff check waits
-        // on a library catalog port.
-        if self.active_task_for_album(&request.mbid).is_some() {
-            return Ok(flows::UpgradeDispatch::AlreadyInLibrary);
-        }
-        self.insert(
-            &request.user_id,
-            &request.artist,
-            &request.title,
-            request.kind == flows::DispatchKind::Track,
-            &request.mbid,
-            "upgrade",
-            None,
-            request.idempotency_key.as_deref(),
-        )
-        .map(flows::UpgradeDispatch::Enqueued)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::ids::UuidGenerator;
-
-    fn dispatch() -> UnifiedDispatch {
-        let staging = std::env::temp_dir().join(format!(
-            "dn-dispatch-test-{}-{}",
-            std::process::id(),
-            now_unix_f64().to_bits()
-        ));
-        UnifiedDispatch::new(
-            Arc::new(Journal::memory().expect("memory journal")),
-            Arc::new(UuidGenerator),
-            staging,
-        )
+    fn active_task_for_album<'a>(
+        &'a self,
+        rg_mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<flows::DownloadTaskView>, String>> {
+        Box::pin(async move {
+            let row: Option<(String, String, String)> = sqlx::query_as(
+                "SELECT id, status, release_group_mbid FROM download_tasks \
+                 WHERE release_group_mbid = ?1 \
+                   AND status IN ('queued', 'downloading', 'processing') \
+                 ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            )
+            .bind(rg_mbid)
+            .fetch_optional(self.journal.db().pool())
+            .await
+            .map_err(|error| error.to_string())?;
+            Ok(row.map(|(task_id, status, album)| flows::DownloadTaskView {
+                task_id,
+                status,
+                album_mbid: Some(album),
+            }))
+        })
     }
 
-    fn album_request(key: Option<&str>) -> requests::DispatchRequest {
-        requests::DispatchRequest {
-            user_id: "u1".to_owned(),
-            kind: "album".to_owned(),
-            key: "rg-1".to_owned(),
-            artist_name: "artist".to_owned(),
-            title: "album".to_owned(),
-            origin: requests::DispatchOrigin::User,
-            release_mbid: None,
-            idempotency_key: key.map(str::to_owned),
-        }
-    }
-
-    fn task_of(outcome: requests::DispatchOutcome) -> String {
-        match outcome {
-            requests::DispatchOutcome::Dispatched { task_id } => task_id,
-            requests::DispatchOutcome::AlreadyInLibrary => panic!("unexpected dedup"),
-        }
-    }
-
-    #[test]
-    fn repeat_key_answers_the_original_task() {
-        use requests::DownloadDispatch as _;
-        let dispatch = dispatch();
-        let first = task_of(dispatch.dispatch(&album_request(Some("k1"))).unwrap());
-        let second = task_of(dispatch.dispatch(&album_request(Some("k1"))).unwrap());
-        assert_eq!(first, second);
-        let other = task_of(dispatch.dispatch(&album_request(Some("k2"))).unwrap());
-        assert_ne!(first, other);
-    }
-
-    #[test]
-    fn missing_key_mints_fresh() {
-        use requests::DownloadDispatch as _;
-        let dispatch = dispatch();
-        let first = task_of(dispatch.dispatch(&album_request(None)).unwrap());
-        let second = task_of(dispatch.dispatch(&album_request(None)).unwrap());
-        assert_ne!(first, second);
-    }
-
-    #[test]
-    fn flows_seam_honors_keys() {
-        use flows::DownloadDispatch as _;
-        let dispatch = dispatch();
-        let request = flows::DispatchRequest {
-            user_id: "u1".to_owned(),
-            kind: flows::DispatchKind::Album,
-            mbid: "rg-1".to_owned(),
-            artist: "artist".to_owned(),
-            title: "album".to_owned(),
-            origin: "wanted".to_owned(),
-            idempotency_key: Some("w1".to_owned()),
-        };
-        let first = dispatch.dispatch(&request).unwrap();
-        let second = dispatch.dispatch(&request).unwrap();
-        assert_eq!(first, second);
+    fn dispatch_upgrade<'a>(
+        &'a self,
+        request: &'a flows::DispatchRequest,
+    ) -> BoxFuture<'a, Result<flows::UpgradeDispatch, String>> {
+        Box::pin(async move {
+            // Active-task dedup: an album already fetching gets nothing new.
+            // The seam spells "nothing queued" as AlreadyInLibrary (the
+            // sweep only needs to not count it); a true library-cutoff check
+            // waits on a library catalog port.
+            if flows::DownloadDispatch::active_task_for_album(self, &request.mbid)
+                .await?
+                .is_some()
+            {
+                return Ok(flows::UpgradeDispatch::AlreadyInLibrary);
+            }
+            self.insert(
+                &request.user_id,
+                &request.artist,
+                &request.title,
+                request.kind == flows::DispatchKind::Track,
+                &request.mbid,
+                "upgrade",
+                None,
+                request.idempotency_key.as_deref(),
+            )
+            .await
+            .map(flows::UpgradeDispatch::Enqueued)
+        })
     }
 }

@@ -172,7 +172,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
     )
     .map_err(stage("media setup"))?;
     let acquire = AcquireSetup::build(
-        &config.library_db_path,
+        crate::acquire::db::AcquireDb::from_runtime(&runtime),
         &config,
         auth.users.clone(),
         &http,

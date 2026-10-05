@@ -23,6 +23,11 @@ pub struct SourceHandle {
     pub filenames: Vec<String>,
     /// Client job name.
     pub job_name: String,
+    /// SABnzbd's own job id, once the add returned one. Polls and cleanup
+    /// match on it so a job SABnzbd renamed is still found. Empty for
+    /// soulseek handles.
+    #[serde(default)]
+    pub nzo_id: String,
 }
 
 /// One poll's view of a transfer batch.

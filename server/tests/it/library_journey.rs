@@ -186,7 +186,7 @@ impl Lib {
         .expect("media bundle builds");
         let mut reads = reads;
         let acquire = droppedneedle::acquire::AcquireSetup::build(
-            &self.db_path,
+            droppedneedle::acquire::db::AcquireDb::from_runtime(&self.runtime),
             &app_config,
             auth.users.clone(),
             &self.http,

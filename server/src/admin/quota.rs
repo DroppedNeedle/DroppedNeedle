@@ -57,6 +57,7 @@ pub async fn get_quota(
     })?;
     let in_window = ledger
         .count_in_window(user_id, effective.request_days, now_epoch())
+        .await
         .map_err(|error| {
             AdminError::internal(&format_args!("quota window count failed: {error:?}"))
         })?;

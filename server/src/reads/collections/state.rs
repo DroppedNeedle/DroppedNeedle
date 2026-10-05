@@ -288,9 +288,13 @@ pub struct PendingBatch {
 /// leave it empty and read the follow rows.
 pub trait PendingApprovalsSource: Send + Sync {
     /// Pending approvals, oldest first.
-    fn pending_approvals(&self) -> Vec<PendingApproval>;
+    fn pending_approvals(
+        &self,
+    ) -> futures_util::future::BoxFuture<'_, Result<Vec<PendingApproval>, String>>;
     /// Pending batches, oldest first.
-    fn pending_batches(&self) -> Vec<PendingBatch>;
+    fn pending_batches(
+        &self,
+    ) -> futures_util::future::BoxFuture<'_, Result<Vec<PendingBatch>, String>>;
 }
 
 /// Seed sink into the requests approval store. Wiring connects this so
@@ -298,9 +302,18 @@ pub trait PendingApprovalsSource: Send + Sync {
 /// mutations decide; tests leave it empty.
 pub trait ApprovalSeedSink: Send + Sync {
     /// File one pending approval.
-    fn seed_approval(&self, user_id: &str, user_name: &str, artist_mbid: &str, artist_name: &str);
+    fn seed_approval<'a>(
+        &'a self,
+        user_id: &'a str,
+        artist_mbid: &'a str,
+        artist_name: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<(), String>>;
     /// Withdraw a pending ask (the user toggled back off).
-    fn withdraw_approval(&self, user_id: &str, artist_mbid: &str);
+    fn withdraw_approval<'a>(
+        &'a self,
+        user_id: &'a str,
+        artist_mbid: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<(), String>>;
 }
 
 /// All collections state. Handlers receive this via the `State` extractor and pass

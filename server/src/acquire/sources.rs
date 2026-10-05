@@ -2,10 +2,12 @@
 //! [`DownloadSource`](super::downloads::sources::DownloadSource) seam.
 //!
 //! Each adapter reads the task row from the shared journal, searches its
-//! own side, and enqueues the `candidate_index`-th pick: the index-th peer
-//! group for slskd, the index-th release for Usenet. The worker journals
-//! the returned handle and polls it; on failover it re-enqueues the same
-//! task at the next index, which walks to the next peer or release.
+//! own side, and enqueues one pick. slskd takes the best peer group that is
+//! neither blocklisted nor already tried for this task; Usenet takes the
+//! `candidate_index`-th release, where the index counts this source's own
+//! earlier attempts. The worker journals the returned handle and polls it;
+//! on failover it re-enqueues the task, which walks to the next peer or
+//! release.
 //!
 //! Pick quality is simple on purpose (free slots and file counts for
 //! slskd; retention, size, and password gates for Usenet). The full v2
@@ -62,7 +64,10 @@ fn sab_error(error: SabnzbdError) -> SourceError {
 async fn task_row(journal: &Arc<Journal>, task_id: &str) -> Result<TaskRow, SourceError> {
     let owned = task_id.to_owned();
     let lookup = owned.clone();
-    Journal::with_store_async(journal, move |store| store.get_task(&lookup))
+    journal
+        .run("downloads.source_task", move |store| {
+            store.get_task(&lookup)
+        })
         .await
         .map_err(SourceError::LocalFault)?
         .ok_or_else(|| SourceError::Rejected(format!("unknown download task {owned}")))
@@ -109,7 +114,7 @@ impl DownloadSource for SlskdSource {
     async fn enqueue(
         &self,
         task_id: &str,
-        candidate_index: i64,
+        _candidate_index: i64,
     ) -> Result<SourceHandle, SourceError> {
         if !self.repo.is_configured() {
             return Err(SourceError::Unavailable("slskd not configured".to_owned()));
@@ -125,24 +130,39 @@ impl DownloadSource for SlskdSource {
                 .await
         }
         .map_err(slskd_error)?;
-        // Blocklisted peer/file pairs never re-enqueue: a failover that
-        // quarantined them walks to the next candidate instead. A journal
-        // hiccup reads as an empty set (fail open here; the release simply
-        // retries like before).
-        let live = Journal::with_store_async(&self.journal, |store| {
-            store.load_quarantine_set(now_unix_f64(), QUARANTINE_TTL_SECONDS)
-        })
-        .await
-        .unwrap_or_default();
+        // Blocklisted peer/file pairs never re-enqueue, and neither does a
+        // peer this task already tried: a failover walks to the best
+        // remaining group, so the list shrinking under quarantine never
+        // skips a candidate.
+        let task_key = task_id.to_owned();
+        let (live, tried) = self
+            .journal
+            .run("downloads.slskd_exclusions", move |store| {
+                let live = store.load_quarantine_set(now_unix_f64(), QUARANTINE_TTL_SECONDS)?;
+                let mut tried = Vec::new();
+                for attempt in store.list_attempts(&task_key)? {
+                    if attempt.source != "soulseek" {
+                        continue;
+                    }
+                    if let Some(handle) = store
+                        .attempt_handle_json(&attempt.id)?
+                        .and_then(|json| serde_json::from_str::<SourceHandle>(&json).ok())
+                    {
+                        tried.push(handle.username);
+                    }
+                }
+                Ok((live, tried))
+            })
+            .await
+            .map_err(SourceError::LocalFault)?;
         let hits: Vec<_> = hits
             .into_iter()
             .filter(|hit| !soulseek_hit_quarantined(&hit.username, &hit.filename, &live))
+            .filter(|hit| !tried.contains(&hit.username))
             .collect();
         let groups = Self::rank_groups(&hits);
-        let (_, files) = groups.get(candidate_index.max(0) as usize).ok_or_else(|| {
-            SourceError::Rejected(format!(
-                "slskd has no candidate {candidate_index} for {task_id}"
-            ))
+        let (_, files) = groups.first().ok_or_else(|| {
+            SourceError::Rejected(format!("slskd has no untried candidate for {task_id}"))
         })?;
         let payload: Vec<EnqueueFile> = files
             .iter()
@@ -158,6 +178,7 @@ impl DownloadSource for SlskdSource {
             username: handle.username,
             filenames: handle.filenames,
             job_name: String::new(),
+            nzo_id: String::new(),
         })
     }
 
@@ -223,6 +244,15 @@ impl DownloadSource for SlskdSource {
         let repo_handle =
             super::slskd::repository::TaskHandle::new(&handle.username, handle.filenames.clone());
         self.repo.abort(&repo_handle).await.map_err(slskd_error)
+    }
+}
+
+/// The queue's correlation handle for one journaled handle.
+fn queue_handle(handle: &SourceHandle) -> super::usenet::sabnzbd::TaskHandle {
+    super::usenet::sabnzbd::TaskHandle {
+        source: "usenet".to_owned(),
+        job_name: handle.job_name.clone(),
+        nzo_id: handle.nzo_id.clone(),
     }
 }
 
@@ -304,6 +334,21 @@ impl SabnzbdSource {
     }
 }
 
+impl SabnzbdSource {
+    /// Whether SABnzbd still lists the job in its queue or history (orphan
+    /// evidence). A job in neither is gone.
+    pub async fn job_present(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
+        let status = self
+            .queue
+            .get_status(&queue_handle(handle))
+            .await
+            .map_err(sab_error)?;
+        Ok(status.matched_transfers > 0
+            && status.status != "completed"
+            && status.status != "failed")
+    }
+}
+
 impl DownloadSource for SabnzbdSource {
     async fn enqueue(
         &self,
@@ -329,11 +374,18 @@ impl DownloadSource for SabnzbdSource {
         };
         match self.queue.get_status(&probe).await {
             Ok(status) if status.matched_transfers > 0 => {
+                let nzo_id = self
+                    .queue
+                    .inspect_materialization(&probe)
+                    .await
+                    .map(|seen| seen.nzo_id)
+                    .unwrap_or_default();
                 return Ok(SourceHandle {
                     source: "usenet".to_owned(),
                     username: String::new(),
                     filenames: Vec::new(),
                     job_name,
+                    nzo_id,
                 });
             }
             Ok(_) => {}
@@ -382,15 +434,12 @@ impl DownloadSource for SabnzbdSource {
             username: String::new(),
             filenames: Vec::new(),
             job_name: handle.job_name,
+            nzo_id: handle.nzo_id,
         })
     }
 
     async fn poll(&self, handle: &SourceHandle) -> Result<TransferProgress, SourceError> {
-        let queue_handle = super::usenet::sabnzbd::TaskHandle {
-            source: "usenet".to_owned(),
-            job_name: handle.job_name.clone(),
-            nzo_id: String::new(),
-        };
+        let queue_handle = queue_handle(handle);
         let status = self
             .queue
             .get_status(&queue_handle)
@@ -413,11 +462,7 @@ impl DownloadSource for SabnzbdSource {
     }
 
     async fn inspect(&self, handle: &SourceHandle) -> Result<Materialization, SourceError> {
-        let queue_handle = super::usenet::sabnzbd::TaskHandle {
-            source: "usenet".to_owned(),
-            job_name: handle.job_name.clone(),
-            nzo_id: String::new(),
-        };
+        let queue_handle = queue_handle(handle);
         let seen = self
             .queue
             .inspect_materialization(&queue_handle)
@@ -436,11 +481,7 @@ impl DownloadSource for SabnzbdSource {
     }
 
     async fn discard(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
-        let queue_handle = super::usenet::sabnzbd::TaskHandle {
-            source: "usenet".to_owned(),
-            job_name: handle.job_name.clone(),
-            nzo_id: String::new(),
-        };
+        let queue_handle = queue_handle(handle);
         self.queue
             .discard_client_artifacts(&queue_handle)
             .await
@@ -448,11 +489,7 @@ impl DownloadSource for SabnzbdSource {
     }
 
     async fn abort(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
-        let queue_handle = super::usenet::sabnzbd::TaskHandle {
-            source: "usenet".to_owned(),
-            job_name: handle.job_name.clone(),
-            nzo_id: String::new(),
-        };
+        let queue_handle = queue_handle(handle);
         self.queue.abort(&queue_handle).await.map_err(sab_error)
     }
 }
@@ -488,16 +525,20 @@ impl OrphanOwnership for JournalOwnership {
             .to_owned();
         let source = source.to_owned();
         let task_id = task_id.to_owned();
-        Journal::with_store_async(&self.journal, move |store| {
-            store.has_cleanup_debt(&source, &task_id, &journal_name)
-        })
-        .await
-        .map_err(SourceError::LocalFault)
+        self.journal
+            .run("downloads.cleanup_debt", move |store| {
+                store.has_cleanup_debt(&source, &task_id, &journal_name)
+            })
+            .await
+            .map_err(SourceError::LocalFault)
     }
 
     async fn task_status(&self, task_id: &str) -> Result<Option<String>, SourceError> {
         let task_id = task_id.to_owned();
-        Journal::with_store_async(&self.journal, move |store| store.get_task(&task_id))
+        self.journal
+            .run("downloads.orphan_task", move |store| {
+                store.get_task(&task_id)
+            })
             .await
             .map_err(SourceError::LocalFault)
             .map(|row| row.map(|task| task.status.as_str().to_owned()))

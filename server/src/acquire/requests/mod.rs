@@ -9,18 +9,20 @@
 //!
 //! Seams owned elsewhere: [`dispatch::DownloadDispatch`] (the downloads
 //! module implements durable fetch; intake only starts, cancels, and
-//! polls through it), the mix build behind the refresh key, and the wanted
-//! watcher loop behind the wanted rows.
+//! polls through it) and the mix build behind the refresh key. The wanted
+//! watcher loop shares the wanted rows through [`sqlite::WantedStore`].
 
 pub mod auth;
 pub mod bridges;
 pub mod dispatch;
 pub mod error;
+pub mod http;
 pub mod intake;
 pub mod ledger;
 pub mod models;
 pub mod quota;
 pub mod service;
+pub mod sqlite;
 pub mod state;
 pub mod views;
 

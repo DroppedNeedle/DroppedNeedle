@@ -236,8 +236,11 @@ async fn auth_context(
 
 /// Map a Lidarr service failure to the wire. Upstream detail reaches the
 /// log only; callers get a fixed user-safe summary.
-fn lidarr_failed(error: ServiceError) -> ImportsError {
+fn lidarr_failed(error: ServiceError, ids: &dyn crate::ids::IdGenerator) -> ImportsError {
     match error {
+        ServiceError::Approvals(cause) => {
+            ImportsError::internal(&format_args!("approval batch failed: {cause}"), ids)
+        }
         ServiceError::NotConnected => ImportsError::NotConfigured {
             message: LIDARR_NOT_CONNECTED.to_owned(),
         },
@@ -329,7 +332,7 @@ pub async fn list_lidarr_artists(
         .list_candidates(&ctx.user_id)
         .await
         .map(Json)
-        .map_err(lidarr_failed)
+        .map_err(|error| lidarr_failed(error, deps.ids.as_ref()))
 }
 
 /// Import selected Lidarr artists into the caller's follows.
@@ -347,7 +350,7 @@ pub async fn import_lidarr(
         .import_artists(&ctx.user_id, ctx.role == Role::Admin, &body.selected_mbids)
         .await
         .map(Json)
-        .map_err(lidarr_failed)
+        .map_err(|error| lidarr_failed(error, deps.ids.as_ref()))
 }
 
 /// Masked Spotify app settings.

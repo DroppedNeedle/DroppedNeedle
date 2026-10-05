@@ -1,35 +1,39 @@
 //! Acquire bundle: one setup the app mounts.
 //!
 //! [`AcquireSetup`] owns the requests state, the imports deps, the flows
-//! stores and loop deps, the unified dispatch, the source adapters, the
-//! health probes, and the download worker. `build` binds everything to
-//! the config store (credentials stay encrypted at rest);
-//! `for_tests` binds the same shape over memory stores and a scratch
-//! journal. The routers nest under `/api/v3` inside the deny-by-default
-//! session gate; only the Spotify OAuth callback mounts outside it (it is
-//! state-token identified, like v2's ungated route).
+//! stores and loop deps, the unified dispatch, the live client set, the
+//! health probes, and the download worker. Every durable piece sits on the
+//! shared SQLite runtime ([`AcquireDb`]). Clients, quotas and the download
+//! policy are resolved from the config store on use, so saving settings
+//! takes effect without a restart. `for_tests` binds the same shape over a
+//! scratch database. The routers nest under `/api/v3` inside the
+//! deny-by-default session gate; only the Spotify OAuth callback mounts
+//! outside it (it is state-token identified, like v2's ungated route).
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::{Router, extract::Request, middleware::Next, response::Response};
+use futures_util::future::BoxFuture;
 
-use super::dispatch::{Journal, UnifiedDispatch};
+use super::db::AcquireDb;
+use super::dispatch::{Journal, RetryPolicySource, UnifiedDispatch};
 use super::downloads::orphans::RecycleBin;
 use super::downloads::watchdog::{RetryPolicy, WatchdogConfig};
 use super::flows::loops::{
-    FollowDeps, SweepDeps, SyncDeps, ThreadJitter, TokioSleeper, WantedDeps,
+    FollowDeps, SweepDeps, SyncDeps, ThreadJitter, TokioSleeper, WantedDeps, WantedSettings,
     register_ephemeral_loop, spawn_follow_loop, spawn_sweep_loop, spawn_sync_loop,
     spawn_wanted_loop,
 };
 use super::flows::operations::{DropImportDeps, OpStore, register_durable_ops};
 use super::flows::seams::{
-    Clock, DropVerify, LibraryOrganise, MemoryHandoff, MemoryTicks, VerifyVerdict,
+    Candidate, CandidateSearch, Clock, DropVerify, LibraryOrganise, MemoryHandoff, MemoryTicks,
+    SystemClock, VerifyVerdict,
 };
 use super::flows::stores::{
     AdminDirectory, FollowStore as FlowsFollowStore, LibraryPresence, QuarantineStore,
-    RequestLedger, UpgradePolicy, UpgradeWorklist, WantedStore as FlowsWantedStore,
+    UpgradePolicy, UpgradeWorklist,
 };
 use super::imports::handlers::{ImportsDeps, imports_callback_router, imports_gated_router};
 use super::imports::jobs::{JobRegistry, QueuedSpotifyImport, TaskExecutor};
@@ -38,14 +42,14 @@ use super::imports::spotify::{
     FixedMbidResolver, MemoryPlaylistIndex, MemorySpotifyConnections, MemorySpotifyStates,
     MemoryTrackSink, SpotifyClient, SpotifyImportService,
 };
-use super::mirror::mirror_requests_into_flows;
 use super::probes::{LiveProbes, ProbeCache, ProbeInputs, refresh_probes, seed_from_config};
 use super::requests::quota::{QuotaLedger, QuotaPolicy};
+use super::requests::sqlite::{RequestStore, WantedStore};
 use super::requests::state::RequestsState;
 use super::search::{EmptyPoll, FanoutSearch};
 use super::settings::{
     ApprovalSeedBridge, CollectionsFollowBridge, ConfigLidarrSettings, ConfigSpotifySettings,
-    FlowsWatchBridge, FollowDecisionBridge, RequestsApprovalBridge, RequestsPendingSource,
+    FollowDecisionBridge, RequestsApprovalBridge, RequestsPendingSource,
 };
 use super::slskd::{DownloadPolicy as SlskdPolicy, ReqwestSlskdHttp, SlskdClient, SlskdRepository};
 use super::sources::{SabnzbdSource, SlskdSource};
@@ -53,7 +57,7 @@ use super::usenet::newznab::{NewznabClient, NewznabIndexer, NewznabIndexerEntry}
 use super::usenet::policy::{QualityTier, UsenetPolicy};
 use super::usenet::prowlarr::{ProwlarrClient, ProwlarrIndexer};
 use super::usenet::sabnzbd::{SabnzbdClient, SabnzbdQueue};
-use super::worker::{DownloadWorker, Source, WorkerConfig, run_startup_recovery};
+use super::worker::{DownloadWorker, Source, SourceSet, WorkerConfig, run_startup_recovery};
 use crate::auth::session::middleware::CurrentSession;
 use crate::auth::users::UsersDeps;
 use crate::auth::users::roles::Role as AuthRole;
@@ -65,10 +69,10 @@ use crate::reads::collections::state::CollectionsState;
 use crate::runtime_config::ConfigStore;
 use crate::runtime_config::secret_sections::{
     DownloadClients, LidarrImportConnection, NewznabIndexer as ConfigIndexer, ProwlarrConnection,
-    SlskdConnection,
+    SecretSection, SlskdConnection,
 };
 use crate::runtime_config::sections::{
-    DownloadPolicy, FreeMusic, SourcePriority, UsenetBackendSetting, WantedWatcher,
+    DownloadPolicy, FreeMusic, Section, SourcePriority, UsenetBackendSetting, WantedWatcher,
 };
 
 /// Spotify API bases (v2 `spotify_client.py`).
@@ -85,33 +89,215 @@ const PROBE_JOB: &str = "acquire-probe-refresh";
 /// MusicBrainz capitalization).
 const FOLLOW_INCLUDE_TYPES: &[&str] = &["Album", "Single", "EP"];
 
-/// Current unix time in epoch seconds.
-fn now_epoch() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|span| span.as_secs())
-        .unwrap_or(0)
-}
-
 /// Clamp a config integer to a non-negative `u32` (0 = unlimited).
 fn clamp_u32(value: i64) -> u32 {
-    value.max(0) as u32
+    u32::try_from(value.max(0)).unwrap_or(u32::MAX)
 }
 
 /// Clamp a config integer to a non-negative `u64`.
 fn clamp_u64(value: i64) -> u64 {
-    value.max(0) as u64
+    u64::try_from(value.max(0)).unwrap_or(0)
 }
 
 /// Clamp a config integer to a non-negative `usize`.
 fn clamp_usize(value: i64) -> usize {
-    value.max(0) as usize
+    usize::try_from(value.max(0)).unwrap_or(usize::MAX)
+}
+
+/// Read one plain section, logging and falling back to the defaults when
+/// the stored value cannot be read.
+fn plain<S: Section>(store: &ConfigStore) -> S {
+    store.get::<S>().unwrap_or_else(|error| {
+        tracing::warn!(section = S::KEY, %error, "settings read failed; using defaults");
+        S::default()
+    })
+}
+
+/// Read one secret section with its real secrets, logging and falling back
+/// to the defaults (unconfigured) when it cannot be read.
+fn secret<S: SecretSection>(store: &ConfigStore) -> S {
+    store.get_raw::<S>().unwrap_or_else(|error| {
+        tracing::warn!(section = S::KEY, %error, "settings read failed; treating as unconfigured");
+        S::default()
+    })
+}
+
+/// The settings every acquisition client is built from.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ClientSettings {
+    /// slskd connection.
+    pub slskd: SlskdConnection,
+    /// SABnzbd connection.
+    pub sabnzbd: DownloadClients,
+    /// Native Newznab indexers.
+    pub indexers: Vec<ConfigIndexer>,
+    /// Prowlarr connection.
+    pub prowlarr: ProwlarrConnection,
+    /// Lidarr import connection.
+    pub lidarr: LidarrImportConnection,
+    /// Download policy (quality gates, timeouts).
+    pub policy: DownloadPolicy,
+    /// Free Music settings.
+    pub free: FreeMusic,
+    /// Active Usenet search side.
+    pub backend: UsenetBackendSetting,
+}
+
+impl ClientSettings {
+    /// Current settings from the config store.
+    pub fn read(store: &ConfigStore) -> Self {
+        let indexers = store.get_indexers_raw().unwrap_or_else(|error| {
+            tracing::warn!(%error, "indexer settings read failed; treating as none");
+            Vec::new()
+        });
+        Self {
+            slskd: secret(store),
+            sabnzbd: secret(store),
+            indexers,
+            prowlarr: secret(store),
+            lidarr: secret(store),
+            policy: plain(store),
+            free: plain(store),
+            backend: plain(store),
+        }
+    }
+}
+
+/// One built set of clients for the current settings.
+pub struct ClientSet {
+    /// Candidate search for the flows loops.
+    pub search: Arc<FanoutSearch>,
+    /// Download sources for the worker.
+    pub sources: SourceSet,
+    /// Health probe inputs.
+    pub probe_inputs: Arc<ProbeInputs>,
+}
+
+/// Acquisition clients resolved from the live settings. The set rebuilds
+/// only when the settings it was built from change, so per-client caches
+/// survive between uses while a saved setting takes effect on the next use.
+pub struct LiveClients {
+    http: reqwest::Client,
+    settings: Arc<dyn Fn() -> ClientSettings + Send + Sync>,
+    slskd_downloads: PathBuf,
+    journal: Arc<Journal>,
+    built: Mutex<Option<(ClientSettings, Arc<ClientSet>)>>,
+}
+
+impl LiveClients {
+    /// Resolver over a settings source. `slskd_downloads` is the slskd
+    /// downloads mount (`SLSKD_DOWNLOADS_PATH`).
+    pub fn new(
+        http: reqwest::Client,
+        settings: Arc<dyn Fn() -> ClientSettings + Send + Sync>,
+        slskd_downloads: PathBuf,
+        journal: Arc<Journal>,
+    ) -> Self {
+        Self {
+            http,
+            settings,
+            slskd_downloads,
+            journal,
+            built: Mutex::new(None),
+        }
+    }
+
+    /// The client set for the current settings.
+    pub fn current(&self) -> Arc<ClientSet> {
+        let settings = (self.settings)();
+        let mut built = match self.built.lock() {
+            Ok(built) => built,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some((seen, set)) = built.as_ref()
+            && *seen == settings
+        {
+            return set.clone();
+        }
+        let set = Arc::new(self.build(&settings));
+        *built = Some((settings, set.clone()));
+        set
+    }
+
+    fn build(&self, settings: &ClientSettings) -> ClientSet {
+        let http = &self.http;
+        let usenet_policy = usenet_policy_from(&settings.policy);
+        let slskd_repo = slskd_repository(http, &settings.slskd, &self.slskd_downloads);
+        let sab_queue = sabnzbd_queue(http, &settings.sabnzbd, &usenet_policy);
+        let newznab = Arc::new(newznab_indexer(http, &settings.indexers));
+        let prowlarr = Arc::new(prowlarr_indexer(http, &settings.prowlarr));
+        let search = Arc::new(FanoutSearch::new(
+            slskd_repo.clone(),
+            newznab.clone(),
+            prowlarr.clone(),
+            settings.backend,
+            usenet_policy.indexer_timeout,
+        ));
+        let mut sources = Vec::new();
+        if let Some(repo) = slskd_repo.clone()
+            && settings.slskd.enabled
+        {
+            sources.push(Source::Slskd(SlskdSource::new(repo, self.journal.clone())));
+        }
+        if let Some(queue) = sab_queue.clone()
+            && settings.sabnzbd.sabnzbd.enabled
+        {
+            sources.push(Source::Sab(SabnzbdSource::new(
+                queue,
+                newznab.clone(),
+                prowlarr.clone(),
+                settings.backend,
+                usenet_policy,
+                self.journal.clone(),
+                Some(settings.sabnzbd.sabnzbd.category.clone()),
+                Duration::from_secs(30),
+            )));
+        }
+        let probe_inputs = Arc::new(ProbeInputs {
+            slskd: slskd_repo,
+            slskd_enabled: settings.slskd.enabled,
+            sabnzbd: sab_queue,
+            sabnzbd_section: settings.sabnzbd.clone(),
+            newznab,
+            newznab_entries: settings.indexers.clone(),
+            prowlarr,
+            prowlarr_section: settings.prowlarr.clone(),
+            lidarr: LidarrClient::new(http.clone()),
+            lidarr_section: settings.lidarr.clone(),
+            free: settings.free,
+        });
+        ClientSet {
+            search,
+            sources: Arc::new(sources),
+            probe_inputs,
+        }
+    }
+}
+
+/// Candidate search over the live client set.
+struct LiveSearch {
+    clients: Arc<LiveClients>,
+}
+
+impl CandidateSearch for LiveSearch {
+    fn search_album<'a>(
+        &'a self,
+        artist: &'a str,
+        title: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<Candidate>, String>> {
+        Box::pin(async move {
+            let search = self.clients.current().search.clone();
+            search.search_album(artist, title).await
+        })
+    }
 }
 
 /// Everything `create_app` needs to mount the acquisition routes, built once.
 #[derive(Clone)]
 pub struct AcquireSetup {
-    /// Request intake state (memory ledgers, unified dispatch).
+    /// Shared database handle.
+    pub db: AcquireDb,
+    /// Request intake state over the durable stores.
     pub requests: RequestsState,
     /// Imports deps (config-backed settings, bridged follows).
     pub imports: ImportsDeps,
@@ -125,12 +311,12 @@ pub struct AcquireSetup {
     pub flows: Arc<FlowsBundle>,
     /// Steady-state download worker.
     pub worker: Arc<DownloadWorker>,
+    /// Acquisition clients over the live settings.
+    pub clients: Arc<LiveClients>,
     /// Live health probes.
     pub probes: Arc<LiveProbes>,
-    /// Probe cache plus refresh inputs, for the probe loop.
+    /// Probe cache the refresh loop fills.
     pub probe_cache: Arc<ProbeCache>,
-    /// Probe refresh inputs.
-    pub probe_inputs: Arc<ProbeInputs>,
     /// Per-task staging root (manifests, drop jobs, quarantine).
     pub staging_root: PathBuf,
 }
@@ -138,27 +324,27 @@ pub struct AcquireSetup {
 /// Flows stores plus the loop deps built over them.
 #[derive(Clone)]
 pub struct FlowsBundle {
-    /// Wanted-watch registry (the loop's own).
-    pub watches: Arc<FlowsWantedStore>,
-    /// Flows request ledger (mirrored from requests).
-    pub ledger: Arc<RequestLedger>,
+    /// Wanted watches (shared with the wanted view).
+    pub watches: WantedStore,
+    /// Request ledger (shared with intake).
+    pub ledger: RequestStore,
     /// Follow-poll cursors.
-    pub follows: Arc<FlowsFollowStore>,
+    pub follows: FlowsFollowStore,
     /// Upgrade worklist (empty until a library scan fills it).
-    pub worklist: Arc<UpgradeWorklist>,
-    /// Quarantine registry.
-    pub quarantine: Arc<QuarantineStore>,
+    pub worklist: UpgradeWorklist,
+    /// Drop-import quarantine.
+    pub quarantine: QuarantineStore,
     /// Library presence (empty until a library port fills it).
     pub library: Arc<LibraryPresence>,
     /// Sweep ownership directory (refreshed from auth at boot).
     pub admins: Arc<AdminDirectory>,
-    /// Durable ticks.
+    /// Plugin ticks.
     pub ticks: Arc<MemoryTicks>,
     /// Free-music landing handoff (memory records; file staging waits on
     /// the path-carrying handoff).
     pub handoff: Arc<MemoryHandoff>,
     /// Durable operation records.
-    pub ops: Arc<OpStore>,
+    pub ops: OpStore,
     /// Wanted-watcher deps.
     pub wanted_deps: Arc<WantedDeps>,
     /// Follow-poll deps.
@@ -185,18 +371,9 @@ impl FlowsBundle {
     }
 }
 
-/// System clock for production flow deps.
-#[derive(Debug, Clone, Copy, Default)]
-struct SystemClock;
-
-impl Clock for SystemClock {
-    fn now_unix(&self) -> i64 {
-        now_epoch() as i64
-    }
-}
-
-/// Drop-file verify by audio extension. Unknown types fail open as local
-/// faults (never quarantined): the library engine owns identification.
+/// Drop-file verify by audio extension, matching the formats the library
+/// imports. Unknown types fail open as local faults (never quarantined):
+/// the library engine owns identification.
 struct ExtensionVerify;
 
 impl DropVerify for ExtensionVerify {
@@ -207,8 +384,9 @@ impl DropVerify for ExtensionVerify {
             .unwrap_or_default()
             .to_lowercase();
         match ext.as_str() {
-            "flac" | "mp3" | "ogg" | "oga" | "opus" | "m4a" | "mp4" | "aac" | "wav" | "aiff"
-            | "aif" | "wma" | "alac" => VerifyVerdict::Ok,
+            "flac" | "mp3" | "ogg" | "oga" | "opus" | "m4a" | "m4b" | "mp4" | "aac" | "wav" => {
+                VerifyVerdict::Ok
+            }
             _ => VerifyVerdict::LocalFault(format!("unsupported file type: {ext}")),
         }
     }
@@ -238,18 +416,101 @@ impl LibraryOrganise for StagingOrganise {
         std::fs::create_dir_all(&dir)
             .map_err(|error| format!("cannot create resolve dir: {error}"))?;
         let dest = dir.join(name);
+        if dest.exists() {
+            return Err(format!(
+                "resolve destination is occupied: {}",
+                dest.display()
+            ));
+        }
         std::fs::rename(&source, &dest).map_err(|error| format!("cannot resolve drop: {error}"))?;
         Ok(dest.to_string_lossy().into_owned())
     }
 }
 
+/// Live retry policy from the download-policy section.
+fn retry_policy_from(policy: &DownloadPolicy) -> RetryPolicy {
+    RetryPolicy {
+        enabled: policy.auto_retry_enabled,
+        max_attempts: clamp_u32(policy.auto_retry_max_attempts),
+        base_interval_minutes: policy.auto_retry_base_interval_minutes.max(0) as f64,
+        cap_seconds: 86_400.0,
+    }
+}
+
+/// Live quota policy from the download-policy section.
+fn quota_policy_from(policy: &DownloadPolicy) -> QuotaPolicy {
+    QuotaPolicy {
+        request_count: clamp_u32(policy.default_request_quota_count),
+        request_days: clamp_u32(policy.default_request_quota_days).max(1),
+        storage_gb_per_user: clamp_u64(policy.default_storage_quota_gb),
+        max_library_gb: clamp_u64(policy.max_library_size_gb),
+    }
+}
+
+/// The pieces shared by the production and test bundles.
+struct Core {
+    requests: RequestsState,
+    dispatch: Arc<UnifiedDispatch>,
+    journal: Arc<Journal>,
+    flows: Arc<FlowsBundle>,
+}
+
+/// Build the durable core: journal, dispatch, requests state and the flows
+/// bundle, all over one database, with the bridges into collections
+/// connected both ways.
+#[allow(clippy::too_many_arguments)]
+fn core(
+    db: &AcquireDb,
+    ids: Arc<dyn IdGenerator>,
+    staging_root: &Path,
+    retry: RetryPolicySource,
+    quota: Arc<QuotaLedger>,
+    search: Arc<dyn CandidateSearch>,
+    wanted_settings: Arc<dyn Fn() -> WantedSettings + Send + Sync>,
+    upgrade_policy: Arc<dyn Fn() -> UpgradePolicy + Send + Sync>,
+    collections: &mut CollectionsState,
+) -> Core {
+    let journal = Arc::new(Journal::new(db.clone()));
+    let dispatch = Arc::new(UnifiedDispatch::new(
+        journal.clone(),
+        ids,
+        staging_root.to_owned(),
+        retry,
+    ));
+    let mut requests = RequestsState::new(db, quota, dispatch.clone());
+    requests.follow_sink = Some(
+        Arc::new(FollowDecisionBridge::new(collections.follows.clone()))
+            as Arc<dyn super::requests::bridges::FollowDecisionSink>,
+    );
+    collections.acquire_approvals = Some(Arc::new(RequestsPendingSource::new(
+        requests.follows.clone(),
+    ))
+        as Arc<dyn crate::reads::collections::state::PendingApprovalsSource>);
+    collections.approval_seeds = Some(Arc::new(ApprovalSeedBridge::new(requests.follows.clone()))
+        as Arc<dyn crate::reads::collections::state::ApprovalSeedSink>);
+    let flows = Arc::new(flows_bundle(
+        db,
+        &requests,
+        search,
+        dispatch.clone(),
+        wanted_settings,
+        upgrade_policy,
+    ));
+    Core {
+        requests,
+        dispatch,
+        journal,
+        flows,
+    }
+}
+
 impl AcquireSetup {
-    /// Build the production bundle. Reads credentials and tuning from the
-    /// config store (decrypted in memory only) and connects the
-    /// collections/requests bridges both ways.
+    /// Build the production bundle over the serving database. Credentials
+    /// and tuning are read from the config store on use (decrypted in
+    /// memory only).
     #[allow(clippy::too_many_arguments)]
     pub fn build(
-        db_path: &Path,
+        db: AcquireDb,
         config: &AppConfig,
         users: UsersDeps,
         http: &crate::http_client::HttpClientFactory,
@@ -259,66 +520,56 @@ impl AcquireSetup {
     ) -> Result<Self, String> {
         let (http, no_redirect) = (http.shared().clone(), http.no_redirect().clone());
         let staging_root = config.imports_dir();
-        let journal = Arc::new(Journal::open(db_path)?);
-        let dispatch = Arc::new(UnifiedDispatch::new(
-            journal.clone(),
+        let policy_store = config_store.clone();
+        let retry: RetryPolicySource =
+            Arc::new(move || retry_policy_from(&plain::<DownloadPolicy>(&policy_store)));
+        let quota_store = config_store.clone();
+        let quota = Arc::new(QuotaLedger::new(
+            Arc::new(move || quota_policy_from(&plain::<DownloadPolicy>(&quota_store))),
+            db.clone(),
+        ));
+        let wanted_store = config_store.clone();
+        let wanted_settings = Arc::new(move || {
+            let section: WantedWatcher = plain(&wanted_store);
+            WantedSettings {
+                enabled: section.enabled,
+                watch_partial_albums: section.watch_partial_albums,
+                max_checks_per_sweep: clamp_usize(section.max_checks_per_sweep).max(1),
+                auto_download_on_find: section.auto_download_on_find,
+            }
+        });
+        let sweep_store = config_store.clone();
+        let upgrade_policy = Arc::new(move || {
+            let section: DownloadPolicy = plain(&sweep_store);
+            UpgradePolicy {
+                upgrade_allowed: section.upgrade_allowed,
+                scan_enabled: section.background_upgrade_scan_enabled,
+                max_per_run: clamp_usize(section.background_upgrade_max_per_run).max(1),
+                interval_hours: clamp_u64(section.background_upgrade_scan_interval_hours).max(1),
+            }
+        });
+        let journal_for_clients = Arc::new(Journal::new(db.clone()));
+        let settings_store = config_store.clone();
+        let clients = Arc::new(LiveClients::new(
+            http.clone(),
+            Arc::new(move || ClientSettings::read(&settings_store)),
+            config.slskd_downloads_path.clone(),
+            journal_for_clients,
+        ));
+        let search: Arc<dyn CandidateSearch> = Arc::new(LiveSearch {
+            clients: clients.clone(),
+        });
+        let core = core(
+            &db,
             ids.clone(),
-            staging_root.clone(),
-        ));
-
-        let slskd_section: SlskdConnection = config_store.get_raw().unwrap_or_default();
-        let sab_section: DownloadClients = config_store.get_raw().unwrap_or_default();
-        let indexers: Vec<ConfigIndexer> = config_store.get_indexers_raw().unwrap_or_default();
-        let prowlarr_section: ProwlarrConnection = config_store.get_raw().unwrap_or_default();
-        let lidarr_section: LidarrImportConnection = config_store.get_raw().unwrap_or_default();
-        let policy: DownloadPolicy = config_store.get().unwrap_or_default();
-        let free_section: FreeMusic = config_store.get().unwrap_or_default();
-        let backend: UsenetBackendSetting = config_store.get().unwrap_or_default();
-        let source_priority: SourcePriority = config_store.get().unwrap_or_default();
-
-        let usenet_policy = usenet_policy_from(&policy);
-        let slskd_repo = slskd_repository(&http, &slskd_section, &config.slskd_downloads_path);
-        let sab_queue = sabnzbd_queue(&http, &sab_section, &usenet_policy);
-        let newznab = Arc::new(newznab_indexer(&http, &indexers));
-        let prowlarr = Arc::new(prowlarr_indexer(&http, &prowlarr_section));
-        let search = Arc::new(FanoutSearch::new(
-            slskd_repo.clone(),
-            newznab.clone(),
-            prowlarr.clone(),
-            backend,
-            usenet_policy.indexer_timeout,
-        ));
-
-        // Requests state: real quotas, bridged follows and watches.
-        let mut requests = RequestsState::new(dispatch.clone());
-        requests.quota = Arc::new(QuotaLedger::new(QuotaPolicy {
-            request_count: clamp_u32(policy.default_request_quota_count),
-            request_days: clamp_u32(policy.default_request_quota_days).max(1),
-            storage_gb_per_user: clamp_u64(policy.default_storage_quota_gb),
-            max_library_gb: clamp_u64(policy.max_library_size_gb),
-        }));
-        requests.follow_sink = Some(
-            Arc::new(FollowDecisionBridge::new(collections.follows.clone()))
-                as Arc<dyn super::requests::bridges::FollowDecisionSink>,
+            &staging_root,
+            retry,
+            quota,
+            search,
+            wanted_settings,
+            upgrade_policy,
+            collections,
         );
-        collections.acquire_approvals = Some(Arc::new(RequestsPendingSource::new(
-            requests.follows.clone(),
-        ))
-            as Arc<dyn crate::reads::collections::state::PendingApprovalsSource>);
-        collections.approval_seeds =
-            Some(Arc::new(ApprovalSeedBridge::new(requests.follows.clone()))
-                as Arc<
-                    dyn crate::reads::collections::state::ApprovalSeedSink,
-                >);
-
-        // Flows bundle over fresh memory stores.
-        let flows = Arc::new(flows_bundle(
-            &config_store,
-            search.clone(),
-            dispatch.clone(),
-        ));
-        requests.watch_view = Some(Arc::new(FlowsWatchBridge::new(flows.watches.clone()))
-            as Arc<dyn super::requests::bridges::WatchView>);
 
         // Imports deps.
         let lidarr_settings = Arc::new(ConfigLidarrSettings::new(config_store.clone()));
@@ -364,34 +615,22 @@ impl AcquireSetup {
                 })
             },
         ));
+        let boot_settings = ClientSettings::read(&config_store);
         let probe_cache = Arc::new(ProbeCache::new(seed_from_config(
-            &slskd_section,
-            &sab_section,
-            &indexers,
-            &prowlarr_section,
-            &lidarr_section,
-            &free_section,
+            &boot_settings.slskd,
+            &boot_settings.sabnzbd,
+            &boot_settings.indexers,
+            &boot_settings.prowlarr,
+            &boot_settings.lidarr,
+            &boot_settings.free,
         )));
         let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
-        let probe_inputs = Arc::new(ProbeInputs {
-            slskd: slskd_repo.clone(),
-            slskd_enabled: slskd_section.enabled,
-            sabnzbd: sab_queue.clone(),
-            sabnzbd_section: sab_section,
-            newznab: newznab.clone(),
-            newznab_entries: indexers,
-            prowlarr: prowlarr.clone(),
-            prowlarr_section,
-            lidarr: LidarrClient::new(http.clone()),
-            lidarr_section,
-            free: free_section,
-        });
         let imports = ImportsDeps {
             http: http.clone(),
             lidarr: LidarrClient::new(http.clone()),
             lidarr_settings,
             follows: Arc::new(CollectionsFollowBridge::new(collections.follows.clone())),
-            approvals: Arc::new(RequestsApprovalBridge::new(requests.follows.clone())),
+            approvals: Arc::new(RequestsApprovalBridge::new(core.requests.follows.clone())),
             spotify: spotify_client,
             spotify_settings,
             spotify_states,
@@ -407,50 +646,43 @@ impl AcquireSetup {
             base_path: config.base_path.clone(),
         };
 
-        // Worker over the configured sources.
-        let mut sources = Vec::new();
-        if let Some(repo) = slskd_repo {
-            sources.push(Source::Slskd(SlskdSource::new(repo, journal.clone())));
-        }
-        if let Some(queue) = sab_queue.clone() {
-            sources.push(Source::Sab(SabnzbdSource::new(
-                queue,
-                newznab,
-                prowlarr,
-                backend,
-                usenet_policy,
-                journal.clone(),
-                Some(probe_inputs.sabnzbd_section.sabnzbd.category.clone()),
-                Duration::from_secs(30),
-            )));
-        }
-        let sab_mount = sab_queue
-            .as_ref()
-            .map(|_| PathBuf::from(probe_inputs.sabnzbd_section.sabnzbd.downloads_mount.clone()));
+        // Worker over the live sources and tuning.
+        let worker_clients = clients.clone();
+        let worker_store = config_store.clone();
+        let worker_staging = staging_root.clone();
         let worker = Arc::new(DownloadWorker::new(
-            journal.clone(),
-            sources,
-            worker_config(&policy, &source_priority, &staging_root, sab_mount),
+            core.journal.clone(),
+            Arc::new(move || worker_clients.current().sources.clone()),
+            Arc::new(move || {
+                let policy: DownloadPolicy = plain(&worker_store);
+                let source_priority: SourcePriority = plain(&worker_store);
+                let sab: DownloadClients = secret(&worker_store);
+                let sab_mount = (!sab.sabnzbd.url.is_empty())
+                    .then(|| PathBuf::from(sab.sabnzbd.downloads_mount.clone()));
+                worker_config(&policy, &source_priority, &worker_staging, sab_mount)
+            }),
         ));
 
         Ok(Self {
-            requests,
+            db,
+            requests: core.requests,
             imports,
             users,
-            dispatch,
-            journal,
-            flows,
+            dispatch: core.dispatch,
+            journal: core.journal,
+            flows: core.flows,
             worker,
+            clients,
             probes,
             probe_cache,
-            probe_inputs,
             staging_root,
         })
     }
 
-    /// Test bundle over memory stores and a scratch journal. Bridges stay
-    /// connected (collections reads share the requests approval store) so
-    /// hooked-state apps behave like production.
+    /// Test bundle over a scratch database, default settings and the
+    /// memory import stores. Bridges stay connected (collections reads
+    /// share the requests approval store) so hooked-state apps behave like
+    /// production. Call inside a tokio runtime.
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(
         users: UsersDeps,
@@ -464,57 +696,37 @@ impl AcquireSetup {
         use super::imports::lidarr::{MemoryApprovalSink, MemoryFollowStore, MemoryLidarrSettings};
         use super::imports::spotify::MemorySpotifySettings;
 
+        let db = AcquireDb::scratch()?;
         let staging_root = std::env::temp_dir().join(format!(
             "dn-acquire-test-{}-{}",
             std::process::id(),
-            now_epoch()
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|span| span.as_nanos())
+                .unwrap_or(0)
         ));
-        let journal = Arc::new(Journal::memory()?);
-        let dispatch = Arc::new(UnifiedDispatch::new(
-            journal.clone(),
-            ids.clone(),
-            staging_root.clone(),
-        ));
-        let mut requests = RequestsState::new(dispatch.clone());
-        requests.follow_sink = Some(
-            Arc::new(FollowDecisionBridge::new(collections.follows.clone()))
-                as Arc<dyn super::requests::bridges::FollowDecisionSink>,
-        );
-        collections.acquire_approvals = Some(Arc::new(RequestsPendingSource::new(
-            requests.follows.clone(),
-        ))
-            as Arc<dyn crate::reads::collections::state::PendingApprovalsSource>);
-        collections.approval_seeds =
-            Some(Arc::new(ApprovalSeedBridge::new(requests.follows.clone()))
-                as Arc<
-                    dyn crate::reads::collections::state::ApprovalSeedSink,
-                >);
-        let search = Arc::new(FanoutSearch::new(
-            None,
-            Arc::new(NewznabIndexer::new(
-                Vec::new(),
-                Duration::from_secs(300),
-                Duration::from_secs(60),
-                Duration::from_secs(300),
-                Duration::from_secs(5),
-            )),
-            Arc::new(ProwlarrIndexer::new(
-                None,
-                Vec::new(),
-                false,
-                Duration::from_secs(300),
-                Duration::from_secs(300),
-                Duration::from_secs(5),
-            )),
-            UsenetBackendSetting::default(),
-            Duration::from_secs(5),
-        ));
-        let flows = Arc::new(flows_bundle_memory(search, dispatch.clone()));
-        requests.watch_view = Some(Arc::new(FlowsWatchBridge::new(flows.watches.clone()))
-            as Arc<dyn super::requests::bridges::WatchView>);
         let factory =
             crate::http_client::HttpClientFactory::new().map_err(|error| error.to_string())?;
         let http = factory.shared().clone();
+        let clients = Arc::new(LiveClients::new(
+            http.clone(),
+            Arc::new(ClientSettings::default),
+            staging_root.clone(),
+            Arc::new(Journal::new(db.clone())),
+        ));
+        let core = core(
+            &db,
+            ids.clone(),
+            &staging_root,
+            Arc::new(RetryPolicy::default),
+            Arc::new(QuotaLedger::unlimited(db.clone())),
+            Arc::new(LiveSearch {
+                clients: clients.clone(),
+            }),
+            Arc::new(WantedSettings::default),
+            Arc::new(UpgradePolicy::default),
+            collections,
+        );
         let spotify_client = SpotifyClient::new(
             http.clone(),
             factory.no_redirect().clone(),
@@ -574,8 +786,8 @@ impl AcquireSetup {
             ids: ids.clone(),
             base_path: String::new(),
         };
-        let worker = Arc::new(DownloadWorker::new(
-            journal.clone(),
+        let worker = Arc::new(DownloadWorker::fixed(
+            core.journal.clone(),
             Vec::new(),
             WorkerConfig {
                 staging_root: staging_root.clone(),
@@ -591,44 +803,18 @@ impl AcquireSetup {
             &FreeMusic::default(),
         )));
         let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
-        // Probe inputs over empty clients; the test loop never runs them.
-        let probe_inputs = Arc::new(ProbeInputs {
-            slskd: None,
-            slskd_enabled: false,
-            sabnzbd: None,
-            sabnzbd_section: DownloadClients::default(),
-            newznab: Arc::new(NewznabIndexer::new(
-                Vec::new(),
-                Duration::from_secs(300),
-                Duration::from_secs(60),
-                Duration::from_secs(300),
-                Duration::from_secs(5),
-            )),
-            newznab_entries: Vec::new(),
-            prowlarr: Arc::new(ProwlarrIndexer::new(
-                None,
-                Vec::new(),
-                false,
-                Duration::from_secs(300),
-                Duration::from_secs(300),
-                Duration::from_secs(5),
-            )),
-            prowlarr_section: ProwlarrConnection::default(),
-            lidarr: LidarrClient::new(reqwest::Client::new()),
-            lidarr_section: LidarrImportConnection::default(),
-            free: FreeMusic::default(),
-        });
         Ok(Self {
-            requests,
+            db,
+            requests: core.requests,
             imports,
             users,
-            dispatch,
-            journal,
-            flows,
+            dispatch: core.dispatch,
+            journal: core.journal,
+            flows: core.flows,
             worker,
+            clients,
             probes,
             probe_cache,
-            probe_inputs,
             staging_root,
         })
     }
@@ -637,9 +823,15 @@ impl AcquireSetup {
     /// first). Boot calls this once; the sweep skips cleanly when no
     /// admin exists.
     pub async fn refresh_admins(&self) {
-        let jonka = self.users.users.list(10_000, 0).await;
-        let Ok((rows, _)) = jonka else {
-            return;
+        let rows = match self.users.users.list(10_000, 0).await {
+            Ok((rows, _)) => rows,
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    "admin directory refresh failed; upgrade sweep idles"
+                );
+                return;
+            }
         };
         let mut admins: Vec<_> = rows
             .iter()
@@ -674,21 +866,39 @@ impl AcquireSetup {
         imports_callback_router(self.imports.clone())
     }
 
-    /// Run startup recovery: durable-op registration plus the journal
-    /// classification. Must run before serving traffic.
+    /// Run startup recovery before serving traffic: durable-op
+    /// registration and recovery, the download journal classification,
+    /// and the request ledger (interrupted cancels and dispatches).
+    /// Re-running after a clean shutdown is a no-op.
     pub async fn run_recovery(
         &self,
         wakeups: &DurableWorkWakeups,
         lane: &WriteLane,
     ) -> Result<super::worker::RecoveryReport, String> {
         register_durable_ops(wakeups, lane).await?;
-        // Startup recovery is synchronous sqlite + staging reads; keep it
-        // off the async runtime.
-        let journal = self.journal.clone();
-        let staging_root = self.staging_root.clone();
-        tokio::task::spawn_blocking(move || run_startup_recovery(&journal, &staging_root))
+        let now = super::db::now_epoch();
+        let ops = self.flows.ops.recover(super::db::to_i64(now)).await?;
+        if ops.interrupted > 0 || ops.resumed > 0 {
+            tracing::info!(
+                interrupted = ops.interrupted,
+                resumed = ops.resumed,
+                "flow operations recovered"
+            );
+        }
+        let report = run_startup_recovery(&self.journal, &self.staging_root).await?;
+        let requests = super::requests::service::RequestsService::new(&self.requests)
+            .recover()
             .await
-            .map_err(|error| format!("acquire recovery join failed: {error}"))?
+            .map_err(|error| format!("request recovery failed: {error:?}"))?;
+        if requests.cancelled > 0 || requests.relinked > 0 || requests.redispatched > 0 {
+            tracing::info!(
+                cancelled = requests.cancelled,
+                relinked = requests.relinked,
+                redispatched = requests.redispatched,
+                "requests recovered"
+            );
+        }
+        Ok(report)
     }
 
     /// Spawn the flows loops, the download worker, and the probe refresh
@@ -700,25 +910,6 @@ impl AcquireSetup {
         shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> Result<Vec<(&'static str, tokio::task::JoinHandle<()>)>, String> {
         let system_clock: Arc<dyn Clock> = Arc::new(SystemClock);
-        // Mirror hook ahead of the wanted and sync passes.
-        let mirror = {
-            let store = self.requests.store.clone();
-            let wanted = self.requests.wanted.clone();
-            let ledger = self.flows.ledger.clone();
-            let watches = self.flows.watches.clone();
-            Arc::new(move || {
-                mirror_requests_into_flows(
-                    &store,
-                    &wanted,
-                    &ledger,
-                    &watches,
-                    SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .map(|span| span.as_secs() as i64)
-                        .unwrap_or(0),
-                );
-            })
-        };
         let mut out = Vec::new();
         let (handle, _) = spawn_wanted_loop(
             TokioSleeper::new(shutdown.clone()),
@@ -727,7 +918,6 @@ impl AcquireSetup {
             lane.clone(),
             system_clock.clone(),
             self.flows.wanted_deps.clone(),
-            Some(mirror.clone()),
         )
         .await?;
         out.push((handle.name, handle.task));
@@ -738,7 +928,6 @@ impl AcquireSetup {
             lane.clone(),
             system_clock.clone(),
             self.flows.follow_deps.clone(),
-            None,
         )
         .await?;
         out.push((handle.name, handle.task));
@@ -748,7 +937,6 @@ impl AcquireSetup {
             lane.clone(),
             system_clock.clone(),
             self.flows.sweep_deps.clone(),
-            None,
         )
         .await?;
         out.push((handle.name, handle.task));
@@ -758,7 +946,6 @@ impl AcquireSetup {
             lane.clone(),
             system_clock,
             self.flows.sync_deps.clone(),
-            Some(mirror),
         )
         .await?;
         out.push((handle.name, handle.task));
@@ -778,7 +965,8 @@ impl AcquireSetup {
     }
 
     /// Probe refresh loop: one pass now, then every five minutes until
-    /// shutdown. Registered ephemeral for liveness.
+    /// shutdown, each pass over the clients the current settings build.
+    /// Registered ephemeral for liveness.
     async fn spawn_probe_loop(
         &self,
         wakeups: DurableWorkWakeups,
@@ -787,29 +975,31 @@ impl AcquireSetup {
     ) -> Result<tokio::task::JoinHandle<()>, String> {
         register_ephemeral_loop(&wakeups, &lane, PROBE_JOB).await?;
         let cache = self.probe_cache.clone();
-        let inputs = self.probe_inputs.clone();
+        let clients = self.clients.clone();
         Ok(tokio::spawn(async move {
             // A pre-signaled shutdown skips the first pass entirely.
-            if *shutdown.borrow() {
-                let _ = wakeups
-                    .set_job_state(&lane, PROBE_JOB, JobState::Stopped)
-                    .await;
-                return;
-            }
-            loop {
-                refresh_probes(&cache, &inputs).await;
-                let _ = wakeups.heartbeat(&lane, PROBE_JOB).await;
-                tokio::select! {
-                    () = tokio::time::sleep(PROBE_INTERVAL) => {}
-                    _ = shutdown.changed() => break,
+            if !*shutdown.borrow() {
+                loop {
+                    let inputs = clients.current().probe_inputs.clone();
+                    refresh_probes(&cache, &inputs).await;
+                    if let Err(error) = wakeups.heartbeat(&lane, PROBE_JOB).await {
+                        tracing::warn!(%error, "probe refresh heartbeat failed");
+                    }
+                    tokio::select! {
+                        () = tokio::time::sleep(PROBE_INTERVAL) => {}
+                        _ = shutdown.changed() => break,
+                    }
+                    if *shutdown.borrow() {
+                        break;
+                    }
                 }
-                if *shutdown.borrow() {
-                    break;
-                }
             }
-            let _ = wakeups
+            if let Err(error) = wakeups
                 .set_job_state(&lane, PROBE_JOB, JobState::Stopped)
-                .await;
+                .await
+            {
+                tracing::warn!(%error, "probe refresh stop state write failed");
+            }
         }))
     }
 }
@@ -822,11 +1012,13 @@ async fn translate_principal(
     mut request: Request,
     next: Next,
 ) -> Response {
-    use super::requests::{auth::Principal, error::RequestsError};
+    use super::requests::{auth::Principal, error::RequestsError, http::HttpError};
     use axum::response::IntoResponse;
 
-    let missing = || RequestsError::Unauthorized {
-        message: "Authentication required".to_owned(),
+    let missing = || {
+        HttpError(RequestsError::Unauthorized {
+            message: "Authentication required".to_owned(),
+        })
     };
     let Some(session) = request.extensions().get::<CurrentSession>().cloned() else {
         return missing().into_response();
@@ -835,14 +1027,16 @@ async fn translate_principal(
         Ok(Some(user)) => user,
         Ok(None) => return missing().into_response(),
         Err(StoreError::Conflict) => {
-            return RequestsError::Conflict {
+            return HttpError(RequestsError::Conflict {
                 message: "Conflicting state".to_owned(),
-            }
+            })
             .into_response();
         }
         Err(StoreError::Internal(cause)) => {
-            return RequestsError::internal(&format_args!("user lookup failed: {cause}"))
-                .into_response();
+            return HttpError(RequestsError::internal(&format_args!(
+                "user lookup failed: {cause}"
+            )))
+            .into_response();
         }
     };
     request.extensions_mut().insert(Principal {
@@ -857,36 +1051,30 @@ async fn translate_principal(
     next.run(request).await
 }
 
-/// Flows bundle with live config-backed settings closures.
+/// Flows bundle over the shared durable stores and live settings.
 fn flows_bundle(
-    config_store: &Arc<ConfigStore>,
-    search: Arc<FanoutSearch>,
+    db: &AcquireDb,
+    requests: &RequestsState,
+    search: Arc<dyn CandidateSearch>,
     dispatch: Arc<UnifiedDispatch>,
+    wanted_settings: Arc<dyn Fn() -> WantedSettings + Send + Sync>,
+    upgrade_policy: Arc<dyn Fn() -> UpgradePolicy + Send + Sync>,
 ) -> FlowsBundle {
-    let watches = Arc::new(FlowsWantedStore::new());
-    let ledger = Arc::new(RequestLedger::new());
-    let follows = Arc::new(FlowsFollowStore::new());
-    let worklist = Arc::new(UpgradeWorklist::new());
-    let quarantine = Arc::new(QuarantineStore::new());
+    let watches = requests.wanted.clone();
+    let ledger = requests.store.clone();
+    let follows = FlowsFollowStore::new(db.clone());
+    let worklist = UpgradeWorklist::new(db.clone());
+    let quarantine = QuarantineStore::new(db.clone());
     let library = Arc::new(LibraryPresence::new());
     let admins = Arc::new(AdminDirectory::new());
     let ticks = Arc::new(MemoryTicks::new());
     let handoff = Arc::new(MemoryHandoff::new());
-    let ops = Arc::new(OpStore::new());
-    let wanted_store = config_store.clone();
+    let ops = OpStore::new(db.clone());
     let wanted_deps = Arc::new(WantedDeps {
-        settings: Arc::new(move || {
-            let section: WantedWatcher = wanted_store.get().unwrap_or_default();
-            super::flows::loops::WantedSettings {
-                enabled: section.enabled,
-                watch_partial_albums: section.watch_partial_albums,
-                max_checks_per_sweep: clamp_usize(section.max_checks_per_sweep).max(1),
-                auto_download_on_find: section.auto_download_on_find,
-            }
-        }),
+        settings: wanted_settings,
         watches: watches.clone(),
         ledger: ledger.clone(),
-        search: search.clone(),
+        search,
         downloads: dispatch.clone(),
         library: library.clone(),
         ticks: ticks.clone(),
@@ -909,17 +1097,8 @@ fn flows_bundle(
             utc_ymd(days)
         }),
     });
-    let sweep_store = config_store.clone();
     let sweep_deps = Arc::new(SweepDeps {
-        policy: Arc::new(move || {
-            let section: DownloadPolicy = sweep_store.get().unwrap_or_default();
-            UpgradePolicy {
-                upgrade_allowed: section.upgrade_allowed,
-                scan_enabled: section.background_upgrade_scan_enabled,
-                max_per_run: clamp_usize(section.background_upgrade_max_per_run).max(1),
-                interval_hours: clamp_u64(section.background_upgrade_scan_interval_hours).max(1),
-            }
-        }),
+        policy: upgrade_policy,
         worklist: worklist.clone(),
         admins: admins.clone(),
         downloads: dispatch.clone(),
@@ -927,7 +1106,7 @@ fn flows_bundle(
     });
     let sync_deps = Arc::new(SyncDeps {
         ledger: ledger.clone(),
-        downloads: dispatch.clone(),
+        downloads: dispatch,
         library: library.clone(),
         ticks: ticks.clone(),
     });
@@ -942,61 +1121,6 @@ fn flows_bundle(
         ticks,
         handoff,
         ops,
-        wanted_deps,
-        follow_deps,
-        sweep_deps,
-        sync_deps,
-    }
-}
-
-/// Flows bundle with static defaults (tests).
-#[cfg(any(test, feature = "test-support"))]
-fn flows_bundle_memory(search: Arc<FanoutSearch>, dispatch: Arc<UnifiedDispatch>) -> FlowsBundle {
-    let watches = Arc::new(FlowsWantedStore::new());
-    let ledger = Arc::new(RequestLedger::new());
-    let follows = Arc::new(FlowsFollowStore::new());
-    let ticks = Arc::new(MemoryTicks::new());
-    let wanted_deps = Arc::new(WantedDeps {
-        settings: Arc::new(super::flows::loops::WantedSettings::default),
-        watches: watches.clone(),
-        ledger: ledger.clone(),
-        search,
-        downloads: dispatch.clone(),
-        library: Arc::new(LibraryPresence::new()),
-        ticks: ticks.clone(),
-    });
-    let follow_deps = Arc::new(FollowDeps {
-        follows: follows.clone(),
-        poll: Arc::new(EmptyPoll::new()),
-        downloads: dispatch.clone(),
-        ticks: ticks.clone(),
-        include_types: Vec::new(),
-        today: Arc::new(|| "2024-01-01".to_owned()),
-    });
-    let sweep_deps = Arc::new(SweepDeps {
-        policy: Arc::new(UpgradePolicy::default),
-        worklist: Arc::new(UpgradeWorklist::new()),
-        admins: Arc::new(AdminDirectory::new()),
-        downloads: dispatch.clone(),
-        ticks: ticks.clone(),
-    });
-    let sync_deps = Arc::new(SyncDeps {
-        ledger: ledger.clone(),
-        downloads: dispatch,
-        library: Arc::new(LibraryPresence::new()),
-        ticks: ticks.clone(),
-    });
-    FlowsBundle {
-        watches,
-        ledger,
-        follows,
-        worklist: Arc::new(UpgradeWorklist::new()),
-        quarantine: Arc::new(QuarantineStore::new()),
-        library: Arc::new(LibraryPresence::new()),
-        admins: Arc::new(AdminDirectory::new()),
-        ticks,
-        handoff: Arc::new(MemoryHandoff::new()),
-        ops: Arc::new(OpStore::new()),
         wanted_deps,
         follow_deps,
         sweep_deps,
@@ -1182,22 +1306,14 @@ fn worker_config(
         protected.push(mount.clone());
     }
     let recycle = match RecycleBin::resolve(&policy.recycle_bin_path, &[]) {
-        None => {
-            tracing::info!("recycle bin unresolved; prune skipped");
-            None
-        }
+        None => None,
         Some(root) => RecycleBin::guarded(root, policy.recycle_retention_days.max(0), &protected),
     };
     WorkerConfig {
         interval: super::worker::WORKER_INTERVAL,
         max_concurrent_downloads: clamp_usize(policy.max_concurrent_downloads).max(1),
         max_failover_attempts: policy.max_failover_attempts.max(0),
-        retry: RetryPolicy {
-            enabled: policy.auto_retry_enabled,
-            max_attempts: clamp_u32(policy.auto_retry_max_attempts),
-            base_interval_minutes: policy.auto_retry_base_interval_minutes.max(0) as f64,
-            cap_seconds: 86_400.0,
-        },
+        retry: retry_policy_from(policy),
         watchdog: WatchdogConfig {
             poll_interval_seconds: 2.0,
             stall_timeout_seconds: (clamp_u64(policy.download_stall_timeout_minutes).max(1) * 60)

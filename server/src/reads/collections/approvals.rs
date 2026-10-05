@@ -24,7 +24,7 @@ const BATCH_SAMPLE_COUNT: usize = 3;
 /// List pending auto-download requests across users. Admin only. When
 /// wiring connects the acquire approval store, reads share it with the
 /// approval mutations; otherwise this reads the follow rows.
-pub fn list_approvals(
+pub async fn list_approvals(
     state: &CollectionsState,
     caller: &Principal,
 ) -> Result<AutoDownloadApprovalListResponse, CollectionsError> {
@@ -33,6 +33,8 @@ pub fn list_approvals(
     if let Some(source) = &state.acquire_approvals {
         let items = source
             .pending_approvals()
+            .await
+            .map_err(|cause| CollectionsError::internal(&cause))?
             .into_iter()
             .map(|row| AutoDownloadApprovalItem {
                 user_id: row.user_id,
@@ -74,7 +76,7 @@ const IMPORT_SOURCE: &str = "import";
 /// wiring connects the acquire approval store, this lists the acquire
 /// batches (every card actionable through the batch mutations); otherwise
 /// it groups the follow rows per user as before.
-pub fn list_approval_batches(
+pub async fn list_approval_batches(
     state: &CollectionsState,
     caller: &Principal,
 ) -> Result<ApprovalBatchListResponse, CollectionsError> {
@@ -83,6 +85,8 @@ pub fn list_approval_batches(
     if let Some(source) = &state.acquire_approvals {
         let mut batches = source
             .pending_batches()
+            .await
+            .map_err(|cause| CollectionsError::internal(&cause))?
             .into_iter()
             .map(|batch| ApprovalBatchItem {
                 batch_id: batch.batch_id,
@@ -174,7 +178,7 @@ pub async fn list_approvals_handler(
     State(state): State<CollectionsState>,
     caller: Principal,
 ) -> Result<Json<AutoDownloadApprovalListResponse>, CollectionsError> {
-    list_approvals(&state, &caller).map(Json)
+    list_approvals(&state, &caller).await.map(Json)
 }
 
 /// List pending requests grouped per user.
@@ -191,5 +195,5 @@ pub async fn list_approval_batches_handler(
     State(state): State<CollectionsState>,
     caller: Principal,
 ) -> Result<Json<ApprovalBatchListResponse>, CollectionsError> {
-    list_approval_batches(&state, &caller).map(Json)
+    list_approval_batches(&state, &caller).await.map(Json)
 }

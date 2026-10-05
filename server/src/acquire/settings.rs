@@ -20,33 +20,24 @@
 //! - [`RequestsPendingSource`] and [`ApprovalSeedBridge`] close the loop
 //!   the other way: collections reads share the requests approval store,
 //!   and follow toggles file the approvals the admin mutations decide.
-//! - [`FlowsWatchBridge`] feeds the wanted view with the flows loop's
-//!   watches.
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
+use futures_util::future::BoxFuture;
+
+use super::db::now_epoch;
 use super::imports::lidarr::{ApprovalSink, FollowStore, LidarrSettingsStore};
 use super::imports::models::{LidarrConnectionSettings, SpotifySettings as ImportsSpotifySettings};
 use super::imports::spotify::SpotifySettingsStore;
-use super::requests::bridges::{FollowDecisionSink, WatchView, WatchedAlbum};
-use super::requests::ledger::{ApprovalBatch, FollowApproval, FollowApprovalStore};
+use super::requests::bridges::FollowDecisionSink;
+use super::requests::sqlite::FollowApprovalStore;
 use crate::reads::collections::state::{
     ApprovalSeedSink, AutoDownloadState, FollowRow, FollowStore as CollectionsFollowStore,
     PendingApproval, PendingApprovalsSource, PendingBatch,
 };
 use crate::runtime_config::secret_sections::{LidarrImportConnection, SpotifySettings};
 use crate::runtime_config::{ConfigStore, Secret};
-
-/// Current unix time in epoch seconds.
-fn now_epoch() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|span| span.as_secs())
-        .unwrap_or(0)
-}
 
 /// Lidarr connection settings over the `lidarr_import` secret section.
 /// Read failures fail closed to empty (the import then reports Lidarr as
@@ -265,35 +256,32 @@ impl FollowStore for CollectionsFollowBridge {
     }
 }
 
-/// Imports approval sink over the requests approval store. Batch ids run
-/// `batch-{n}` like the memory sink, so fixtures and production agree.
+/// Imports approval sink over the requests approval store.
 pub struct RequestsApprovalBridge {
-    approvals: Arc<FollowApprovalStore>,
-    next_batch: AtomicU64,
+    approvals: FollowApprovalStore,
 }
 
 impl RequestsApprovalBridge {
     /// Sink over the shared requests approval store.
-    pub fn new(approvals: Arc<FollowApprovalStore>) -> Self {
-        Self {
-            approvals,
-            next_batch: AtomicU64::new(1),
-        }
+    pub fn new(approvals: FollowApprovalStore) -> Self {
+        Self { approvals }
     }
 }
 
 impl ApprovalSink for RequestsApprovalBridge {
-    fn create_import_batch(&self, user_id: &str, pairs: &[(String, String)]) -> String {
-        let id = format!("batch-{}", self.next_batch.fetch_add(1, Ordering::Relaxed));
-        self.approvals.seed_batch(ApprovalBatch {
-            batch_id: id.clone(),
-            user_id: user_id.to_owned(),
-            user_name: user_id.to_owned(),
-            artists: pairs.to_vec(),
-            state: "pending".to_owned(),
-            requested_at: now_epoch(),
-        });
-        id
+    fn create_import_batch<'a>(
+        &'a self,
+        user_id: &'a str,
+        pairs: &'a [(String, String)],
+    ) -> BoxFuture<'a, Result<String, String>> {
+        Box::pin(async move {
+            let id = format!("batch-{}", uuid::Uuid::new_v4().simple());
+            self.approvals
+                .create_batch(&id, user_id, pairs, "lidarr_import", now_epoch())
+                .await
+                .map_err(|error| format!("{error:?}"))?;
+            Ok(id)
+        })
     }
 }
 
@@ -319,7 +307,10 @@ impl FollowDecisionSink for FollowDecisionBridge {
     ) {
         let mut rows = match self.follows.follows.write() {
             Ok(rows) => rows,
-            Err(_) => return,
+            Err(error) => {
+                tracing::warn!(%error, "follow rows lock failed; auto-download not armed");
+                return;
+            }
         };
         let now = now_epoch();
         if let Some(key) = find_follow_key(&rows, user_id, artist_mbid) {
@@ -348,7 +339,10 @@ impl FollowDecisionSink for FollowDecisionBridge {
     fn clear_auto_download(&self, user_id: &str, artist_mbid: &str) {
         let mut rows = match self.follows.follows.write() {
             Ok(rows) => rows,
-            Err(_) => return,
+            Err(error) => {
+                tracing::warn!(%error, "follow rows lock failed; auto-download not cleared");
+                return;
+            }
         };
         let key = find_follow_key(&rows, user_id, artist_mbid);
         if let Some(key) = key
@@ -363,20 +357,25 @@ impl FollowDecisionSink for FollowDecisionBridge {
 
 /// Collections approval reads over the requests approval store.
 pub struct RequestsPendingSource {
-    approvals: Arc<FollowApprovalStore>,
+    approvals: FollowApprovalStore,
 }
 
 impl RequestsPendingSource {
     /// Source over the shared requests approval store.
-    pub fn new(approvals: Arc<FollowApprovalStore>) -> Self {
+    pub fn new(approvals: FollowApprovalStore) -> Self {
         Self { approvals }
     }
 }
 
 impl PendingApprovalsSource for RequestsPendingSource {
-    fn pending_approvals(&self) -> Vec<PendingApproval> {
-        match self.approvals.pending() {
-            Ok(rows) => rows
+    fn pending_approvals(&self) -> BoxFuture<'_, Result<Vec<PendingApproval>, String>> {
+        Box::pin(async move {
+            let rows = self
+                .approvals
+                .pending()
+                .await
+                .map_err(|error| format!("{error:?}"))?;
+            Ok(rows
                 .into_iter()
                 .map(|row| PendingApproval {
                     user_id: row.user_id,
@@ -385,17 +384,18 @@ impl PendingApprovalsSource for RequestsPendingSource {
                     artist_name: row.artist_name,
                     requested_at: row.requested_at,
                 })
-                .collect(),
-            Err(error) => {
-                tracing::warn!(?error, "pending approvals read failed");
-                Vec::new()
-            }
-        }
+                .collect())
+        })
     }
 
-    fn pending_batches(&self) -> Vec<PendingBatch> {
-        match self.approvals.pending_batches() {
-            Ok(rows) => rows
+    fn pending_batches(&self) -> BoxFuture<'_, Result<Vec<PendingBatch>, String>> {
+        Box::pin(async move {
+            let rows = self
+                .approvals
+                .pending_batches()
+                .await
+                .map_err(|error| format!("{error:?}"))?;
+            Ok(rows
                 .into_iter()
                 .map(|batch| PendingBatch {
                     batch_id: batch.batch_id,
@@ -404,76 +404,49 @@ impl PendingApprovalsSource for RequestsPendingSource {
                     artists: batch.artists,
                     requested_at: batch.requested_at,
                 })
-                .collect(),
-            Err(error) => {
-                tracing::warn!(?error, "pending batches read failed");
-                Vec::new()
-            }
-        }
+                .collect())
+        })
     }
 }
 
 /// Collections seed sink over the requests approval store.
 pub struct ApprovalSeedBridge {
-    approvals: Arc<FollowApprovalStore>,
+    approvals: FollowApprovalStore,
 }
 
 impl ApprovalSeedBridge {
     /// Sink over the shared requests approval store.
-    pub fn new(approvals: Arc<FollowApprovalStore>) -> Self {
+    pub fn new(approvals: FollowApprovalStore) -> Self {
         Self { approvals }
     }
 }
 
 impl ApprovalSeedSink for ApprovalSeedBridge {
-    fn seed_approval(&self, user_id: &str, user_name: &str, artist_mbid: &str, artist_name: &str) {
-        self.approvals.seed_pending(FollowApproval {
-            user_id: user_id.to_owned(),
-            user_name: user_name.to_owned(),
-            artist_mbid: artist_mbid.to_lowercase(),
-            artist_name: artist_name.to_owned(),
-            state: "pending".to_owned(),
-            requested_at: now_epoch(),
-        });
+    fn seed_approval<'a>(
+        &'a self,
+        user_id: &'a str,
+        artist_mbid: &'a str,
+        artist_name: &'a str,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            self.approvals
+                .file_pending(user_id, artist_mbid, artist_name, now_epoch())
+                .await
+                .map_err(|error| format!("{error:?}"))
+        })
     }
 
-    fn withdraw_approval(&self, user_id: &str, artist_mbid: &str) {
-        if let Err(error) = self.approvals.withdraw(user_id, artist_mbid) {
-            tracing::warn!(?error, "approval withdraw failed");
-        }
-    }
-}
-
-/// Requests watch view over the flows loop's watch registry. The loop
-/// tracks next-check times rather than creation times, so creation reads
-/// as the next check due.
-pub struct FlowsWatchBridge {
-    watches: Arc<super::flows::stores::WantedStore>,
-}
-
-impl FlowsWatchBridge {
-    /// View over the shared flows watch registry.
-    pub fn new(watches: Arc<super::flows::stores::WantedStore>) -> Self {
-        Self { watches }
-    }
-}
-
-impl WatchView for FlowsWatchBridge {
-    fn watching(&self) -> Vec<WatchedAlbum> {
-        self.watches
-            .list_due(i64::MAX, usize::MAX)
-            .into_iter()
-            .map(|watch| {
-                let next_check_at = watch.next_check_at.max(0) as u64;
-                WatchedAlbum {
-                    key: watch.rg_mbid,
-                    user_id: watch.user_id,
-                    artist_name: watch.artist,
-                    album_title: watch.title,
-                    created_at: next_check_at,
-                    next_check_at,
-                }
-            })
-            .collect()
+    fn withdraw_approval<'a>(
+        &'a self,
+        user_id: &'a str,
+        artist_mbid: &'a str,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            self.approvals
+                .withdraw(user_id, artist_mbid)
+                .await
+                .map(|_| ())
+                .map_err(|error| format!("{error:?}"))
+        })
     }
 }

@@ -1028,7 +1028,7 @@ async fn stats_maintained_totals_track_mutations() {
 /// maintained through the triggers.
 #[tokio::test]
 async fn migration_0005_backfills_on_upgrade() {
-    assert_eq!(latest_version(), 5);
+    assert!(latest_version() >= 5);
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -1097,7 +1097,7 @@ async fn migration_0005_backfills_on_upgrade() {
         .fetch_one(&pool)
         .await
         .expect("stamp reads");
-    assert_eq!(version, 5);
+    assert_eq!(version, latest_version());
     let fts: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM local_tracks_fts WHERE local_tracks_fts MATCH ?")
             .bind("\"b-side\"")

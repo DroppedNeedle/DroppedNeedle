@@ -1,9 +1,7 @@
-//! Stage-7 acquire journeys through the real app: request → approve →
-//! land, wanted watch → candidate → auto-download, drop → quarantine →
-//! resolve, follow toggle → approval → armed follow, plus the 0002
-//! migration check. Scratch databases and sandbox dirs only; the worker
-//! loop itself never runs here (landing is simulated through the journal,
-//! which is exactly what the loop would write).
+//! Acquire journeys through the real app: request, approve, land; follow
+//! toggle, approval, armed follow; plus the migration upgrade check and
+//! the usenet re-attach. Scratch databases only; the worker loop never
+//! runs here (landing is simulated through the journal).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -155,7 +153,7 @@ impl E2e {
         )
         .expect("media bundle builds");
         let acquire = AcquireSetup::build(
-            &self.db_path,
+            droppedneedle::acquire::db::AcquireDb::from_runtime(&self.runtime),
             &app_config,
             auth.users.clone(),
             &self.http,
@@ -390,232 +388,7 @@ async fn acquire_request_approve_land() {
 }
 
 // ---------------------------------------------------------------------------
-// Journey 2: wanted watch → loopback candidate → auto-download dispatch.
-// The candidate comes from the in-repo slskd mock over HTTP; nothing
-// touches the live network.
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn acquire_wanted_watch_auto_downloads() {
-    use droppedneedle::acquire::flows::loops::{
-        LoopState, WantedDeps, WantedSettings, wanted_tick,
-    };
-    use droppedneedle::acquire::flows::seams::MemoryTicks;
-    use droppedneedle::acquire::flows::stores::{
-        LibraryPresence, RequestLedger, RequestRow, WantedStore, Watch,
-    };
-    use droppedneedle::acquire::search::FanoutSearch;
-    use droppedneedle::acquire::slskd::{
-        DownloadPolicy, MOCK_API_KEY, MockSlskd, ReqwestSlskdHttp, SlskdClient, SlskdRepository,
-    };
-    use droppedneedle::acquire::usenet::newznab::NewznabIndexer;
-    use droppedneedle::acquire::usenet::prowlarr::ProwlarrIndexer;
-
-    let e2e = E2e::open("wanted").await;
-    let (app, acquire) = e2e.build();
-    let (_admin, _molly, molly_id) = seed_users(&app).await;
-
-    // slskd mock with its canned peer set, behind the production fan-out.
-    let mock = MockSlskd::start().await.expect("mock starts");
-    let mount = std::env::temp_dir().join(format!(
-        "acquire-journey-slskd-{}-{}",
-        std::process::id(),
-        uuid::Uuid::new_v4().simple()
-    ));
-    let transport = ReqwestSlskdHttp::new(reqwest::Client::new(), &mock.base_url(), MOCK_API_KEY);
-    let repo = Arc::new(SlskdRepository::new(
-        SlskdClient::new(transport),
-        &mock.base_url(),
-        MOCK_API_KEY,
-        mount,
-        DownloadPolicy::default(),
-    ));
-    let search = Arc::new(FanoutSearch::new(
-        Some(repo),
-        Arc::new(NewznabIndexer::new(
-            Vec::new(),
-            Duration::from_secs(300),
-            Duration::from_secs(60),
-            Duration::from_secs(300),
-            Duration::from_secs(5),
-        )),
-        Arc::new(ProwlarrIndexer::new(
-            None,
-            Vec::new(),
-            false,
-            Duration::from_secs(300),
-            Duration::from_secs(300),
-            Duration::from_secs(5),
-        )),
-        droppedneedle::runtime_config::sections::UsenetBackendSetting::default(),
-        Duration::from_secs(5),
-    ));
-    assert!(search.any_configured());
-
-    // A failed ask enrols a watch; the loop finds the mock candidate.
-    let now = 1_700_000_000i64;
-    let ledger = Arc::new(RequestLedger::new());
-    ledger.upsert(RequestRow {
-        mbid: "rg-green".to_owned(),
-        kind: "album".to_owned(),
-        user_id: molly_id.clone(),
-        artist: "Massive Attack".to_owned(),
-        title: "Blue Lines".to_owned(),
-        status: "failed".to_owned(),
-        task_id: None,
-        generation: 1,
-        completed_at: None,
-    });
-    let watches = Arc::new(WantedStore::new());
-    watches.enrol(Watch {
-        rg_mbid: "rg-green".to_owned(),
-        user_id: molly_id.clone(),
-        artist: "Massive Attack".to_owned(),
-        title: "Blue Lines".to_owned(),
-        first_release_date: None,
-        quiet_streak: 0,
-        next_check_at: now,
-    });
-    let ticks = Arc::new(MemoryTicks::new());
-    let deps = WantedDeps {
-        settings: Arc::new(WantedSettings::default),
-        watches,
-        ledger,
-        search,
-        downloads: acquire.dispatch.clone(),
-        library: Arc::new(LibraryPresence::new()),
-        ticks: ticks.clone(),
-    };
-    let mut state = LoopState::new();
-    let summary = wanted_tick(now, &mut state, &deps).await;
-    assert_eq!(summary.dispatched, 1, "candidate auto-downloads");
-    let tasks = journal_tasks(&e2e.db_path);
-    assert_eq!(tasks.len(), 1);
-    assert_eq!(tasks[0].1, "queued");
-    let manifest = acquire.staging_root.join(&tasks[0].0).join("manifest.json");
-    assert!(manifest.is_file(), "wanted dispatch stages a manifest");
-}
-
-// ---------------------------------------------------------------------------
-// Journey 3: drop folder import → quarantine → resolve by hand.
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn acquire_drop_quarantine_resolve() {
-    use droppedneedle::acquire::flows::operations::{
-        DropImportDeps, DropJob, ResolveDecision, create_drop_job, process_drop_job,
-        quarantine_dir, resolve_quarantined_item,
-    };
-    use droppedneedle::acquire::flows::seams::{
-        ManualClock, MemoryTicks, ScriptedVerify, VerifyVerdict,
-    };
-
-    struct MoveAside {
-        staging_root: PathBuf,
-    }
-    impl droppedneedle::acquire::flows::seams::LibraryOrganise for MoveAside {
-        fn organise(&self, job_id: &str, staged_path: &str) -> Result<String, String> {
-            let dest = self
-                .staging_root
-                .join("resolved")
-                .join(job_id)
-                .join("track.flac");
-            std::fs::create_dir_all(dest.parent().expect("resolve parent"))
-                .map_err(|error| format!("resolve dir: {error}"))?;
-            std::fs::rename(staged_path, &dest).map_err(|error| format!("resolve: {error}"))?;
-            Ok(dest.to_string_lossy().into_owned())
-        }
-    }
-
-    let e2e = E2e::open("drop").await;
-    let (_app, acquire) = e2e.build();
-    let staging = acquire.staging_root.clone();
-    let incoming = staging.join("_incoming");
-    std::fs::create_dir_all(&incoming).expect("incoming creates");
-    let upload = incoming.join("track.flac");
-    std::fs::write(&upload, b"fake audio").expect("upload writes");
-
-    // Adopt the upload as a drop job through the real bundle stores.
-    let mut job: DropJob = create_drop_job(
-        e2e.runtime.wakeups(),
-        e2e.runtime.lane(),
-        &acquire.flows.ops,
-        &staging,
-        1,
-        "u-molly",
-        &[("track.flac".to_owned(), upload.clone())],
-        1_700_000_000,
-    )
-    .await
-    .expect("drop job creates");
-    assert!(!upload.exists(), "adoption moves the upload into staging");
-
-    // A bad-source verdict quarantines the file.
-    let verify = Arc::new(ScriptedVerify::new());
-    verify.set(
-        "track.flac",
-        VerifyVerdict::BadSource("fake rip".to_owned()),
-    );
-    let clock = Arc::new(ManualClock::new(1_700_000_000));
-    let deps = DropImportDeps {
-        verify,
-        organise: Arc::new(MoveAside {
-            staging_root: staging.clone(),
-        }),
-        quarantine: acquire.flows.quarantine.clone(),
-        ledger: acquire.flows.ledger.clone(),
-        ticks: Arc::new(MemoryTicks::new()),
-        clock,
-    };
-    process_drop_job(
-        e2e.runtime.wakeups(),
-        e2e.runtime.lane(),
-        &acquire.flows.ops,
-        &deps,
-        &staging,
-        &mut job,
-        None,
-    )
-    .await
-    .expect("drop processes");
-    assert!(
-        matches!(
-            job.items[0].outcome,
-            Some(droppedneedle::acquire::flows::operations::DropItemOutcome::Quarantined(_))
-        ),
-        "bad source quarantines"
-    );
-    assert!(
-        quarantine_dir(&staging).join("track.flac").is_file()
-            || acquire.flows.quarantine.get("drop-1:track.flac").is_some(),
-        "quarantine holds the file"
-    );
-
-    // A hand resolve moves it out and clears the registry.
-    let resolved =
-        resolve_quarantined_item(&deps, &mut job, "track.flac", ResolveDecision::Match, None)
-            .expect("resolve runs");
-    assert!(resolved, "match resolves the item");
-    assert!(
-        matches!(
-            job.items[0].outcome,
-            Some(droppedneedle::acquire::flows::operations::DropItemOutcome::Resolved(_))
-        ),
-        "item resolves"
-    );
-    assert!(
-        staging
-            .join("resolved")
-            .join("drop-1")
-            .join("track.flac")
-            .is_file(),
-        "resolved file lands in the staging area"
-    );
-    assert!(acquire.flows.quarantine.get("drop-1:track.flac").is_none());
-}
-
-// ---------------------------------------------------------------------------
-// Journey 4: follow toggle → approval queue → armed follow. The collections
+// Journey 2: follow toggle → approval queue → armed follow. The collections
 // legs and the requests mutations share one approval store through the
 // wiring bridges.
 // ---------------------------------------------------------------------------
@@ -684,11 +457,11 @@ async fn acquire_follow_approval_arms_auto_download() {
 }
 
 // ---------------------------------------------------------------------------
-// Migration 0002: applies cleanly on top of 0001, and reruns idempotently.
+// Migrations apply cleanly on top of the baseline and rerun idempotently.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn migration_0002_download_idempotency() {
+async fn migrations_upgrade_from_baseline() {
     let dir = std::env::temp_dir().join(format!(
         "acquire-migration-{}-{}",
         std::process::id(),
@@ -697,7 +470,7 @@ async fn migration_0002_download_idempotency() {
     std::fs::create_dir_all(&dir).expect("scratch dir creates");
     let db_path = dir.join("migrate.db");
 
-    // Baseline only, exactly as a pre-stage-7 database would hold it.
+    // Baseline only, as the oldest database would hold it.
     let baseline = include_str!("../../migrations/0001_baseline.sql");
     {
         let conn = rusqlite::Connection::open(&db_path).expect("scratch opens");
@@ -712,20 +485,27 @@ async fn migration_0002_download_idempotency() {
         .expect("runtime opens");
     apply_migrations(runtime.pool())
         .await
-        .expect("0002 applies on top of 0001");
+        .expect("later migrations apply on top of 0001");
     let conn = rusqlite::Connection::open(&db_path).expect("scratch reopens");
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .expect("version reads");
     assert_eq!(version, latest_version());
-    let table: Option<String> = conn
-        .query_row(
-            "SELECT name FROM sqlite_master WHERE name = 'download_idempotency_keys'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("table lookup runs");
-    assert_eq!(table.as_deref(), Some("download_idempotency_keys"));
+    for name in [
+        "download_idempotency_keys",
+        "acquire_operations",
+        "acquire_follow_cursors",
+        "acquire_flow_quarantine",
+    ] {
+        let table: Option<String> = conn
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE name = ?1",
+                [name],
+                |row| row.get(0),
+            )
+            .expect("table lookup runs");
+        assert_eq!(table.as_deref(), Some(name));
+    }
     drop(conn);
 
     // A second run is a clean no-op (the boot path reruns every start).
@@ -764,9 +544,11 @@ async fn usenet_enqueue_reattaches_to_existing_job() {
     mock.queue_job("nzo-1", &job_name, "Downloading", "100.0", "50.0", "50");
     let (base, _server) = serve_loopback(mock.router()).await.expect("mock serves");
 
-    let journal = Arc::new(Journal::memory().expect("memory journal"));
+    let db = droppedneedle::acquire::db::AcquireDb::scratch().expect("scratch db");
+    db.add_user("u1", "U", "user").await.expect("user seeds");
+    let journal = Arc::new(Journal::new(db));
     journal
-        .with_store(|store| {
+        .run("test.seed", |store| {
             store.insert_task(
                 &NewTask {
                     id: task_id.to_owned(),
@@ -780,6 +562,7 @@ async fn usenet_enqueue_reattaches_to_existing_job() {
                 1_700_000_000.0,
             )
         })
+        .await
         .expect("task inserts");
     let policy = UsenetPolicy::v2_defaults();
     let queue = Arc::new(SabnzbdQueue::new(

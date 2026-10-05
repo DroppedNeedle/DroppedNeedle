@@ -89,7 +89,7 @@ pub fn set_follow(
 
 /// Turn auto-download on or off. Enabling needs a follow; the approval state
 /// is active at once for trusted/admin, pending for regular users.
-pub fn set_auto_download(
+pub async fn set_auto_download(
     state: &CollectionsState,
     caller: &Principal,
     artist_mbid: &str,
@@ -97,42 +97,48 @@ pub fn set_auto_download(
 ) -> Result<FollowStatusResponse, CollectionsError> {
     state.check_injection()?;
     let key = (caller.user_id.clone(), artist_mbid.to_owned());
-    let mut rows = write_store(&state.follows.follows, "follow")?;
-    let row = rows.get_mut(&key).ok_or_else(|| {
-        if body.enabled {
-            CollectionsError::Conflict {
-                message: "Follow the artist before enabling auto-download".to_owned(),
+    // The store guard lives only in this block: it must not be held
+    // across the approval-store await below.
+    let (pending_now, artist_name, response) = {
+        let mut rows = write_store(&state.follows.follows, "follow")?;
+        let row = rows.get_mut(&key).ok_or_else(|| {
+            if body.enabled {
+                CollectionsError::Conflict {
+                    message: "Follow the artist before enabling auto-download".to_owned(),
+                }
+            } else {
+                CollectionsError::NotFound
             }
+        })?;
+        if body.enabled {
+            row.auto_download = true;
+            row.requested_at = Some(now_epoch());
+            row.auto_download_state = if caller.role.is_curator() {
+                AutoDownloadState::Active
+            } else {
+                AutoDownloadState::Pending
+            };
         } else {
-            CollectionsError::NotFound
+            row.auto_download = false;
+            row.auto_download_state = AutoDownloadState::Off;
+            row.requested_at = None;
         }
-    })?;
-    if body.enabled {
-        row.auto_download = true;
-        row.requested_at = Some(now_epoch());
-        row.auto_download_state = if caller.role.is_curator() {
-            AutoDownloadState::Active
-        } else {
-            AutoDownloadState::Pending
-        };
-    } else {
-        row.auto_download = false;
-        row.auto_download_state = AutoDownloadState::Off;
-        row.requested_at = None;
-    }
-    let pending_now = row.auto_download_state == AutoDownloadState::Pending;
-    let seed_names = (row.user_name.clone(), row.artist_name.clone());
-    let response = status_for(artist_mbid, Some(row));
-    // Mirror the verdict into the acquire approval store, when wired. The
-    // store guard drops first: the sink locks the acquire store, and the
-    // acquire write-through locks this one, so nesting would invert.
-    drop(rows);
+        let pending_now = row.auto_download_state == AutoDownloadState::Pending;
+        let artist_name = row.artist_name.clone();
+        let response = status_for(artist_mbid, Some(row));
+        (pending_now, artist_name, response)
+    };
+    // Mirror the verdict into the acquire approval store, when wired.
     if pending_now && let Some(sink) = &state.approval_seeds {
-        sink.seed_approval(&caller.user_id, &seed_names.0, artist_mbid, &seed_names.1);
+        sink.seed_approval(&caller.user_id, artist_mbid, &artist_name)
+            .await
+            .map_err(|cause| CollectionsError::internal(&cause))?;
     } else if !body.enabled
         && let Some(sink) = &state.approval_seeds
     {
-        sink.withdraw_approval(&caller.user_id, artist_mbid);
+        sink.withdraw_approval(&caller.user_id, artist_mbid)
+            .await
+            .map_err(|cause| CollectionsError::internal(&cause))?;
     }
     Ok(response)
 }
@@ -320,7 +326,9 @@ pub async fn set_auto_download_handler(
     Path(artist_mbid): Path<String>,
     ValidJson(body): ValidJson<AutoDownloadBody>,
 ) -> Result<Json<FollowStatusResponse>, CollectionsError> {
-    set_auto_download(&state, &caller, &artist_mbid, &body).map(Json)
+    set_auto_download(&state, &caller, &artist_mbid, &body)
+        .await
+        .map(Json)
 }
 
 /// List the caller's followed artists.

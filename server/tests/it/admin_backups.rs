@@ -41,7 +41,11 @@ impl Rig {
             .expect("scratch runtime opens");
         let rig = TestRig::new().expect("rig builds");
         let admin_user = rig.seed_user("brenda", Role::Admin).await;
-        let quota = Arc::new(droppedneedle::acquire::requests::quota::QuotaLedger::unlimited());
+        let quota = Arc::new(
+            droppedneedle::acquire::requests::quota::QuotaLedger::unlimited(
+                droppedneedle::acquire::db::AcquireDb::from_runtime(&runtime),
+            ),
+        );
         let cache = Arc::new(droppedneedle::providers::InMemoryProviderCache::new());
         let providers = Arc::new(droppedneedle::providers::Providers::new(cache.clone()));
         let backup_dir = dir.join("backups");

@@ -46,7 +46,11 @@ impl Rig {
         let rig = TestRig::new().expect("rig builds");
         let admin_user = rig.seed_user("brenda", Role::Admin).await;
         let plain_user = rig.seed_user("molly", Role::User).await;
-        let quota = Arc::new(droppedneedle::acquire::requests::quota::QuotaLedger::unlimited());
+        let quota = Arc::new(
+            droppedneedle::acquire::requests::quota::QuotaLedger::unlimited(
+                droppedneedle::acquire::db::AcquireDb::from_runtime(&runtime),
+            ),
+        );
         let cache = Arc::new(droppedneedle::providers::InMemoryProviderCache::new());
         let providers = Arc::new(droppedneedle::providers::Providers::new(cache.clone()));
         let jobs = droppedneedle::jobs::wiring::JobsSetup::for_tests(rig.deps.clone());
@@ -345,10 +349,27 @@ async fn quota_usage_counts_asks_and_bytes() {
         .duration_since(UNIX_EPOCH)
         .expect("clock reads")
         .as_secs();
-    for _ in 0..3 {
-        rig.quota
-            .record_ask(&rig.user_id, now)
-            .expect("ask records");
+    // Asks count from the durable request rows.
+    for key in ["ask-1", "ask-2", "ask-3"] {
+        lane_seed(
+            &rig,
+            &format!(
+                "INSERT INTO request_history (musicbrainz_id_lower, musicbrainz_id, \
+                 artist_name, album_title, requested_at, status, user_id) \
+                 VALUES ('{key}', '{key}', 'artist', 'album', {now}, 'pending', ?1)"
+            ),
+            &[&rig.user_id],
+        )
+        .await;
+        lane_seed(
+            &rig,
+            &format!(
+                "INSERT INTO request_history_requesters \
+                 (user_id, musicbrainz_id_lower, requested_at) VALUES (?1, '{key}', {now})"
+            ),
+            &[&rig.user_id],
+        )
+        .await;
     }
     lane_seed(
         &rig,

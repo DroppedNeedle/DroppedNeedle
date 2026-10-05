@@ -11,6 +11,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::{Arc, Mutex};
 
+use futures_util::future::BoxFuture;
+
 /// What triggered a dispatch. Origins decide quota exemptions, never routing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DispatchOrigin {
@@ -85,6 +87,8 @@ pub enum DispatchTaskState {
     /// Landed and imported.
     Imported,
     /// Landed short.
+    Incomplete,
+    /// Failed.
     Failed,
     /// Cancelled.
     Cancelled,
@@ -127,21 +131,54 @@ pub struct TaskProgress {
 /// only starts, cancels, and polls through here.
 pub trait DownloadDispatch: Send + Sync {
     /// Start one fetch for an admitted ask.
-    fn dispatch(&self, request: &DispatchRequest) -> Result<DispatchOutcome, DispatchError>;
-    /// Cancel one fetch. Unknown ids are a no-op success.
-    fn cancel_task(&self, task_id: &str);
+    fn dispatch<'a>(
+        &'a self,
+        request: &'a DispatchRequest,
+    ) -> BoxFuture<'a, Result<DispatchOutcome, DispatchError>>;
+    /// Cancel one fetch: the task stops and its live transfer is handed to
+    /// cleanup. Unknown or finished ids are a no-op success.
+    fn cancel_task<'a>(&'a self, task_id: &'a str) -> BoxFuture<'a, Result<(), DispatchError>>;
     /// Read one fetch's state for status sync.
-    fn task_state(&self, task_id: &str) -> DispatchTaskState;
+    fn task_state<'a>(
+        &'a self,
+        task_id: &'a str,
+    ) -> BoxFuture<'a, Result<DispatchTaskState, DispatchError>>;
     /// Read one fetch's progress snapshot for the request views. Unknown
-    /// ids answer None; fakes that track no progress keep the default.
-    fn task_progress(&self, _task_id: &str) -> Option<TaskProgress> {
-        None
-    }
+    /// ids answer None.
+    fn task_progress<'a>(
+        &'a self,
+        task_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<TaskProgress>, DispatchError>>;
     /// Whether one fetch can be reimported (failed or short-landed with
-    /// its candidate still linked). Fakes keep the default false.
-    fn reimportable(&self, _task_id: &str) -> bool {
-        false
-    }
+    /// its candidate still linked).
+    fn reimportable<'a>(&'a self, task_id: &'a str) -> BoxFuture<'a, Result<bool, DispatchError>>;
+    /// The pending auto-retry for one failed fetch, or None when no retry
+    /// is scheduled (auto-retry off, ladder exhausted, or not failed).
+    fn retry_schedule<'a>(
+        &'a self,
+        task_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<RetrySchedule>, DispatchError>>;
+    /// The newest fetch one owner started for an album or recording at or
+    /// after `since` (epoch seconds). Startup recovery uses it to relink a
+    /// request whose task was created but never linked.
+    fn find_task_since<'a>(
+        &'a self,
+        owner: &'a str,
+        kind: &'a str,
+        key: &'a str,
+        since: u64,
+    ) -> BoxFuture<'a, Result<Option<String>, DispatchError>>;
+}
+
+/// One scheduled auto-retry for a failed fetch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetrySchedule {
+    /// Retries already spent.
+    pub retry_count: u32,
+    /// Retries the ladder allows.
+    pub max_attempts: u32,
+    /// Epoch seconds when the next retry is due.
+    pub next_retry_at: u64,
 }
 
 /// Scripted fake for tests: canned outcomes in call order, every call
@@ -160,6 +197,8 @@ pub struct ScriptedDispatch {
     progress: Mutex<HashMap<String, TaskProgress>>,
     /// Task ids the reimport guard passes for.
     reimportable_ids: Mutex<HashSet<String>>,
+    /// Scripted auto-retry schedules by task id.
+    retries: Mutex<HashMap<String, RetrySchedule>>,
     /// Counter for minted task ids.
     next_task: Mutex<u64>,
 }
@@ -175,6 +214,7 @@ impl ScriptedDispatch {
             states: Mutex::new(HashMap::new()),
             progress: Mutex::new(HashMap::new()),
             reimportable_ids: Mutex::new(HashSet::new()),
+            retries: Mutex::new(HashMap::new()),
             next_task: Mutex::new(1),
         })
     }
@@ -194,6 +234,15 @@ impl ScriptedDispatch {
     /// Flip a task to failed.
     pub fn fail(&self, task_id: &str) {
         self.set_state(task_id, DispatchTaskState::Failed);
+    }
+
+    /// A task's current scripted state.
+    pub fn state_of(&self, task_id: &str) -> DispatchTaskState {
+        self.states
+            .lock()
+            .ok()
+            .and_then(|states| states.get(task_id).copied())
+            .unwrap_or(DispatchTaskState::Missing)
     }
 
     /// Flip a task's state.
@@ -226,6 +275,13 @@ impl ScriptedDispatch {
         }
     }
 
+    /// Script one task's pending auto-retry.
+    pub fn set_retry(&self, task_id: &str, schedule: RetrySchedule) {
+        if let Ok(mut retries) = self.retries.lock() {
+            retries.insert(task_id.to_owned(), schedule);
+        }
+    }
+
     /// Script one task as passing the reimport guard.
     pub fn set_reimportable(&self, task_id: &str) {
         if let Ok(mut ids) = self.reimportable_ids.lock() {
@@ -244,14 +300,15 @@ impl Default for ScriptedDispatch {
             states: Mutex::new(HashMap::new()),
             progress: Mutex::new(HashMap::new()),
             reimportable_ids: Mutex::new(HashSet::new()),
+            retries: Mutex::new(HashMap::new()),
             next_task: Mutex::new(1),
         }
     }
 }
 
 #[cfg(any(test, feature = "test-support"))]
-impl DownloadDispatch for ScriptedDispatch {
-    fn dispatch(&self, request: &DispatchRequest) -> Result<DispatchOutcome, DispatchError> {
+impl ScriptedDispatch {
+    fn dispatch_now(&self, request: &DispatchRequest) -> DispatchOutcome {
         if let Ok(mut calls) = self.calls.lock() {
             calls.push(request.clone());
         }
@@ -261,7 +318,7 @@ impl DownloadDispatch for ScriptedDispatch {
             if let DispatchOutcome::Dispatched { task_id } = &outcome {
                 self.set_state(task_id, DispatchTaskState::Active);
             }
-            return Ok(outcome);
+            return outcome;
         }
         let task_id = self
             .next_task
@@ -273,35 +330,86 @@ impl DownloadDispatch for ScriptedDispatch {
             })
             .unwrap_or_else(|_| "task-fallback".to_owned());
         self.set_state(&task_id, DispatchTaskState::Active);
-        Ok(DispatchOutcome::Dispatched { task_id })
+        DispatchOutcome::Dispatched { task_id }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl DownloadDispatch for ScriptedDispatch {
+    fn dispatch<'a>(
+        &'a self,
+        request: &'a DispatchRequest,
+    ) -> BoxFuture<'a, Result<DispatchOutcome, DispatchError>> {
+        Box::pin(async move { Ok(self.dispatch_now(request)) })
     }
 
-    fn cancel_task(&self, task_id: &str) {
-        if let Ok(mut cancels) = self.cancels.lock() {
-            cancels.push(task_id.to_owned());
-        }
-        self.set_state(task_id, DispatchTaskState::Cancelled);
+    fn cancel_task<'a>(&'a self, task_id: &'a str) -> BoxFuture<'a, Result<(), DispatchError>> {
+        Box::pin(async move {
+            if let Ok(mut cancels) = self.cancels.lock() {
+                cancels.push(task_id.to_owned());
+            }
+            self.set_state(task_id, DispatchTaskState::Cancelled);
+            Ok(())
+        })
     }
 
-    fn task_state(&self, task_id: &str) -> DispatchTaskState {
-        self.states
-            .lock()
-            .ok()
-            .and_then(|states| states.get(task_id).copied())
-            .unwrap_or(DispatchTaskState::Missing)
+    fn task_state<'a>(
+        &'a self,
+        task_id: &'a str,
+    ) -> BoxFuture<'a, Result<DispatchTaskState, DispatchError>> {
+        Box::pin(async move {
+            Ok(self
+                .states
+                .lock()
+                .ok()
+                .and_then(|states| states.get(task_id).copied())
+                .unwrap_or(DispatchTaskState::Missing))
+        })
     }
 
-    fn task_progress(&self, task_id: &str) -> Option<TaskProgress> {
-        self.progress
-            .lock()
-            .ok()
-            .and_then(|snapshots| snapshots.get(task_id).cloned())
+    fn task_progress<'a>(
+        &'a self,
+        task_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<TaskProgress>, DispatchError>> {
+        Box::pin(async move {
+            Ok(self
+                .progress
+                .lock()
+                .ok()
+                .and_then(|snapshots| snapshots.get(task_id).cloned()))
+        })
     }
 
-    fn reimportable(&self, task_id: &str) -> bool {
-        self.reimportable_ids
-            .lock()
-            .map(|ids| ids.contains(task_id))
-            .unwrap_or(false)
+    fn reimportable<'a>(&'a self, task_id: &'a str) -> BoxFuture<'a, Result<bool, DispatchError>> {
+        Box::pin(async move {
+            Ok(self
+                .reimportable_ids
+                .lock()
+                .map(|ids| ids.contains(task_id))
+                .unwrap_or(false))
+        })
+    }
+
+    fn retry_schedule<'a>(
+        &'a self,
+        task_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<RetrySchedule>, DispatchError>> {
+        Box::pin(async move {
+            Ok(self
+                .retries
+                .lock()
+                .ok()
+                .and_then(|retries| retries.get(task_id).copied()))
+        })
+    }
+
+    fn find_task_since<'a>(
+        &'a self,
+        _owner: &'a str,
+        _kind: &'a str,
+        _key: &'a str,
+        _since: u64,
+    ) -> BoxFuture<'a, Result<Option<String>, DispatchError>> {
+        Box::pin(async move { Ok(None) })
     }
 }

@@ -1,239 +1,40 @@
-//! Memory state behind the acquisition flows.
+//! State behind the acquisition flows.
 //!
-//! Wanted watches, request rows, follow cursors, the upgrade worklist, and
-//! quarantine entries live here on mutex-guarded maps; they have no durable
-//! rows yet. The registry already
-//! persists job liveness, and every state transition emits a durable tick
-//! (see [`TickSink`](super::seams::TickSink)), so no outcome is silent.
+//! Follow-poll cursors, the upgrade worklist and drop-import quarantine
+//! entries live in SQLite (migration 0007 plus `artist_known_releases`),
+//! read through the pool and written through the writer lane. The request
+//! ledger and the wanted watches are the requests module's durable stores,
+//! shared with the loops. Library presence and the admin directory are
+//! derived views refreshed from their owners.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Mutex;
 
-/// One wanted watch: a user waiting on an unavailable album.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Watch {
-    /// Release-group MBID under watch.
-    pub rg_mbid: String,
-    /// Watching user id.
-    pub user_id: String,
-    /// Artist name for searches.
-    pub artist: String,
-    /// Album title for searches.
-    pub title: String,
-    /// First release date (`YYYY-MM-DD`, possibly partial), when known.
-    pub first_release_date: Option<String>,
-    /// Consecutive quiet checks; long streaks back off to 28 days.
-    pub quiet_streak: u32,
-    /// Unix seconds when the next check is due.
-    pub next_check_at: i64,
+use rusqlite::params;
+use serde::{Deserialize, Serialize};
+
+use crate::acquire::db::AcquireDb;
+use crate::db::{DbError, map_sqlx_busy};
+
+/// A flows store failure, already logged by the caller with its context.
+#[derive(Debug, thiserror::Error)]
+#[error("flows store {operation} failed: {cause}")]
+pub struct StoreFailure {
+    /// Operation name.
+    pub operation: &'static str,
+    /// Cause text.
+    pub cause: String,
 }
 
-/// Wanted-watch registry.
-#[derive(Debug, Default)]
-pub struct WantedStore {
-    watches: Mutex<HashMap<String, Watch>>,
-}
-
-impl WantedStore {
-    /// Empty registry.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Enrol a watch; answers false when one already covers the MBID.
-    pub fn enrol(&self, watch: Watch) -> bool {
-        self.watches
-            .lock()
-            .map(|mut watches| {
-                if watches.contains_key(&watch.rg_mbid) {
-                    return false;
-                }
-                watches.insert(watch.rg_mbid.clone(), watch);
-                true
-            })
-            .unwrap_or(false)
-    }
-
-    /// Watches due at `now`, oldest first, capped at `limit`.
-    pub fn list_due(&self, now: i64, limit: usize) -> Vec<Watch> {
-        self.watches
-            .lock()
-            .map(|watches| {
-                let mut due: Vec<Watch> = watches
-                    .values()
-                    .filter(|watch| watch.next_check_at <= now)
-                    .cloned()
-                    .collect();
-                due.sort_by(|a, b| {
-                    a.next_check_at
-                        .cmp(&b.next_check_at)
-                        .then_with(|| a.rg_mbid.cmp(&b.rg_mbid))
-                });
-                due.truncate(limit);
-                due
-            })
-            .unwrap_or_default()
-    }
-
-    /// Replace one watch's check outcome (streak + next due).
-    pub fn record_check(&self, rg_mbid: &str, quiet_streak: u32, next_check_at: i64) {
-        if let Ok(mut watches) = self.watches.lock()
-            && let Some(watch) = watches.get_mut(rg_mbid)
-        {
-            watch.quiet_streak = quiet_streak;
-            watch.next_check_at = next_check_at;
-        }
-    }
-
-    /// Drop a watch (Stop, or satisfied).
-    pub fn remove(&self, rg_mbid: &str) {
-        if let Ok(mut watches) = self.watches.lock() {
-            watches.remove(rg_mbid);
-        }
-    }
-
-    /// One watch, if present.
-    pub fn get(&self, rg_mbid: &str) -> Option<Watch> {
-        self.watches
-            .lock()
-            .ok()
-            .and_then(|watches| watches.get(rg_mbid).cloned())
-    }
-
-    /// Watch count, for tests.
-    pub fn len(&self) -> usize {
-        self.watches
-            .lock()
-            .map(|watches| watches.len())
-            .unwrap_or(0)
-    }
-
-    /// True when no watches are enrolled.
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
+fn lane_failure(operation: &'static str, error: DbError) -> StoreFailure {
+    StoreFailure {
+        operation,
+        cause: error.to_string(),
     }
 }
 
-/// One request row as the status sync sees it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RequestRow {
-    /// Album release-group MBID or track recording MBID.
-    pub mbid: String,
-    /// `album` or `track`.
-    pub kind: String,
-    /// Requesting user id.
-    pub user_id: String,
-    /// Artist name for searches and task rows.
-    pub artist: String,
-    /// Album or track title for searches and task rows.
-    pub title: String,
-    /// Current request status.
-    pub status: String,
-    /// Linked download task id, when dispatched.
-    pub task_id: Option<String>,
-    /// Optimistic generation for status writes.
-    pub generation: u64,
-    /// Completion instant (unix seconds), once terminal.
-    pub completed_at: Option<i64>,
-}
-
-/// Request ledger: active rows plus terminal history.
-#[derive(Debug, Default)]
-pub struct RequestLedger {
-    rows: Mutex<HashMap<String, RequestRow>>,
-}
-
-impl RequestLedger {
-    /// Empty ledger.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Insert or replace one row, keyed by MBID.
-    pub fn upsert(&self, row: RequestRow) {
-        if let Ok(mut rows) = self.rows.lock() {
-            rows.insert(row.mbid.clone(), row);
-        }
-    }
-
-    /// One row, if present.
-    pub fn get(&self, mbid: &str) -> Option<RequestRow> {
-        self.rows
-            .lock()
-            .ok()
-            .and_then(|rows| rows.get(mbid).cloned())
-    }
-
-    /// Rows still needing reconciliation: anything outside the terminal set
-    /// (`imported`, `incomplete`, `failed`, `cancelled`, `ignored`).
-    pub fn active(&self) -> Vec<RequestRow> {
-        self.rows
-            .lock()
-            .map(|rows| {
-                rows.values()
-                    .filter(|row| !is_terminal(&row.status))
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    /// Rows in one status, for enrolment scans.
-    pub fn with_status(&self, status: &str) -> Vec<RequestRow> {
-        self.rows
-            .lock()
-            .map(|rows| {
-                rows.values()
-                    .filter(|row| row.status == status)
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    /// Move one row to a new status, stamping `completed_at` for terminal
-    /// states and bumping the generation. Answers false when the row or the
-    /// expected generation is gone (lost race, skip quietly).
-    pub fn update_status(
-        &self,
-        mbid: &str,
-        status: &str,
-        completed_at: Option<i64>,
-        expected_generation: Option<u64>,
-    ) -> bool {
-        self.rows
-            .lock()
-            .map(|mut rows| {
-                let Some(row) = rows.get_mut(mbid) else {
-                    return false;
-                };
-                if expected_generation.is_some_and(|generation| generation != row.generation) {
-                    return false;
-                }
-                row.status = status.to_owned();
-                row.completed_at = completed_at;
-                row.generation += 1;
-                true
-            })
-            .unwrap_or(false)
-    }
-
-    /// Link a dispatch task id to a row.
-    pub fn link_task(&self, mbid: &str, task_id: &str) {
-        if let Ok(mut rows) = self.rows.lock()
-            && let Some(row) = rows.get_mut(mbid)
-        {
-            row.task_id = Some(task_id.to_owned());
-        }
-    }
-}
-
-/// Terminal request statuses: nothing left to reconcile.
-pub fn is_terminal(status: &str) -> bool {
-    matches!(
-        status,
-        "imported" | "incomplete" | "failed" | "cancelled" | "ignored"
-    )
+fn read_failure(operation: &'static str, error: sqlx::Error) -> StoreFailure {
+    lane_failure(operation, map_sqlx_busy(operation, error))
 }
 
 /// One followed artist's poll cursor.
@@ -256,7 +57,7 @@ pub struct FollowCursor {
 }
 
 /// One future-dated release held until its date arrives.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingRelease {
     /// Release-group MBID.
     pub rg_mbid: String,
@@ -266,59 +67,131 @@ pub struct PendingRelease {
     pub date: String,
 }
 
-/// Follow-poll cursor store.
-#[derive(Debug, Default)]
+/// Durable follow-poll cursors.
+#[derive(Clone)]
 pub struct FollowStore {
-    cursors: Mutex<HashMap<String, FollowCursor>>,
+    db: AcquireDb,
 }
 
+/// One cursor row as the pool reads it.
+type CursorRow = (String, i64, Option<String>, i64, String, String);
+
 impl FollowStore {
-    /// Empty store.
-    pub fn new() -> Self {
-        Self::default()
+    /// Cursors over one database.
+    pub fn new(db: AcquireDb) -> Self {
+        Self { db }
     }
 
-    /// Insert or replace one cursor.
-    pub fn upsert(&self, cursor: FollowCursor) {
-        if let Ok(mut cursors) = self.cursors.lock() {
-            cursors.insert(cursor.artist_mbid.clone(), cursor);
-        }
+    /// Insert or replace one cursor, its known set included.
+    pub async fn upsert(&self, cursor: FollowCursor) -> Result<(), StoreFailure> {
+        let followers = serde_json::to_string(&cursor.followers).map_err(|error| StoreFailure {
+            operation: "follows.upsert",
+            cause: error.to_string(),
+        })?;
+        let pending = serde_json::to_string(&cursor.pending).map_err(|error| StoreFailure {
+            operation: "follows.upsert",
+            cause: error.to_string(),
+        })?;
+        self.db
+            .write_background("follows.upsert", move |tx| {
+                let artist = cursor.artist_mbid.to_lowercase();
+                tx.execute(
+                    "INSERT OR REPLACE INTO acquire_follow_cursors (artist_mbid_lower, \
+                     baselined, cursor_date, next_poll_at, followers, pending) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        artist,
+                        cursor.baselined,
+                        cursor.cursor_date,
+                        cursor.next_poll_at,
+                        followers,
+                        pending
+                    ],
+                )?;
+                tx.execute(
+                    "DELETE FROM artist_known_releases WHERE artist_mbid_lower = ?1",
+                    params![artist],
+                )?;
+                for rg in &cursor.known {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO artist_known_releases \
+                         (artist_mbid_lower, rg_mbid_lower) VALUES (?1, ?2)",
+                        params![artist, rg.to_lowercase()],
+                    )?;
+                }
+                Ok(())
+            })
+            .await
+            .map_err(|error| lane_failure("follows.upsert", error))
     }
 
     /// One cursor, if present.
-    pub fn get(&self, artist_mbid: &str) -> Option<FollowCursor> {
-        self.cursors
-            .lock()
-            .ok()
-            .and_then(|cursors| cursors.get(artist_mbid).cloned())
+    pub async fn get(&self, artist_mbid: &str) -> Result<Option<FollowCursor>, StoreFailure> {
+        let row: Option<CursorRow> = sqlx::query_as(
+            "SELECT artist_mbid_lower, baselined, cursor_date, next_poll_at, followers, pending \
+             FROM acquire_follow_cursors WHERE artist_mbid_lower = ?1",
+        )
+        .bind(artist_mbid.to_lowercase())
+        .fetch_optional(self.db.pool())
+        .await
+        .map_err(|error| read_failure("follows.get", error))?;
+        match row {
+            Some(row) => Ok(Some(self.hydrate(row).await?)),
+            None => Ok(None),
+        }
     }
 
     /// Artists due at `now`, oldest first, capped at `limit`.
-    pub fn list_due(&self, now: i64, limit: usize) -> Vec<FollowCursor> {
-        self.cursors
-            .lock()
-            .map(|cursors| {
-                let mut due: Vec<FollowCursor> = cursors
-                    .values()
-                    .filter(|cursor| cursor.next_poll_at <= now)
-                    .cloned()
-                    .collect();
-                due.sort_by(|a, b| {
-                    a.next_poll_at
-                        .cmp(&b.next_poll_at)
-                        .then_with(|| a.artist_mbid.cmp(&b.artist_mbid))
-                });
-                due.truncate(limit);
-                due
-            })
-            .unwrap_or_default()
+    pub async fn list_due(
+        &self,
+        now: i64,
+        limit: usize,
+    ) -> Result<Vec<FollowCursor>, StoreFailure> {
+        let rows: Vec<CursorRow> = sqlx::query_as(
+            "SELECT artist_mbid_lower, baselined, cursor_date, next_poll_at, followers, pending \
+             FROM acquire_follow_cursors WHERE next_poll_at <= ?1 \
+             ORDER BY next_poll_at, artist_mbid_lower LIMIT ?2",
+        )
+        .bind(now)
+        .bind(i64::try_from(limit).unwrap_or(i64::MAX))
+        .fetch_all(self.db.pool())
+        .await
+        .map_err(|error| read_failure("follows.list_due", error))?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            out.push(self.hydrate(row).await?);
+        }
+        Ok(out)
     }
 
     /// Replace one cursor after a poll.
-    pub fn record_poll(&self, cursor: &FollowCursor) {
-        if let Ok(mut cursors) = self.cursors.lock() {
-            cursors.insert(cursor.artist_mbid.clone(), cursor.clone());
-        }
+    pub async fn record_poll(&self, cursor: &FollowCursor) -> Result<(), StoreFailure> {
+        self.upsert(cursor.clone()).await
+    }
+
+    /// Decode one row and load its known set.
+    async fn hydrate(&self, row: CursorRow) -> Result<FollowCursor, StoreFailure> {
+        let (artist, baselined, cursor_date, next_poll_at, followers, pending) = row;
+        let known: Vec<String> = sqlx::query_scalar(
+            "SELECT rg_mbid_lower FROM artist_known_releases WHERE artist_mbid_lower = ?1",
+        )
+        .bind(&artist)
+        .fetch_all(self.db.pool())
+        .await
+        .map_err(|error| read_failure("follows.known", error))?;
+        let decode = |error: serde_json::Error| StoreFailure {
+            operation: "follows.decode",
+            cause: error.to_string(),
+        };
+        Ok(FollowCursor {
+            artist_mbid: artist,
+            baselined: baselined != 0,
+            cursor_date,
+            known: known.into_iter().collect(),
+            next_poll_at,
+            followers: serde_json::from_str(&followers).map_err(decode)?,
+            pending: serde_json::from_str(&pending).map_err(decode)?,
+        })
     }
 }
 
@@ -333,31 +206,59 @@ pub struct UpgradeItem {
     pub title: String,
 }
 
-/// Background-upgrade worklist: cutoff-unmet albums, oldest first.
-#[derive(Debug, Default)]
+/// Durable background-upgrade worklist: cutoff-unmet albums, oldest first.
+#[derive(Clone)]
 pub struct UpgradeWorklist {
-    items: Mutex<Vec<UpgradeItem>>,
+    db: AcquireDb,
 }
 
 impl UpgradeWorklist {
-    /// Empty worklist.
-    pub fn new() -> Self {
-        Self::default()
+    /// Worklist over one database.
+    pub fn new(db: AcquireDb) -> Self {
+        Self { db }
     }
 
-    /// Replace the worklist contents.
-    pub fn set(&self, items: Vec<UpgradeItem>) {
-        if let Ok(mut current) = self.items.lock() {
-            *current = items;
-        }
+    /// Replace the worklist contents, keeping the given order.
+    pub async fn set(&self, items: Vec<UpgradeItem>) -> Result<(), StoreFailure> {
+        self.db
+            .write_background("upgrades.set", move |tx| {
+                tx.execute("DELETE FROM acquire_upgrade_worklist", [])?;
+                for (position, item) in items.iter().enumerate() {
+                    tx.execute(
+                        "INSERT OR REPLACE INTO acquire_upgrade_worklist \
+                         (release_group_mbid, artist_name, album_title, position) \
+                         VALUES (?1, ?2, ?3, ?4)",
+                        params![
+                            item.rg_mbid,
+                            item.artist,
+                            item.title,
+                            i64::try_from(position).unwrap_or(i64::MAX)
+                        ],
+                    )?;
+                }
+                Ok(())
+            })
+            .await
+            .map_err(|error| lane_failure("upgrades.set", error))
     }
 
     /// Cutoff-unmet albums, oldest first.
-    pub fn list_cutoff_unmet(&self) -> Vec<UpgradeItem> {
-        self.items
-            .lock()
-            .map(|items| items.clone())
-            .unwrap_or_default()
+    pub async fn list_cutoff_unmet(&self) -> Result<Vec<UpgradeItem>, StoreFailure> {
+        let rows: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT release_group_mbid, artist_name, album_title \
+             FROM acquire_upgrade_worklist ORDER BY position, release_group_mbid",
+        )
+        .fetch_all(self.db.pool())
+        .await
+        .map_err(|error| read_failure("upgrades.list", error))?;
+        Ok(rows
+            .into_iter()
+            .map(|(rg_mbid, artist, title)| UpgradeItem {
+                rg_mbid,
+                artist,
+                title,
+            })
+            .collect())
     }
 }
 
@@ -398,74 +299,104 @@ pub struct QuarantineEntry {
     pub at: i64,
 }
 
-/// Quarantine registry (v2 `download_store` quarantine half).
-#[derive(Debug, Default)]
+/// Durable drop-import quarantine registry.
+#[derive(Clone)]
 pub struct QuarantineStore {
-    entries: Mutex<HashMap<String, QuarantineEntry>>,
+    db: AcquireDb,
 }
 
 impl QuarantineStore {
-    /// Empty registry.
-    pub fn new() -> Self {
-        Self::default()
+    /// Registry over one database.
+    pub fn new(db: AcquireDb) -> Self {
+        Self { db }
     }
 
     /// Record one quarantine entry.
-    pub fn quarantine(&self, entry: QuarantineEntry) {
-        if let Ok(mut entries) = self.entries.lock() {
-            entries.insert(entry.key.clone(), entry);
-        }
-    }
-
-    /// True when the key is quarantined.
-    pub fn is_quarantined(&self, key: &str) -> bool {
-        self.entries
-            .lock()
-            .map(|entries| entries.contains_key(key))
-            .unwrap_or(false)
+    pub async fn quarantine(&self, entry: QuarantineEntry) -> Result<(), StoreFailure> {
+        self.db
+            .write_background("quarantine.add", move |tx| {
+                tx.execute(
+                    "INSERT OR REPLACE INTO acquire_flow_quarantine \
+                     (key, album_key, reason, quarantined_at) VALUES (?1, ?2, ?3, ?4)",
+                    params![entry.key, entry.album_key, entry.reason, entry.at],
+                )?;
+                Ok(())
+            })
+            .await
+            .map_err(|error| lane_failure("quarantine.add", error))
     }
 
     /// One entry, if present.
-    pub fn get(&self, key: &str) -> Option<QuarantineEntry> {
-        self.entries
-            .lock()
-            .ok()
-            .and_then(|entries| entries.get(key).cloned())
+    pub async fn get(&self, key: &str) -> Result<Option<QuarantineEntry>, StoreFailure> {
+        let row: Option<(String, Option<String>, String, i64)> = sqlx::query_as(
+            "SELECT key, album_key, reason, quarantined_at FROM acquire_flow_quarantine \
+             WHERE key = ?1",
+        )
+        .bind(key)
+        .fetch_optional(self.db.pool())
+        .await
+        .map_err(|error| read_failure("quarantine.get", error))?;
+        Ok(row.map(|(key, album_key, reason, at)| QuarantineEntry {
+            key,
+            album_key,
+            reason,
+            at,
+        }))
+    }
+
+    /// True when the key is quarantined.
+    pub async fn is_quarantined(&self, key: &str) -> Result<bool, StoreFailure> {
+        Ok(self.get(key).await?.is_some())
     }
 
     /// Drop one entry (manual resolve).
-    pub fn clear(&self, key: &str) {
-        if let Ok(mut entries) = self.entries.lock() {
-            entries.remove(key);
-        }
+    pub async fn clear(&self, key: &str) -> Result<(), StoreFailure> {
+        let key = key.to_owned();
+        self.db
+            .write_background("quarantine.clear", move |tx| {
+                tx.execute(
+                    "DELETE FROM acquire_flow_quarantine WHERE key = ?1",
+                    params![key],
+                )?;
+                Ok(())
+            })
+            .await
+            .map_err(|error| lane_failure("quarantine.clear", error))
     }
 
     /// Drop every entry scoped to one album (retry reconsiders quarantined
     /// sources for album downloads only, v2 orchestrator rule).
-    pub fn clear_for_album(&self, album_key: &str) -> usize {
-        self.entries
-            .lock()
-            .map(|mut entries| {
-                let keys: Vec<String> = entries
-                    .values()
-                    .filter(|entry| entry.album_key.as_deref() == Some(album_key))
-                    .map(|entry| entry.key.clone())
-                    .collect();
-                let cleared = keys.len();
-                for key in keys {
-                    entries.remove(&key);
-                }
-                cleared
+    pub async fn clear_for_album(&self, album_key: &str) -> Result<usize, StoreFailure> {
+        let album_key = album_key.to_owned();
+        self.db
+            .write_background("quarantine.clear_album", move |tx| {
+                Ok(tx.execute(
+                    "DELETE FROM acquire_flow_quarantine WHERE album_key = ?1",
+                    params![album_key],
+                )?)
             })
-            .unwrap_or(0)
+            .await
+            .map_err(|error| lane_failure("quarantine.clear_album", error))
     }
 
-    /// Every entry, for tests.
-    pub fn list(&self) -> Vec<QuarantineEntry> {
-        self.entries
-            .lock()
-            .map(|entries| entries.values().cloned().collect())
-            .unwrap_or_default()
+    /// Every entry, oldest first.
+    pub async fn list(&self) -> Result<Vec<QuarantineEntry>, StoreFailure> {
+        let rows: Vec<(String, Option<String>, String, i64)> = sqlx::query_as(
+            "SELECT key, album_key, reason, quarantined_at FROM acquire_flow_quarantine \
+             ORDER BY quarantined_at, key",
+        )
+        .fetch_all(self.db.pool())
+        .await
+        .map_err(|error| read_failure("quarantine.list", error))?;
+        Ok(rows
+            .into_iter()
+            .map(|(key, album_key, reason, at)| QuarantineEntry {
+                key,
+                album_key,
+                reason,
+                at,
+            })
+            .collect())
     }
 }
 
@@ -496,14 +427,6 @@ impl LibraryPresence {
             .lock()
             .map(|owned| owned.contains(mbid))
             .unwrap_or(false)
-    }
-
-    /// Every owned MBID, for tests.
-    pub fn all(&self) -> HashSet<String> {
-        self.mbids
-            .lock()
-            .map(|owned| owned.clone())
-            .unwrap_or_default()
     }
 }
 
