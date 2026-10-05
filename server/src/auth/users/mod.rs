@@ -40,7 +40,8 @@ use axum::{
     routing::{delete, get, post, put},
 };
 
-pub use error::{UsersError, WWW_AUTHENTICATE_BEARER};
+pub use error::UsersError;
+pub use handlers::UsersHttpError;
 pub use roles::{AuthContext, CurrentAdmin, CurrentCurator, CurrentUser, Role, SessionKind};
 
 use crate::{ids::IdGenerator, runtime_config::crypto::Crypto};

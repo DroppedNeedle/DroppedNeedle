@@ -39,6 +39,7 @@ use crate::{
 };
 
 pub use error::AdminError;
+pub use handlers::AdminHttpError;
 pub use models::{
     BackupListResponse, BackupRunResponse, BackupView, CacheClearBody, CacheClearResponse,
     CacheStatsResponse, CheckpointView, JobView, PrecacheRunResponse, ProviderLimiterView,
@@ -184,8 +185,10 @@ impl AdminSetup {
 /// when the account is not an admin. The role rereads the user row every
 /// request, so promotions and demotions land on the next call.
 async fn require_admin(State(admin): State<AdminSetup>, request: Request, next: Next) -> Response {
-    let missing = || AdminError::Unauthorized {
-        message: "Authentication required".to_owned(),
+    let missing = || {
+        AdminHttpError(AdminError::Unauthorized {
+            message: "Authentication required".to_owned(),
+        })
     };
     let Some(session) = request.extensions().get::<CurrentSession>().cloned() else {
         return missing().into_response();
@@ -194,14 +197,16 @@ async fn require_admin(State(admin): State<AdminSetup>, request: Request, next: 
         Ok(Some(user)) => user,
         Ok(None) => return missing().into_response(),
         Err(error) => {
-            return AdminError::internal(&format_args!("admin gate lookup failed: {error}"))
-                .into_response();
+            return AdminHttpError(AdminError::internal(&format_args!(
+                "admin gate lookup failed: {error}"
+            )))
+            .into_response();
         }
     };
     if user.role != Role::Admin {
-        return AdminError::Forbidden {
+        return AdminHttpError(AdminError::Forbidden {
             message: "Admin role required".to_owned(),
-        }
+        })
         .into_response();
     }
     next.run(request).await

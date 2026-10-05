@@ -273,8 +273,13 @@ where
     {
         Ok(record) => record,
         Err(error) => {
-            tracing::error!(%error, "session store lookup failed");
-            return internal_error();
+            let error_id = request
+                .extensions()
+                .get::<crate::ids::RequestId>()
+                .map(|id| id.0.clone())
+                .unwrap_or_default();
+            tracing::error!(%error, error_id, "session store lookup failed");
+            return crate::error::ApiError::internal_response(&error_id);
         }
     };
     let Some(record) = record else {
@@ -327,16 +332,6 @@ pub fn effective_host(request: &Request, trusted: &TrustedProxies) -> String {
         return host.to_owned();
     }
     request.uri().host().unwrap_or("").to_owned()
-}
-
-/// Fixed 500 body for store outages (the request-scope layer rewrites 5xx
-/// bodies anyway; this keeps the contract if layered standalone).
-fn internal_error() -> Response {
-    use axum::{Json, http::StatusCode, response::IntoResponse};
-    let body = serde_json::json!({
-        "error": { "code": "INTERNAL_ERROR", "message": "Internal server error", "details": null }
-    });
-    (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
 }
 
 #[cfg(test)]

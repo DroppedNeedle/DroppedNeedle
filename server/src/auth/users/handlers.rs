@@ -1,7 +1,8 @@
 //! Thin Axum handlers and route assembly.
 //!
 //! Every handler answers one route: extract, call the service, render.
-//! Status mapping lives in [`UsersError`](super::error::UsersError). Bodies
+//! Status mapping lives here, in [`UsersHttpError`]: the services return
+//! the domain [`UsersError`] and know nothing of HTTP. Bodies
 //! parse through [`ValidJson`], which keeps malformed input inside the
 //! shared error envelope instead of Axum's default plain-text 400.
 
@@ -20,8 +21,7 @@ use super::super::federated::users::{PROVIDER_JELLYFIN, PROVIDER_PLEX};
 use super::UsersDeps;
 use super::error::UsersError;
 use super::import::{
-    DisabledJellyfinDirectory, DisabledPlexDirectory, ImportError, import_users,
-    list_import_candidates,
+    DisabledJellyfinDirectory, DisabledPlexDirectory, import_users, list_import_candidates,
 };
 use super::models::{
     AdminUserCreate, AdminUserListResponse, AppPasswordCreate, AppPasswordCreatedResponse,
@@ -33,23 +33,85 @@ use super::models::{
 };
 use super::roles::{CurrentAdmin, CurrentUser, Role};
 use super::services;
+use crate::error::{
+    CONFLICT, FIXED_INTERNAL_MESSAGE, FIXED_TOO_LARGE_MESSAGE, FIXED_UPSTREAM_MESSAGE, FORBIDDEN,
+    INTERNAL_ERROR, INVALID_INPUT, NOT_FOUND, NOT_FOUND_MESSAGE, PAYLOAD_TOO_LARGE, UPSTREAM_ERROR,
+    envelope_response, fault_response, unauthorized_response,
+};
 
 /// Avatar upload body cap: 8 MiB of JSON holds the 5 MiB image plus base64
 /// overhead with headroom; the decoded 5 MiB rule still applies after.
 const AVATAR_BODY_CAP: usize = 8 * 1024 * 1024;
 
+/// A users-domain failure on its way to the wire: the one place users
+/// errors get an HTTP status and envelope.
+#[derive(Debug)]
+pub struct UsersHttpError(pub UsersError);
+
+impl From<UsersError> for UsersHttpError {
+    fn from(error: UsersError) -> Self {
+        Self(error)
+    }
+}
+
+impl IntoResponse for UsersHttpError {
+    fn into_response(self) -> Response {
+        match self.0 {
+            UsersError::Unauthorized { message } => unauthorized_response(message),
+            UsersError::Forbidden { message } => {
+                envelope_response(StatusCode::FORBIDDEN, FORBIDDEN, message, None)
+            }
+            UsersError::NotFound => {
+                envelope_response(StatusCode::NOT_FOUND, NOT_FOUND, NOT_FOUND_MESSAGE, None)
+            }
+            UsersError::InvalidInput { message } => {
+                envelope_response(StatusCode::BAD_REQUEST, INVALID_INPUT, message, None)
+            }
+            UsersError::Conflict { message } => {
+                envelope_response(StatusCode::CONFLICT, CONFLICT, message, None)
+            }
+            UsersError::TooLarge => envelope_response(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                PAYLOAD_TOO_LARGE,
+                FIXED_TOO_LARGE_MESSAGE,
+                None,
+            ),
+            UsersError::Unavailable { error_id } => fault_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                UPSTREAM_ERROR,
+                FIXED_UPSTREAM_MESSAGE,
+                &error_id,
+            ),
+            UsersError::Upstream { error_id } => fault_response(
+                StatusCode::BAD_GATEWAY,
+                UPSTREAM_ERROR,
+                FIXED_UPSTREAM_MESSAGE,
+                &error_id,
+            ),
+            UsersError::Internal { error_id } => fault_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                INTERNAL_ERROR,
+                FIXED_INTERNAL_MESSAGE,
+                &error_id,
+            ),
+        }
+    }
+}
+
 /// JSON body extractor that renders failures in the shared envelope.
 pub struct ValidJson<T>(pub T);
 
 impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidJson<T> {
-    type Rejection = UsersError;
+    type Rejection = UsersHttpError;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         Json::<T>::from_request(req, state)
             .await
             .map(|Json(value)| Self(value))
-            .map_err(|cause| UsersError::InvalidInput {
-                message: format!("Invalid request body: {cause}"),
+            .map_err(|cause| {
+                UsersHttpError(UsersError::InvalidInput {
+                    message: format!("Invalid request body: {cause}"),
+                })
             })
     }
 }
@@ -63,8 +125,11 @@ impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidJson<T> {
 pub async fn get_profile(
     State(deps): State<UsersDeps>,
     CurrentUser(ctx): CurrentUser,
-) -> Result<Json<ProfileResponse>, UsersError> {
-    services::get_profile(&deps, &ctx).await.map(Json)
+) -> Result<Json<ProfileResponse>, UsersHttpError> {
+    services::get_profile(&deps, &ctx)
+        .await
+        .map(Json)
+        .map_err(UsersHttpError::from)
 }
 
 /// Change the caller's display name.
@@ -78,10 +143,11 @@ pub async fn patch_profile(
     State(deps): State<UsersDeps>,
     CurrentUser(ctx): CurrentUser,
     ValidJson(body): ValidJson<DisplayNameUpdate>,
-) -> Result<Json<UserResponse>, UsersError> {
+) -> Result<Json<UserResponse>, UsersHttpError> {
     services::update_display_name(&deps, &ctx, &body.display_name)
         .await
         .map(Json)
+        .map_err(UsersHttpError::from)
 }
 
 /// Rename the caller.
@@ -95,10 +161,11 @@ pub async fn put_username(
     State(deps): State<UsersDeps>,
     CurrentUser(ctx): CurrentUser,
     ValidJson(body): ValidJson<UsernameUpdate>,
-) -> Result<Json<UserResponse>, UsersError> {
+) -> Result<Json<UserResponse>, UsersHttpError> {
     services::update_username(&deps, &ctx, &body.username)
         .await
         .map(Json)
+        .map_err(UsersHttpError::from)
 }
 
 /// Set or clear the caller's email.
@@ -112,10 +179,11 @@ pub async fn put_email(
     State(deps): State<UsersDeps>,
     CurrentUser(ctx): CurrentUser,
     ValidJson(body): ValidJson<EmailUpdate>,
-) -> Result<Json<UserResponse>, UsersError> {
+) -> Result<Json<UserResponse>, UsersHttpError> {
     services::update_email(&deps, &ctx, body.email.as_deref())
         .await
         .map(Json)
+        .map_err(UsersHttpError::from)
 }
 
 /// Change the caller's password.
@@ -129,10 +197,11 @@ pub async fn post_password(
     State(deps): State<UsersDeps>,
     CurrentUser(ctx): CurrentUser,
     ValidJson(body): ValidJson<PasswordChange>,
-) -> Result<Json<UserResponse>, UsersError> {
+) -> Result<Json<UserResponse>, UsersHttpError> {
     services::change_password(&deps, &ctx, &body.current_password, &body.new_password)
         .await
         .map(Json)
+        .map_err(UsersHttpError::from)
 }
 
 /// Set the first local password on an account without one.
@@ -146,10 +215,11 @@ pub async fn post_local_password(
     State(deps): State<UsersDeps>,
     CurrentUser(ctx): CurrentUser,
     ValidJson(body): ValidJson<LocalPasswordSet>,
-) -> Result<Json<UserResponse>, UsersError> {
+) -> Result<Json<UserResponse>, UsersHttpError> {
     services::set_local_password(&deps, &ctx, &body.new_password)
         .await
         .map(Json)
+        .map_err(UsersHttpError::from)
 }
 
 /// Avatar upload payload (parsed manually so the body cap applies).
@@ -172,7 +242,7 @@ pub async fn post_avatar(
     State(deps): State<UsersDeps>,
     CurrentUser(ctx): CurrentUser,
     body: Body,
-) -> Result<Json<UserResponse>, UsersError> {
+) -> Result<Json<UserResponse>, UsersHttpError> {
     let bytes: Bytes = to_bytes(body, AVATAR_BODY_CAP)
         .await
         .map_err(|_| UsersError::TooLarge)?;
@@ -183,6 +253,7 @@ pub async fn post_avatar(
     services::upload_avatar(&deps, &ctx, &parsed.content_type, &parsed.image_base64)
         .await
         .map(Json)
+        .map_err(UsersHttpError::from)
 }
 
 /// Serve one user's avatar. Self-or-admin; the `v` query is ignored.
@@ -196,7 +267,7 @@ pub async fn get_avatar(
     State(deps): State<UsersDeps>,
     CurrentUser(ctx): CurrentUser,
     Path(user_id): Path<String>,
-) -> Result<Response, UsersError> {
+) -> Result<Response, UsersHttpError> {
     let (bytes, content_type) = services::get_avatar(&deps, &ctx, &user_id).await?;
     let mime = content_type.parse().map_err(|_| {
         UsersError::internal(
@@ -227,8 +298,11 @@ pub async fn get_avatar(
 pub async fn list_sessions(
     State(deps): State<UsersDeps>,
     CurrentUser(ctx): CurrentUser,
-) -> Result<Json<SessionListResponse>, UsersError> {
-    services::list_sessions(&deps, &ctx).await.map(Json)
+) -> Result<Json<SessionListResponse>, UsersHttpError> {
+    services::list_sessions(&deps, &ctx)
+        .await
+        .map(Json)
+        .map_err(UsersHttpError::from)
 }
 
 /// Mint a named companion Bearer token. Standard sessions only.
@@ -242,10 +316,11 @@ pub async fn mint_device_session(
     State(deps): State<UsersDeps>,
     CurrentUser(ctx): CurrentUser,
     ValidJson(body): ValidJson<DeviceSessionMint>,
-) -> Result<(StatusCode, Json<DeviceSessionResponse>), UsersError> {
+) -> Result<(StatusCode, Json<DeviceSessionResponse>), UsersHttpError> {
     services::mint_device_session(&deps, &ctx, &body)
         .await
         .map(|minted| (StatusCode::CREATED, Json(minted)))
+        .map_err(UsersHttpError::from)
 }
 
 /// Revoke one own session.
@@ -259,10 +334,11 @@ pub async fn revoke_session(
     State(deps): State<UsersDeps>,
     CurrentUser(ctx): CurrentUser,
     Path(session_id): Path<String>,
-) -> Result<StatusCode, UsersError> {
+) -> Result<StatusCode, UsersHttpError> {
     services::revoke_session(&deps, &ctx, &session_id)
         .await
         .map(|()| StatusCode::NO_CONTENT)
+        .map_err(UsersHttpError::from)
 }
 
 /// Revoke every own session.
@@ -274,10 +350,11 @@ pub async fn revoke_session(
 pub async fn logout_all(
     State(deps): State<UsersDeps>,
     CurrentUser(ctx): CurrentUser,
-) -> Result<StatusCode, UsersError> {
+) -> Result<StatusCode, UsersHttpError> {
     services::logout_all(&deps, &ctx)
         .await
         .map(|()| StatusCode::NO_CONTENT)
+        .map_err(UsersHttpError::from)
 }
 
 /// Reset a password with a recovery code. Public: a locked-out user holds
@@ -291,10 +368,11 @@ pub async fn logout_all(
 pub async fn reset_password(
     State(deps): State<UsersDeps>,
     ValidJson(body): ValidJson<PasswordReset>,
-) -> Result<StatusCode, UsersError> {
+) -> Result<StatusCode, UsersHttpError> {
     services::reset_password(&deps, &body)
         .await
         .map(|()| StatusCode::NO_CONTENT)
+        .map_err(UsersHttpError::from)
 }
 
 /// Caller's app passwords.
@@ -306,10 +384,11 @@ pub async fn reset_password(
 pub async fn list_app_passwords(
     State(deps): State<UsersDeps>,
     CurrentUser(ctx): CurrentUser,
-) -> Result<Json<super::models::AppPasswordListResponse>, UsersError> {
+) -> Result<Json<super::models::AppPasswordListResponse>, UsersHttpError> {
     services::list_app_passwords(&deps, &ctx.user_id)
         .await
         .map(Json)
+        .map_err(UsersHttpError::from)
 }
 
 /// Create an app password. The secret returns once.
@@ -323,10 +402,11 @@ pub async fn create_app_password(
     State(deps): State<UsersDeps>,
     CurrentUser(ctx): CurrentUser,
     ValidJson(body): ValidJson<AppPasswordCreate>,
-) -> Result<(StatusCode, Json<AppPasswordCreatedResponse>), UsersError> {
+) -> Result<(StatusCode, Json<AppPasswordCreatedResponse>), UsersHttpError> {
     services::create_app_password(&deps, &ctx.user_id, &body)
         .await
         .map(|created| (StatusCode::CREATED, Json(created)))
+        .map_err(UsersHttpError::from)
 }
 
 /// Revoke one own app password.
@@ -340,10 +420,11 @@ pub async fn revoke_app_password(
     State(deps): State<UsersDeps>,
     CurrentUser(ctx): CurrentUser,
     Path(app_password_id): Path<String>,
-) -> Result<StatusCode, UsersError> {
+) -> Result<StatusCode, UsersHttpError> {
     services::revoke_app_password(&deps, &ctx.user_id, &app_password_id)
         .await
         .map(|()| StatusCode::NO_CONTENT)
+        .map_err(UsersHttpError::from)
 }
 
 /// Per-user Last.fm link status.
@@ -355,8 +436,11 @@ pub async fn revoke_app_password(
 pub async fn lastfm_status(
     State(deps): State<UsersDeps>,
     CurrentUser(ctx): CurrentUser,
-) -> Result<Json<LastFmStatusResponse>, UsersError> {
-    services::lastfm_status(&deps, &ctx.user_id).await.map(Json)
+) -> Result<Json<LastFmStatusResponse>, UsersHttpError> {
+    services::lastfm_status(&deps, &ctx.user_id)
+        .await
+        .map(Json)
+        .map_err(UsersHttpError::from)
 }
 
 /// Store the caller's own Last.fm API credentials.
@@ -370,7 +454,7 @@ pub async fn lastfm_set_credentials(
     State(deps): State<UsersDeps>,
     CurrentUser(ctx): CurrentUser,
     ValidJson(body): ValidJson<LastFmCredentialsSet>,
-) -> Result<Json<LastFmConfiguredResponse>, UsersError> {
+) -> Result<Json<LastFmConfiguredResponse>, UsersHttpError> {
     services::lastfm_set_credentials(&deps, &ctx.user_id, &body.api_key, &body.shared_secret)
         .await
         .map(|link| {
@@ -379,6 +463,7 @@ pub async fn lastfm_set_credentials(
                 linked: link.username.is_some() && link.session_key_encrypted.is_some(),
             })
         })
+        .map_err(UsersHttpError::from)
 }
 
 /// Fetch a Last.fm sign-in token plus approval URL.
@@ -390,10 +475,11 @@ pub async fn lastfm_set_credentials(
 pub async fn lastfm_token(
     State(deps): State<UsersDeps>,
     CurrentUser(ctx): CurrentUser,
-) -> Result<Json<LastFmTokenResponse>, UsersError> {
+) -> Result<Json<LastFmTokenResponse>, UsersHttpError> {
     services::lastfm_request_token(&deps, &ctx.user_id)
         .await
         .map(Json)
+        .map_err(UsersHttpError::from)
 }
 
 /// Exchange an approved token for a linked session.
@@ -407,10 +493,11 @@ pub async fn lastfm_session(
     State(deps): State<UsersDeps>,
     CurrentUser(ctx): CurrentUser,
     ValidJson(body): ValidJson<LastFmSessionExchange>,
-) -> Result<Json<LastFmSessionResponse>, UsersError> {
+) -> Result<Json<LastFmSessionResponse>, UsersHttpError> {
     services::lastfm_exchange_session(&deps, &ctx.user_id, &body.token)
         .await
         .map(Json)
+        .map_err(UsersHttpError::from)
 }
 
 /// Unlink Last.fm (drops credentials and session).
@@ -422,10 +509,11 @@ pub async fn lastfm_session(
 pub async fn lastfm_unlink(
     State(deps): State<UsersDeps>,
     CurrentUser(ctx): CurrentUser,
-) -> Result<StatusCode, UsersError> {
+) -> Result<StatusCode, UsersHttpError> {
     services::lastfm_unlink(&deps, &ctx.user_id)
         .await
         .map(|()| StatusCode::NO_CONTENT)
+        .map_err(UsersHttpError::from)
 }
 
 /// Admin user listing, paged.
@@ -438,7 +526,7 @@ pub async fn admin_list_users(
     State(deps): State<UsersDeps>,
     CurrentAdmin(_): CurrentAdmin,
     Query(query): Query<HashMap<String, String>>,
-) -> Result<Json<AdminUserListResponse>, UsersError> {
+) -> Result<Json<AdminUserListResponse>, UsersHttpError> {
     let limit = query
         .get("limit")
         .and_then(|value| value.parse::<u64>().ok());
@@ -449,6 +537,7 @@ pub async fn admin_list_users(
     services::admin_list_users(&deps, limit, offset)
         .await
         .map(Json)
+        .map_err(UsersHttpError::from)
 }
 
 /// Create a local account.
@@ -462,7 +551,7 @@ pub async fn admin_create_user(
     State(deps): State<UsersDeps>,
     CurrentAdmin(_): CurrentAdmin,
     ValidJson(body): ValidJson<AdminUserCreate>,
-) -> Result<(StatusCode, Json<UserResponse>), UsersError> {
+) -> Result<(StatusCode, Json<UserResponse>), UsersHttpError> {
     services::admin_create_user(
         &deps,
         &body.username,
@@ -473,6 +562,7 @@ pub async fn admin_create_user(
     )
     .await
     .map(|user| (StatusCode::CREATED, Json(user)))
+    .map_err(UsersHttpError::from)
 }
 
 /// Fetch one user.
@@ -486,8 +576,11 @@ pub async fn admin_get_user(
     State(deps): State<UsersDeps>,
     CurrentAdmin(_): CurrentAdmin,
     Path(user_id): Path<String>,
-) -> Result<Json<UserResponse>, UsersError> {
-    services::admin_get_user(&deps, &user_id).await.map(Json)
+) -> Result<Json<UserResponse>, UsersHttpError> {
+    services::admin_get_user(&deps, &user_id)
+        .await
+        .map(Json)
+        .map_err(UsersHttpError::from)
 }
 
 /// Change one user's role.
@@ -503,10 +596,11 @@ pub async fn admin_set_role(
     CurrentAdmin(ctx): CurrentAdmin,
     Path(user_id): Path<String>,
     ValidJson(body): ValidJson<RoleUpdate>,
-) -> Result<Json<UserResponse>, UsersError> {
+) -> Result<Json<UserResponse>, UsersHttpError> {
     services::admin_set_role(&deps, &ctx, &user_id, body.role)
         .await
         .map(Json)
+        .map_err(UsersHttpError::from)
 }
 
 /// Delete one user.
@@ -520,10 +614,11 @@ pub async fn admin_delete_user(
     State(deps): State<UsersDeps>,
     CurrentAdmin(ctx): CurrentAdmin,
     Path(user_id): Path<String>,
-) -> Result<StatusCode, UsersError> {
+) -> Result<StatusCode, UsersHttpError> {
     services::admin_delete_user(&deps, &ctx, &user_id)
         .await
         .map(|()| StatusCode::NO_CONTENT)
+        .map_err(UsersHttpError::from)
 }
 
 /// Revoke every session of one user.
@@ -537,10 +632,11 @@ pub async fn admin_revoke_sessions(
     State(deps): State<UsersDeps>,
     CurrentAdmin(_): CurrentAdmin,
     Path(user_id): Path<String>,
-) -> Result<StatusCode, UsersError> {
+) -> Result<StatusCode, UsersHttpError> {
     services::admin_revoke_user_sessions(&deps, &user_id)
         .await
         .map(|()| StatusCode::NO_CONTENT)
+        .map_err(UsersHttpError::from)
 }
 
 /// Mint a recovery code for one user. The code returns once.
@@ -554,10 +650,11 @@ pub async fn admin_mint_recovery_code(
     State(deps): State<UsersDeps>,
     CurrentAdmin(_): CurrentAdmin,
     Path(user_id): Path<String>,
-) -> Result<(StatusCode, Json<RecoveryCodeResponse>), UsersError> {
+) -> Result<(StatusCode, Json<RecoveryCodeResponse>), UsersHttpError> {
     services::admin_mint_recovery_code(&deps, &user_id)
         .await
         .map(|minted| (StatusCode::CREATED, Json(minted)))
+        .map_err(UsersHttpError::from)
 }
 
 /// Every live app password across users, with owners.
@@ -569,12 +666,15 @@ pub async fn admin_mint_recovery_code(
 pub async fn admin_list_app_passwords(
     State(deps): State<UsersDeps>,
     CurrentAdmin(_): CurrentAdmin,
-) -> Result<Json<super::models::AdminAppPasswordListResponse>, UsersError> {
-    services::admin_list_app_passwords(&deps).await.map(|rows| {
-        Json(super::models::AdminAppPasswordListResponse {
-            app_passwords: rows,
+) -> Result<Json<super::models::AdminAppPasswordListResponse>, UsersHttpError> {
+    services::admin_list_app_passwords(&deps)
+        .await
+        .map(|rows| {
+            Json(super::models::AdminAppPasswordListResponse {
+                app_passwords: rows,
+            })
         })
-    })
+        .map_err(UsersHttpError::from)
 }
 
 /// Revoke any user's app password.
@@ -588,10 +688,11 @@ pub async fn admin_revoke_app_password(
     State(deps): State<UsersDeps>,
     CurrentAdmin(_): CurrentAdmin,
     Path(app_password_id): Path<String>,
-) -> Result<StatusCode, UsersError> {
+) -> Result<StatusCode, UsersHttpError> {
     services::admin_revoke_app_password(&deps, &app_password_id)
         .await
         .map(|()| StatusCode::NO_CONTENT)
+        .map_err(UsersHttpError::from)
 }
 
 /// List Jellyfin accounts available for import. 503 until a live Jellyfin
@@ -604,10 +705,11 @@ pub async fn admin_revoke_app_password(
 pub async fn admin_import_list_jellyfin(
     State(deps): State<UsersDeps>,
     CurrentAdmin(_): CurrentAdmin,
-) -> Result<Json<ImportCandidateListResponse>, ImportError> {
+) -> Result<Json<ImportCandidateListResponse>, UsersHttpError> {
     list_import_candidates(&deps, &DisabledJellyfinDirectory)
         .await
         .map(Json)
+        .map_err(UsersHttpError::from)
 }
 
 /// List Plex accounts available for import. 503 until a live Plex client
@@ -620,10 +722,11 @@ pub async fn admin_import_list_jellyfin(
 pub async fn admin_import_list_plex(
     State(deps): State<UsersDeps>,
     CurrentAdmin(_): CurrentAdmin,
-) -> Result<Json<ImportCandidateListResponse>, ImportError> {
+) -> Result<Json<ImportCandidateListResponse>, UsersHttpError> {
     list_import_candidates(&deps, &DisabledPlexDirectory)
         .await
         .map(Json)
+        .map_err(UsersHttpError::from)
 }
 
 /// Import a batch of accounts from one provider. The catalog is re-read
@@ -638,7 +741,7 @@ pub async fn admin_import_users(
     State(deps): State<UsersDeps>,
     CurrentAdmin(_): CurrentAdmin,
     ValidJson(body): ValidJson<ImportUsersRequest>,
-) -> Result<Json<ImportUsersResponse>, ImportError> {
+) -> Result<Json<ImportUsersResponse>, UsersHttpError> {
     // Disabled directories until the live clients land: every provider
     // branch 503s below; only the provider name validates here.
     let directory = match body.provider.as_str() {
@@ -653,7 +756,7 @@ pub async fn admin_import_users(
             .into());
         }
     };
-    directory.map(Json)
+    directory.map(Json).map_err(UsersHttpError::from)
 }
 
 /// Curator probe body: proves the extractor admitted the caller.

@@ -1,20 +1,89 @@
-//! Thin admin handlers. Each answers one route and returns typed errors.
+//! Thin admin handlers. Each answers one route; [`AdminHttpError`] is the
+//! one place admin errors get a status and envelope.
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{FromRequest, Path, Request, State},
     http::StatusCode,
+    response::{IntoResponse, Response},
+};
+use serde::de::DeserializeOwned;
+
+use crate::error::{
+    CONFLICT, FIXED_INTERNAL_MESSAGE, FORBIDDEN, INTERNAL_ERROR, INVALID_INPUT, NOT_FOUND,
+    NOT_FOUND_MESSAGE, UPSTREAM_ERROR, envelope_response, fault_response, unauthorized_response,
 };
 
 use super::{
     AdminSetup,
-    error::{AdminError, ValidJson},
+    error::AdminError,
     models::{
         BackupListResponse, BackupRunResponse, CacheClearBody, CacheClearResponse,
         CacheStatsResponse, PrecacheRunResponse, ProviderStatsResponse, QueueStatsResponse,
         QuotaOverrideBody, QuotaResponse, RestoreReport,
     },
 };
+
+/// An admin failure on its way to the wire.
+#[derive(Debug)]
+pub struct AdminHttpError(pub AdminError);
+
+impl From<AdminError> for AdminHttpError {
+    fn from(error: AdminError) -> Self {
+        Self(error)
+    }
+}
+
+impl IntoResponse for AdminHttpError {
+    fn into_response(self) -> Response {
+        match self.0 {
+            AdminError::Unauthorized { message } => unauthorized_response(message),
+            AdminError::Forbidden { message } => {
+                envelope_response(StatusCode::FORBIDDEN, FORBIDDEN, message, None)
+            }
+            AdminError::NotFound => {
+                envelope_response(StatusCode::NOT_FOUND, NOT_FOUND, NOT_FOUND_MESSAGE, None)
+            }
+            AdminError::InvalidInput { message } => {
+                envelope_response(StatusCode::BAD_REQUEST, INVALID_INPUT, message, None)
+            }
+            AdminError::Conflict { message } => {
+                envelope_response(StatusCode::CONFLICT, CONFLICT, message, None)
+            }
+            AdminError::Unavailable { message } => envelope_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                UPSTREAM_ERROR,
+                message,
+                None,
+            ),
+            AdminError::Internal { error_id } => fault_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                INTERNAL_ERROR,
+                FIXED_INTERNAL_MESSAGE,
+                &error_id,
+            ),
+        }
+    }
+}
+
+/// JSON body extractor that keeps malformed input inside the shared envelope
+/// instead of Axum's default plain-text 400.
+pub struct ValidJson<T>(pub T);
+
+impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidJson<T> {
+    type Rejection = AdminHttpError;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        Json::<T>::from_request(req, state)
+            .await
+            .map(|Json(value)| Self(value))
+            .map_err(|cause| {
+                AdminHttpError(AdminError::InvalidInput {
+                    message: format!("Invalid request body: {cause}"),
+                })
+            })
+    }
+}
 
 /// Backup listing, oldest first.
 #[utoipa::path(
@@ -24,9 +93,11 @@ use super::{
 )]
 pub async fn list_backups(
     State(admin): State<AdminSetup>,
-) -> Result<Json<BackupListResponse>, AdminError> {
+) -> Result<Json<BackupListResponse>, AdminHttpError> {
     let backups = admin.backups.as_ref().ok_or_else(unwired_backups)?;
-    super::backups::list_backups(backups.backup_dir()).map(Json)
+    super::backups::list_backups(backups.backup_dir())
+        .map(Json)
+        .map_err(AdminHttpError::from)
 }
 
 /// Run one backup now.
@@ -37,7 +108,7 @@ pub async fn list_backups(
 )]
 pub async fn run_backup(
     State(admin): State<AdminSetup>,
-) -> Result<(StatusCode, Json<BackupRunResponse>), AdminError> {
+) -> Result<(StatusCode, Json<BackupRunResponse>), AdminHttpError> {
     let backups = admin.backups.as_ref().ok_or_else(unwired_backups)?;
     let report = super::backups::run_backup(backups).await?;
     Ok((StatusCode::CREATED, Json(report)))
@@ -53,9 +124,11 @@ pub async fn run_backup(
 pub async fn restore_report(
     State(admin): State<AdminSetup>,
     Path(name): Path<String>,
-) -> Result<Json<RestoreReport>, AdminError> {
+) -> Result<Json<RestoreReport>, AdminHttpError> {
     let backups = admin.backups.as_ref().ok_or_else(unwired_backups)?;
-    super::backups::restore_report(backups.backup_dir(), &name).map(Json)
+    super::backups::restore_report(backups.backup_dir(), &name)
+        .map(Json)
+        .map_err(AdminHttpError::from)
 }
 
 /// Provider-cache counters.
@@ -78,10 +151,11 @@ pub async fn cache_stats(State(admin): State<AdminSetup>) -> Json<CacheStatsResp
 pub async fn clear_cache(
     State(admin): State<AdminSetup>,
     ValidJson(body): ValidJson<CacheClearBody>,
-) -> Result<Json<CacheClearResponse>, AdminError> {
+) -> Result<Json<CacheClearResponse>, AdminHttpError> {
     super::cache::clear_cache(&admin.cache, &body)
         .await
         .map(Json)
+        .map_err(AdminHttpError::from)
 }
 
 /// Queue demand plus the job registry.
@@ -92,9 +166,9 @@ pub async fn clear_cache(
 )]
 pub async fn queue_stats(
     State(admin): State<AdminSetup>,
-) -> Result<Json<QueueStatsResponse>, AdminError> {
+) -> Result<Json<QueueStatsResponse>, AdminHttpError> {
     let db = admin.db.as_ref().ok_or_else(unwired_db)?;
-    super::queues::queue_stats(db).await.map(Json)
+    Ok(Json(super::queues::queue_stats(db).await?))
 }
 
 /// Provider limiter posture plus slot lanes.
@@ -117,11 +191,12 @@ pub async fn provider_stats(State(admin): State<AdminSetup>) -> Json<ProviderSta
 pub async fn get_quota(
     State(admin): State<AdminSetup>,
     Path(user_id): Path<String>,
-) -> Result<Json<QuotaResponse>, AdminError> {
+) -> Result<Json<QuotaResponse>, AdminHttpError> {
     let db = admin.db.as_ref().ok_or_else(unwired_db)?;
     super::quota::get_quota(&admin.users, db, &admin.quota, &user_id)
         .await
         .map(Json)
+        .map_err(AdminHttpError::from)
 }
 
 /// Start one supervised precache run. The run continues in the background
@@ -136,7 +211,7 @@ pub async fn get_quota(
 )]
 pub async fn run_precache(
     State(admin): State<AdminSetup>,
-) -> Result<(StatusCode, Json<PrecacheRunResponse>), AdminError> {
+) -> Result<(StatusCode, Json<PrecacheRunResponse>), AdminHttpError> {
     let trigger = admin.precache.as_ref().ok_or_else(unwired_precache)?;
     match trigger.run().await {
         Ok(_) => Ok((
@@ -148,7 +223,8 @@ pub async fn run_precache(
         )),
         Err(_) => Err(AdminError::Conflict {
             message: "A precache run is already live".to_owned(),
-        }),
+        }
+        .into()),
     }
 }
 
@@ -164,11 +240,12 @@ pub async fn set_quota(
     State(admin): State<AdminSetup>,
     Path(user_id): Path<String>,
     ValidJson(body): ValidJson<QuotaOverrideBody>,
-) -> Result<Json<QuotaResponse>, AdminError> {
+) -> Result<Json<QuotaResponse>, AdminHttpError> {
     let db = admin.db.as_ref().ok_or_else(unwired_db)?;
     super::quota::set_quota(&admin.users, db, &admin.quota, &user_id, &body)
         .await
         .map(Json)
+        .map_err(AdminHttpError::from)
 }
 
 /// 503 for backup routes on states without a backup service.

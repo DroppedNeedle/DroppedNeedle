@@ -16,6 +16,7 @@ use utoipa::ToSchema;
 use super::super::session::middleware::CurrentSession;
 use super::UsersDeps;
 use super::error::UsersError;
+use super::handlers::UsersHttpError;
 use super::stores::StoreError;
 
 /// Session kind, re-exported from the session module so services and
@@ -152,18 +153,18 @@ async fn resolve(parts: &Parts, deps: &UsersDeps) -> Result<AuthContext, UsersEr
 }
 
 impl FromRequestParts<UsersDeps> for CurrentUser {
-    type Rejection = UsersError;
+    type Rejection = UsersHttpError;
 
     async fn from_request_parts(
         parts: &mut Parts,
         state: &UsersDeps,
     ) -> Result<Self, Self::Rejection> {
-        resolve(parts, state).await.map(CurrentUser)
+        Ok(CurrentUser(resolve(parts, state).await?))
     }
 }
 
 impl FromRequestParts<UsersDeps> for CurrentCurator {
-    type Rejection = UsersError;
+    type Rejection = UsersHttpError;
 
     async fn from_request_parts(
         parts: &mut Parts,
@@ -175,13 +176,14 @@ impl FromRequestParts<UsersDeps> for CurrentCurator {
         } else {
             Err(UsersError::Forbidden {
                 message: "Curator role required".to_owned(),
-            })
+            }
+            .into())
         }
     }
 }
 
 impl FromRequestParts<UsersDeps> for CurrentAdmin {
-    type Rejection = UsersError;
+    type Rejection = UsersHttpError;
 
     async fn from_request_parts(
         parts: &mut Parts,
@@ -193,7 +195,8 @@ impl FromRequestParts<UsersDeps> for CurrentAdmin {
         } else {
             Err(UsersError::Forbidden {
                 message: "Admin role required".to_owned(),
-            })
+            }
+            .into())
         }
     }
 }

@@ -1,45 +1,24 @@
-//! Shared error shape for the auth HTTP routes.
+//! HTTP errors for the auth routes.
 //!
-//! Every failure renders the shared `{"error": {code, message, details}}`
-//! envelope. Codes and fixed messages mirror the users routes so one route
-//! never disagrees with the next; the one intended difference is the
-//! upstream outage status: federated IdP outages are 503 here (the
-//! federated contract and v2 both say 503), while the users routes use 502
-//! for their Last.fm calls.
+//! Every failure renders through the shared envelope in [`crate::error`].
+//! Codes and fixed messages match the users routes; the one intended
+//! difference is the upstream outage status: federated IdP outages are 503
+//! here (the federated contract and v2 both say 503), while the users routes
+//! use 502 for their Last.fm calls.
 
 use crate::auth::users::error::UsersError;
-use crate::error::{ErrorBody, ErrorEnvelope};
+use crate::error::{
+    CONFLICT, FIXED_INTERNAL_MESSAGE, FIXED_TOO_LARGE_MESSAGE, FIXED_UPSTREAM_MESSAGE, FORBIDDEN,
+    INTERNAL_ERROR, INVALID_INPUT, NOT_FOUND, NOT_FOUND_MESSAGE, PAYLOAD_TOO_LARGE, UNAUTHORIZED,
+    UPSTREAM_ERROR, envelope_response, fault_response, unauthorized_response,
+};
 use crate::ids::IdGenerator;
 use axum::{
-    Json,
     extract::{FromRequest, Query, Request},
-    http::{HeaderValue, StatusCode},
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde::de::DeserializeOwned;
-
-/// Missing or invalid credential.
-pub const UNAUTHORIZED: &str = "UNAUTHORIZED";
-/// Valid credential lacking rights (and Plex poll rejections, v2 parity).
-pub const FORBIDDEN: &str = "FORBIDDEN";
-/// Unknown id.
-pub const NOT_FOUND: &str = "NOT_FOUND";
-/// The request itself is wrong. The message is user-facing.
-pub const INVALID_INPUT: &str = "INVALID_INPUT";
-/// The request conflicts with current state. The message is user-facing.
-pub const CONFLICT: &str = "CONFLICT";
-/// A body larger than the route allows.
-pub const PAYLOAD_TOO_LARGE: &str = "PAYLOAD_TOO_LARGE";
-/// An upstream IdP failed. Body is fixed; the cause stays in the log.
-pub const UPSTREAM_ERROR: &str = "UPSTREAM_ERROR";
-
-/// Fixed 503 message. Never carries cause text, hosts, or paths.
-pub const FIXED_UPSTREAM_MESSAGE: &str = "Upstream service error";
-/// Fixed 413 message.
-pub const FIXED_TOO_LARGE_MESSAGE: &str = "Request body too large";
-
-/// Challenge sent on login-route 401s.
-pub const WWW_AUTHENTICATE_BEARER: &str = "Bearer";
 
 /// Every failure these routes can return.
 #[derive(Debug)]
@@ -113,55 +92,6 @@ impl AuthRouteError {
         tracing::error!(error_id, %cause, "auth route upstream failed");
         Self::Unavailable { error_id }
     }
-
-    fn status(&self) -> StatusCode {
-        match self {
-            Self::Unauthorized { .. } => StatusCode::UNAUTHORIZED,
-            Self::Forbidden { .. } => StatusCode::FORBIDDEN,
-            Self::NotFound => StatusCode::NOT_FOUND,
-            Self::InvalidInput { .. } => StatusCode::BAD_REQUEST,
-            Self::Conflict { .. } => StatusCode::CONFLICT,
-            Self::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
-            Self::Unavailable { .. } => StatusCode::SERVICE_UNAVAILABLE,
-            Self::Internal { .. } => StatusCode::INTERNAL_SERVER_ERROR,
-        }
-    }
-
-    fn envelope(&self) -> ErrorEnvelope {
-        let (code, message, details) = match self {
-            Self::Unauthorized { message, .. } => (UNAUTHORIZED.to_owned(), message.clone(), None),
-            Self::Forbidden { message } => (FORBIDDEN.to_owned(), message.clone(), None),
-            Self::NotFound => (
-                NOT_FOUND.to_owned(),
-                crate::error::NOT_FOUND_MESSAGE.to_owned(),
-                None,
-            ),
-            Self::InvalidInput { message } => (INVALID_INPUT.to_owned(), message.clone(), None),
-            Self::Conflict { message } => (CONFLICT.to_owned(), message.clone(), None),
-            Self::TooLarge => (
-                PAYLOAD_TOO_LARGE.to_owned(),
-                FIXED_TOO_LARGE_MESSAGE.to_owned(),
-                None,
-            ),
-            Self::Unavailable { error_id } => (
-                UPSTREAM_ERROR.to_owned(),
-                FIXED_UPSTREAM_MESSAGE.to_owned(),
-                Some(serde_json::json!({ "error_id": error_id })),
-            ),
-            Self::Internal { error_id } => (
-                crate::error::INTERNAL_ERROR.to_owned(),
-                crate::error::FIXED_INTERNAL_MESSAGE.to_owned(),
-                Some(serde_json::json!({ "error_id": error_id })),
-            ),
-        };
-        ErrorEnvelope {
-            error: ErrorBody {
-                code,
-                message,
-                details,
-            },
-        }
-    }
 }
 
 impl From<UsersError> for AuthRouteError {
@@ -173,7 +103,9 @@ impl From<UsersError> for AuthRouteError {
             UsersError::InvalidInput { message } => Self::InvalidInput { message },
             UsersError::Conflict { message } => Self::Conflict { message },
             UsersError::TooLarge => Self::TooLarge,
-            UsersError::Upstream { error_id } => Self::Unavailable { error_id },
+            UsersError::Unavailable { error_id } | UsersError::Upstream { error_id } => {
+                Self::Unavailable { error_id }
+            }
             UsersError::Internal { error_id } => Self::Internal { error_id },
         }
     }
@@ -181,21 +113,46 @@ impl From<UsersError> for AuthRouteError {
 
 impl IntoResponse for AuthRouteError {
     fn into_response(self) -> Response {
-        let status = self.status();
-        let challenge = matches!(
-            &self,
+        match self {
             Self::Unauthorized {
+                message,
                 challenge: true,
-                ..
+            } => unauthorized_response(message),
+            Self::Unauthorized {
+                message,
+                challenge: false,
+            } => envelope_response(StatusCode::UNAUTHORIZED, UNAUTHORIZED, message, None),
+            Self::Forbidden { message } => {
+                envelope_response(StatusCode::FORBIDDEN, FORBIDDEN, message, None)
             }
-        );
-        let mut response = (status, Json(self.envelope())).into_response();
-        if challenge && let Ok(value) = HeaderValue::from_str(WWW_AUTHENTICATE_BEARER) {
-            response
-                .headers_mut()
-                .insert(axum::http::header::WWW_AUTHENTICATE, value);
+            Self::NotFound => {
+                envelope_response(StatusCode::NOT_FOUND, NOT_FOUND, NOT_FOUND_MESSAGE, None)
+            }
+            Self::InvalidInput { message } => {
+                envelope_response(StatusCode::BAD_REQUEST, INVALID_INPUT, message, None)
+            }
+            Self::Conflict { message } => {
+                envelope_response(StatusCode::CONFLICT, CONFLICT, message, None)
+            }
+            Self::TooLarge => envelope_response(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                PAYLOAD_TOO_LARGE,
+                FIXED_TOO_LARGE_MESSAGE,
+                None,
+            ),
+            Self::Unavailable { error_id } => fault_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                UPSTREAM_ERROR,
+                FIXED_UPSTREAM_MESSAGE,
+                &error_id,
+            ),
+            Self::Internal { error_id } => fault_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                INTERNAL_ERROR,
+                FIXED_INTERNAL_MESSAGE,
+                &error_id,
+            ),
         }
-        response
     }
 }
 

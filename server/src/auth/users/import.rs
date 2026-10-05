@@ -13,16 +13,10 @@
 
 use std::collections::HashMap;
 
-use axum::{
-    Json,
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
-
 use super::super::federated::users::{
     CREATE_RETRIES, PROVIDER_JELLYFIN, PROVIDER_PLEX, ProviderBinding, username_base,
 };
-use super::error::{FIXED_UPSTREAM_MESSAGE, UPSTREAM_ERROR, UsersError};
+use super::error::UsersError;
 use super::models::{
     ImportCandidateListResponse, ImportCandidateView, ImportUsersResponse, UserRecord,
 };
@@ -30,55 +24,6 @@ use super::roles::Role;
 use super::services::{self, MAX_DISPLAY_NAME_LEN, store_internal, user_response as render_user};
 use super::stores::{DirectoryError, DirectoryUser, StoreError, UserDirectory};
 use super::{UsersDeps, clock_now};
-use crate::error::{ErrorBody, ErrorEnvelope};
-use crate::ids::IdGenerator;
-
-/// Failures the import endpoints can return. Directory outages render the
-/// federated 503 posture (same as the login flows); everything else
-/// delegates to the users error.
-#[derive(Debug)]
-pub enum ImportError {
-    /// Users failure (store fault, bad input, conflict).
-    Users(UsersError),
-    /// The directory is unconfigured or unreachable. Fixed body plus id.
-    Unavailable {
-        /// Ties the wire response to the server log line.
-        error_id: String,
-    },
-}
-
-impl ImportError {
-    /// Build a 503, logging the real cause with its id.
-    pub fn unavailable(cause: &dyn std::fmt::Display, ids: &dyn IdGenerator) -> Self {
-        let error_id = ids.new_id();
-        tracing::error!(error_id, %cause, "user import upstream failed");
-        Self::Unavailable { error_id }
-    }
-}
-
-impl From<UsersError> for ImportError {
-    fn from(error: UsersError) -> Self {
-        Self::Users(error)
-    }
-}
-
-impl IntoResponse for ImportError {
-    fn into_response(self) -> Response {
-        match self {
-            Self::Users(error) => error.into_response(),
-            Self::Unavailable { error_id } => {
-                let envelope = ErrorEnvelope {
-                    error: ErrorBody {
-                        code: UPSTREAM_ERROR.to_owned(),
-                        message: FIXED_UPSTREAM_MESSAGE.to_owned(),
-                        details: Some(serde_json::json!({ "error_id": error_id })),
-                    },
-                };
-                (StatusCode::SERVICE_UNAVAILABLE, Json(envelope)).into_response()
-            }
-        }
-    }
-}
 
 /// Jellyfin directory with no live client: every listing reports
 /// unconfigured (503). A live client would replace this at the
@@ -121,11 +66,11 @@ impl UserDirectory for DisabledPlexDirectory {
 pub async fn list_import_candidates(
     deps: &UsersDeps,
     directory: &dyn UserDirectory,
-) -> Result<ImportCandidateListResponse, ImportError> {
+) -> Result<ImportCandidateListResponse, UsersError> {
     let users = directory
         .list_users()
         .await
-        .map_err(|error| ImportError::unavailable(&error, deps.ids.as_ref()))?;
+        .map_err(|error| UsersError::unavailable(&error, deps.ids.as_ref()))?;
     let mut candidates = Vec::with_capacity(users.len());
     for user in &users {
         let binding = deps
@@ -151,11 +96,11 @@ pub async fn import_users(
     deps: &UsersDeps,
     directory: &dyn UserDirectory,
     provider_uids: &[String],
-) -> Result<ImportUsersResponse, ImportError> {
+) -> Result<ImportUsersResponse, UsersError> {
     let users = directory
         .list_users()
         .await
-        .map_err(|error| ImportError::unavailable(&error, deps.ids.as_ref()))?;
+        .map_err(|error| UsersError::unavailable(&error, deps.ids.as_ref()))?;
     let catalog: HashMap<&str, &DirectoryUser> = users
         .iter()
         .map(|user| (user.provider_uid.as_str(), user))
@@ -182,8 +127,7 @@ pub async fn import_users(
                 // maps its RegistrationError the same way).
                 return Err(UsersError::Conflict {
                     message: "Could not import users".to_owned(),
-                }
-                .into());
+                });
             }
             Err(ImportFault::Store(cause)) => {
                 // One bad uid must not abort the batch (v2 parity).

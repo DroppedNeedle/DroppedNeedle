@@ -12,12 +12,9 @@
 //! 403-or-404 choices land with the role extractors.
 
 use axum::{
-    Json,
     http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
+    response::Response,
 };
-
-use crate::error::{ErrorBody, ErrorEnvelope};
 
 /// Which transport carried the credential. Cookie sessions are ambient (CSRF
 /// exposure, hence the origin check); Bearer is explicit and exempt.
@@ -29,10 +26,7 @@ pub enum Transport {
     Cookie,
 }
 
-/// Machine code for missing/invalid sessions.
-pub const UNAUTHORIZED: &str = "UNAUTHORIZED";
-/// Machine code for valid sessions lacking rights (and origin-check failures).
-pub const FORBIDDEN: &str = "FORBIDDEN";
+pub use crate::error::{FORBIDDEN, UNAUTHORIZED};
 
 /// Extract the presented credential, Bearer-then-cookie. Returns the raw token
 /// and the transport that carried it.
@@ -79,31 +73,12 @@ fn strip_bearer_prefix(value: &str) -> Option<&str> {
 
 /// 401 response: shared envelope, `WWW-Authenticate: Bearer`.
 pub fn unauthorized_response(message: &str) -> Response {
-    let body = ErrorEnvelope {
-        error: ErrorBody {
-            code: UNAUTHORIZED.to_owned(),
-            message: message.to_owned(),
-            details: None,
-        },
-    };
-    (
-        StatusCode::UNAUTHORIZED,
-        [(axum::http::header::WWW_AUTHENTICATE, "Bearer")],
-        Json(body),
-    )
-        .into_response()
+    crate::error::unauthorized_response(message)
 }
 
 /// 403 response: shared envelope, no auth challenge (the session is valid).
 pub fn forbidden_response(message: &str) -> Response {
-    let body = ErrorEnvelope {
-        error: ErrorBody {
-            code: FORBIDDEN.to_owned(),
-            message: message.to_owned(),
-            details: None,
-        },
-    };
-    (StatusCode::FORBIDDEN, Json(body)).into_response()
+    crate::error::envelope_response(StatusCode::FORBIDDEN, FORBIDDEN, message, None)
 }
 
 #[cfg(test)]

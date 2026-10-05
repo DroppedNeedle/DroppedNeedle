@@ -32,7 +32,7 @@ pub use checkpoint::{
     Observation, TRUNCATE_MIN_INTERVAL,
 };
 pub use durable::{DurableWorkWakeups, JobKind, JobRecord, JobState, WakeupChannel};
-pub use error::{DbError, busy_response, map_sqlx_busy, rusqlite_is_busy, sqlx_is_busy};
+pub use error::{DbError, map_sqlx_busy, rusqlite_is_busy, sqlx_is_busy};
 pub use factory::{
     ACQUIRE_TIMEOUT, BUSY_TIMEOUT, CACHE_SIZE_KIB, DbConfig, DbRuntime, IDLE_TIMEOUT, MAX_READERS,
     MIN_CONNECTIONS, MMAP_SIZE, WAL_AUTOCHECKPOINT, open_runtime,

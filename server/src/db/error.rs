@@ -1,20 +1,15 @@
-//! Typed persistence errors and the busy-path mapping.
+//! Typed persistence errors and busy detection.
 //!
 //! Lock contention is transient by construction: the writer lane serializes
 //! writes and every connection waits out the 5 s busy timeout before SQLite
-//! reports busy. When busy still escapes, the data path maps it to a typed
-//! retryable error rendered as HTTP 503 with `Retry-After: 1`. The client
+//! reports busy. When busy still escapes, the data path maps it to the typed
+//! retryable [`DbError::Busy`]; handlers render that as HTTP 503 with
+//! `Retry-After: 1` through [`crate::error::busy_response`]. The client
 //! retries; this process never spins.
 
 use std::path::PathBuf;
 
-use axum::{
-    http::{HeaderValue, StatusCode, header::RETRY_AFTER},
-    response::Response,
-};
 use thiserror::Error;
-
-use crate::error::ApiError;
 
 /// Failures from the SQLite runtime: boot checks, writes, backup, restore.
 #[derive(Debug, Error)]
@@ -158,37 +153,9 @@ pub fn map_sqlx_busy(operation: &str, error: sqlx::Error) -> DbError {
     }
 }
 
-/// Render the busy path: 503 with `Retry-After: 1` and the fixed 5xx envelope.
-///
-/// The body matches what the request-scope middleware writes for any
-/// 5xx, so passing through the middleware is idempotent: same status, same
-/// header, same body. The operation name is logged, never rendered.
-pub fn busy_response(operation: &str, request_id: &str) -> Response {
-    tracing::warn!(
-        operation,
-        request_id,
-        "database busy; answering 503 with retry"
-    );
-    let mut response = ApiError::server_error_response(StatusCode::SERVICE_UNAVAILABLE, request_id);
-    response
-        .headers_mut()
-        .insert(RETRY_AFTER, HeaderValue::from_static("1"));
-    response
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn busy_response_carries_503_retry_after_and_fixed_envelope() {
-        let response = busy_response("op", "req-1");
-        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(
-            response.headers().get(RETRY_AFTER).unwrap(),
-            HeaderValue::from_static("1")
-        );
-    }
 
     #[test]
     fn rusqlite_busy_detection_follows_message_and_code() {
