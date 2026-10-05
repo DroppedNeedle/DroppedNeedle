@@ -25,7 +25,7 @@ use crate::acquire::requests::sqlite::RequestStore;
 use crate::db::{DurableWorkWakeups, JobKind, JobState, WriteLane};
 
 use super::seams::{
-    CandidateSearch, Clock, DispatchKind, DispatchRequest, DownloadDispatch, DropVerify,
+    CandidateSearch, Clock, DispatchKind, DispatchRequest, DownloadDispatch, DropVerify, FlowEvent,
     LandedHandoff, LibraryOrganise, TickSink, VerifyVerdict,
 };
 use super::stores::{QuarantineEntry, QuarantineStore};
@@ -526,9 +526,13 @@ async fn land_free_music(
     let job_id = deps.handoff.land(&op.id, &request.user_id, files).await?;
     ops.transition(&op.id, OpState::Succeeded, now, &job_id)
         .await?;
-    deps.ticks.emit_about(
+    deps.ticks.announce(FlowEvent::RequestFulfilled {
+        request_id: request.mbid.clone(),
+        user_id: request.user_id.clone(),
+        release_group_mbid: request.mbid.clone(),
+    });
+    deps.ticks.emit(
         "request_fulfilled",
-        &request.mbid,
         &format!(
             "free-music {} landed as {job_id} (task {task_id})",
             request.mbid
@@ -745,6 +749,7 @@ pub async fn process_drop_job(
     let now = deps.clock.now_unix();
     let op_id = ops.register("drop-import", &job.id, now).await?.id;
     ops.transition(&op_id, OpState::Running, now, "").await?;
+    let mut resolved: i64 = 0;
     tokio::fs::create_dir_all(quarantine_dir(staging_root))
         .await
         .map_err(|error| format!("cannot open quarantine: {error}"))?;
@@ -761,9 +766,9 @@ pub async fn process_drop_job(
                 if let Some(rg) = rg_mbid {
                     mark_imported(&deps.ledger, rg, at).await;
                 }
-                deps.ticks.emit_about(
+                resolved += 1;
+                deps.ticks.emit(
                     "drop_import.resolved",
-                    rg_mbid.unwrap_or_default(),
                     &format!("{} resolved to {final_path}", item.name),
                     at,
                 );
@@ -812,6 +817,13 @@ pub async fn process_drop_job(
             }
         }
         heartbeat(wakeups, lane, DROP_IMPORT_JOB).await;
+    }
+    if resolved > 0 {
+        deps.ticks.announce(FlowEvent::ImportFinished {
+            release_group_mbid: rg_mbid.unwrap_or_default().to_owned(),
+            track_count: resolved,
+            source: "drop_import".to_owned(),
+        });
     }
     let done = deps.clock.now_unix();
     ops.transition(
@@ -871,6 +883,11 @@ pub async fn resolve_quarantined_item(
                 &format!("{} matched by hand to {final_path}", item.name),
                 at,
             );
+            deps.ticks.announce(FlowEvent::ImportFinished {
+                release_group_mbid: rg_mbid.unwrap_or_default().to_owned(),
+                track_count: 1,
+                source: "drop_import".to_owned(),
+            });
         }
         ResolveDecision::Discard => {
             tokio::fs::remove_file(&item.staged_path)

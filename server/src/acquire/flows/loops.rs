@@ -21,7 +21,8 @@ use std::time::Duration;
 use crate::db::{DurableWorkWakeups, JobKind, JobState, WriteLane};
 
 use super::seams::{
-    CandidateSearch, Clock, DispatchKind, DispatchRequest, DownloadDispatch, ReleasePoll, TickSink,
+    CandidateSearch, Clock, DispatchKind, DispatchRequest, DownloadDispatch, FlowEvent,
+    ReleasePoll, TickSink,
 };
 use super::stores::{
     AdminDirectory, FollowCursor, FollowStore, LibraryPresence, PendingRelease, UpgradePolicy,
@@ -416,12 +417,16 @@ async fn check_watch(
         deps.ledger
             .update_status(RequestKind::Album, &watch.key, "imported", Some(at), None)
             .await?;
-        deps.ticks.emit_about(
+        deps.ticks.emit(
             "request_fulfilled",
-            &watch.key,
             &format!("wanted {} satisfied from the library", watch.key),
             now,
         );
+        deps.ticks.announce(FlowEvent::RequestFulfilled {
+            request_id: watch.key.clone(),
+            user_id: watch.user_id.clone(),
+            release_group_mbid: watch.key.clone(),
+        });
         summary.fulfilled += 1;
         return Ok(());
     }
@@ -1137,6 +1142,19 @@ pub async fn sync_tick(now: i64, state: &mut LoopState, deps: &SyncDeps) -> Sync
     summary
 }
 
+/// The plugin event for one request that reached the library.
+fn fulfilled(row: &RequestRecord) -> FlowEvent {
+    let release_group_mbid = match row.kind {
+        RequestKind::Album => row.key.clone(),
+        _ => row.track_release_group_mbid.clone().unwrap_or_default(),
+    };
+    FlowEvent::RequestFulfilled {
+        request_id: row.key.clone(),
+        user_id: row.user_id.clone().unwrap_or_default(),
+        release_group_mbid,
+    }
+}
+
 /// Reconcile one live request row.
 async fn sync_one(
     now: i64,
@@ -1179,12 +1197,12 @@ async fn sync_one(
             summary.reconciled += 1;
             if mapped == "imported" {
                 summary.imported += 1;
-                deps.ticks.emit_about(
+                deps.ticks.emit(
                     "request_fulfilled",
-                    &row.key,
                     &format!("request {} imported (task {task_status})", row.key),
                     now,
                 );
+                deps.ticks.announce(fulfilled(row));
             }
         }
         return Ok(());
@@ -1206,12 +1224,12 @@ async fn sync_one(
     if won {
         summary.reconciled += 1;
         summary.imported += 1;
-        deps.ticks.emit_about(
+        deps.ticks.emit(
             "request_fulfilled",
-            &row.key,
             &format!("request {} imported (library presence)", row.key),
             now,
         );
+        deps.ticks.announce(fulfilled(row));
     }
     Ok(())
 }

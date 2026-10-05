@@ -6,7 +6,7 @@
 //! to the plugin host when boot attached one, in the background: a slow
 //! plugin never delays the flow that raised the event.
 
-use super::flows::seams::TickSink;
+use super::flows::seams::{FlowEvent, TickSink};
 use super::wiring::PluginSlot;
 use crate::plugins::runtime::{
     DownloadTaskEvent, EventKind, EventPayload, ImportEvent, PluginEvent, RequestEvent,
@@ -62,29 +62,35 @@ impl TickSink for PluginTicks {
         tracing::debug!(kind, detail, at, "flow tick");
     }
 
-    fn emit_about(&self, kind: &str, release_group_mbid: &str, detail: &str, at: i64) {
-        self.emit(kind, detail, at);
-        match kind {
-            "request_fulfilled" => announce(
+    fn announce(&self, event: FlowEvent) {
+        match event {
+            FlowEvent::RequestFulfilled {
+                request_id,
+                user_id,
+                release_group_mbid,
+            } => announce(
                 &self.plugins,
                 EventKind::RequestFulfilled,
                 EventPayload::Request(RequestEvent {
-                    request_id: release_group_mbid.to_owned(),
-                    user_id: String::new(),
-                    release_group_mbid: release_group_mbid.to_owned(),
+                    request_id,
+                    user_id,
+                    release_group_mbid,
                     status: "imported".to_owned(),
                 }),
             ),
-            "drop_import.resolved" => announce(
+            FlowEvent::ImportFinished {
+                release_group_mbid,
+                track_count,
+                source,
+            } => announce(
                 &self.plugins,
                 EventKind::ImportFinished,
                 EventPayload::Import(ImportEvent {
-                    release_group_mbid: release_group_mbid.to_owned(),
-                    track_count: 1,
-                    source: "drop_import".to_owned(),
+                    release_group_mbid,
+                    track_count,
+                    source,
                 }),
             ),
-            _ => {}
         }
     }
 }

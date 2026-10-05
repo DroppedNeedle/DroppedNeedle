@@ -485,12 +485,34 @@ pub trait TickSink: Send + Sync {
     /// Record one tick.
     fn emit(&self, kind: &str, detail: &str, at: i64);
 
-    /// Record one tick about one release group (its MBID, when known).
-    /// Plugin subscribers hear these; the default just records the tick.
-    fn emit_about(&self, kind: &str, release_group_mbid: &str, detail: &str, at: i64) {
-        let _ = release_group_mbid;
-        self.emit(kind, detail, at);
+    /// Announce one flow outcome to plugin subscribers. The default
+    /// drops it; the production sink forwards it to the plugin host.
+    fn announce(&self, event: FlowEvent) {
+        let _ = event;
     }
+}
+
+/// A flow outcome plugin subscribers hear about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FlowEvent {
+    /// A request reached the library.
+    RequestFulfilled {
+        /// Request key (the release-group MBID for albums).
+        request_id: String,
+        /// Requesting user, when the request has one.
+        user_id: String,
+        /// Release-group MBID.
+        release_group_mbid: String,
+    },
+    /// An import put files in the library.
+    ImportFinished {
+        /// Release-group MBID, when known.
+        release_group_mbid: String,
+        /// Files imported.
+        track_count: i64,
+        /// Where the files came from (`drop_import`).
+        source: String,
+    },
 }
 
 /// Memory tick sink recording every tick in order (tests).
