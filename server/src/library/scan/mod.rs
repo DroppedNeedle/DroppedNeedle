@@ -61,6 +61,7 @@ pub mod revision;
 pub mod roots;
 pub mod scheduler;
 pub mod seams;
+pub mod sqlite_store;
 pub mod store;
 pub mod supervisor;
 pub mod walk;
@@ -93,8 +94,10 @@ pub use seams::{
     AllowAll, ArmableDeferTagReader, Checkpoint, DeferOnceTagReader, FnCheckpoint, IdentifyQueue,
     NullIdentifyQueue, NullTagReader, ScannedTags, TagReadError, TagReader,
 };
+pub use sqlite_store::SqliteScanStore;
 pub use store::{
-    CatalogEntry, ClassifyInput, MemoryScanStore, RevisionKind, ScanStore, ScanStoreError,
+    CatalogEntry, ClassifyInput, CommitIndexedItem, InventoryPage, MemoryScanStore, RevisionKind,
+    ScanStore, ScanStoreError,
 };
 pub use supervisor::SupervisorInputs;
 pub use walk::{InventoryScanner, inventory_key, is_audio_file, relativize, text_safe_posix};

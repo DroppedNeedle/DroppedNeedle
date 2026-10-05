@@ -13,6 +13,7 @@
 
 use std::fs::File;
 use std::path::Path;
+use std::sync::{Arc, OnceLock};
 
 use lofty::file::AudioFile as _;
 use symphonia::core::audio::GenericAudioBufferRef;
@@ -23,7 +24,7 @@ use symphonia::core::codecs::registry::CodecRegistry;
 use symphonia::core::errors::Error as SymphoniaError;
 use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, TrackType};
-use symphonia::core::io::MediaSourceStream;
+use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::meta::MetadataOptions;
 use symphonia_adapter_libopus::OpusDecoder;
 
@@ -53,12 +54,76 @@ pub(crate) struct DecodedPcm {
 }
 
 /// Codec registry with every enabled symphonia codec plus Opus via the
-/// stage-1 adapter (`symphonia-adapter-libopus`).
-fn codec_registry() -> CodecRegistry {
-    let mut registry = CodecRegistry::new();
-    symphonia::default::register_enabled_codecs(&mut registry);
-    registry.register_audio_decoder::<OpusDecoder>();
-    registry
+/// stage-1 adapter (`symphonia-adapter-libopus`). Built once: the
+/// contents never vary, and rebuilding per file churns the scan heap.
+fn codec_registry() -> &'static CodecRegistry {
+    static REGISTRY: OnceLock<CodecRegistry> = OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        let mut registry = CodecRegistry::new();
+        symphonia::default::register_enabled_codecs(&mut registry);
+        registry.register_audio_decoder::<OpusDecoder>();
+        registry
+    })
+}
+
+/// Seekable in-memory media source over caller-owned bytes. Lets the
+/// scan tag reader decode from its reused file buffer instead of
+/// re-opening every file for the probe half.
+struct SharedBytes {
+    shared: Arc<Vec<u8>>,
+    position: u64,
+}
+
+impl SharedBytes {
+    fn new(shared: Arc<Vec<u8>>) -> Self {
+        Self {
+            shared,
+            position: 0,
+        }
+    }
+}
+
+impl std::io::Read for SharedBytes {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        // Like a file at EOF: a seek past the end reads zero and
+        // holds its position.
+        let start = self.position as usize;
+        if start >= self.shared.len() {
+            return Ok(0);
+        }
+        let take = (self.shared.len() - start).min(out.len());
+        out[..take].copy_from_slice(&self.shared[start..start + take]);
+        self.position = start as u64 + take as u64;
+        Ok(take)
+    }
+}
+
+impl std::io::Seek for SharedBytes {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        let position: i64 = match pos {
+            std::io::SeekFrom::Start(offset) => offset as i64,
+            std::io::SeekFrom::Current(offset) => self.position as i64 + offset,
+            std::io::SeekFrom::End(offset) => self.shared.len() as i64 + offset,
+        };
+        if position < 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "cannot seek before the start",
+            ));
+        }
+        self.position = position as u64;
+        Ok(self.position)
+    }
+}
+
+impl MediaSource for SharedBytes {
+    fn is_seekable(&self) -> bool {
+        true
+    }
+
+    fn byte_len(&self) -> Option<u64> {
+        Some(self.shared.len() as u64)
+    }
 }
 
 /// Probe technical info. WMA is rejected before any byte is read.
@@ -99,12 +164,71 @@ struct OpenStream {
     channels: u32,
 }
 
+/// Decode-counted duration from already-loaded bytes. Same verdicts as
+/// [`probe`]: ADTS takes the packet-count fallback, anything undecodable
+/// fails, and the caller decides what a missing duration means.
+pub fn probe_duration_from_shared(
+    shared: Arc<Vec<u8>>,
+    path: &Path,
+    format: AudioFormat,
+) -> Result<f64, TagsError> {
+    if format == AudioFormat::Aac {
+        let opened = open_reader_from_shared(shared, path, format)?;
+        return probe_adts_duration(opened.reader, opened.track_id, opened.sample_rate, path);
+    }
+    let opened = open_reader_from_shared(shared, path, format)?;
+    decode_count_duration(opened.reader, opened.params.clone()).map_err(|reason| TagsError::Probe {
+        path: path.display().to_string(),
+        reason,
+    })
+}
+
+/// Packet-count duration over an opened ADTS stream. Shared by the path
+/// and shared-bytes probes so the fallback stays one implementation.
+fn probe_adts_duration(
+    mut reader: Box<dyn FormatReader>,
+    track_id: u32,
+    sample_rate: u32,
+    path: &Path,
+) -> Result<f64, TagsError> {
+    let mut packets: u64 = 0;
+    while let Ok(Some(packet)) = reader.next_packet() {
+        if packet.track_id == track_id {
+            packets += 1;
+        }
+    }
+    if packets == 0 {
+        return Err(TagsError::Probe {
+            path: path.display().to_string(),
+            reason: "no ADTS packets found".to_owned(),
+        });
+    }
+    Ok(packets as f64 * 1024.0 / f64::from(sample_rate))
+}
+
 fn open_reader(path: &Path, format: AudioFormat) -> Result<OpenStream, TagsError> {
     let file = File::open(path).map_err(|source| TagsError::Io {
         path: path.display().to_string(),
         source,
     })?;
-    let source = MediaSourceStream::new(Box::new(file), Default::default());
+    open_stream(Box::new(file), path, format)
+}
+
+/// Same as [`open_reader`] over caller-owned bytes instead of a file.
+fn open_reader_from_shared(
+    shared: Arc<Vec<u8>>,
+    path: &Path,
+    format: AudioFormat,
+) -> Result<OpenStream, TagsError> {
+    open_stream(Box::new(SharedBytes::new(shared)), path, format)
+}
+
+fn open_stream(
+    source: Box<dyn MediaSource>,
+    path: &Path,
+    format: AudioFormat,
+) -> Result<OpenStream, TagsError> {
+    let source = MediaSourceStream::new(source, Default::default());
     let mut hint = Hint::new();
     hint.with_extension(format.as_str());
     let reader = symphonia::default::get_probe()
@@ -162,20 +286,8 @@ fn open_reader(path: &Path, format: AudioFormat) -> Result<OpenStream, TagsError
 /// frame carries exactly 1024 samples.
 fn probe_adts(path: &Path, file_size_bytes: u64) -> Result<AudioInfo, TagsError> {
     let opened = open_reader(path, AudioFormat::Aac)?;
-    let mut reader = opened.reader;
-    let mut packets: u64 = 0;
-    while let Ok(Some(packet)) = reader.next_packet() {
-        if packet.track_id == opened.track_id {
-            packets += 1;
-        }
-    }
-    if packets == 0 {
-        return Err(TagsError::Probe {
-            path: path.display().to_string(),
-            reason: "no ADTS packets found".to_owned(),
-        });
-    }
-    let duration_seconds = packets as f64 * 1024.0 / f64::from(opened.sample_rate);
+    let duration_seconds =
+        probe_adts_duration(opened.reader, opened.track_id, opened.sample_rate, path)?;
     Ok(AudioInfo {
         duration_seconds,
         bitrate: average_bitrate(file_size_bytes, duration_seconds),

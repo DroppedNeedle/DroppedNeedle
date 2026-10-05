@@ -58,7 +58,10 @@ pub const IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// Memory-mapped I/O window. The v1 catalog-validation value, unchanged.
 pub const MMAP_SIZE: i64 = 67_108_864;
 /// Page cache per connection, in KiB. Negative means KiB in SQLite units.
-pub const CACHE_SIZE_KIB: i64 = -16384;
+/// Stage-13 fix F cut this from 16 MiB: heavy reads held tens of MB of
+/// cache across connections after the workload, and 2 MiB keeps every
+/// read-latency budget green (seeded 100k artists p95 9.5 ms vs 10 ms).
+pub const CACHE_SIZE_KIB: i64 = -2048;
 /// Frames between automatic checkpoints during bulk writes.
 pub const WAL_AUTOCHECKPOINT: i64 = 1000;
 

@@ -8,8 +8,9 @@
 //! and memory stores. The routers nest under `/api/v3` inside the
 //! deny-by-default session gate.
 //!
-//! Store durability follows the stage-6 precedent: scan, identify,
-//! and contribution state run on the slices' memory stores (durable
+//! Store durability follows the stage-6 precedent: scan state runs
+//! on SQLite over the application database, while identify and
+//! contribution state run on the slices' memory stores (durable
 //! SQLite ports are a later persistence tier, as are durable root
 //! persistence, the rolling schedule settings, and the AcoustID key
 //! config). Publish journals, snapshots, baselines, and the catalog
@@ -17,7 +18,7 @@
 //! root with idempotent schema.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -62,9 +63,10 @@ use super::scan::models::{
 use super::scan::pool::BlockingPool;
 use super::scan::roots::{LibraryRoot, RootRegistry, fingerprint_roots};
 use super::scan::scheduler::ScheduleSettings;
-use super::scan::store::{MemoryScanStore, ScanStore};
+use super::scan::sqlite_store::SqliteScanStore;
+use super::scan::store::ScanStore;
 use super::scan::supervisor::SupervisorInputs;
-use super::scan::supervisor::{startup_recovery, supervise_once};
+use super::scan::supervisor::{startup_recovery, supervise_once, supervise_once_with_shutdown};
 use super::scan::watcher::{
     DirtyScopes, WatcherAction, WatcherSettings, WatcherState, WorkWakeups, clear_pending,
     watcher_request,
@@ -74,7 +76,7 @@ use crate::auth::users::stores::StoreError;
 use crate::ids::IdGenerator;
 
 /// Scan coordinator over the wired seams.
-pub type ScanCoordinator = LibraryScanCoordinator<MemoryScanStore, LoftyTagReader, IdentifyEnqueue>;
+pub type ScanCoordinator = LibraryScanCoordinator<SqliteScanStore, LoftyTagReader, IdentifyEnqueue>;
 
 /// Live root-registry source shared with the stream gateway.
 pub type RootSource = Arc<dyn Fn() -> RootRegistry + Send + Sync>;
@@ -273,7 +275,7 @@ pub struct LibrarySetup {
     /// Shared root registry (settings saves swap it in place).
     pub registry: Arc<SharedResolver>,
     /// Scan store.
-    pub scan_store: Arc<MemoryScanStore>,
+    pub scan_store: Arc<SqliteScanStore>,
     /// Scan coordinator over the wired seams.
     pub coordinator: Arc<ScanCoordinator>,
     /// Filesystem leases shared by scan (read) and publish (write).
@@ -322,6 +324,7 @@ impl LibrarySetup {
         http: reqwest::Client,
         ids: Arc<dyn IdGenerator>,
         providers: Arc<crate::providers::Providers>,
+        db_path: &Path,
     ) -> Result<Self, String> {
         use crate::providers::acoustid::{AcoustIdClient, DEFAULT_BASE_URL};
         use crate::providers::adapters::{CorePacer, CoreSink};
@@ -334,25 +337,48 @@ impl LibrarySetup {
         let acoustid = AcoustIdClient::new(http, DEFAULT_BASE_URL, pacer, CoreSink);
         let live =
             super::identify::providers::LiveProviders::new(musicbrainz, acoustid, String::new());
+        let scan_store = Arc::new(
+            SqliteScanStore::open(db_path).map_err(|error| format!("scan store: {error}"))?,
+        );
         Self::assemble(
             users,
             ids,
             Arc::new(live) as Arc<dyn super::identify::providers::IdentifyProviders>,
             None,
+            scan_store,
         )
     }
 
     /// Test bundle over scripted providers and memory stores. The
-    /// publish cell opens under the first added root, so sandbox-only
-    /// tests stay hermetic.
+    /// scan store is an ephemeral SQLite database and the publish
+    /// cell opens under the first added root, so sandbox-only tests
+    /// stay hermetic.
     pub fn for_tests(users: UsersDeps, ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
         let scripted = Arc::new(FakeProviders::default());
+        let scan_store = Arc::new(
+            SqliteScanStore::open_ephemeral().map_err(|error| format!("scan store: {error}"))?,
+        );
         Self::assemble(
             users,
             ids,
             scripted.clone() as Arc<dyn super::identify::providers::IdentifyProviders>,
             Some(scripted),
+            scan_store,
         )
+    }
+
+    /// Test bundle over caller-supplied identify providers. Focused
+    /// shutdown briefs script provider timing here; the shared
+    /// `for_tests` shape stays the default everywhere else.
+    pub fn for_tests_with_providers(
+        users: UsersDeps,
+        ids: Arc<dyn IdGenerator>,
+        providers: Arc<dyn super::identify::providers::IdentifyProviders>,
+    ) -> Result<Self, String> {
+        let scan_store = Arc::new(
+            SqliteScanStore::open_ephemeral().map_err(|error| format!("scan store: {error}"))?,
+        );
+        Self::assemble(users, ids, providers, None, scan_store)
     }
 
     fn assemble(
@@ -360,13 +386,13 @@ impl LibrarySetup {
         ids: Arc<dyn IdGenerator>,
         providers: Arc<dyn super::identify::providers::IdentifyProviders>,
         test_providers: Option<Arc<FakeProviders>>,
+        scan_store: Arc<SqliteScanStore>,
     ) -> Result<Self, String> {
         let registry: Arc<SharedResolver> = Arc::new(SharedResolver::default());
         let root_dirs: RootDirs = {
             let registry = registry.clone();
             Arc::new(move || registry.resolver().registry().root_paths())
         };
-        let scan_store = Arc::new(MemoryScanStore::new());
         let track_albums = Arc::new(TrackAlbumMap::new());
         let identify_queue = Arc::new(MemoryQueueStore::default());
         let enqueue = Arc::new(IdentifyEnqueue::new(
@@ -588,6 +614,17 @@ impl LibrarySetup {
         supervise_once(&self.coordinator, &self.supervisor_inputs()).await
     }
 
+    /// One shutdown-aware supervisor iteration: same Hook B, schedule,
+    /// and worker semantics as [`supervisor_tick`](Self::supervisor_tick),
+    /// but a signalled shutdown stops the in-flight scan instead of
+    /// waiting it out. The stop goes through the regular control latch,
+    /// so the walk and index checkpoints settle the run to cancelled
+    /// on their next check and the next start resumes cleanly. A
+    /// pre-signalled shutdown claims no new work.
+    pub async fn supervisor_tick_with_shutdown(&self, shutdown: &watch::Receiver<bool>) -> bool {
+        supervise_once_with_shutdown(&self.coordinator, &self.supervisor_inputs(), shutdown).await
+    }
+
     /// One watcher tick over the persistent watcher state.
     pub async fn watcher_tick(&self) -> WatcherAction {
         // The state swaps out and back so no mutex guard crosses the
@@ -642,26 +679,54 @@ impl LibrarySetup {
     /// from the scan catalog plus disk tag reads, and run each
     /// attempt. Returns jobs attempted.
     pub async fn identify_tick(&self) -> usize {
+        // No signal: the sender stays alive so the watch never fires
+        // and the drain runs exactly as before.
+        let (_live, quiet) = watch::channel(false);
+        self.identify_tick_with_shutdown(&quiet).await
+    }
+
+    /// Shutdown-aware drain: same claim order and per-attempt
+    /// semantics as [`identify_tick`](Self::identify_tick), but a
+    /// signalled shutdown abandons the drain instead of pacing out
+    /// the whole queue at one MusicBrainz gate slot per attempt. The
+    /// signal is checked before each claim, before each gated
+    /// attempt, and across the attempt itself, so SIGTERM mid-drain
+    /// yields promptly. Claimed-but-unfinished jobs stay Running in
+    /// memory; a restart clears them, same as any mid-drain crash
+    /// today.
+    pub async fn identify_tick_with_shutdown(&self, shutdown: &watch::Receiver<bool>) -> usize {
         let mut attempted = 0;
+        let mut shutdown = shutdown.clone();
         loop {
+            if *shutdown.borrow() {
+                break;
+            }
             let claimed = self
                 .identify_queue
                 .claim(now_ms(), super::identify::queue::LEASE_SECONDS * 1000);
             let Some(job) = claimed else { break };
             self.fill_facts(&job).await;
-            match self.identify.run_claimed_job(&job.id, now_ms()).await {
-                Some(report) => {
-                    attempted += 1;
-                    tracing::info!(
-                        job_id = report.job.id,
-                        outcome = ?report.outcome,
-                        reason = report.reason_code,
-                        "identify attempt finished"
-                    );
-                }
-                None => {
-                    tracing::warn!(job_id = job.id, "identify job vanished mid-claim");
-                }
+            if *shutdown.borrow() {
+                break;
+            }
+            let attempt = self.identify.run_claimed_job(&job.id, now_ms());
+            tokio::select! {
+                biased;
+                _ = shutdown.changed() => break,
+                report = attempt => match report {
+                    Some(report) => {
+                        attempted += 1;
+                        tracing::info!(
+                            job_id = report.job.id,
+                            outcome = ?report.outcome,
+                            reason = report.reason_code,
+                            "identify attempt finished"
+                        );
+                    }
+                    None => {
+                        tracing::warn!(job_id = job.id, "identify job vanished mid-claim");
+                    }
+                },
             }
         }
         attempted
@@ -858,7 +923,8 @@ fn read_track_facts(file: &std::path::Path) -> DiskTrackFacts {
 // ---------------------------------------------------------------------------
 
 /// Scan supervisor loop: Hook A preamble, then drive-until-idle with
-/// a shutdown-checked ceiling.
+/// a shutdown-checked ceiling. The tick itself is shutdown-aware, so a
+/// SIGTERM landing mid-scan stops the run instead of waiting it out.
 async fn scan_loop(setup: LibrarySetup, mut shutdown: watch::Receiver<bool>) {
     setup.scan_startup_recovery().await;
     loop {
@@ -866,7 +932,7 @@ async fn scan_loop(setup: LibrarySetup, mut shutdown: watch::Receiver<bool>) {
             break;
         }
         let revision = setup.wakeups.revision("scan");
-        if setup.supervisor_tick().await {
+        if setup.supervisor_tick_with_shutdown(&shutdown).await {
             continue;
         }
         tokio::select! {
@@ -902,7 +968,7 @@ async fn identify_loop(setup: LibrarySetup, mut shutdown: watch::Receiver<bool>)
         if *shutdown.borrow() {
             break;
         }
-        setup.identify_tick().await;
+        setup.identify_tick_with_shutdown(&shutdown).await;
         tokio::select! {
             _ = shutdown.changed() => break,
             _ = tokio::time::sleep(IDENTIFY_POLL) => {}

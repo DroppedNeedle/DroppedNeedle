@@ -99,7 +99,8 @@ async fn boot_migrates_and_applies_pragmas() {
         .fetch_one(pool)
         .await
         .unwrap();
-    assert_eq!(cache_size, -16384);
+    // Stage-13 fix F diet: 2 MiB per connection (was 16 MiB).
+    assert_eq!(cache_size, -2048);
     let temp_store: i64 = sqlx::query_scalar("PRAGMA temp_store")
         .fetch_one(pool)
         .await

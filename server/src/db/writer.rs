@@ -504,13 +504,16 @@ fn writer_loop(
     let opened = (|| -> Result<Connection, DbError> {
         let connection = Connection::open(path)?;
         connection.busy_timeout(Duration::from_millis(5000))?;
+        // Stage-13 fix F: writer cache 2 MiB, matching the pool diet.
+        // The 16 MiB writer cache stayed resident after every 100k scan;
+        // 2 MiB keeps scan throughput identical (reindex 42 s either way).
         connection.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA synchronous=NORMAL;
              PRAGMA foreign_keys=ON;
              PRAGMA mmap_size=67108864;
              PRAGMA temp_store=MEMORY;
-             PRAGMA cache_size=-16384;
+             PRAGMA cache_size=-2048;
              PRAGMA wal_autocheckpoint=1000;",
         )?;
         register_fold(&connection)?;

@@ -44,6 +44,27 @@ const PRINT_OPENAPI_ARG: &str = "--print-openapi";
 /// Debug builds only: a release binary rejects it as unknown.
 const TOOLING_ROUTES_ARG: &str = "--tooling-routes";
 
+/// Bound glibc malloc arenas and trim retained heap promptly.
+///
+/// Stage-13 fix F measured the default 96-arena layout holding ~100 MB of
+/// post-scan fragment freelists (8 arenas per core) with wide run-to-run
+/// swings. One arena plus a 128 KiB trim threshold coalesces the scan and
+/// read churn onto a single heap that trims at idle: post-100k-workload
+/// RSS falls from ~265 MB to ~111 MB with no scan-throughput or read-
+/// latency regression (mimalloc+override was trialled and reverted: +20 MB
+/// boot overhead and worse bench retention on this workload). Runs first
+/// so the cap lands before worker threads allocate; a non-glibc platform
+/// reports failure and keeps running on defaults.
+fn tune_allocator() {
+    // Safety: mallopt only adjusts global tuning knobs; the parameters
+    // are valid and failure is a non-fatal 0 return.
+    let arena_result = unsafe { libc::mallopt(libc::M_ARENA_MAX, 1) };
+    let trim_result = unsafe { libc::mallopt(libc::M_TRIM_THRESHOLD, 128 * 1024) };
+    if arena_result == 0 || trim_result == 0 {
+        tracing::debug!("allocator tuning not applied; running on malloc defaults");
+    }
+}
+
 /// True for the arguments this binary accepts. The tooling flag only
 /// exists in debug builds.
 fn is_known_arg(arg: &str) -> bool {
@@ -58,6 +79,7 @@ fn is_known_arg(arg: &str) -> bool {
 }
 
 fn main() {
+    tune_allocator();
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|arg| arg == PRINT_OPENAPI_ARG) {
         print_openapi();
@@ -207,6 +229,7 @@ async fn serve(tooling_routes: bool) -> Result<(), String> {
         http.shared().clone(),
         ids.clone(),
         providers.clone(),
+        &config.library_db_path,
     )
     .map_err(|error| format!("library setup: {error}"))?;
     let compat_crypto = crypto.clone();

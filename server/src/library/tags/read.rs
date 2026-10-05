@@ -15,9 +15,11 @@
 //! AAC carries an APEv2 tag lofty does not read, so this slice parses that
 //! tag itself (reads only; AAC stays read-only for writes).
 
+use std::io::Cursor;
 use std::path::Path;
 
-use lofty::file::TaggedFileExt as _;
+use lofty::file::{AudioFile as _, TaggedFile, TaggedFileExt as _};
+use lofty::probe::Probe;
 use lofty::tag::{ItemKey, Tag, TagType};
 
 use super::{AudioFormat, TagsError, format_for_path};
@@ -77,6 +79,14 @@ pub fn read_tags(path: &Path) -> Result<(AudioTag, super::AudioInfo), TagsError>
     Ok((tag, info))
 }
 
+/// Tag text plus the raw lofty bit depth for one file.
+pub struct TagFromBytes {
+    pub tag: AudioTag,
+    /// Raw header bit depth (`None` when lofty reports none or zero).
+    /// Suppression rules stay with the caller.
+    pub lofty_bit_depth: Option<u8>,
+}
+
 /// Read the tag half only. The probe half lives in [`super::probe`].
 pub fn read_tag_only(path: &Path, format: AudioFormat) -> Result<AudioTag, TagsError> {
     if format == AudioFormat::Aac {
@@ -86,6 +96,50 @@ pub fn read_tag_only(path: &Path, format: AudioFormat) -> Result<AudioTag, TagsE
         path: path.display().to_string(),
         reason: error.to_string(),
     })?;
+    Ok(select_tag(&tagged, format).map_or_else(AudioTag::default, audio_tag_from_items))
+}
+
+/// Read the tag half from already-loaded bytes. Resolution matches
+/// [`lofty::read_from_path`] exactly: the file type comes from the path
+/// extension (so `.oga` still fails unknown-format there), never from
+/// content sniffing.
+pub fn read_tag_from_bytes(
+    bytes: &[u8],
+    path: &Path,
+    format: AudioFormat,
+) -> Result<TagFromBytes, TagsError> {
+    if format == AudioFormat::Aac {
+        let tag =
+            parse_apev2(bytes).map_or_else(AudioTag::default, |items| ape_tag_from_items(&items));
+        return Ok(TagFromBytes {
+            tag,
+            lofty_bit_depth: None,
+        });
+    }
+    let Some(file_type) = lofty::file::FileType::from_path(path) else {
+        // Same unknown-format error `read_from_path` raises on an
+        // extension lofty does not resolve (notably `.oga`).
+        let reason =
+            lofty::error::FileParseError::from(lofty::error::UnknownFormatError).to_string();
+        return Err(TagsError::TagRead {
+            path: path.display().to_string(),
+            reason,
+        });
+    };
+    let tagged = Probe::with_file_type(Cursor::new(bytes), file_type)
+        .read()
+        .map_err(|error| TagsError::TagRead {
+            path: path.display().to_string(),
+            reason: error.to_string(),
+        })?;
+    Ok(TagFromBytes {
+        tag: select_tag(&tagged, format).map_or_else(AudioTag::default, audio_tag_from_items),
+        lofty_bit_depth: tagged.properties().bit_depth().filter(|depth| *depth > 0),
+    })
+}
+
+/// Preferred tag for the format, else the first tag lofty parsed.
+fn select_tag(tagged: &TaggedFile, format: AudioFormat) -> Option<&Tag> {
     let preferred = match format {
         AudioFormat::Mp3 => Some(TagType::Id3v2),
         AudioFormat::Flac | AudioFormat::Ogg | AudioFormat::Opus => Some(TagType::VorbisComments),
@@ -93,10 +147,9 @@ pub fn read_tag_only(path: &Path, format: AudioFormat) -> Result<AudioTag, TagsE
         AudioFormat::Wav => Some(TagType::Id3v2),
         AudioFormat::Aac => None,
     };
-    let tag = preferred
+    preferred
         .and_then(|tag_type| tagged.tag(tag_type))
-        .or_else(|| tagged.first_tag());
-    Ok(tag.map_or_else(AudioTag::default, audio_tag_from_items))
+        .or_else(|| tagged.first_tag())
 }
 
 /// First embedded cover-art blob, or `None` when the file has none.
@@ -124,15 +177,22 @@ pub fn read_cover_art(path: &Path) -> Result<Option<Vec<u8>>, TagsError> {
 /// splits multi-valued frames, de-duplicated in order.
 fn values_for(tag: &Tag, key: ItemKey) -> Vec<String> {
     let mut out = Vec::new();
-    for item in tag.get_strings(key) {
+    collect_values(tag.get_strings(key), &mut out);
+    out
+}
+
+/// Split each raw item on NUL, trim, and push de-duplicated in order.
+/// Compares against the trimmed slice so the check itself allocates
+/// nothing on the hot scan path.
+fn collect_values<'a>(items: impl Iterator<Item = &'a str>, out: &mut Vec<String>) {
+    for item in items {
         for part in item.split('\0') {
             let trimmed = part.trim();
-            if !trimmed.is_empty() && !out.contains(&trimmed.to_owned()) {
+            if !trimmed.is_empty() && !out.iter().any(|seen| seen == trimmed) {
                 out.push(trimmed.to_owned());
             }
         }
     }
-    out
 }
 
 fn audio_tag_from_items(tag: &Tag) -> AudioTag {
@@ -265,8 +325,12 @@ fn read_ape_tag(path: &Path) -> Result<AudioTag, TagsError> {
     let Some(items) = parse_apev2(&bytes) else {
         return Ok(AudioTag::default());
     };
+    Ok(ape_tag_from_items(&items))
+}
+
+fn ape_tag_from_items(items: &[(String, Vec<String>)]) -> AudioTag {
     let mut mapped: Vec<(ItemKey, String)> = Vec::new();
-    for (key, values) in &items {
+    for (key, values) in items {
         if let Some(item_key) = ItemKey::from_key(TagType::Ape, key) {
             for value in values {
                 mapped.push((item_key, value.clone()));
@@ -275,13 +339,13 @@ fn read_ape_tag(path: &Path) -> Result<AudioTag, TagsError> {
     }
     // APE maps "Track"/"Disc" to both the number and the total keys; the
     // mapper reads the number side.
-    Ok(audio_tag_from_values(|key| {
+    audio_tag_from_values(|key| {
         mapped
             .iter()
             .filter(|(mapped_key, _)| *mapped_key == key)
             .map(|(_, value)| value.clone())
             .collect()
-    }))
+    })
 }
 
 /// Raw APEv2 items: `(key, values)` with NUL-separated multi-values split.

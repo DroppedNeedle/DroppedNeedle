@@ -43,6 +43,23 @@ pub struct CatalogEntry {
 /// mtime seconds float, stat revision.
 pub type ClassifyInput = (String, u64, i64, f64, String);
 
+/// One inventory page plus the cursor for the next page (none when the
+/// page came up short).
+pub type InventoryPage = (Vec<ScanInventoryItem>, Option<(String, String)>);
+
+/// One row for [`ScanStore::commit_indexed_batch`]: the same fields as
+/// [`ScanStore::commit_indexed`], bundled so SQLite implementations can
+/// land a whole batch in one transaction.
+#[derive(Debug, Clone)]
+pub struct CommitIndexedItem {
+    pub root_id: String,
+    pub relative_path: String,
+    pub size_bytes: u64,
+    pub mtime_ns: i64,
+    pub track_id: String,
+    pub tags_read_at: f64,
+}
+
 /// Store errors. Spelling mirrors the v2 exception mapping: stale reads
 /// fail loudly, missing runs are not-found.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +67,7 @@ pub enum ScanStoreError {
     NotFound { run_id: String },
     StaleRevision { message: String },
     InvalidControl { message: String },
+    Internal { message: String },
 }
 
 impl std::fmt::Display for ScanStoreError {
@@ -58,6 +76,7 @@ impl std::fmt::Display for ScanStoreError {
             ScanStoreError::NotFound { run_id } => write!(f, "scan run not found: {run_id}"),
             ScanStoreError::StaleRevision { message } => write!(f, "{message}"),
             ScanStoreError::InvalidControl { message } => write!(f, "{message}"),
+            ScanStoreError::Internal { message } => write!(f, "{message}"),
         }
     }
 }
@@ -158,7 +177,50 @@ pub trait ScanStore: Send + Sync {
 
     fn inventory_for_run(&self, run_id: &str) -> Vec<ScanInventoryItem>;
 
+    /// One bounded inventory page in `(root_id, relative_path)` order,
+    /// starting after `after` (none for the first page). Returns the page
+    /// plus the cursor for the next page (none when the page came up
+    /// short). Keyset paging keeps every page O(page): no offset rescan,
+    /// no sort. The default sorts the full listing; SQLite seeks its
+    /// primary key. Processing order is path order in both. A read
+    /// failure is `Err`, never an empty page: an empty page means
+    /// end-of-run, and the caller must fail honestly on `Err` instead
+    /// of completing the run short.
+    fn inventory_page(
+        &self,
+        run_id: &str,
+        after: Option<(&str, &str)>,
+        limit: usize,
+    ) -> Result<InventoryPage, ScanStoreError> {
+        let mut all = self.inventory_for_run(run_id);
+        all.sort_by(|a, b| (&a.root_id, &a.relative_path).cmp(&(&b.root_id, &b.relative_path)));
+        let mut items = Vec::new();
+        let mut cursor = None;
+        for item in all {
+            if let Some((root, path)) = after
+                && (item.root_id.as_str(), item.relative_path.as_str()) <= (root, path)
+            {
+                continue;
+            }
+            if items.len() >= limit.max(1) {
+                break;
+            }
+            cursor = Some((item.root_id.clone(), item.relative_path.clone()));
+            items.push(item);
+        }
+        Ok((items, cursor))
+    }
+
     fn add_counter(&self, run_id: &str, name: &str, delta: i64);
+
+    /// Add several counter deltas at once. Same per-name semantics as
+    /// [`ScanStore::add_counter`]; the default loops, SQLite lands one
+    /// statement.
+    fn add_counters(&self, run_id: &str, deltas: &[(&str, i64)]) {
+        for (name, delta) in deltas {
+            self.add_counter(run_id, name, *delta);
+        }
+    }
 
     fn set_counter(&self, run_id: &str, name: &str, value: i64);
 
@@ -172,13 +234,59 @@ pub trait ScanStore: Send + Sync {
         tags_read_at: f64,
     );
 
+    /// Commit several catalog rows with the exact per-row semantics of
+    /// [`ScanStore::commit_indexed`]. The default loops; SQLite lands one
+    /// transaction with reused prepared statements.
+    fn commit_indexed_batch(&self, items: &[CommitIndexedItem]) {
+        for item in items {
+            self.commit_indexed(
+                &item.root_id,
+                &item.relative_path,
+                item.size_bytes,
+                item.mtime_ns,
+                item.track_id.clone(),
+                item.tags_read_at,
+            );
+        }
+    }
+
     fn mark_deferred(&self, root_id: &str, relative_path: &str, deferred: bool);
 
     fn catalog_entries(&self, root_id: &str) -> Vec<(String, CatalogEntry)>;
 
     fn remove_catalog(&self, root_id: &str, relative_path: &str);
 
+    /// Catalog paths under `scope_relative_path` that the run's current
+    /// inventory does not contain: the missing set for one cleanly-walked
+    /// scope. Only indexed catalog rows qualify, and scope matching is the
+    /// exact [`scope_covers_path`] rule. The default joins the two full
+    /// listings in memory; SQLite answers in one query.
+    fn missing_catalog_paths(
+        &self,
+        run_id: &str,
+        root_id: &str,
+        scope_relative_path: &str,
+    ) -> Vec<String> {
+        let seen: HashSet<String> = self
+            .inventory_for_run(run_id)
+            .into_iter()
+            .filter(|item| item.root_id == root_id)
+            .map(|item| item.relative_path)
+            .collect();
+        self.catalog_entries(root_id)
+            .into_iter()
+            .map(|(relative_path, _)| relative_path)
+            .filter(|relative_path| scope_covers_path(scope_relative_path, relative_path))
+            .filter(|relative_path| !seen.contains(relative_path))
+            .collect()
+    }
+
     fn stream_revision(&self, kind: &str) -> u64;
+
+    /// Fold the run's WAL frames back after a terminal outcome. Runs after
+    /// the completed transition, off the observed scan wall. SQLite-only;
+    /// the default is a no-op.
+    fn checkpoint_terminal(&self) {}
 
     fn flush_invalidation(&self, terminal: bool);
 

@@ -972,7 +972,7 @@ impl<S: ScanStore> InventoryScanner<S> {
                     }
                     batch.push((file.resolved.clone(), file, key));
                     if batch.len() >= INVENTORY_BATCH_SIZE {
-                        row_revision = self.persist_batch(
+                        let (revision, persisted) = self.persist_batch(
                             &run.id,
                             row_revision,
                             scope,
@@ -980,7 +980,16 @@ impl<S: ScanStore> InventoryScanner<S> {
                             resolver,
                             generation,
                         );
-                        discovered += INVENTORY_BATCH_SIZE;
+                        row_revision = revision;
+                        // A skipped batch degrades the scope: its files are
+                        // absent from inventory, so the scope must not read
+                        // Completed and let reconcile delete their catalog
+                        // rows as missing.
+                        if persisted {
+                            discovered += batch.len();
+                        } else if degraded_code.is_none() {
+                            degraded_code = Some(failure_codes::WALK_ERROR.to_owned());
+                        }
                         batch.clear();
                         if stale_cleanup_pending {
                             stale_cleanup_pending = self.store.cleanup_stale_inventory(&run.id) > 0;
@@ -1012,8 +1021,12 @@ impl<S: ScanStore> InventoryScanner<S> {
             }
         }
         if !batch.is_empty() && completed {
-            row_revision =
+            let (revision, persisted) =
                 self.persist_batch(&run.id, row_revision, scope, &batch, resolver, generation);
+            row_revision = revision;
+            if !persisted && degraded_code.is_none() {
+                degraded_code = Some(failure_codes::WALK_ERROR.to_owned());
+            }
             if stale_cleanup_pending {
                 self.store.cleanup_stale_inventory(&run.id);
             }
@@ -1057,6 +1070,9 @@ impl<S: ScanStore> InventoryScanner<S> {
     }
 
     /// Classify and persist one inventory page (v2 `_persist_batch`).
+    /// Returns the revision plus whether the batch landed: a skipped
+    /// batch degrades the scope (its files are invisible to reconcile),
+    /// so the outcome must reach the caller, not just the log.
     #[allow(clippy::too_many_arguments)]
     fn persist_batch(
         &self,
@@ -1066,55 +1082,64 @@ impl<S: ScanStore> InventoryScanner<S> {
         batch: &[(PathBuf, DiscoveredFile, String)],
         resolver: &PolicyResolver,
         generation: u64,
-    ) -> u64 {
-        let inputs: Vec<ClassifyInput> = batch
-            .iter()
-            .map(|(_, file, key)| {
-                (
-                    key.clone(),
-                    file.size_bytes,
-                    file.mtime_ns,
-                    file.mtime_secs,
-                    file.revision.clone(),
-                )
-            })
-            .collect();
-        let verdicts = self.store.classify(&scope.root_id, &inputs, Some(run_id));
-        let mut items = Vec::with_capacity(batch.len());
-        for ((path, file, key), _) in batch.iter().zip(inputs.iter()) {
-            let policy = resolver.resolve(path).unwrap_or(scope.effective_policy);
-            let (mut verdict, track_id) =
-                verdicts.get(key).cloned().unwrap_or((Verdict::New, None));
-            if policy == EffectivePolicy::Excluded {
-                verdict = Verdict::Excluded;
+    ) -> (u64, bool) {
+        // Items build on demand: the first attempt moves its batch, and
+        // only the rare stale retry rebuilds (reclassifying is cheap
+        // against the store's snapshot). Cloning every batch doubled
+        // discovery's string churn for a path that never fires.
+        let build_items = || {
+            let inputs: Vec<ClassifyInput> = batch
+                .iter()
+                .map(|(_, file, key)| {
+                    (
+                        key.clone(),
+                        file.size_bytes,
+                        file.mtime_ns,
+                        file.mtime_secs,
+                        file.revision.clone(),
+                    )
+                })
+                .collect();
+            let verdicts = self.store.classify(&scope.root_id, &inputs, Some(run_id));
+            let mut items = Vec::with_capacity(batch.len());
+            for ((path, file, key), _) in batch.iter().zip(inputs.iter()) {
+                let policy = resolver.resolve(path).unwrap_or(scope.effective_policy);
+                let (mut verdict, track_id) =
+                    verdicts.get(key).cloned().unwrap_or((Verdict::New, None));
+                if policy == EffectivePolicy::Excluded {
+                    verdict = Verdict::Excluded;
+                }
+                items.push(ScanInventoryItem {
+                    root_id: scope.root_id.clone(),
+                    relative_path: key.clone(),
+                    absolute_path: path.display().to_string(),
+                    file_size_bytes: file.size_bytes,
+                    file_mtime_ns: file.mtime_ns,
+                    stat_revision: file.revision.clone(),
+                    effective_policy: policy,
+                    comparison_result: verdict,
+                    policy_revision: scope.policy_revision.clone(),
+                    local_track_id: track_id,
+                    scope_relative_path: scope.relative_path.clone(),
+                });
             }
-            items.push(ScanInventoryItem {
-                root_id: scope.root_id.clone(),
-                relative_path: key.clone(),
-                absolute_path: path.display().to_string(),
-                file_size_bytes: file.size_bytes,
-                file_mtime_ns: file.mtime_ns,
-                stat_revision: file.revision.clone(),
-                effective_policy: policy,
-                comparison_result: verdict,
-                policy_revision: scope.policy_revision.clone(),
-                local_track_id: track_id,
-                scope_relative_path: scope.relative_path.clone(),
-            });
-        }
+            items
+        };
         // Single-worker stores never go stale here; retry once with a
         // fresh revision so a racing writer costs one retry instead of a
         // failed run. A second stale is recorded honestly and the batch
         // is skipped: losing one page with a failure row beats failing
-        // the whole run.
+        // the whole run. Any other store error (the SQLite store already
+        // retried its lock races) is recorded the same honest way: a
+        // skipped page must never vanish silently.
         match self.store.add_inventory_batch(
             run_id,
-            items.clone(),
+            build_items(),
             row_revision,
             (self.clock)(),
             generation,
         ) {
-            Ok(revision) => revision,
+            Ok(revision) => (revision, true),
             Err(ScanStoreError::StaleRevision { .. }) => {
                 let fresh = self
                     .store
@@ -1123,13 +1148,14 @@ impl<S: ScanStore> InventoryScanner<S> {
                     .unwrap_or(row_revision);
                 match self.store.add_inventory_batch(
                     run_id,
-                    items,
+                    build_items(),
                     fresh,
                     (self.clock)(),
                     generation,
                 ) {
-                    Ok(revision) => revision,
-                    Err(_) => {
+                    Ok(revision) => (revision, true),
+                    Err(error) => {
+                        tracing::error!(%error, "scan inventory batch lost its retry");
                         self.record_failure(
                             run_id,
                             scope,
@@ -1137,11 +1163,21 @@ impl<S: ScanStore> InventoryScanner<S> {
                             failure_codes::WALK_ERROR,
                             "IoError while walking.".to_owned(),
                         );
-                        fresh
+                        (fresh, false)
                     }
                 }
             }
-            Err(_) => row_revision,
+            Err(error) => {
+                tracing::error!(%error, "scan inventory batch failed");
+                self.record_failure(
+                    run_id,
+                    scope,
+                    scope.relative_path.clone(),
+                    failure_codes::WALK_ERROR,
+                    "The inventory page failed to persist; the page was skipped.".to_owned(),
+                );
+                (row_revision, false)
+            }
         }
     }
 }
@@ -1357,5 +1393,518 @@ mod tests {
         let nfd: String = "cafe\u{301}.flac".to_owned();
         let key = inventory_key(&Path::new("/music").join(&nfd), root);
         assert_eq!(key, "caf\u{e9}.flac");
+    }
+
+    /// Store wrapper that fails `add_inventory_batch` with an internal
+    /// error a fixed number of times, then delegates. Models a SQLite
+    /// lock race the store's own retry could not ride out. `pages_left`
+    /// fails `inventory_page` reads the same way.
+    struct FailBatches<S> {
+        inner: S,
+        failures_left: std::sync::atomic::AtomicUsize,
+        pages_left: std::sync::atomic::AtomicUsize,
+    }
+
+    impl<S> FailBatches<S> {
+        fn new(inner: S, failures: usize) -> Self {
+            Self::with_page_failures(inner, failures, 0)
+        }
+
+        fn with_page_failures(inner: S, failures: usize, pages: usize) -> Self {
+            Self {
+                inner,
+                failures_left: std::sync::atomic::AtomicUsize::new(failures),
+                pages_left: std::sync::atomic::AtomicUsize::new(pages),
+            }
+        }
+    }
+
+    impl<S: ScanStore> ScanStore for FailBatches<S> {
+        fn request_run(
+            &self,
+            request: &super::super::models::ScanRequest,
+            run_id: &str,
+            requested_at: f64,
+        ) -> super::super::models::ScanRequestResult {
+            self.inner.request_run(request, run_id, requested_at)
+        }
+
+        fn get_run(
+            &self,
+            run_id: &str,
+        ) -> Result<
+            (
+                super::super::models::ScanRun,
+                Vec<super::super::models::ScanScope>,
+                super::super::models::Counters,
+            ),
+            ScanStoreError,
+        > {
+            self.inner.get_run(run_id)
+        }
+
+        fn list_current(&self) -> Vec<super::super::models::ScanRun> {
+            self.inner.list_current()
+        }
+
+        fn list_history(&self, limit: usize) -> Vec<super::super::models::ScanRun> {
+            self.inner.list_history(limit)
+        }
+
+        fn latest_filesystem_terminal(&self) -> Option<super::super::models::ScanRun> {
+            self.inner.latest_filesystem_terminal()
+        }
+
+        fn claim_next(&self, now: f64) -> Option<super::super::models::ScanRun> {
+            self.inner.claim_next(now)
+        }
+
+        fn resumable(&self) -> Option<super::super::models::ScanRun> {
+            self.inner.resumable()
+        }
+
+        fn transition(
+            &self,
+            run_id: &str,
+            expected_state: super::super::models::ScanState,
+            expected_revision: u64,
+            new_state: super::super::models::ScanState,
+            now: f64,
+            terminal_code: Option<&str>,
+        ) -> Result<super::super::models::ScanRun, ScanStoreError> {
+            self.inner.transition(
+                run_id,
+                expected_state,
+                expected_revision,
+                new_state,
+                now,
+                terminal_code,
+            )
+        }
+
+        fn request_control(
+            &self,
+            run_id: &str,
+            control: super::super::models::ScanControl,
+            resume: bool,
+            expected_revision: u64,
+            now: f64,
+        ) -> Result<(super::super::models::ScanRun, u64), ScanStoreError> {
+            self.inner
+                .request_control(run_id, control, resume, expected_revision, now)
+        }
+
+        fn record_failures(
+            &self,
+            run_id: &str,
+            failures: Vec<super::super::models::ScanFailureRecord>,
+        ) {
+            self.inner.record_failures(run_id, failures);
+        }
+
+        fn failures(&self, run_id: &str) -> Vec<super::super::models::ScanFailureRecord> {
+            self.inner.failures(run_id)
+        }
+
+        fn scope_discovery_state(
+            &self,
+            run_id: &str,
+            root_id: &str,
+            relative_path: &str,
+        ) -> super::super::models::ScopeDiscoveryState {
+            self.inner
+                .scope_discovery_state(run_id, root_id, relative_path)
+        }
+
+        fn scope_discovery_generation(
+            &self,
+            run_id: &str,
+            root_id: &str,
+            relative_path: &str,
+        ) -> u64 {
+            self.inner
+                .scope_discovery_generation(run_id, root_id, relative_path)
+        }
+
+        fn complete_scope_discovery(
+            &self,
+            run_id: &str,
+            root_id: &str,
+            relative_path: &str,
+            state: super::super::models::ScopeDiscoveryState,
+            error_code: Option<&str>,
+        ) {
+            self.inner
+                .complete_scope_discovery(run_id, root_id, relative_path, state, error_code);
+        }
+
+        fn restart_scope_discovery(&self, run_id: &str, root_id: &str, relative_path: &str) {
+            self.inner
+                .restart_scope_discovery(run_id, root_id, relative_path);
+        }
+
+        fn prepare_discovery_resume(&self, run_id: &str) {
+            self.inner.prepare_discovery_resume(run_id);
+        }
+
+        fn finalize_discovery(
+            &self,
+            run_id: &str,
+            updated_at: f64,
+        ) -> Result<super::super::models::ScanRun, ScanStoreError> {
+            self.inner.finalize_discovery(run_id, updated_at)
+        }
+
+        fn cleanup_stale_inventory(&self, run_id: &str) -> usize {
+            self.inner.cleanup_stale_inventory(run_id)
+        }
+
+        fn cleanup_terminal_inventory(&self, limit: usize) {
+            self.inner.cleanup_terminal_inventory(limit);
+        }
+
+        fn classify(
+            &self,
+            root_id: &str,
+            paths: &[ClassifyInput],
+            run_id: Option<&str>,
+        ) -> HashMap<String, (super::super::models::Verdict, Option<String>)> {
+            self.inner.classify(root_id, paths, run_id)
+        }
+
+        fn add_inventory_batch(
+            &self,
+            run_id: &str,
+            items: Vec<super::super::models::ScanInventoryItem>,
+            expected_run_revision: u64,
+            updated_at: f64,
+            generation: u64,
+        ) -> Result<u64, ScanStoreError> {
+            if self
+                .failures_left
+                .fetch_update(
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                    |left| (left > 0).then(|| left - 1),
+                )
+                .is_ok()
+            {
+                return Err(ScanStoreError::Internal {
+                    message: "database is locked".to_owned(),
+                });
+            }
+            self.inner.add_inventory_batch(
+                run_id,
+                items,
+                expected_run_revision,
+                updated_at,
+                generation,
+            )
+        }
+
+        fn inventory_for_run(&self, run_id: &str) -> Vec<super::super::models::ScanInventoryItem> {
+            self.inner.inventory_for_run(run_id)
+        }
+
+        fn inventory_page(
+            &self,
+            run_id: &str,
+            after: Option<(&str, &str)>,
+            limit: usize,
+        ) -> Result<super::super::store::InventoryPage, ScanStoreError> {
+            if self
+                .pages_left
+                .fetch_update(
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                    |left| (left > 0).then(|| left - 1),
+                )
+                .is_ok()
+            {
+                return Err(ScanStoreError::Internal {
+                    message: "database is locked".to_owned(),
+                });
+            }
+            self.inner.inventory_page(run_id, after, limit)
+        }
+
+        fn add_counter(&self, run_id: &str, name: &str, delta: i64) {
+            self.inner.add_counter(run_id, name, delta);
+        }
+
+        fn set_counter(&self, run_id: &str, name: &str, value: i64) {
+            self.inner.set_counter(run_id, name, value);
+        }
+
+        fn commit_indexed(
+            &self,
+            root_id: &str,
+            relative_path: &str,
+            size_bytes: u64,
+            mtime_ns: i64,
+            track_id: String,
+            tags_read_at: f64,
+        ) {
+            self.inner.commit_indexed(
+                root_id,
+                relative_path,
+                size_bytes,
+                mtime_ns,
+                track_id,
+                tags_read_at,
+            );
+        }
+
+        fn mark_deferred(&self, root_id: &str, relative_path: &str, deferred: bool) {
+            self.inner.mark_deferred(root_id, relative_path, deferred);
+        }
+
+        fn catalog_entries(
+            &self,
+            root_id: &str,
+        ) -> Vec<(String, super::super::store::CatalogEntry)> {
+            self.inner.catalog_entries(root_id)
+        }
+
+        fn remove_catalog(&self, root_id: &str, relative_path: &str) {
+            self.inner.remove_catalog(root_id, relative_path);
+        }
+
+        fn stream_revision(&self, kind: &str) -> u64 {
+            self.inner.stream_revision(kind)
+        }
+
+        fn flush_invalidation(&self, terminal: bool) {
+            self.inner.flush_invalidation(terminal);
+        }
+
+        fn recover(&self, now: f64) -> Vec<super::super::models::ScanRun> {
+            self.inner.recover(now)
+        }
+
+        fn recover_stopping(&self, now: f64) -> Vec<super::super::models::ScanRun> {
+            self.inner.recover_stopping(now)
+        }
+    }
+
+    /// A batch the store cannot persist is recorded honestly and never
+    /// silently skipped: the failure row names the scope, and the next
+    /// batch still lands on the unchanged revision.
+    #[test]
+    fn failed_inventory_batch_records_and_continues() {
+        use super::super::models::{ScanKind, ScanRequest, ScanScope, ScanTrigger};
+        use super::super::roots::{LibraryRoot, RootRegistry};
+        use super::super::store::MemoryScanStore;
+
+        let store = std::sync::Arc::new(FailBatches::new(MemoryScanStore::new(), 1));
+        let scanner = InventoryScanner::new(store.clone(), BlockingPool::new(1));
+        let registry = RootRegistry::new(
+            vec![LibraryRoot::new(
+                "music",
+                PathBuf::from("/music"),
+                EffectivePolicy::Automatic,
+            )],
+            true,
+            "rev-1",
+        );
+        let resolver = PolicyResolver::new(registry);
+        store.inner.request_run(
+            &ScanRequest {
+                kind: ScanKind::Incremental,
+                trigger: ScanTrigger::Manual,
+                scopes: vec![ScanScope::root("music", "/music", "rev-1")],
+                requested_by_user_id: None,
+                policy_revision: "rev-1".to_owned(),
+            },
+            "run-1",
+            1.0,
+        );
+        let scope = ScanScope::root("music", "/music", "rev-1");
+        let batch = vec![(
+            PathBuf::from("/music/a.flac"),
+            DiscoveredFile {
+                resolved: PathBuf::from("/music/a.flac"),
+                size_bytes: 10,
+                mtime_ns: 5,
+                mtime_secs: 5e-9,
+                revision: "10:5".to_owned(),
+            },
+            "a.flac".to_owned(),
+        )];
+        let (revision, persisted) = scanner.persist_batch("run-1", 1, &scope, &batch, &resolver, 1);
+        assert_eq!(revision, 1, "failed batch leaves the revision for retry");
+        assert!(!persisted, "failed batch reports its skip to the caller");
+        let failures = store.inner.failures("run-1");
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].failure_code, failure_codes::WALK_ERROR);
+        assert_eq!(failures[0].relative_path, ".");
+        assert!(store.inner.inventory_for_run("run-1").is_empty());
+        let (revision, persisted) =
+            scanner.persist_batch("run-1", revision, &scope, &batch, &resolver, 1);
+        assert_eq!(revision, 2);
+        assert!(persisted);
+        assert_eq!(store.inner.inventory_for_run("run-1").len(), 1);
+    }
+
+    /// A persist batch the store cannot land degrades the scope instead
+    /// of completing it: reconcile stays conservative and keeps the
+    /// catalog row for the file the skipped batch never inventoried.
+    #[tokio::test]
+    async fn skipped_persist_batch_degrades_scope_and_spares_catalog() {
+        use super::super::coordinator::{LibraryScanCoordinator, StaticResolver};
+        use super::super::models::{ScanKind, ScanRequest, ScanTrigger, counter_names};
+        use super::super::roots::{LibraryRoot, RootRegistry};
+        use super::super::seams::{NullIdentifyQueue, NullTagReader};
+        use super::super::store::MemoryScanStore;
+
+        let sandbox = std::env::temp_dir().join(format!(
+            "dn-fixups-m1-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        std::fs::create_dir_all(&sandbox).expect("sandbox");
+        std::fs::write(sandbox.join("a.flac"), b"fake-audio").expect("fixture");
+
+        let store = std::sync::Arc::new(FailBatches::new(MemoryScanStore::new(), 0));
+        let registry = RootRegistry::new(
+            vec![LibraryRoot::new(
+                "music",
+                sandbox.clone(),
+                EffectivePolicy::Automatic,
+            )],
+            true,
+            "rev-1",
+        );
+        let coordinator = LibraryScanCoordinator::new(
+            store.clone(),
+            BlockingPool::new(1),
+            std::sync::Arc::new(NullTagReader::new()),
+            std::sync::Arc::new(NullIdentifyQueue::new()),
+            std::sync::Arc::new(StaticResolver::new(registry)),
+        );
+        let request = ScanRequest {
+            kind: ScanKind::Incremental,
+            trigger: ScanTrigger::Manual,
+            scopes: vec![ScanScope::root(
+                "music",
+                sandbox.to_str().expect("sandbox is utf-8"),
+                "rev-1",
+            )],
+            requested_by_user_id: None,
+            policy_revision: "rev-1".to_owned(),
+        };
+        let mut root_paths = HashMap::new();
+        root_paths.insert("music".to_owned(), sandbox.clone());
+
+        coordinator.request_run(&request).expect("run 1 requested");
+        let first = coordinator
+            .run_once(&root_paths)
+            .await
+            .expect("run 1 driven");
+        assert_eq!(first.state, ScanState::Completed);
+        assert_eq!(store.inner.catalog_entries("music").len(), 1);
+
+        // Every persist fails from here: the walk sees the file but no
+        // inventory row lands.
+        store
+            .failures_left
+            .store(usize::MAX, std::sync::atomic::Ordering::SeqCst);
+        coordinator.request_run(&request).expect("run 2 requested");
+        let second = coordinator
+            .run_once(&root_paths)
+            .await
+            .expect("run 2 driven");
+        assert_eq!(second.state, ScanState::Completed);
+        assert_eq!(
+            store.scope_discovery_state(&second.id, "music", "."),
+            ScopeDiscoveryState::PartiallyRead
+        );
+        assert_eq!(
+            second
+                .counters
+                .get(counter_names::MISSING)
+                .copied()
+                .unwrap_or(0),
+            0,
+            "a degraded scope keeps reconcile conservative"
+        );
+        assert_eq!(
+            store.inner.catalog_entries("music").len(),
+            1,
+            "the catalog row survives the skipped batch"
+        );
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    /// An inventory page that will not read fails the run honestly
+    /// instead of completing it short: a read error is never
+    /// end-of-run.
+    #[tokio::test]
+    async fn unreadable_inventory_page_fails_run_honestly() {
+        use super::super::coordinator::{LibraryScanCoordinator, StaticResolver};
+        use super::super::models::{ScanKind, ScanRequest, ScanTrigger};
+        use super::super::roots::{LibraryRoot, RootRegistry};
+        use super::super::seams::{NullIdentifyQueue, NullTagReader};
+        use super::super::store::MemoryScanStore;
+
+        let sandbox = std::env::temp_dir().join(format!(
+            "dn-fixups-m2-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or(0)
+        ));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        std::fs::create_dir_all(&sandbox).expect("sandbox");
+        std::fs::write(sandbox.join("a.flac"), b"fake-audio").expect("fixture");
+
+        let store = std::sync::Arc::new(FailBatches::with_page_failures(
+            MemoryScanStore::new(),
+            0,
+            usize::MAX,
+        ));
+        let registry = RootRegistry::new(
+            vec![LibraryRoot::new(
+                "music",
+                sandbox.clone(),
+                EffectivePolicy::Automatic,
+            )],
+            true,
+            "rev-1",
+        );
+        let coordinator = LibraryScanCoordinator::new(
+            store.clone(),
+            BlockingPool::new(1),
+            std::sync::Arc::new(NullTagReader::new()),
+            std::sync::Arc::new(NullIdentifyQueue::new()),
+            std::sync::Arc::new(StaticResolver::new(registry)),
+        );
+        let request = ScanRequest {
+            kind: ScanKind::Incremental,
+            trigger: ScanTrigger::Manual,
+            scopes: vec![ScanScope::root(
+                "music",
+                sandbox.to_str().expect("sandbox is utf-8"),
+                "rev-1",
+            )],
+            requested_by_user_id: None,
+            policy_revision: "rev-1".to_owned(),
+        };
+        let mut root_paths = HashMap::new();
+        root_paths.insert("music".to_owned(), sandbox.clone());
+
+        coordinator.request_run(&request).expect("requested");
+        let run = coordinator.run_once(&root_paths).await.expect("run driven");
+        assert_eq!(run.state, ScanState::Failed);
+        assert_eq!(
+            run.terminal_code.as_deref(),
+            Some(failure_codes::UNEXPECTED_WORKER_FAILURE)
+        );
+        let _ = std::fs::remove_dir_all(&sandbox);
     }
 }

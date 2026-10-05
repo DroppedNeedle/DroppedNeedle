@@ -26,6 +26,7 @@ use std::time::Duration;
 
 use tokio::sync::Notify;
 
+use super::fs::is_management_artifact;
 use super::models::{ScanKind, ScanRequest, ScanRequestResult, ScanTrigger};
 use super::pool::BlockingPool;
 use super::roots::RootRegistry;
@@ -110,6 +111,14 @@ pub fn snapshot_tree(root: &Path) -> std::io::Result<Snapshot> {
                 Ok(relative) => relative.to_string_lossy().replace('\\', "/"),
                 Err(_) => continue,
             };
+            // Own sidecar writes must not retrigger the watcher: the
+            // server keeps its publish database under the management
+            // prefix inside watched roots. The walk already skips the
+            // same rule; skipping here drops both the entry and the
+            // descent, since the push below never runs.
+            if is_management_artifact(Path::new(&relative)) {
+                continue;
+            }
             let mtime_ns = super::revision::mtime_ns_from_metadata(&meta);
             snapshot.insert(relative, (mtime_ns, meta.len(), is_dir));
             if is_dir && !file_type.is_symlink() {
@@ -526,6 +535,51 @@ mod tests {
         // Past the window: due.
         let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 71.0).await;
         assert_eq!(action, WatcherAction::Due);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn sidecar_writes_do_not_trip_the_watcher() {
+        let root = std::env::temp_dir().join(format!("scan-watch-sidecar-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("mkdir");
+        std::fs::write(root.join("a.flac"), b"data").expect("write");
+        let registry = RootRegistry::new(
+            vec![super::super::roots::LibraryRoot::new(
+                "r1",
+                root.clone(),
+                super::super::models::EffectivePolicy::Automatic,
+            )],
+            true,
+            "rev-1",
+        );
+        let mut roots = HashMap::new();
+        roots.insert("r1".to_owned(), root.clone());
+        let pool = BlockingPool::new(2);
+        let settings = WatcherSettings {
+            enabled: true,
+            poll_interval_seconds: 5.0,
+            batch_window_seconds: 60.0,
+        };
+        let mut state = WatcherState::new();
+        let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 0.0).await;
+        assert!(matches!(action, WatcherAction::Idle { .. }));
+        // The server's own publish sidecar lands mid-root: still idle,
+        // with no batch pending.
+        let meta = root.join(".droppedneedle-management-meta");
+        std::fs::create_dir_all(&meta).expect("mkdir meta");
+        std::fs::write(meta.join("publish.db"), b"sidecar").expect("write sidecar");
+        let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 10.0).await;
+        assert!(matches!(action, WatcherAction::Idle { .. }));
+        assert!(!state.is_pending(), "sidecar write leaves no batch pending");
+        // A second sidecar write stays quiet too, while a real music
+        // file still trips the batch.
+        std::fs::write(meta.join("publish.db"), b"sidecar-v2").expect("rewrite sidecar");
+        let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 20.0).await;
+        assert!(matches!(action, WatcherAction::Idle { .. }));
+        std::fs::write(root.join("b.flac"), b"data").expect("write music");
+        let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 30.0).await;
+        assert!(matches!(action, WatcherAction::Batching { .. }));
         let _ = std::fs::remove_dir_all(&root);
     }
 }

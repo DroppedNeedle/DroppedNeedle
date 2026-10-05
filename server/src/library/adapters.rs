@@ -5,7 +5,9 @@
 //! (AcoustID key config, album projection for contributions) degrade
 //! loudly or dormantly, never silently wrong; each carries a note.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -37,27 +39,116 @@ use crate::ids::IdGenerator;
 /// and every failure maps onto the scan seam's two errors.
 pub struct LoftyTagReader;
 
+/// Files at or under this size parse from one shared read; larger files
+/// keep the streaming path so a huge file never spikes the scan heap.
+const MAX_BUFFERED_FILE_BYTES: u64 = 64 * 1024 * 1024;
+/// Files over this size leave an empty buffer behind instead of a big
+/// retained one. Covers the corpus outright.
+const RETAINED_READ_CAPACITY: usize = 256 * 1024;
+
+thread_local! {
+    /// One file buffer per scan worker, reused across files. Held behind
+    /// `Arc` so the probe half shares the bytes without copying; the
+    /// clones never escape one `read_tags` call, so the buffer is always
+    /// exclusively owned here (a contended buffer falls back cleanly).
+    static READ_BUFFER: RefCell<Arc<Vec<u8>>> = RefCell::new(Arc::new(Vec::new()));
+}
+
 impl TagReader for LoftyTagReader {
     fn read_tags(&self, path: &Path) -> Result<ScannedTags, TagReadError> {
         let format = super::tags::format_for_path(path).map_err(|_| TagReadError::Fatal)?;
+        if let Some(scanned) = read_tags_buffered(path, format) {
+            return scanned;
+        }
         let tag = super::tags::read::read_tag_only(path, format).map_err(map_tag_read_error)?;
         let duration_secs = super::tags::probe(path)
             .ok()
             .map(|info| info.duration_seconds);
-        let mut extra = HashMap::new();
-        if !tag.genres.is_empty() {
-            extra.insert("genre".to_owned(), tag.genres.join("\u{0}"));
+        Ok(scanned_tags(tag, duration_secs))
+    }
+}
+
+/// Tag text plus duration from a single shared read of the file. Returns
+/// `None` when the file should take the streaming path instead (over the
+/// size cap, unreadable metadata, or a contended thread buffer); I/O and
+/// parse failures inside the buffered path map exactly like the
+/// streaming path, so verdicts never depend on which path ran.
+fn read_tags_buffered(
+    path: &Path,
+    format: super::tags::AudioFormat,
+) -> Option<Result<ScannedTags, TagReadError>> {
+    let size = path.metadata().map(|meta| meta.len()).unwrap_or(0);
+    if size > MAX_BUFFERED_FILE_BYTES {
+        return None;
+    }
+    READ_BUFFER.with(|cell| {
+        let mut shared = cell.borrow_mut();
+        {
+            let buffer = Arc::get_mut(&mut shared)?;
+            buffer.clear();
+            let mut file = match std::fs::File::open(path) {
+                Ok(file) => file,
+                Err(source) => return Some(Err(map_read_open_error(source, path, format))),
+            };
+            if let Err(source) = file.read_to_end(buffer) {
+                return Some(Err(map_read_open_error(source, path, format)));
+            }
         }
-        if let Some(mbid) = tag.musicbrainz_recording_id.as_deref() {
-            extra.insert("musicbrainz_recording_id".to_owned(), mbid.to_owned());
+        let bytes = shared.clone();
+        if bytes.len() > RETAINED_READ_CAPACITY {
+            // A big file just passed through: leave an empty buffer
+            // behind so the retained capacity stays small. This file's
+            // backing lives on in `bytes` and frees when parsing ends.
+            *shared = Arc::new(Vec::new());
         }
-        Ok(ScannedTags {
-            artist: non_empty(tag.artist),
-            album: non_empty(tag.album),
-            title: non_empty(tag.title),
-            duration_secs,
-            extra,
+        let parsed = super::tags::read::read_tag_from_bytes(&bytes, path, format)
+            .map_err(map_tag_read_error);
+        let tag = match parsed {
+            Ok(parsed) => parsed.tag,
+            Err(error) => return Some(Err(error)),
+        };
+        let duration_secs =
+            super::tags::probe::probe_duration_from_shared(bytes, path, format).ok();
+        Some(Ok(scanned_tags(tag, duration_secs)))
+    })
+}
+
+/// Map a buffered-path open/read failure like the streaming path would:
+/// AAC reads surface I/O (deferred re-offer), where every other format
+/// surfaces a tag-read failure (lofty owns the read there, including
+/// its I/O errors).
+fn map_read_open_error(
+    source: std::io::Error,
+    path: &Path,
+    format: super::tags::AudioFormat,
+) -> TagReadError {
+    if format == super::tags::AudioFormat::Aac {
+        map_tag_read_error(super::tags::TagsError::Io {
+            path: path.display().to_string(),
+            source,
         })
+    } else {
+        map_tag_read_error(super::tags::TagsError::TagRead {
+            path: path.display().to_string(),
+            reason: source.to_string(),
+        })
+    }
+}
+
+fn scanned_tags(tag: super::tags::read::AudioTag, duration_secs: Option<f64>) -> ScannedTags {
+    let mut extra = HashMap::new();
+    if !tag.genres.is_empty() {
+        extra.insert("genre".to_owned(), tag.genres.join("\u{0}"));
+    }
+    if let Some(mbid) = tag.musicbrainz_recording_id.as_deref() {
+        extra.insert("musicbrainz_recording_id".to_owned(), mbid.to_owned());
+    }
+    ScannedTags {
+        artist: non_empty(tag.artist),
+        album: non_empty(tag.album),
+        title: non_empty(tag.title),
+        duration_secs,
+        extra,
     }
 }
 
@@ -84,7 +175,19 @@ fn map_tag_read_error(error: super::tags::TagsError) -> TagReadError {
 /// the join until a durable catalog owns it.
 #[derive(Debug, Default)]
 pub struct TrackAlbumMap {
-    inner: Mutex<HashMap<String, String>>,
+    inner: Mutex<MapInner>,
+}
+
+#[derive(Debug, Default)]
+struct MapInner {
+    /// Track ids are UUIDs in production; the 128-bit form drops the
+    /// 36-byte string plus its allocation at 100k scale.
+    by_track: HashMap<u128, Arc<str>>,
+    /// Non-UUID ids (tests, foreign callers) keep exact semantics here.
+    overflow: HashMap<String, Arc<str>>,
+    /// One shared copy of each album key: tracks outnumber albums ten
+    /// to one, so sharing saves most of the value bytes at 100k scale.
+    keys: HashMap<String, Arc<str>>,
 }
 
 impl TrackAlbumMap {
@@ -97,17 +200,33 @@ impl TrackAlbumMap {
             .inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let shared = inner
+            .keys
+            .entry(album_key.to_owned())
+            .or_insert_with(|| Arc::from(album_key))
+            .clone();
         for track_id in track_ids {
-            inner.insert(track_id.clone(), album_key.to_owned());
+            match uuid::Uuid::parse_str(track_id) {
+                Ok(id) => {
+                    inner.by_track.insert(id.as_u128(), shared.clone());
+                }
+                Err(_) => {
+                    inner.overflow.insert(track_id.clone(), shared.clone());
+                }
+            }
         }
     }
 
     pub fn album_for_track(&self, track_id: &str) -> Option<String> {
-        self.inner
+        let inner = self
+            .inner
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(track_id)
-            .cloned()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match uuid::Uuid::parse_str(track_id) {
+            Ok(id) => inner.by_track.get(&id.as_u128()),
+            Err(_) => inner.overflow.get(track_id),
+        }
+        .map(|shared| shared.to_string())
     }
 }
 
@@ -397,5 +516,92 @@ impl MusicBrainzContrib for UnavailableMusicBrainz {
                 "The MusicBrainz adapter is not available.".into(),
             ))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture(name: &str) -> PathBuf {
+        Path::new("../backend/tests/fixtures/library").join(name)
+    }
+
+    /// The buffered read-once path returns exactly what the streaming
+    /// path would: same tag text, same duration, same error mapping.
+    /// Runs over every committed audio fixture (WMA stays rejected).
+    #[test]
+    fn buffered_tag_read_matches_streaming() {
+        let reader = LoftyTagReader;
+        for name in [
+            "flac_full_01.flac",
+            "flac_full_02.flac",
+            "flac_no_tags.flac",
+            "flac_cjk_01.flac",
+            "flac_compilation_01.flac",
+            "flac_only_release_mbid.flac",
+            "mp3_full_01.mp3",
+            "m4a_full_01.m4a",
+            "management_full.mp3",
+            "management_full_v23.mp3",
+            "management_full.flac",
+            "management_full.m4a",
+            "management_full.ogg",
+            "management_full.opus",
+            "management_full.wav",
+            "management_full_riff.wav",
+            "management_full.aac",
+        ] {
+            let path = fixture(name);
+            let format = super::super::tags::format_for_path(&path).expect("fixture format");
+            let streamed = (|| {
+                let tag = super::super::tags::read::read_tag_only(&path, format)
+                    .map_err(map_tag_read_error)?;
+                let duration_secs = super::super::tags::probe(&path)
+                    .ok()
+                    .map(|info| info.duration_seconds);
+                Ok::<_, TagReadError>(scanned_tags(tag, duration_secs))
+            })();
+            assert_eq!(reader.read_tags(&path), streamed, "fixture {name}");
+        }
+        // WMA never reaches either path.
+        assert_eq!(
+            reader.read_tags(&fixture("management_full.wma")),
+            Err(TagReadError::Fatal)
+        );
+        // A vanishing file maps like the streaming path: I/O surfaces
+        // for AAC (deferred re-offer), tag failure everywhere else.
+        assert_eq!(
+            reader.read_tags(Path::new("/nonexistent-missing-file.mp3")),
+            Err(TagReadError::Fatal)
+        );
+        assert_eq!(
+            reader.read_tags(Path::new("/nonexistent-missing-file.aac")),
+            Err(TagReadError::Deferred)
+        );
+    }
+
+    /// The track/album join records every offer and re-recording one
+    /// album replaces its tracks' keys without disturbing the rest.
+    /// UUID and non-UUID ids share the same semantics.
+    #[test]
+    fn track_album_map_records_and_replaces() {
+        let map = TrackAlbumMap::new();
+        let uuid_a = "123e4567-e89b-12d3-a456-426614174000";
+        let uuid_b = "123e4567-e89b-12d3-a456-426614174001";
+        map.record("r::a1", &[uuid_a.to_owned(), "t2".to_owned()]);
+        map.record("r::a2", &[uuid_b.to_owned()]);
+        assert_eq!(map.album_for_track(uuid_a).as_deref(), Some("r::a1"));
+        assert_eq!(map.album_for_track("t2").as_deref(), Some("r::a1"));
+        assert_eq!(map.album_for_track(uuid_b).as_deref(), Some("r::a2"));
+        assert_eq!(map.album_for_track("missing"), None);
+        assert_eq!(
+            map.album_for_track("123e4567-e89b-12d3-a456-426614179999"),
+            None
+        );
+        map.record("r::a1", &[uuid_a.to_owned(), "t4".to_owned()]);
+        assert_eq!(map.album_for_track(uuid_a).as_deref(), Some("r::a1"));
+        assert_eq!(map.album_for_track("t4").as_deref(), Some("r::a1"));
+        assert_eq!(map.album_for_track(uuid_b).as_deref(), Some("r::a2"));
     }
 }

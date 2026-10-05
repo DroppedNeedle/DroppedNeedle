@@ -22,12 +22,12 @@ async fn fresh_migrate_creates_import_runs() {
     let pool = scratch_pool().await;
     apply_migrations(&pool).await.unwrap();
 
-    assert_eq!(latest_version(), 4);
+    assert_eq!(latest_version(), 5);
     let version: i64 = sqlx::query_scalar("PRAGMA user_version")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(version, 4);
+    assert_eq!(version, 5);
     let table: Option<String> = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'import_runs'",
     )
@@ -100,7 +100,7 @@ async fn upgrade_from_0001_keeps_data() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(version, 4);
+    assert_eq!(version, 5);
     let name: String = sqlx::query_scalar("SELECT display_name FROM auth_users WHERE id = 'u1'")
         .fetch_one(&pool)
         .await
@@ -132,7 +132,7 @@ async fn upgrade_over_0003_keeps_data() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(version, 4);
+    assert_eq!(version, 5);
     let name: String = sqlx::query_scalar("SELECT display_name FROM auth_users WHERE id = 'u1'")
         .fetch_one(&pool)
         .await

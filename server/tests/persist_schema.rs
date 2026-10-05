@@ -50,25 +50,25 @@ async fn column_names(pool: &SqlitePool, table: &str) -> Vec<String> {
 async fn fresh_migrate_marks_version_and_seeds() {
     let pool = migrated_pool().await;
 
-    assert_eq!(latest_version(), 4);
+    assert_eq!(latest_version(), 5);
     let version: i64 = sqlx::query_scalar("PRAGMA user_version")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(version, 4);
+    assert_eq!(version, 5);
     let applied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(applied, 4);
+    assert_eq!(applied, 5);
 
-    assert_eq!(table_names(&pool).await.len(), 184);
+    assert_eq!(table_names(&pool).await.len(), 190);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!(triggers, 43);
+    assert_eq!(triggers, 50);
 
     let catalog: (i64, i64) =
         sqlx::query_as("SELECT singleton, value FROM library_catalog_revision")
@@ -127,12 +127,12 @@ async fn migrate_rerun_is_clean() {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(version, 4);
+    assert_eq!(version, 5);
     let applied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(applied, 4);
+    assert_eq!(applied, 5);
     let artists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM local_artists")
         .fetch_one(&pool)
         .await
@@ -165,7 +165,7 @@ async fn boot_assertion_refuses_version_mismatch() {
     let pool = scratch_pool().await;
     match assert_migrated(&pool).await {
         Err(SchemaError::VersionMismatch { found, expected }) => {
-            assert_eq!((found, expected), (0, 4));
+            assert_eq!((found, expected), (0, 5));
         }
         other => panic!("unmigrated database must refuse, got {other:?}"),
     }
@@ -178,7 +178,7 @@ async fn boot_assertion_refuses_version_mismatch() {
         assert_migrated(&pool).await,
         Err(SchemaError::VersionMismatch {
             found: 999,
-            expected: 4
+            expected: 5
         })
     ));
 

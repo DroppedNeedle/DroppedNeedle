@@ -13,9 +13,7 @@
 //! Scan and identify never write music files: the purity brief snapshots
 //! every byte before and after full runs and pins zero writes.
 
-#[path = "../src/library/scan/mod.rs"]
-#[allow(dead_code)]
-mod scan;
+use droppedneedle::library::scan;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};

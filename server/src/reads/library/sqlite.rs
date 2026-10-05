@@ -16,9 +16,14 @@
 //!   folded by the shared [`fold_text`](droppedneedle::db::fold_text), the
 //!   same fold the scan path writes.
 //! - Optional filters bind NULL-means-absent so every statement keeps a
-//!   static bind list; only the favorite-id list builds placeholders.
+//!   static bind list; only id IN-lists build placeholders.
 //! - Retired artists (`retired_into_artist_id` set) are merged away and read
 //!   as absent everywhere.
+//! - List methods page ids first, then aggregate over the page only; the
+//!   0005 read models (trigram miss oracle, maintained format totals) keep
+//!   text misses and stats off full scans.
+
+use std::collections::HashMap;
 
 use sqlx::{Row as _, SqlitePool};
 
@@ -74,8 +79,29 @@ fn like_pattern(raw: &str) -> String {
     format!("%{folded}%")
 }
 
+/// `?, ?, ...` placeholders for an id IN-list. Callers skip empty lists:
+/// `IN ()` is a syntax error.
+fn in_placeholders(len: usize) -> String {
+    vec!["?"; len].join(", ")
+}
+
+/// FTS5 trigram phrase for the track miss oracle, or `None` when the LIKE
+/// path must run instead. A trigram MATCH is exact substring only for
+/// queries of 3 or more characters (shorter queries silently match
+/// nothing), and a NUL byte would truncate the bind and break the phrase
+/// quoting, so both fall back to LIKE.
+/// Visible to the plan briefs, which assemble the same statements.
+pub(crate) fn fts_match_phrase(raw: &str) -> Option<String> {
+    let folded = droppedneedle::db::fold_text(raw);
+    if folded.chars().count() < 3 || folded.contains('\0') {
+        return None;
+    }
+    Some(format!("\"{}\"", folded.replace('"', "\"\"")))
+}
+
 /// One album's aggregate columns, shared by every album SELECT.
-const ALBUM_COLUMNS: &str = "a.id AS id, a.title AS title, \
+/// Visible to the plan briefs, which assemble the same statements.
+pub(crate) const ALBUM_COLUMNS: &str = "a.id AS id, a.title AS title, \
     COALESCE(an.display_name, a.album_artist_name, '') AS artist_name, \
     a.album_artist_id AS artist_id, \
     ae.release_group_mbid AS release_group_mbid, ae.release_mbid AS release_mbid, \
@@ -92,7 +118,8 @@ const ALBUM_COLUMNS: &str = "a.id AS id, a.title AS title, \
     a.created_at AS date_added";
 
 /// Joins shared by every album SELECT. Track joins filter to streamable.
-const ALBUM_JOINS: &str = "FROM local_albums a \
+/// Visible to the plan briefs, which assemble the same statements.
+pub(crate) const ALBUM_JOINS: &str = "FROM local_albums a \
     LEFT JOIN local_artists an ON an.id = a.album_artist_id \
     LEFT JOIN local_album_external_identities ae ON ae.local_album_id = a.id \
     LEFT JOIN local_artist_external_identities rte ON rte.local_artist_id = a.album_artist_id \
@@ -100,7 +127,8 @@ const ALBUM_JOINS: &str = "FROM local_albums a \
     LEFT JOIN local_tracks t ON t.local_album_id = a.id AND t.availability = 'indexed'";
 
 /// Filters shared by the album list and its count.
-const ALBUM_FILTER: &str = "(? IS NULL OR a.title_folded LIKE ? ESCAPE '\\' \
+/// Visible to the plan briefs, which assemble the same statements.
+pub(crate) const ALBUM_FILTER: &str = "(? IS NULL OR a.title_folded LIKE ? ESCAPE '\\' \
     OR a.album_artist_name_folded LIKE ? ESCAPE '\\') \
     AND (? IS NULL OR a.album_artist_id = ?) \
     AND (? IS NULL OR (a.year >= ? AND a.year < ? + 10)) \
@@ -108,7 +136,8 @@ const ALBUM_FILTER: &str = "(? IS NULL OR a.title_folded LIKE ? ESCAPE '\\' \
      WHERE t2.local_album_id = a.id AND t2.availability = 'indexed' \
      GROUP BY t2.file_format ORDER BY COUNT(*) DESC, t2.file_format LIMIT 1)) = ?)";
 
-fn album_order(sort: AlbumSort, descending: bool) -> &'static str {
+/// Visible to the plan briefs, which assemble the same statements.
+pub(crate) fn album_order(sort: AlbumSort, descending: bool) -> &'static str {
     match (sort, descending) {
         (AlbumSort::Name, false) => "a.title_folded ASC, a.id ASC",
         (AlbumSort::Name, true) => "a.title_folded DESC, a.id ASC",
@@ -152,7 +181,7 @@ fn map_album(row: &sqlx::sqlite::SqliteRow) -> AlbumRecord {
 }
 
 /// One track's columns, shared by every track SELECT.
-const TRACK_COLUMNS: &str = "t.id AS id, t.title AS title, \
+pub(crate) const TRACK_COLUMNS: &str = "t.id AS id, t.title AS title, \
     t.local_album_id AS album_id, t.album_title AS album_title, \
     COALESCE(t.artist_name, '') AS artist_name, \
     ta.local_artist_id AS artist_id, \
@@ -166,10 +195,48 @@ const TRACK_COLUMNS: &str = "t.id AS id, t.title AS title, \
     (w.local_album_id IS NOT NULL) AS cover_available";
 
 /// Joins shared by every track SELECT. Callers add the streamability filter.
-const TRACK_JOINS: &str = "FROM local_tracks t \
+pub(crate) const TRACK_JOINS: &str = "FROM local_tracks t \
     LEFT JOIN local_track_artists ta \
         ON ta.local_track_id = t.id AND ta.position = 0 \
     LEFT JOIN local_album_artwork w ON w.local_album_id = t.local_album_id";
+
+/// Filters shared by the track list and its count.
+pub(crate) const TRACK_FILTER: &str = "t.availability = 'indexed' \
+    AND (? IS NULL OR t.title_folded LIKE ? ESCAPE '\\' \
+    OR t.artist_name_folded LIKE ? ESCAPE '\\' \
+    OR t.album_title_folded LIKE ? ESCAPE '\\') \
+    AND (? IS NULL OR t.local_album_id = ?) \
+    AND (? IS NULL OR EXISTS (SELECT 1 FROM local_track_artists x \
+    WHERE x.local_track_id = t.id AND x.local_artist_id = ?)) \
+    AND (? IS NULL OR EXISTS (SELECT 1 FROM local_track_genres g \
+    WHERE g.local_track_id = t.id AND g.folded_name = ?) \
+    OR t.genre_folded = ?)";
+
+/// True when any track text matches the trigram phrase: the miss oracle.
+pub(crate) const TRACK_MISS_ORACLE: &str =
+    "SELECT EXISTS(SELECT 1 FROM local_tracks_fts WHERE local_tracks_fts MATCH ?)";
+
+/// Library totals: live album/artist counts plus maintained track totals.
+pub(crate) const STATS_MAIN: &str = "SELECT (SELECT COUNT(*) FROM local_albums) AS albums, \
+    (SELECT COUNT(*) FROM local_artists \
+     WHERE retired_into_artist_id IS NULL) AS artists, \
+    (SELECT COALESCE(SUM(indexed_tracks), 0) \
+     FROM library_track_format_stats) AS tracks, \
+    (SELECT COALESCE(SUM(indexed_bytes), 0) \
+     FROM library_track_format_stats) AS size_bytes";
+
+/// Per-format indexed-track counts, zero rows excluded like GROUP BY.
+pub(crate) const STATS_FORMATS: &str = "SELECT file_format AS format, indexed_tracks AS total \
+    FROM library_track_format_stats WHERE indexed_tracks > 0";
+
+pub(crate) fn track_order(sort: TrackSort, descending: bool) -> &'static str {
+    match (sort, descending) {
+        (TrackSort::Title, false) => "t.title_folded ASC, t.id ASC",
+        (TrackSort::Title, true) => "t.title_folded DESC, t.id ASC",
+        (TrackSort::DateAdded, false) => "t.imported_at ASC, t.id ASC",
+        (TrackSort::DateAdded, true) => "t.imported_at DESC, t.id ASC",
+    }
+}
 
 fn map_track(row: &sqlx::sqlite::SqliteRow) -> TrackRecord {
     TrackRecord {
@@ -194,22 +261,33 @@ fn map_track(row: &sqlx::sqlite::SqliteRow) -> TrackRecord {
     }
 }
 
-/// One artist's aggregate columns, shared by every artist SELECT.
-const ARTIST_COLUMNS: &str = "r.id AS id, r.display_name AS name, \
+/// One artist's identity columns. Counts arrive separately from the
+/// batched aggregate queries below, so a page pays one grouped pass, not
+/// one correlated subquery per row.
+const ARTIST_ROW_COLUMNS: &str = "r.id AS id, r.display_name AS name, \
     e.provider_artist_id AS artist_mbid, (e.local_artist_id IS NOT NULL) AS linked, \
-    (SELECT COUNT(*) FROM local_albums la WHERE la.album_artist_id = r.id) AS album_count, \
-    (SELECT COUNT(DISTINCT ct.id) FROM local_tracks ct \
-     JOIN local_track_artists cta ON cta.local_track_id = ct.id \
-     WHERE cta.local_artist_id = r.id AND ct.availability = 'indexed') AS track_count, \
-    (SELECT COUNT(DISTINCT at.local_album_id) FROM local_tracks at \
-     JOIN local_track_artists ata ON ata.local_track_id = at.id \
-     JOIN local_albums aa ON aa.id = at.local_album_id \
-     WHERE ata.local_artist_id = r.id AND at.availability = 'indexed' \
-     AND aa.album_artist_id != r.id) AS appearance_album_count, \
     r.created_at AS date_added";
 
 const ARTIST_JOINS: &str = "FROM local_artists r \
     LEFT JOIN local_artist_external_identities e ON e.local_artist_id = r.id";
+
+/// Albums led per artist id, one grouped pass over the page's leaders.
+const ARTIST_ALBUM_COUNTS: &str = "SELECT la.album_artist_id AS id, COUNT(*) AS total \
+    FROM local_albums la WHERE la.album_artist_id IN ({placeholders}) GROUP BY 1";
+
+/// Streamable credited tracks and appearance albums per artist id, one
+/// grouped pass over the page's credits. The CASE keeps the legacy
+/// appearance definition: distinct albums whose leader is someone else.
+/// Visible to the plan briefs, which assemble the same statements.
+pub(crate) const ARTIST_CREDIT_COUNTS: &str = "SELECT ata.local_artist_id AS id, \
+    COUNT(DISTINCT at.id) AS tracks, \
+    COUNT(DISTINCT CASE WHEN aa.album_artist_id != ata.local_artist_id \
+     THEN at.local_album_id END) AS appearances \
+    FROM local_track_artists ata \
+    JOIN local_tracks at ON at.id = ata.local_track_id \
+    JOIN local_albums aa ON aa.id = at.local_album_id \
+    WHERE ata.local_artist_id IN ({placeholders}) AND at.availability = 'indexed' \
+    GROUP BY 1";
 
 /// Artists leading at least one album.
 const LED_PREDICATE: &str =
@@ -221,7 +299,8 @@ const CREDITED_PREDICATE: &str = "(EXISTS (SELECT 1 FROM local_album_artists laa
     OR EXISTS (SELECT 1 FROM local_track_artists lta WHERE lta.local_artist_id = r.id) \
     OR EXISTS (SELECT 1 FROM local_albums la WHERE la.album_artist_id = r.id))";
 
-fn artist_scope_predicate(scope: ArtistScope) -> &'static str {
+/// Visible to the plan briefs, which assemble the same statements.
+pub(crate) fn artist_scope_predicate(scope: ArtistScope) -> &'static str {
     match scope {
         ArtistScope::All => "1 = 1",
         ArtistScope::AlbumArtists => LED_PREDICATE,
@@ -229,7 +308,8 @@ fn artist_scope_predicate(scope: ArtistScope) -> &'static str {
     }
 }
 
-fn artist_order(sort: ArtistSort, descending: bool) -> &'static str {
+/// Visible to the plan briefs, which assemble the same statements.
+pub(crate) fn artist_order(sort: ArtistSort, descending: bool) -> &'static str {
     match (sort, descending) {
         (ArtistSort::Name, false) => "r.folded_name ASC, r.id ASC",
         (ArtistSort::Name, true) => "r.folded_name DESC, r.id ASC",
@@ -240,20 +320,64 @@ fn artist_order(sort: ArtistSort, descending: bool) -> &'static str {
     }
 }
 
-fn map_artist(row: &sqlx::sqlite::SqliteRow) -> ArtistRecord {
-    let album_count: i64 = row.get("album_count");
-    let track_count: i64 = row.get("track_count");
-    let appearance_album_count: i64 = row.get("appearance_album_count");
+fn map_artist(
+    row: &sqlx::sqlite::SqliteRow,
+    album_count: u64,
+    track_count: u64,
+    appearance_album_count: u64,
+) -> ArtistRecord {
     ArtistRecord {
         id: row.get("id"),
         name: row.get("name"),
         artist_mbid: row.get("artist_mbid"),
         linked: row.get("linked"),
-        album_count: album_count.max(0) as u64,
-        track_count: track_count.max(0) as u64,
-        appearance_album_count: appearance_album_count.max(0) as u64,
+        album_count,
+        track_count,
+        appearance_album_count,
         date_added: row.get("date_added"),
     }
+}
+
+/// Batched artist aggregates for one id set: albums led per id, plus
+/// (streamable credited tracks, appearance albums) per id. Ids with no
+/// rows are absent from the maps and read as zero.
+async fn artist_counts(
+    pool: &SqlitePool,
+    ids: &[String],
+) -> Result<(HashMap<String, u64>, HashMap<String, (u64, u64)>), StoreError> {
+    let placeholders = in_placeholders(ids.len());
+    let albums_sql = ARTIST_ALBUM_COUNTS.replace("{placeholders}", &placeholders);
+    let mut albums = sqlx::query(&albums_sql);
+    for id in ids {
+        albums = albums.bind(id);
+    }
+    let album_rows = albums
+        .fetch_all(pool)
+        .await
+        .map_err(|error| internal("library.artists.list", error))?;
+    let mut album_counts = HashMap::with_capacity(ids.len());
+    for row in &album_rows {
+        let id: String = row.get("id");
+        let total: i64 = row.get("total");
+        album_counts.insert(id, total.max(0) as u64);
+    }
+    let credits_sql = ARTIST_CREDIT_COUNTS.replace("{placeholders}", &placeholders);
+    let mut credits = sqlx::query(&credits_sql);
+    for id in ids {
+        credits = credits.bind(id);
+    }
+    let credit_rows = credits
+        .fetch_all(pool)
+        .await
+        .map_err(|error| internal("library.artists.list", error))?;
+    let mut credit_counts = HashMap::with_capacity(ids.len());
+    for row in &credit_rows {
+        let id: String = row.get("id");
+        let tracks: i64 = row.get("tracks");
+        let appearances: i64 = row.get("appearances");
+        credit_counts.insert(id, (tracks.max(0) as u64, appearances.max(0) as u64));
+    }
+    Ok((album_counts, credit_counts))
 }
 
 /// Catalog reads over the reader pool.
@@ -284,9 +408,12 @@ impl LibraryCatalog for SqliteCatalog {
             };
             let pattern = filter.q.as_deref().map(like_pattern);
             let order = album_order(sort, descending);
-            let rows = sqlx::query(&format!(
-                "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} WHERE {ALBUM_FILTER} \
-                 GROUP BY a.id ORDER BY {order} LIMIT ? OFFSET ?"
+            // Page the ids first: filtering and ordering touch albums only,
+            // so the track aggregation below runs over the page, never the
+            // catalog. Page order is restored below from this vec.
+            let ids: Vec<String> = sqlx::query_scalar(&format!(
+                "SELECT a.id FROM local_albums a WHERE {ALBUM_FILTER} \
+                 ORDER BY {order} LIMIT ? OFFSET ?"
             ))
             .bind(pattern.as_deref())
             .bind(pattern.as_deref())
@@ -303,6 +430,26 @@ impl LibraryCatalog for SqliteCatalog {
             .fetch_all(pool)
             .await
             .map_err(|error| internal("library.albums.list", error))?;
+            let mut records = HashMap::with_capacity(ids.len());
+            if !ids.is_empty() {
+                let placeholders = in_placeholders(ids.len());
+                let sql = format!(
+                    "SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} \
+                     WHERE a.id IN ({placeholders}) GROUP BY a.id"
+                );
+                let mut query = sqlx::query(&sql);
+                for id in &ids {
+                    query = query.bind(id);
+                }
+                let rows = query
+                    .fetch_all(pool)
+                    .await
+                    .map_err(|error| internal("library.albums.list", error))?;
+                for row in &rows {
+                    let record = map_album(row);
+                    records.insert(record.id.clone(), record);
+                }
+            }
             let row = sqlx::query(&format!(
                 "SELECT COUNT(*) AS total FROM local_albums a WHERE {ALBUM_FILTER}"
             ))
@@ -320,7 +467,13 @@ impl LibraryCatalog for SqliteCatalog {
             .await
             .map_err(|error| internal("library.albums.count", error))?;
             let total: i64 = row.get("total");
-            Ok((rows.iter().map(map_album).collect(), total.max(0) as u64))
+            let mut ordered = Vec::with_capacity(ids.len());
+            for id in &ids {
+                if let Some(record) = records.remove(id) {
+                    ordered.push(record);
+                }
+            }
+            Ok((ordered, total.max(0) as u64))
         })
     }
 
@@ -439,20 +592,76 @@ impl LibraryCatalog for SqliteCatalog {
             let scope_sql = artist_scope_predicate(scope)
                 .replace("(LED)", LED_PREDICATE)
                 .replace("(CREDITED)", CREDITED_PREDICATE);
-            let order = artist_order(sort, descending);
-            let rows = sqlx::query(&format!(
-                "SELECT {ARTIST_COLUMNS} {ARTIST_JOINS} \
-                 WHERE r.retired_into_artist_id IS NULL AND ({scope_sql}) \
-                 AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\') \
-                 ORDER BY {order} LIMIT ? OFFSET ?"
-            ))
-            .bind(pattern.as_deref())
-            .bind(pattern.as_deref())
-            .bind(limit as i64)
-            .bind(offset as i64)
-            .fetch_all(pool)
-            .await
-            .map_err(|error| internal("library.artists.list", error))?;
+            // Page the ids first; counts aggregate over the page below.
+            // Album-count sort joins pre-aggregated leader counts, with
+            // COALESCE so artists without albums sort as zero, as before.
+            let ids: Vec<String> = if matches!(sort, ArtistSort::AlbumCount) {
+                let direction = if descending { "DESC" } else { "ASC" };
+                sqlx::query_scalar(&format!(
+                    "SELECT r.id FROM local_artists r \
+                     LEFT JOIN (SELECT album_artist_id AS aid, COUNT(*) AS c \
+                     FROM local_albums GROUP BY aid) ac ON ac.aid = r.id \
+                     WHERE r.retired_into_artist_id IS NULL AND ({scope_sql}) \
+                     AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\') \
+                     ORDER BY COALESCE(ac.c, 0) {direction}, \
+                     r.folded_name ASC, r.id ASC LIMIT ? OFFSET ?"
+                ))
+                .bind(pattern.as_deref())
+                .bind(pattern.as_deref())
+                .bind(limit as i64)
+                .bind(offset as i64)
+                .fetch_all(pool)
+                .await
+                .map_err(|error| internal("library.artists.list", error))?
+            } else {
+                let order = artist_order(sort, descending);
+                sqlx::query_scalar(&format!(
+                    "SELECT r.id FROM local_artists r \
+                     WHERE r.retired_into_artist_id IS NULL AND ({scope_sql}) \
+                     AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\') \
+                     ORDER BY {order} LIMIT ? OFFSET ?"
+                ))
+                .bind(pattern.as_deref())
+                .bind(pattern.as_deref())
+                .bind(limit as i64)
+                .bind(offset as i64)
+                .fetch_all(pool)
+                .await
+                .map_err(|error| internal("library.artists.list", error))?
+            };
+            let mut records = Vec::with_capacity(ids.len());
+            if !ids.is_empty() {
+                let placeholders = in_placeholders(ids.len());
+                let sql = format!(
+                    "SELECT {ARTIST_ROW_COLUMNS} {ARTIST_JOINS} \
+                     WHERE r.id IN ({placeholders})"
+                );
+                let mut query = sqlx::query(&sql);
+                for id in &ids {
+                    query = query.bind(id);
+                }
+                let rows = query
+                    .fetch_all(pool)
+                    .await
+                    .map_err(|error| internal("library.artists.list", error))?;
+                let (album_counts, credit_counts) = artist_counts(pool, &ids).await?;
+                let mut by_id = HashMap::with_capacity(rows.len());
+                for row in &rows {
+                    let id: String = row.get("id");
+                    let album_count = album_counts.get(&id).copied().unwrap_or(0);
+                    let (track_count, appearances) =
+                        credit_counts.get(&id).copied().unwrap_or((0, 0));
+                    by_id.insert(
+                        id.clone(),
+                        map_artist(row, album_count, track_count, appearances),
+                    );
+                }
+                for id in &ids {
+                    if let Some(record) = by_id.remove(id) {
+                        records.push(record);
+                    }
+                }
+            }
             let totals = sqlx::query(&format!(
                 "SELECT COUNT(*) AS total, \
                  COALESCE(SUM(CASE WHEN {LED_PREDICATE} THEN 1 ELSE 0 END), 0) AS led, \
@@ -483,7 +692,7 @@ impl LibraryCatalog for SqliteCatalog {
                 total = scoped.get("total");
             }
             Ok((
-                rows.iter().map(map_artist).collect(),
+                records,
                 total.max(0) as u64,
                 led.max(0) as u64,
                 contributors.max(0) as u64,
@@ -500,14 +709,26 @@ impl LibraryCatalog for SqliteCatalog {
                 return Err(unwired_store());
             };
             let row = sqlx::query(&format!(
-                "SELECT {ARTIST_COLUMNS} {ARTIST_JOINS} \
+                "SELECT {ARTIST_ROW_COLUMNS} {ARTIST_JOINS} \
                  WHERE r.id = ? AND r.retired_into_artist_id IS NULL"
             ))
             .bind(id)
             .fetch_optional(pool)
             .await
             .map_err(|error| internal("library.artists.get", error))?;
-            Ok(row.as_ref().map(map_artist))
+            let Some(row) = row else {
+                return Ok(None);
+            };
+            let owned = [id.to_owned()];
+            let (album_counts, credit_counts) = artist_counts(pool, &owned).await?;
+            let album_count = album_counts.get(id).copied().unwrap_or(0);
+            let (track_count, appearances) = credit_counts.get(id).copied().unwrap_or((0, 0));
+            Ok(Some(map_artist(
+                &row,
+                album_count,
+                track_count,
+                appearances,
+            )))
         })
     }
 
@@ -595,29 +816,30 @@ impl LibraryCatalog for SqliteCatalog {
             let Some(pool) = self.db.live() else {
                 return Err(unwired_store());
             };
+            // Miss oracle: when the folded query is trigram-eligible and
+            // matches no track text anywhere, the page and total are empty
+            // whatever the other filters say (they only narrow). Hits and
+            // ineligible queries run the LIKE path below unchanged.
+            if let Some(q) = filter.q.as_deref()
+                && let Some(phrase) = fts_match_phrase(q)
+            {
+                let hit: bool = sqlx::query_scalar(TRACK_MISS_ORACLE)
+                    .bind(phrase)
+                    .fetch_one(pool)
+                    .await
+                    .map_err(|error| internal("library.tracks.search", error))?;
+                if !hit {
+                    return Ok((Vec::new(), 0));
+                }
+            }
             let pattern = filter.q.as_deref().map(like_pattern);
             let genre = filter
                 .genre
                 .as_deref()
                 .map(|name| droppedneedle::db::fold_text(name.trim()));
-            let order = match (sort, descending) {
-                (TrackSort::Title, false) => "t.title_folded ASC, t.id ASC",
-                (TrackSort::Title, true) => "t.title_folded DESC, t.id ASC",
-                (TrackSort::DateAdded, false) => "t.imported_at ASC, t.id ASC",
-                (TrackSort::DateAdded, true) => "t.imported_at DESC, t.id ASC",
-            };
-            let filter_sql = "t.availability = 'indexed' \
-                AND (? IS NULL OR t.title_folded LIKE ? ESCAPE '\\' \
-                OR t.artist_name_folded LIKE ? ESCAPE '\\' \
-                OR t.album_title_folded LIKE ? ESCAPE '\\') \
-                AND (? IS NULL OR t.local_album_id = ?) \
-                AND (? IS NULL OR EXISTS (SELECT 1 FROM local_track_artists x \
-                WHERE x.local_track_id = t.id AND x.local_artist_id = ?)) \
-                AND (? IS NULL OR EXISTS (SELECT 1 FROM local_track_genres g \
-                WHERE g.local_track_id = t.id AND g.folded_name = ?) \
-                OR t.genre_folded = ?)";
+            let order = track_order(sort, descending);
             let rows = sqlx::query(&format!(
-                "SELECT {TRACK_COLUMNS} {TRACK_JOINS} WHERE {filter_sql} \
+                "SELECT {TRACK_COLUMNS} {TRACK_JOINS} WHERE {TRACK_FILTER} \
                  ORDER BY {order} LIMIT ? OFFSET ?"
             ))
             .bind(pattern.as_deref())
@@ -636,25 +858,42 @@ impl LibraryCatalog for SqliteCatalog {
             .fetch_all(pool)
             .await
             .map_err(|error| internal("library.tracks.list", error))?;
-            let row = sqlx::query(&format!(
-                "SELECT COUNT(*) AS total FROM local_tracks t WHERE {filter_sql}"
-            ))
-            .bind(pattern.as_deref())
-            .bind(pattern.as_deref())
-            .bind(pattern.as_deref())
-            .bind(pattern.as_deref())
-            .bind(filter.album_id.as_deref())
-            .bind(filter.album_id.as_deref())
-            .bind(filter.artist_id.as_deref())
-            .bind(filter.artist_id.as_deref())
-            .bind(genre.as_deref())
-            .bind(genre.as_deref())
-            .bind(genre.as_deref())
-            .fetch_one(pool)
-            .await
-            .map_err(|error| internal("library.tracks.count", error))?;
-            let total: i64 = row.get("total");
-            Ok((rows.iter().map(map_track).collect(), total.max(0) as u64))
+            let unfiltered = filter.q.is_none()
+                && filter.album_id.is_none()
+                && filter.artist_id.is_none()
+                && filter.genre.is_none();
+            let total = if unfiltered {
+                // Maintained exact count of indexed tracks (migration 0005).
+                let total: i64 = sqlx::query_scalar(
+                    "SELECT COALESCE(SUM(indexed_tracks), 0) \
+                     FROM library_track_format_stats",
+                )
+                .fetch_one(pool)
+                .await
+                .map_err(|error| internal("library.tracks.count", error))?;
+                total.max(0) as u64
+            } else {
+                let row = sqlx::query(&format!(
+                    "SELECT COUNT(*) AS total FROM local_tracks t WHERE {TRACK_FILTER}"
+                ))
+                .bind(pattern.as_deref())
+                .bind(pattern.as_deref())
+                .bind(pattern.as_deref())
+                .bind(pattern.as_deref())
+                .bind(filter.album_id.as_deref())
+                .bind(filter.album_id.as_deref())
+                .bind(filter.artist_id.as_deref())
+                .bind(filter.artist_id.as_deref())
+                .bind(genre.as_deref())
+                .bind(genre.as_deref())
+                .bind(genre.as_deref())
+                .fetch_one(pool)
+                .await
+                .map_err(|error| internal("library.tracks.count", error))?;
+                let total: i64 = row.get("total");
+                total.max(0) as u64
+            };
+            Ok((rows.iter().map(map_track).collect(), total))
         })
     }
 
@@ -683,28 +922,20 @@ impl LibraryCatalog for SqliteCatalog {
             let Some(pool) = self.db.live() else {
                 return Err(unwired_store());
             };
-            let row = sqlx::query(
-                "SELECT (SELECT COUNT(*) FROM local_albums) AS albums, \
-                 (SELECT COUNT(*) FROM local_artists \
-                  WHERE retired_into_artist_id IS NULL) AS artists, \
-                 (SELECT COUNT(*) FROM local_tracks \
-                  WHERE availability = 'indexed') AS tracks, \
-                 (SELECT COALESCE(SUM(file_size_bytes), 0) FROM local_tracks \
-                  WHERE availability = 'indexed') AS size_bytes",
-            )
-            .fetch_one(pool)
-            .await
-            .map_err(|error| internal("library.stats", error))?;
+            // Track totals come from the maintained per-format rows
+            // (migration 0005); the zero-count rows they keep stay out of
+            // the breakdown, matching GROUP BY exactly.
+            let row = sqlx::query(STATS_MAIN)
+                .fetch_one(pool)
+                .await
+                .map_err(|error| internal("library.stats", error))?;
             let albums: i64 = row.get("albums");
             let artists: i64 = row.get("artists");
             let tracks: i64 = row.get("tracks");
-            let rows = sqlx::query(
-                "SELECT file_format AS format, COUNT(*) AS total FROM local_tracks \
-                 WHERE availability = 'indexed' GROUP BY file_format",
-            )
-            .fetch_all(pool)
-            .await
-            .map_err(|error| internal("library.stats.formats", error))?;
+            let rows = sqlx::query(STATS_FORMATS)
+                .fetch_all(pool)
+                .await
+                .map_err(|error| internal("library.stats.formats", error))?;
             let mut format_breakdown = std::collections::HashMap::new();
             for row in &rows {
                 let format: String = row.get("format");

@@ -13,6 +13,8 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
+use tokio::sync::watch;
+
 use super::coordinator::LibraryScanCoordinator;
 use super::models::{Disposition, ScanKind, ScanRequest, ScanScope, ScanTrigger};
 use super::roots::RootRegistry;
@@ -133,6 +135,36 @@ where
     T: TagReader + 'static,
     Q: IdentifyQueue,
 {
+    supervise_once_inner(coordinator, inputs, None).await
+}
+
+/// One shutdown-aware supervisor iteration: Hook B, schedule, and worker
+/// exactly like [`supervise_once`], but a signalled shutdown stops the
+/// in-flight run instead of waiting it out. A pre-signalled shutdown
+/// claims no new work. Returns true when a run was driven.
+pub async fn supervise_once_with_shutdown<S, T, Q>(
+    coordinator: &LibraryScanCoordinator<S, T, Q>,
+    inputs: &SupervisorInputs,
+    shutdown: &watch::Receiver<bool>,
+) -> bool
+where
+    S: ScanStore,
+    T: TagReader + 'static,
+    Q: IdentifyQueue,
+{
+    supervise_once_inner(coordinator, inputs, Some(shutdown)).await
+}
+
+async fn supervise_once_inner<S, T, Q>(
+    coordinator: &LibraryScanCoordinator<S, T, Q>,
+    inputs: &SupervisorInputs,
+    shutdown: Option<&watch::Receiver<bool>>,
+) -> bool
+where
+    S: ScanStore,
+    T: TagReader + 'static,
+    Q: IdentifyQueue,
+{
     let registry = coordinator.registry();
     let enabled = registry.enabled();
     // Hook B consumer: dirty scope marks fire regardless of frequency
@@ -189,7 +221,13 @@ where
         }
     }
     if enabled {
-        return coordinator.run_once(&(inputs.root_paths)()).await.is_some();
+        return match shutdown {
+            Some(signal) => coordinator
+                .run_once_with_shutdown(&(inputs.root_paths)(), signal)
+                .await
+                .is_some(),
+            None => coordinator.run_once(&(inputs.root_paths)()).await.is_some(),
+        };
     }
     false
 }
@@ -304,6 +342,25 @@ mod tests {
         let history = coordinator.history(10);
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].trigger, ScanTrigger::PolicyApply);
+    }
+
+    #[tokio::test]
+    async fn pre_signalled_shutdown_claims_no_new_work() {
+        let coordinator = coordinator().with_wakeups(WorkWakeups::new());
+        let dirty = DirtyScopes::new();
+        dirty.mark("r1");
+        let inputs = inputs(dirty.clone());
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        shutdown_tx.send(true).expect("shutdown sends");
+        let processed = supervise_once_with_shutdown(&coordinator, &inputs, &shutdown_rx).await;
+        assert!(!processed, "pre-signalled shutdown drives no run");
+        let current = coordinator.current();
+        assert!(
+            current
+                .iter()
+                .all(|run| run.state == super::super::models::ScanState::Queued),
+            "no run leaves queued under shutdown"
+        );
     }
 
     #[tokio::test]
