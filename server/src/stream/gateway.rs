@@ -59,6 +59,7 @@ pub trait RemoteReader: Send + Sync {
 pub struct Gateway<R, T> {
     local_root: PathBuf,
     library_roots: Option<crate::library::wiring::RootSource>,
+    plugins: std::sync::OnceLock<(Arc<crate::plugins::host::PluginHost>, reqwest::Client)>,
     remote: R,
     transcoder: T,
     settings: TranscodeSettings,
@@ -80,6 +81,7 @@ impl<R, T> Gateway<R, T> {
         Self {
             local_root,
             library_roots: None,
+            plugins: std::sync::OnceLock::new(),
             remote,
             transcoder,
             settings,
@@ -98,6 +100,20 @@ impl<R, T> Gateway<R, T> {
         self.library_roots = Some(roots);
         self
     }
+
+    /// Serve `streaming_source` plugins under [`AudioSource::Plugin`].
+    /// `no_redirect` proxies plugin URLs; it must not follow redirects on
+    /// its own, because every hop is re-checked. Boot attaches the host
+    /// once, after the shared engine exists.
+    pub fn attach_plugins(
+        &self,
+        host: Arc<crate::plugins::host::PluginHost>,
+        no_redirect: reqwest::Client,
+    ) {
+        if self.plugins.set((host, no_redirect)).is_err() {
+            tracing::warn!("plugin host was already attached to the stream gateway");
+        }
+    }
 }
 
 impl<R: RemoteReader, T: Transcoder> StreamEngine for Gateway<R, T> {
@@ -109,6 +125,10 @@ impl<R: RemoteReader, T: Transcoder> StreamEngine for Gateway<R, T> {
             .map_err(|_| StreamFault::Capacity)?;
         match request.source {
             AudioSource::Local => self.open_local(&request).await,
+            AudioSource::Plugin => {
+                let media = self.stream_plugin(&request, false).await?;
+                whole_media(media).await
+            }
             source => self.open_remote(source, &request).await,
         }
     }
@@ -125,6 +145,7 @@ impl<R: RemoteReader, T: Transcoder> StreamEngine for Gateway<R, T> {
             .map_err(|_| StreamFault::Capacity)?;
         let mut media = match request.source {
             AudioSource::Local => self.stream_local(&request, head_only).await?,
+            AudioSource::Plugin => self.stream_plugin(&request, head_only).await?,
             source => self
                 .open_remote(source, &request)
                 .await
@@ -198,11 +219,23 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
         request: &StreamOpen,
         head_only: bool,
     ) -> Result<StreamMedia, StreamFault> {
+        let read = self.local_read(request)?;
+        self.stream_read(read, request, head_only).await
+    }
+
+    /// Stream one resolved read: a file body by range, or live transcode
+    /// output.
+    async fn stream_read(
+        &self,
+        read: LocalRead,
+        request: &StreamOpen,
+        head_only: bool,
+    ) -> Result<StreamMedia, StreamFault> {
         let LocalRead {
             path,
             content_type,
             plan,
-        } = self.local_read(request)?;
+        } = read;
         match plan {
             StreamPlan::Direct { .. } => {
                 let probe = path.clone();
@@ -253,6 +286,11 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
     /// Resolve the sandboxed path, its content type, and the plan.
     fn local_read(&self, request: &StreamOpen) -> Result<LocalRead, StreamFault> {
         let path = self.sandboxed_path(&request.key)?;
+        self.read_plan(path, request)
+    }
+
+    /// Content type and transcode plan for one resolved local path.
+    fn read_plan(&self, path: PathBuf, request: &StreamOpen) -> Result<LocalRead, StreamFault> {
         let extension = path
             .extension()
             .and_then(|ext| ext.to_str())
@@ -303,6 +341,95 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             content_type,
             plan,
         })
+    }
+
+    /// Every library root a plugin path may point into.
+    fn all_library_roots(&self) -> Vec<PathBuf> {
+        match &self.library_roots {
+            Some(source) => source()
+                .roots()
+                .iter()
+                .map(|root| root.path.clone())
+                .collect(),
+            None => vec![self.local_root.clone()],
+        }
+    }
+
+    /// Ask `streaming_source` plugins for one recording. A file answer is
+    /// served like a local file (ranges, transcodes); a URL answer is
+    /// proxied as-is, whole and direct, with every hop re-checked.
+    async fn stream_plugin(
+        &self,
+        request: &StreamOpen,
+        head_only: bool,
+    ) -> Result<StreamMedia, StreamFault> {
+        use crate::plugins::capabilities::stream::{PluginStream, open_url};
+
+        let Some((host, client)) = self.plugins.get() else {
+            return Err(StreamFault::NotFound);
+        };
+        let roots = self.all_library_roots();
+        let resolved = host
+            .resolve_stream(&request.key, &request.user_id, &roots)
+            .await
+            .ok_or(StreamFault::NotFound)?;
+        match resolved {
+            PluginStream::File { path, .. } => {
+                let read = self.read_plan(path, request)?;
+                self.stream_read(read, request, head_only).await
+            }
+            PluginStream::Remote {
+                plugin,
+                url,
+                content_type,
+                ..
+            } => {
+                let response = open_url(client, url, None).await.map_err(|reason| {
+                    tracing::warn!(%plugin, %reason, "plugin stream URL refused");
+                    StreamFault::NotFound
+                })?;
+                if !response.status().is_success() {
+                    tracing::warn!(%plugin, status = %response.status(), "plugin stream URL failed");
+                    return Err(StreamFault::Upstream {
+                        source: AudioSource::Plugin,
+                    });
+                }
+                let upstream_type = response
+                    .headers()
+                    .get(reqwest::header::CONTENT_TYPE)
+                    .and_then(|value| value.to_str().ok())
+                    .filter(|value| value.starts_with("audio/") || *value == "application/ogg")
+                    .map(str::to_owned);
+                let content_type = upstream_type
+                    .or_else(|| (!content_type.is_empty()).then_some(content_type))
+                    .unwrap_or_else(|| "application/octet-stream".to_owned());
+                let length = response.content_length();
+                let body = if head_only {
+                    MediaBody::Empty
+                } else {
+                    MediaBody::Chunks(
+                        futures_util::stream::unfold(Some(response), |state| async move {
+                            let mut response = state?;
+                            match response.chunk().await {
+                                Ok(Some(bytes)) => Some((Ok(bytes.to_vec()), Some(response))),
+                                Ok(None) => None,
+                                Err(error) => Some((Err(std::io::Error::other(error)), None)),
+                            }
+                        })
+                        .boxed(),
+                    )
+                };
+                // Served like a landing: whole, never ranged.
+                Ok(StreamMedia {
+                    content_type,
+                    total_len: 0,
+                    transcoded: true,
+                    estimated_len: length,
+                    body,
+                    lease: None,
+                })
+            }
+        }
     }
 
     /// Proxied remote read. Direct-only: the ffmpeg service takes a local
@@ -422,6 +549,37 @@ fn transcode_chunks<B: TranscodeBody + 'static>(body: B) -> ChunkStream {
         }
     })
     .boxed()
+}
+
+/// Collect a streamed open into a whole object (the compat whole-object
+/// path).
+async fn whole_media(media: StreamMedia) -> Result<OpenMedia, StreamFault> {
+    let bytes = match media.body {
+        MediaBody::Bytes(bytes) => bytes,
+        MediaBody::File(path) => tokio::task::spawn_blocking(move || std::fs::read(path))
+            .await
+            .map_err(|cause| StreamFault::Internal {
+                cause: cause.to_string(),
+            })?
+            .map_err(io_fault)?,
+        MediaBody::Chunks(mut chunks) => {
+            let mut bytes = Vec::new();
+            while let Some(chunk) = chunks.next().await {
+                bytes.extend_from_slice(&chunk.map_err(|error| StreamFault::Internal {
+                    cause: error.to_string(),
+                })?);
+            }
+            bytes
+        }
+        MediaBody::Empty => Vec::new(),
+    };
+    Ok(OpenMedia {
+        content_type: media.content_type,
+        total_len: bytes.len() as u64,
+        transcoded: media.transcoded,
+        estimated_len: media.estimated_len,
+        bytes,
+    })
 }
 
 /// Fixed sandbox refusal: the key never reaches the wire.

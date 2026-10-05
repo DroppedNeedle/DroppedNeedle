@@ -22,6 +22,8 @@ pub mod dispatch;
 pub mod downloads;
 pub mod flows;
 pub mod imports;
+pub mod plugin_events;
+pub mod plugin_source;
 pub mod probes;
 pub mod requests;
 pub mod search;

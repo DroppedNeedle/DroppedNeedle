@@ -57,6 +57,7 @@ mod migration_pipeline;
 mod persist_runtime;
 mod persist_schema;
 mod playback_reporting;
+mod plugins_examples;
 mod plugins_host;
 mod plugins_scrobble;
 mod providers_audio;

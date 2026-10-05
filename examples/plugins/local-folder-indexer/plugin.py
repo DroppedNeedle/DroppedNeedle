@@ -8,8 +8,7 @@ the client, demonstrating cross-plugin pairing.
 
 from pathlib import Path
 
-from models.common import ServiceStatus
-from repositories.protocols.indexer import IndexerResult, PluginSearchResult
+from droppedneedle_plugin import IndexerResult, PluginSearchResult, ServiceStatus
 
 
 class LocalFolderIndexer:

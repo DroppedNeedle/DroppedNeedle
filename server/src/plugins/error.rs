@@ -25,6 +25,8 @@ pub const FORBIDDEN: &str = "FORBIDDEN";
 pub const NOT_FOUND: &str = "NOT_FOUND";
 /// The request itself is wrong. The message is user-facing.
 pub const INVALID_INPUT: &str = "INVALID_INPUT";
+/// The request no longer matches the current state.
+pub const CONFLICT: &str = "CONFLICT";
 /// The request body is over the cap.
 pub const PAYLOAD_TOO_LARGE: &str = "PAYLOAD_TOO_LARGE";
 /// The caller is over the route's per-minute budget.
@@ -63,6 +65,11 @@ pub enum PluginError {
         /// What was wrong.
         message: String,
     },
+    /// The request no longer matches the current state. User-facing.
+    Conflict {
+        /// What changed.
+        message: String,
+    },
     /// Request body over the cap.
     PayloadTooLarge,
     /// Over the route's per-minute budget.
@@ -93,6 +100,7 @@ impl PluginError {
             Self::Forbidden { .. } => StatusCode::FORBIDDEN,
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::InvalidInput { .. } => StatusCode::BAD_REQUEST,
+            Self::Conflict { .. } => StatusCode::CONFLICT,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::RateLimited { .. } => StatusCode::TOO_MANY_REQUESTS,
             Self::RouteFailed => StatusCode::BAD_GATEWAY,
@@ -117,6 +125,7 @@ impl PluginError {
                 None,
             ),
             Self::InvalidInput { message } => (INVALID_INPUT.to_owned(), message.clone(), None),
+            Self::Conflict { message } => (CONFLICT.to_owned(), message.clone(), None),
             Self::PayloadTooLarge => (
                 PAYLOAD_TOO_LARGE.to_owned(),
                 FIXED_TOO_LARGE_MESSAGE.to_owned(),

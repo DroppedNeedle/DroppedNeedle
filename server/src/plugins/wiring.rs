@@ -1,20 +1,16 @@
 //! Plugins bundle: host, routes, scrobble backend, tick loops.
 //!
-//! [`PluginsSetup`] is the one `AppState` field plugins adds. It builds the
-//! [`PluginHost`] over the deployment's plugins directory, assembles the
-//! plugin and scrobble route dependencies, and shares the jobs registry so
-//! tick loops register as `plugin-tick:{name}` through the one jobs choke
-//! point; plugins never run a second registry or their own loop
-//! mechanics.
+//! [`new_host`] builds the [`PluginHost`] early in boot so the flows that
+//! raise events or look up plugin sources (playback, acquisition,
+//! streaming) can hold it. [`PluginsSetup`] is the one `AppState` field
+//! plugins adds: it backs plugin state with the jobs tick store, starts
+//! the enabled plugins, mounts the routes, and runs tick loops on the
+//! shared jobs registry as `plugin-tick:{name}`.
 //!
-//! Production binds the real archive fetcher, a deflate zip reader, the
-//! HTTP ListenBrainz verifier, cache invalidation on link changes, and the
-//! SQLite tick and scrobble stores (tick state survives restarts with the
-//! database; so do prefs and links). Two seams stay interim by design:
-//! module loading (v3 has no execution engine for plugin code yet, so
-//! enabling a plugin records a per-plugin error instead of failing the
-//! host) and the personal-mix hooks (`acquire::requests` owns the queue;
-//! the static reader answers until that service is wired here).
+//! Production runs each plugin as a subprocess through
+//! [`ProcessLauncher`]; the Python helper module ships inside the server
+//! binary and is written to `<plugins>/.sdk/python` at boot, so a Python
+//! plugin needs nothing installed beyond `python3` itself.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -33,18 +29,57 @@ use crate::runtime_config::{ConfigStore, Crypto};
 use super::handlers::{
     ExtRateLimiter, PluginsDeps, ScrobbleHttpDeps, UserRoles, plugins_router, scrobble_router,
 };
-use super::host::{
-    ArchiveEntry, ArchiveUnpacker, MAX_PLUGIN_ZIP_DECOMPRESSED_BYTES, MAX_PLUGIN_ZIP_ENTRIES,
-    MAX_PLUGIN_ZIP_FILE_BYTES, PluginHost, ReqwestFetcher,
-};
-use super::manifest::PluginManifest;
-use super::runtime::{ModuleLoader, PluginModule};
+use super::host::PluginHost;
+use super::install::{ReqwestFetcher, ZipUnpacker};
+use super::process::ProcessLauncher;
+use super::runtime::PluginLauncher;
 use super::scrobble::{
     ConnectionChangedHook, ListenBrainzLinkStore, NoopMixApprovalHook, ScrobbleDeps,
     ScrobblePrefsStore, SqliteListenBrainzLinkStore, SqliteScrobblePrefsStore, StaticMixState,
 };
 use super::ticks::{PluginTickLoops, TICK_CANCEL_GRACE, TickLoopSync, TickStoreKind};
 use crate::providers::listenbrainz::HttpListenBrainzVerifier;
+
+/// The Python helper module, shipped inside the binary.
+const PYTHON_SDK: &str = include_str!("../../../sdk/python/droppedneedle_plugin.py");
+
+/// Where the Python helper lives under the plugins directory.
+pub fn python_sdk_dir(plugins_dir: &Path) -> PathBuf {
+    plugins_dir.join(".sdk").join("python")
+}
+
+/// Write the Python helper next to the plugins, replacing an older copy.
+/// A failure is logged: Python plugins then fail to start with a clear
+/// import error, and nothing else is affected.
+pub fn write_python_sdk(plugins_dir: &Path) {
+    let dir = python_sdk_dir(plugins_dir);
+    let target = dir.join("droppedneedle_plugin.py");
+    if std::fs::read_to_string(&target).is_ok_and(|current| current == PYTHON_SDK) {
+        return;
+    }
+    let written = std::fs::create_dir_all(&dir).and_then(|()| {
+        let staged = dir.join(".droppedneedle_plugin.py.new");
+        std::fs::write(&staged, PYTHON_SDK)?;
+        std::fs::rename(&staged, &target)
+    });
+    if let Err(error) = written {
+        tracing::warn!(%error, dir = %dir.display(), "could not write the Python plugin helper");
+    }
+}
+
+/// The production host: subprocess plugins over the deployment's plugins
+/// directory. Nothing starts until [`PluginsSetup::build`] loads it.
+pub fn new_host(plugins_dir: PathBuf, config: Arc<ConfigStore>) -> Arc<PluginHost> {
+    // Best-effort: the host reads a missing directory as empty and the
+    // install path creates it, so a failure here must not fail the boot.
+    if let Err(error) = std::fs::create_dir_all(&plugins_dir) {
+        tracing::warn!(%error, "plugins directory could not be created");
+    }
+    write_python_sdk(&plugins_dir);
+    let launcher: Arc<dyn PluginLauncher> =
+        Arc::new(ProcessLauncher::new(python_sdk_dir(&plugins_dir)));
+    PluginHost::new(plugins_dir, config, launcher)
+}
 
 /// Role lookups over the user store. The plugins routes call this
 /// synchronously while the store is async, so the lookup bridges with
@@ -74,93 +109,6 @@ impl UserRoles for StoreRoles {
     }
 }
 
-/// Module loader without an engine. v2 imports plugin code in-process;
-/// v3 has no execution engine for that yet, so every load fails the one
-/// plugin with the reason. Discovery, validation, settings, and dispatch
-/// around it keep working, and the engine plugs in behind this seam.
-#[derive(Debug, Default)]
-pub struct NoEngineLoader;
-
-impl ModuleLoader for NoEngineLoader {
-    fn load(
-        &self,
-        _dir: &Path,
-        manifest: &PluginManifest,
-    ) -> Result<Arc<dyn PluginModule>, String> {
-        Err(format!(
-            "plugin '{}' needs an execution engine; v3 has none wired yet",
-            manifest.name,
-        ))
-    }
-}
-
-/// Zip reader over stored and deflated entries (what GitHub serves).
-/// Caps apply while streaming, before the host's own checks: entry
-/// count, per-file bytes, and total decompressed bytes, so an archive at
-/// the fetch cap cannot balloon past the decompressed budget. Anything
-/// outside the two methods, or a name escaping its root, refuses loudly.
-#[derive(Debug, Default)]
-pub struct ZipUnpacker;
-
-impl ArchiveUnpacker for ZipUnpacker {
-    fn unpack(&self, bytes: &[u8]) -> Result<Vec<ArchiveEntry>, String> {
-        use std::io::Read as _;
-
-        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
-            .map_err(|error| format!("plugin archive is not a readable zip: {error}"))?;
-        if archive.len() > MAX_PLUGIN_ZIP_ENTRIES {
-            return Err(format!(
-                "plugin archive holds {} entries; the cap is {MAX_PLUGIN_ZIP_ENTRIES}",
-                archive.len(),
-            ));
-        }
-        let mut entries = Vec::new();
-        let mut total: u64 = 0;
-        for index in 0..archive.len() {
-            let file = archive
-                .by_index(index)
-                .map_err(|error| format!("plugin archive entry {index} is unreadable: {error}"))?;
-            if file.is_dir() {
-                continue;
-            }
-            match file.compression() {
-                zip::CompressionMethod::Stored | zip::CompressionMethod::Deflated => {}
-                method => {
-                    return Err(format!(
-                        "plugin archive uses {method:?} compression; only stored and deflated entries install"
-                    ));
-                }
-            }
-            let name = file.name().to_owned();
-            if file.enclosed_name().is_none() {
-                return Err(format!("plugin archive entry {name:?} escapes its root"));
-            }
-            let is_symlink = file
-                .unix_mode()
-                .is_some_and(|mode| mode & 0o170_000 == 0o120_000);
-            let mut data = Vec::new();
-            file.take(MAX_PLUGIN_ZIP_FILE_BYTES as u64 + 1)
-                .read_to_end(&mut data)
-                .map_err(|error| format!("plugin archive entry is unreadable: {error}"))?;
-            if data.len() > MAX_PLUGIN_ZIP_FILE_BYTES {
-                return Err(format!(
-                    "plugin archive entry {name:?} tops the per-file cap"
-                ));
-            }
-            total += data.len() as u64;
-            if total > MAX_PLUGIN_ZIP_DECOMPRESSED_BYTES as u64 {
-                return Err("plugin archive decompresses past the total cap".to_owned());
-            }
-            entries.push(ArchiveEntry {
-                path: name,
-                is_symlink,
-                data,
-            });
-        }
-        Ok(entries)
-    }
-}
-
 /// Link-change hook over the shared provider cache: a ListenBrainz link
 /// mutation invalidates the dependent cached reads, the way v2 resets its
 /// breaker and clears caches on every per-user change. The invalidation
@@ -179,6 +127,18 @@ impl ConnectionChangedHook for ListenBrainzCacheHook {
     }
 }
 
+/// Removes a test bundle's scratch folder once the last clone drops.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Debug)]
+struct ScratchGuard(PathBuf);
+
+#[cfg(any(test, feature = "test-support"))]
+impl Drop for ScratchGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// Everything `create_app` needs to mount the plugin routes, plus the
 /// tick loops over the shared jobs registry.
 #[derive(Clone)]
@@ -187,36 +147,32 @@ pub struct PluginsSetup {
     plugins: PluginsDeps,
     scrobble: ScrobbleHttpDeps,
     ticks: Arc<PluginTickLoops<StoreKind, TickStoreKind>>,
+    #[cfg(any(test, feature = "test-support"))]
+    _scratch: Option<Arc<ScratchGuard>>,
 }
 
 impl PluginsSetup {
-    /// Bind the production seams: the deployment's plugins directory and
-    /// config store, the HTTP verifier and fetcher, cache invalidation on
-    /// link changes, SQLite tick and scrobble stores over the database,
-    /// and tick loops over the shared jobs registry. The host loads once
-    /// here; installs and updates reload it.
+    /// Bind the production seams over a host from [`new_host`]: SQLite
+    /// tick, state and scrobble stores, the HTTP verifier and fetcher,
+    /// cache invalidation on link changes, and tick loops over the shared
+    /// jobs registry. Loads the host, which starts the enabled plugins.
     #[allow(clippy::too_many_arguments)]
     pub fn build(
+        host: Arc<PluginHost>,
         users: UsersDeps,
         http: reqwest::Client,
-        config: Arc<ConfigStore>,
         ids: Arc<dyn IdGenerator>,
         crypto: Arc<Crypto>,
-        plugins_dir: PathBuf,
         cache: Arc<dyn ProviderCache>,
         registry: JobRegistry<StoreKind>,
         pool: sqlx::SqlitePool,
         lane: WriteLane,
     ) -> Self {
-        // Best-effort: the host reads a missing directory as empty and the
-        // install path creates it, so a failure here must not fail the boot.
-        let _ = std::fs::create_dir_all(&plugins_dir);
         Self::assemble(
+            host,
             users,
             http,
-            config,
             ids,
-            plugins_dir,
             cache,
             registry,
             TickStoreKind::Sqlite(SqliteTickStore::new(pool.clone(), lane.clone())),
@@ -225,11 +181,9 @@ impl PluginsSetup {
         )
     }
 
-    /// Test bundle: scratch config store and plugins directory (created
-    /// only when a test installs or saves something), memory tick
-    /// and scrobble stores, the production verifier and zip reader, and
-    /// tick loops over the caller's registry (usually the test jobs
-    /// setup's).
+    /// Test bundle: scratch config store and plugins directory, fake
+    /// plugin runtimes (no subprocesses), memory tick and scrobble stores,
+    /// the production verifier, and tick loops over the caller's registry.
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(
         users: UsersDeps,
@@ -238,6 +192,7 @@ impl PluginsSetup {
     ) -> Result<Self, String> {
         use std::sync::atomic::{AtomicU64, Ordering};
 
+        use super::fakes::FakeLauncher;
         use super::scrobble::{MemoryListenBrainzLinkStore, MemoryScrobblePrefsStore};
         use crate::http_client::HttpClientFactory;
         use crate::jobs::plugin_ticks::MemoryTickStore;
@@ -252,6 +207,7 @@ impl PluginsSetup {
             "droppedneedle-plugins-test-{}-{seq}",
             std::process::id()
         ));
+        let scratch = Arc::new(ScratchGuard(dir.clone()));
         // `Crypto` is not cloneable, so the store and the link sealer each
         // open the same test key; both instances seal identically.
         let config = Arc::new(
@@ -264,40 +220,37 @@ impl PluginsSetup {
         let crypto =
             Arc::new(Crypto::from_key_bytes(&[7u8; 32]).map_err(|error| error.to_string())?);
         let cache: Arc<dyn ProviderCache> = Arc::new(InMemoryProviderCache::new());
-        Ok(Self::assemble(
+        let host = PluginHost::new(dir.join("plugins"), config, Arc::new(FakeLauncher::new()));
+        let mut setup = Self::assemble(
+            host,
             users,
             http.shared().clone(),
-            config,
             ids,
-            dir.join("plugins"),
             cache,
             registry,
             TickStoreKind::Memory(MemoryTickStore::new()),
             Arc::new(MemoryScrobblePrefsStore::new()),
             Arc::new(MemoryListenBrainzLinkStore::new(crypto)),
-        ))
+        );
+        setup._scratch = Some(scratch);
+        Ok(setup)
     }
 
     /// Assemble the bundle from its parts. Production passes the SQLite
     /// stores, tests the memory ones; everything else is identical.
     #[allow(clippy::too_many_arguments)]
     fn assemble(
+        host: Arc<PluginHost>,
         users: UsersDeps,
         http: reqwest::Client,
-        config: Arc<ConfigStore>,
         ids: Arc<dyn IdGenerator>,
-        plugins_dir: PathBuf,
         cache: Arc<dyn ProviderCache>,
         registry: JobRegistry<StoreKind>,
         ticks: TickStoreKind,
         prefs: Arc<dyn ScrobblePrefsStore>,
         links: Arc<dyn ListenBrainzLinkStore>,
     ) -> Self {
-        let host = Arc::new(PluginHost::new(
-            plugins_dir,
-            Arc::clone(&config),
-            Arc::new(NoEngineLoader),
-        ));
+        host.set_state_store(Arc::new(ticks.clone()));
         host.load_all();
         let roles: Arc<dyn UserRoles> = Arc::new(StoreRoles {
             users: users.clone(),
@@ -305,7 +258,7 @@ impl PluginsSetup {
         let ticks = Arc::new(PluginTickLoops::new(registry, ticks, TICK_CANCEL_GRACE));
         let plugins = PluginsDeps {
             host: Arc::clone(&host),
-            config,
+            config: Arc::clone(host.config()),
             roles: Arc::clone(&roles),
             ids: Arc::clone(&ids),
             fetcher: Arc::new(ReqwestFetcher::new(http.clone())),
@@ -330,6 +283,8 @@ impl PluginsSetup {
             plugins,
             scrobble,
             ticks,
+            #[cfg(any(test, feature = "test-support"))]
+            _scratch: None,
         }
     }
 
@@ -359,48 +314,5 @@ impl PluginsSetup {
     /// uninstalls re-sync through the handlers' shared loops.
     pub async fn sync_ticks(&self) {
         self.ticks.sync_host(&self.host).await;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn zip_reader_round_trips_stored_and_deflated_entries() {
-        use std::io::Write as _;
-
-        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-        let stored = zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Stored);
-        writer.start_file("root/plugin.toml", stored).unwrap();
-        writer.write_all(b"[plugin]").unwrap();
-        let deflated = zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated);
-        writer.start_file("root/ui/panel.js", deflated).unwrap();
-        writer
-            .write_all(b"console.log(1);".repeat(64).as_slice())
-            .unwrap();
-        let bytes = writer.finish().unwrap().into_inner();
-
-        let entries = ZipUnpacker.unpack(&bytes).unwrap();
-        let paths: Vec<&str> = entries.iter().map(|entry| entry.path.as_str()).collect();
-        assert_eq!(paths, ["root/plugin.toml", "root/ui/panel.js"]);
-        assert_eq!(entries[0].data, b"[plugin]");
-        assert!(!entries[0].is_symlink);
-    }
-
-    #[test]
-    fn zip_reader_refuses_garbage_and_escapes() {
-        assert!(ZipUnpacker.unpack(b"not a zip").is_err());
-
-        use std::io::Write as _;
-
-        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-        let options = zip::write::SimpleFileOptions::default();
-        writer.start_file("../escape.toml", options).unwrap();
-        writer.write_all(b"[plugin]").unwrap();
-        let bytes = writer.finish().unwrap().into_inner();
-        assert!(ZipUnpacker.unpack(&bytes).is_err());
     }
 }

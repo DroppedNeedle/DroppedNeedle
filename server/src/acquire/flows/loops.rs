@@ -416,8 +416,9 @@ async fn check_watch(
         deps.ledger
             .update_status(RequestKind::Album, &watch.key, "imported", Some(at), None)
             .await?;
-        deps.ticks.emit(
+        deps.ticks.emit_about(
             "request_fulfilled",
+            &watch.key,
             &format!("wanted {} satisfied from the library", watch.key),
             now,
         );
@@ -1178,8 +1179,9 @@ async fn sync_one(
             summary.reconciled += 1;
             if mapped == "imported" {
                 summary.imported += 1;
-                deps.ticks.emit(
+                deps.ticks.emit_about(
                     "request_fulfilled",
+                    &row.key,
                     &format!("request {} imported (task {task_status})", row.key),
                     now,
                 );
@@ -1204,8 +1206,9 @@ async fn sync_one(
     if won {
         summary.reconciled += 1;
         summary.imported += 1;
-        deps.ticks.emit(
+        deps.ticks.emit_about(
             "request_fulfilled",
+            &row.key,
             &format!("request {} imported (library presence)", row.key),
             now,
         );

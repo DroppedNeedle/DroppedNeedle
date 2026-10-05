@@ -1,8 +1,8 @@
 """Webhook Scrobbler - the minimal reference plugin.
 
-Demonstrates the whole contract in ~30 lines: the entrypoint class takes the
-host's PluginContext, reads live settings, and uses the host-provided HTTP
-client (never builds its own).
+Demonstrates the whole contract in about 30 lines: the entrypoint class
+takes the PluginContext, reads live settings, and posts with ctx.http.
+No imports needed: the helper module does the protocol work.
 """
 
 

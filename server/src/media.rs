@@ -174,6 +174,7 @@ impl MediaSetup {
             mixed: MixedDedup::new(),
             clock: Arc::new(SystemClock),
             ids: ids.clone(),
+            events: std::sync::Arc::new(crate::playback::ports::NoPlayEvents),
         };
         let worker = MediaWorkers {
             reports: rx,
@@ -254,8 +255,15 @@ impl MediaSetup {
                 mixed: MixedDedup::new(),
                 clock: Arc::new(SystemClock),
                 ids,
+                events: std::sync::Arc::new(crate::playback::ports::NoPlayEvents),
             },
         })
+    }
+
+    /// Send accepted plays to listeners (the plugin host).
+    pub fn with_play_events(mut self, events: Arc<dyn crate::playback::ports::PlayEvents>) -> Self {
+        self.playback.events = events;
+        self
     }
 
     /// Relative-path routers for nesting under `/api/v3` inside the

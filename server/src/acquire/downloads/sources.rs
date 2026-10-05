@@ -28,6 +28,10 @@ pub struct SourceHandle {
     /// soulseek handles.
     #[serde(default)]
     pub nzo_id: String,
+    /// A plugin client's correlation token (the search result payload),
+    /// handed back on every call. Empty for built-in sources.
+    #[serde(default)]
+    pub plugin_token: String,
 }
 
 /// One poll's view of a transfer batch.

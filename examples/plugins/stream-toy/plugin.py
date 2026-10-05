@@ -5,7 +5,7 @@ no credentials, no tokens. The router authenticates first and enforces path
 roots, range-passthrough, and concurrency leases around whatever ref returns.
 """
 
-from infrastructure.plugins.protocols import PluginStreamRef
+from droppedneedle_plugin import PluginStreamRef
 
 
 class StreamToy:

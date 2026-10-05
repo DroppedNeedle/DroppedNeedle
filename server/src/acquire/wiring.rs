@@ -28,8 +28,8 @@ use super::flows::loops::{
 };
 use super::flows::operations::{DropImportDeps, OpStore, register_durable_ops};
 use super::flows::seams::{
-    Candidate, CandidateSearch, Clock, DropVerify, LibraryOrganise, LogTicks, MemoryHandoff,
-    SystemClock, TickSink, VerifyVerdict,
+    Candidate, CandidateSearch, Clock, DropVerify, LibraryOrganise, MemoryHandoff, SystemClock,
+    TickSink, VerifyVerdict,
 };
 use super::flows::stores::{
     AdminDirectory, FollowStore as FlowsFollowStore, LibraryPresence, QuarantineStore,
@@ -182,7 +182,12 @@ pub struct LiveClients {
     slskd_downloads: PathBuf,
     journal: Arc<Journal>,
     built: Mutex<Option<(ClientSettings, Arc<ClientSet>)>>,
+    plugins: PluginSlot,
 }
+
+/// The plugin host, set once boot has built it. Plugin sources and
+/// usenet-targeting plugin indexers join the pipeline through it.
+pub type PluginSlot = Arc<std::sync::OnceLock<Arc<crate::plugins::host::PluginHost>>>;
 
 impl LiveClients {
     /// Resolver over a settings source. `slskd_downloads` is the slskd
@@ -199,7 +204,43 @@ impl LiveClients {
             slskd_downloads,
             journal,
             built: Mutex::new(None),
+            plugins: Arc::new(std::sync::OnceLock::new()),
         }
+    }
+
+    /// The slot the plugin host goes into.
+    pub fn plugins(&self) -> &PluginSlot {
+        &self.plugins
+    }
+
+    /// The built-in sources for the current settings plus one source per
+    /// enabled plugin download client.
+    pub fn sources_with_plugins(&self, policy: &DownloadPolicy) -> super::worker::SourceSet {
+        let built = self.current().sources.clone();
+        let Some(host) = self.plugins.get() else {
+            return built;
+        };
+        let keys = host.download_source_keys();
+        if keys.is_empty() {
+            return built;
+        }
+        let release_policy = super::plugin_source::ReleasePolicy {
+            usenet: usenet_policy_from(policy),
+            ignored_terms: policy.ignored_terms.clone(),
+            required_terms: policy.required_terms.clone(),
+        };
+        let mut sources: Vec<Source> = built.iter().cloned().collect();
+        for key in keys {
+            sources.push(Source::Plugin(Arc::new(
+                super::plugin_source::PluginDownloadSource::new(
+                    Arc::clone(host),
+                    key,
+                    self.journal.clone(),
+                    release_policy.clone(),
+                ),
+            )));
+        }
+        Arc::new(sources)
     }
 
     /// The client set for the current settings.
@@ -237,20 +278,26 @@ impl LiveClients {
         if let Some(repo) = slskd_repo.clone()
             && settings.slskd.enabled
         {
-            sources.push(Source::Slskd(SlskdSource::new(repo, self.journal.clone())));
+            sources.push(Source::Slskd(Arc::new(SlskdSource::new(
+                repo,
+                self.journal.clone(),
+            ))));
         }
         if let Some(queue) = sab_queue.clone()
             && settings.sabnzbd.sabnzbd.enabled
         {
-            sources.push(Source::Sab(SabnzbdSource::new(
-                queue,
-                newznab.clone(),
-                prowlarr.clone(),
-                settings.backend,
-                usenet_policy,
-                self.journal.clone(),
-                Some(settings.sabnzbd.sabnzbd.category.clone()),
-                Duration::from_secs(30),
+            sources.push(Source::Sab(Arc::new(
+                SabnzbdSource::new(
+                    queue,
+                    newznab.clone(),
+                    prowlarr.clone(),
+                    settings.backend,
+                    usenet_policy,
+                    self.journal.clone(),
+                    Some(settings.sabnzbd.sabnzbd.category.clone()),
+                    Duration::from_secs(30),
+                )
+                .with_plugins(self.plugins.clone()),
             )));
         }
         let probe_inputs = Arc::new(ProbeInputs {
@@ -471,6 +518,7 @@ fn core(
     wanted_settings: Arc<dyn Fn() -> WantedSettings + Send + Sync>,
     upgrade_policy: Arc<dyn Fn() -> UpgradePolicy + Send + Sync>,
     collections: &mut CollectionsState,
+    plugins: PluginSlot,
 ) -> Core {
     let journal = Arc::new(Journal::new(db.clone()));
     let dispatch = Arc::new(UnifiedDispatch::new(
@@ -490,6 +538,7 @@ fn core(
         as Arc<dyn crate::reads::collections::state::PendingApprovalsSource>);
     collections.approval_seeds = Some(Arc::new(ApprovalSeedBridge::new(requests.follows.clone()))
         as Arc<dyn crate::reads::collections::state::ApprovalSeedSink>);
+    requests.plugins = plugins.clone();
     let flows = Arc::new(flows_bundle(
         db,
         &requests,
@@ -497,6 +546,7 @@ fn core(
         dispatch.clone(),
         wanted_settings,
         upgrade_policy,
+        plugins,
     ));
     Core {
         requests,
@@ -571,6 +621,7 @@ impl AcquireSetup {
             wanted_settings,
             upgrade_policy,
             collections,
+            clients.plugins().clone(),
         );
         let prune_store = config_store.clone();
         let prune = Arc::new(PruneDeps {
@@ -666,18 +717,26 @@ impl AcquireSetup {
         let worker_clients = clients.clone();
         let worker_store = config_store.clone();
         let worker_staging = staging_root.clone();
-        let worker = Arc::new(DownloadWorker::new(
-            core.journal.clone(),
-            Arc::new(move || worker_clients.current().sources.clone()),
-            Arc::new(move || {
-                let policy: DownloadPolicy = plain(&worker_store);
-                let source_priority: SourcePriority = plain(&worker_store);
-                let sab: DownloadClients = secret(&worker_store);
-                let sab_mount = (!sab.sabnzbd.url.is_empty())
-                    .then(|| PathBuf::from(sab.sabnzbd.downloads_mount.clone()));
-                worker_config(&policy, &source_priority, &worker_staging, sab_mount)
-            }),
-        ));
+        let sources_store = config_store.clone();
+        let worker_plugins = clients.plugins().clone();
+        let worker = Arc::new(
+            DownloadWorker::new(
+                core.journal.clone(),
+                Arc::new(move || {
+                    let policy: DownloadPolicy = plain(&sources_store);
+                    worker_clients.sources_with_plugins(&policy)
+                }),
+                Arc::new(move || {
+                    let policy: DownloadPolicy = plain(&worker_store);
+                    let source_priority: SourcePriority = plain(&worker_store);
+                    let sab: DownloadClients = secret(&worker_store);
+                    let sab_mount = (!sab.sabnzbd.url.is_empty())
+                        .then(|| PathBuf::from(sab.sabnzbd.downloads_mount.clone()));
+                    worker_config(&policy, &source_priority, &worker_staging, sab_mount)
+                }),
+            )
+            .with_plugin_events(worker_plugins),
+        );
 
         Ok(Self {
             db,
@@ -694,6 +753,15 @@ impl AcquireSetup {
             staging_root,
             prune,
         })
+    }
+
+    /// Let enabled plugins act as download sources and feed usenet. Boot
+    /// calls this once with the plugin host.
+    pub fn with_plugins(self, host: Arc<crate::plugins::host::PluginHost>) -> Self {
+        if self.clients.plugins().set(host).is_err() {
+            tracing::warn!("plugin host was already attached to acquisition");
+        }
+        self
     }
 
     /// Test bundle over a scratch database, default settings and the
@@ -741,6 +809,7 @@ impl AcquireSetup {
             Arc::new(WantedSettings::default),
             Arc::new(UpgradePolicy::default),
             collections,
+            clients.plugins().clone(),
         );
         let spotify_client = SpotifyClient::new(
             http.clone(),
@@ -1089,6 +1158,7 @@ fn flows_bundle(
     dispatch: Arc<UnifiedDispatch>,
     wanted_settings: Arc<dyn Fn() -> WantedSettings + Send + Sync>,
     upgrade_policy: Arc<dyn Fn() -> UpgradePolicy + Send + Sync>,
+    plugins: PluginSlot,
 ) -> FlowsBundle {
     let watches = requests.wanted.clone();
     let ledger = requests.store.clone();
@@ -1097,7 +1167,7 @@ fn flows_bundle(
     let quarantine = QuarantineStore::new(db.clone());
     let library = Arc::new(LibraryPresence::new());
     let admins = Arc::new(AdminDirectory::new());
-    let ticks: Arc<dyn TickSink> = Arc::new(LogTicks);
+    let ticks: Arc<dyn TickSink> = Arc::new(super::plugin_events::PluginTicks::new(plugins));
     let handoff = Arc::new(MemoryHandoff::new());
     let ops = OpStore::new(db.clone());
     let wanted_deps = Arc::new(WantedDeps {
@@ -1321,7 +1391,9 @@ fn worker_config(
     let mut source_order: Vec<String> = source_priority
         .0
         .iter()
-        .filter(|source| *source == "soulseek" || *source == "usenet")
+        .filter(|source| {
+            *source == "soulseek" || *source == "usenet" || source.starts_with("plugin:")
+        })
         .cloned()
         .collect();
     if source_order.is_empty() {

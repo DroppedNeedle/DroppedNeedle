@@ -75,6 +75,107 @@ pub struct PluginInfo {
     /// Declared indexer targets.
     #[serde(default)]
     pub targets: Vec<String>,
+    /// What the plugin asks to do, in plain words.
+    #[serde(default)]
+    pub permissions: Vec<String>,
+    /// The running process, while enabled.
+    #[serde(default)]
+    pub runtime: Option<PluginRuntimeInfo>,
+    /// Where the plugin was installed from, when it came from GitHub.
+    #[serde(default)]
+    pub install: Option<PluginInstallInfo>,
+}
+
+/// Health of one enabled plugin's process.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct PluginRuntimeInfo {
+    /// `starting`, `running`, `restarting`, `stopped` or `failed`.
+    pub state: super::runtime::RuntimeState,
+    /// Restarts since it was enabled.
+    pub restarts: u64,
+    /// Last start failure, crash or protocol problem.
+    #[serde(default)]
+    pub last_error: Option<String>,
+    /// Capabilities the plugin said it implements.
+    #[serde(default)]
+    pub implemented_capabilities: Vec<String>,
+    /// Events skipped because the plugin was still busy with the last one.
+    #[serde(default)]
+    pub dropped_events: u64,
+}
+
+/// The pinned GitHub source of one installed plugin.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct PluginInstallInfo {
+    /// The URL the admin gave.
+    pub repository_url: String,
+    /// `owner/repo`.
+    pub repository: String,
+    /// `release`, `tag`, `branch` or `commit`.
+    pub ref_kind: String,
+    /// The release tag, tag, branch or commit asked for.
+    pub reference: String,
+    /// The exact commit installed.
+    pub commit: String,
+    /// Unix seconds.
+    pub installed_at: i64,
+}
+
+/// What an install would bring in, shown before anything is written.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct PluginInstallPreview {
+    /// Manifest name.
+    pub name: String,
+    /// Display name.
+    pub display_name: String,
+    /// Plugin version.
+    pub version: String,
+    /// Short description.
+    #[serde(default)]
+    pub description: String,
+    /// Author string.
+    #[serde(default)]
+    pub author: String,
+    /// Homepage URL.
+    #[serde(default)]
+    pub homepage: String,
+    /// Declared capabilities.
+    pub capabilities: Vec<String>,
+    /// What the plugin asks to do, in plain words.
+    pub permissions: Vec<String>,
+    /// `owner/repo`.
+    pub repository: String,
+    /// `release`, `tag`, `branch` or `commit`.
+    pub ref_kind: String,
+    /// The release tag, tag, branch or commit.
+    pub reference: String,
+    /// The exact commit that will be installed. Send it back to install
+    /// exactly this code.
+    pub commit: String,
+    /// Version already installed under the same name, when any.
+    #[serde(default)]
+    pub installed_version: Option<String>,
+    /// The plain trust warning to show the admin.
+    pub warning: String,
+}
+
+/// Update an installed plugin from its GitHub source.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct PluginSourceUpdateRequest {
+    /// A release tag, tag, branch or commit to move to. Without one, a
+    /// plugin installed from releases moves to the latest release; one
+    /// pinned to a tag, branch or commit is checked against the same ref.
+    #[serde(default)]
+    pub reference: Option<String>,
+}
+
+/// Outcome of an update from GitHub.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct PluginSourceUpdateResponse {
+    /// False when the plugin was already at that commit.
+    pub updated: bool,
+    /// The plugin after the update.
+    pub plugin: PluginInfo,
 }
 
 /// Plugin listing.
@@ -95,11 +196,20 @@ pub struct PluginUpdateRequest {
     pub settings: HashMap<String, String>,
 }
 
-/// Install request: one public GitHub repository URL.
+/// Install request: one public GitHub repository URL, optionally pinned.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct PluginInstallRequest {
-    /// Repository URL, e.g. `https://github.com/owner/repo`.
+    /// Repository URL, e.g. `https://github.com/owner/repo` (latest
+    /// release), `.../releases/tag/v1.0.0`, `.../tree/<ref>` or
+    /// `.../commit/<sha>`.
     pub repository_url: String,
+    /// A release tag, tag, branch or commit; overrides any in the URL.
+    #[serde(default)]
+    pub reference: Option<String>,
+    /// The exact commit from a preview. When set, exactly that commit
+    /// installs, whatever the ref points at by now.
+    #[serde(default)]
+    pub commit: Option<String>,
 }
 
 /// One enabled plugin acquisition source.

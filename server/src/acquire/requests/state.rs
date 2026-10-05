@@ -33,6 +33,9 @@ pub struct RequestsState {
     /// Verdict sink into the collections follow rows. `None` in tests that
     /// run the routes alone; wiring connects the collections store.
     pub follow_sink: Option<Arc<dyn FollowDecisionSink>>,
+    /// The plugin host, once boot attached it: new requests are announced
+    /// to `subscriber` plugins.
+    pub plugins: crate::acquire::wiring::PluginSlot,
 }
 
 impl RequestsState {
@@ -51,6 +54,7 @@ impl RequestsState {
             mixes: Arc::new(PersonalMixStore::new(db.clone())),
             editions: EditionStore::new(db.clone()),
             follow_sink: None,
+            plugins: Default::default(),
         }
     }
 

@@ -213,6 +213,7 @@ impl CompatSetup {
             mixed: MixedDedup::new(),
             clock: Arc::new(SystemClock),
             ids,
+            events: std::sync::Arc::new(crate::playback::ports::NoPlayEvents),
         };
         Ok(Self::build(CompatDeps::over_reads(
             users,

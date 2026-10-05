@@ -1,19 +1,25 @@
-//! Capability surface: what a plugin implements, and what the host hands it.
+//! The seam between the host and a running plugin, plus the payload types
+//! that cross it.
 //!
-//! A module is instantiated once per plugin and may implement any subset of
-//! the capability methods matching its manifest. Every method is fallible so
-//! the host can isolate a failing plugin: an error is logged against the
-//! plugin and never propagates into the host flow that triggered it.
+//! The host never links plugin code. It talks to a [`PluginConnection`]:
+//! send a method name and JSON params, get JSON back or a [`CallError`].
+//! [`PluginLauncher`] starts one connection per enabled plugin. Production
+//! launches a subprocess per plugin (`process.rs`); tests launch fakes.
+//! Because the seam is just "method plus JSON", a WebAssembly sandbox can
+//! implement it later and plugins do not change.
 //!
-//! Modules are trusted once an admin enables them, exactly like v2. The
-//! context a tick or handler receives carries no ambient authority beyond
-//! the tick store; anything else a module wants goes over the public API.
+//! Plugins are trusted code once an admin enables them, as in v2. What the
+//! subprocess model adds is isolation from crashes and hangs: a plugin
+//! that dies or stops answering fails its own calls and is restarted, and
+//! the flow that called it carries on.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::manifest::PluginManifest;
 
@@ -75,6 +81,8 @@ pub enum EventKind {
     ImportFinished,
     /// Playback started.
     PlaybackStarted,
+    /// Another plugin published a `plugin_notice`.
+    PluginNotice,
 }
 
 impl EventKind {
@@ -89,6 +97,7 @@ impl EventKind {
             EventKind::RequestFulfilled => "request_fulfilled",
             EventKind::ImportFinished => "import_finished",
             EventKind::PlaybackStarted => "playback_started",
+            EventKind::PluginNotice => "plugin_notice",
         }
     }
 
@@ -103,6 +112,7 @@ impl EventKind {
             "request_fulfilled" => Some(EventKind::RequestFulfilled),
             "import_finished" => Some(EventKind::ImportFinished),
             "playback_started" => Some(EventKind::PlaybackStarted),
+            "plugin_notice" => Some(EventKind::PluginNotice),
             _ => None,
         }
     }
@@ -170,6 +180,18 @@ pub struct PlaybackEvent {
     pub user_id: String,
 }
 
+/// Payload for the `plugin_notice` kind.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NoticeEvent {
+    /// Plugin that published the notice, stamped by the host.
+    pub source_plugin: String,
+    /// Notice title.
+    pub title: String,
+    /// Notice body.
+    #[serde(default)]
+    pub body: String,
+}
+
 /// One struct per event kind. The plugin gets the struct only: it cannot
 /// reach the task row or mutate engine state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -185,6 +207,8 @@ pub enum EventPayload {
     Import(ImportEvent),
     /// `playback_started` payload.
     Playback(PlaybackEvent),
+    /// `plugin_notice` payload.
+    Notice(NoticeEvent),
 }
 
 /// One fan-out event for subscriber plugins.
@@ -200,36 +224,9 @@ pub struct PluginEvent {
     pub causation_id: String,
 }
 
-/// Hint asking the engine to rescout a source. The engine decides; the
-/// plugin cannot force a rescan.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct IndexerInvalidate {
-    /// Source to rescout.
-    pub target_source: String,
-}
-
-/// Annotation on one of the publishing plugin's own tasks. Annotation
-/// only, never a status mutation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DownloadNote {
-    /// Task id.
-    pub task_id: String,
-    /// Note text, at most 1 KiB.
-    #[serde(default)]
-    pub note: String,
-}
-
-/// Opaque broadcast, fanned out to subscribers. Never mutates.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PluginNotice {
-    /// Notice title.
-    pub title: String,
-    /// Notice body.
-    #[serde(default)]
-    pub body: String,
-}
-
-/// Allowlisted publish kinds a `publisher` plugin may emit.
+/// Kinds a `publisher` plugin may publish: `indexer_invalidate` (a hint
+/// to search a source again), `download_note` (a note on a download) and
+/// `plugin_notice` (a message for the other subscribers).
 pub const PUBLISH_KINDS: &[&str] = &["indexer_invalidate", "download_note", "plugin_notice"];
 
 /// Required fields per publish kind: references must arrive non-empty,
@@ -257,7 +254,7 @@ pub enum PublishPayload {
 /// Outcome of one `publish_from_plugin` call.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginPublishResult {
-    /// True when the hint was queued.
+    /// True when the publish was accepted.
     pub ok: bool,
     /// 200 accepted, 404 unknown/disabled, 409 max-depth, 422 invalid,
     /// 429 rate-limited.
@@ -268,23 +265,6 @@ pub struct PluginPublishResult {
     /// Short reason on failure.
     #[serde(default)]
     pub error: Option<String>,
-}
-
-/// One queued hint, taken by the engine consumer via `drain_published`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PublishedRecord {
-    /// Publishing plugin name, stamped by the host (never spoofable).
-    pub source_plugin: String,
-    /// Publish kind.
-    pub kind: String,
-    /// Validated fields.
-    pub payload: HashMap<String, String>,
-    /// Trusted engine principal, for rate keying only.
-    pub principal: String,
-    /// Causation id for fan-out dedup.
-    pub causation_id: String,
-    /// Fan-out depth (1 for a direct publish).
-    pub depth: u32,
 }
 
 /// Request body shapes for one `/ext/` call.
@@ -315,89 +295,109 @@ impl PluginRouteResponse {
     }
 }
 
-/// Durable tick state, scoped to one plugin. Reads of missing keys come
-/// back `None`; writes fail on unsafe keys and over-cap values. Backed by
-/// the jobs tick store (see `ticks.rs`).
-pub trait TickStateAccess: Send + Sync {
-    /// Read one state key.
-    fn read<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<Vec<u8>>>;
-    /// Store one state key, creating or overwriting.
-    fn write<'a>(&'a self, key: &'a str, bytes: Vec<u8>) -> BoxFuture<'a, Result<(), String>>;
+/// Why one call into a plugin failed. The host logs these against the
+/// plugin and turns them into the caller's safe fallback (no links, no
+/// results, a 502 on `/ext/`); they never reach a user verbatim.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CallError {
+    /// The plugin is starting, restarting or stopped.
+    #[error("plugin is not running: {0}")]
+    NotRunning(String),
+    /// No answer inside the call's time budget.
+    #[error("plugin did not answer in time")]
+    Timeout,
+    /// The plugin does not implement the method.
+    #[error("plugin does not implement {0}")]
+    Unsupported(String),
+    /// The plugin's own code raised or refused.
+    #[error("plugin failed: {0}")]
+    Failed(String),
+    /// The answer did not have the expected shape.
+    #[error("plugin answer was malformed: {0}")]
+    Malformed(String),
 }
 
-/// What a tick may use: its own plugin name plus durable state. Library
-/// file mutations and HTTP stay out of ticks; the module persists
-/// whatever it needs through the state handle.
-pub struct TickContext<'a> {
-    /// Ticking plugin name.
-    pub plugin_name: &'a str,
-    /// Durable per-plugin state.
-    pub state: &'a dyn TickStateAccess,
+/// Where a plugin's runtime is in its life.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[schema(as = PluginRuntimeState)]
+pub enum RuntimeState {
+    /// Launched, handshake not finished yet.
+    Starting,
+    /// Answering calls.
+    Running,
+    /// Crashed or hung; waiting out the backoff before the next start.
+    Restarting,
+    /// Stopped on purpose (disabled, uninstalled, shutting down).
+    Stopped,
+    /// Cannot run until something changes (bad command, protocol mismatch).
+    Failed,
 }
 
-/// One loaded plugin module. Every method defaults to inert so a module
-/// implements only what its manifest declares; the host intersects the
-/// manifest with [`provides`](PluginModule::provides) before dispatching.
-pub trait PluginModule: Send + Sync {
-    /// Whether this module implements one capability id.
-    fn provides(&self, _capability: &str) -> bool {
-        false
-    }
+/// Health snapshot of one plugin runtime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeStatus {
+    /// Current state.
+    pub state: RuntimeState,
+    /// Restarts since the plugin was enabled.
+    pub restarts: u64,
+    /// Last start failure, crash or protocol problem.
+    pub last_error: Option<String>,
+    /// Capabilities the plugin said it implements in the handshake.
+    pub implemented: Vec<String>,
+}
 
-    /// Handle one accepted scrobble (`scrobbler`).
-    fn on_scrobble<'a>(&'a self, _event: &'a ScrobbleEvent) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async { Ok(()) })
-    }
-
-    /// Contribute purchase links (`purchase_links`).
-    fn purchase_links<'a>(
+/// One running plugin, whatever carries the messages.
+pub trait PluginConnection: Send + Sync {
+    /// Call one method and wait up to `timeout` for the answer. A call made
+    /// while the plugin is starting waits for the handshake inside the same
+    /// budget.
+    fn call<'a>(
         &'a self,
-        _artist: &'a str,
-        _album: &'a str,
-        _release_group_mbid: &'a str,
-    ) -> BoxFuture<'a, Result<Vec<PluginPurchaseLink>, String>> {
-        Box::pin(async { Ok(Vec::new()) })
-    }
+        method: &'a str,
+        params: Value,
+        timeout: Duration,
+    ) -> BoxFuture<'a, Result<Value, CallError>>;
 
-    /// Consume one fan-out event (`subscriber`).
-    fn on_event<'a>(&'a self, _event: &'a PluginEvent) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async { Ok(()) })
-    }
+    /// Send one notification. Dropped silently when the plugin is down.
+    fn notify(&self, method: &str, params: Value);
 
-    /// Run one scheduled tick (`scheduler`). Persist through the context:
-    /// the store is the tick's only durable memory.
-    fn on_tick<'a>(&'a self, _ctx: &'a TickContext<'a>) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async { Ok(()) })
-    }
+    /// Current health.
+    fn status(&self) -> RuntimeStatus;
 
-    /// Whether this module serves `/ext/` routes (`publisher` plus a
-    /// handler). A publisher without one answers 502 like v2.
-    fn has_route_handler(&self) -> bool {
-        false
-    }
-
-    /// Serve one declared `/ext/` route (`publisher`).
-    fn handle_route<'a>(
-        &'a self,
-        _method: &'a str,
-        _subpath: &'a str,
-        _query: &'a HashMap<String, String>,
-        _body: &'a PluginRouteBody,
-    ) -> BoxFuture<'a, Result<PluginRouteResponse, String>> {
-        Box::pin(async {
-            Ok(PluginRouteResponse {
-                status: 404,
-                body: serde_json::Value::Null,
-            })
-        })
-    }
+    /// Stop for good: ask the plugin to exit, then kill it.
+    fn stop(&self) -> BoxFuture<'_, ()>;
 }
 
-/// Resolves a validated manifest to a live module. v2 imports Python
-/// in-process; v3 has no execution engine for that yet, so this trait is
-/// the seam: tests load fakes, and the production engine plugs in here
-/// when it exists. Unknown entrypoints fail the plugin, never the host.
-pub trait ModuleLoader: Send + Sync {
-    /// Build the module for one enabled plugin.
-    fn load(&self, dir: &Path, manifest: &PluginManifest) -> Result<Arc<dyn PluginModule>, String>;
+/// What a plugin may ask of the host. The host answers on behalf of the
+/// named plugin only; a plugin cannot act as another.
+pub trait HostServices: Send + Sync {
+    /// Answer one plugin-to-host request.
+    fn handle<'a>(
+        &'a self,
+        plugin: &'a str,
+        method: &'a str,
+        params: Value,
+    ) -> BoxFuture<'a, Result<Value, super::protocol::RpcError>>;
+}
+
+/// Everything a launcher needs to start one plugin.
+pub struct LaunchSpec {
+    /// Validated manifest.
+    pub manifest: PluginManifest,
+    /// Plugin code directory.
+    pub plugin_dir: PathBuf,
+    /// Writable data directory for this plugin (also its working directory).
+    pub data_dir: PathBuf,
+    /// Current settings, secrets decrypted.
+    pub settings: HashMap<String, String>,
+    /// Plugin-to-host requests land here.
+    pub services: Arc<dyn HostServices>,
+}
+
+/// Starts plugin runtimes. Launching returns at once; the handshake runs
+/// in the background and calls wait for it.
+pub trait PluginLauncher: Send + Sync {
+    /// Start one plugin.
+    fn launch(&self, spec: LaunchSpec) -> Result<Arc<dyn PluginConnection>, String>;
 }

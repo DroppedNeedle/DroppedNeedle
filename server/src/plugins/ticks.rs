@@ -1,14 +1,16 @@
-//! Plugin ticks on the jobs store.
+//! `scheduler`: plugin ticks on the jobs registry, and plugin state on the
+//! jobs tick store.
 //!
-//! Jobs owns the loop mechanics, the registry, and the tick
-//! store; this module is the adapter that plugs the plugin host into it.
-//! [`HostTickAdapter`] implements the jobs [`TickHost`](jobs_tick_host)
-//! seam over [`PluginHost`], resolving modules fresh every sweep, and
-//! [`PluginTickLoops`] rebuilds loops through the jobs [`sync_ticks`]
-//! choke point after every install, update, and uninstall. Tick state
-//! itself lives on the jobs [`TickStore`](jobs_tick_store): modules reach
-//! it through the plugin-scoped [`TickStateAccess`], which is what makes
-//! their state survive restarts and reinstalls.
+//! Jobs owns the loop mechanics, the registry, and the tick store; this
+//! module plugs the plugin host into them. [`HostTickAdapter`] implements
+//! the jobs [`TickHost`](jobs_tick_host) seam over [`PluginHost`],
+//! resolving the plugin fresh on every tick, and [`PluginTickLoops`]
+//! rebuilds loops through the jobs [`sync_ticks`] choke point after every
+//! install, update, and uninstall. One loop per plugin, no overlap; a tick
+//! that runs past its interval is cancelled. The same
+//! [`TickStore`](jobs_tick_store) backs every plugin's `host.state.*`
+//! requests, which is what makes plugin state survive restarts and
+//! reinstalls.
 //!
 //! [`jobs_tick_host`]: crate::jobs::plugin_ticks::TickHost
 //! [`jobs_tick_store`]: crate::jobs::plugin_ticks::TickStore
@@ -24,8 +26,9 @@ use crate::jobs::plugin_ticks::{
 };
 use crate::jobs::registry::{JobRegistry, RegistryStore};
 
-use super::host::PluginHost;
-use super::runtime::{BoxFuture, TickContext, TickStateAccess};
+use super::host::{PluginHost, PluginStateStore};
+use super::protocol::methods;
+use super::runtime::BoxFuture;
 
 /// Default cancel grace for tick loops.
 pub const TICK_CANCEL_GRACE: Duration = Duration::from_secs(5);
@@ -96,65 +99,62 @@ impl TickStoreAdmin for TickStoreKind {
     }
 }
 
-/// [`TickStateAccess`] over one jobs tick store, scoped to one plugin.
-/// Missing keys and unknown plugins read as `None`; unsafe keys and
-/// over-cap writes fail loudly.
-pub struct JobsStateAccess<T> {
-    store: T,
-    plugin: String,
-}
-
-impl<T> JobsStateAccess<T> {
-    /// Scope one store to one plugin.
-    pub fn new(store: T, plugin: &str) -> Self {
-        Self {
-            store,
-            plugin: plugin.to_owned(),
-        }
-    }
-}
-
-impl<T: JobsTickStore> TickStateAccess for JobsStateAccess<T> {
-    fn read<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<Vec<u8>>> {
+impl PluginStateStore for TickStoreKind {
+    fn read<'a>(
+        &'a self,
+        plugin: &'a str,
+        key: &'a str,
+    ) -> BoxFuture<'a, Result<Option<Vec<u8>>, String>> {
         Box::pin(async move {
-            match self.store.read(&self.plugin, key).await {
-                Ok(found) => found,
-                Err(TickStoreError::NotFound(_)) | Err(TickStoreError::UnknownPlugin(_)) => None,
-                Err(error) => {
-                    tracing::warn!(
-                        plugin = %self.plugin,
-                        key = %key,
-                        %error,
-                        "tick state read failed"
-                    );
-                    None
+            match JobsTickStore::read(self, plugin, key).await {
+                Ok(found) => Ok(found),
+                Err(TickStoreError::NotFound(_)) | Err(TickStoreError::UnknownPlugin(_)) => {
+                    Ok(None)
                 }
+                Err(error) => Err(error.to_string()),
             }
         })
     }
 
-    fn write<'a>(&'a self, key: &'a str, bytes: Vec<u8>) -> BoxFuture<'a, Result<(), String>> {
+    fn write<'a>(
+        &'a self,
+        plugin: &'a str,
+        key: &'a str,
+        value: Vec<u8>,
+    ) -> BoxFuture<'a, Result<(), String>> {
         Box::pin(async move {
-            self.store
-                .write(&self.plugin, key, bytes)
+            self.ensure_plugin(plugin);
+            JobsTickStore::write(self, plugin, key, value)
                 .await
                 .map_err(|error| error.to_string())
         })
     }
 }
 
-/// One scheduler-capable module behind the jobs [`TickPlugin`] seam. The
-/// host and name resolve the module fresh on every call, never captured,
-/// so a settings-save rebuild applies on the next sweep.
-pub struct ModuleTick<T> {
-    host: Arc<PluginHost>,
-    name: String,
-    store: T,
+impl PluginHost {
+    /// Run one scheduler tick, waiting at most `budget`. Resolves the
+    /// plugin fresh every call, so a settings save applies on the next tick.
+    pub async fn fire_tick(&self, name: &str, budget: Duration) -> Result<(), String> {
+        let plugin = self
+            .get(name)
+            .filter(|plugin| plugin.serves("scheduler"))
+            .ok_or_else(|| "unknown or disabled scheduler".to_owned())?;
+        super::capabilities::call(&plugin, methods::TICK, serde_json::Value::Null, budget)
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
 }
 
-impl<T> ModuleTick<T> {}
+/// One scheduler plugin behind the jobs [`TickPlugin`] seam. The host
+/// resolves the plugin fresh on every call, never captured.
+pub struct PluginTick {
+    host: Arc<PluginHost>,
+    name: String,
+    budget: Duration,
+}
 
-impl<T: JobsTickStore> JobsTickPlugin for ModuleTick<T> {
+impl JobsTickPlugin for PluginTick {
     fn name(&self) -> &str {
         &self.name
     }
@@ -162,53 +162,45 @@ impl<T: JobsTickStore> JobsTickPlugin for ModuleTick<T> {
     fn on_tick(&self) -> crate::jobs::registry::BoxFuture<'_, Result<(), String>> {
         let host = Arc::clone(&self.host);
         let name = self.name.clone();
-        let access = JobsStateAccess::new(self.store.clone(), &self.name);
-        Box::pin(async move {
-            let ctx = TickContext {
-                plugin_name: &name,
-                state: &access,
-            };
-            host.fire_module_tick(&name, &ctx).await
-        })
+        let budget = self.budget;
+        Box::pin(async move { host.fire_tick(&name, budget).await })
     }
 
     fn tick_enabled(&self) -> bool {
         self.host
             .get(&self.name)
-            .map(|plugin| {
-                plugin.enabled
-                    && plugin.module.is_some()
-                    && plugin
-                        .active_capabilities
-                        .iter()
-                        .any(|capability| capability == "scheduler")
-            })
-            .unwrap_or(false)
+            .is_some_and(|plugin| plugin.serves("scheduler"))
     }
 }
 
 /// The plugin host behind the jobs [`TickHost`] seam.
 #[derive(Clone)]
-pub struct HostTickAdapter<T> {
+pub struct HostTickAdapter {
     host: Arc<PluginHost>,
-    store: T,
 }
 
-impl<T> HostTickAdapter<T> {
-    /// Adapt one host plus its tick store.
-    pub fn new(host: Arc<PluginHost>, store: T) -> Self {
-        Self { host, store }
+impl HostTickAdapter {
+    /// Adapt one host.
+    pub fn new(host: Arc<PluginHost>) -> Self {
+        Self { host }
     }
 }
 
-impl<T: JobsTickStore> JobsTickHost for HostTickAdapter<T> {
-    type Plugin = ModuleTick<T>;
+impl JobsTickHost for HostTickAdapter {
+    type Plugin = PluginTick;
 
     fn get(&self, name: &str) -> Option<Self::Plugin> {
-        self.host.get(name).map(|_| ModuleTick {
+        let plugin = self.host.get(name)?;
+        let minutes = plugin
+            .manifest
+            .schedule
+            .as_ref()
+            .map(|schedule| schedule.interval_minutes)
+            .unwrap_or(60);
+        Some(PluginTick {
             host: Arc::clone(&self.host),
             name: name.to_owned(),
-            store: self.store.clone(),
+            budget: clamp_interval_minutes(Some(minutes)),
         })
     }
 }
@@ -266,7 +258,7 @@ impl<S: RegistryStore, T: JobsTickStore + TickStoreAdmin> TickLoopSync for Plugi
             for spec in &specs {
                 self.store.ensure_plugin(&spec.name);
             }
-            let adapter = HostTickAdapter::new(Arc::clone(host), self.store.clone());
+            let adapter = HostTickAdapter::new(Arc::clone(host));
             sync_ticks(&self.registry, &adapter, &self.sync, &specs, self.grace).await;
         })
     }
@@ -281,48 +273,5 @@ pub struct NoopTickSync;
 impl TickLoopSync for NoopTickSync {
     fn sync_host<'a>(&'a self, _host: &'a Arc<PluginHost>) -> BoxFuture<'a, ()> {
         Box::pin(async {})
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn adapter_reports_enabled_only_while_the_plugin_wants_its_loop() {
-        let dir = std::env::temp_dir().join(format!(
-            "dn-tick-adapter-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("plugins").join("toy")).unwrap();
-        std::fs::write(
-            dir.join("plugins").join("toy").join("plugin.toml"),
-            "[plugin]\nname = \"toy\"\napi_version = 1\nentrypoint = \"plugin:Toy\"\ncapabilities = [\"scheduler\"]\n[schedule]\ninterval_minutes = 60\n",
-        )
-        .unwrap();
-        let crypto = crate::runtime_config::crypto::Crypto::from_key_bytes(&[7u8; 32]).unwrap();
-        let config = Arc::new(
-            crate::runtime_config::ConfigStore::open(&dir.join("config.json"), crypto).unwrap(),
-        );
-        let loader = Arc::new(super::super::fakes::FakeLoader::new());
-        loader.insert(
-            "toy",
-            Arc::new(super::super::fakes::FakeModule::providing(&["scheduler"])),
-        );
-        let host = Arc::new(PluginHost::new(dir.join("plugins"), config, loader));
-        host.load_all();
-        let adapter = HostTickAdapter::new(Arc::clone(&host), MemoryTickStore::new());
-        // Disabled: the record exists but the loop is unwanted.
-        assert!(!adapter.get("toy").unwrap().tick_enabled());
-        host.update_settings("toy", true, std::collections::HashMap::new())
-            .unwrap();
-        assert!(adapter.get("toy").unwrap().tick_enabled());
-        assert!(adapter.get("ghost").is_none());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

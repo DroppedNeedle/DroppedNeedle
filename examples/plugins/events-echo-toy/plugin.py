@@ -6,7 +6,7 @@ out. A ``download_note`` the toy itself published never re-triggers its own
 subscriber path (the host's depth-1 + causation-dedup loop guard).
 """
 
-from infrastructure.plugins.protocols import PluginRouteResponse
+from droppedneedle_plugin import PluginRouteResponse
 
 
 class EventsEcho:

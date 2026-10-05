@@ -1,227 +1,208 @@
-//! Test doubles for plugins: scripted modules, loaders,
+//! Test doubles for plugins: scripted connections and launchers,
 //! fetchers, unpackers, verifiers, and roles.
 //!
-//! The memory stores (`MemoryTickStore`, `MemoryTickJobs`,
-//! `MemoryScrobblePrefsStore`, `MemoryListenBrainzLinkStore`) are real
-//! implementations and double as their own fakes; only the behavior seams
-//! need scripting here.
+//! The real plugin runtime is a subprocess; tests that need one launch the
+//! shipped examples (see `tests/it/plugins_examples.rs`). These fakes cover
+//! the host logic around it: fan-out, publish guards, route clamps.
+//! The memory stores (`MemoryTickStore`, `MemoryScrobblePrefsStore`,
+//! `MemoryListenBrainzLinkStore`) are real implementations and double as
+//! their own fakes.
 
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use serde_json::Value;
 
 use crate::auth::users::roles::Role;
 
-use super::host::{ArchiveEntry, ArchiveFetcher, ArchiveUnpacker};
-use super::manifest::PluginManifest;
+use super::install::{ArchiveEntry, ArchiveFetcher, ArchiveUnpacker};
+use super::protocol::RpcError;
 use super::runtime::{
-    BoxFuture, EventKind, ModuleLoader, PluginEvent, PluginModule, PluginPurchaseLink,
-    PluginRouteBody, PluginRouteResponse, ScrobbleEvent, TickContext,
+    BoxFuture, CallError, EventKind, HostServices, LaunchSpec, PluginConnection, PluginEvent,
+    PluginLauncher, RuntimeState, RuntimeStatus, ScrobbleEvent,
 };
 use crate::providers::listenbrainz::{ListenBrainzVerifier, VerifyOutcome};
 
-/// How a fake tick behaves.
-#[derive(Debug, Clone, Default)]
-pub enum FakeTickBehavior {
-    /// Finish cleanly.
-    #[default]
-    Ok,
-    /// Fail with a message.
-    Fail(String),
-    /// Write one state blob, then finish cleanly.
-    WriteState(String),
+/// Scripted plugin runtime. Answers each method from a script (default
+/// `null`), records every call, and can make host requests as the plugin.
+pub struct FakeConnection {
+    answers: Mutex<HashMap<String, Result<Value, CallError>>>,
+    /// Calls received, `(method, params)`, in order.
+    pub calls: Mutex<Vec<(String, Value)>>,
+    /// Notifications received, `(method, params)`, in order.
+    pub notifications: Mutex<Vec<(String, Value)>>,
+    /// How long every call takes.
+    pub delay: Mutex<Duration>,
+    services: Mutex<Option<(String, Arc<dyn HostServices>)>>,
+    stopped: Mutex<bool>,
 }
 
-/// How a fake answers `/ext/` calls.
-#[derive(Debug, Clone)]
-pub enum FakeRouteScript {
-    /// Answer with a chosen status and body.
-    Status(i32, serde_json::Value),
-}
-
-/// Scripted plugin module. Records every call for assertions.
-pub struct FakeModule {
-    provides: Vec<String>,
-    /// Received scrobbles.
-    pub scrobbles: Mutex<Vec<ScrobbleEvent>>,
-    /// Received fan-out events.
-    pub events: Mutex<Vec<PluginEvent>>,
-    /// Ticks run.
-    pub ticks: Mutex<u32>,
-    /// Scripted links.
-    pub links: Mutex<Vec<PluginPurchaseLink>>,
-    /// Scripted tick behavior.
-    pub tick_behavior: Mutex<FakeTickBehavior>,
-    /// Scripted route answers, in order (the last repeats).
-    pub route_scripts: Mutex<Vec<FakeRouteScript>>,
-    /// Received route calls `(method, subpath)`.
-    pub route_calls: Mutex<Vec<(String, String)>>,
-    /// Whether the module serves routes.
-    pub route_handler: bool,
-}
-
-impl FakeModule {
-    /// Module implementing the given capabilities.
-    pub fn providing(caps: &[&str]) -> Self {
-        Self {
-            provides: caps.iter().map(|cap| cap.to_string()).collect(),
-            scrobbles: Mutex::new(Vec::new()),
-            events: Mutex::new(Vec::new()),
-            ticks: Mutex::new(0),
-            links: Mutex::new(Vec::new()),
-            tick_behavior: Mutex::new(FakeTickBehavior::Ok),
-            route_scripts: Mutex::new(Vec::new()),
-            route_calls: Mutex::new(Vec::new()),
-            route_handler: caps.contains(&"publisher"),
-        }
-    }
-
-    /// Ticks run so far.
-    pub fn tick_count(&self) -> u32 {
-        self.ticks.lock().map(|guard| *guard).unwrap_or(0)
-    }
-
-    /// Events received so far.
-    pub fn event_count(&self) -> usize {
-        self.events.lock().map(|guard| guard.len()).unwrap_or(0)
-    }
-}
-
-impl PluginModule for FakeModule {
-    fn provides(&self, capability: &str) -> bool {
-        self.provides.iter().any(|cap| cap == capability)
-    }
-
-    fn on_scrobble<'a>(&'a self, event: &'a ScrobbleEvent) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async move {
-            if let Ok(mut guard) = self.scrobbles.lock() {
-                guard.push(event.clone());
-            }
-            Ok(())
-        })
-    }
-
-    fn purchase_links<'a>(
-        &'a self,
-        _artist: &'a str,
-        _album: &'a str,
-        _release_group_mbid: &'a str,
-    ) -> BoxFuture<'a, Result<Vec<PluginPurchaseLink>, String>> {
-        Box::pin(async move {
-            Ok(self
-                .links
-                .lock()
-                .map(|guard| guard.clone())
-                .unwrap_or_default())
-        })
-    }
-
-    fn on_event<'a>(&'a self, event: &'a PluginEvent) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async move {
-            if let Ok(mut guard) = self.events.lock() {
-                guard.push(event.clone());
-            }
-            Ok(())
-        })
-    }
-
-    fn on_tick<'a>(&'a self, ctx: &'a TickContext<'a>) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async move {
-            if let Ok(mut guard) = self.ticks.lock() {
-                *guard += 1;
-            }
-            let behavior = self
-                .tick_behavior
-                .lock()
-                .map(|guard| guard.clone())
-                .unwrap_or(FakeTickBehavior::Ok);
-            match behavior {
-                FakeTickBehavior::Ok => Ok(()),
-                FakeTickBehavior::Fail(reason) => Err(reason),
-                FakeTickBehavior::WriteState(blob) => {
-                    ctx.state.write("state", blob.into_bytes()).await
-                }
-            }
-        })
-    }
-
-    fn has_route_handler(&self) -> bool {
-        self.route_handler
-    }
-
-    fn handle_route<'a>(
-        &'a self,
-        method: &'a str,
-        subpath: &'a str,
-        _query: &'a HashMap<String, String>,
-        _body: &'a PluginRouteBody,
-    ) -> BoxFuture<'a, Result<PluginRouteResponse, String>> {
-        Box::pin(async move {
-            if let Ok(mut guard) = self.route_calls.lock() {
-                guard.push((method.to_owned(), subpath.to_owned()));
-            }
-            let script = self
-                .route_scripts
-                .lock()
-                .ok()
-                .and_then(|guard| guard.last().cloned());
-            match script {
-                Some(FakeRouteScript::Status(status, body)) => {
-                    Ok(PluginRouteResponse { status, body })
-                }
-                None => Ok(PluginRouteResponse::ok(serde_json::json!({"ok": true}))),
-            }
-        })
-    }
-}
-
-/// Scripted module loader: names map to shared fake modules.
-pub struct FakeLoader {
-    modules: Mutex<HashMap<String, Arc<FakeModule>>>,
-    /// Names that fail to load, with reasons.
-    pub failures: Mutex<HashMap<String, String>>,
-}
-
-impl FakeLoader {
-    /// Empty loader.
+impl FakeConnection {
+    /// A runtime answering `null` to everything.
     pub fn new() -> Self {
         Self {
-            modules: Mutex::new(HashMap::new()),
-            failures: Mutex::new(HashMap::new()),
+            answers: Mutex::new(HashMap::new()),
+            calls: Mutex::new(Vec::new()),
+            notifications: Mutex::new(Vec::new()),
+            delay: Mutex::new(Duration::ZERO),
+            services: Mutex::new(None),
+            stopped: Mutex::new(false),
         }
     }
 
-    /// Share one fake module under one plugin name.
-    pub fn insert(&self, name: &str, module: Arc<FakeModule>) {
-        if let Ok(mut guard) = self.modules.lock() {
-            guard.insert(name.to_owned(), module);
+    /// Script one method's answer.
+    pub fn answer(&self, method: &str, answer: Result<Value, CallError>) {
+        if let Ok(mut answers) = self.answers.lock() {
+            answers.insert(method.to_owned(), answer);
         }
+    }
+
+    /// Calls made with one method.
+    pub fn calls_to(&self, method: &str) -> Vec<Value> {
+        self.calls
+            .lock()
+            .map(|calls| {
+                calls
+                    .iter()
+                    .filter(|(name, _)| name == method)
+                    .map(|(_, params)| params.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Make one plugin-to-host request, as the plugin would.
+    pub async fn host_request(&self, method: &str, params: Value) -> Result<Value, RpcError> {
+        let bound = self.services.lock().ok().and_then(|slot| slot.clone());
+        let Some((name, services)) = bound else {
+            return Err(RpcError::new(-1, "not launched"));
+        };
+        services.handle(&name, method, params).await
+    }
+
+    /// Whether the host stopped this runtime.
+    pub fn was_stopped(&self) -> bool {
+        self.stopped.lock().map(|stopped| *stopped).unwrap_or(false)
     }
 }
 
-impl Default for FakeLoader {
+impl Default for FakeConnection {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ModuleLoader for FakeLoader {
-    fn load(
-        &self,
-        _dir: &Path,
-        manifest: &PluginManifest,
-    ) -> Result<Arc<dyn PluginModule>, String> {
-        if let Ok(guard) = self.failures.lock()
-            && let Some(reason) = guard.get(&manifest.name)
+impl PluginConnection for FakeConnection {
+    fn call<'a>(
+        &'a self,
+        method: &'a str,
+        params: Value,
+        timeout: Duration,
+    ) -> BoxFuture<'a, Result<Value, CallError>> {
+        Box::pin(async move {
+            if let Ok(mut calls) = self.calls.lock() {
+                calls.push((method.to_owned(), params));
+            }
+            let delay = self.delay.lock().map(|delay| *delay).unwrap_or_default();
+            if delay > timeout {
+                tokio::time::sleep(timeout).await;
+                return Err(CallError::Timeout);
+            }
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
+            self.answers
+                .lock()
+                .ok()
+                .and_then(|answers| answers.get(method).cloned())
+                .unwrap_or(Ok(Value::Null))
+        })
+    }
+
+    fn notify(&self, method: &str, params: Value) {
+        if let Ok(mut notes) = self.notifications.lock() {
+            notes.push((method.to_owned(), params));
+        }
+    }
+
+    fn status(&self) -> RuntimeStatus {
+        RuntimeStatus {
+            state: if self.was_stopped() {
+                RuntimeState::Stopped
+            } else {
+                RuntimeState::Running
+            },
+            restarts: 0,
+            last_error: None,
+            implemented: Vec::new(),
+        }
+    }
+
+    fn stop(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            if let Ok(mut stopped) = self.stopped.lock() {
+                *stopped = true;
+            }
+        })
+    }
+}
+
+/// Scripted launcher: plugin names map to shared fake runtimes.
+#[derive(Default)]
+pub struct FakeLauncher {
+    runtimes: Mutex<HashMap<String, Arc<FakeConnection>>>,
+    /// Names that fail to launch, with reasons.
+    pub failures: Mutex<HashMap<String, String>>,
+    /// Launches made, by plugin name, in order.
+    pub launched: Mutex<Vec<String>>,
+}
+
+impl FakeLauncher {
+    /// Empty launcher: unknown names get a fresh runtime answering `null`.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Share one runtime under one plugin name.
+    pub fn insert(&self, name: &str, runtime: Arc<FakeConnection>) {
+        if let Ok(mut runtimes) = self.runtimes.lock() {
+            runtimes.insert(name.to_owned(), runtime);
+        }
+    }
+
+    /// The runtime bound to one name, creating it when absent.
+    pub fn runtime(&self, name: &str) -> Arc<FakeConnection> {
+        match self.runtimes.lock() {
+            Ok(mut runtimes) => Arc::clone(
+                runtimes
+                    .entry(name.to_owned())
+                    .or_insert_with(|| Arc::new(FakeConnection::new())),
+            ),
+            Err(_) => Arc::new(FakeConnection::new()),
+        }
+    }
+}
+
+impl PluginLauncher for FakeLauncher {
+    fn launch(&self, spec: LaunchSpec) -> Result<Arc<dyn PluginConnection>, String> {
+        let name = spec.manifest.name.clone();
+        if let Ok(failures) = self.failures.lock()
+            && let Some(reason) = failures.get(&name)
         {
             return Err(reason.clone());
         }
-        self.modules
-            .lock()
-            .ok()
-            .and_then(|guard| guard.get(&manifest.name).cloned())
-            .map(|module| module as Arc<dyn PluginModule>)
-            .ok_or_else(|| format!("no module for '{}'", manifest.name))
+        if let Ok(mut launched) = self.launched.lock() {
+            launched.push(name.clone());
+        }
+        let runtime = self.runtime(&name);
+        if let Ok(mut slot) = runtime.services.lock() {
+            *slot = Some((name, spec.services));
+        }
+        if let Ok(mut stopped) = runtime.stopped.lock() {
+            *stopped = false;
+        }
+        Ok(runtime as Arc<dyn PluginConnection>)
     }
 }
 

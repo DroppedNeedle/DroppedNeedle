@@ -25,7 +25,7 @@ use super::{
         ServiceResult,
     },
     ports::{
-        Clock, DisplayNames, ListeningPrefs, PlayHistory, PlayRecord, ProviderFailure,
+        Clock, DisplayNames, ListeningPrefs, PlayEvents, PlayHistory, PlayRecord, ProviderFailure,
         RemoteReport, RemoteReporters, ReportTrack, ScrobblePrefs, ScrobbleSinks, ScrobbleTargets,
         ServiceOutcome, TrackCatalog, TrackInfo, VISIBILITY_FULL, VISIBILITY_OFFLINE,
         VISIBILITY_TRACK_HIDDEN,
@@ -840,6 +840,8 @@ pub struct PlaybackDeps {
     pub clock: Arc<dyn Clock>,
     /// Ids for error correlation.
     pub ids: Arc<dyn IdGenerator>,
+    /// Listeners for accepted plays (plugins).
+    pub events: Arc<dyn PlayEvents>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1177,6 +1179,7 @@ fn submit_counted_play(
             services: HashMap::new(),
         };
     }
+    deps.events.play_accepted(user_id, report, played_at);
     let targets = targets(&prefs);
     if targets.is_empty() {
         return ScrobbleResponse {

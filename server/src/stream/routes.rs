@@ -121,6 +121,8 @@ pub enum AudioSource {
     Navidrome,
     /// Plex proxied audio (part keys may contain slashes).
     Plex,
+    /// A `streaming_source` plugin; the key is a recording MBID.
+    Plugin,
 }
 
 impl AudioSource {
@@ -131,6 +133,7 @@ impl AudioSource {
             "jellyfin" => Some(Self::Jellyfin),
             "navidrome" => Some(Self::Navidrome),
             "plex" => Some(Self::Plex),
+            "plugin" => Some(Self::Plugin),
             _ => None,
         }
     }
@@ -142,6 +145,7 @@ impl AudioSource {
             Self::Jellyfin => "jellyfin",
             Self::Navidrome => "navidrome",
             Self::Plex => "plex",
+            Self::Plugin => "plugin",
         }
     }
 
@@ -152,6 +156,7 @@ impl AudioSource {
             Self::Jellyfin => "Jellyfin",
             Self::Navidrome => "Navidrome",
             Self::Plex => "Plex",
+            Self::Plugin => "plugin",
         }
     }
 }
@@ -646,8 +651,8 @@ where
     get,
     path = "/api/v3/stream/{source}/{key}",
     params(
-        ("source" = String, Path, description = "Audio source: local, jellyfin, navidrome, or plex"),
-        ("key" = String, Path, description = "Local file id, remote item id, or Plex part key"),
+        ("source" = String, Path, description = "Audio source: local, jellyfin, navidrome, plex, or plugin"),
+        ("key" = String, Path, description = "Local file id, remote item id, Plex part key, or recording MBID for plugin"),
         ("format" = Option<String>, Query, description = "Requested output codec: mp3, opus, or raw"),
         ("max_bitrate" = Option<i64>, Query, description = "Client bitrate cap in kbps (0 or unset means uncapped)"),
         ("estimate_content_length" = Option<bool>, Query, description = "Ask a transcode landing for its estimated Content-Length"),
@@ -679,8 +684,8 @@ pub(crate) async fn stream_get<E: StreamEngine>(
     head,
     path = "/api/v3/stream/{source}/{key}",
     params(
-        ("source" = String, Path, description = "Audio source: local, jellyfin, navidrome, or plex"),
-        ("key" = String, Path, description = "Local file id, remote item id, or Plex part key"),
+        ("source" = String, Path, description = "Audio source: local, jellyfin, navidrome, plex, or plugin"),
+        ("key" = String, Path, description = "Local file id, remote item id, Plex part key, or recording MBID for plugin"),
     ),
     responses(
         (status = 200, description = "Stream headers, no body"),

@@ -61,6 +61,8 @@ pub struct RequestsService {
     editions: EditionStore,
     /// Verdict sink into the collections follow rows, when wired.
     follow_sink: Option<Arc<dyn FollowDecisionSink>>,
+    /// Plugin host for `request_created` events, when attached.
+    plugins: crate::acquire::wiring::PluginSlot,
 }
 
 impl RequestsService {
@@ -75,7 +77,28 @@ impl RequestsService {
             mixes: state.mixes.clone(),
             editions: state.editions.clone(),
             follow_sink: state.follow_sink.clone(),
+            plugins: state.plugins.clone(),
         }
+    }
+
+    /// Tell `subscriber` plugins about one new request.
+    fn announce_created(&self, record: &super::ledger::RequestRecord) {
+        use crate::plugins::runtime::{EventKind, EventPayload, RequestEvent};
+
+        let release_group_mbid = match record.kind {
+            RequestKind::Album => record.key.clone(),
+            _ => record.track_release_group_mbid.clone().unwrap_or_default(),
+        };
+        crate::acquire::plugin_events::announce(
+            &self.plugins,
+            EventKind::RequestCreated,
+            EventPayload::Request(RequestEvent {
+                request_id: record.key.clone(),
+                user_id: record.user_id.clone().unwrap_or_default(),
+                release_group_mbid,
+                status: record.status.clone(),
+            }),
+        );
     }
 
     /// Ask for one album. Winners record and maybe dispatch; duplicate asks
@@ -148,6 +171,7 @@ impl RequestsService {
                 task_id: None,
             }),
             BeginOutcome::Won(won) => {
+                self.announce_created(&won);
                 if needs_approval {
                     return Ok(IntakeResponse {
                         success: true,
@@ -262,6 +286,7 @@ impl RequestsService {
                 task_id: None,
             }),
             BeginOutcome::Won(won) => {
+                self.announce_created(&won);
                 if needs_approval {
                     return Ok(TrackIntakeResponse {
                         status: STATUS_AWAITING_APPROVAL.to_owned(),
@@ -424,7 +449,10 @@ impl RequestsService {
         let mut raced = Vec::new();
         for outcome in outcomes {
             match outcome {
-                BeginOutcome::Won(won) => created.push(won),
+                BeginOutcome::Won(won) => {
+                    self.announce_created(&won);
+                    created.push(won);
+                }
                 BeginOutcome::Existing(winner)
                     if is_active(&winner.status) || winner.status == STATUS_CANCELLING =>
                 {

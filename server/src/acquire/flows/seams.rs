@@ -478,21 +478,18 @@ pub struct Tick {
     pub at: i64,
 }
 
-/// Durable tick sink. Production forwards these to the plugin host from the
-/// registry/store trail; tests read them back.
+/// Durable tick sink. Production logs each tick and forwards the ones
+/// plugins care about (`acquire::plugin_events::PluginTicks`); tests read
+/// them back.
 pub trait TickSink: Send + Sync {
     /// Record one tick.
     fn emit(&self, kind: &str, detail: &str, at: i64);
-}
 
-/// Production tick sink: there is no plugin host to forward to yet, so
-/// each tick is a structured log line and nothing accumulates in memory.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct LogTicks;
-
-impl TickSink for LogTicks {
-    fn emit(&self, kind: &str, detail: &str, at: i64) {
-        tracing::debug!(kind, detail, at, "flow tick");
+    /// Record one tick about one release group (its MBID, when known).
+    /// Plugin subscribers hear these; the default just records the tick.
+    fn emit_about(&self, kind: &str, release_group_mbid: &str, detail: &str, at: i64) {
+        let _ = release_group_mbid;
+        self.emit(kind, detail, at);
     }
 }
 

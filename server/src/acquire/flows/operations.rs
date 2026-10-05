@@ -526,8 +526,9 @@ async fn land_free_music(
     let job_id = deps.handoff.land(&op.id, &request.user_id, files).await?;
     ops.transition(&op.id, OpState::Succeeded, now, &job_id)
         .await?;
-    deps.ticks.emit(
+    deps.ticks.emit_about(
         "request_fulfilled",
+        &request.mbid,
         &format!(
             "free-music {} landed as {job_id} (task {task_id})",
             request.mbid
@@ -760,8 +761,9 @@ pub async fn process_drop_job(
                 if let Some(rg) = rg_mbid {
                     mark_imported(&deps.ledger, rg, at).await;
                 }
-                deps.ticks.emit(
+                deps.ticks.emit_about(
                     "drop_import.resolved",
+                    rg_mbid.unwrap_or_default(),
                     &format!("{} resolved to {final_path}", item.name),
                     at,
                 );

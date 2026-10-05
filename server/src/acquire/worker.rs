@@ -43,6 +43,7 @@ use super::downloads::sources::{DownloadSource, SourceError, SourceHandle};
 use super::downloads::state::{AttemptState, TaskStatus};
 use super::downloads::store::{AttemptRow, NewTask, StoreError, TaskRow};
 use super::downloads::watchdog::{PollSample, RetryPolicy, Watchdog, WatchdogConfig};
+use super::plugin_source::PluginDownloadSource;
 use super::sources::{JournalOwnership, SabnzbdSource, SlskdSource};
 use crate::db::{DurableWorkWakeups, JobKind, JobState, WriteLane};
 
@@ -139,12 +140,16 @@ async fn read_manifest(staging_root: &Path, task_id: &str) -> Option<DownloadMan
     ManifestCodec.decode(&bytes).ok()
 }
 
-/// One bundled download source behind the fetch seam.
+/// One download source behind the fetch seam. Cheap to clone, so each
+/// pass can add the plugin sources enabled right now to the built-in ones.
+#[derive(Clone)]
 pub enum Source {
     /// Soulseek via slskd.
-    Slskd(SlskdSource),
+    Slskd(Arc<SlskdSource>),
     /// Usenet via SABnzbd.
-    Sab(SabnzbdSource),
+    Sab(Arc<SabnzbdSource>),
+    /// A plugin's download client (`plugin:<name>`).
+    Plugin(Arc<PluginDownloadSource>),
 }
 
 impl Source {
@@ -152,14 +157,16 @@ impl Source {
         match self {
             Self::Slskd(_) => "slskd",
             Self::Sab(_) => "sabnzbd",
+            Self::Plugin(source) => source.key(),
         }
     }
 
-    /// Journal source tag (`soulseek`, `usenet`).
-    fn journal_source(&self) -> &'static str {
+    /// Journal source tag (`soulseek`, `usenet`, `plugin:<name>`).
+    fn journal_source(&self) -> &str {
         match self {
             Self::Slskd(_) => "soulseek",
             Self::Sab(_) => "usenet",
+            Self::Plugin(source) => source.key(),
         }
     }
 
@@ -171,6 +178,7 @@ impl Source {
         match self {
             Self::Slskd(source) => source.enqueue(task_id, candidate_index).await,
             Self::Sab(source) => source.enqueue(task_id, candidate_index).await,
+            Self::Plugin(source) => source.enqueue(task_id, candidate_index).await,
         }
     }
 
@@ -181,6 +189,7 @@ impl Source {
         match self {
             Self::Slskd(source) => source.poll(handle).await,
             Self::Sab(source) => source.poll(handle).await,
+            Self::Plugin(source) => source.poll(handle).await,
         }
     }
 
@@ -188,6 +197,7 @@ impl Source {
         match self {
             Self::Slskd(source) => source.discard(handle).await,
             Self::Sab(source) => source.discard(handle).await,
+            Self::Plugin(source) => source.discard(handle).await,
         }
     }
 
@@ -195,6 +205,7 @@ impl Source {
         match self {
             Self::Slskd(source) => source.abort(handle).await,
             Self::Sab(source) => source.abort(handle).await,
+            Self::Plugin(source) => source.abort(handle).await,
         }
     }
 
@@ -202,7 +213,7 @@ impl Source {
     /// means the lookup failed and the folder must stay.
     async fn job_active(&self, handle: &SourceHandle) -> Option<bool> {
         match self {
-            Self::Slskd(_) => None,
+            Self::Slskd(_) | Self::Plugin(_) => None,
             Self::Sab(source) => source.job_present(handle).await.ok(),
         }
     }
@@ -214,6 +225,11 @@ impl Source {
         match self {
             Self::Slskd(_) => None,
             Self::Sab(source) => source
+                .inspect(handle)
+                .await
+                .map(|seen| seen.mount_healthy)
+                .ok(),
+            Self::Plugin(source) => source
                 .inspect(handle)
                 .await
                 .map(|seen| seen.mount_healthy)
@@ -332,6 +348,7 @@ pub struct DownloadWorker {
     poll_cache: Mutex<HashMap<String, PollMemory>>,
     enqueue_not_before: Mutex<HashMap<String, f64>>,
     unsearchable_warned: Mutex<HashSet<String>>,
+    plugins: super::wiring::PluginSlot,
 }
 
 impl DownloadWorker {
@@ -347,7 +364,15 @@ impl DownloadWorker {
             poll_cache: Mutex::new(HashMap::new()),
             enqueue_not_before: Mutex::new(HashMap::new()),
             unsearchable_warned: Mutex::new(HashSet::new()),
+            plugins: Default::default(),
         }
+    }
+
+    /// Announce download starts, completions and failures to `subscriber`
+    /// plugins through this slot.
+    pub fn with_plugin_events(mut self, plugins: super::wiring::PluginSlot) -> Self {
+        self.plugins = plugins;
+        self
     }
 
     /// Worker over a fixed source list and fixed tuning.
@@ -583,6 +608,13 @@ impl DownloadWorker {
             )
         })
         .await;
+        super::plugin_events::download_event(
+            &self.plugins,
+            crate::plugins::runtime::EventKind::DownloadFailed,
+            task,
+            &task.source,
+            "failed",
+        );
     }
 
     /// Journal one successful enqueue: the attempt row plus the
@@ -609,7 +641,7 @@ impl DownloadWorker {
         };
         let attempt_id = format!("{}-a{attempt_number}", task.id);
         let task_id = task.id.clone();
-        let journal_source = source.journal_source();
+        let journal_source = source.journal_source().to_owned();
         let job_name = handle.job_name.clone();
         let row_id = attempt_id.clone();
         let journaled = self
@@ -617,7 +649,7 @@ impl DownloadWorker {
                 store.insert_attempt(
                     &row_id,
                     &task_id,
-                    journal_source,
+                    &journal_source,
                     source_index,
                     &job_name,
                     &handle_json,
@@ -635,6 +667,13 @@ impl DownloadWorker {
         }
         self.write_manifest_handle(pass, task, handle, &attempt_id)
             .await;
+        super::plugin_events::download_event(
+            &self.plugins,
+            crate::plugins::runtime::EventKind::DownloadStarted,
+            task,
+            source.journal_source(),
+            "started",
+        );
         if let Ok(mut cache) = self.poll_cache.lock() {
             cache.insert(
                 task.id.clone(),
@@ -869,6 +908,13 @@ impl DownloadWorker {
                 if let Ok(mut cache) = self.poll_cache.lock() {
                     cache.remove(&task.id);
                 }
+                super::plugin_events::download_event(
+                    &self.plugins,
+                    crate::plugins::runtime::EventKind::DownloadCompleted,
+                    task,
+                    source.journal_source(),
+                    "completed",
+                );
                 return;
             }
             WatchdogOutcome::Terminal => format!(
@@ -1112,6 +1158,7 @@ impl DownloadWorker {
             filenames: Vec::new(),
             job_name: attempt.job_name.clone(),
             nzo_id: String::new(),
+            plugin_token: String::new(),
         });
         let Some(source) = pass.source_for(&attempt.source) else {
             // No adapter for this source: defer with backoff rather than
@@ -1249,6 +1296,7 @@ impl DownloadWorker {
             filenames: Vec::new(),
             job_name: job_name.to_owned(),
             nzo_id: String::new(),
+            plugin_token: String::new(),
         };
         // Soulseek handles need the peer plus filenames, which the folder
         // name does not carry: without them the client check cannot run,
@@ -1319,6 +1367,7 @@ impl DownloadWorker {
             filenames: Vec::new(),
             job_name: job_name.to_owned(),
             nzo_id: String::new(),
+            plugin_token: String::new(),
         };
         if let Err(error) = source.discard(&handle).await {
             tracing::warn!(task_id, %error, "orphan client discard failed; folder kept");

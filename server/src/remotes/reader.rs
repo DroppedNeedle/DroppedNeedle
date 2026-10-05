@@ -70,6 +70,7 @@ impl RemoteReader for RemotesRemoteReader {
             AudioSource::Jellyfin => SourceName::Jellyfin,
             AudioSource::Navidrome => SourceName::Navidrome,
             AudioSource::Plex => SourceName::Plex,
+            AudioSource::Plugin => return Err(StreamFault::NotFound),
         };
         let resolved = self
             .resolver

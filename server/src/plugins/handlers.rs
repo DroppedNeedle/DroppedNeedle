@@ -27,15 +27,19 @@ use crate::auth::users::roles::Role;
 use crate::ids::IdGenerator;
 use crate::runtime_config::ConfigStore;
 
+use super::capabilities::routes::ROUTE_BODY_MAX_BYTES;
 use super::error::PluginError;
-use super::host::{
-    ArchiveFetcher, ArchiveUnpacker, InstallError, PluginHost, ROUTE_BODY_MAX_BYTES,
-    UninstallError, UpdateError,
+use super::host::{PluginHost, UninstallError, UpdateError};
+use super::install::{
+    ArchiveFetcher, ArchiveUnpacker, InstallError, StagedPlugin, TRUST_WARNING, parse_source,
+    resolve, stage,
 };
 use super::models::{
-    ConnectionStatus, ListenBrainzConnectRequest, PluginInfo, PluginInstallRequest,
-    PluginListResponse, PluginSettingFieldInfo, PluginSourcesResponse, PluginUpdateRequest,
-    ScrobblePreferences, ScrobblePreferencesUpdate, StatusMessage,
+    ConnectionStatus, ListenBrainzConnectRequest, PluginInfo, PluginInstallInfo,
+    PluginInstallPreview, PluginInstallRequest, PluginListResponse, PluginRuntimeInfo,
+    PluginSettingFieldInfo, PluginSourceUpdateRequest, PluginSourceUpdateResponse,
+    PluginSourcesResponse, PluginUpdateRequest, ScrobblePreferences, ScrobblePreferencesUpdate,
+    StatusMessage,
 };
 use super::runtime::PluginRouteBody;
 use super::scrobble::{
@@ -238,6 +242,25 @@ fn plugin_info(
             targets.push(cap.target_source.clone());
         }
     }
+    let runtime = plugin.runtime_status().map(|status| PluginRuntimeInfo {
+        state: status.state,
+        restarts: status.restarts,
+        last_error: status.last_error,
+        implemented_capabilities: status.implemented,
+        dropped_events: host
+            .dropped_event_counts()
+            .get(&manifest.name)
+            .copied()
+            .unwrap_or(0),
+    });
+    let install = host.install_record(name).map(|record| PluginInstallInfo {
+        repository_url: record.repository_url,
+        repository: record.repository,
+        ref_kind: record.ref_kind,
+        reference: record.reference,
+        commit: record.commit,
+        installed_at: record.installed_at,
+    });
     Ok(PluginInfo {
         name: manifest.name.clone(),
         display_name: manifest.display_name.clone(),
@@ -265,6 +288,9 @@ fn plugin_info(
         ui_external_url: manifest.ui_external_url.clone(),
         sources,
         targets,
+        permissions: manifest.permissions(),
+        runtime,
+        install,
     })
 }
 
@@ -298,9 +324,84 @@ pub async fn list_plugins(
     Ok(Json(PluginListResponse { plugins }))
 }
 
-/// Install a plugin from a public GitHub repository. The code is stored,
-/// never executed: the plugin arrives disabled and an admin must enable
-/// it, exactly like a hand-copied folder.
+/// Resolve and download one install request without installing it.
+async fn stage_request(
+    deps: &PluginsDeps,
+    url: &str,
+    reference: Option<&str>,
+) -> Result<StagedPlugin, PluginError> {
+    let ids = deps.ids.as_ref();
+    let source = parse_source(url, reference).map_err(|error| map_install(error, ids))?;
+    let resolved = resolve(deps.fetcher.as_ref(), source)
+        .await
+        .map_err(|error| map_install(error, ids))?;
+    stage(deps.fetcher.as_ref(), deps.unpacker.as_ref(), resolved)
+        .await
+        .map_err(|error| map_install(error, ids))
+}
+
+/// Write a staged plugin to disk off the async workers, then re-sync ticks.
+async fn install_staged(deps: &PluginsDeps, staged: StagedPlugin) -> Result<String, PluginError> {
+    let host = Arc::clone(&deps.host);
+    let name = tokio::task::spawn_blocking(move || host.install_staged(&staged))
+        .await
+        .map_err(|error| PluginError::internal(&error, deps.ids.as_ref()))?
+        .map_err(|error| map_install(error, deps.ids.as_ref()))?;
+    deps.tick_sync.sync_host(&deps.host).await;
+    Ok(name)
+}
+
+/// Show what installing a repository would bring in: the manifest, the
+/// permissions it asks for, the exact commit, and the trust warning.
+/// Downloads and validates; writes nothing.
+#[utoipa::path(
+    post,
+    path = "/api/v3/plugins/install/preview",
+    request_body = PluginInstallRequest,
+    responses(
+        (status = 200, description = "What would be installed", body = PluginInstallPreview),
+        (status = 400, description = "Not a usable plugin repository"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin access required"),
+    )
+)]
+pub async fn preview_plugin_install(
+    State(deps): State<PluginsDeps>,
+    _admin: AdminUser,
+    ValidJson(body): ValidJson<PluginInstallRequest>,
+) -> Result<Json<PluginInstallPreview>, PluginError> {
+    let staged = stage_request(&deps, &body.repository_url, body.reference.as_deref()).await?;
+    let manifest = &staged.manifest;
+    let installed_version = deps
+        .host
+        .get(&manifest.name)
+        .filter(|plugin| plugin.error.is_none() || !plugin.manifest.version.is_empty())
+        .map(|plugin| plugin.manifest.version);
+    Ok(Json(PluginInstallPreview {
+        name: manifest.name.clone(),
+        display_name: manifest.display_name.clone(),
+        version: manifest.version.clone(),
+        description: manifest.description.clone(),
+        author: manifest.author.clone(),
+        homepage: manifest.homepage.clone(),
+        capabilities: manifest.capabilities.clone(),
+        permissions: manifest.permissions(),
+        repository: format!(
+            "{}/{}",
+            staged.resolved.source.owner, staged.resolved.source.repo
+        ),
+        ref_kind: staged.resolved.ref_kind.clone(),
+        reference: staged.resolved.reference.clone(),
+        commit: staged.resolved.commit.clone(),
+        installed_version,
+        warning: TRUST_WARNING.to_owned(),
+    }))
+}
+
+/// Install a plugin from a public GitHub repository, pinned to an exact
+/// commit. The code is stored, never run: the plugin arrives disabled and
+/// an admin must enable it. Reinstalling over an installed plugin replaces
+/// its code and keeps its settings.
 #[utoipa::path(
     post,
     path = "/api/v3/plugins/install",
@@ -310,6 +411,7 @@ pub async fn list_plugins(
         (status = 400, description = "Not a usable plugin repository"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin access required"),
+        (status = 409, description = "The repository moved since the preview"),
     )
 )]
 pub async fn install_plugin(
@@ -317,17 +419,19 @@ pub async fn install_plugin(
     _admin: AdminUser,
     ValidJson(body): ValidJson<PluginInstallRequest>,
 ) -> Result<(StatusCode, Json<PluginInfo>), PluginError> {
-    let archive = PluginHost::fetch_plugin_archive(&body.repository_url, deps.fetcher.as_ref())
-        .await
-        .map_err(|error| map_install(error, deps.ids.as_ref()))?;
-    let host = Arc::clone(&deps.host);
-    let unpacker = Arc::clone(&deps.unpacker);
-    let name =
-        tokio::task::spawn_blocking(move || host.install_archive(&archive, unpacker.as_ref()))
-            .await
-            .map_err(|error| PluginError::internal(&error, deps.ids.as_ref()))?
-            .map_err(|error| map_install(error, deps.ids.as_ref()))?;
-    deps.tick_sync.sync_host(&deps.host).await;
+    let staged = stage_request(&deps, &body.repository_url, body.reference.as_deref()).await?;
+    if let Some(expected) = body
+        .commit
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        && !expected.eq_ignore_ascii_case(&staged.resolved.commit)
+    {
+        return Err(PluginError::Conflict {
+            message: "The repository changed since the preview. Preview it again to see what would be installed".to_owned(),
+        });
+    }
+    let name = install_staged(&deps, staged).await?;
     let info = plugin_info(
         deps.host.as_ref(),
         deps.config.as_ref(),
@@ -335,6 +439,62 @@ pub async fn install_plugin(
         &name,
     )?;
     Ok((StatusCode::CREATED, Json(info)))
+}
+
+/// Update one installed plugin from the GitHub repository it came from.
+/// A plugin installed from releases moves to the latest release; a pinned
+/// one moves only when a new ref is given. Settings and data stay.
+#[utoipa::path(
+    post,
+    path = "/api/v3/plugins/{name}/update",
+    request_body = PluginSourceUpdateRequest,
+    params(("name" = String, Path, description = "Plugin name")),
+    responses(
+        (status = 200, description = "Update outcome", body = PluginSourceUpdateResponse),
+        (status = 400, description = "No GitHub source, or not a usable plugin"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin access required"),
+        (status = 404, description = "Unknown plugin"),
+    )
+)]
+pub async fn update_plugin_from_source(
+    State(deps): State<PluginsDeps>,
+    _admin: AdminUser,
+    Path(name): Path<String>,
+    ValidJson(body): ValidJson<PluginSourceUpdateRequest>,
+) -> Result<Json<PluginSourceUpdateResponse>, PluginError> {
+    deps.host.get(&name).ok_or(PluginError::NotFound)?;
+    let record = deps
+        .host
+        .install_record(&name)
+        .ok_or_else(|| map_install(InstallError::NoSource, deps.ids.as_ref()))?;
+    let reference = match body.reference.as_deref().map(str::trim) {
+        Some(reference) if !reference.is_empty() => Some(reference.to_owned()),
+        _ if record.ref_kind == "release" => None,
+        _ if record.ref_kind == "branch" && record.reference == "HEAD" => None,
+        _ => Some(record.reference.clone()),
+    };
+    let url = format!("https://github.com/{}", record.repository);
+    let staged = stage_request(&deps, &url, reference.as_deref()).await?;
+    if staged.manifest.name != name {
+        return Err(PluginError::InvalidInput {
+            message: format!(
+                "That repository now holds a plugin named '{}', not '{name}'",
+                staged.manifest.name
+            ),
+        });
+    }
+    let updated = staged.resolved.commit != record.commit;
+    if updated {
+        install_staged(&deps, staged).await?;
+    }
+    let plugin = plugin_info(
+        deps.host.as_ref(),
+        deps.config.as_ref(),
+        deps.ids.as_ref(),
+        &name,
+    )?;
+    Ok(Json(PluginSourceUpdateResponse { updated, plugin }))
 }
 
 /// Save one plugin's enable switch plus its settings.
@@ -521,7 +681,7 @@ async fn serve_ext(
         });
     }
     let plugin = match deps.host.get(plugin_name) {
-        Some(plugin) if plugin.enabled && plugin.module.is_some() => plugin,
+        Some(plugin) if plugin.serves("publisher") => plugin,
         _ => return Err(PluginError::NotFound),
     };
     let spec = plugin
@@ -777,7 +937,7 @@ pub async fn plugin_panel_js(
         return Err(PluginError::NotFound);
     }
     let plugin = match deps.host.get(&name) {
-        Some(plugin) if plugin.enabled && plugin.module.is_some() => plugin,
+        Some(plugin) if plugin.enabled && plugin.runtime.is_some() => plugin,
         _ => return Err(PluginError::NotFound),
     };
     let entry = plugin.manifest.ui_entry.clone();
@@ -1056,6 +1216,8 @@ pub fn plugins_router(deps: PluginsDeps) -> axum::Router {
     axum::Router::new()
         .route("/plugins", get(list_plugins))
         .route("/plugins/install", post(install_plugin))
+        .route("/plugins/install/preview", post(preview_plugin_install))
+        .route("/plugins/{name}/update", post(update_plugin_from_source))
         .route("/plugins/sources", get(list_plugin_sources))
         .route(
             "/plugins/{name}",

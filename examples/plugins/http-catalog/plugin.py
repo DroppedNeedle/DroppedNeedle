@@ -13,16 +13,17 @@ request back to its catalog entry.
 import asyncio
 from pathlib import Path
 
-from models.common import ServiceStatus
-from repositories.protocols.download_client import (
+from droppedneedle_plugin import (
     DownloadFileRef,
     DownloadMaterialization,
     DownloadTaskStatus,
     EnqueueRequest,
+    IndexerResult,
     MountDiagnosis,
+    PluginSearchResult,
+    ServiceStatus,
     TaskHandle,
 )
-from repositories.protocols.indexer import IndexerResult, PluginSearchResult
 
 
 class HttpCatalog:
@@ -36,8 +37,9 @@ class HttpCatalog:
         return (self.ctx.settings.get("catalog_url") or "").strip()
 
     def _downloads_dir(self) -> Path:
+        # Without a setting, files land in the plugin's own data folder.
         raw = (self.ctx.settings.get("downloads_dir") or "").strip()
-        return Path(raw) if raw else Path(".")
+        return Path(raw) if raw else self.ctx.data_dir / "downloads"
 
     # -- DownloadClientProtocol + IndexerProtocol identity --
 

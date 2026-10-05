@@ -6807,7 +6807,7 @@
         "tags": [
           "crate::plugins::handlers"
         ],
-        "summary": "Install a plugin from a public GitHub repository. The code is stored,\nnever executed: the plugin arrives disabled and an admin must enable\nit, exactly like a hand-copied folder.",
+        "summary": "Install a plugin from a public GitHub repository, pinned to an exact\ncommit. The code is stored, never run: the plugin arrives disabled and\nan admin must enable it. Reinstalling over an installed plugin replaces\nits code and keeps its settings.",
         "operationId": "install_plugin",
         "requestBody": {
           "content": {
@@ -6826,6 +6826,49 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PluginInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a usable plugin repository"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin access required"
+          },
+          "409": {
+            "description": "The repository moved since the preview"
+          }
+        }
+      }
+    },
+    "/api/v3/plugins/install/preview": {
+      "post": {
+        "tags": [
+          "crate::plugins::handlers"
+        ],
+        "summary": "Show what installing a repository would bring in: the manifest, the\npermissions it asks for, the exact commit, and the trust warning.\nDownloads and validates; writes nothing.",
+        "operationId": "preview_plugin_install",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginInstallRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What would be installed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginInstallPreview"
                 }
               }
             }
@@ -6992,6 +7035,60 @@
           },
           "404": {
             "description": "Unknown plugin or panel"
+          }
+        }
+      }
+    },
+    "/api/v3/plugins/{name}/update": {
+      "post": {
+        "tags": [
+          "crate::plugins::handlers"
+        ],
+        "summary": "Update one installed plugin from the GitHub repository it came from.\nA plugin installed from releases moves to the latest release; a pinned\none moves only when a new ref is given. Settings and data stay.",
+        "operationId": "update_plugin_from_source",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Plugin name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginSourceUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Update outcome",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginSourceUpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No GitHub source, or not a usable plugin"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin access required"
+          },
+          "404": {
+            "description": "Unknown plugin"
           }
         }
       }
@@ -12931,7 +13028,7 @@
           {
             "name": "source",
             "in": "path",
-            "description": "Audio source: local, jellyfin, navidrome, or plex",
+            "description": "Audio source: local, jellyfin, navidrome, plex, or plugin",
             "required": true,
             "schema": {
               "type": "string"
@@ -12940,7 +13037,7 @@
           {
             "name": "key",
             "in": "path",
-            "description": "Local file id, remote item id, or Plex part key",
+            "description": "Local file id, remote item id, Plex part key, or recording MBID for plugin",
             "required": true,
             "schema": {
               "type": "string"
@@ -13015,7 +13112,7 @@
           {
             "name": "source",
             "in": "path",
-            "description": "Audio source: local, jellyfin, navidrome, or plex",
+            "description": "Audio source: local, jellyfin, navidrome, plex, or plugin",
             "required": true,
             "schema": {
               "type": "string"
@@ -13024,7 +13121,7 @@
           {
             "name": "key",
             "in": "path",
-            "description": "Local file id, remote item id, or Plex part key",
+            "description": "Local file id, remote item id, Plex part key, or recording MBID for plugin",
             "required": true,
             "schema": {
               "type": "string"
@@ -24133,9 +24230,38 @@
             "type": "string",
             "description": "Homepage URL."
           },
+          "install": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PluginInstallInfo",
+                "description": "Where the plugin was installed from, when it came from GitHub."
+              }
+            ]
+          },
           "name": {
             "type": "string",
             "description": "Manifest name."
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What the plugin asks to do, in plain words."
+          },
+          "runtime": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PluginRuntimeInfo",
+                "description": "The running process, while enabled."
+              }
+            ]
           },
           "settings_fields": {
             "type": "array",
@@ -24189,16 +24315,152 @@
           }
         }
       },
+      "PluginInstallInfo": {
+        "type": "object",
+        "description": "The pinned GitHub source of one installed plugin.",
+        "required": [
+          "repository_url",
+          "repository",
+          "ref_kind",
+          "reference",
+          "commit",
+          "installed_at"
+        ],
+        "properties": {
+          "commit": {
+            "type": "string",
+            "description": "The exact commit installed."
+          },
+          "installed_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix seconds."
+          },
+          "ref_kind": {
+            "type": "string",
+            "description": "`release`, `tag`, `branch` or `commit`."
+          },
+          "reference": {
+            "type": "string",
+            "description": "The release tag, tag, branch or commit asked for."
+          },
+          "repository": {
+            "type": "string",
+            "description": "`owner/repo`."
+          },
+          "repository_url": {
+            "type": "string",
+            "description": "The URL the admin gave."
+          }
+        }
+      },
+      "PluginInstallPreview": {
+        "type": "object",
+        "description": "What an install would bring in, shown before anything is written.",
+        "required": [
+          "name",
+          "display_name",
+          "version",
+          "capabilities",
+          "permissions",
+          "repository",
+          "ref_kind",
+          "reference",
+          "commit",
+          "warning"
+        ],
+        "properties": {
+          "author": {
+            "type": "string",
+            "description": "Author string."
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Declared capabilities."
+          },
+          "commit": {
+            "type": "string",
+            "description": "The exact commit that will be installed. Send it back to install\nexactly this code."
+          },
+          "description": {
+            "type": "string",
+            "description": "Short description."
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Display name."
+          },
+          "homepage": {
+            "type": "string",
+            "description": "Homepage URL."
+          },
+          "installed_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Version already installed under the same name, when any."
+          },
+          "name": {
+            "type": "string",
+            "description": "Manifest name."
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What the plugin asks to do, in plain words."
+          },
+          "ref_kind": {
+            "type": "string",
+            "description": "`release`, `tag`, `branch` or `commit`."
+          },
+          "reference": {
+            "type": "string",
+            "description": "The release tag, tag, branch or commit."
+          },
+          "repository": {
+            "type": "string",
+            "description": "`owner/repo`."
+          },
+          "version": {
+            "type": "string",
+            "description": "Plugin version."
+          },
+          "warning": {
+            "type": "string",
+            "description": "The plain trust warning to show the admin."
+          }
+        }
+      },
       "PluginInstallRequest": {
         "type": "object",
-        "description": "Install request: one public GitHub repository URL.",
+        "description": "Install request: one public GitHub repository URL, optionally pinned.",
         "required": [
           "repository_url"
         ],
         "properties": {
+          "commit": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The exact commit from a preview. When set, exactly that commit\ninstalls, whatever the ref points at by now."
+          },
+          "reference": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A release tag, tag, branch or commit; overrides any in the URL."
+          },
           "repository_url": {
             "type": "string",
-            "description": "Repository URL, e.g. `https://github.com/owner/repo`."
+            "description": "Repository URL, e.g. `https://github.com/owner/repo` (latest\nrelease), `.../releases/tag/v1.0.0`, `.../tree/<ref>` or\n`.../commit/<sha>`."
           }
         }
       },
@@ -24217,6 +24479,57 @@
             "description": "Every discovered plugin."
           }
         }
+      },
+      "PluginRuntimeInfo": {
+        "type": "object",
+        "description": "Health of one enabled plugin's process.",
+        "required": [
+          "state",
+          "restarts"
+        ],
+        "properties": {
+          "dropped_events": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Events skipped because the plugin was still busy with the last one.",
+            "minimum": 0
+          },
+          "implemented_capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Capabilities the plugin said it implements."
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Last start failure, crash or protocol problem."
+          },
+          "restarts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Restarts since it was enabled.",
+            "minimum": 0
+          },
+          "state": {
+            "$ref": "#/components/schemas/PluginRuntimeState",
+            "description": "`starting`, `running`, `restarting`, `stopped` or `failed`."
+          }
+        }
+      },
+      "PluginRuntimeState": {
+        "type": "string",
+        "description": "Where a plugin's runtime is in its life.",
+        "enum": [
+          "starting",
+          "running",
+          "restarting",
+          "stopped",
+          "failed"
+        ]
       },
       "PluginSettingFieldInfo": {
         "type": "object",
@@ -24282,6 +24595,37 @@
           "target_source": {
             "type": "string",
             "description": "Indexer target source."
+          }
+        }
+      },
+      "PluginSourceUpdateRequest": {
+        "type": "object",
+        "description": "Update an installed plugin from its GitHub source.",
+        "properties": {
+          "reference": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A release tag, tag, branch or commit to move to. Without one, a\nplugin installed from releases moves to the latest release; one\npinned to a tag, branch or commit is checked against the same ref."
+          }
+        }
+      },
+      "PluginSourceUpdateResponse": {
+        "type": "object",
+        "description": "Outcome of an update from GitHub.",
+        "required": [
+          "updated",
+          "plugin"
+        ],
+        "properties": {
+          "plugin": {
+            "$ref": "#/components/schemas/PluginInfo",
+            "description": "The plugin after the update."
+          },
+          "updated": {
+            "type": "boolean",
+            "description": "False when the plugin was already at that commit."
           }
         }
       },

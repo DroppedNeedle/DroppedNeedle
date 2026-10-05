@@ -2815,11 +2815,33 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Install a plugin from a public GitHub repository. The code is stored,
-         *     never executed: the plugin arrives disabled and an admin must enable
-         *     it, exactly like a hand-copied folder.
+         * Install a plugin from a public GitHub repository, pinned to an exact
+         *     commit. The code is stored, never run: the plugin arrives disabled and
+         *     an admin must enable it. Reinstalling over an installed plugin replaces
+         *     its code and keeps its settings.
          */
         post: operations["install_plugin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/plugins/install/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Show what installing a repository would bring in: the manifest, the
+         *     permissions it asks for, the exact commit, and the trust warning.
+         *     Downloads and validates; writes nothing.
+         */
+        post: operations["preview_plugin_install"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2882,6 +2904,27 @@ export interface paths {
         get: operations["plugin_panel_js"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/plugins/{name}/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Update one installed plugin from the GitHub repository it came from.
+         *     A plugin installed from releases moves to the latest release; a pinned
+         *     one moves only when a new ref is given. Settings and data stay.
+         */
+        post: operations["update_plugin_from_source"];
         delete?: never;
         options?: never;
         head?: never;
@@ -11324,8 +11367,12 @@ export interface components {
             error?: string | null;
             /** @description Homepage URL. */
             homepage?: string;
+            install?: null | components["schemas"]["PluginInstallInfo"];
             /** @description Manifest name. */
             name: string;
+            /** @description What the plugin asks to do, in plain words. */
+            permissions?: string[];
+            runtime?: null | components["schemas"]["PluginRuntimeInfo"];
             /** @description Declared settings fields. */
             settings_fields?: components["schemas"]["PluginSettingFieldInfo"][];
             /** @description Current settings values (secrets masked). */
@@ -11345,9 +11392,72 @@ export interface components {
             /** @description Plugin version. */
             version: string;
         };
-        /** @description Install request: one public GitHub repository URL. */
+        /** @description The pinned GitHub source of one installed plugin. */
+        PluginInstallInfo: {
+            /** @description The exact commit installed. */
+            commit: string;
+            /**
+             * Format: int64
+             * @description Unix seconds.
+             */
+            installed_at: number;
+            /** @description `release`, `tag`, `branch` or `commit`. */
+            ref_kind: string;
+            /** @description The release tag, tag, branch or commit asked for. */
+            reference: string;
+            /** @description `owner/repo`. */
+            repository: string;
+            /** @description The URL the admin gave. */
+            repository_url: string;
+        };
+        /** @description What an install would bring in, shown before anything is written. */
+        PluginInstallPreview: {
+            /** @description Author string. */
+            author?: string;
+            /** @description Declared capabilities. */
+            capabilities: string[];
+            /**
+             * @description The exact commit that will be installed. Send it back to install
+             *     exactly this code.
+             */
+            commit: string;
+            /** @description Short description. */
+            description?: string;
+            /** @description Display name. */
+            display_name: string;
+            /** @description Homepage URL. */
+            homepage?: string;
+            /** @description Version already installed under the same name, when any. */
+            installed_version?: string | null;
+            /** @description Manifest name. */
+            name: string;
+            /** @description What the plugin asks to do, in plain words. */
+            permissions: string[];
+            /** @description `release`, `tag`, `branch` or `commit`. */
+            ref_kind: string;
+            /** @description The release tag, tag, branch or commit. */
+            reference: string;
+            /** @description `owner/repo`. */
+            repository: string;
+            /** @description Plugin version. */
+            version: string;
+            /** @description The plain trust warning to show the admin. */
+            warning: string;
+        };
+        /** @description Install request: one public GitHub repository URL, optionally pinned. */
         PluginInstallRequest: {
-            /** @description Repository URL, e.g. `https://github.com/owner/repo`. */
+            /**
+             * @description The exact commit from a preview. When set, exactly that commit
+             *     installs, whatever the ref points at by now.
+             */
+            commit?: string | null;
+            /** @description A release tag, tag, branch or commit; overrides any in the URL. */
+            reference?: string | null;
+            /**
+             * @description Repository URL, e.g. `https://github.com/owner/repo` (latest
+             *     release), `.../releases/tag/v1.0.0`, `.../tree/<ref>` or
+             *     `.../commit/<sha>`.
+             */
             repository_url: string;
         };
         /** @description Plugin listing. */
@@ -11355,6 +11465,30 @@ export interface components {
             /** @description Every discovered plugin. */
             plugins: components["schemas"]["PluginInfo"][];
         };
+        /** @description Health of one enabled plugin's process. */
+        PluginRuntimeInfo: {
+            /**
+             * Format: int64
+             * @description Events skipped because the plugin was still busy with the last one.
+             */
+            dropped_events?: number;
+            /** @description Capabilities the plugin said it implements. */
+            implemented_capabilities?: string[];
+            /** @description Last start failure, crash or protocol problem. */
+            last_error?: string | null;
+            /**
+             * Format: int64
+             * @description Restarts since it was enabled.
+             */
+            restarts: number;
+            /** @description `starting`, `running`, `restarting`, `stopped` or `failed`. */
+            state: components["schemas"]["PluginRuntimeState"];
+        };
+        /**
+         * @description Where a plugin's runtime is in its life.
+         * @enum {string}
+         */
+        PluginRuntimeState: "starting" | "running" | "restarting" | "stopped" | "failed";
         /** @description One settings field a plugin declares. */
         PluginSettingFieldInfo: {
             /** @description Help text. */
@@ -11384,6 +11518,22 @@ export interface components {
             plugin?: string;
             /** @description Indexer target source. */
             target_source?: string;
+        };
+        /** @description Update an installed plugin from its GitHub source. */
+        PluginSourceUpdateRequest: {
+            /**
+             * @description A release tag, tag, branch or commit to move to. Without one, a
+             *     plugin installed from releases moves to the latest release; one
+             *     pinned to a tag, branch or commit is checked against the same ref.
+             */
+            reference?: string | null;
+        };
+        /** @description Outcome of an update from GitHub. */
+        PluginSourceUpdateResponse: {
+            /** @description The plugin after the update. */
+            plugin: components["schemas"]["PluginInfo"];
+            /** @description False when the plugin was already at that commit. */
+            updated: boolean;
         };
         /** @description Plugin source listing. */
         PluginSourcesResponse: {
@@ -20652,6 +20802,58 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description The repository moved since the preview */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    preview_plugin_install: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PluginInstallRequest"];
+            };
+        };
+        responses: {
+            /** @description What would be installed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginInstallPreview"];
+                };
+            };
+            /** @description Not a usable plugin repository */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin access required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     list_plugin_sources: {
@@ -20821,6 +21023,61 @@ export interface operations {
                 content?: never;
             };
             /** @description Unknown plugin or panel */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    update_plugin_from_source: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Plugin name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PluginSourceUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Update outcome */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginSourceUpdateResponse"];
+                };
+            };
+            /** @description No GitHub source, or not a usable plugin */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin access required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown plugin */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -25286,9 +25543,9 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description Audio source: local, jellyfin, navidrome, or plex */
+                /** @description Audio source: local, jellyfin, navidrome, plex, or plugin */
                 source: string;
-                /** @description Local file id, remote item id, or Plex part key */
+                /** @description Local file id, remote item id, Plex part key, or recording MBID for plugin */
                 key: string;
             };
             cookie?: never;
@@ -25365,9 +25622,9 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Audio source: local, jellyfin, navidrome, or plex */
+                /** @description Audio source: local, jellyfin, navidrome, plex, or plugin */
                 source: string;
-                /** @description Local file id, remote item id, or Plex part key */
+                /** @description Local file id, remote item id, Plex part key, or recording MBID for plugin */
                 key: string;
             };
             cookie?: never;

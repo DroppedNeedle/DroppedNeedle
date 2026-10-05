@@ -104,6 +104,9 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
     )?);
     let ids = Arc::new(UuidGenerator);
     let clock = Arc::new(SystemClock);
+    // The plugin host exists early so playback, acquisition and streaming
+    // can hold it; no plugin starts until `PluginsSetup::build` loads it.
+    let plugin_host = crate::plugins::wiring::new_host(config.plugins_dir(), config_store.clone());
     let auth_bundle = ProdAuth::new(
         runtime.pool(),
         runtime.lane(),
@@ -190,6 +193,13 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         Arc::new(PlaylistImportSink::new(reads.collections.clone())),
     )
     .map_err(stage("media setup"))?;
+    let media = media.with_play_events(Arc::new(
+        crate::plugins::capabilities::events::PluginPlayEvents(plugin_host.clone()),
+    ));
+    media
+        .stream
+        .engine
+        .attach_plugins(plugin_host.clone(), http.no_redirect().clone());
     let acquire = AcquireSetup::build(
         crate::acquire::db::AcquireDb::from_runtime(&runtime),
         &config,
@@ -199,7 +209,8 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         config_store.clone(),
         &mut reads.collections,
     )
-    .map_err(stage("acquire setup"))?;
+    .map_err(stage("acquire setup"))?
+    .with_plugins(plugin_host.clone());
     acquire.refresh_admins().await;
     // Startup recovery before serving traffic. Re-running after a clean
     // shutdown is a no-op: nothing destructive repeats.
@@ -293,12 +304,11 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         pool: runtime.pool().clone(),
     }));
     let plugins = PluginsSetup::build(
+        plugin_host,
         auth.users.clone(),
         http.shared().clone(),
-        config_store.clone(),
         ids.clone(),
         crypto,
-        config.plugins_dir(),
         provider_cache,
         jobs.registry().clone(),
         runtime.pool().clone(),
@@ -309,6 +319,16 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
 
     let mut background = Background::new(config.shutdown_grace);
     let stop = background.stop_signal();
+    // Plugin processes get `shutdown`, then a kill, when the server stops.
+    let plugin_host = plugins.host().clone();
+    let mut plugin_stop = background.stop_signal();
+    background.push(
+        "plugins",
+        tokio::spawn(async move {
+            let _ = plugin_stop.wait_for(|stopping| *stopping).await;
+            plugin_host.stop_all().await;
+        }),
+    );
     // Attribution and scrobble drains: exit once the app drops its queue handles.
     background.push(
         "media-workers",

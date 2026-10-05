@@ -1,38 +1,40 @@
-//! Plugins host plus the ListenBrainz and scrobble settings backend.
+//! Plugins, plus the ListenBrainz and scrobble settings backend.
 //!
-//! The host manages plugin packages the way v2 does: a folder on disk is
-//! inert until its `plugin.toml` validates and an admin enables it. What it
-//! does not do yet is run plugin code. v2 imports Python in-process; v3 has
-//! no execution engine for that, so [`ModuleLoader`](runtime::ModuleLoader)
-//! is the seam where one plugs in: tests and future engines provide the
-//! modules, the host owns discovery, validation, settings, dispatch, and
-//! scheduling around them.
+//! Plugins work like community plugins in the *arr apps: an admin installs
+//! one from a GitHub repository, pinned to an exact commit, and enables it.
+//! Each enabled plugin runs as its own process and talks to the server in
+//! JSON-RPC over stdin and stdout, so a crash or a hang stays inside that
+//! process. Plugins are trusted code, not sandboxed; PLUGINS.md says what
+//! the process limits do and do not cover.
 //!
-//! Tick durability lives in jobs: per-plugin tick state is on the jobs
-//! tick store, loops run under the jobs registry as `plugin-tick:<name>`,
-//! and this module adapts the host to those seams
-//! ([`ticks::HostTickAdapter`], [`ticks::PluginTickLoops`]). Loop mechanics
-//! and store durability are tested with jobs; the journey here proves the
-//! host side: install, enable, tick, and the
-//! persisted state reading back from the jobs store.
+//! One module per concern:
+//! - [`protocol`]: the wire format and method names.
+//! - [`process`]: one plugin as a supervised subprocess.
+//! - [`runtime`]: the transport-neutral seam and the payload types.
+//! - [`manifest`]: `plugin.toml` validation.
+//! - [`host`]: discovery, the running set, plugin-to-host requests.
+//! - [`install`]: install and update from GitHub.
+//! - [`capabilities`]: typed calls per capability, with their budgets and
+//!   fallbacks.
+//! - [`ticks`]: `scheduler` loops and plugin state on the jobs store.
+//! - [`handlers`], [`models`], [`error`]: the HTTP routes.
+//! - [`wiring`]: the `AppState` bundle.
 //!
-//! The scrobble half is the settings backend only: per-user ListenBrainz
-//! links (verify-then-store, token sealed) and scrobble preference reads
-//! and writes. The SQLite stores target the existing baseline tables
-//! (`user_connections` with `service = 'listenbrainz'`, and
-//! `user_listening_prefs`), with memory stores behind the same traits for
-//! tests.
-//!
-//! The `plugins_*` integration tests drive these modules through the
-//! `droppedneedle` crate name, alongside the wired routers.
+//! The scrobble half ([`scrobble`]) is the settings backend only: per-user
+//! ListenBrainz links (verify-then-store, token sealed) and scrobble
+//! preference reads and writes, over the baseline tables.
 
+pub mod capabilities;
 pub mod error;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fakes;
 pub mod handlers;
 pub mod host;
+pub mod install;
 pub mod manifest;
 pub mod models;
+pub mod process;
+pub mod protocol;
 pub mod runtime;
 pub mod scrobble;
 pub mod ticks;

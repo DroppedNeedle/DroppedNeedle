@@ -76,6 +76,7 @@ fn rig_with_sinks(sinks: FakeSinks) -> Rig {
         mixed: MixedDedup::new(),
         clock: Arc::new(clock.clone()),
         ids: Arc::new(FixedIds),
+        events: std::sync::Arc::new(droppedneedle::playback::ports::NoPlayEvents),
     };
     Rig {
         deps,

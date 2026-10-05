@@ -37,7 +37,7 @@ symphonia = { version = "0.6", features = ["aac", "alac", "isomp4", "mp3"] }
 symphonia-adapter-libopus = "0.3"
 thiserror = "2"
 unicode-normalization = "0.1"
-tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.6", features = ["cors"] }
 tracing = "0.1"

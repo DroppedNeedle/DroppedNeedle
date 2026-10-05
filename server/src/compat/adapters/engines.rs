@@ -104,7 +104,9 @@ fn backend_error(fault: StreamFault) -> BackendError {
     }
 }
 
-/// One local open for a lease principal.
+/// One open for a lease principal: the local library first, then, on a
+/// miss, any `streaming_source` plugin that claims the id (v2's plugin
+/// fallback; a plugin can never shadow a local track).
 async fn open<E: StreamEngine>(
     engine: &E,
     lease_user: &str,
@@ -112,17 +114,23 @@ async fn open<E: StreamEngine>(
     params: StreamParams,
     head_only: bool,
 ) -> Result<StreamMedia, StreamFault> {
-    engine
-        .open_stream(
-            StreamOpen {
-                source: AudioSource::Local,
-                key: file_id.to_owned(),
-                user_id: lease_user.to_owned(),
-                params,
-            },
-            head_only,
-        )
+    let request = |source| StreamOpen {
+        source,
+        key: file_id.to_owned(),
+        user_id: lease_user.to_owned(),
+        params: params.clone(),
+    };
+    match engine
+        .open_stream(request(AudioSource::Local), head_only)
         .await
+    {
+        Err(StreamFault::NotFound) => {
+            engine
+                .open_stream(request(AudioSource::Plugin), head_only)
+                .await
+        }
+        other => other,
+    }
 }
 
 /// Engine params for a compat transcode verdict.

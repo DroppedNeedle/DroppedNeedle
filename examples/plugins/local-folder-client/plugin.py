@@ -10,12 +10,12 @@ stays empty - the client discovers the files at enqueue time.
 import shutil
 from pathlib import Path
 
-from models.common import ServiceStatus
-from repositories.protocols.download_client import (
+from droppedneedle_plugin import (
     DownloadMaterialization,
     DownloadTaskStatus,
     EnqueueRequest,
     MountDiagnosis,
+    ServiceStatus,
     TaskHandle,
 )
 
@@ -29,8 +29,9 @@ class LocalFolderClient:
         return (self.ctx.settings.get("source_dir") or "").strip()
 
     def _downloads_dir(self) -> Path:
+        # Without a setting, copies land in the plugin's own data folder.
         raw = (self.ctx.settings.get("downloads_dir") or "").strip()
-        return Path(raw) if raw else Path(".")
+        return Path(raw) if raw else self.ctx.data_dir / "downloads"
 
     @property
     def client_name(self) -> str:

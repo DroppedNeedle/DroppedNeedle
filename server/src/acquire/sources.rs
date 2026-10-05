@@ -175,6 +175,7 @@ impl DownloadSource for SlskdSource {
             filenames: handle.filenames,
             job_name: String::new(),
             nzo_id: String::new(),
+            plugin_token: String::new(),
         })
     }
 
@@ -262,6 +263,7 @@ pub struct SabnzbdSource {
     journal: Arc<Journal>,
     category: Option<String>,
     timeout: Duration,
+    plugins: super::wiring::PluginSlot,
 }
 
 impl SabnzbdSource {
@@ -286,7 +288,49 @@ impl SabnzbdSource {
             journal,
             category,
             timeout,
+            plugins: Default::default(),
         }
+    }
+
+    /// Pool releases from plugin indexers that target `usenet`.
+    pub fn with_plugins(mut self, plugins: super::wiring::PluginSlot) -> Self {
+        self.plugins = plugins;
+        self
+    }
+
+    /// Releases from plugin indexers that target `usenet`, as NZB hits.
+    /// Results without an NZB URL cannot go to SABnzbd and are skipped.
+    async fn plugin_hits(&self, task: &TaskRow) -> Vec<IndexerResult> {
+        let Some(host) = self.plugins.get() else {
+            return Vec::new();
+        };
+        let found = if task.download_type == "track" {
+            host.search_track("usenet", &task.artist_name, &task.album_title, None)
+                .await
+        } else {
+            host.search_album("usenet", &task.artist_name, &task.album_title, None, None)
+                .await
+        };
+        found
+            .into_iter()
+            .filter(|hit| hit.nzb_url.starts_with("https://") || hit.nzb_url.starts_with("http://"))
+            .map(|hit| IndexerResult {
+                source: "usenet".to_owned(),
+                usenet: super::usenet::newznab::UsenetRelease {
+                    indexer_id: "plugin".to_owned(),
+                    indexer_name: "plugin".to_owned(),
+                    guid: hit.payload,
+                    title: hit.title,
+                    nzb_url: hit.nzb_url,
+                    size_bytes: hit.size_bytes.max(0) as u64,
+                    category_ids: Vec::new(),
+                    grabs: None,
+                    files: None,
+                    usenet_date: hit.usenet_date,
+                    password: 0,
+                },
+            })
+            .collect()
     }
 
     /// Search the active side, then gate: an NZB URL is required, a
@@ -320,6 +364,19 @@ impl SabnzbdSource {
                 }
             }
         };
+        // Pool plugin releases after the configured side; the first copy
+        // of a release wins (v2's composite indexer rule).
+        let mut seen = std::collections::HashSet::new();
+        let hits: Vec<IndexerResult> = hits
+            .into_iter()
+            .chain(self.plugin_hits(task).await)
+            .filter(|hit| {
+                seen.insert(super::usenet::newznab::usenet_identity(
+                    &hit.usenet.title,
+                    hit.usenet.size_bytes,
+                ))
+            })
+            .collect();
         let now = now_unix_f64();
         hits.into_iter()
             .filter(|hit| !hit.usenet.nzb_url.is_empty())
@@ -382,6 +439,7 @@ impl DownloadSource for SabnzbdSource {
                     filenames: Vec::new(),
                     job_name,
                     nzo_id,
+                    plugin_token: String::new(),
                 });
             }
             Ok(_) => {}
@@ -431,6 +489,7 @@ impl DownloadSource for SabnzbdSource {
             filenames: Vec::new(),
             job_name: handle.job_name,
             nzo_id: handle.nzo_id,
+            plugin_token: String::new(),
         })
     }
 

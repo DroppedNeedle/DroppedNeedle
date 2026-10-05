@@ -176,8 +176,12 @@ pub struct PluginManifest {
     pub version: String,
     /// Contract version, 0 or 1.
     pub api_version: i64,
-    /// `<module>:<ClassName>` inside the plugin package.
+    /// `<module>:<ClassName>` inside the plugin package, run under the
+    /// Python helper. Empty when `command` is set.
     pub entrypoint: String,
+    /// Program plus arguments that start the plugin, for plugins not
+    /// written in Python. A leading `./` points inside the plugin folder.
+    pub command: Vec<String>,
     /// Declared capability ids.
     pub capabilities: Vec<String>,
     /// Display name (defaults to the name).
@@ -212,6 +216,69 @@ impl PluginManifest {
             .filter(|field| field.secret)
             .map(|field| field.key.clone())
             .collect()
+    }
+
+    /// What enabling this plugin lets it do, in plain words, for the
+    /// install preview. Derived from the manifest alone: it describes what
+    /// the plugin asks for, not what its code will actually do.
+    pub fn permissions(&self) -> Vec<String> {
+        let mut lines = vec![
+            "Runs as its own program on your server, with the same file and network access as the server's user account".to_owned(),
+        ];
+        if self.command.is_empty() {
+            lines.push(format!("Starts with Python: {}", self.entrypoint));
+        } else {
+            lines.push(format!("Starts the program: {}", self.command.join(" ")));
+        }
+        for capability in &self.capabilities {
+            let line = match capability.as_str() {
+                "scrobbler" => "Sees every play that gets scrobbled: artist, track, album and time".to_owned(),
+                "purchase_links" => "Adds buy links to album pages".to_owned(),
+                "download_client" => "Downloads files for requests and hands them to the importer".to_owned(),
+                "indexer" => "Searches for releases when music is requested".to_owned(),
+                "subscriber" => "Sees download, request, import and playback events, including user ids".to_owned(),
+                "publisher" => "Can post notes and search hints back to the server".to_owned(),
+                "metadata_provider" => "Adds biographies, tags, links and images to artist and album pages".to_owned(),
+                "scheduler" => {
+                    let minutes = self
+                        .schedule
+                        .as_ref()
+                        .map(|schedule| schedule.interval_minutes)
+                        .unwrap_or(60);
+                    format!("Runs on its own every {minutes} minutes")
+                }
+                "streaming_source" => "Can serve audio for tracks missing from your library, from a file or a web address".to_owned(),
+                other => format!("Uses the {other} capability"),
+            };
+            lines.push(line);
+        }
+        for route in &self.routes {
+            let who = if route.auth == "admin" {
+                "admins"
+            } else {
+                "any signed-in user"
+            };
+            lines.push(format!(
+                "Answers {} /api/v3/plugins/ext/{}/{} for {who}",
+                route.method, self.name, route.path
+            ));
+        }
+        if !self.ui_entry.is_empty() {
+            lines.push("Shows its own panel in Settings (in a locked-down frame)".to_owned());
+        }
+        if !self.ui_external_url.is_empty() {
+            lines.push(format!(
+                "Links to an outside page: {}",
+                self.ui_external_url
+            ));
+        }
+        let secrets = self.settings.iter().filter(|field| field.secret).count();
+        if secrets > 0 {
+            lines.push(format!(
+                "Receives {secrets} secret setting(s) you enter, such as API keys"
+            ));
+        }
+        lines
     }
 }
 
@@ -568,7 +635,13 @@ pub fn load_manifest(plugin_dir: &Path) -> Result<PluginManifest, ManifestError>
         Ok(bytes) => bytes,
         Err(_) => return Err(ManifestError(format!("{dir_name}: no plugin.toml"))),
     };
-    let text = match String::from_utf8(text) {
+    parse_manifest(&dir_name, &text)
+}
+
+/// Validate manifest bytes. `dir_name` names the plugin in errors when the
+/// manifest has no usable name of its own.
+pub fn parse_manifest(dir_name: &str, text: &[u8]) -> Result<PluginManifest, ManifestError> {
+    let text = match String::from_utf8(text.to_vec()) {
         Ok(text) => text,
         Err(error) => {
             return Err(ManifestError(format!(
@@ -584,7 +657,7 @@ pub fn load_manifest(plugin_dir: &Path) -> Result<PluginManifest, ManifestError>
             )));
         }
     };
-    validate_manifest(&dir_name, &doc)
+    validate_manifest(dir_name, &doc)
 }
 
 fn validate_manifest(dir_name: &str, doc: &RawDoc) -> Result<PluginManifest, ManifestError> {
@@ -648,6 +721,7 @@ fn validate_manifest(dir_name: &str, doc: &RawDoc) -> Result<PluginManifest, Man
                 | "version"
                 | "api_version"
                 | "entrypoint"
+                | "command"
                 | "capabilities"
                 | "display_name"
                 | "description"
@@ -658,8 +732,19 @@ fn validate_manifest(dir_name: &str, doc: &RawDoc) -> Result<PluginManifest, Man
         }
     }
 
+    let command = match plugin.get("command") {
+        None => Vec::new(),
+        Some(RawValue::StrList(items)) if !items.is_empty() && !items[0].trim().is_empty() => {
+            items.clone()
+        }
+        Some(_) => {
+            return Err(fail(format!(
+                "{name}: command must be a non-empty list of strings"
+            )));
+        }
+    };
     let entrypoint = raw_str(plugin, "entrypoint").trim().to_owned();
-    if !entrypoint.contains(':') {
+    if command.is_empty() && !entrypoint.contains(':') {
         return Err(fail(format!(
             "{name}: entrypoint must be '<module>:<ClassName>'"
         )));
@@ -710,6 +795,7 @@ fn validate_manifest(dir_name: &str, doc: &RawDoc) -> Result<PluginManifest, Man
         name,
         api_version,
         entrypoint,
+        command,
         capabilities,
         description: raw_str(plugin, "description"),
         author: raw_str(plugin, "author"),

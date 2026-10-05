@@ -193,6 +193,23 @@ pub struct PlayRecord {
     pub played_at: i64,
 }
 
+/// Listeners for accepted plays (plugins). Called after dedup, the
+/// short-track gate and Navidrome delegation, whatever the user's Last.fm
+/// and ListenBrainz choices are. Must not block: implementations hand the
+/// play off and return.
+pub trait PlayEvents: Send + Sync {
+    /// One play was accepted for `user_id`.
+    fn play_accepted(&self, user_id: &str, report: &ReportTrack, played_at: i64);
+}
+
+/// No listeners.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoPlayEvents;
+
+impl PlayEvents for NoPlayEvents {
+    fn play_accepted(&self, _user_id: &str, _report: &ReportTrack, _played_at: i64) {}
+}
+
 /// Local play-history store. Every accepted play lands here regardless of
 /// external linkage (v2 `PlayHistoryStore` rule).
 pub trait PlayHistory: Send + Sync {
