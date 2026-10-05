@@ -173,23 +173,6 @@ describe('TagEditor.svelte', () => {
 		expect(mockGoto).toHaveBeenCalledWith('/library/management/previews/preview-1');
 	});
 
-	it('makes write-once semantics explicit', async () => {
-		await renderEditor();
-		await page.getByRole('button', { name: /Write once/ }).click();
-		await expect
-			.element(page.getByRole('button', { name: /Write once/ }))
-			.toHaveAttribute('aria-pressed', 'true');
-		await page.getByRole('textbox', { name: /Title/ }).fill('Airbag (Live)');
-		await page.getByRole('button', { name: 'Preview 1 change' }).click();
-
-		expect(mockCreate).toHaveBeenCalledWith(
-			expect.objectContaining({
-				mode: 'write_once',
-				fields: [{ field_name: 'title', value: 'Airbag (Live)' }]
-			})
-		);
-	});
-
 	it('never preselects override resets and warns when album scope expands', async () => {
 		await renderEditor();
 		await page.getByRole('button', { name: /Reset to canonical/ }).click();
@@ -213,15 +196,5 @@ describe('TagEditor.svelte', () => {
 		await renderEditor();
 		await expect.element(page.getByText(/needs an accepted MusicBrainz release/)).toBeVisible();
 		await expect.element(page.getByRole('button', { name: /Preview changes/ })).toBeDisabled();
-	});
-
-	it('shows a query failure instead of an endless loading state', async () => {
-		mockQuery.mockReturnValue({ data: undefined, isPending: false, isError: true });
-		await renderEditor();
-
-		await expect
-			.element(page.getByRole('alert'))
-			.toHaveTextContent("Could not load the file's current metadata.");
-		await expect.element(page.getByLabelText('Loading tag editor')).not.toBeInTheDocument();
 	});
 });

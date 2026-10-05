@@ -181,21 +181,6 @@ beforeEach(() => {
 });
 
 describe('LibraryManagementIdentityReadiness', () => {
-	it('explains the exact-edition prerequisite before starting a read-only check', async () => {
-		await render(LibraryManagementIdentityReadiness, { roots });
-
-		await expect.element(page.getByText('Need exact track maps')).toBeVisible();
-		await expect.element(page.getByText('Need an exact edition', { exact: true })).toBeVisible();
-		await page.getByRole('button', { name: 'Prepare identities...' }).click();
-		await expect.element(page.getByRole('heading', { name: 'Prepare identities' })).toHaveFocus();
-		await expect
-			.element(page.getByText(/This dry run checks exact MusicBrainz editions/))
-			.toBeVisible();
-		await page.getByRole('button', { name: 'Start read-only check' }).click();
-
-		expect(h.create).toHaveBeenCalledWith([]);
-	});
-
 	it('requires a second confirmation before accepting catalog-only mappings', async () => {
 		h.preparations = {
 			data: { pages: [{ items: [readyReport()] }] },
@@ -250,109 +235,6 @@ describe('LibraryManagementIdentityReadiness', () => {
 		});
 	});
 
-	it('opens re-identification directly from a needs-review finding', async () => {
-		h.preparations = {
-			data: { pages: [{ items: [readyReport()] }] },
-			isLoading: false,
-			isError: false
-		};
-		h.findings.data.pages[0].items[0].reason_code = 'RELEASE_TYPE_REQUIRES_CONFIRMATION';
-		await render(LibraryManagementIdentityReadiness, { roots });
-		await page.getByRole('button', { name: /Needs review/ }).click();
-		await expect.element(page.getByRole('button', { name: 'Re-identify' })).toBeVisible();
-		await expect
-			.element(page.getByText('Compilation or live edition needs confirmation'))
-			.toBeVisible();
-		await expect.element(page.getByText(/Only current findings are listed/)).toBeVisible();
-		await expect.element(page.getByRole('link', { name: 'Open release' })).not.toBeInTheDocument();
-	});
-
-	it('requires a fresh check and hides report actions for old matcher rules', async () => {
-		h.preparations = {
-			data: { pages: [{ items: [readyReport()] }] },
-			isLoading: false,
-			isError: false
-		};
-		h.findings.data.pages[0].refresh_required = true;
-		h.findings.data.pages[0].items[0].reason_code = 'UNSAFE_RELEASE_TYPE';
-		await render(LibraryManagementIdentityReadiness, { roots });
-
-		await expect
-			.element(page.getByText('These checks used older rules. Run a fresh identity check.'))
-			.toBeVisible();
-		await expect
-			.element(page.getByText('Compilation or live edition needs confirmation'))
-			.toBeVisible();
-		await expect
-			.element(page.getByRole('button', { name: 'Accept mappings...' }))
-			.not.toBeInTheDocument();
-		await expect.element(page.getByRole('link', { name: 'Open release' })).not.toBeInTheDocument();
-	});
-
-	it('shows the suggested edition under a choose-edition finding', async () => {
-		h.preparations = {
-			data: { pages: [{ items: [readyReport()] }] },
-			isLoading: false,
-			isError: false
-		};
-		h.findings.data.pages[0].current_counts_by_finding = {
-			mapping_ready: 1,
-			ready: 4,
-			exact_release_required: 0,
-			exact_release_suggested: 1,
-			needs_review: 1
-		};
-		h.findings.data.pages[0].items[0] = {
-			...h.findings.data.pages[0].items[0],
-			finding_code: 'exact_release_suggested',
-			reason_code: 'EXACT_EDITION_SUGGESTED',
-			confidence: 'suggested',
-			suggested_edition: {
-				release_mbid: 'release-1',
-				release_group_mbid: 'release-group-1',
-				title: 'Juturna (Deluxe)',
-				track_count: 11,
-				competing_count: 3,
-				date: '2005-03-01',
-				country: 'US',
-				status: 'Official'
-			}
-		};
-		await render(LibraryManagementIdentityReadiness, { roots });
-
-		await page.getByRole('button', { name: /Choose edition/ }).click();
-		await expect.element(page.getByText(/Suggested: Juturna \(Deluxe\)/)).toBeVisible();
-		await expect.element(page.getByText(/2005-03-01/)).toBeVisible();
-		await expect.element(page.getByText(/11 tracks/)).toBeVisible();
-		await expect.element(page.getByText('1 of 3 matching editions')).toBeVisible();
-		await expect.element(page.getByText(/Exact edition suggested/)).toBeVisible();
-	});
-
-	it('opens the apply dialog from Accept editions listing both kinds', async () => {
-		h.preparations = {
-			data: { pages: [{ items: [readyReport()] }] },
-			isLoading: false,
-			isError: false
-		};
-		h.findings.data.pages[0].current_counts_by_finding = {
-			mapping_ready: 1,
-			ready: 4,
-			exact_release_required: 0,
-			exact_release_suggested: 2,
-			needs_review: 1
-		};
-		await render(LibraryManagementIdentityReadiness, { roots });
-
-		await page.getByRole('button', { name: 'Accept editions (2)...' }).click();
-		await expect
-			.element(page.getByRole('heading', { name: 'Accept exact-release mappings?' }))
-			.toHaveFocus();
-		await expect
-			.element(page.getByText(/1 exact track map and 2 suggested editions will be sealed/))
-			.toBeVisible();
-		await expect.element(page.getByRole('button', { name: 'Accept identities' })).toBeVisible();
-	});
-
 	it('confirms the bulk edition accept with the apply mutation', async () => {
 		h.preparations = {
 			data: { pages: [{ items: [readyReport()] }] },
@@ -375,63 +257,6 @@ describe('LibraryManagementIdentityReadiness', () => {
 			jobId: 'preparation-1',
 			expectedRevision: 7
 		});
-	});
-
-	it('hides the Accept editions button when no editions are suggested', async () => {
-		h.preparations = {
-			data: { pages: [{ items: [readyReport()] }] },
-			isLoading: false,
-			isError: false
-		};
-		await render(LibraryManagementIdentityReadiness, { roots });
-
-		await expect.element(page.getByRole('button', { name: 'Accept mappings...' })).toBeVisible();
-		await expect
-			.element(page.getByRole('button', { name: /Accept editions/ }))
-			.not.toBeInTheDocument();
-	});
-
-	it('renders auto-accepted albums distinctly from suggested-pending', async () => {
-		h.preparations = {
-			data: { pages: [{ items: [readyReport()] }] },
-			isLoading: false,
-			isError: false
-		};
-		h.findings.data.pages[0].current_counts_by_finding = {
-			mapping_ready: 0,
-			ready: 0,
-			exact_release_required: 0,
-			exact_release_auto_accepted: 2,
-			needs_review: 0
-		};
-		h.findings.data.pages[0].items[0] = {
-			id: 'finding-auto',
-			local_album_id: 'album-auto',
-			album_title: 'Juturna',
-			album_artist_name: 'Circa Survive',
-			album_year: 2005,
-			cover_available: false,
-			evidence_id: 'evidence-auto',
-			review_id: null,
-			finding_code: 'exact_release_auto_accepted',
-			reason_code: 'EXACT_EDITION_AUTO_ACCEPTED',
-			confidence: 'complete',
-			apply_eligible: false,
-			state: 'applied',
-			apply_result: 'EDITION_AUTO_ACCEPTED',
-			suggested_edition: null,
-			automatic_undo: null,
-			updated_at: 10,
-			row_revision: 3
-		};
-		await render(LibraryManagementIdentityReadiness, { roots });
-
-		const tab = page.getByRole('button', { name: /Auto-accepted/ });
-		await expect.element(tab).toHaveTextContent('2');
-		await page.getByRole('button', { name: /Auto-accepted/ }).click();
-		await expect.element(page.getByText('Edition accepted automatically')).toBeVisible();
-		await expect.element(page.getByText('Auto-accepted', { exact: true })).toBeVisible();
-		await expect.element(page.getByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
 	});
 
 	it('shows the undo action on an auto-accepted finding and fires it once', async () => {

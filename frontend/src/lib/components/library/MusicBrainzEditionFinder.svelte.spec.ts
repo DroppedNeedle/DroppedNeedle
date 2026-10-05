@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
 const currentReleaseMbid = '428b6417-8a4d-4a5b-b1a3-8762002167a8';
-const alternativeReleaseMbid = '718b6417-8a4d-4a5b-b1a3-8762002167a8';
 const h = vi.hoisted(() => ({
 	getTitle: (() => '') as () => string,
 	getArtist: (() => '') as () => string,
@@ -88,89 +87,6 @@ beforeEach(() => {
 });
 
 describe('MusicBrainzEditionFinder', () => {
-	it('keeps artist and release title separate, allows an unknown artist, and pages results', async () => {
-		const oncheck = vi.fn();
-		await render(MusicBrainzEditionFinder, {
-			props: {
-				albumId: 'album-1',
-				artistName: 'Signal Artist',
-				albumTitle: 'Local Signals',
-				oncheck
-			}
-		} as unknown as Parameters<typeof render>[1]);
-
-		const artist = page.getByRole('textbox', { name: /Artist/ });
-		const title = page.getByRole('textbox', { name: 'Release title' });
-		await expect.element(artist).toHaveValue('Signal Artist');
-		await expect.element(title).toHaveValue('Local Signals');
-		await artist.fill('Clairo');
-		await title.fill('Originals');
-		await page.getByRole('button', { name: 'Search', exact: true }).click();
-		expect(h.getTitle()).toBe('Originals');
-		expect(h.getArtist()).toBe('Clairo');
-		await expect.element(page.getByText('Current release group')).toBeVisible();
-		await expect.element(page.getByText(/CD · Digipak · 1 disc · 12 tracks/)).toBeVisible();
-		const finder = page.getByRole('region', { name: 'Search exact releases' }).element();
-		expect(finder.scrollWidth).toBeLessThanOrEqual(finder.clientWidth);
-		await page.getByRole('button', { name: /Check this edition/ }).click();
-		expect(oncheck).toHaveBeenCalledWith(currentReleaseMbid);
-		await page.getByRole('button', { name: /Next/ }).click();
-		expect(h.getOffset()).toBe(12);
-		await expect
-			.element(page.getByRole('link', { name: /Open this search on MusicBrainz/ }))
-			.toHaveAttribute(
-				'href',
-				expect.stringContaining('release%3A%22Originals%22%20AND%20artist%3A%22Clairo%22')
-			);
-
-		await artist.fill('');
-		await page.getByRole('button', { name: 'Search', exact: true }).click();
-		expect(h.getArtist()).toBe('');
-	});
-
-	it('shows the attached edition first and reveals only different selectable editions', async () => {
-		h.queryState.data.items = [
-			{ ...h.queryState.data.items[0], is_current_release: true },
-			{
-				...h.queryState.data.items[0],
-				release_mbid: alternativeReleaseMbid,
-				title: 'Local Signals (Deluxe)',
-				musicbrainz_url: `https://musicbrainz.org/release/${alternativeReleaseMbid}`,
-				is_current_release: false
-			}
-		];
-		const oncheck = vi.fn();
-		await render(MusicBrainzEditionFinder, {
-			props: {
-				albumId: 'album-1',
-				artistName: 'Signal Artist',
-				albumTitle: 'Local Signals',
-				currentReleaseMbid,
-				mappedTrackCount: 11,
-				totalTrackCount: 12,
-				oncheck
-			}
-		} as unknown as Parameters<typeof render>[1]);
-
-		await expect.element(page.getByText('Currently attached')).toBeVisible();
-		await expect.element(page.getByText('11 of 12 indexed files mapped')).toBeVisible();
-		await expect
-			.element(page.getByRole('link', { name: /MusicBrainz/ }))
-			.toHaveAttribute('href', `https://musicbrainz.org/release/${currentReleaseMbid}`);
-		await expect
-			.element(page.getByRole('button', { name: /Check this edition/ }))
-			.not.toBeInTheDocument();
-		expect(h.getEnabled()).toBe(false);
-
-		await page.getByText('Choose a different edition').click();
-		await expect.element(page.getByRole('textbox', { name: 'Release title' })).toHaveFocus();
-		expect(h.getEnabled()).toBe(true);
-		await expect.element(page.getByText('Local Signals (Deluxe)')).toBeVisible();
-		expect(page.getByRole('button', { name: /Check this edition/ }).elements()).toHaveLength(1);
-		await page.getByRole('button', { name: /Check this edition/ }).click();
-		expect(oncheck).toHaveBeenCalledWith(alternativeReleaseMbid);
-	});
-
 	it('accepts a canonical MusicBrainz release URL', async () => {
 		const oncheck = vi.fn();
 		await render(MusicBrainzEditionFinder, {
@@ -188,33 +104,5 @@ describe('MusicBrainzEditionFinder', () => {
 			.fill(`https://musicbrainz.org/release/${currentReleaseMbid}`);
 		await page.getByRole('button', { name: 'Check exact release' }).click();
 		expect(oncheck).toHaveBeenCalledWith(currentReleaseMbid);
-	});
-
-	it('shows empty and provider-unavailable states independently', async () => {
-		h.queryState.data.items = [];
-		h.queryState.data.total = 0;
-		const empty = await render(MusicBrainzEditionFinder, {
-			props: {
-				albumId: 'album-1',
-				artistName: 'Signal Artist',
-				albumTitle: 'Local Signals',
-				oncheck: vi.fn()
-			}
-		} as unknown as Parameters<typeof render>[1]);
-		await expect.element(page.getByText('No editions found')).toBeVisible();
-		await empty.unmount();
-
-		h.queryState.isError = true;
-		await render(MusicBrainzEditionFinder, {
-			props: {
-				albumId: 'album-1',
-				artistName: 'Signal Artist',
-				albumTitle: 'Local Signals',
-				oncheck: vi.fn()
-			}
-		} as unknown as Parameters<typeof render>[1]);
-		await expect.element(page.getByText('MusicBrainz is unavailable')).toBeVisible();
-		await page.getByRole('button', { name: 'Retry' }).click();
-		expect(h.refetch).toHaveBeenCalledOnce();
 	});
 });

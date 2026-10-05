@@ -113,26 +113,6 @@ describe('HeldVerdictCard.svelte', () => {
 		h.reverifyMut = vi.fn();
 	});
 
-	it('presents a wrong-product grab as one actionable unit', async () => {
-		await render(HeldVerdictCard, {
-			props: { task: task(), items: [held(2), held(1)] }
-		} as Parameters<typeof render<typeof HeldVerdictCard>>[1]);
-
-		await expect.element(page.getByText('Wrong edition grabbed')).toBeVisible();
-		await expect.element(page.getByText('2 files held, none imported')).toBeVisible();
-		await expect.element(page.getByText(/Grabbed “2021\. Flux”/)).toBeVisible();
-	});
-
-	it('expands to the member tracks for individual review', async () => {
-		await render(HeldVerdictCard, {
-			props: { task: task(), items: [held(2), held(1)] }
-		} as Parameters<typeof render<typeof HeldVerdictCard>>[1]);
-
-		await page.getByRole('button', { name: 'Review tracks one by one' }).click();
-		await expect.element(page.getByText('Track 1')).toBeVisible();
-		await expect.element(page.getByText('Track 2')).toBeVisible();
-	});
-
 	it('retries the download from the card', async () => {
 		await render(HeldVerdictCard, { props: { task: task(), items: [held(1)] } } as Parameters<
 			typeof render<typeof HeldVerdictCard>

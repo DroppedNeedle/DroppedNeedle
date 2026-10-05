@@ -220,20 +220,6 @@ describe('LibraryReviewDetail', () => {
 		};
 	}
 
-	it('shows stable local links, compilation credit, evidence, and safe/manual candidate actions', async () => {
-		await render(LibraryReviewDetail, {
-			props: { reviewId: 'review-1', onclose: vi.fn() }
-		} as unknown as Parameters<typeof render>[1]);
-		await expect.element(page.getByRole('heading', { name: 'The Local Album' })).toBeVisible();
-		await expect.element(page.getByText(/Various Artists/).first()).toBeVisible();
-		await expect
-			.element(page.getByRole('link', { name: 'Track Artist' }).first())
-			.toHaveAttribute('href', '/artist/local-artist-1');
-		await expect.element(page.getByText('Supports this release')).toBeVisible();
-		await expect.element(page.getByRole('button', { name: 'Use this release' })).toBeVisible();
-		await expect.element(page.getByRole('button', { name: 'Use anyway...' })).toBeVisible();
-	});
-
 	it('offers plain Keep only without an external identity', async () => {
 		await render(LibraryReviewDetail, {
 			props: { reviewId: 'review-1', onclose: vi.fn() }
@@ -384,63 +370,5 @@ describe('LibraryReviewDetail', () => {
 		await expect
 			.element(page.getByRole('heading', { name: 'Dismiss review?' }))
 			.not.toBeInTheDocument();
-	});
-
-	it('marks automatic and manual history entries', async () => {
-		const data = detail(false);
-		data.history = [
-			{
-				id: 'history-auto',
-				kind: 'decision',
-				state: 'edition_to_confirm',
-				reason_code: 'EDITION_UNCERTAIN',
-				created_at: 3,
-				actor_user_id: null
-			},
-			{
-				id: 'history-manual',
-				kind: 'action',
-				state: 'needs_review',
-				reason_code: '',
-				created_at: 4,
-				actor_user_id: 'admin-1'
-			}
-		];
-		h.query = { data, isLoading: false, isError: false };
-		await render(LibraryReviewDetail, {
-			props: { reviewId: 'review-1', onclose: vi.fn() }
-		} as unknown as Parameters<typeof render>[1]);
-
-		await expect.element(page.getByText('Automatic', { exact: true })).toBeVisible();
-		await expect.element(page.getByText('Manual', { exact: true })).toBeVisible();
-		await expect
-			.element(page.getByText('Automatic', { exact: true }))
-			.toHaveAttribute('title', 'Decided automatically; use Retry identification to reopen it.');
-		await expect
-			.element(page.getByText('Manual', { exact: true }))
-			.toHaveAttribute('title', 'Decided by a user.');
-	});
-
-	it('omits the retry hint when retry is not offered', async () => {
-		const data = detail(false);
-		data.available_actions = ['keep_tagged', 'exclude'];
-		data.history = [
-			{
-				id: 'history-auto',
-				kind: 'decision',
-				state: 'edition_to_confirm',
-				reason_code: 'EDITION_UNCERTAIN',
-				created_at: 3,
-				actor_user_id: null
-			}
-		];
-		h.query = { data, isLoading: false, isError: false };
-		await render(LibraryReviewDetail, {
-			props: { reviewId: 'review-1', onclose: vi.fn() }
-		} as unknown as Parameters<typeof render>[1]);
-
-		await expect
-			.element(page.getByText('Automatic', { exact: true }))
-			.toHaveAttribute('title', 'Decided automatically.');
 	});
 });

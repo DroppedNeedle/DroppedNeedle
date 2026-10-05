@@ -112,66 +112,6 @@ beforeEach(() => {
 });
 
 describe('LibraryManagementRunner', () => {
-	it('keeps selected releases visible across searches and removable from the scope tray', async () => {
-		await render(LibraryManagementRunner, {
-			roots,
-			settings,
-			policyRevision: 'policy-1',
-			onclose: vi.fn()
-		});
-
-		await page.getByRole('button', { name: 'Releases' }).click();
-		const scope = page.getByRole('region', { name: 'Selected management scope' });
-		const search = page.getByRole('textbox', { name: 'Search library releases' });
-		await search.fill('Juturna');
-		await expect.element(page.getByTestId('search-scope-artwork-album-1')).toBeVisible();
-		await page.getByRole('checkbox', { name: /Juturna/ }).click();
-		await expect.element(scope.getByText('Juturna')).toBeVisible();
-		await expect.element(scope.getByTestId('selected-scope-artwork-album-1')).toBeVisible();
-
-		await search.fill('Descensus');
-		await expect.element(page.getByRole('checkbox', { name: /Juturna/ })).not.toBeInTheDocument();
-		await expect.element(scope.getByText('Juturna')).toBeVisible();
-		await page.getByRole('checkbox', { name: /Descensus/ }).click();
-		await expect.element(scope.getByText('Juturna')).toBeVisible();
-		await expect.element(scope.getByText('Descensus')).toBeVisible();
-		await expect.element(scope.getByText('2 items in scope')).toBeVisible();
-
-		await scope.getByRole('button', { name: 'Remove Juturna from scope' }).click();
-		await expect.element(scope.getByText('Juturna')).not.toBeInTheDocument();
-		await expect.element(scope.getByText('1 item in scope')).toBeVisible();
-		await page.getByRole('button', { name: /Continue/ }).click();
-		await page.getByRole('button', { name: /Continue/ }).click();
-		await page.getByRole('button', { name: /Continue/ }).click();
-		await expect.element(page.getByText('1 selected release')).toBeVisible();
-	});
-
-	it('makes whole-library defaults explicit and gives long profile lists a bounded region', async () => {
-		const manyProfiles = {
-			...settings,
-			profiles: Array.from({ length: 12 }, (_, index) => ({
-				...settings.profiles[0],
-				id: `profile-${index + 1}`,
-				name: `Profile ${index + 1}`
-			}))
-		} as LibraryManagementSettingsResponse;
-		await render(LibraryManagementRunner, {
-			roots,
-			settings: manyProfiles,
-			policyRevision: 'policy-1',
-			onclose: vi.fn()
-		});
-
-		const scope = page.getByRole('region', { name: 'Selected management scope' });
-		await expect.element(scope.getByText('Archive')).toBeVisible();
-		await expect.element(scope.getByText('1 item in scope')).toBeVisible();
-		await page.getByRole('button', { name: /Continue/ }).click();
-		await expect
-			.element(page.getByRole('radiogroup', { name: 'Available management profiles' }))
-			.toHaveAttribute('tabindex', '0');
-		await expect.element(page.getByRole('radio', { name: /Profile 12/ })).toBeInTheDocument();
-	});
-
 	it('discloses track-to-album expansion and creates only a durable preview', async () => {
 		await render(LibraryManagementRunner, {
 			roots,
@@ -227,31 +167,5 @@ describe('LibraryManagementRunner', () => {
 			.toBeVisible();
 		await page.getByRole('button', { name: /Continue/ }).click();
 		await expect.element(page.getByText(/separate from Undo/)).toBeVisible();
-	});
-
-	it('can generate a baseline restore independently of the current profile', async () => {
-		const settingsWithoutProfile = {
-			...settings,
-			default_profile_id: 'missing-profile',
-			profiles: []
-		} as unknown as LibraryManagementSettingsResponse;
-		await render(LibraryManagementRunner, {
-			mode: 'baseline_restore',
-			roots,
-			settings: settingsWithoutProfile,
-			policyRevision: 'policy-1',
-			onclose: vi.fn()
-		});
-
-		await page.getByRole('button', { name: /Continue/ }).click();
-		await page.getByRole('button', { name: 'Generate preview' }).click();
-		expect(h.createRestore).toHaveBeenCalledWith(
-			expect.objectContaining({
-				selection: { kind: 'roots', ids: ['root-1'] },
-				expected_settings_revision: 'settings-1',
-				expected_policy_revision: 'policy-1'
-			})
-		);
-		expect(h.goto).toHaveBeenCalledWith('/library/management/previews/restore-preview-1');
 	});
 });

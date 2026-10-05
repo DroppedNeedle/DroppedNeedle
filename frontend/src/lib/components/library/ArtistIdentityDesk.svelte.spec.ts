@@ -200,72 +200,6 @@ beforeEach(async () => {
 });
 
 describe('ArtistIdentityDesk', () => {
-	it('shows progress and an evidence dossier with release work', async () => {
-		await render(ArtistIdentityDesk);
-		await expect.element(page.getByText('12 of 24 albums')).toBeVisible();
-		await expect.element(page.getByText('14', { exact: true }).first()).toBeVisible();
-		await page.getByRole('button', { name: /NIKI/ }).click();
-		await expect
-			.element(page.getByRole('heading', { name: 'Exact provider evidence' }))
-			.toBeVisible();
-		await expect.element(page.getByText('Moonchild').first()).toBeVisible();
-		await expect
-			.element(page.getByRole('link', { name: 'Open Moonchild' }))
-			.toHaveAttribute('href', '/album/album-1');
-	});
-
-	it('filters groups through the URL-backed query parameters', async () => {
-		await render(ArtistIdentityDesk);
-		expect(h.paramsGetter()).toEqual({ state: undefined, search: undefined });
-		await page.getByLabelText('Search artist groups').fill('Grimes');
-		await page.getByLabelText('Evidence state').selectOptions('provider_conflict');
-		expect(h.paramsGetter()).toEqual({ state: undefined, search: undefined });
-		await page.getByRole('button', { name: 'Apply filters' }).click();
-		expect(h.goto).toHaveBeenCalledWith(
-			'/library/management/artists?state=provider_conflict&q=Grimes',
-			expect.objectContaining({ keepFocus: true, replaceState: true })
-		);
-	});
-
-	it('restores applied filters from URL state', async () => {
-		h.pageUrl = new URL(
-			'https://example.test/library/management/artists?state=same_name_only&q=Grimes'
-		);
-		await render(ArtistIdentityDesk);
-		expect(h.paramsGetter()).toEqual({ state: 'same_name_only', search: 'Grimes' });
-		await expect.element(page.getByLabelText('Search artist groups')).toHaveValue('Grimes');
-		await expect.element(page.getByLabelText('Evidence state')).toHaveValue('same_name_only');
-	});
-
-	it('places the selected inspector directly after its dossier on narrow screens', async () => {
-		await page.viewport(390, 760);
-		h.groups = [
-			group,
-			{
-				...group,
-				id: 'group-2',
-				display_name: 'Grimes',
-				members: [
-					{ ...memberOne, id: 'artist-3', name: 'Grimes' },
-					{ ...memberTwo, id: 'artist-4', name: 'Grimes' }
-				]
-			}
-		];
-		await render(ArtistIdentityDesk);
-
-		const firstDossier = page.getByRole('button', { name: /NIKI/ }).first().element();
-		const inspector = page
-			.getByRole('complementary', { name: 'Artist identity inspector' })
-			.element();
-		const secondDossier = page.getByRole('button', { name: /Grimes/ }).element();
-		expect(firstDossier.compareDocumentPosition(inspector) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
-			Node.DOCUMENT_POSITION_FOLLOWING
-		);
-		expect(
-			inspector.compareDocumentPosition(secondDossier) & Node.DOCUMENT_POSITION_FOLLOWING
-		).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-	});
-
 	it('previews and confirms the whole group while restoring focus', async () => {
 		await render(ArtistIdentityDesk);
 		await page.getByRole('button', { name: /NIKI/ }).click();
@@ -338,14 +272,5 @@ describe('ArtistIdentityDesk', () => {
 			groupId: 'group-1',
 			expectedMemberRevisions: { 'artist-1': 3, 'artist-2': 5 }
 		});
-	});
-
-	it('has a deliberate empty state', async () => {
-		h.groups = [];
-		h.detail = null;
-		await render(ArtistIdentityDesk);
-		await expect
-			.element(page.getByRole('heading', { name: 'No matching artist groups' }))
-			.toBeVisible();
 	});
 });

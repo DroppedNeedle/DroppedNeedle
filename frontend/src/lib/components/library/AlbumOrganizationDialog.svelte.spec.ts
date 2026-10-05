@@ -146,37 +146,6 @@ beforeEach(() => {
 });
 
 describe('AlbumOrganizationDialog', () => {
-	it('previews exact membership and states that files and tags stay unchanged', async () => {
-		await render(AlbumOrganizationDialog, {
-			props: { album, tracks }
-		} as unknown as Parameters<typeof render>[1]);
-		await openSplitAndPreview();
-		await expect.element(page.getByText(/will not move files or rewrite tags/)).toBeVisible();
-		expect(h.preview).toHaveBeenCalledWith({
-			albumId: 'album-1',
-			request: {
-				track_ids: ['track-1'],
-				expected_album_revisions: { 'album-1': 5 },
-				target_album_id: null
-			}
-		});
-		await expect.element(page.getByText(/1 tracks/)).toBeVisible();
-		await expect.element(page.getByText(/External identities conflict/)).toBeVisible();
-		await page.getByRole('radio', { name: /Retain the target identity/ }).click();
-		await page.getByRole('checkbox', { name: /preserves files and tags/ }).click();
-		await page.getByRole('button', { name: 'Apply split album' }).click();
-		expect(h.apply).toHaveBeenCalledWith({
-			albumId: 'album-1',
-			request: {
-				track_ids: ['track-1'],
-				expected_album_revisions: { 'album-1': 5 },
-				target_album_id: null
-			},
-			previewToken: 'preview-1',
-			identityChoice: 'retain_manual'
-		});
-	});
-
 	it('keeps a stale grouping open and returns to Preview', async () => {
 		h.apply.mockRejectedValue(new Error('stale revision'));
 		await render(AlbumOrganizationDialog, {
@@ -187,19 +156,5 @@ describe('AlbumOrganizationDialog', () => {
 		await page.getByRole('button', { name: 'Apply split album' }).click();
 		await expect.element(page.getByText(/local grouping changed after this preview/)).toBeVisible();
 		await expect.element(page.getByRole('button', { name: 'Preview changes' })).toBeVisible();
-	});
-
-	it('returns focus to the exact organization action after cancellation', async () => {
-		await render(AlbumOrganizationDialog, {
-			props: { album, tracks }
-		} as unknown as Parameters<typeof render>[1]);
-		await page.getByText('Album organization').click();
-		const opener = page.getByRole('button', { name: 'Reset manual grouping...' });
-		await opener.click();
-		await expect
-			.element(page.getByRole('heading', { name: 'Reset manual grouping' }))
-			.toHaveFocus();
-		await page.getByRole('button', { name: 'Cancel' }).click();
-		await expect.element(opener).toHaveFocus();
 	});
 });

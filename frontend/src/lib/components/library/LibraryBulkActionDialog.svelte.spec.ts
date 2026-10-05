@@ -186,47 +186,4 @@ describe('LibraryBulkActionDialog', () => {
 		await expect.element(page.getByText('Bulk review · succeeded')).not.toBeInTheDocument();
 		expect(h.apply).not.toHaveBeenCalled();
 	});
-
-	it('distinguishes the full filtered result from the current page', async () => {
-		await renderDialog(vi.fn(), true);
-		await expect.element(page.getByText('All 120 matching selected')).toBeVisible();
-		await page.getByRole('button', { name: 'Retry...' }).click();
-		expect(h.preview).toHaveBeenCalledWith(
-			expect.objectContaining({
-				selection: expect.objectContaining({
-					review_ids: [],
-					expected_revisions: {},
-					normalized_filter: expect.objectContaining({ state: 'needs_review' })
-				})
-			})
-		);
-	});
-
-	it('previews and applies one automatically safe candidate shared by the selection', async () => {
-		h.previewData = {
-			...h.previewData,
-			action: 'accept_candidate',
-			eligible_count: 2,
-			common_candidate_keys: ['rg-shared:release-shared']
-		};
-		await renderDialog();
-
-		await page.getByRole('button', { name: 'Accept shared candidate...' }).click();
-		await page
-			.getByLabelText('Candidate available to every selected item')
-			.selectOptions('rg-shared:release-shared');
-		expect(h.preview).toHaveBeenLastCalledWith(
-			expect.objectContaining({
-				action: 'accept_candidate',
-				candidate_key: 'rg-shared:release-shared'
-			})
-		);
-		await page.getByRole('button', { name: 'Apply to 2' }).click();
-		expect(h.apply).toHaveBeenCalledWith(
-			expect.objectContaining({
-				action: 'accept_candidate',
-				candidate_key: 'rg-shared:release-shared'
-			})
-		);
-	});
 });

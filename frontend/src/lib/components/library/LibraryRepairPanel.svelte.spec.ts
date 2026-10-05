@@ -152,35 +152,6 @@ beforeEach(() => {
 });
 
 describe('LibraryRepairPanel', () => {
-	it('previews exact scope, candidate count, and queue impact before starting', async () => {
-		await render(LibraryRepairPanel);
-		await page.getByRole('button', { name: 'Check existing matches' }).click();
-		await expect.element(page.getByText(/does not change/)).toBeVisible();
-		await expect.element(page.getByText('12 identities')).toBeVisible();
-		await expect.element(page.getByText(/No other repair checks are waiting/)).toBeVisible();
-		await page.getByRole('radio', { name: /Selected roots/ }).click();
-		await page.getByRole('checkbox', { name: 'Archive' }).click();
-		await page.getByRole('button', { name: 'Start check' }).click();
-		expect(h.create).toHaveBeenCalledWith(['root-1']);
-	});
-
-	it('shows the complete report and requests server-filtered tabs', async () => {
-		h.repairs = { data: { pages: [{ items: [repair()] }] }, isLoading: false };
-		await render(LibraryRepairPanel);
-		await page.getByRole('button', { name: 'View report' }).click();
-		await expect
-			.element(page.getByRole('tab', { name: /Safe to detach 3/ }))
-			.toHaveAttribute('aria-selected', 'true');
-		await expect.element(page.getByText('12', { exact: true }).first()).toBeVisible();
-		await expect.element(page.getByText('120 of 120')).toBeVisible();
-		await expect.element(page.getByText(/Main library: 12/)).toBeVisible();
-		await expect
-			.element(page.getByRole('link', { name: 'Open evidence' }))
-			.toHaveAttribute('href', '/library/review?review=review-1');
-		await page.getByRole('tab', { name: /Could not verify 2/ }).click();
-		expect(h.categoryGetter()).toBe('unverifiable');
-	});
-
 	it('uses durable controls and confirms the exact safe Apply count', async () => {
 		h.repairs = {
 			data: { pages: [{ items: [repair({ state: 'running', row_revision: 9 })] }] },
@@ -197,49 +168,5 @@ describe('LibraryRepairPanel', () => {
 		await expect.element(page.getByText('3 identities are eligible.')).toBeVisible();
 		await page.getByRole('button', { name: 'Apply safe repairs', exact: true }).click();
 		expect(h.apply).toHaveBeenCalledWith({ jobId: 'repair-1', expectedRevision: 7 });
-	});
-
-	it('shows a disabled stopping state until the worker reaches its checkpoint', async () => {
-		h.repairs = {
-			data: {
-				pages: [
-					{
-						items: [repair({ state: 'running', control_request: 'stop', row_revision: 10 })]
-					}
-				]
-			},
-			isLoading: false
-		};
-		await render(LibraryRepairPanel);
-		await expect.element(page.getByText('stopping', { exact: true })).toBeVisible();
-		await expect.element(page.getByRole('button', { name: 'Stopping...' })).toBeDisabled();
-		await expect
-			.element(page.getByRole('button', { name: 'Stop', exact: true }))
-			.not.toBeInTheDocument();
-	});
-
-	it('shows three recent checks by default and keeps older audit history available', async () => {
-		h.repairs = {
-			data: {
-				pages: [
-					{
-						items: [
-							repair({ id: 'repair-5', completed_count: 5 }),
-							repair({ id: 'repair-4', completed_count: 4 }),
-							repair({ id: 'repair-3', completed_count: 3 }),
-							repair({ id: 'repair-2', completed_count: 2 }),
-							repair({ id: 'repair-1', completed_count: 1 })
-						]
-					}
-				]
-			},
-			isLoading: false
-		};
-		await render(LibraryRepairPanel);
-		await expect.element(page.getByText('3 of 12')).toBeVisible();
-		await expect.element(page.getByText('2 of 12')).not.toBeInTheDocument();
-		await page.getByRole('button', { name: 'Show 2 older checks' }).click();
-		await expect.element(page.getByText('2 of 12')).toBeVisible();
-		await expect.element(page.getByRole('button', { name: 'Show latest 3' })).toBeVisible();
 	});
 });

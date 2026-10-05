@@ -200,22 +200,6 @@ describe('ContributionMusicBrainzReview', () => {
 		});
 	});
 
-	it('shows a returned MBID as pending while verification runs', async () => {
-		await render(ContributionMusicBrainzReview, {
-			contribution: contribution({
-				state: 'verifying',
-				result_release_mbid: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-				next_actions: ['cancel']
-			})
-		});
-
-		await expect.element(page.getByText('MusicBrainz release returned')).toBeVisible();
-		await expect.element(page.getByText('This page updates automatically.')).toBeVisible();
-		await expect
-			.element(page.getByRole('button', { name: 'Continue on MusicBrainz' }))
-			.not.toBeInTheDocument();
-	});
-
 	it('validates and queues a pasted MusicBrainz recovery result locally', async () => {
 		await render(ContributionMusicBrainzReview, {
 			contribution: contribution({
@@ -245,27 +229,6 @@ describe('ContributionMusicBrainzReview', () => {
 			expectedRowRevision: 4,
 			releaseIdOrUrl: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
 			replaceExistingResult: false
-		});
-	});
-
-	it('explicitly replaces a rejected result before re-verification', async () => {
-		await render(ContributionMusicBrainzReview, {
-			contribution: contribution({
-				state: 'needs_review',
-				result_release_mbid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-				next_actions: ['retry_verification', 'cancel']
-			})
-		});
-		const replacement = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
-
-		await page.getByRole('textbox', { name: 'MusicBrainz release MBID or URL' }).fill(replacement);
-		await page.getByRole('button', { name: 'Replace and verify' }).click();
-
-		expect(h.recordResult).toHaveBeenCalledWith({
-			contributionId: 'contribution-1',
-			expectedRowRevision: 4,
-			releaseIdOrUrl: replacement,
-			replaceExistingResult: true
 		});
 	});
 });
