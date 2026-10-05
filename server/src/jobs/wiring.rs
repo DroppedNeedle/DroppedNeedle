@@ -26,8 +26,9 @@ use crate::db::{CheckpointService, DurableWorkWakeups, WriteLane};
 use crate::jobs::checkpoint::{self, CheckpointRunner};
 use crate::jobs::events_kick::{self, EventsKick, FnKick, KickOutcome};
 use crate::jobs::events_watcher::{self, EventsWatcher, PollTimeSource, SystemWatchClock};
-use crate::jobs::media::{M3uPlaylistExporter, MediaJobs, RegistryFeed, RemoteSessionPollers};
+use crate::jobs::media::{MediaJobs, RegistryFeed, RemoteSessionPollers};
 use crate::jobs::personal_mix::{self, PersonalMixer};
+use crate::jobs::playlist_export::M3uPlaylistExporter;
 use crate::jobs::playlist_sync::{
     self, PlaylistSyncConfig, PlaylistSyncSettings, PlaylistSyncState, SyncRoles,
 };
