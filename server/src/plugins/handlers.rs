@@ -94,6 +94,7 @@ impl Clone for ScrobbleHttpDeps {
                 verifier: Arc::clone(&self.deps.verifier),
                 mix_hook: Arc::clone(&self.deps.mix_hook),
                 cache_hook: Arc::clone(&self.deps.cache_hook),
+                visibility_hook: Arc::clone(&self.deps.visibility_hook),
             },
             roles: Arc::clone(&self.roles),
             mix_state: Arc::clone(&self.mix_state),

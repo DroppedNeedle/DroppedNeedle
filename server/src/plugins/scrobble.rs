@@ -605,6 +605,23 @@ impl ConnectionChangedHook for NoopConnectionChangedHook {
     fn on_listenbrainz_connection_changed(&self) {}
 }
 
+/// Live presence privacy: a saved `now_playing_visibility` must reach the
+/// now-playing feed at once, not after a restart (v2
+/// `NowPlayingService.set_visibility`). Playback owns the feed; this seam
+/// keeps plugins from depending on it.
+pub trait VisibilityHook: Send + Sync {
+    /// The user saved a visibility value.
+    fn on_visibility_changed(&self, user_id: &str, visibility: &str);
+}
+
+/// No-op hook for builds without a presence feed.
+#[derive(Debug, Default)]
+pub struct NoopVisibilityHook;
+
+impl VisibilityHook for NoopVisibilityHook {
+    fn on_visibility_changed(&self, _user_id: &str, _visibility: &str) {}
+}
+
 /// Reads the standing-grant state for the prefs response
 /// (`none`, `pending`, `approved`, `rejected`, `revoked`). `acquire::requests` owns
 /// the queue; this seam keeps the response complete without depending on
@@ -643,6 +660,8 @@ pub struct ScrobbleDeps {
     pub mix_hook: Arc<dyn MixApprovalHook>,
     /// Link-change hook.
     pub cache_hook: Arc<dyn ConnectionChangedHook>,
+    /// Presence privacy hook.
+    pub visibility_hook: Arc<dyn VisibilityHook>,
 }
 
 impl ScrobbleDeps {
@@ -660,7 +679,14 @@ impl ScrobbleDeps {
             verifier,
             mix_hook,
             cache_hook,
+            visibility_hook: Arc::new(NoopVisibilityHook),
         }
+    }
+
+    /// Route saved visibility changes to the live presence feed.
+    pub fn with_visibility_hook(mut self, hook: Arc<dyn VisibilityHook>) -> Self {
+        self.visibility_hook = hook;
+        self
     }
 }
 
@@ -757,6 +783,10 @@ pub async fn update_prefs(
     }
     let before = deps.prefs.get(user_id).await;
     deps.prefs.upsert(user_id, patch).await;
+    if let Some(visibility) = &patch.now_playing_visibility {
+        deps.visibility_hook
+            .on_visibility_changed(user_id, visibility);
+    }
     if let Some(enabled) = patch.auto_request_personal_mix
         && enabled != before.auto_request_personal_mix
     {

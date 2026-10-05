@@ -433,3 +433,46 @@ async fn sqlite_links_round_trip_sealed_and_survive_reopen() {
     assert!(!store.delete("user-1").await);
     runtime.shutdown().await;
 }
+
+/// Privacy: a user who sets their now-playing visibility to offline drops
+/// out of the live feed at once, not after a restart.
+#[tokio::test]
+async fn saved_visibility_reaches_the_live_presence_feed() {
+    use droppedneedle::playback::services::{PresenceRegistry, PresenceUpdate};
+    use droppedneedle::plugins::scrobble::update_prefs;
+
+    let registry = PresenceRegistry::new();
+    let deps = rig().deps.with_visibility_hook(Arc::new(registry.clone()));
+    registry.update(
+        PresenceUpdate {
+            key: "user-1:web".to_owned(),
+            user_id: Some("user-1".to_owned()),
+            user_name: "Melody".to_owned(),
+            source: "local".to_owned(),
+            device_name: "Web".to_owned(),
+            track_name: "Roads".to_owned(),
+            artist_name: "Portishead".to_owned(),
+            album_name: None,
+            cover_url: String::new(),
+            is_paused: false,
+            progress_ms: None,
+            duration_ms: None,
+            track_file_id: None,
+        },
+        1_790_000_000,
+        |_| Ok("full".to_owned()),
+    );
+    assert_eq!(registry.snapshot().len(), 1);
+    update_prefs(
+        &deps,
+        "user-1",
+        "user",
+        &ScrobblePrefsPatch {
+            now_playing_visibility: Some("offline".to_owned()),
+            ..ScrobblePrefsPatch::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert!(registry.snapshot().is_empty(), "offline hides the session");
+}

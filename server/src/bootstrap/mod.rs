@@ -295,7 +295,8 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         jobs.registry().clone(),
         runtime.pool().clone(),
         runtime.lane().clone(),
-    );
+    )
+    .with_presence(Arc::new(media.playback.presence.clone()));
     plugins.sync_ticks().await;
 
     let mut background = Background::new(config.shutdown_grace);

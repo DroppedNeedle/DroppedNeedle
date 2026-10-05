@@ -333,6 +333,13 @@ impl PluginsSetup {
         }
     }
 
+    /// Send saved `now_playing_visibility` changes to the live presence
+    /// feed so a user going offline or hiding the track disappears at once.
+    pub fn with_presence(mut self, hook: Arc<dyn super::scrobble::VisibilityHook>) -> Self {
+        self.scrobble.deps.visibility_hook = hook;
+        self
+    }
+
     /// The plugin host, for dispatches outside the route layer.
     pub fn host(&self) -> &Arc<PluginHost> {
         &self.host
