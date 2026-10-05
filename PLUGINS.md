@@ -1,507 +1,524 @@
-# DroppedNeedle Plugin API
+# DroppedNeedle plugins
 
-> **Status: STABLE** (`api_version = 1`). Plugins written for `api_version = 0`
-> keep working exactly as before (see table). Pin your plugin to the api_version
-> it was written for; the host refuses manifests it doesn't speak, naming the
-> versions it does.
+Plugins add things DroppedNeedle does not do on its own: another place to
+download from, a webhook for every play, buy links on album pages, a bit of
+extra metadata. They work much like community plugins in Lidarr: someone
+publishes a plugin in a GitHub repository, you paste the URL, and DroppedNeedle
+installs it.
 
-| `api_version` | State | May declare |
-| --- | --- | --- |
-| `0` | frozen, loads byte-identically (v0 reserved ids `metadata_provider` / `streaming_source` still log-and-skip) | `scrobbler`, `purchase_links` (+ v0 reserved skip-set) |
-| `1` | current | all v0 ids + `download_client`, `indexer`, `subscriber`, `publisher`, `metadata_provider`, `scheduler`, `streaming_source` (+ `[[route]]`, `[schedule]`, `[plugin_ui]` tables) |
+This page is the reference: how plugins run, what they can do, the manifest,
+and the protocol. If you want to write one, start with
+[docs/PLUGIN-CREATION.md](docs/PLUGIN-CREATION.md).
 
-Host accepts `SUPPORTED_API_VERSIONS = (0, 1)`; anything else (e.g. `api_version = 2`)
-fails load with an error naming both accepted versions.
+## Read this first: plugins are trusted code
 
-DroppedNeedle loads plugins from the `plugins/` directory in its data folder,
-alongside `config/` and `cache/` - one folder per plugin. Under Docker that is
-`/app/plugins`, which is not mounted by default: add the volume, or every plugin
-you install disappears when the container is recreated. Nothing is bundled, and
-there is no plugin registry: what you install is between you and the plugin's
-author.
+**Only install plugins you trust.** A plugin is a program that runs on your
+server. It is not sandboxed. Once you enable it, it can read and write files
+and reach the network just like DroppedNeedle itself can.
 
-## Trust model - read this first
+What DroppedNeedle does to keep a plugin in its lane:
 
-A plugin is Python running **in-process with the full privileges of your
-DroppedNeedle server**. There is no sandbox. Two rules follow:
+- **Nothing runs until you say so.** Installing a plugin, or copying a folder
+  into the plugins directory, only stores files. A plugin starts when an admin
+  enables it in Settings > Plugins.
+- **Installs are pinned.** DroppedNeedle installs an exact commit and records
+  it. The install screen shows that commit, the plugin's version, and what it
+  asks to do, before anything is written. If the repository changes between
+  the preview and the install, the install stops and asks you to look again.
+- **Each plugin is its own process.** If it crashes, only that plugin stops;
+  DroppedNeedle restarts it after a short wait (1 second, doubling up to 5
+  minutes). If it hangs, its calls time out and the rest of the server
+  carries on; three timeouts in a row restart it.
+- **It gets a clean environment.** The plugin process does not inherit the
+  server's environment variables, so no secrets from there. Its working
+  directory and `HOME` are its own data folder. DroppedNeedle never tells it
+  where the config and database folders are.
+- **Memory is capped.** Each plugin process can use at most 1 GiB of address
+  space, and it cannot dump core or gain privileges.
+- **Calls have time limits** (listed per capability below).
 
-1. Only install plugins whose code you have read or whose author you trust.
-2. Dropping a folder into the plugins directory runs **no code**. A plugin is
-   inert until an admin explicitly enables it in **Settings > Plugins**.
+What this does **not** do: it does not stop a plugin that goes looking for
+your files. The plugin runs as the same user as the server, so if it knows
+where `/app/config` is, it can read it. Treat a plugin like any other program
+you would run on your server: read the code, or trust the author.
 
-A download-client plugin holds the same power as the download-client settings it
-parallels: once enabled, it can enqueue downloads and expose files for import with
-your server's privileges. The enable gate is the control — read the code before
-you enable it.
+The protocol does not depend on processes, so a sandboxed mode (WebAssembly)
+can be added later without changing plugins.
 
-A streaming plugin can make the server fetch and serve bytes, with the same
-admin-enable gate as download clients (§3.4).
+## Installing a plugin
 
-Residual risk, stated honestly: per-call timeouts fire only at await points — a
-plugin doing sync/blocking work (file I/O, parsing, crypto) past a timeout still
-degrades the whole server until it yields. The host logs per-call durations and
-surfaces overruns in plugin health; plugin authors must run blocking work in
-`asyncio.to_thread` and never block the event loop.
+### From GitHub
 
-`secret = true` fields are encrypted at rest, masked on every read and over RPC
-(including the panel `get_settings` RPC payload — plaintext never appears in
-`config.json` dumps or RPC), and saves use a sentinel (sending the mask back
-keeps the stored value; only a changed value rewrites it). Reads return the
-`plugin****` mask when a value exists.
+In **Settings > Plugins**, paste the repository URL and press **Preview**.
 
-Plugins load when the server starts, and reload whenever an admin saves any
-plugin in Settings > Plugins. If you edit a plugin's code on disk, save it in
-Settings (or restart) before the change takes effect.
+- `https://github.com/owner/repo` installs the latest release. If the
+  repository has no releases, it installs the default branch as it is now.
+- `https://github.com/owner/repo/releases/tag/v1.2.0` installs that release.
+- `https://github.com/owner/repo/tree/some-branch` installs that branch (or
+  tag) as it is now.
+- `https://github.com/owner/repo/commit/<sha>` installs that commit.
 
-## Anatomy of a plugin
+The preview lists the plugin's name, version, author, the exact commit, and
+what the plugin asks to do. Press **Install** to write it. The plugin arrives
+disabled; enable it, fill in its settings, and save.
+
+To update later, press **Update** on the plugin. A plugin installed from
+releases moves to the newest release. One pinned to a tag, branch or commit
+stays where it is unless you give it a new version. Updating keeps your
+settings and the plugin's data.
+
+### By hand
+
+Copy the plugin folder into the plugins directory and reload Settings >
+Plugins:
+
+```bash
+cp -r examples/plugins/webhook-scrobbler /path/to/app/plugins/
+```
+
+Under Docker the plugins directory is `/app/plugins`. **Mount it as a
+volume**, or installed plugins disappear when the container is recreated.
+
+### Removing
+
+**Remove** deletes the plugin's code. Its settings stay in the config and its
+data folder stays on disk, so reinstalling picks up where you left off.
+
+## What a plugin needs
+
+The Docker image includes `python3`, so plugins written in Python work out of
+the box. If you build the image with `--build-arg PLUGIN_PYTHON=0`, Python is
+left out and only plugins that ship their own program (see `command` below)
+will run. Outside Docker, `python3` (3.9 or newer; the examples use 3.11) must
+be on the server's `PATH`.
+
+Python plugins need nothing else installed. DroppedNeedle ships a small helper
+module, `droppedneedle_plugin`, and puts it on the plugin's import path.
+
+## Where things live
 
 ```
-my-plugin/
-├── plugin.toml     # the manifest - validated before any import happens
-└── plugin.py       # your entrypoint module
+plugins/
+  my-plugin/          the plugin's code (plugin.toml at the root)
+  .data/my-plugin/    the plugin's own folder: working directory and HOME
+  .sdk/python/        the Python helper, written by the server at start
 ```
 
-### plugin.toml
+Folders starting with `.` or `_` are never treated as plugins.
+
+## The manifest: plugin.toml
+
+Every plugin has a `plugin.toml` at the root of its folder. DroppedNeedle
+checks it before running anything; a typo in a key is an error, never
+silently ignored.
 
 ```toml
 [plugin]
-name = "my-plugin"            # unique id: lowercase kebab-case in v1
-display_name = "My Plugin"
+name = "acme-music"                 # lowercase letters, digits and dashes, up to 32
+display_name = "Acme Music"
 version = "1.0.0"
 api_version = 1
-entrypoint = "plugin:MyPlugin"   # <module>:<ClassName>
-capabilities = ["scrobbler"]
+entrypoint = "plugin:AcmeMusic"     # <python module>:<class>
+capabilities = ["download_client", "indexer", "scheduler"]
 description = "One line about what it does."
 author = "you"
 homepage = "https://acme-music.test"
+# command = ["./bin/acme-plugin"]   # instead of entrypoint, for non-Python plugins
 
-[[settings]]                   # optional, repeatable: admin-editable fields
-key = "webhook_url"
-label = "Webhook URL"
-help = "Shown under the field in Settings."
-secret = false                 # true = encrypted at rest, masked, sentinel saves
-```
+[[settings]]                        # one per setting the admin fills in
+key = "api_key"
+label = "API key"
+help = "Shown under the field."
+secret = true                       # encrypted at rest, masked on screen
 
-### Manifest reference (v1 tables)
-
-```toml
-[plugin]
-name = "acme-music"              # source key becomes plugin:acme-music (the manifest
-                                 # `source` field below is a display alias only)
-api_version = 1
-entrypoint = "plugin:AcmeMusic"
-capabilities = ["download_client", "indexer", "subscriber", "publisher", "scheduler"]
-
-[[capability]]                   # per-capability config; every id must also be in `capabilities`
+[[capability]]                      # extra detail for some capabilities
 id = "download_client"
-source = "acme-music"            # display alias only, ^[a-z0-9][a-z0-9-]{0,31}$
 display_name = "Acme Music"
 
 [[capability]]
 id = "indexer"
-target_source = "plugin:acme-music"   # "usenet" OR a plugin source key (own or another plugin's)
+target_source = "plugin:acme-music" # or "usenet", or another plugin's key
 
-[schedule]                       # required iff `scheduler` is declared
-interval_minutes = 60            # int in [5, 1440]
+[schedule]                          # required with "scheduler"
+interval_minutes = 60               # 5 to 1440
 run_on_load = false
 
-[[route]]                        # requires api_version = 1 AND the `publisher` capability
-path = "lookup"                  # ^[a-z0-9][a-z0-9/_-]{0,63}$, relative only
-method = "GET"                   # GET|POST|DELETE
-auth = "user"                    # admin|user, deny-by-default
-rate_limit_per_minute = 60       # default 60, max 600
+[[route]]                           # needs the "publisher" capability
+path = "lookup"                     # served at /api/v3/plugins/ext/acme-music/lookup
+method = "GET"                      # GET, POST or DELETE
+auth = "user"                       # "admin" (default) or "user"
+rate_limit_per_minute = 60          # 1 to 600
 
-[plugin_ui]                      # requires api_version = 1; entry/pages XOR external_url
-entry = "ui/dist/panel.js"       # prebuilt JS inside the plugin dir (no .., absolute, or http(s))
-pages = ["panel"]                # v1 single page id allowlist; >1 fails load
-# external_url = "https://acme-music.test/setup"   # alternative to entry/pages (https; http loopback-only)
+[plugin_ui]                         # optional settings panel
+entry = "ui/dist/panel.js"          # a script inside the plugin folder
+pages = ["panel"]
+# external_url = "https://acme-music.test/setup"   # or a link instead
 ```
 
-Strict rule: unknown keys in any table fail load loudly — a typo'd `soruce`
-is a ManifestError, never a silent default. `[[route]]` on a manifest without
-`publisher`, or `[plugin_ui]` / `[[route]]` / `[schedule]` on `api_version = 0`, fails load.
-`[[settings]]` shape is unchanged (`key`, `label`, `help`, `secret`); `secret = true`
-follows the mask-sentinel contract above.
+`api_version = 0` is the older, frozen contract: only `scrobbler` and
+`purchase_links`, no `[schedule]`, `[[route]]` or `[plugin_ui]`. Manifests
+from DroppedNeedle v2 load unchanged.
 
-One plugin, one source key: `plugin:<manifest-name>`. A plugin declaring both
-`download_client` and `indexer` is one complete source. An indexer-only plugin
-with `target_source = "usenet"` feeds the existing SABnzbd pipeline; any other
-`target_source` pins the client that enqueues its results, including cross-plugin
-pairing (resolved deterministically by plugin-name sort). `display_name`
-overrides the card label in Settings and the queue. `source` is a display alias
-only and must also match `^[a-z0-9][a-z0-9-]{0,31}$`.
+### Settings
 
-### The entrypoint class
+Settings are what the admin types into the plugin's card. The plugin gets the
+current values when it starts and again every time they are saved, secrets
+decrypted. Secret values are encrypted in the config file and shown as
+`plugin****`; saving the mask back keeps the stored value.
 
-Your class is constructed once as `MyPlugin(context)`. The `context` provides:
+### Running something other than Python
 
-- `context.settings` - a live mapping of the admin's saved values for your
-  declared settings fields (re-read on every access; saves apply instantly).
-- `context.http` - a shared `httpx.AsyncClient` owned by the host (timeouts
-  and the app User-Agent are managed for you). **Do not build your own client.**
-  Per-request `timeout=` overrides on the shared client cover large transfers.
-- `context.logger` - a logger namespaced to your plugin.
-- `context.scoring` - opt-in `album_match` / `track_match` helper reusing the
-  app's token-matching pipeline (see `indexer`).
-- `ctx.publish(kind, payload)` - bound publisher API for plugins declaring the
-  `publisher` capability (see `publisher`).
-
-All capability methods are `async`. The host catches exceptions, logs them against your
-plugin, and keeps running the flow that called you. A caught exception means
-your plugin did nothing, so log generously.
-
-Your type hints and the objects you return come from
-`infrastructure.plugins.protocols`: the single documented import surface,
-which re-exports the boundary types (`DownloadClientProtocol`,
-`EnqueueRequest`, `TaskHandle`, `IndexerProtocol`, `IndexerResult`,
-`PluginSearchResult`, and the rest). A plugin runs in-process, so you can
-import them directly:
-
-```python
-from infrastructure.plugins.protocols import PluginPurchaseLink
-```
-
-That import couples your plugin to the host's internals, which is exactly what
-`api_version` tracks. When it changes, expect these types to move with it.
+Set `command` to the program and its arguments. A first entry starting with
+`./` points inside the plugin folder (files under `bin/` and files starting
+with `#!` are made executable on install). The program must speak the
+protocol below on stdin and stdout, and exit when stdin closes.
 
 ## Capabilities
 
-### `scrobbler`
+A plugin declares what it does in `capabilities`. With the Python helper, each
+capability is one or more methods on the plugin class, with the same names
+and arguments as in DroppedNeedle v2. Methods may be `async` or plain
+functions. Anything a method raises is logged against the plugin and the
+server carries on as if the plugin had said nothing.
+
+| Capability | Methods | Time limit | When a plugin fails |
+|---|---|---|---|
+| `scrobbler` | `on_scrobble(event)` | 10 s | the play is still recorded |
+| `purchase_links` | `purchase_links(artist, album, release_group_mbid)` | 10 s | no links from it |
+| `subscriber` | `on_event(event)` | 5 s | that event is skipped |
+| `publisher` | `handle_route(method, subpath, query, body)` for `[[route]]`s; `await ctx.publish(kind, payload)` | 5 s | the route answers 502 |
+| `metadata_provider` | `enrich_artist(...)`, `enrich_album(...)` | 15 s | nothing is filled in |
+| `scheduler` | `on_tick()` | the interval | the next tick runs as normal |
+| `streaming_source` | `resolve_stream(recording_mbid, user_id)` | 5 s | the next plugin is asked |
+| `indexer` | `search_album(...)`, `search_track(...)` | 35 s | no results from it |
+| `download_client` | `enqueue`, `get_status`, `inspect_materialization`, `discard_client_artifacts`, `abort` | 120 s enqueue, 30 s others | the download fails over |
+
+Every plugin may also have `is_configured()` and `health_check()`; they feed
+the plugin's health in Settings and the source list.
+
+### scrobbler
+
+`on_scrobble(event)` runs once per accepted play, after duplicates, very short
+tracks and Navidrome-handled plays are filtered out. `event` has `artist`,
+`track`, `album`, `timestamp`, `duration_ms` and `recording_mbid`. It runs in
+the background; the player never waits for it.
+
+Example: `examples/plugins/webhook-scrobbler`.
+
+### purchase_links
+
+`purchase_links(artist, album, release_group_mbid)` returns a list of
+`PluginPurchaseLink(label, url, kind)`, where `kind` is `digital`, `physical`
+or `free`. Links must be `http` or `https`. Duplicates (same URL) are dropped,
+and the album page orders links by its own rules: a plugin cannot put itself
+first. At most 20 links per plugin.
+
+Example: `examples/plugins/metadata-joke-toy`.
+
+### subscriber
+
+`on_event(event)` receives `event.kind` and `event.payload` (a dict you can
+also read with dots, like `event.payload.task_id`):
+
+| Kind | Payload |
+|---|---|
+| `scrobble` | `artist`, `track`, `album`, `timestamp`, `duration_ms`, `recording_mbid` |
+| `playback_started` | `artist`, `track`, `album`, `user_id` |
+| `download_started`, `download_completed`, `download_failed` | `task_id`, `user_id`, `release_group_mbid`, `source`, `outcome` |
+| `request_created`, `request_fulfilled` | `request_id`, `user_id`, `release_group_mbid`, `status` |
+| `import_finished` | `release_group_mbid`, `track_count`, `source` |
+| `plugin_notice` | `source_plugin`, `title`, `body` |
+
+Each plugin handles one event at a time. An event that arrives while the
+plugin is still busy with the last one is skipped and counted in the plugin's
+health as a dropped event. Events never wait on plugins.
+
+`scrobble` and `playback_started` fire together, where scrobbling happens, so
+very short tracks and Navidrome-handled plays raise neither.
+
+### publisher
+
+Two things come with `publisher`:
+
+**Routes.** Each `[[route]]` is served at
+`/api/v3/plugins/ext/<plugin>/<path>` and calls
+`handle_route(method, subpath, query, body)`, which returns
+`PluginRouteResponse(status, body)`. DroppedNeedle checks the session and
+role first (`auth = "admin"` refuses other users with 403), applies the
+per-user rate limit (429 with `Retry-After`), and refuses request bodies over
+1 MiB (413). Only statuses 200-299, 400 and 404 pass through; 500-599 become
+502 and anything else becomes 200, so a plugin cannot redirect people through
+your server. Answers over 1 MiB, and any failure, become a plain 502; the
+plugin's error text never reaches the browser. An undeclared path or a
+disabled plugin is 404.
+
+**Publishing.** `await ctx.publish(kind, payload)` sends one of three hints:
+
+| Kind | Fields | What happens |
+|---|---|---|
+| `plugin_notice` | `title`, `body` | sent to every subscriber as a `plugin_notice` event |
+| `download_note` | `task_id`, `note` (up to 1 KiB) | written to the server log against that download |
+| `indexer_invalidate` | `target_source` | written to the server log; the next search asks the plugin again anyway |
+
+The result has `ok`, `status`, `retry_after` and `error`. Limits: 30
+publishes a minute per plugin (429 after that), unknown fields are refused
+(422), and a plugin that is handling a `plugin_notice` cannot publish again
+(409), so two plugins cannot bounce notices between them forever. The same
+event never reaches the same plugin twice.
+
+Example: `examples/plugins/events-echo-toy`.
+
+### metadata_provider
+
+`enrich_artist(*, artist_name, mbid=None, timeout=...)` and
+`enrich_album(*, artist_name, album_title, mbid=None, timeout=...)` return a
+`PluginArtistEnrichment` / `PluginAlbumEnrichment` (`biography`, `links`,
+`tags`, `image_urls`) or `None` for "not mine". Plugins only fill gaps:
+
+| Field | Already known from MusicBrainz, Wikidata and friends | Missing |
+|---|---|---|
+| biography | kept | the first plugin biography |
+| links, tags | kept, plugin entries added after | plugin entries |
+| image | kept | the first plugin image URL |
+
+Example: `examples/plugins/metadata-joke-toy`.
+
+### scheduler
+
+`on_tick()` runs every `interval_minutes` (at least 5). One tick at a time per
+plugin; a tick still running when the next is due is cancelled; a failed tick
+is logged and the next one runs as normal; missed ticks are not made up. With
+`run_on_load = true` the first tick runs right after the plugin starts.
+
+For state that should survive restarts, use `await ctx.state_set(key, value)`
+and `await ctx.state_get(key)`: small strings (up to 1 MiB each) that the
+server keeps in its database for you. Files in `ctx.data_dir` also survive.
+
+Example: `examples/plugins/http-catalog`.
+
+### streaming_source
+
+`resolve_stream(recording_mbid, user_id)` returns
+`PluginStreamRef(path=..., url=..., content_type=..., duration_seconds=...)`
+with exactly one of `path` or `url`, or `None` for "not mine". The plugin
+gets the signed-in user's id, never their password or token.
+
+Your own library always wins: plugins are only asked when the library does
+not have the track. They are asked in name order and the first answer wins.
+Before anything is served, DroppedNeedle checks the answer:
+
+- A `path` (relative paths are inside the plugin folder) must resolve, after
+  symlinks, to a file inside the plugin folder, the folder in the plugin's
+  `downloads_dir` setting if it has one, or a library folder. It is then
+  served like a library file, with seeking and transcoding.
+- A `url` must be `http` or `https`, and the host must resolve to public
+  addresses only: no `localhost`, private networks, link-local or similar.
+  The server checks the address it actually connects to and up to three
+  redirects, each checked again. The audio is passed through as-is, without
+  seeking or transcoding.
+
+Plugin streams are reachable through Subsonic and Jellyfin clients (when the
+library misses) and at `/api/v3/stream/plugin/<recording mbid>`.
+
+Example: `examples/plugins/stream-toy`.
+
+### indexer and download_client
+
+A plugin with `download_client` is a download source with the key
+`plugin:<name>`. It shows up in the source list and in the source priority
+setting; sources not listed there are tried after the listed ones.
+
+An `indexer` searches for releases. Its results go to the source named in
+`target_source`: its own client (the default when it also has
+`download_client`), another plugin's client (`plugin:other-name`), or
+`usenet`, where results that carry an `nzb_url` join the SABnzbd pipeline
+next to your Newznab or Prowlarr results.
+
+Search methods return a list of `IndexerResult(source, plugin=PluginSearchResult(...))`
+(or bare `PluginSearchResult`s):
 
 ```python
-async def on_scrobble(self, event) -> None: ...
+PluginSearchResult(
+    title="Artist - Album",
+    size_bytes=0,
+    score=0.9,            # your confidence, 0 to 1
+    quality_tier="",      # lossless, mp3_320, mp3_256, mp3_192, low, or ""
+    files=[],             # exact files (files mode), or empty (folder mode)
+    payload="",           # anything; handed back to your client at enqueue
+    nzb_url="",           # for indexers that feed "usenet"
+)
 ```
 
-Called once per accepted play (already deduplicated). `event` has `artist`,
-`track`, `album`, `timestamp`, `duration_ms`, `recording_mbid`. Dispatch is
-fire-and-forget: take your time, you can't slow the player down.
+You rank your source; DroppedNeedle applies its rules on top, the same as
+for every other source: quarantined releases, ignored and required terms, the
+size limit and the quality range drop results. A score of 0.70 or more
+downloads automatically; 0.50 to 0.70 is kept back for a person to pick;
+lower is dropped. When a download fails, the next result is tried.
 
-Reference: [`examples/plugins/webhook-scrobbler`](examples/plugins/webhook-scrobbler).
+The client then gets `enqueue(request)` with `task_id`, `source`, `files`,
+`payload`, `job_name` and `download_type`, and returns a `TaskHandle`. Every
+later call (`get_status`, `inspect_materialization`, `discard_client_artifacts`,
+`abort`) gets that handle back, with `plugin_token` set to the result's
+`payload`. `get_status` returns a `DownloadTaskStatus` (`status` is `queued`,
+`downloading`, `completed` or `failed`); `inspect_materialization` returns a
+`DownloadMaterialization` with the finished files in `file_paths`.
 
-### `purchase_links`
+Files mode (non-empty `files`) means the client fetches exactly those files.
+Folder mode (empty `files`) means the client works out the files itself and
+reports them when done.
 
-```python
-async def purchase_links(self, artist, album, release_group_mbid) -> list[PluginPurchaseLink]: ...
-```
+Examples: `examples/plugins/http-catalog` (files mode),
+`examples/plugins/local-folder-client` with `local-folder-indexer` (folder
+mode, two plugins paired).
 
-Contribute links to the album page's "Where to buy" section. Return
-`PluginPurchaseLink(label=..., url=..., kind='digital'|'physical'|'free')`.
-Links are deduplicated by URL and ordered by the app's store-fairness rules -
-plugins cannot influence ordering. You have a 10-second budget per album.
+### Settings panel
 
-### `download_client`
+With `[plugin_ui] entry`, the admin's plugin card shows the plugin's own
+script in a locked-down frame: no access to the page, its cookies or the
+network. It can talk to the page only through `postMessage`, with four
+read-only requests: `sources.list`, `search.preview`, `get_settings` (its own,
+secrets masked) and `health.get` (its own). The script is served to admins
+only, from inside the plugin folder. `external_url` shows a link instead.
 
-Implements `DownloadClientProtocol` directly (imported from
-`infrastructure.plugins.protocols`). The host wraps your instance in an
-adapter before handing it to the acquisition engine.
+## The Python helper
 
-- `client_name` — ignored; the adapter forces `plugin:<manifest-name>` (no spoofing).
-- `is_configured()` — `False` on error; gates source enablement and readiness.
-- `health_check()` — errors map to `ServiceStatus.error`; best-effort, never fails listings.
-- `enqueue(request)` — failures raise engine-understood failures; `request.payload`
-  carries the plugin's opaque correlation token (see below). Per-request `timeout=`
-  overrides on the shared client for large transfers — never build your own client.
-- `get_status(handle)` / `abort(handle)` — `handle.plugin_token` reattaches the
-  correlation id stored at enqueue.
-- `inspect_materialization` / `discard_client_artifacts` — safe empty shapes on error.
-- `list_completed_files(handle)` — `[]` on error (absence, not failure).
-- `get_file_path(handle, remote_filename, size=None)` — `None` on error.
-- `diagnose_downloads_mount()` — `MountDiagnosis(supported=False)` on error.
+`droppedneedle_plugin` gives the plugin class one argument, the context:
 
-Correlation: `IndexerResult.plugin.payload` (opaque `str`) is handed back
-verbatim as `EnqueueRequest.payload`; the adapter stores it against `task_id` in memory and
-reattaches it as `TaskHandle.plugin_token` for status/abort/file calls.
+- `ctx.settings`: the saved settings, a dict updated in place when they change.
+- `ctx.http`: an async HTTP client with `get`, `post`, `put`, `delete`,
+  `head` (taking `params`, `headers`, `json`, `data`, `content`, `timeout`),
+  returning a response with `status_code`, `headers`, `content`, `text` and
+  `json()`.
+- `ctx.logger`: a logger; its lines land in the server log under the
+  plugin's name.
+- `ctx.publish(kind, payload)`, `ctx.state_get(key)`, `ctx.state_set(key, value)`.
+- `ctx.scoring.album_match(artist, album, title)` and `track_match(...)`:
+  optional 0-1 word-overlap scores for indexers.
+- `ctx.name`, `ctx.plugin_dir`, `ctx.data_dir`.
 
-Files vs folder mode: `PluginSearchResult.files` non-empty = per-file mode
-(exact files are enqueued and imported, Soulseek-shaped); empty = folder mode (the client
-downloads the release and `list_completed_files` feeds MB-tracklist folder import,
-Usenet-shaped minus the NFS settle — plugin clients manage their own visibility).
+Do not print to stdout: it carries the protocol. The helper sends `print`
+output to the log instead, and anything a plugin writes to stderr is logged
+too, one entry per line.
 
-Error isolation: every adapter method is delegation + `try/except` that logs against the
-plugin and converts to the safe shape above. A plugin can fail a download; it cannot crash
-the poll loop, the failover loop, or the host.
+### Porting a v2 plugin
 
-List this source in the UI via `GET /api/v3/plugins/sources`: each entry carries
-`key` (`plugin:<name>`), `plugin`, `display_name`, `has_client`, `has_indexer`,
-`target_source`, `configured`, and `health` (closed enum
-`ok`/`degraded`/`error`/`unknown`; anything else reads back as `unknown`).
+1. Change the imports. Everything v2 plugins imported from
+   `infrastructure.plugins.protocols`, `models.common` and
+   `repositories.protocols.*` now comes from `droppedneedle_plugin`:
 
-### `indexer`
+   ```python
+   from droppedneedle_plugin import PluginRouteResponse, ServiceStatus, TaskHandle
+   ```
 
-Implements `IndexerProtocol` directly:
+2. If you used `ctx.http` like `httpx`, it keeps working for the common calls
+   above. Streaming responses and client options are not there.
+3. Anything that reached into the server's own Python code no longer exists;
+   use `ctx` instead.
+4. State you kept in memory is lost when the plugin restarts (it is a separate
+   process now). Keep anything important in `ctx.state_set` or in files under
+   `ctx.data_dir`.
 
-```python
-@property
-def indexer_name(self) -> str: ...
-def is_configured(self) -> bool: ...
-async def health_check(self) -> ServiceStatus: ...
-async def search_album(self, artist_name, album_title, year=None, track_count=None, *, timeout=30.0) -> list[IndexerResult]: ...
-async def search_track(self, artist_name, track_title, album_title=None, duration_seconds=None, *, timeout=30.0) -> list[IndexerResult]: ...
-```
+`plugin.toml` stays as it was.
 
-- `indexer_name` — forced to the **target** source key (`usenet` for usenet-targeting
-  indexers pooling into the composite, else the owning plugin's `plugin:<name>` key).
-- `search_album(...)` / `search_track(...)` — wrapped in `asyncio.timeout(timeout)` +
-  `try/except → []`: one broken indexer drops only its group, never the search.
-- `target_source`: required for indexer-only plugins; defaults to the plugin's own source
-  when it also declares `download_client`. `"usenet"` feeds the existing SABnzbd pipeline
-  (pooled + deduped by `usenet_identity`); a plugin key feeds that source's client, including
-  cross-plugin pairing (resolved deterministically by plugin-name sort).
-- `is_configured` (error → `False`) / `health_check` (error → `ServiceStatus.error`).
+## The protocol
 
-```python
-class PluginSearchResult(AppStruct):
-    title: str
-    size_bytes: int = 0
-    score: float = 0.0              # plugin-provided confidence 0..1 (clamped by the app)
-    quality_tier: str = ""          # optional; "" = unknown
-    files: list[DownloadFileRef] = []   # per-file mode; empty = folder mode
-    payload: str = ""               # opaque correlation token, handed back at enqueue
-```
+Plugins and the server talk JSON-RPC 2.0 over the plugin's stdin and stdout,
+one JSON message per line (UTF-8, ending in `\n`, at most 8 MiB). Either side
+may send requests. stderr is free-form log output. The Python helper does all
+of this; you need it only for a plugin in another language.
 
-"You rank your source; the app enforces policy": `final_score = clamp(score, 0, 1)`;
-quality range, ignored/required terms, max size, quarantine, and held-tier gates apply
-identically to plugin results. `context.scoring` (`album_match` / `track_match`) is an
-opt-in helper reusing the app's token-matching pipeline for plugins that want it —
-using it is never required.
+### Starting and stopping
 
-Timeout contract: the `timeout` kwarg (default `30.0`) is the host's budget, enforced with
-`asyncio.timeout`; timeout → `[]` + degradation record.
+1. The server starts the plugin with its data folder as the working directory
+   and sends `initialize`:
 
-### `subscriber`
+   ```json
+   {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+     "protocol_version": 1,
+     "host": {"name": "droppedneedle", "version": "3.0.0"},
+     "plugin": {"name": "acme-music", "version": "1.0.0", "api_version": 1,
+                "entrypoint": "plugin:AcmeMusic", "capabilities": ["indexer"]},
+     "settings": {"api_key": "..."},
+     "plugin_dir": "/app/plugins/acme-music",
+     "data_dir": "/app/plugins/.data/acme-music"}}
+   ```
 
-```python
-async def on_event(self, event: PluginEvent) -> None: ...
-```
+2. The plugin answers within 15 seconds with the protocol version it speaks
+   and the capabilities it implements:
 
-- `on_event(event: PluginEvent) -> None` — consume-only; the plugin receives small structs,
-  never task rows or engine handles, and cannot mutate engine state.
-- Event kinds (closed set) + payload shapes: `scrobble` (reuses `ScrobbleEvent`),
-  `download_started` / `download_completed` / `download_failed`
-  (`DownloadTaskEvent{task_id, user_id, release_group_mbid, source, outcome}`-shaped),
-  `request_created` / `request_fulfilled` (`RequestEvent{...}`-shaped),
-  `import_finished` (`ImportEvent{release_group_mbid, track_count, source}`-shaped),
-  `playback_started` (`PlaybackEvent{artist, track, album, user_id}`-shaped).
-- Dispatch is fire-and-forget with per-plugin isolation (per-plugin task + timeout 5 s);
-  at most ONE in-flight notification per plugin — a slow subscriber never delays the
-  publishing flow; overruns are skipped (skip-if-pending) and counted in health
-  (`dropped_events`). Each kind carries exactly one payload struct, stamped by the
-  host publisher path with a top-level `causation_id` so fan-out can dedup on
-  `(causation_id, subscriber)`.
-- `scrobble`-kind events also reach v0 `scrobbler` plugins (alias path, unchanged).
-- `playback_started` gate: fires where scrobble dispatch fires — short-track
-  and Navidrome-delegated plays do NOT emit.
-- `import_finished` scope: ALL imports — the orchestrator `_finalize` (after
-  request sync) AND `DropImportService._after_import` (covers manual drop-imports and
-  Free Music completions). Every library addition is visible.
+   ```json
+   {"jsonrpc": "2.0", "id": 1, "result": {"protocol_version": 1, "capabilities": ["indexer"]}}
+   ```
 
-### `publisher`
+   A different `protocol_version`, or an error answer, stops the plugin until
+   it is changed.
+3. To stop, the server sends `shutdown` and waits 2 seconds before killing the
+   plugin's process group. A plugin must also exit when stdin closes.
 
-Bound API only (not a plugin method to implement):
+### Server to plugin
 
-```python
-await ctx.publish(kind, payload)
-```
+| Method | Params | Result |
+|---|---|---|
+| `initialize` | see above | `{protocol_version, capabilities}` |
+| `shutdown` | none | anything |
+| `plugin.health` | none | `{status: "ok"\|"error", message, configured}` |
+| `scrobbler.on_scrobble` | scrobble fields | `null` |
+| `purchase_links.get` | `{artist, album, release_group_mbid}` | `[{label, url, kind}]` |
+| `subscriber.on_event` | `{kind, payload, causation_id}` | `null` |
+| `scheduler.on_tick` | none | `null` |
+| `routes.handle` | `{method, subpath, query, body}` | `{status, body}` |
+| `metadata.enrich_artist` | `{artist_name, mbid}` | enrichment or `null` |
+| `metadata.enrich_album` | `{artist_name, album_title, mbid}` | enrichment or `null` |
+| `stream.resolve` | `{recording_mbid, user_id}` | `{path, url, content_type, duration_seconds}` or `null` |
+| `indexer.search_album` | `{artist_name, album_title, year, track_count, timeout}` | `[search result]` |
+| `indexer.search_track` | `{artist_name, track_title, album_title, duration_seconds, timeout}` | `[search result]` |
+| `download_client.enqueue` | `{task_id, source, files, payload, job_name, download_type}` | task handle |
+| `download_client.status` | `{handle}` | task status |
+| `download_client.inspect` | `{handle}` | `{state, workspace_path, file_paths, mount_healthy}` |
+| `download_client.discard` | `{handle}` | `true`/`false` |
+| `download_client.abort` | `{handle}` | `true`/`false` |
 
-- Bound API only: `ctx.publish(kind, payload)` — the host stamps `source_plugin`;
-  caller-supplied source is ignored; a disabled plugin's publish is dropped + logged.
-  Declaring the capability id admits the plugin to the allowlisted publish kinds.
-- Allowlisted kinds v1 (closed set; unknown kind = loud error):
-  `indexer_invalidate{target_source}` (hint to rescout; engine decides),
-  `download_note{task_id, note}` (annotation only, never status mutation; ONLY tasks owned
-  by the plugin's own source key — cross-plugin `task_id` dropped + logged with no
-  existence oracle; `note` capped at 1 KiB),
-  `plugin_notice{title, body}` (opaque, fanned to subscribers, never mutates).
-- Schemas: one AppStruct per kind, `msgspec.convert(strict)` both directions; unknown
-  keys rejected.
-- Rate limits: 30 publishes/min keyed `(plugin, principal)` (per-principal isolation —
-  one user cannot burn another's quota); exceed = drop + warn log + health signal +
-  documented `429 {code: "rate_limited"}` with `Retry-After: 60`.
-- Loop guards: max publish depth 1 (a publish from inside `on_event` is enqueued once;
-  nested publishes from the resulting dispatch are dropped + logged); per-top-level-event
-  causation id with bounded dedup; never synchronous re-entry; bounded queue (100,
-  drop-oldest + counter).
+Notifications (no answer): `settings.update` with `{settings}` when the admin
+saves, and `$/cancel` with `{id}` when the server stops waiting for a request.
 
-### Custom routes (`/ext/`)
+Answer an unknown method with error code `-32601`; the server treats that as
+"not implemented". Use `-32000` for your own failures.
 
-One router: `GET|POST|DELETE /api/v3/plugins/ext/{plugin_name}/{subpath}`;
-`{plugin_name}` matches EXACTLY (case-sensitive, no normalization); mismatch → 404.
-Requires `api_version = 1` AND the `publisher` capability in the manifest.
+### Plugin to server
 
-```python
-async def handle_route(self, method, subpath, query: dict, body: object) -> PluginRouteResponse: ...
-```
+| Method | Params | Result |
+|---|---|---|
+| `host.publish` | `{kind, payload, causation_id?}` | `{ok, status, retry_after, error}` |
+| `host.state.get` | `{key}` | `{value}` (`null` when unset) |
+| `host.state.set` | `{key, value}` | `{}` |
 
-- Handler shape: `async def handle_route(method, subpath, query, body) -> PluginRouteResponse{status, body}`;
-  `asyncio.timeout(5.0)`; exceptions → generic 5xx envelope (never a traceback).
-- Auth: deny-by-default; the route declares the loosest dep and the handler re-checks at
-  runtime (`auth: admin` re-verified with admin semantics — a user token gets 403, anon
-  gets 401). Disabled plugin or unknown path → 404 (no oracle); validation fail → 422;
-  rate exceed → 429 + `Retry-After`; request POST body capped (oversized → 413 without
-  invoking plugin); response body capped at 1 MiB serialized (over → 502 + warn log).
-- Status clamp: only `200–299` plus explicit `400`/`404` pass through —
-  anything else the plugin chooses (301/302/500/…) is mapped to `200` (success with body)
-  or `502` (plugin-signalled failure) per a fixed table, never proxied (no open-redirect
-  through the API origin, no `Location` leak). In full: `200–299`, `400`, `404` pass;
-  `500–599` map to `502`; anything else maps to `200`. Unserialisable bodies are a
-  plugin failure (generic 502 + warn log).
-- `[[route]]` caps: `path` matches `^[a-z0-9][a-z0-9/_-]{0,63}$` relative-only,
-  `method` is `GET`, `POST`, or `DELETE`, `auth` is `admin` (default) or `user`,
-  `rate_limit_per_minute` is an int in `[1, 600]` (default 60).
-- Layering: plugin code never touches stores; file mutations via routes go through the
-  library-management publish path only; routes never synchronously dispatch events.
-
-### `metadata_provider`
-
-```python
-async def enrich_album(self, *, artist_name, album_title, mbid=None, timeout=30.0) -> PluginAlbumEnrichment | None: ...
-async def enrich_artist(self, *, artist_name, mbid=None, timeout=30.0) -> PluginArtistEnrichment | None: ...
-```
-
-- `enrich_album(*, artist_name, album_title, mbid=None, timeout=30.0)` /
-  `enrich_artist(*, artist_name, mbid=None, timeout=30.0)` → enrichment struct or `None`;
-  all fields defaulted — partial enrichment is normal. Consumed BELOW first-party sources.
-- Failure degrades to `None` (recorded in the request `DegradationContext` as
-  `plugin:<name>`); timeout → `None` + record, never an error page.
-- Per-field merge table (a gap is `None` OR empty `""`/`[]`; anything present
-  first-party wins, never overwritten):
-
-  | Field | First-party present → | Gap → |
-  | --- | --- | --- |
-  | `biography` | keep first-party | plugin `biography` if non-empty |
-  | `links` | keep first-party list | union (first-party order, then plugin-only entries) |
-  | `tags` | keep first-party list | union, same order rule |
-  | `images` | keep first-party | plugin `image_urls[0]` only when first-party has none |
-
-### `scheduler`
-
-```python
-async def on_tick(self) -> None: ...
-```
-
-- Manifest: `scheduler` + `[schedule]` (`interval_minutes` int in `[5, 1440]`, 5-min floor
-  is a DoS-by-config guard; `run_on_load = false` default, first tick after the interval).
-- `async def on_tick() -> None` — no args, no return surface; work through `context.http`
-  and `context.settings`; publish via `ctx.publish`; library file writes ONLY through
-  `plugin_write_library_file()` (relative-only path, app music-library roots only,
-  100 MiB/day/plugin quota); plugin-dir state files only (symlink escape = error + log,
-  10 MiB cap per file); no SQLite access in v1; no engine handles passed.
-- Loop semantics: one loop per plugin, no overlap (an overrun delays itself + one full
-  interval, never runs twice); a hung tick is cancelled at the interval; an exception
-  logs-and-continues; a missed tick is skipped (no backfill); disable-while-running
-  cancels the loop. Rebuilt ONLY on load/save via `sync_ticks` (the sole rebuild choke
-  point, called after `load_all` from the plugin save route and startup lifecycle;
-  loops are `TaskRegistry`-owned as `plugin-tick:<name>`).
-- Shipped docs and examples use fictional hosts only
-  (`example-catalog.test`, `acme-music.test`, `hooks.example`) — never a real
-  indexer/tracker/Soulseek domain.
-
-### `streaming_source`
-
-```python
-class PluginStreamRef(AppStruct):
-    path: str = ""           # local file the host may serve/transcode
-    url: str = ""            # remote http(s) the host proxies
-    content_type: str = ""   # hint; host sniffs when empty
-    duration_seconds: float | None = None
-
-async def resolve_stream(self, recording_mbid: str, user_id: str) -> PluginStreamRef | None: ...
-```
-
-- Args are plain strings (mbid + already-authed `user.id`) — never the user record, never
-  a token. `None` = "not mine" (router falls through to the local-files path).
-- Exactly one of `path`/`url` set, else `None` + warn log.
-- `path` containment: allowlisted roots are EXACTLY (1) the plugin's own directory,
-  (2) its configured `downloads_dir` setting when declared, (3) the app music-library
-  roots. Symlinks resolved; `..`/escape = `None` + warn log + health signal.
-  `path` results reuse the app's decide/stream policy (direct-play vs transcode).
-- `url` egress (SSRF): `http(s)` only, dedicated proxy client (`timeout=10.0`,
-  `follow_redirects=False`), max 3 re-validated redirects; loopback / link-local /
-  private / `localhost` destinations blocked AFTER DNS resolution (private-intranet
-  plugins are a documented v1 non-goal). Timeout → `None` + degradation record.
-  `url` MAY carry transcode hints (owner override 2026-09-05); the host proxy
-  honours them rather than treating every url as opaque passthrough.
-- Auth boundary: routers authenticate FIRST with the existing compat auth;
-  `resolve_stream` NEVER runs before auth (order-pinned). Precedence is local-first,
-  plugin-fallback — a plugin cannot shadow the library.
-
-### Plugin UI (`[plugin_ui]`)
-
-- `[plugin_ui]`: EITHER `entry` + `pages = ["panel"]` (prebuilt JS inside the plugin dir;
-  must exist at load or the plugin loads with `error` set) OR `external_url` (https; http
-  loopback-only), never both; neither = settings-fields-only (the common case).
-- Serving: `GET /api/v3/plugins/{name}/ui/panel.js`, admin-only; `Content-Type:
-  text/javascript`, `X-Content-Type-Options: nosniff`, sandbox-compatible CSP; ETag from
-  host generation + mtime (no stale bytes across save); traversal → 404, real failures →
-  generic 5xx (never fs details). External-URL pages need no backend surface (plain link).
-- Embedding: `<iframe sandbox="allow-scripts">` (no `allow-same-origin`: opaque origin —
-  DOM/storage/cookies unreachable by construction) + frame CSP egress lock
-  (`connect-src 'none'`: the bundle cannot `fetch()` out); `postMessage` is the ONLY
-  bridge, gated on opaque-origin `"null"` + `contentWindow` identity (foreign-window
-  messages ignored; unknown methods get an `unknown_method` envelope).
-- RPC is a CLOSED allowlist of exactly 4 read-only methods — any other method gets the
-  `unknown_method` envelope:
-  1. `sources.list` — plugin source roster (mirrors `GET /plugins/sources`: key,
-     display_name, configured, health).
-  2. `search.preview` — manual-search candidate groups with the same grouping labels as
-     the review UI; read-only, no enqueue path.
-  3. `get_settings` — the panel's OWN plugin settings only, secrets masked via the
-     mask-sentinel contract (plaintext never in `config.json` or RPC).
-  4. `health.get` — the panel's OWN plugin health entry (same closed-enum shape as
-     `PluginSourceInfo.health`).
-  The iframe NEVER gets `queryClient`, raw API access, or tokens.
-  No write method exists on this bridge; multi-page (`pages > 1`) fails load in v1.
-
-## Rules of the house
-
-- You are responsible for what your plugin accesses. DroppedNeedle ships no
-  sources, endorses no plugins, and maintains none beyond the examples below.
-- Respect the upstream services you talk to: their terms, their rate limits.
-- A plugin that needs credentials should declare them as `secret` settings
-  fields, never hardcode them.
-
-## Installing a plugin
-
-Either way, the plugin lands disabled.
-
-### From GitHub
-
-In Settings > Plugins, paste a public repository URL: `https://github.com/owner/repo`,
-or `https://github.com/owner/repo/tree/some-branch` to pin a branch. Without a
-branch, DroppedNeedle tries `main` and falls back to `master`. The repository root
-must contain `plugin.toml`. This stores code; it does not run it.
-
-### By hand
-
-```bash
-cp -r examples/plugins/webhook-scrobbler <data dir>/plugins/
-```
-
-Read the code, then enable the plugin in Settings > Plugins. Enabling is what runs
-it, with your server's privileges.
-
-Install location is `<root_app_dir>/plugins` — under Docker that is `/app/plugins`,
-which is not mounted by default: add the volume, or every plugin you install
-disappears when the container is recreated. Either way, the plugin lands disabled:
-enabling in Settings > Plugins is what runs it, with your server's privileges.
-There is no plugin registry: what you install is between you and the plugin's author.
-Removing a plugin deletes its folder; its settings stay in `config.json`, so
-reinstalling picks up where you left off.
-
-## Publishing a plugin
-
-Put `plugin.toml` and your entrypoint module at the **root** of a public GitHub
-repository. That's the whole contract. Users install it by pasting the URL.
+State keys are 1-128 letters, digits, `_`, `-`, `.` or `:`; values are
+strings up to 1 MiB. `host.log` is a notification with `{level, message}`
+(`error`, `warning`, `info`, `debug`) for plugins that prefer it to stderr.
 
 ## Examples
 
-- `examples/plugins/http-catalog`: download_client + indexer + scheduler, files
-  mode + scheduler tick + panel bundle (read this one first).
-- `examples/plugins/local-folder-client` + `examples/plugins/local-folder-indexer`:
-  folder-mode client paired with its indexer (cross-plugin pairing demo).
-- `examples/plugins/events-echo-toy`: subscriber + publisher + routes.
-- `examples/plugins/metadata-joke-toy`: metadata_provider.
-- `examples/plugins/stream-toy`: streaming_source.
-- `examples/plugins/webhook-scrobbler`: v0 scrobbler (frozen-compat reference).
+All in `examples/plugins/`, all using fictional hosts:
 
-Step-by-step build walkthrough: [docs/PLUGIN-CREATION.md](docs/PLUGIN-CREATION.md).
+- `webhook-scrobbler`: `scrobbler`, the smallest plugin (v0 manifest).
+- `metadata-joke-toy`: `metadata_provider` and `purchase_links`.
+- `events-echo-toy`: `subscriber`, `publisher` and routes.
+- `stream-toy`: `streaming_source` with a file in its own folder.
+- `http-catalog`: `download_client`, `indexer` (files mode), `scheduler` and a
+  settings panel. Read this one first for sources.
+- `local-folder-client` and `local-folder-indexer`: folder mode, one plugin
+  feeding another.
+
+They double as the plugin tests: the server's test suite runs each one as a
+real process.
+
+## Publishing a plugin
+
+Put `plugin.toml` and your code at the root of a public GitHub repository and
+make a release. People install it by pasting the repository URL. Bump
+`version` in `plugin.toml` with each release so admins can see what they
+have.
+
+Respect the services your plugin talks to: their terms and their rate limits.
+Ask for credentials as `secret` settings; never put them in the code.
+DroppedNeedle ships no sources and endorses no plugins beyond the examples.
