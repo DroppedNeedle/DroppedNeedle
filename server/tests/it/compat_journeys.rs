@@ -22,9 +22,11 @@ use droppedneedle::compat::http::{
     CompatLimits, StoreLabels, SubsonicState, cors_layer, limits_layer, redact_target,
     subsonic_router,
 };
+use droppedneedle::compat::jellyfin::fake::{
+    FakeLibrary, MemoryEngine, MemoryIds, MemorySessions, SessionCall,
+};
 use droppedneedle::compat::jellyfin::seams::{
-    AlbumView, ArtistView, GenreView, IdMap, JellyfinSettings, MemoryEngine, MemoryIds,
-    MemoryLibrary, MemorySessions, SessionCall, TrackView,
+    AlbumView, ArtistView, GenreView, IdMap, JellyfinSettings, TrackView,
 };
 use droppedneedle::compat::jellyfin::{JellyfinState, router as jellyfin_router};
 use droppedneedle::compat::subsonic::Settings as SubsonicSettings;
@@ -92,7 +94,7 @@ fn jellyfin_settings() -> JellyfinSettings {
 /// Seeds the Jellyfin fixture library: two artists, two albums, three
 /// tracks (mp3 1024 bytes, flac 512 bytes, mp3 256 bytes), one genre, art.
 /// Shared with `compat_jellyfin`.
-pub(crate) fn seed_jellyfin(library: &MemoryLibrary, engine: &MemoryEngine) {
+pub(crate) fn seed_jellyfin(library: &FakeLibrary, engine: &MemoryEngine) {
     for (mbid, name, albums, added, album_artist) in [
         ("mb-a1", "Blue Giant", 2, 900.0, true),
         ("mb-a2", "Guest Star", 0, 950.0, false),
@@ -236,7 +238,7 @@ fn apps() -> Apps {
         .layer(from_fn_with_state(subsonic_limits, limits_layer))
         .layer(axum::middleware::from_fn(cors_layer));
 
-    let library = MemoryLibrary::new();
+    let library = FakeLibrary::new();
     let engine = MemoryEngine::new();
     seed_jellyfin(&library, &engine);
     let sessions = MemorySessions::new();

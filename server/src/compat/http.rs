@@ -38,7 +38,7 @@ use crate::compat::subsonic::{
 };
 
 /// Jellyfin route templates (registered casing) for path canonicalization.
-/// Mirrors `jellyfin::routes::router` registration; the wiring test pins at
+/// Mirrors `jellyfin::router` registration; the wiring test pins at
 /// least the lowercase-login route so drift shows up as a failure, not a
 /// silent 404.
 pub const JELLYFIN_TEMPLATES: &[&str] = &[

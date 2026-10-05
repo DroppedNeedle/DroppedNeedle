@@ -9,9 +9,11 @@ use axum::body::Body;
 use axum::http::Request;
 use droppedneedle::auth::compat_auth::fakes::FakeCompatPasswords;
 use droppedneedle::auth::compat_auth::jellyfin::server_id;
+use droppedneedle::compat::jellyfin::fake::{
+    FakeLibrary, MemoryEngine, MemoryIds, MemorySessions, SessionCall,
+};
 use droppedneedle::compat::jellyfin::seams::{
-    DecideInput, IdMap, JellyfinSettings, MemoryEngine, MemoryIds, MemoryLibrary, MemorySessions,
-    SessionCall, StreamPlan, decide,
+    DecideInput, IdMap, JellyfinSettings, StreamPlan, decide,
 };
 use droppedneedle::compat::jellyfin::{JellyfinState, router};
 use serde_json::{Value, json};
@@ -22,7 +24,7 @@ const BOB: &str = "bob-app-secret";
 
 struct Fx {
     passwords: FakeCompatPasswords,
-    library: MemoryLibrary,
+    library: FakeLibrary,
     engine: MemoryEngine,
     sessions: MemorySessions,
     ids: MemoryIds,
@@ -47,7 +49,7 @@ async fn fixture() -> Fx {
         &[ALICE],
     );
     passwords.add_user("user-bob", "bob", "Bob", "admin", "bob-account-pw", &[BOB]);
-    let library = MemoryLibrary::new();
+    let library = FakeLibrary::new();
     let engine = MemoryEngine::new();
     crate::compat_journeys::seed_jellyfin(&library, &engine);
     let ids = MemoryIds::new();
