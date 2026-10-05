@@ -12771,7 +12771,7 @@ export interface components {
             /**
              * @description Whether the play counted. Submit is true whenever history recorded,
              *     even with no linked account; now-playing is true only when at least
-             *     one service accepted (the v2 accepted-quirk, kept).
+             *     one service queued it (the v2 accepted-quirk, kept).
              */
             accepted: boolean;
             /** @description Per-service outcomes, keyed by service name. */
@@ -13026,11 +13026,18 @@ export interface components {
             /** @description Card title. */
             title: string;
         };
-        /** @description Per-service forwarding outcome (v2 `ServiceResult`). */
+        /**
+         * @description Per-service forwarding outcome (v2 `ServiceResult`). Forwarding runs in
+         *     the background, so `success` means the report was queued for delivery,
+         *     not that the service has accepted it (v2 waited for the service).
+         */
         ServiceResult: {
-            /** @description Failure text, when the service refused or errored. */
+            /** @description Why the report was not queued (the forwarding queue was full). */
             error?: string | null;
-            /** @description True when that service accepted the report. */
+            /**
+             * @description True when the report was queued for that service. Delivery happens
+             *     afterwards with retries; a later refusal is logged, not reported.
+             */
             success: boolean;
         };
         /** @description Own sessions. */

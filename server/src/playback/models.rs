@@ -155,12 +155,15 @@ pub struct ScrobbleNowPlayingRequest {
     pub source: Option<String>,
 }
 
-/// Per-service forwarding outcome (v2 `ServiceResult`).
+/// Per-service forwarding outcome (v2 `ServiceResult`). Forwarding runs in
+/// the background, so `success` means the report was queued for delivery,
+/// not that the service has accepted it (v2 waited for the service).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ServiceResult {
-    /// True when that service accepted the report.
+    /// True when the report was queued for that service. Delivery happens
+    /// afterwards with retries; a later refusal is logged, not reported.
     pub success: bool,
-    /// Failure text, when the service refused or errored.
+    /// Why the report was not queued (the forwarding queue was full).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -170,7 +173,7 @@ pub struct ServiceResult {
 pub struct ScrobbleResponse {
     /// Whether the play counted. Submit is true whenever history recorded,
     /// even with no linked account; now-playing is true only when at least
-    /// one service accepted (the v2 accepted-quirk, kept).
+    /// one service queued it (the v2 accepted-quirk, kept).
     pub accepted: bool,
     /// Per-service outcomes, keyed by service name.
     #[serde(default)]

@@ -27237,7 +27237,7 @@
         "properties": {
           "accepted": {
             "type": "boolean",
-            "description": "Whether the play counted. Submit is true whenever history recorded,\neven with no linked account; now-playing is true only when at least\none service accepted (the v2 accepted-quirk, kept)."
+            "description": "Whether the play counted. Submit is true whenever history recorded,\neven with no linked account; now-playing is true only when at least\none service queued it (the v2 accepted-quirk, kept)."
           },
           "services": {
             "type": "object",
@@ -27827,7 +27827,7 @@
       },
       "ServiceResult": {
         "type": "object",
-        "description": "Per-service forwarding outcome (v2 `ServiceResult`).",
+        "description": "Per-service forwarding outcome (v2 `ServiceResult`). Forwarding runs in\nthe background, so `success` means the report was queued for delivery,\nnot that the service has accepted it (v2 waited for the service).",
         "required": [
           "success"
         ],
@@ -27837,11 +27837,11 @@
               "string",
               "null"
             ],
-            "description": "Failure text, when the service refused or errored."
+            "description": "Why the report was not queued (the forwarding queue was full)."
           },
           "success": {
             "type": "boolean",
-            "description": "True when that service accepted the report."
+            "description": "True when the report was queued for that service. Delivery happens\nafterwards with retries; a later refusal is logged, not reported."
           }
         }
       },
