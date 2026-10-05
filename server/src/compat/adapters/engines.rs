@@ -43,6 +43,9 @@ fn facts_for(media: &OpenMedia) -> AudioFacts {
     }
 }
 
+/// Map an engine fault onto the Subsonic backend error. The message is
+/// shown to clients inside a 200 envelope, so internal causes are logged
+/// here and replaced by the fixed server-fault text.
 fn backend_error(fault: StreamFault) -> BackendError {
     match fault {
         StreamFault::Capacity => BackendError::full(),
@@ -52,7 +55,10 @@ fn backend_error(fault: StreamFault) -> BackendError {
         StreamFault::Upstream { source } => {
             BackendError::failed(format!("upstream {} failed", source.as_str()))
         }
-        StreamFault::Internal { cause } => BackendError::failed(cause),
+        StreamFault::Internal { cause } => {
+            tracing::error!(%cause, "compat audio backend failed");
+            BackendError::failed(crate::error::FIXED_INTERNAL_MESSAGE)
+        }
     }
 }
 
@@ -149,7 +155,10 @@ impl<E: StreamEngine + 'static> AudioBackend for GatewayAudio<E> {
             .bytes
             .get(start..=end)
             .map(|slice| slice.to_vec())
-            .ok_or_else(|| BackendError::failed("engine short-read the ranged object"))
+            .ok_or_else(|| {
+                tracing::error!(file_id, "stream engine short-read a ranged object");
+                BackendError::failed(crate::error::FIXED_INTERNAL_MESSAGE)
+            })
     }
 
     async fn transcode(
@@ -417,5 +426,18 @@ impl<E: StreamEngine + 'static> JellyfinStreamEngine for GatewayStream<E> {
             ],
             body: media.bytes,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn internal_causes_never_reach_the_client() {
+        let error = backend_error(StreamFault::Internal {
+            cause: "open /srv/music/secret.flac: permission denied".to_owned(),
+        });
+        assert_eq!(error.to_string(), crate::error::FIXED_INTERNAL_MESSAGE);
     }
 }
