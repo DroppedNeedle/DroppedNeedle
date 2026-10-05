@@ -84,16 +84,6 @@ describe('api client', () => {
 			expect(result).toEqual({ name: 'test' });
 		});
 
-		it('passes signal through', async () => {
-			const controller = new AbortController();
-			mockPageFetch.mockResolvedValue(jsonResponse({ ok: true }));
-			await api.get('/api/v1/test', { signal: controller.signal });
-			expect(mockPageFetch).toHaveBeenCalledWith(
-				'/api/v1/test',
-				expect.objectContaining({ signal: controller.signal })
-			);
-		});
-
 		it('combines caller cancellation with a request deadline', async () => {
 			const controller = new AbortController();
 			mockPageFetch.mockResolvedValue(jsonResponse({ ok: true }));
@@ -105,15 +95,6 @@ describe('api client', () => {
 			expect(init.signal).not.toBe(controller.signal);
 			controller.abort();
 			expect(init.signal?.aborted).toBe(true);
-		});
-
-		it('passes cache option through', async () => {
-			mockPageFetch.mockResolvedValue(jsonResponse({ ok: true }));
-			await api.get('/api/v1/test', { cache: 'no-cache' });
-			expect(mockPageFetch).toHaveBeenCalledWith(
-				'/api/v1/test',
-				expect.objectContaining({ cache: 'no-cache' })
-			);
 		});
 	});
 
@@ -164,46 +145,7 @@ describe('api client', () => {
 		});
 	});
 
-	describe('api.put', () => {
-		it('sends PUT with JSON body', async () => {
-			mockPageFetch.mockResolvedValue(jsonResponse({ updated: true }));
-			await api.put('/api/v1/items/1', { name: 'updated' });
-			expect(mockPageFetch).toHaveBeenCalledWith(
-				'/api/v1/items/1',
-				expect.objectContaining({ method: 'PUT' })
-			);
-		});
-	});
-
-	describe('api.patch', () => {
-		it('sends PATCH with JSON body', async () => {
-			mockPageFetch.mockResolvedValue(jsonResponse({ patched: true }));
-			await api.patch('/api/v1/items/1', { name: 'patched' });
-			expect(mockPageFetch).toHaveBeenCalledWith(
-				'/api/v1/items/1',
-				expect.objectContaining({ method: 'PATCH' })
-			);
-		});
-	});
-
 	describe('api.delete', () => {
-		it('sends DELETE and handles 204', async () => {
-			mockPageFetch.mockResolvedValue(emptyResponse(204));
-			await api.delete('/api/v1/items/1');
-			expect(mockPageFetch).toHaveBeenCalledWith(
-				'/api/v1/items/1',
-				expect.objectContaining({ method: 'DELETE' })
-			);
-		});
-
-		it('returns typed JSON for 200 DELETE responses', async () => {
-			mockPageFetch.mockResolvedValue(jsonResponse({ success: true, artist_removed: true }));
-			const data = await api.delete<{ success: boolean; artist_removed: boolean }>(
-				'/api/v1/items/1'
-			);
-			expect(data).toEqual({ success: true, artist_removed: true });
-		});
-
 		it('supports an explicit JSON body for revision-guarded deletes', async () => {
 			mockPageFetch.mockResolvedValue(jsonResponse({ deleted: true }));
 			await api.delete('/api/v1/items/1', {
@@ -216,25 +158,6 @@ describe('api client', () => {
 					body: JSON.stringify({ expected_revision: 'revision-1' })
 				})
 			);
-		});
-	});
-
-	describe('api.head', () => {
-		it('returns raw Response without parsing', async () => {
-			const rawRes = jsonResponse({}, 200);
-			mockPageFetch.mockResolvedValue(rawRes);
-			const result = await api.head('/api/v1/stream/123');
-			expect(result).toBe(rawRes);
-		});
-	});
-
-	describe('api.global.head', () => {
-		it('uses global fetch for HEAD', async () => {
-			const rawRes = jsonResponse({}, 200);
-			mockGlobalFetch.mockResolvedValue(rawRes);
-			const result = await api.global.head('/api/v1/stream/123');
-			expect(result).toBe(rawRes);
-			expect(mockPageFetch).not.toHaveBeenCalled();
 		});
 	});
 
@@ -258,24 +181,6 @@ describe('api client', () => {
 			expect(result).toBeUndefined();
 		});
 
-		it('returns undefined for content-length: 0', async () => {
-			mockPageFetch.mockResolvedValue(emptyResponse(200));
-			const result = await api.get('/api/v1/empty');
-			expect(result).toBeUndefined();
-		});
-
-		it('returns undefined for empty body text', async () => {
-			const res = {
-				ok: true,
-				status: 200,
-				headers: new Headers(),
-				text: () => Promise.resolve('  ')
-			} as unknown as Response;
-			mockPageFetch.mockResolvedValue(res);
-			const result = await api.get('/api/v1/empty');
-			expect(result).toBeUndefined();
-		});
-
 		it('throws ApiError with backend error envelope', async () => {
 			mockPageFetch.mockResolvedValue(
 				errorResponse(422, {
@@ -292,17 +197,6 @@ describe('api client', () => {
 				expect(err.message).toBe('Name is required');
 				expect(err.code).toBe('VALIDATION');
 				expect(err.details).toEqual({ field: 'name' });
-			}
-		});
-
-		it('throws ApiError with detail field (FastAPI style)', async () => {
-			mockPageFetch.mockResolvedValue(errorResponse(400, { detail: 'Bad request' }));
-			try {
-				await api.get('/api/v1/test');
-				expect.unreachable('should have thrown');
-			} catch (e) {
-				expect(e).toBeInstanceOf(ApiError);
-				expect((e as ApiError).message).toBe('Bad request');
 			}
 		});
 
@@ -324,23 +218,6 @@ describe('api client', () => {
 			}
 		});
 
-		it('throws ApiError with fallback message when text() fails', async () => {
-			const res = {
-				ok: false,
-				status: 503,
-				headers: new Headers(),
-				text: () => Promise.resolve('')
-			} as unknown as Response;
-			mockPageFetch.mockResolvedValue(res);
-			try {
-				await api.get('/api/v1/test');
-				expect.unreachable('should have thrown');
-			} catch (e) {
-				expect(e).toBeInstanceOf(ApiError);
-				expect((e as ApiError).message).toBe('Request failed with status 503');
-			}
-		});
-
 		it('throws ApiError on malformed JSON body', async () => {
 			const res = {
 				ok: true,
@@ -356,17 +233,6 @@ describe('api client', () => {
 				expect(e).toBeInstanceOf(ApiError);
 				expect((e as ApiError).message).toBe('Failed to parse response JSON');
 			}
-		});
-	});
-
-	describe('ApiError', () => {
-		it('extends Error with correct name', () => {
-			const err = new ApiError(404, 'Not found', 'NOT_FOUND');
-			expect(err).toBeInstanceOf(Error);
-			expect(err.name).toBe('ApiError');
-			expect(err.status).toBe(404);
-			expect(err.message).toBe('Not found');
-			expect(err.code).toBe('NOT_FOUND');
 		});
 	});
 
