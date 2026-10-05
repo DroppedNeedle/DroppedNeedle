@@ -27,27 +27,13 @@
 //!   it for each protocol.
 //! - Settings: [`LiveSettings`](settings::LiveSettings), read per request.
 //!
-//! # Golden format (one spelling)
+//! # Tests
 //!
-//! There is no on-disk byte corpus and no corpus runner: every golden is
-//! inline in a test target, in exactly two shapes.
-//!
-//! - Journey traces + pinned references (`tests/it/compat_journeys.rs`,
-//!   fixtures in `tests/fixtures/compat/`): multi-step `*.trace.json`
-//!   lifecycles (request, status, header sidecar, body per step) plus
-//!   single-response `pinned_*.json` shapes, compared by `diff_golden`
-//!   under the exact / `re:` / `ignore` vocabulary (`re:`-prefixed
-//!   string leaves are whole-leaf regexes for volatile ids and dates;
-//!   `ignore` lists skip paths). `COMPAT_BLESS=1` regenerates both;
-//!   re-add `re:` markers afterwards.
-//! - Protocol suites (`tests/it/compat_subsonic.rs`, `tests/it/compat_jellyfin.rs`):
-//!   dispatches against fixture seams, asserting status, content type,
-//!   headers, and body per test. Subsonic asserts on the `Rendered`
-//!   struct (exact bytes for key rows, field asserts elsewhere);
-//!   Jellyfin asserts through the inline `Golden` harness (status +
-//!   header sidecar + `BodyExp::Exact` wire bytes or parsed-JSON
-//!   comparison with `__UUID__`/`__ISO_PY__`/`__ISO_O__`/`__ANY__`
-//!   placeholders and exact key sets).
+//! Wire goldens live with the tests: `tests/it/compat_journeys.rs` replays
+//! the client traces and pinned shapes in `tests/fixtures/compat/`
+//! (`COMPAT_BLESS=1` rewrites them), `tests/it/compat_subsonic.rs` and
+//! `tests/it/compat_jellyfin.rs` pin each protocol over the test doubles,
+//! and `tests/it/compat_catalog.rs` runs both over a real database.
 
 pub mod adapters;
 pub mod http;

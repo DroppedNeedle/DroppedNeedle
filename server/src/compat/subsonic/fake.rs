@@ -1,8 +1,6 @@
-//! In-memory fixture: fake store, audio backend, and verifier.
-//!
-//! The golden tests in `server/tests/it/compat_subsonic.rs` run dispatch
-//! against this fixture. The clock is fixed ([`NOW_UNIX`]) to keep
-//! time-derived fields (`minutesAgo`) deterministic.
+//! Test doubles for the Subsonic seams: a loaded store, an audio backend
+//! and a verifier. The clock is fixed ([`NOW_UNIX`]) so time-derived
+//! fields (`minutesAgo`) stay deterministic.
 
 use std::collections::HashMap;
 use std::convert::Infallible;

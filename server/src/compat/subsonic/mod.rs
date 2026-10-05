@@ -84,22 +84,10 @@
 //!   queues, bookmarks, lyrics, avatars, scan, cover art, advanced
 //!   transcode).
 //! - Audio bytes: [`stream::AudioBackend`] on the stream engine
-//!   (ranges, HEAD, leases, pools, cancellation, plugin fallback).
+//!   (ranges, HEAD, leases per caller).
 //! - Edge (`compat::shared`): enablement kill-switch default, rate limits,
 //!   CORS, case-insensitive paths, access-log redaction. The enablement
 //!   gate itself (`enabled` in [`Settings`]) runs here before lookup.
-//!
-//! # Golden harness (inline, no on-disk corpus)
-//!
-//! One test per matrix row in `tests/it/compat_subsonic.rs`, replayed
-//! against a live [`dispatch`] with the [`fake`] fixture (fixed clock)
-//! and the fake verifier. Each test asserts status, content type,
-//! headers, and body on the [`Rendered`](value::Rendered) struct:
-//! exact bytes for key rows (ping, license, one failed envelope), field
-//! asserts elsewhere. Binary rows pin the text-vs-envelope split and the
-//! byte-exact 200/206/416/HEAD audio contract; the journey traces in
-//! `tests/fixtures/compat/` pin multi-step lifecycles on top. Error rows
-//! pin the failed envelope (codes 0/10/40/43/44/50/70).
 
 pub mod auth;
 pub mod browse;
