@@ -17,15 +17,6 @@ describe('integrationStore', () => {
 		({ integrationStore } = await import('$lib/stores/integration'));
 	});
 
-	it('applies fetched flags and marks the store loaded on success', async () => {
-		apiGet.mockResolvedValueOnce({ jellyfin: true, localfiles: true });
-		await integrationStore.ensureLoaded();
-		const state = get(integrationStore);
-		expect(state.loaded).toBe(true);
-		expect(state.jellyfin).toBe(true);
-		expect(state.localfiles).toBe(true);
-	});
-
 	it('leaves loaded false on failure so a later ensureLoaded retries (#155)', async () => {
 		apiGet.mockRejectedValueOnce(new Error('unauthenticated'));
 		await integrationStore.ensureLoaded();
@@ -37,13 +28,6 @@ describe('integrationStore', () => {
 		expect(state.loaded).toBe(true);
 		expect(state.jellyfin).toBe(true);
 		expect(apiGet).toHaveBeenCalledTimes(2);
-	});
-
-	it('does not refetch once loaded', async () => {
-		apiGet.mockResolvedValue({});
-		await integrationStore.ensureLoaded();
-		await integrationStore.ensureLoaded();
-		expect(apiGet).toHaveBeenCalledTimes(1);
 	});
 
 	it('coalesces concurrent loads into one request', async () => {

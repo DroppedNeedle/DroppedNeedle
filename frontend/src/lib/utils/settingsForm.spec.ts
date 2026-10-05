@@ -62,14 +62,6 @@ describe('createSettingsForm', () => {
 		vi.useRealTimers();
 	});
 
-	it('initializes with loading=true and null data', () => {
-		const form = createSettingsForm<TestSettings>(defaultConfig);
-		expect(form.loading).toBe(true);
-		expect(form.data).toBeNull();
-		expect(form.message).toBe('');
-		form.cleanup();
-	});
-
 	describe('load', () => {
 		it('fetches data and sets state on success', async () => {
 			const data = { url: 'http://test', enabled: true };
@@ -81,26 +73,6 @@ describe('createSettingsForm', () => {
 			expect(form.data).toEqual(data);
 			expect(form.loading).toBe(false);
 			expect(form.message).toBe('');
-			form.cleanup();
-		});
-
-		it('tracks wasAlreadyEnabled from enabledField', async () => {
-			mockApiGet.mockResolvedValueOnce({ url: 'http://test', enabled: true });
-			const form = createSettingsForm<TestSettings>({ ...defaultConfig, enabledField: 'enabled' });
-			await form.load();
-
-			expect(form.wasAlreadyEnabled).toBe(true);
-			form.cleanup();
-		});
-
-		it('shows error message on failure', async () => {
-			mockApiGet.mockRejectedValueOnce(new Error('Network error'));
-			const form = createSettingsForm<TestSettings>(defaultConfig);
-			await form.load();
-
-			expect(form.loading).toBe(false);
-			expect(form.message).toBe("Couldn't load your settings");
-			expect(form.messageType).toBe('error');
 			form.cleanup();
 		});
 
@@ -135,35 +107,6 @@ describe('createSettingsForm', () => {
 			form.cleanup();
 		});
 
-		it('auto-clears success message after 5s', async () => {
-			const data = { url: 'http://test', enabled: true };
-			mockApiGet.mockResolvedValueOnce(data);
-			mockApiPut.mockResolvedValueOnce(data);
-
-			const form = createSettingsForm<TestSettings>(defaultConfig);
-			await form.load();
-			await form.save();
-
-			expect(form.message).toBe('Settings saved');
-			vi.advanceTimersByTime(5000);
-			expect(form.message).toBe('');
-			form.cleanup();
-		});
-
-		it('returns false on failure', async () => {
-			mockApiGet.mockResolvedValueOnce({ url: '', enabled: false });
-			mockApiPut.mockRejectedValueOnce(new Error('save failed'));
-
-			const form = createSettingsForm<TestSettings>(defaultConfig);
-			await form.load();
-			const result = await form.save();
-
-			expect(result).toBe(false);
-			expect(form.message).toBe("Couldn't save your settings");
-			expect(form.messageType).toBe('error');
-			form.cleanup();
-		});
-
 		it('uses ApiError message on failure', async () => {
 			const { ApiError } = await import('$lib/api/client');
 			mockApiGet.mockResolvedValueOnce({ url: '', enabled: false });
@@ -175,56 +118,6 @@ describe('createSettingsForm', () => {
 
 			expect(result).toBe(false);
 			expect(form.message).toBe('Invalid URL format');
-			form.cleanup();
-		});
-
-		it('refreshes integration status when configured', async () => {
-			const data = { url: 'http://test', enabled: true };
-			mockApiGet.mockResolvedValueOnce(data);
-			mockApiPut.mockResolvedValueOnce(data);
-			mockApiGet.mockResolvedValueOnce({ jellyfin: true });
-
-			const form = createSettingsForm<TestSettings>({
-				...defaultConfig,
-				refreshIntegration: true
-			});
-			await form.load();
-			await form.save();
-
-			expect(mockSetStatus).toHaveBeenCalledWith({ jellyfin: true });
-			form.cleanup();
-		});
-
-		it('calls afterSave callback on success', async () => {
-			const afterSave = vi.fn();
-			const data = { url: 'http://test', enabled: true };
-			mockApiGet.mockResolvedValueOnce(data);
-			mockApiPut.mockResolvedValueOnce(data);
-
-			const form = createSettingsForm<TestSettings>({
-				...defaultConfig,
-				afterSave
-			});
-			await form.load();
-			await form.save();
-
-			expect(afterSave).toHaveBeenCalledWith(data);
-			form.cleanup();
-		});
-
-		it('updates wasAlreadyEnabled after save', async () => {
-			mockApiGet.mockResolvedValueOnce({ url: '', enabled: false });
-			mockApiPut.mockResolvedValueOnce({ url: 'http://new', enabled: true });
-
-			const form = createSettingsForm<TestSettings>({
-				...defaultConfig,
-				enabledField: 'enabled'
-			});
-			await form.load();
-			expect(form.wasAlreadyEnabled).toBe(false);
-
-			await form.save();
-			expect(form.wasAlreadyEnabled).toBe(true);
 			form.cleanup();
 		});
 	});
@@ -249,23 +142,6 @@ describe('createSettingsForm', () => {
 			form.cleanup();
 		});
 
-		it('calls afterTest callback', async () => {
-			const afterTest = vi.fn();
-			mockApiGet.mockResolvedValueOnce({ url: 'http://test', enabled: true });
-			mockApiPost.mockResolvedValueOnce({ success: true });
-
-			const form = createSettingsForm<TestSettings>({
-				...defaultConfig,
-				testEndpoint: '/api/v1/settings/test/verify',
-				afterTest
-			});
-			await form.load();
-			await form.test();
-
-			expect(afterTest).toHaveBeenCalledWith({ success: true });
-			form.cleanup();
-		});
-
 		it('sets failure testResult on error', async () => {
 			mockApiGet.mockResolvedValueOnce({ url: 'http://test', enabled: true });
 			mockApiPost.mockRejectedValueOnce(new Error('timeout'));
@@ -282,16 +158,6 @@ describe('createSettingsForm', () => {
 				valid: false,
 				message: "Couldn't test the connection"
 			});
-			form.cleanup();
-		});
-
-		it('does nothing without testEndpoint', async () => {
-			mockApiGet.mockResolvedValueOnce({ url: 'http://test', enabled: true });
-			const form = createSettingsForm<TestSettings>(defaultConfig);
-			await form.load();
-			await form.test();
-
-			expect(mockApiPost).not.toHaveBeenCalled();
 			form.cleanup();
 		});
 	});

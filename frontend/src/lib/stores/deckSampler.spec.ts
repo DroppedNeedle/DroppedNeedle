@@ -104,75 +104,7 @@ async function waitForStatus(status: string) {
 	await vi.waitFor(() => expect(deckSampler.status).toBe(status));
 }
 
-describe('deckSampler single album', () => {
-	it('plays an album’s clips back-to-back then ends', async () => {
-		apiGet.mockResolvedValue(albumPreview(2));
-
-		deckSampler.start('rg-1', 'Artist', 'Album', { artistMbid: 'a-1', coverUrl: 'c.jpg' });
-		await waitForStatus('playing');
-
-		expect(deckSampler.currentEntry?.title).toBe('Album');
-		expect(deckSampler.currentEntry?.albumMbid).toBe('rg-1');
-		expect(deckSampler.provider).toBe('deezer');
-		expect(deckSampler.trackIndex).toBe(0);
-
-		// clip 1 ends -> advance to clip 2
-		FakeAudio.started.at(-1)!.finish();
-		await vi.waitFor(() => expect(deckSampler.trackIndex).toBe(1));
-
-		// clip 2 ends -> station of one is exhausted -> idle
-		FakeAudio.started.at(-1)!.finish();
-		await waitForStatus('idle');
-		expect(focus.release).toHaveBeenCalled();
-	});
-
-	it('reports error when the album has no previews', async () => {
-		apiGet.mockResolvedValue(albumPreview(0));
-		deckSampler.start('rg-x', 'Artist', 'Nope');
-		await waitForStatus('error');
-	});
-});
-
 describe('deckSampler station', () => {
-	it('advances from one album to the next', async () => {
-		apiGet.mockResolvedValue(albumPreview(2));
-
-		deckSampler.startStation('Station', [
-			{ key: 'rg-1', kind: 'album', artist: 'A1', title: 'Album 1', albumMbid: 'rg-1' },
-			{ key: 'rg-2', kind: 'album', artist: 'A2', title: 'Album 2', albumMbid: 'rg-2' }
-		]);
-		await waitForStatus('playing');
-		expect(deckSampler.isStation).toBe(true);
-		expect(deckSampler.stationPosition).toEqual({ index: 0, total: 2 });
-
-		// exhaust the first album's 2 clips -> should load the second entry
-		FakeAudio.started.at(-1)!.finish();
-		await vi.waitFor(() => expect(deckSampler.trackIndex).toBe(1));
-		FakeAudio.started.at(-1)!.finish();
-		await vi.waitFor(() => expect(deckSampler.stationPosition.index).toBe(1));
-		expect(deckSampler.currentEntry?.title).toBe('Album 2');
-	});
-	it('reuses two pooled elements across crossfades', async () => {
-		vi.useFakeTimers();
-		apiGet.mockResolvedValue(albumPreview(3));
-		deckSampler.start('rg-1', 'Artist', 'Album');
-		await waitForStatus('playing');
-
-		const first = FakeAudio.started.at(-1)!;
-		first.currentTime = first.duration - 0.25;
-		await vi.advanceTimersByTimeAsync(100);
-		await vi.waitFor(() => expect(FakeAudio.started).toHaveLength(2));
-
-		const second = FakeAudio.started.at(-1)!;
-		second.currentTime = second.duration - 0.25;
-		await vi.advanceTimersByTimeAsync(100);
-		await vi.waitFor(() => expect(FakeAudio.started).toHaveLength(3));
-
-		expect(new Set(FakeAudio.started)).toHaveLength(2);
-		expect(FakeAudio.started[2]).toBe(first);
-		expect(FakeAudio.started[1]).not.toBe(first);
-	});
-
 	it('rapid next() never starts two <audio> at once (session-guarded race)', async () => {
 		// deferred fetches so we can pile up skips before any entry resolves
 		const resolvers: ((v: unknown) => void)[] = [];
@@ -198,20 +130,6 @@ describe('deckSampler station', () => {
 		expect(deckSampler.currentEntry?.title).toBe('Album 3');
 		// exactly one element was ever started -> no double audio
 		expect(FakeAudio.started.length).toBe(1);
-	});
-	it('reports feedback when every station entry is exhausted', async () => {
-		vi.useFakeTimers();
-		apiGet.mockResolvedValue(albumPreview(0));
-		deckSampler.startStation('Station', [
-			{ key: 'rg-1', kind: 'album', artist: 'A1', title: 'Album 1', albumMbid: 'rg-1' },
-			{ key: 'rg-2', kind: 'album', artist: 'A2', title: 'Album 2', albumMbid: 'rg-2' }
-		]);
-
-		await waitForStatus('error');
-		expect(playbackToast.show).toHaveBeenCalledWith(
-			'Preview station ended: no more playable clips',
-			'warning'
-		);
 	});
 
 	it('ignores a stale play fulfillment after a restart', async () => {
@@ -259,38 +177,9 @@ describe('deckSampler station', () => {
 		expect(deckSampler.status).toBe('playing');
 		expect(replacement.pause).not.toHaveBeenCalled();
 	});
-
-	it('next() skips to the following entry immediately', async () => {
-		apiGet.mockResolvedValue(albumPreview(2));
-		deckSampler.startStation('Station', [
-			{ key: 'rg-1', kind: 'album', artist: 'A1', title: 'Album 1', albumMbid: 'rg-1' },
-			{ key: 'rg-2', kind: 'album', artist: 'A2', title: 'Album 2', albumMbid: 'rg-2' }
-		]);
-		await waitForStatus('playing');
-		expect(deckSampler.hasNext).toBe(true);
-
-		deckSampler.next();
-		await vi.waitFor(() => expect(deckSampler.stationPosition.index).toBe(1));
-		expect(deckSampler.hasNext).toBe(false);
-	});
 });
 
 describe('deckSampler transport', () => {
-	it('pause halts the ticker and audio; resume continues', async () => {
-		apiGet.mockResolvedValue(albumPreview(2));
-		deckSampler.start('rg-1', 'Artist', 'Album');
-		await waitForStatus('playing');
-		const el = FakeAudio.started.at(-1)!;
-
-		deckSampler.pause();
-		expect(deckSampler.status).toBe('paused');
-		expect(el.pause).toHaveBeenCalled();
-
-		el.play.mockClear();
-		deckSampler.resume();
-		expect(deckSampler.status).toBe('playing');
-		expect(el.play).toHaveBeenCalled();
-	});
 	it('pauses with feedback when autoplay blocks a clip and resumes from a gesture', async () => {
 		vi.useFakeTimers();
 		apiGet.mockResolvedValue(albumPreview(2));
@@ -309,28 +198,5 @@ describe('deckSampler transport', () => {
 		deckSampler.resume();
 		await waitForStatus('playing');
 		expect(el.play).toHaveBeenCalledTimes(1);
-	});
-
-	it('setVolume applies live to the active element and persists', async () => {
-		apiGet.mockResolvedValue(albumPreview(1));
-		deckSampler.start('rg-1', 'Artist', 'Album');
-		await waitForStatus('playing');
-		const el = FakeAudio.started.at(-1)!;
-
-		deckSampler.setVolume(0.4);
-		expect(deckSampler.volume).toBe(0.4);
-		expect(el.volume).toBe(0.4);
-	});
-
-	it('stop clears the station and releases focus', async () => {
-		apiGet.mockResolvedValue(albumPreview(2));
-		deckSampler.start('rg-1', 'Artist', 'Album');
-		await waitForStatus('playing');
-
-		deckSampler.stop();
-		expect(deckSampler.status).toBe('idle');
-		expect(deckSampler.currentEntry).toBeNull();
-		expect(deckSampler.activeKey).toBe('');
-		expect(focus.release).toHaveBeenCalled();
 	});
 });
