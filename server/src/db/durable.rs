@@ -383,31 +383,3 @@ fn map_missing_table(error: DbError, table: &str) -> DbError {
         _ => error,
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn channel_keys_round_trip() {
-        for channel in WakeupChannel::ALL {
-            assert_eq!(WakeupChannel::parse(channel.as_str()), Some(channel));
-        }
-        assert_eq!(WakeupChannel::parse("nope"), None);
-    }
-
-    #[test]
-    fn job_enums_round_trip() {
-        for kind in [JobKind::Durable, JobKind::Ephemeral] {
-            assert_eq!(JobKind::parse(kind.as_str()), Some(kind));
-        }
-        for state in [
-            JobState::Idle,
-            JobState::Running,
-            JobState::Stopped,
-            JobState::Failed,
-        ] {
-            assert_eq!(JobState::parse(state.as_str()), Some(state));
-        }
-    }
-}

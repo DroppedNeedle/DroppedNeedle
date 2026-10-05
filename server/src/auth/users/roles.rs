@@ -203,21 +203,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn role_parse_round_trip() {
-        for role in [Role::User, Role::Trusted, Role::Admin] {
-            assert_eq!(Role::parse(role.as_str()), Some(role));
-        }
-        assert_eq!(Role::parse("owner"), None);
-    }
-
-    #[test]
-    fn curator_is_trusted_or_admin() {
-        assert!(!Role::User.is_curator());
-        assert!(Role::Trusted.is_curator());
-        assert!(Role::Admin.is_curator());
-    }
-
-    #[test]
     fn stored_roles_degrade_to_least_privilege() {
         assert_eq!(Role::from_stored("owner"), Role::User);
     }

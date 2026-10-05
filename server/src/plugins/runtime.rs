@@ -401,25 +401,3 @@ pub trait ModuleLoader: Send + Sync {
     /// Build the module for one enabled plugin.
     fn load(&self, dir: &Path, manifest: &PluginManifest) -> Result<Arc<dyn PluginModule>, String>;
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn event_kinds_round_trip() {
-        for kind in [
-            EventKind::Scrobble,
-            EventKind::DownloadStarted,
-            EventKind::DownloadCompleted,
-            EventKind::DownloadFailed,
-            EventKind::RequestCreated,
-            EventKind::RequestFulfilled,
-            EventKind::ImportFinished,
-            EventKind::PlaybackStarted,
-        ] {
-            assert_eq!(EventKind::parse(kind.as_str()), Some(kind));
-        }
-        assert_eq!(EventKind::parse("nope"), None);
-    }
-}

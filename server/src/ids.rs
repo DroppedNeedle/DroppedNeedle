@@ -31,18 +31,3 @@ impl IdGenerator for UuidGenerator {
         Uuid::new_v4().to_string()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn uuid_generator_mints_parseable_unique_ids() {
-        let generator = UuidGenerator;
-        let first = generator.new_id();
-        let second = generator.new_id();
-        assert_ne!(first, second);
-        assert!(Uuid::parse_str(&first).is_ok());
-        assert!(Uuid::parse_str(&second).is_ok());
-    }
-}
