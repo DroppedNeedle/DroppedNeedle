@@ -1,6 +1,6 @@
 //! Open-Meteo geocoding client (the events city picker).
 //!
-//! Port of `backend/repositories/geocoding_repository.py`. A city search is a
+//! Port of v2's geocoding repository. A city search is a
 //! user-initiated action, not optional enrichment: failures raise a typed
 //! error (wiring maps it to 503) so the UI can say "geocoding unavailable".
 //! A silent `[]` would read as "no such city", so `[]` only ever means the
@@ -11,7 +11,7 @@
 //! coordinates, `country_code`, and `admin1` region. Open-Meteo omits the
 //! `results` key entirely for unknown places.
 //!
-//! Seam for s5-core: this client sends one request per call. Retry (3
+//! Shared infrastructure note: this client sends one request per call. Retry (3
 //! attempts over transport and rate-limit failures only), the 2 req/s pacing,
 //! and the circuit breaker live in the shared resilience layer, which matches
 //! on [GeocodingError].

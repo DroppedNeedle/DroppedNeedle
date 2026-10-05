@@ -4,7 +4,7 @@
 //! plus the per-source status that produced it. Optional enrichment follows
 //! the record-then-`None` rule: on failure the caller records the outcome
 //! into the request's [`DegradationContext`] and returns `None`, and the
-//! request still succeeds. The recording **is** the error signal —
+//! request still succeeds. The recording is the error signal:
 //! aggregation boundaries and the response envelope read the context instead
 //! of receiving errors. Ports v2's `IntegrationResult` and `degradation.py`,
 //! with the context carried by a tokio task-local instead of a contextvar.
@@ -272,10 +272,9 @@ pub fn degraded_none<T>(
     None
 }
 
-/// Degradation port behind the slice clients: one note per failed optional
-/// call. The audio slices landed with identical local copies of this trait
-/// (and MusicBrainz with an operation-keyed variant); the integrator unified
-/// them here so one fake records for every client and the production
+/// Degradation port behind the provider clients: one note per failed
+/// optional call. One trait for every client, so one fake records for all
+/// of them and the production
 /// [`CoreSink`](super::adapters::CoreSink) implements it once against the
 /// request context. `source` is the lowercase provider key the matrix joins
 /// on; callers fold any operation detail into `message`.

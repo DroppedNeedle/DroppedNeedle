@@ -1,14 +1,12 @@
 //! YouTube Data API client: preview search with a quota-file governor.
 //!
-//! Port of `backend/repositories/youtube.py`,
-//! `infrastructure/persistence/youtube_quota_store.py`, the
-//! `YouTubeConnectionSettings` validation from
-//! `backend/api/v1/schemas/settings.py`, and the `YouTubeQuotaResponse`
-//! shape from `backend/models/youtube.py`.
+//! Port of v2's YouTube repository, its quota store, the
+//! `YouTubeConnectionSettings` validation, and the `YouTubeQuotaResponse`
+//! shape.
 //!
 //! This client only searches for preview videos and verifies API keys.
-//! Stored preview links stay standalone in their own slice (per R3); link
-//! persistence is deliberately not part of this file.
+//! Stored preview links live elsewhere; link persistence is not part of
+//! this file.
 //!
 //! The quota governor is the heart of the port. Every fresh search reserves
 //! one unit from a daily budget persisted in `youtube_quota.json` before any
@@ -29,7 +27,7 @@
 //! - A successful empty result (`items: []`) caches the absence, so the UI
 //!   stops asking for the same missing video.
 //!
-//! Seam for s5-core: the optional-work budget (`reserve_optional_operation`
+//! Shared infrastructure note: the optional-work budget (`reserve_optional_operation`
 //! / `check_optional_dispatch`) and provider call counters live in shared
 //! infra and are not ported here; wiring should gate background searches
 //! before calling [YouTubeClient::search_video] / [YouTubeClient::search_track].

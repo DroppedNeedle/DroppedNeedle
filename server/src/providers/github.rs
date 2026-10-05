@@ -1,8 +1,7 @@
 //! GitHub releases client (the update check).
 //!
-//! Port of `backend/repositories/github_repository.py` and the
-//! `GitHubRelease` schema from `backend/api/v1/schemas/version.py`. This is
-//! the slice's quiet client: every failure mode (non-200 answers,
+//! Port of v2's GitHub repository and its `GitHubRelease` schema. This is
+//! the quiet client: every failure mode (non-200 answers,
 //! undecodable bodies, transport errors) degrades to an empty release list
 //! with a log line, never an error. An update check must not break the app
 //! it checks for updates.
@@ -17,7 +16,7 @@
 //! - One hourly memo: repeated checks within the hour reuse the last good
 //!   answer instead of calling GitHub again.
 //!
-//! Seam for s5-core: v2's hourly cache is an injected shared cache; here it
+//! Shared infrastructure note: v2's hourly cache is an injected shared cache; here it
 //! is a small in-client TTL memo so the port stays self-contained. Wiring
 //! may later replace it with the shared cache without changing this surface.
 

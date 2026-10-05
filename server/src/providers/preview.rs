@@ -1,14 +1,14 @@
 //! 30-second track and album previews via Deezer (primary) and iTunes (fallback).
 //!
-//! A Rust port of v2's `backend/repositories/preview_repository.py` with the
-//! wire shapes from `backend/repositories/deezer_models.py` (live-verified
+//! A Rust port of v2's preview repository with the Deezer wire shapes
+//! (live-verified
 //! 2026-07-03). Both APIs are keyless. Deezer matches better (field-scoped
 //! query syntax, ordered album track lists); iTunes results are verified
 //! against the requested artist because its top hit can be a cover.
 //!
 //! Expiry warning, carried over from the v2 module docs: Deezer preview URLs
 //! carry an `hdnea` expiry token. Callers must resolve them just-in-time and
-//! never cache the URL long-term; only the s5-core enrichment layer decides
+//! never cache the URL long-term; only the enrichment layer decides
 //! what, if anything, is cached, and it must treat these URLs as short-lived.
 //!
 //! Transport rides the shared [`HttpPort`](super::client::HttpPort) GET port.

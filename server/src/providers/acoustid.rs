@@ -1,6 +1,6 @@
 //! AcoustID fingerprint-lookup client (Tier-3 identification).
 //!
-//! Ports `backend/infrastructure/audio/fingerprinter.py`: a lookup call posts
+//! Ports v2's audio fingerprinter: a lookup call posts
 //! the compressed Chromaprint fingerprint to the AcoustID web service
 //! (see <https://acoustid.org/webservice>) and the response is folded into a
 //! recording match. Everything here fails soft: a dead or confused upstream
@@ -402,7 +402,7 @@ pub struct FpCalcOutput {
     /// Audio duration in whole seconds.
     pub duration_secs: i64,
     /// True when fpcalc exited non-zero yet still emitted a fingerprint.
-    /// v2 (F-044) carries this flag so confident matches from a partial
+    /// v2 carries this flag so confident matches from a partial
     /// decode can be corroborated downstream.
     pub partial_decode: bool,
     /// fpcalc's stderr, preserved so a changed or unexpected error stays

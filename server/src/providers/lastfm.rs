@@ -1,15 +1,13 @@
-//! Last.fm metadata client with per-user credentials (R7).
+//! Last.fm metadata client with per-user credentials.
 //!
-//! Ports the read paths of `backend/repositories/lastfm_repository.py`, the
-//! wire parsing in `lastfm_models.py`, and the live-verified genre surface
-//! (`lastfm_MANAGEMENT_API_NOTES.md`, verified against production on
-//! 2026-07-22; `lastfm_management_models.py`).
+//! Ports the read paths of v2's Last.fm repository, its wire models, and
+//! the genre surface verified against production on 2026-07-22.
 //!
 //! Credentials are per user, always. `LastFmCredentials` mirrors the
-//! plaintext projection of the stage-3 per-user store
-//! (`server/src/auth/users/models.rs` `LastFmConnection`, read through the
-//! `LastFmStore` trait; only the service layer holds decrypted values, in
-//! memory). There is deliberately no global key pair:
+//! plaintext projection of the per-user store (`auth::users::models`
+//! `LastFmConnection`, read through the `LastFmStore` trait; only the
+//! service layer holds decrypted values, in memory). There is no global
+//! key pair, on purpose:
 //! every method takes the calling user's credentials, and the client itself
 //! stores none. The one shared thing is pacing: wiring must hand every
 //! per-user client the same community limiter ([`RATE_PER_SEC`] / [`BURST`])
@@ -22,11 +20,12 @@
 //!
 //! Backoff signaling (not sleeping) lives here: error 29 maps to
 //! [`Outcome::Unavailable`] with a 1-second retry hint, exactly like v2's
-//! `RateLimitedError`. The retry loop and circuit breaker belong to s5-core.
+//! `RateLimitedError`. The retry loop and circuit breaker belong to the
+//! provider core.
 //!
 //! The two auth calls (`request_token`, `exchange_session`) are the
-//! production implementation the stage-3 `LastFmAuthClient` seam
-//! (`server/src/auth/users/stores.rs`) awaits; wiring adapts their outcomes
+//! production implementation the `LastFmAuthClient` seam
+//! (`auth::users::stores`) awaits; wiring would adapt their outcomes
 //! onto `LastFmError` (`TokenNotAuthorized` maps from the error-14 outcome).
 
 use std::time::Duration;
@@ -88,7 +87,7 @@ impl<T> Outcome<T> {
 }
 
 /// One user's Last.fm credentials, plaintext in memory only. This mirrors the
-/// decrypted projection of the stage-3 `LastFmConnection` store record
+/// decrypted projection of the `LastFmConnection` store record
 /// (`api_key`, `shared_secret`, `username`, `session_key`); the store keeps
 /// ciphertext at rest and only the service layer decrypts. Methods borrow
 /// this per call so credentials can never leak across users.
@@ -699,7 +698,7 @@ pub fn api_sig(params: &[(String, String)], shared_secret: &str) -> String {
 /// Parse a string-or-number count the way v2 `_safe_int` does: integers pass
 /// through, numeric strings parse, floats truncate, and anything else reads
 /// as zero. Counts are telemetry, not identity, so leniency here is
-/// deliberate.
+/// intended.
 fn lenient_int(value: Option<&serde_json::Value>) -> i64 {
     match value {
         None | Some(serde_json::Value::Null) => 0,

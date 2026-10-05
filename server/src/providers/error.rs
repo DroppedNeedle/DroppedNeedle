@@ -2,14 +2,14 @@
 //!
 //! Every upstream answers through [`ProviderError`], which keeps the distinct
 //! meanings of 401, 403, 404, the rest of 4xx/3xx, 429, 503, and other 5xx.
-//! There is deliberately no blanket non-2xx mapping: callers match on the
+//! There is no blanket non-2xx mapping, on purpose: callers match on the
 //! variant, and [`classify_status`] is the single place that turns a status
 //! code into one.
 //!
 //! Retry behavior ports the v2 rules: 429/503/5xx and transport failures are
-//! retriable, everything else is not. Payload-shape failures and deliberate
+//! retriable, everything else is not. Payload-shape failures and intended
 //! upstream switch-offs are deterministic: never retried and never tripping a
-//! shared breaker, because the service is healthy (or deliberately dark) and
+//! shared breaker, because the service is healthy (or switched off) and
 //! retrying cannot help. `Retry-After` parsing ports v2 too: delta-seconds or
 //! an HTTP date, negative or past values ignored, honored values capped.
 
@@ -116,11 +116,11 @@ pub enum ProviderError {
         /// What failed to decode, safe for logs.
         message: String,
     },
-    /// The provider deliberately switched this sub-API off (ports v2's
+    /// The provider switched this sub-API off on purpose (ports v2's
     /// `ServiceDisabledUpstreamError`, e.g. a disabled popularity endpoint).
     /// Deterministic for the outage and breaker-exempt: the rest of the
     /// provider is healthy.
-    #[error("{provider} has deliberately switched this API off: {message}")]
+    #[error("{provider} has switched this API off: {message}")]
     Disabled {
         /// Lowercase provider key.
         provider: &'static str,
@@ -180,7 +180,7 @@ impl ProviderError {
     /// Whether another attempt could plausibly succeed.
     ///
     /// Only 429, 503, other 5xx, and transport failures retry. Auth failures,
-    /// rejections, redirects, absence, deterministic payload errors, deliberate
+    /// rejections, redirects, absence, deterministic payload errors, intended
     /// switch-offs, and missing configuration never do.
     #[must_use]
     pub const fn is_retriable(&self) -> bool {
@@ -206,7 +206,7 @@ impl ProviderError {
     }
 
     /// Whether this failure counts against the provider's shared circuit
-    /// breaker. Deterministic failures (payload shape, deliberate switch-off,
+    /// breaker. Deterministic failures (payload shape, intended switch-off,
     /// bad request shape, auth, absence, missing configuration) never trip
     /// the breaker; only genuine service-health signals do.
     #[must_use]

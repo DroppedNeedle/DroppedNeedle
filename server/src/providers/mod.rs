@@ -1,6 +1,6 @@
 //! Shared provider core: pacing, retry, caching, coalescing, degradation.
 //!
-//! Every upstream client in stage 5 builds on this module instead of
+//! Every upstream client builds on this module instead of
 //! reimplementing resilience. The pieces:
 //!
 //! - [`error`]: typed [`ProviderError`](error::ProviderError) with distinct
@@ -24,31 +24,28 @@
 //!   fails the request, per operation.
 //! - [`client`]: the [`ProviderClient`](client::ProviderClient) surface every
 //!   client implements, plus the [`check_client_contract`](client::check_client_contract)
-//!   conformance harness for slice test suites.
-//! - [`adapters`]: integrator-owned bridges from the unified core seams
+//!   conformance harness for client tests.
+//! - [`adapters`]: bridges from the shared core seams
 //!   onto production (limiter-backed pacing, context-backed degradation
 //!   recording, one shared reqwest transport, core/enrichment error mapping,
 //!   enrichment role adapters over the concrete clients).
 //!
-//! # Wiring (integrator)
-//!
-//! One line in `lib.rs` plus the deps struct:
+//! # Wiring
 //!
 //! ```rust,ignore
-//! pub mod providers;
 //! let providers = providers::Providers::with_memory_cache();
 //! ```
 //!
-//! # Landed providers
+//! # Provider clients
 //!
-//! Each file below is owned by its slice and reached by module path
-//! (`providers::musicbrainz::MusicBrainzClient`, ...). The names are
-//! deliberately *not* re-exported at this root: several collide across
+//! Each client is reached by module path
+//! (`providers::musicbrainz::MusicBrainzClient`, ...). The names are not
+//! re-exported at this root, on purpose: several collide across
 //! modules (`enrich::MusicBrainzClient` is an aggregation role trait while
 //! `musicbrainz::MusicBrainzClient` is the concrete HTTP client, and the
 //! same holds for `LastFmClient`, `LyricsLookup`, `IntegrationStatus`, and
 //! `ProviderError`), so the module path is the disambiguator. The shared
-//! seams the slices pace, record, and fetch through
+//! seams the clients pace, record, and fetch through
 //! ([`Pacer`](limiter::Pacer), [`DegradationSink`](degradation::DegradationSink),
 //! [`HttpPort`](client::HttpPort)) live in the core modules and are
 //! re-exported at this root; see [`adapters`] for their production bridges.

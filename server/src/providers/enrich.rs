@@ -4,15 +4,11 @@
 //! MusicBrainz resolves identity, ListenBrainz and Last.fm add popularity
 //! and prose, LRCLIB adds lyrics, the events feed adds concerts. Providers
 //! fail independently, so every leg carries a typed outcome and the page
-//! still renders with honest gaps.
+//! still renders, with visible gaps.
 //!
-//! The rules below are ported from the v2 Python reference
-//! (`backend/services/search_enrichment_service.py`,
-//! `backend/services/discover/enrichment_service.py`,
-//! `backend/services/album_enrichment_service.py`,
-//! `backend/services/artist_enrichment_service.py`,
-//! `backend/services/events_service.py`,
-//! `backend/infrastructure/integration_result.py`):
+//! The rules below are ported from v2's search, discover, album and artist
+//! enrichment services, its events service, and its integration result
+//! type:
 //!
 //! - Typed degradation results: each leg reports ok, degraded, or error,
 //!   and the worst status wins when legs combine.
@@ -26,10 +22,10 @@
 //!
 //! Seam note: the aggregation role traits below (`MusicBrainzClient`,
 //! `ListenBrainzClient`, `LastFmClient`, `LyricsClient`, `EventsClient`)
-//! are the stable aggregator surface. The integrator's adapters in
+//! are the stable aggregator surface. The adapters in
 //! [`adapters`](super::adapters) implement them over the concrete HTTP
-//! clients (live where credentials and persistence allow, honest
-//! unconfigured stubs elsewhere); this module needs no other changes.
+//! clients (live where credentials and persistence allow, unconfigured
+//! stubs that report the gap elsewhere).
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -931,7 +927,7 @@ impl EnrichmentAggregator {
     ///
     /// Identity is identity-critical: a dead MusicBrainz fails the page
     /// with [`AlbumPageError::IdentityUnavailable`], and the local-degraded
-    /// fallback for owned albums composes above this call (the page slice
+    /// fallback for owned albums composes above this call (the page code
     /// owns the catalog). Popularity and prose are stale-cache-acceptable:
     /// a dead ListenBrainz or Last.fm leaves gaps with notes, and the page
     /// still completes.
@@ -1203,7 +1199,7 @@ const MAX_LYRICS_BYTES: usize = 2 * 1024 * 1024;
 /// Max lyrics payload in characters, kept from v2 (`_MAX_LYRICS_CHARACTERS`).
 const MAX_LYRICS_CHARACTERS: usize = 1_000_000;
 
-/// One lyrics outcome: a document, or honest absence with an optional note.
+/// One lyrics outcome: a document, or absence with an optional note.
 #[derive(Debug, Clone)]
 pub struct LyricsOutcome {
     /// Lyrics document, when the provider held usable lyrics.
@@ -1408,16 +1404,16 @@ fn filter_to_cities(concerts: &[UserConcert], cities: &[EventCity]) -> Vec<Match
 }
 
 // ---------------------------------------------------------------------------
-// Port adapters: providers behind the stage-4 seams
+// Port adapters: providers behind the reads seams
 // ---------------------------------------------------------------------------
 
-/// Search enrichment behind the stage-4 [`EnrichmentPort`] seam.
+/// Search enrichment behind the reads [`EnrichmentPort`] seam.
 ///
 /// The aggregator never fails a counts batch (popularity is
 /// stale-cache-acceptable), so this adapter always answers `Ok` with
 /// degradation notes inside; the service-level `Err` mapping stays for
 /// genuinely broken wiring. Production wires this in `ReadsSetup::build`
-/// over the integrator's role adapters; the `None` pair keeps
+/// over the role adapters in `providers::adapters`; the `None` pair keeps
 /// `UnconfiguredEnrichment` for hermetic tests.
 pub struct AggregatingEnrichment {
     aggregator: Arc<EnrichmentAggregator>,
@@ -1442,7 +1438,7 @@ impl EnrichmentPort for AggregatingEnrichment {
     }
 }
 
-/// Provider lyrics behind the stage-4 [`LyricsPort`] seam.
+/// Provider lyrics behind the reads [`LyricsPort`] seam.
 ///
 /// The port only carries a track id, so the adapter resolves artist and
 /// title through the catalog first: an unknown track reads as absent, and

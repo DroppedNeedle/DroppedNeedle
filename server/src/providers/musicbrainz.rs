@@ -7,11 +7,11 @@
 //! (missing entity ids fail decoding; a retired MBID counts as its target
 //! only after a lookup proves the redirect).
 //!
-//! Seam notes (s5-core owns shared infra):
+//! Seam notes (the shared infrastructure lives in the provider core):
 //! - [`MbTransport`] stays a typed local port: its requests carry validated
 //!   redirect hops the catalog GET port cannot express, and the reqwest
 //!   adapter below serves production from the shared client.
-//! - [`RateGate`] is a deliberately small interval gate (both MB policies
+//! - [`RateGate`] is a small interval gate on purpose (both MB policies
 //!   run capacity 1). Unifying with the shared token buckets stays open:
 //!   the official 1/s gate is limiter-shaped, but the BrainzMash cooldown
 //!   scheduler is endpoint-specific behavior with no core counterpart.
@@ -210,7 +210,7 @@ impl RateGate {
         Self::new(BRAINZMASH_RATE_PER_SEC)
     }
 
-    /// Configured rate, for the policy-table brief.
+    /// Configured rate, for the policy-table test.
     pub fn rate_per_sec(&self) -> f64 {
         1.0 / self.interval.as_secs_f64()
     }
@@ -282,8 +282,8 @@ impl MbSource {
 
 /// Operation class from the degradation matrix. A dead MusicBrainz fails
 /// identity-critical work with a typed error and degrades everything else
-/// to a recorded absence (stage-5 plan: "MB-dead fails identity-critical
-/// only"; v2 grouped search kept the same bucket isolation by returning
+/// to a recorded absence (a dead MusicBrainz fails identity-critical work
+/// only; v2 grouped search kept the same bucket isolation by returning
 /// empty results plus a failure record per dead bucket).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Criticality {
@@ -703,7 +703,7 @@ impl BrainzMashScheduler {
         Self::with_gate(RateGate::brainzmash())
     }
 
-    /// Scheduler with a caller-supplied gate (briefs pace faster).
+    /// Scheduler with a caller-supplied gate (tests pace faster).
     pub fn with_gate(gate: RateGate) -> Self {
         Self {
             gate,
@@ -1538,7 +1538,7 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         }
     }
 
-    /// Swap the pacing gates (briefs pace faster than production).
+    /// Swap the pacing gates (tests pace faster than production).
     pub fn with_gates(mut self, official_gate: RateGate, brainzmash: BrainzMashScheduler) -> Self {
         self.official_gate = official_gate;
         self.brainzmash = brainzmash;

@@ -1,7 +1,7 @@
 //! ListenBrainz metadata client.
 //!
-//! Ports the read paths of `backend/repositories/listenbrainz_repository.py`
-//! and the wire parsing in `listenbrainz_models.py`, including the
+//! Ports the read paths of v2's ListenBrainz repository and its wire
+//! models, including the
 //! live-verified metadata surface (`listenbrainz_MANAGEMENT_API_NOTES.md`,
 //! verified against production on 2026-07-21; the recording-metadata POST
 //! was verified on 2026-07-17).
@@ -18,18 +18,14 @@
 //! ([`Pacer`](super::limiter::Pacer), [`DegradationSink`](super::degradation::DegradationSink)):
 //! wire the pacer to a 1/second bucket ([`RATE_PER_SEC`] / [`BURST`]). v2
 //! paces at 2.5/second from live edge evidence (30 requests/10 seconds,
-//! 2026-08-26); this slice uses the stricter 1/second the stage brief
-//! specifies.
+//! 2026-08-26); v3 uses the stricter documented 1/second.
 //!
-//! One seam stays open for later core work:
-//!
-//! - v2's response-header window tracking (`X-RateLimit-Remaining` merging,
-//!   the headerless-429 escalation, the popularity-degraded flag) is retry
-//!   and limiter state, so it belongs to s5-core. This client only reads
-//!   the 429 delay headers on the failure itself and reports the hint.
-//!
-//! Accepted gap (stage-5 review): proactive `X-RateLimit-Remaining`
-//! tracking is absent. The core [`RateLimiter`](super::limiter::RateLimiter)
+//! One gap stays open: v2's response-header window tracking
+//! (`X-RateLimit-Remaining` merging, the headerless-429 escalation, the
+//! popularity-degraded flag) is retry and limiter state, so it belongs to
+//! the provider core, and this client only reads the 429 delay headers on
+//! the failure itself and reports the hint. Proactive
+//! `X-RateLimit-Remaining` tracking is absent. The core [`RateLimiter`](super::limiter::RateLimiter)
 //! exposes no header-feedback hook, so adding it means growing limiter API
 //! surface, not client logic. The 1/s bucket plus the 429 delay hint carry
 //! the pacing until that hook exists.
@@ -45,7 +41,7 @@ use super::{DegradationSink, Pacer};
 
 /// Default API host (v2 `LISTENBRAINZ_API_URL`).
 pub const DEFAULT_BASE_URL: &str = "https://api.listenbrainz.org";
-/// Pacing the wiring must configure: 1 call/second (stage brief; v2 paces
+/// Pacing the wiring must configure: 1 call/second (the documented limit; v2 paced
 /// 2.5/second from live edge evidence, 2026-08-26).
 pub const RATE_PER_SEC: f64 = 1.0;
 /// Bucket burst: none, the baseline stays evenly paced (v2 `capacity=1`).
@@ -126,7 +122,7 @@ pub struct Validation {
 
 /// One listen (v2 `ListenBrainzListen`). Track and artist names are required;
 /// a payload missing them fails decode instead of yielding placeholder
-/// text. (v2 defaults those to `"Unknown"`; this slice treats names as
+/// text. (v2 defaults those to `"Unknown"`; this client treats names as
 /// identity and skips nameless items, so placeholder text can never flow
 /// into the library as metadata.)
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -770,7 +766,7 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
         }
         if status == 429 {
             // Explicit server delay wins; a headerless 429 falls back to the
-            // 2s default here, while s5-core owns the streak escalation.
+            // 2s default here, while the provider core owns the streak escalation.
             let retry_after = retry_after_secs(response.headers());
             return Err(RequestFailure::Outcome(self.recorded(
                 Some(retry_after),

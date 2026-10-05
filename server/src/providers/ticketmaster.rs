@@ -1,7 +1,6 @@
 //! Ticketmaster Discovery v2 client (Upcoming Events).
 //!
-//! Port of `backend/repositories/ticketmaster_repository.py` and
-//! `backend/repositories/ticketmaster_models.py`. An actionable-failure
+//! Port of v2's Ticketmaster repository and models. An actionable-failure
 //! client: non-200 answers and undecodable bodies raise [TicketmasterError]
 //! (wiring maps it to 503), HTTP 429 raises
 //! [TicketmasterError::RateLimited] carrying the server's retry hint, and raw
@@ -10,20 +9,20 @@
 //!
 //! Wire quirks, verified against the live API on 2026-07-06 and preserved
 //! here with the v2 decode fixtures as reference
-//! (`backend/tests/fixtures/events/tm_*.json`):
+//! (its `tm_*.json` event fixtures):
 //!
 //! - Ticketmaster omits `_embedded` entirely when there are zero results,
 //!   so a missing block decodes as "no results", never as an error.
 //! - Everything is tolerant-by-default: attractions without
 //!   `externalLinks`, venues without `location`, and events without
 //!   `_embedded` must all decode cleanly.
-//! - Venue coordinates arrive as STRINGS (`"51.46368200"`) and stay that
+//! - Venue coordinates arrive as strings (`"51.46368200"`) and stay that
 //!   way; parsing them is the caller's choice.
 //! - `externalLinks` is a dynamic key/value map; the key this client
 //!   consumes is `musicbrainz`, whose ids arrive padded or cased and are
 //!   trimmed and lowercased on read, blanks skipped.
 //!
-//! Seam for s5-core: this client sends one request per call (plus pagination
+//! Shared infrastructure note: this client sends one request per call (plus pagination
 //! follow-ups). Retry (3 attempts over transport and rate-limit failures
 //! only), the 2 req/s pacing (Ticketmaster's docs state 5 req/s in one place
 //! and 2 req/s in another; v2 encodes the documented floor), and the circuit
@@ -158,7 +157,7 @@ pub struct TmVenueCountry {
     pub country_code: Option<String>,
 }
 
-/// Venue coordinates. The wire carries these as STRINGS (`"51.46368200"`),
+/// Venue coordinates. The wire carries these as strings (`"51.46368200"`),
 /// so they stay strings here too.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -4,16 +4,16 @@
 //! Cover Art Archive, Last.fm) implements [`ProviderClient`]: a lowercase
 //! source key, the verified [`RatePolicy`], the cache prefixes it writes,
 //! and status classification with the shared default. The trait is
-//! deliberately small — call shapes differ per provider, but pacing,
+//! small on purpose: call shapes differ per provider, but pacing,
 //! caching, degradation, and error semantics stay uniform.
 //!
-//! [`check_client_contract`] is the conformance harness: each slice's test
-//! suite calls it against its client and fails on any violation. It returns
-//! a [`ContractViolation`] listing every breach instead of asserting, so the
-//! harness itself stays free of test-only panics and slices choose how to
-//! surface the report.
+//! [`check_client_contract`] is the conformance harness: each client's
+//! tests call it and fail on any violation. It returns a
+//! [`ContractViolation`] listing every breach instead of asserting, so the
+//! harness itself stays free of test-only panics and each caller chooses
+//! how to surface the report.
 //!
-//! Copy-paste surface for other slices:
+//! Example:
 //!
 //! ```rust,no_run
 //! use droppedneedle::providers::client::ProviderClient;
@@ -67,8 +67,7 @@ pub struct HttpReply {
 pub struct HttpFault;
 
 /// Smallest HTTP surface the catalog clients need: GET with query pairs.
-/// The six catalog slices landed with identical local copies of this trait
-/// (plus identical reply/fault types); the integrator unified them here so
+/// The six catalog clients share it (plus the reply and fault types), so
 /// one fake serves every catalog client and the production
 /// [`ReqwestGet`](super::adapters::ReqwestGet) implements it once. Anything
 /// before a status line (bad URL, DNS, connect, TLS, timeout, reset,
@@ -118,7 +117,7 @@ pub struct ContractViolation {
 }
 
 /// Check one client against the shared contract. `Ok(())` means full
-/// conformance; `Err` lists every breach at once so slices fix them in one
+/// conformance; `Err` lists every breach at once so a client fixes them in one
 /// pass. The checks:
 ///
 /// - `source` is non-empty lowercase ASCII (the key other tables join on).

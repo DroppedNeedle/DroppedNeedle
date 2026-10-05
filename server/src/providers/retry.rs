@@ -7,7 +7,7 @@
 //! exponential backoff and full-ish jitter, porting v2's `with_retry`:
 //! `min(base * 2^(attempt-1), max) * (0.5 + random())`.
 //!
-//! Two v2 behaviors carry over deliberately:
+//! Two v2 behaviors carry over on purpose:
 //!
 //! - A `Retry-After` carried on the failure (429/503) replaces the computed
 //!   backoff for that sleep instead of adding to it.

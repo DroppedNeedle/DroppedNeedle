@@ -8,13 +8,13 @@
 //! the verified v3 policy-table row, and image bytes pass through
 //! untouched: originals may be PNG, so the client never assumes JPEG.
 //!
-//! Seam notes (s5-core owns shared infra):
+//! Seam notes (the shared infrastructure lives in the provider core):
 //! - [`CaaTransport`] stays a typed local port: its requests carry
 //!   redirect-hop validation the catalog GET port cannot express, and the
 //!   reqwest adapter below serves production from the shared client.
 //! - [`RateGate`] and [`is_valid_mbid`] are small local copies of the
-//!   MusicBrainz module's helpers. The integrator deliberately left them
-//!   duplicated: they are structs and functions, not traits, and unifying
+//!   MusicBrainz module's helpers, left duplicated on purpose: they are
+//!   structs and functions, not traits, and unifying
 //!   them means reconciling real differences (per-source poison log
 //!   lines). Retry-After parsing already delegates to the core
 //!   [`parse_retry_after`](super::error::parse_retry_after), whose
@@ -179,7 +179,7 @@ impl RateGate {
         Self::new(CAA_RATE_PER_SEC)
     }
 
-    /// Configured rate, for the policy-table brief.
+    /// Configured rate, for the policy-table test.
     pub fn rate_per_sec(&self) -> f64 {
         1.0 / self.interval.as_secs_f64()
     }
@@ -607,13 +607,13 @@ impl<T: CaaTransport> CaaClient<T> {
         }
     }
 
-    /// Swap the pacing gate (briefs pace faster than production).
+    /// Swap the pacing gate (tests pace faster than production).
     pub fn with_gate(mut self, gate: RateGate) -> Self {
         self.gate = gate;
         self
     }
 
-    /// Swap the backoff ceilings (briefs sleep milliseconds, not seconds).
+    /// Swap the backoff ceilings (tests sleep milliseconds, not seconds).
     pub fn with_backoff(mut self, max_backoff: Duration, fallback_backoff: Duration) -> Self {
         self.max_backoff = max_backoff;
         self.fallback_backoff = fallback_backoff;

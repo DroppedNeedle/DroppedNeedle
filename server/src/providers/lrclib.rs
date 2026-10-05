@@ -1,8 +1,7 @@
 //! Typed LRCLIB reads for optional lyrics.
 //!
-//! A Rust port of v2's `backend/repositories/lrclib_repository.py` with the
-//! API notes verified live on 2026-07-22 and reverified on 2026-08-05
-//! (`backend/repositories/lrclib_API_NOTES.md`). Only the exact `/api/get`
+//! A Rust port of v2's LRCLIB repository, with its API notes verified live
+//! on 2026-07-22 and reverified on 2026-08-05. Only the exact `/api/get`
 //! lookup feeds projections; `/api/search` results are never promoted
 //! automatically, because a common recording returns several plausible
 //! candidates.

@@ -1,11 +1,10 @@
 //! Internet Archive client: the Free Music download source.
 //!
-//! A Rust port of v2's `backend/repositories/archive_repository.py` with the
-//! shapes pinned by `backend/tests/repositories/test_archive_repository.py`
-//! and the ASGI mock in `backend/tests/mocks/archive_mock.py`. Only items
+//! A Rust port of v2's Internet Archive repository, with the shapes pinned
+//! by v2's repository tests and Archive mock. Only items
 //! carrying an explicit Creative Commons or public-domain `licenseurl` are
 //! surfaced; that filter is DroppedNeedle's own editorial rule for its own
-//! client (D24/D25), not a rule imposed on anyone else.
+//! client, not a rule imposed on anyone else.
 //!
 //! Transport rides the shared [`HttpPort`](super::client::HttpPort) GET port.
 //! Rate limiting (2/s), retries, and caching stay with wiring.
@@ -168,7 +167,7 @@ pub const ALLOWED_LICENCE_PREFIXES: &[&str] = &[
 /// True only for an explicit Creative Commons or public-domain licence (v2
 /// `is_open_licence`). The check is a lowercase prefix match, which is also
 /// what rejects lookalike hosts such as
-/// `https://evil.example/creativecommons.org/licenses/by/4.0/` (v2 brief).
+/// `https://evil.example/creativecommons.org/licenses/by/4.0/` (a v2 test case).
 pub fn is_open_licence(licence_url: Option<&str>) -> bool {
     let value = licence_url.unwrap_or("").trim().to_lowercase();
     !value.is_empty()

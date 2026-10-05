@@ -1,6 +1,6 @@
 //! iTunes Search API: the "Get it" purchase-link fallback.
 //!
-//! A Rust port of v2's `backend/repositories/itunes_repository.py` plus the
+//! A Rust port of v2's iTunes repository plus the
 //! ranking quirk in `ITUNES_API_NOTES.md` (verified live 2026-07-10). The
 //! keyless Search API ranks by popularity, not relevance, so a result is
 //! only trusted when its artist fuzzy-matches the requested one.

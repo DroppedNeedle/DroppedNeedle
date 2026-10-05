@@ -1,13 +1,9 @@
-//! Integrator-owned bridges from the unified core seams onto production.
+//! Bridges from the shared provider seams onto production.
 //!
-//! The provider slices landed before the core did, so each declared the
-//! smallest local seam it needed: a `Pacer` + `DegradationSink` pair in the
-//! four audio clients, a `DegradationSink` in the MusicBrainz client, and one
-//! `HttpPort` per catalog client. The integrator unified those duplicates
-//! onto the core traits ([`Pacer`](super::limiter::Pacer),
+//! The clients reach the core through three traits ([`Pacer`](super::limiter::Pacer),
 //! [`DegradationSink`](super::degradation::DegradationSink),
-//! [`HttpPort`](super::client::HttpPort)), and this module implements each
-//! once against the real core:
+//! [`HttpPort`](super::client::HttpPort)); this module implements each once
+//! against the real core:
 //!
 //! - [`CorePacer`] paces audio-client calls through the verified per-source
 //!   [`RateLimiter`](super::limiter::RateLimiter).
@@ -18,11 +14,11 @@
 //!
 //! The `From` impls below map core failures and statuses onto the
 //! enrichment leg types; the enrichment aggregator keeps its own leg error
-//! (its briefs pin that shape) and converts at the boundary.
+//! (its tests pin that shape) and converts at the boundary.
 //!
-//! Deliberately *not* unified here:
+//! Not unified here, on purpose:
 //!
-//! - [`ProviderClient`](super::client::ProviderClient) conformance: no slice
+//! - [`ProviderClient`](super::client::ProviderClient) conformance: no
 //!   client performs cache writes yet, so claiming `cache_prefixes` would be
 //!   vacuous conformance. The impls land with cache-aside integration.
 //! - The MusicBrainz `RateGate` / `BrainzMashScheduler` pair: the official
@@ -58,7 +54,7 @@ use crate::http_client::HttpClientFactory;
 /// tokens; slot-lane admission stays at explicit call sites because the
 /// `Pacer` seam carries no priority to choose a lane with.
 ///
-/// Follow-up for the first background caller (stage-5 review): [`acquire`](Self::acquire)
+/// Open point for the first background caller: [`acquire`](Self::acquire)
 /// paces at user priority, and there is no `Outcome` -> retriable bridge
 /// to the audio retry seam (unbuilt). Growing the `Pacer` seam with a
 /// priority touches every audio client and fake, so it stays until a
@@ -93,7 +89,7 @@ impl Pacer for CorePacer {
     }
 }
 
-/// Context-backed degradation recording for the slice clients.
+/// Context-backed degradation recording for the provider clients.
 ///
 /// Records into the current request's [`DegradationContext`](super::degradation::DegradationContext)
 /// (a no-op outside a request scope) and keeps the cause on the log line.
@@ -399,7 +395,7 @@ impl enrich::ListenBrainzClient for UnconfiguredListenBrainz {
 }
 
 /// Last.fm role for production: never available. Credentials are per-user
-/// (R7) and the stage-4 enrichment port carries no user, so no request can
+/// and the enrichment port carries no user, so no request can
 /// authenticate a Last.fm call; the aggregator falls back to ListenBrainz
 /// or bare echoes. Per-user fan-out awaits a user-scoped port.
 #[derive(Debug, Clone, Copy, Default)]
@@ -440,9 +436,9 @@ impl enrich::LastFmClient for UnconfiguredLastFm {
 }
 
 /// MusicBrainz role for production: identity lookups always fail. No
-/// stage-4 route serves album-page identity (the discover ports are
-/// synchronous and cannot host the async client), so nothing can reach
-/// this leg; failing closed keeps any future caller honest.
+/// route serves album-page identity (the discover ports are synchronous
+/// and cannot host the async client), so nothing can reach this leg;
+/// failing closed keeps any future caller from trusting it.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct UnconfiguredMusicBrainz;
 
@@ -473,7 +469,7 @@ impl enrich::MusicBrainzClient for UnconfiguredMusicBrainz {
 }
 
 /// Events role for production: the feed always fails. Concert rows and
-/// saved cities live in persistence no stage-5 slice owns (no feed
+/// saved cities live in persistence that does not exist yet (no feed
 /// fetching, no city store), so there is nothing to read; the lookup
 /// degrades to empty with a note instead of inventing concerts.
 #[derive(Debug, Clone, Copy, Default)]
@@ -508,9 +504,9 @@ impl enrich::EventsClient for UnconfiguredEvents {
 /// Live production enrichment: the search batch adapter plus the lyrics
 /// role, built once at boot and handed to [`ReadsSetup::build`](crate::reads::ReadsSetup::build).
 pub struct ProductionEnrichment {
-    /// Search enrichment behind the stage-4 `EnrichmentPort`.
+    /// Search enrichment behind the reads `EnrichmentPort`.
     pub search: Arc<enrich::AggregatingEnrichment>,
-    /// Live lyrics role behind the stage-4 `LyricsPort` (via
+    /// Live lyrics role behind the reads `LyricsPort` (via
     /// `ProviderLyrics`), or `None` when lyrics are disabled, in which case
     /// reads stay on the empty memory port and touch no network.
     pub lyrics: Option<Arc<LiveLrclib>>,

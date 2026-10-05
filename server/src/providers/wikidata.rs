@@ -1,21 +1,21 @@
 //! Artist bios, images, and relation targets via Wikidata/Wikipedia/Commons.
 //!
-//! A Rust port of v2's `backend/repositories/wikidata_repository.py`. Bios
+//! A Rust port of v2's Wikidata repository. Bios
 //! arrive in two hops (Wikidata entity to the English Wikipedia title, then
 //! the plain-text intro extract); artist images arrive in two more (the P18
 //! "image" claim filename, then the Commons file URL). Relation targets
 //! reuse the same claims path with a caller-chosen property.
 //!
-//! Absence-vs-outage semantics, carried over from the v2 B1 comments: a
+//! Absence-vs-outage semantics, carried over from v2: a
 //! clean miss (no sitelink, no extract, no claim) is `Ok(None)` and is
 //! safe for wiring to negative-cache briefly, while `Err` means the fetch
 //! itself failed and must stay uncached so the next request retries. v2
 //! parks a falsy `""` sentinel for 600s on clean misses, caches extracts
-//! for 7 days and images for 24h; those TTLs belong to the wiring slice.
+//! for 7 days and images for 24h; those TTLs belong to the wiring.
 //!
 //! Transport rides the shared [`HttpPort`](super::client::HttpPort) GET port.
 //! Retries, dedup, caching, and degradation recording stay
-//! with wiring/enrichment. One deliberate mapping to note: v2 answers
+//! with wiring/enrichment. One intended difference: v2 answers
 //! `None` for any non-200 status, while this port answers `Ok(None)` only
 //! for 404 and `Err(Transport)` otherwise, so an outage cannot be mistaken
 //! for "this artist has no bio".

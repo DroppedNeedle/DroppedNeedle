@@ -1,7 +1,6 @@
 //! Skiddle API client (Upcoming Events, the UK/IE depth source).
 //!
-//! Port of `backend/repositories/skiddle_repository.py` and
-//! `backend/repositories/skiddle_models.py`. An actionable-failure client:
+//! Port of v2's Skiddle repository and models. An actionable-failure client:
 //! non-200 answers, undecodable bodies, and Skiddle's own `error != 0`
 //! envelope on HTTP 200 all raise [SkiddleError] (wiring maps it to 503);
 //! HTTP 429 raises [SkiddleError::RateLimited]; raw transport errors never
@@ -9,17 +8,17 @@
 //!
 //! Wire quirks, verified against the live API on 2026-07-06 and preserved
 //! here with the v2 decode fixtures as reference
-//! (`backend/tests/fixtures/events/sk_*.json`):
+//! (its `sk_*.json` event fixtures):
 //!
-//! - `cancelled` is the STRING `'0'`/`'1'`, never a boolean.
+//! - `cancelled` is the string `'0'`/`'1'`, never a boolean.
 //! - Ids are strings, venue coordinates are floats.
 //! - Empty strings stand in for absent values (`ticketUrl`,
 //!   `cancellationDate`, `rescheduledDate`).
 //! - Key casing is mixed (`eventname` vs `ticketUrl` vs `EventCode`).
-//! - `totalcount` is an int on the artists endpoint but a STRING on events
+//! - `totalcount` is an int on the artists endpoint but a string on events
 //!   (`"392"`), so both shapes decode.
 //!
-//! Seam for s5-core: this client sends one request per call. Retry (3
+//! Shared infrastructure note: this client sends one request per call. Retry (3
 //! attempts over transport and rate-limit failures only), the conservative
 //! 1 req/s pacing (Skiddle documents only that unspecified daily + hourly
 //! caps exist), and the circuit breaker live in the shared resilience

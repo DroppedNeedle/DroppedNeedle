@@ -10,7 +10,7 @@
 //! The policy rows below encode the verified per-provider table: MusicBrainz
 //! 1/s hard, ListenBrainz 1/s, AudioDB 30/min free tier, AcoustID 3/s,
 //! Cover Art Archive conservative ~1/s with backoff, Last.fm 5/s with
-//! backoff. Two rows deliberately differ from v2's running config: v2 paced
+//! backoff. Two rows differ from v2's running config on purpose: v2 paced
 //! ListenBrainz at 2.5/s against a 1/s documented allocation (now fixed to
 //! the verified 1/s), and v2's cover-art lane self-throttled at 10/s (now
 //! conservative ~1/s per the verified row). Raise a row only by re-verifying
@@ -412,9 +412,8 @@ impl Default for LimiterSet {
     }
 }
 
-/// Pacing port behind the audio clients: one token per upstream call. The
-/// four audio slices landed with identical local copies of this trait; the
-/// integrator unified them here so one fake paces every client and the
+/// Pacing port behind the audio clients: one token per upstream call. One
+/// trait for all four audio clients, so one fake paces every client and the
 /// production [`CorePacer`](super::adapters::CorePacer) implements it once
 /// against the verified bucket. Slot-lane admission stays at explicit call
 /// sites because this seam carries no priority to choose a lane with.

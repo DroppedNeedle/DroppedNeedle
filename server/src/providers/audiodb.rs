@@ -1,7 +1,6 @@
 //! TheAudioDB artwork client.
 //!
-//! Ports `backend/repositories/audiodb_repository.py` plus the wire structs
-//! in `audiodb_models.py`: artist and album lookups by MusicBrainz id or by
+//! Ports v2's AudioDB repository plus its wire models: artist and album lookups by MusicBrainz id or by
 //! name, returning the artwork URLs TheAudioDB knows. The source is optional,
 //! so every failure fails soft into [`Outcome`]: a dead upstream records one
 //! degradation note and yields [`Outcome::Unavailable`], while "no match"
