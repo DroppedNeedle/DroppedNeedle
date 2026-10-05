@@ -10,8 +10,8 @@ entrypoint.sh                                        @HabiRabbu
 server/src/auth/                                     @HabiRabbu
 server/src/middleware.rs                             @HabiRabbu
 server/src/error.rs                                  @HabiRabbu
-server/src/config/crypto.rs                          @HabiRabbu
-server/src/config/mask.rs                            @HabiRabbu
+server/src/runtime_config/crypto.rs                        @HabiRabbu
+server/src/runtime_config/mask.rs                        @HabiRabbu
 server/src/compat/shared/auth.rs                     @HabiRabbu
 server/migrations/                                   @HabiRabbu
 frontend/src/lib/stores/authStore.svelte.ts          @HabiRabbu
