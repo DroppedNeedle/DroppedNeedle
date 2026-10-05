@@ -1806,7 +1806,7 @@ mod tests {
     /// instead of completing it short: a read error is never
     /// end-of-run.
     #[tokio::test]
-    async fn unreadable_inventory_page_fails_run_honestly() {
+    async fn unreadable_inventory_page_fails_the_run() {
         use super::super::coordinator::{LibraryScanCoordinator, StaticResolver};
         use super::super::models::{ScanKind, ScanRequest, ScanTrigger};
         use super::super::roots::{LibraryRoot, RootRegistry};
