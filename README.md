@@ -1,5 +1,7 @@
 <div align="center">
 
+[![Deploy to Railyard](https://app.railyard.run/deploy/badge)](https://app.railyard.run/deploy?repo=https://github.com/DroppedNeedle/DroppedNeedle)
+
 <img src="Images/logo_wide.png" alt="DroppedNeedle" width="400" />
 
 **Request music. Own everything.**
