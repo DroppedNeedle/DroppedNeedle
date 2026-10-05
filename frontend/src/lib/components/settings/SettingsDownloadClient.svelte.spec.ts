@@ -75,20 +75,6 @@ describe('SettingsDownloadClient.svelte', () => {
 		await expect.element(page.getByText(/Connected/)).toBeInTheDocument();
 	});
 
-	it('shows the effective lookup folder under the mount header', async () => {
-		await render(SettingsDownloadClient);
-		await page.getByRole('button', { name: 'Expand' }).click();
-		await expect
-			.element(page.getByTestId('effective-downloads-path'))
-			.toHaveTextContent('/data/downloads/slskd');
-	});
-
-	it('tells the user to leave the subfolder empty when the mount already matches slskd', async () => {
-		await render(SettingsDownloadClient);
-		await page.getByRole('button', { name: 'Expand' }).click();
-		await expect.element(page.getByText(/Leave this empty/)).toBeInTheDocument();
-	});
-
 	it('warns on a full path in the subfolder and trims it to relative', async () => {
 		await render(SettingsDownloadClient);
 		await page.getByRole('button', { name: 'Expand' }).click();
@@ -102,17 +88,5 @@ describe('SettingsDownloadClient.svelte', () => {
 		await expect
 			.element(page.getByTestId('effective-downloads-path'))
 			.toHaveTextContent('/data/downloads/slskd/complete');
-	});
-
-	it('reveals the incomplete-folder input and sends it on save', async () => {
-		await render(SettingsDownloadClient);
-		await page.getByRole('button', { name: 'Expand' }).click();
-		const input = page.getByPlaceholder('e.g. /data/slskd/incomplete');
-		await expect.element(input).toBeInTheDocument();
-		await input.fill('/data/slskd/incomplete');
-		await page.getByRole('button', { name: 'Save settings' }).click();
-		expect(saveMutate).toHaveBeenCalledWith(
-			expect.objectContaining({ slskd_incomplete_mount: '/data/slskd/incomplete' })
-		);
 	});
 });

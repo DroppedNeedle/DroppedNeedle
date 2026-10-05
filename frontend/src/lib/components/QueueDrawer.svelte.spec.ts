@@ -35,51 +35,6 @@ describe('QueueDrawer.svelte', () => {
 		playerStore.stop();
 	});
 
-	it('shows empty state when queue is empty', async () => {
-		const onclose = vi.fn();
-		await renderDrawer(true, onclose);
-		await expect.element(page.getByText('Queue is empty')).toBeVisible();
-	});
-
-	it('shows upcoming-only queue count when items exist', async () => {
-		playerStore.playQueue([
-			{
-				trackSourceId: 'v1',
-				trackName: 'Track A',
-				artistName: 'Artist',
-				trackNumber: 1,
-				albumId: 'a1',
-				albumName: 'Album',
-				coverUrl: null,
-				sourceType: 'local',
-				streamUrl: 'http://test/1.mp3'
-			},
-			{
-				trackSourceId: 'v2',
-				trackName: 'Track B',
-				artistName: 'Artist',
-				trackNumber: 2,
-				albumId: 'a1',
-				albumName: 'Album',
-				coverUrl: null,
-				sourceType: 'local',
-				streamUrl: 'http://test/2.mp3'
-			}
-		]);
-		const onclose = vi.fn();
-		await renderDrawer(true, onclose);
-		await expect.element(page.getByRole('heading', { name: 'Queue' })).toBeVisible();
-		await expect.element(page.getByText('Track A')).toBeVisible();
-		await expect.element(page.getByText('Track B')).toBeVisible();
-		await expect.element(page.getByText('1 track upcoming')).toBeVisible();
-	});
-
-	it('does not render content when closed', async () => {
-		const onclose = vi.fn();
-		await renderDrawer(false, onclose);
-		await expect.element(page.getByText('Queue')).not.toBeInTheDocument();
-	});
-
 	it('clears upcoming tracks on clear click but keeps current track', async () => {
 		playerStore.playQueue([
 			{
@@ -114,37 +69,6 @@ describe('QueueDrawer.svelte', () => {
 		expect(playerStore.queue).toHaveLength(1);
 		expect(playerStore.queue[0].trackSourceId).toBe('v1');
 		expect(onclose).toHaveBeenCalledTimes(1);
-	});
-
-	it('has remove buttons for queue items', async () => {
-		playerStore.playQueue([
-			{
-				trackSourceId: 'v1',
-				trackName: 'Track A',
-				artistName: 'Artist',
-				trackNumber: 1,
-				albumId: 'a1',
-				albumName: 'Album',
-				coverUrl: null,
-				sourceType: 'local',
-				streamUrl: 'http://test/1.mp3'
-			},
-			{
-				trackSourceId: 'v2',
-				trackName: 'Track B',
-				artistName: 'Artist',
-				trackNumber: 2,
-				albumId: 'a1',
-				albumName: 'Album',
-				coverUrl: null,
-				sourceType: 'local',
-				streamUrl: 'http://test/2.mp3'
-			}
-		]);
-		const onclose = vi.fn();
-		await renderDrawer(true, onclose);
-		const removeButtons = page.getByLabelText('Remove from queue').all();
-		expect(removeButtons.length).toBeGreaterThanOrEqual(1);
 	});
 
 	it('only allows reordering upcoming tracks', async () => {

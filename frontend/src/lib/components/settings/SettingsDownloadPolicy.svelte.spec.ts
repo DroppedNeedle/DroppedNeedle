@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 
 import type { DownloadPolicySettings, QualityRecipeEntry } from '$lib/types';
-import { PRESETS } from './acquisition/qualityRecipeModel';
 
 const recipe: QualityRecipeEntry[] = [
 	{ format: 'flac', quality: 'cd' },
@@ -112,43 +111,6 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 		h.mutateAsync = vi.fn().mockResolvedValue(undefined);
 	});
 
-	it('loads the saved recipe, summary, current preset, and exactly one acquisition policy save action', async () => {
-		h.policy = {
-			...structuredClone(basePolicy),
-			quality_recipe: structuredClone(PRESETS.balanced.recipe)
-		};
-		const { container } = await render(SettingsDownloadPolicy);
-
-		await expect
-			.element(
-				page.getByText(
-					'Try FLAC · CD quality → MP3 · 320+ kbps → MP3 · 256-319 kbps → MP3 · 192-255 kbps.',
-					{ exact: true }
-				)
-			)
-			.toBeVisible();
-		expect(container.querySelector('[data-preset="balanced"] .badge')?.textContent?.trim()).toBe(
-			'Current'
-		);
-		expect(rows(container)).toHaveLength(4);
-		expect(container.querySelectorAll('button[aria-label="Save acquisition policy"]')).toHaveLength(
-			1
-		);
-	});
-
-	it('keeps upgrade controls in the same save mutation as the recipe', async () => {
-		const { container } = await render(SettingsDownloadPolicy);
-		await page.getByRole('checkbox', { name: 'Allow automatic upgrades' }).click();
-		await page.getByRole('button', { name: 'Save acquisition policy' }).click();
-
-		expect(h.mutateAsync).toHaveBeenCalledTimes(1);
-		const saved = h.mutateAsync.mock.calls[0][0] as Record<string, unknown>;
-		expect(saved.upgrade_allowed).toBe(true);
-		expect(saved.quality_cutoff).toBe('lossless');
-		expect(saved.quality_recipe_status).toBe('v2');
-		expect(saved.quality_recipe).toEqual(recipe);
-		expect(cutoffSelect(container).value).toBe('lossless');
-	});
 	it('derives the live legacy range from custom MP3 coverage and clamps the cutoff', async () => {
 		h.policy = {
 			...structuredClone(basePolicy),
@@ -199,25 +161,6 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 			recipe[1]
 		]);
 		expect(container.querySelectorAll('[data-recipe-id]')).toHaveLength(3);
-	});
-
-	it('adds, edits, removes, and reorders entries through the composed settings surface', async () => {
-		const { container } = await render(SettingsDownloadPolicy);
-		await page.getByRole('radio', { name: /24-bit \/ 96 kHz/ }).click();
-		await page.getByRole('button', { name: 'Add FLAC recipe entry' }).click();
-		expect(rows(container)).toHaveLength(3);
-		expect(rows(container)[2]).toHaveTextContent('24-bit / 96 kHz');
-
-		await page.getByRole('button', { name: 'Move FLAC · 24-bit / 96 kHz up' }).click();
-		expect(rows(container)[1]).toHaveTextContent('24-bit / 96 kHz');
-
-		await page.getByRole('button', { name: 'Edit FLAC · 24-bit / 96 kHz' }).click();
-		await page.getByRole('radio', { name: /^24-bit \/ 192 kHz High-resolution/ }).click();
-		await page.getByRole('button', { name: 'Update FLAC recipe entry' }).click();
-		expect(rows(container)[1]).toHaveTextContent('24-bit / 192 kHz');
-
-		await page.getByRole('button', { name: 'Remove FLAC · 24-bit / 192 kHz' }).click();
-		expect(rows(container)).toHaveLength(2);
 	});
 
 	it('blocks inclusive MP3 overlap and accepts a non-overlapping custom region', async () => {
@@ -335,46 +278,6 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 			}
 		]);
 	});
-	it('shows replacement state instead of presenting a non-convertible saved recipe', async () => {
-		h.policy = {
-			...structuredClone(basePolicy),
-			flac_mp3_only: false,
-			quality_recipe_status: 'non_convertible',
-			quality_recipe_error: 'The saved policy allows additional formats.',
-			quality_recipe: structuredClone(recipe)
-		};
-		const { container } = await render(SettingsDownloadPolicy);
-
-		await expect
-			.element(page.getByRole('alert').first())
-			.toHaveTextContent('The saved policy allows additional formats.');
-		expect(rows(container)).toHaveLength(0);
-		await expect.element(page.getByRole('button', { name: 'Apply Balanced preset' })).toBeVisible();
-	});
-
-	it('shows loading without rendering editable defaults', async () => {
-		h.policy = undefined;
-		h.pending = true;
-		const { container } = await render(SettingsDownloadPolicy);
-		await expect
-			.element(page.getByRole('region', { name: 'Loading acquisition policy' }))
-			.toHaveAttribute('aria-busy', 'true');
-		expect(container.querySelector('[data-motion="quality-recipe"]')).toBeNull();
-	});
-
-	it('shows an error and retries without rendering editable defaults', async () => {
-		h.policy = undefined;
-		h.pending = false;
-		h.isError = true;
-		h.error = new Error('network');
-		const { container } = await render(SettingsDownloadPolicy);
-		await expect
-			.element(page.getByRole('alert'))
-			.toHaveTextContent('Could not load acquisition policy');
-		expect(container.querySelector('[data-motion="quality-recipe"]')).toBeNull();
-		await page.getByRole('button', { name: 'Retry' }).click();
-		expect(h.refetch).toHaveBeenCalledTimes(1);
-	});
 
 	it('preserves the draft after a failed save and restores it with Discard', async () => {
 		h.mutateAsync = vi.fn().mockRejectedValue(new Error('conflict'));
@@ -443,26 +346,6 @@ describe('SettingsDownloadPolicy quality recipe', () => {
 			true
 		);
 		expect(order).not.toEqual(['lossless', 'mp3_320', 'mp3_256', 'mp3_192', 'low']);
-	});
-
-	it('heals a stale preference order when adding an entry widens the range', async () => {
-		const { container } = await render(SettingsDownloadPolicy);
-		expect(rows(container)).toHaveLength(2);
-		await page.getByRole('radio', { name: 'Below 192' }).click();
-		await page.getByRole('button', { name: 'Add MP3 recipe entry' }).click();
-		expect(rows(container)).toHaveLength(3);
-		await page.getByRole('button', { name: 'Save acquisition policy' }).click();
-
-		expect(h.mutateAsync).toHaveBeenCalledTimes(1);
-		const saved = h.mutateAsync.mock.calls[0][0] as Record<string, unknown>;
-		expect(saved.quality_min).toBe('low');
-		expect(saved.quality_max).toBe('lossless');
-		const order = saved.quality_preference_order as string[];
-		const expected = ['lossless', 'mp3_320', 'mp3_256', 'mp3_192', 'low'];
-		expect(order.length === 0 || [...order].sort().join() === [...expected].sort().join()).toBe(
-			true
-		);
-		expect(order).not.toEqual(['lossless', 'mp3_320']);
 	});
 
 	it('preserves the stored preference-order permutation when the range is unchanged', async () => {

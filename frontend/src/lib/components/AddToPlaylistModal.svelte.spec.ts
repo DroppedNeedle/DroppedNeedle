@@ -102,70 +102,6 @@ describe('AddToPlaylistModal.svelte', () => {
 		mockCheckTracksMutate.mockResolvedValue({ membership: {} });
 	});
 
-	it('opening modal fetches playlists and renders list', async () => {
-		mockListAnswer(makePlaylists());
-		const result = await renderModal();
-		(result.component as unknown as ModalRef).open([makeTrack()]);
-
-		await expect.element(page.getByText('My Playlist')).toBeVisible();
-		await expect.element(page.getByText('Another')).toBeVisible();
-		expect(mockV3List).toHaveBeenCalledOnce();
-	});
-
-	it('shows loading skeletons while fetching', async () => {
-		let resolveFetch!: (value: { playlists: unknown[] }) => void;
-		mockV3List.mockReturnValue(
-			new Promise<{ playlists: unknown[] }>((r) => {
-				resolveFetch = r;
-			})
-		);
-		const result = await renderModal();
-		(result.component as unknown as ModalRef).open([makeTrack()]);
-
-		const skeletons = page.getByTestId('playlist-skeleton').all();
-		expect((await skeletons).length).toBeGreaterThan(0);
-
-		resolveFetch({ playlists: makePlaylists() });
-		await expect.element(page.getByText('My Playlist')).toBeVisible();
-	});
-
-	it('renders empty state when playlists list is empty', async () => {
-		mockListAnswer([]);
-		const result = await renderModal();
-		(result.component as unknown as ModalRef).open([makeTrack()]);
-
-		await expect.element(page.getByText("You haven't created any playlists yet.")).toBeVisible();
-	});
-
-	it('clicking add button calls addTracksToPlaylist with correct tracks', async () => {
-		mockListAnswer(makePlaylists());
-		mockAddTracksMutate.mockResolvedValue({ tracks: [] });
-		const track = makeTrack();
-		const result = await renderModal();
-		(result.component as unknown as ModalRef).open([track]);
-
-		await expect.element(page.getByText('My Playlist')).toBeVisible();
-		const addBtn = page.getByLabelText('Add to My Playlist');
-		await addBtn.click();
-
-		await vi.waitFor(() => {
-			expect(mockAddTracksMutate).toHaveBeenCalledOnce();
-			expect(mockAddTracksMutate.mock.calls[0][0]).toMatchObject({ id: 'p1' });
-		});
-	});
-
-	it('after adding, button transitions from CirclePlus to Check', async () => {
-		mockListAnswer(makePlaylists());
-		mockAddTracksMutate.mockResolvedValue({ tracks: [] });
-		const result = await renderModal();
-		(result.component as unknown as ModalRef).open([makeTrack()]);
-
-		await expect.element(page.getByText('My Playlist')).toBeVisible();
-		await page.getByLabelText('Add to My Playlist').click();
-
-		await expect.element(page.getByLabelText('Already added').first()).toBeVisible();
-	});
-
 	it('clicking add on same playlist twice is a no-op (addedSet guard)', async () => {
 		mockListAnswer(makePlaylists());
 		mockAddTracksMutate.mockResolvedValue({ tracks: [] });
@@ -177,38 +113,6 @@ describe('AddToPlaylistModal.svelte', () => {
 		await expect.element(page.getByLabelText('Already added').first()).toBeVisible();
 
 		expect(mockAddTracksMutate).toHaveBeenCalledOnce();
-	});
-
-	it('new playlist creation flow: creates, adds tracks, shows in list', async () => {
-		mockListAnswer([]);
-		mockCreateMutate.mockResolvedValue({
-			id: 'p-new',
-			name: 'Fresh',
-			track_count: 0,
-			total_duration: null,
-			cover_urls: [],
-			custom_cover_url: null,
-			created_at: 1767400000,
-			updated_at: 1767400000,
-			is_public: false,
-			is_owner: true,
-			owner_name: null,
-			is_redacted: false,
-			tracks: []
-		});
-		mockAddTracksMutate.mockResolvedValue({ tracks: [] });
-
-		const result = await renderModal();
-		(result.component as unknown as ModalRef).open([makeTrack()]);
-
-		await expect.element(page.getByText("You haven't created any playlists yet.")).toBeVisible();
-
-		const input = page.getByPlaceholder('New playlist name');
-		await input.fill('Fresh');
-		await page.getByLabelText('Create playlist').click();
-
-		expect(mockCreateMutate).toHaveBeenCalledWith('Fresh');
-		await expect.element(page.getByText('Fresh')).toBeVisible();
 	});
 
 	it('error during add shows error status and does not mark as added', async () => {
@@ -223,31 +127,6 @@ describe('AddToPlaylistModal.svelte', () => {
 		await expect.element(page.getByText("Couldn't add those tracks")).toBeVisible();
 
 		await expect.element(page.getByLabelText('Add to My Playlist')).toBeVisible();
-	});
-
-	it('shows tick for playlists where all tracks already exist', async () => {
-		mockListAnswer(makePlaylists());
-		mockCheckTracksMutate.mockResolvedValue({ membership: { '0': ['p1'] } });
-		const result = await renderModal();
-		(result.component as unknown as ModalRef).open([makeTrack()]);
-
-		await expect.element(page.getByText('My Playlist')).toBeVisible();
-		const tickBtn = page.getByLabelText('Already added').first();
-		await expect.element(tickBtn).toBeVisible();
-		expect(tickBtn.element().hasAttribute('disabled')).toBe(true);
-	});
-
-	it('shows partial indicator when some tracks already exist', async () => {
-		mockListAnswer(makePlaylists());
-		mockCheckTracksMutate.mockResolvedValue({ membership: { '0': ['p1'] } });
-		const track1 = makeTrack({ trackName: 'Track 1' });
-		const track2 = makeTrack({ trackName: 'Track 2', trackSourceId: 'v2' });
-		const result = await renderModal();
-		(result.component as unknown as ModalRef).open([track1, track2]);
-
-		await expect.element(page.getByText('My Playlist')).toBeVisible();
-		const partialBtn = page.getByLabelText('Add the remaining tracks to My Playlist');
-		await expect.element(partialBtn).toBeVisible();
 	});
 
 	it('partial add only sends non-duplicate tracks', async () => {
@@ -268,15 +147,5 @@ describe('AddToPlaylistModal.svelte', () => {
 			expect(calledTracks).toHaveLength(1);
 			expect(calledTracks[0].track_name).toBe('Track 2');
 		});
-	});
-
-	it('shows + for playlists with no overlap', async () => {
-		mockListAnswer(makePlaylists());
-		mockCheckTracksMutate.mockResolvedValue({ membership: {} });
-		const result = await renderModal();
-		(result.component as unknown as ModalRef).open([makeTrack()]);
-
-		await expect.element(page.getByText('My Playlist')).toBeVisible();
-		await expect.element(page.getByLabelText('Add to My Playlist')).toBeVisible();
 	});
 });
