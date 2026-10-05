@@ -87,7 +87,7 @@
 	const canReview = $derived(needsDecision && authStore.isAdmin);
 	const musicFooter = $derived(
 		stillMatching > 0 && libUnmatched > 0
-			? `${stillMatching.toLocaleString()} still matching — ${libUnmatched.toLocaleString()} need a decision`
+			? `${stillMatching.toLocaleString()} still matching, ${libUnmatched.toLocaleString()} need a decision`
 			: stillMatching > 0
 				? `${stillMatching.toLocaleString()} still matching`
 				: libUnmatched > 0

@@ -287,7 +287,7 @@
 				<p>
 					<strong>{preview.data.eligible_count.toLocaleString()} eligible</strong>, {preview.data.ineligible_count.toLocaleString()}
 					ineligible, {preview.data.stale_count.toLocaleString()}
-					changed since selection — nothing changed yet. Covers {preview.data.album_count.toLocaleString()}
+					changed since selection; nothing changed yet. Covers {preview.data.album_count.toLocaleString()}
 					albums and {preview.data.root_count.toLocaleString()} roots.
 				</p>
 				{#if selection.normalized_filter.reason_code}

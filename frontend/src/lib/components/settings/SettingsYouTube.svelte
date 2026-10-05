@@ -53,7 +53,7 @@
 	<div class="card-body">
 		<h2 class="card-title text-2xl">YouTube</h2>
 		<p class="text-base-content/70 mb-4">
-			Enable YouTube features across the app — manage album links, search YouTube, and optionally
+			Enable YouTube features across the app: manage album links, search YouTube, and optionally
 			enable the API for automatic link generation.
 		</p>
 

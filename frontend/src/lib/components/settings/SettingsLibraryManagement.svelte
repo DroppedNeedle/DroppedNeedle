@@ -371,10 +371,8 @@
 				saved.automatic_scan_discovered)
 		) {
 			if (activationHealthQuery.isLoading) return 'Checking activation…';
-			if (blockedActivationRootIds.includes(rootId)) return 'Paused — needs attention';
-			return staleActivationRootIds.includes(rootId)
-				? 'Activation stale — run a dry run'
-				: 'Active';
+			if (blockedActivationRootIds.includes(rootId)) return 'Paused: needs attention';
+			return staleActivationRootIds.includes(rootId) ? 'Activation stale: run a dry run' : 'Active';
 		}
 		return saved.enabled ? 'Configured; automatic triggers off' : 'Off';
 	}
@@ -1499,7 +1497,7 @@
 					>
 				{:else if blockedActivationRootIds.length > 0}
 					<div>
-						<strong class="text-sm">Automatic writes paused — needs attention</strong>
+						<strong class="text-sm">Automatic writes paused: needs attention</strong>
 						<p class="text-xs text-base-content/50">
 							{#if blockedActivationRootLabels.length === 1}
 								{blockedActivationRootLabels[0]} needs attention before automatic writes can resume. Check
@@ -1521,7 +1519,7 @@
 					>
 				{:else if staleActivationRootIds.length > 0}
 					<div>
-						<strong class="text-sm">Automatic writes paused — dry run needed</strong>
+						<strong class="text-sm">Automatic writes paused: dry run needed</strong>
 						<p class="text-xs text-base-content/50">
 							{#if staleActivationRootLabels.length === 1}
 								{staleActivationRootLabels[0]} no longer matches its confirmed dry run. Run a fresh dry

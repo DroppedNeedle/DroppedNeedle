@@ -248,7 +248,7 @@
 							Current work
 						</p>
 						<h2 class="font-display mt-1 text-2xl font-bold">
-							Scan complete ({totalTracks.toLocaleString()} files) — Matching {drainPending.toLocaleString()}
+							Scan complete ({totalTracks.toLocaleString()} files), matching {drainPending.toLocaleString()}
 							{drainPending === 1 ? 'album' : 'albums'}
 						</h2>
 						<p class="mt-1 text-sm text-base-content/60">

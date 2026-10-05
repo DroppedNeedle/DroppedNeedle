@@ -24,7 +24,7 @@
 		loadEndpoint: '/api/v1/settings/advanced',
 		saveEndpoint: '/api/v1/settings/advanced',
 		afterSave: () => {
-			form.showMessage('Settings saved — some changes take effect after page reload');
+			form.showMessage('Settings saved. Some changes take effect after a page reload');
 		}
 	});
 

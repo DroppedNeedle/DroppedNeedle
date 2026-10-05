@@ -77,7 +77,7 @@
 			onQuotaUpdate(data.quota);
 		} catch (e) {
 			toastStore.show({
-				message: `Failed: ${trackName} — ${e instanceof Error ? e.message : 'Unknown error'}`,
+				message: `Failed: ${trackName} (${e instanceof Error ? e.message : 'Unknown error'})`,
 				type: 'error',
 				duration: TOAST_DURATION
 			});
@@ -93,7 +93,7 @@
 			void generateLink();
 		} else {
 			toastStore.show({
-				message: 'YouTube API not configured — enable it in Settings',
+				message: 'YouTube API not configured. Enable it in Settings.',
 				type: 'error',
 				duration: TOAST_DURATION
 			});

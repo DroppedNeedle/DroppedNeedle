@@ -141,7 +141,7 @@
 												class="min-w-0 flex-1 truncate {href ? 'hover:text-primary' : ''}"
 											>
 												{item.album_name}
-												<span class="text-base-content/50">— {item.artist_name}</span>
+												<span class="text-base-content/50">· {item.artist_name}</span>
 											</svelte:element>
 											{#if item.outcome !== 'requested'}
 												<span class="badge badge-ghost badge-sm shrink-0">Already yours</span>

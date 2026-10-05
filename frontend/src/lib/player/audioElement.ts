@@ -22,14 +22,14 @@ export function setAudioElement(el: HTMLAudioElement): void {
 
 export function getAudioElement(): HTMLAudioElement {
 	if (!audioElement) {
-		throw new Error('Audio element not mounted — setAudioElement() must be called before playback');
+		throw new Error('Audio element not mounted: setAudioElement() must be called before playback');
 	}
 	return audioElement;
 }
 
 export function getAudioEngine(): AudioEngine {
 	if (!engine) {
-		throw new Error('Audio engine not initialized — setAudioElement() must be called first');
+		throw new Error('Audio engine not initialized: setAudioElement() must be called first');
 	}
 	return engine;
 }

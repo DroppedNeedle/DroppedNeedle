@@ -3,7 +3,7 @@
 		if (code === 'NO_CANDIDATE') return 'No external result';
 		if (code === 'AMBIGUOUS') return 'Several equally likely releases';
 		if (code === 'CONTRADICTORY') return 'Conflicting track evidence';
-		if (code === 'EDITION_UNCERTAIN') return 'Edition to confirm — release group pinned';
+		if (code === 'EDITION_UNCERTAIN') return 'Edition to confirm - release group pinned';
 		if (code === 'RELEASE_TYPE_REQUIRES_CONFIRMATION' || code === 'UNSAFE_RELEASE_TYPE') {
 			return 'Compilation or live edition needs confirmation';
 		}
@@ -66,7 +66,7 @@
 				: filtered
 					? 'No review items match these filters.'
 					: waitingCount > 0
-						? 'Matching still running — check back.'
+						? 'Matching still running. Check back later.'
 						: 'No albums need identification review.'}
 		description={state === 'keep_tagged'
 			? 'Albums you keep as tagged will appear here.'

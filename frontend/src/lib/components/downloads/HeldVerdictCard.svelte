@@ -115,7 +115,7 @@
 			</p>
 			<p class="mt-3 max-w-3xl text-sm leading-relaxed text-base-content/70">
 				{#if grabbed}
-					Grabbed “{grabbed}” — but it doesn't match the expected
+					Grabbed “{grabbed}”, but it doesn't match the expected
 					<strong class="text-base-content">{task.album_title}</strong> edition, so every file failed
 					verification. Discard the lot, retry the hunt, or review tracks one by one below.
 				{:else}

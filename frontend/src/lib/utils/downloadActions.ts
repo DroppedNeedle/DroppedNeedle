@@ -12,7 +12,7 @@ export async function downloadAlbumArchive(url: string): Promise<void> {
 		toastStore.show({ message: 'Album download started', type: 'success' });
 	} catch {
 		toastStore.show({
-			message: 'Could not download this album — it may have no local files left to archive',
+			message: 'Could not download this album. It may have no local files left to archive.',
 			type: 'error'
 		});
 	}

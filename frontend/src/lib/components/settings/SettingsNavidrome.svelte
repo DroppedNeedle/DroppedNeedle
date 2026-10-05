@@ -208,8 +208,9 @@
 						<div class="label whitespace-normal">
 							<span class="label-text-alt text-base-content/50">
 								An absolute path <em>inside the DroppedNeedle container</em> that must sit
-								<strong>inside the same music library tree Navidrome scans</strong> — track paths are
-								written relative to this folder, so both apps have to see the same folder-to-track relationship.
+								<strong>inside the same music library tree Navidrome scans</strong>. Track paths are
+								written relative to this folder, so both apps have to see the same folder-to-track
+								relationship.
 							</span>
 						</div>
 					</div>
@@ -268,7 +269,7 @@
 								{#if syncResult.removal_failures}
 									<p class="text-xs mt-1">
 										Files that could not be removed are still visible in Navidrome. They will be
-										retried on the next sync — check the folder's permissions if this persists.
+										retried on the next sync. Check the folder's permissions if this persists.
 									</p>
 								{/if}
 							</div>
