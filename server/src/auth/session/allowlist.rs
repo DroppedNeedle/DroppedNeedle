@@ -13,11 +13,12 @@
 //! like their v2 parents (link under `/me`, settings under `/plex`).
 
 /// Exact public paths under `/api/v3`. Logout is public so a stale client can
-/// always clear its cookie; the two OAuth callbacks carry their own single-use
-/// state tokens instead of a session.
+/// always clear its cookie. Every entry must be a mounted route (pinned by a
+/// test): a public path with no route is a hole waiting for one. Routes
+/// that carry their own credential and never need the gate (the Spotify
+/// OAuth callback, the wrapped API) mount outside it instead.
 pub const PUBLIC_PATHS: &[&str] = &[
     "/api/v3/auth/setup/status",
-    "/api/v3/auth/providers",
     "/api/v3/auth/setup",
     "/api/v3/auth/login",
     "/api/v3/auth/password-recovery/reset",
@@ -25,9 +26,6 @@ pub const PUBLIC_PATHS: &[&str] = &[
     "/api/v3/auth/jellyfin/login",
     "/api/v3/auth/plex/start",
     "/api/v3/auth/plex/poll/login",
-    "/api/v3/me/connections/spotify/auth/callback",
-    "/api/v3/library/contributions/musicbrainz/callback",
-    "/api/v3/openapi.json",
 ];
 
 /// Public path prefixes (segment-boundary matched): the OIDC
@@ -56,7 +54,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn allowlist_covers_spec_d2_and_nothing_adjacent() {
+    fn every_public_path_is_a_mounted_route() {
+        use utoipa::OpenApi as _;
+        let doc = crate::docs::ApiDoc::openapi();
+        for path in PUBLIC_PATHS {
+            assert!(doc.paths.paths.contains_key(*path), "{path} has no route");
+        }
+        for prefix in PUBLIC_PREFIXES {
+            assert!(
+                doc.paths.paths.keys().any(|path| path.starts_with(prefix)),
+                "{prefix} has no route"
+            );
+        }
+    }
+
+    #[test]
+    fn allowlist_is_exact_and_nothing_adjacent() {
         for path in PUBLIC_PATHS {
             assert!(is_public(path), "{path} must be public");
         }
