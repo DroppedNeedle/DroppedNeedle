@@ -12,9 +12,9 @@ use droppedneedle::acquire::db::AcquireDb;
 use droppedneedle::acquire::flows::{
     self,
     loops::{
-        FollowDeps, LoopState, ManualSleeper, SYNC_INITIAL_DELAY, SYNC_INTERVAL, SYNC_JOB,
-        SweepDeps, SyncDeps, WantedDeps, WantedSettings, follow_tick, interval_seconds,
-        spawn_sync_loop, sweep_tick, sync_tick, wanted_tick,
+        FollowDeps, LoopState, ManualSleeper, PruneDeps, PruneSettings, SYNC_INITIAL_DELAY,
+        SYNC_INTERVAL, SYNC_JOB, SweepDeps, SyncDeps, WantedDeps, WantedSettings, follow_tick,
+        interval_seconds, prune_tick, spawn_sync_loop, sweep_tick, sync_tick, wanted_tick,
     },
     operations::{
         DROP_IMPORT_JOB, DropImportDeps, FreeMusicDeps, FreeMusicOutcome, FreeMusicRequest,
@@ -590,4 +590,30 @@ async fn wait_for_requests(sleeper: &ManualSleeper, count: usize) {
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
     panic!("loop never requested {count} sleep(s)");
+}
+
+// The store prune drops settled requests past retention, never an active
+// one.
+#[tokio::test]
+async fn prune_drops_only_settled_rows_past_retention() {
+    let db = AcquireDb::scratch().unwrap();
+    let ledger = RequestStore::new(db.clone());
+    seed_request(&ledger, "rg-done", "imported", None).await;
+    seed_request(&ledger, "rg-live", "pending", None).await;
+    let deps = PruneDeps {
+        settings: Arc::new(PruneSettings::default),
+        ledger: ledger.clone(),
+        watches: WantedStore::new(db.clone()),
+    };
+
+    let summary = prune_tick(NOW + 200 * 86_400, &deps).await.unwrap();
+    assert_eq!(summary.requests, 1);
+    assert!(
+        ledger
+            .get(RequestKind::Album, "rg-done")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(status_of(&ledger, "rg-live").await, "pending");
 }

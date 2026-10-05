@@ -60,6 +60,12 @@ pub const FOLLOW_JOB: &str = "follow-new-release-poll";
 pub const UPGRADE_JOB: &str = "background-upgrade-scan";
 /// Registry name for the request-status sync (v2 `TaskRegistry` key).
 pub const SYNC_JOB: &str = "request-status-sync";
+/// Registry name for the store prune (v2 `TaskRegistry` key).
+pub const PRUNE_JOB: &str = "store-prune";
+/// Store-prune startup delay (v2 `prune_stores_periodically`).
+pub const PRUNE_INITIAL_DELAY: Duration = Duration::from_secs(600);
+/// How often the prune loop checks whether its configured interval passed.
+pub const PRUNE_TICK: Duration = Duration::from_secs(3600);
 
 /// Sleep seam so loops test without real waits.
 pub trait Sleeper: Send + Sync {
@@ -961,6 +967,111 @@ pub struct SyncSummary {
     pub imported: usize,
     /// Rows that errored (each isolated).
     pub errors: usize,
+}
+
+/// Retention policy for the store prune, read on every pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PruneSettings {
+    /// Terminal requests and finished watches older than this go.
+    pub retention_days: u64,
+    /// Hours between prunes.
+    pub interval_hours: u64,
+}
+
+impl Default for PruneSettings {
+    fn default() -> Self {
+        Self {
+            retention_days: 180,
+            interval_hours: 6,
+        }
+    }
+}
+
+/// Store-prune dependencies.
+pub struct PruneDeps {
+    /// Live retention policy.
+    pub settings: Arc<dyn Fn() -> PruneSettings + Send + Sync>,
+    /// Request ledger.
+    pub ledger: RequestStore,
+    /// Wanted watches.
+    pub watches: WantedStore,
+}
+
+/// What one prune removed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PruneSummary {
+    /// Terminal requests deleted.
+    pub requests: u64,
+    /// Finished watches deleted.
+    pub watches: u64,
+    /// Seen-candidate rows deleted.
+    pub seen: u64,
+}
+
+/// One prune at `now`: terminal requests and stopped or fulfilled watches
+/// past the retention window go (v2 `prune_stores_periodically`). The
+/// window is clamped to the settings' 30..3650 days.
+pub async fn prune_tick(now: i64, deps: &PruneDeps) -> Result<PruneSummary, RequestsError> {
+    let days = (deps.settings)().retention_days.clamp(30, 3650);
+    let cutoff = u64::try_from(now)
+        .unwrap_or(0)
+        .saturating_sub(days * 86_400);
+    let requests = deps.ledger.prune_terminal(cutoff).await?;
+    let (watches, seen) = deps.watches.prune(cutoff).await?;
+    Ok(PruneSummary {
+        requests,
+        watches,
+        seen,
+    })
+}
+
+/// Store-prune pass: runs when the configured interval has passed since
+/// the last prune.
+pub struct PrunePass {
+    /// Prune deps.
+    pub deps: Arc<PruneDeps>,
+    last: Option<i64>,
+}
+
+impl FlowPass for PrunePass {
+    async fn run(&mut self, now: i64, _state: &mut LoopState) {
+        let hours = (self.deps.settings)().interval_hours.clamp(1, 168);
+        let interval = i64::try_from(hours * 3600).unwrap_or(i64::MAX);
+        if self.last.is_some_and(|last| now - last < interval) {
+            return;
+        }
+        self.last = Some(now);
+        match prune_tick(now, &self.deps).await {
+            Ok(summary) => tracing::info!(?summary, "store prune finished"),
+            Err(error) => tracing::warn!(?error, "store prune failed"),
+        }
+    }
+}
+
+/// Spawn the store prune: startup delay, then an hourly check that prunes
+/// once the configured interval has passed, until shutdown.
+pub async fn spawn_prune_loop<S>(
+    sleeper: S,
+    wakeups: DurableWorkWakeups,
+    lane: WriteLane,
+    clock: Arc<dyn Clock>,
+    deps: Arc<PruneDeps>,
+) -> Result<(FlowHandle, Arc<FlowRegistry>), String>
+where
+    S: Sleeper + Clone + Send + 'static,
+{
+    spawn_flow(
+        PRUNE_JOB,
+        sleeper,
+        None,
+        PRUNE_INITIAL_DELAY,
+        PRUNE_TICK,
+        wakeups,
+        lane,
+        clock,
+        PrunePass { deps, last: None },
+    )
+    .await
 }
 
 /// Status-sync dependencies.

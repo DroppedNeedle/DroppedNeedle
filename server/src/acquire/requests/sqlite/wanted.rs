@@ -89,6 +89,31 @@ pub struct WantedStore {
 }
 
 impl WantedStore {
+    /// Delete stopped and fulfilled watches last touched before `cutoff`
+    /// (epoch seconds), then seen-candidate rows left without a watch.
+    /// Returns `(watches, seen rows)` deleted (v2 `WantedStore.prune`).
+    pub async fn prune(&self, cutoff: u64) -> Result<(u64, u64), RequestsError> {
+        self.db
+            .write_background("wanted.prune", move |tx| {
+                let watches = tx.execute(
+                    "DELETE FROM wanted_watches WHERE state IN ('stopped', 'fulfilled') \
+                     AND COALESCE(last_checked_at, created_at) < ?1",
+                    params![cutoff as f64],
+                )?;
+                let seen = tx.execute(
+                    "DELETE FROM wanted_seen_candidates WHERE release_group_mbid_lower \
+                     NOT IN (SELECT release_group_mbid_lower FROM wanted_watches)",
+                    [],
+                )?;
+                Ok((
+                    u64::try_from(watches).unwrap_or(0),
+                    u64::try_from(seen).unwrap_or(0),
+                ))
+            })
+            .await
+            .map_err(|error| lane_error("wanted.prune", error))
+    }
+
     /// Watches over one database.
     pub fn new(db: AcquireDb) -> Self {
         Self { db }

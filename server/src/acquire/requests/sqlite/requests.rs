@@ -887,6 +887,37 @@ impl RequestStore {
         Ok(u32::try_from(count).unwrap_or(u32::MAX))
     }
 
+    /// Delete terminal requests settled before `cutoff` (epoch seconds),
+    /// keeping any a live wanted watch still points at, then the
+    /// requester and dismissal rows left without a request. Returns the
+    /// requests deleted (v2 `prune_old_terminal_requests`).
+    pub async fn prune_terminal(&self, cutoff: u64) -> Result<u64, RequestsError> {
+        self.db
+            .write_background("requests.prune", move |tx| {
+                let deleted = tx.execute(
+                    "DELETE FROM request_history \
+                     WHERE status IN ('imported', 'incomplete', 'failed', 'cancelled', 'rejected') \
+                       AND CAST(COALESCE(completed_at, requested_at) AS INTEGER) < ?1 \
+                       AND musicbrainz_id_lower NOT IN (SELECT release_group_mbid_lower \
+                           FROM wanted_watches WHERE state IN ('watching', 'dormant'))",
+                    params![to_i64(cutoff)],
+                )?;
+                tx.execute(
+                    "DELETE FROM request_history_requesters WHERE musicbrainz_id_lower \
+                     NOT IN (SELECT musicbrainz_id_lower FROM request_history)",
+                    [],
+                )?;
+                tx.execute(
+                    "DELETE FROM request_history_dismissals WHERE musicbrainz_id_lower \
+                     NOT IN (SELECT musicbrainz_id_lower FROM request_history)",
+                    [],
+                )?;
+                Ok(u64::try_from(deleted).unwrap_or(0))
+            })
+            .await
+            .map_err(|error| lane_error("requests.prune", error))
+    }
+
     /// Run one record query and attach listeners to every row.
     async fn fetch_records<'q>(
         &self,

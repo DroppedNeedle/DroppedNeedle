@@ -22,9 +22,9 @@ use super::dispatch::{Journal, RetryPolicySource, UnifiedDispatch};
 use super::downloads::orphans::RecycleBin;
 use super::downloads::watchdog::{RetryPolicy, WatchdogConfig};
 use super::flows::loops::{
-    FollowDeps, SweepDeps, SyncDeps, ThreadJitter, TokioSleeper, WantedDeps, WantedSettings,
-    register_ephemeral_loop, spawn_follow_loop, spawn_sweep_loop, spawn_sync_loop,
-    spawn_wanted_loop,
+    FollowDeps, PruneDeps, PruneSettings, SweepDeps, SyncDeps, ThreadJitter, TokioSleeper,
+    WantedDeps, WantedSettings, register_ephemeral_loop, spawn_follow_loop, spawn_prune_loop,
+    spawn_sweep_loop, spawn_sync_loop, spawn_wanted_loop,
 };
 use super::flows::operations::{DropImportDeps, OpStore, register_durable_ops};
 use super::flows::seams::{
@@ -68,8 +68,8 @@ use crate::ids::IdGenerator;
 use crate::reads::collections::state::CollectionsState;
 use crate::runtime_config::ConfigStore;
 use crate::runtime_config::secret_sections::{
-    DownloadClients, LidarrImportConnection, NewznabIndexer as ConfigIndexer, ProwlarrConnection,
-    SecretSection, SlskdConnection,
+    AdvancedSettings, DownloadClients, LidarrImportConnection, NewznabIndexer as ConfigIndexer,
+    ProwlarrConnection, SecretSection, SlskdConnection,
 };
 use crate::runtime_config::sections::{
     DownloadPolicy, FreeMusic, Section, SourcePriority, UsenetBackendSetting, WantedWatcher,
@@ -319,6 +319,8 @@ pub struct AcquireSetup {
     pub probe_cache: Arc<ProbeCache>,
     /// Per-task staging root (manifests, drop jobs, quarantine).
     pub staging_root: PathBuf,
+    /// Store-prune deps (request history and wanted rows).
+    pub prune: Arc<PruneDeps>,
 }
 
 /// Flows stores plus the loop deps built over them.
@@ -570,6 +572,18 @@ impl AcquireSetup {
             upgrade_policy,
             collections,
         );
+        let prune_store = config_store.clone();
+        let prune = Arc::new(PruneDeps {
+            settings: Arc::new(move || {
+                let section: AdvancedSettings = plain(&prune_store);
+                PruneSettings {
+                    retention_days: clamp_u64(section.request_history_retention_days),
+                    interval_hours: clamp_u64(section.store_prune_interval_hours),
+                }
+            }),
+            ledger: core.requests.store.clone(),
+            watches: core.requests.wanted.clone(),
+        });
 
         // Imports deps.
         let lidarr_settings = Arc::new(ConfigLidarrSettings::new(config_store.clone()));
@@ -676,6 +690,7 @@ impl AcquireSetup {
             probes,
             probe_cache,
             staging_root,
+            prune,
         })
     }
 
@@ -801,6 +816,11 @@ impl AcquireSetup {
             &FreeMusic::default(),
         )));
         let probes = Arc::new(LiveProbes::new(probe_cache.clone()));
+        let prune = Arc::new(PruneDeps {
+            settings: Arc::new(PruneSettings::default),
+            ledger: core.requests.store.clone(),
+            watches: core.requests.wanted.clone(),
+        });
         Ok(Self {
             db,
             requests: core.requests,
@@ -814,6 +834,7 @@ impl AcquireSetup {
             probes,
             probe_cache,
             staging_root,
+            prune,
         })
     }
 
@@ -942,8 +963,17 @@ impl AcquireSetup {
             TokioSleeper::new(shutdown.clone()),
             wakeups.clone(),
             lane.clone(),
-            system_clock,
+            system_clock.clone(),
             self.flows.sync_deps.clone(),
+        )
+        .await?;
+        out.push((handle.name, handle.task));
+        let (handle, _) = spawn_prune_loop(
+            TokioSleeper::new(shutdown.clone()),
+            wakeups.clone(),
+            lane.clone(),
+            system_clock,
+            self.prune.clone(),
         )
         .await?;
         out.push((handle.name, handle.task));
