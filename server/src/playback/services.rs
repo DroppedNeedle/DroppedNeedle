@@ -58,7 +58,7 @@ pub const SCROBBLE_TIMESTAMP_MAX_AGE_SECS: i64 = 14 * 24 * 60 * 60;
 pub const SCROBBLE_FUTURE_SKEW_SECS: i64 = 60;
 
 // ---------------------------------------------------------------------------
-// Pure rules (v2 ports, directly covered by briefs)
+// Pure rules (v2 ports, directly covered by tests)
 // ---------------------------------------------------------------------------
 
 /// Normalize a reporting client name (v2 `CompatScrobbleAdapter._norm_client`:
@@ -73,7 +73,7 @@ pub fn normalize_client(client: Option<&str>) -> Option<String> {
 }
 
 /// Native scrobble threshold: the v2 Jellyfin stop rule, exact
-/// (`backend/api/compat/jellyfin/router.py::_should_scrobble`).
+/// (v2's Jellyfin router `_should_scrobble`).
 ///
 /// - Omitted position counts (v2 "reference s6" quirk: a client that sends
 ///   no position is trusted to have finished).
@@ -119,7 +119,7 @@ pub fn has_remote(source: &str) -> bool {
 
 /// Presence cover URL for a resolved track: the v3 release-group cover
 /// route when an MBID is known, else empty (v2
-/// `CompatScrobbleAdapter._write_presence` built the v1 route; same rule,
+/// `CompatScrobbleAdapter._write_presence` built the old route; same rule,
 /// new path).
 pub fn presence_cover_url(track: &TrackInfo) -> String {
     track
@@ -145,7 +145,7 @@ pub enum ServiceError {
 }
 
 impl ServiceError {
-    /// Render into the slice envelope.
+    /// Render into the playback envelope.
     pub fn into_playback_error(self, _ids: &dyn IdGenerator) -> PlaybackError {
         match self {
             Self::TrackNotFound => PlaybackError::NotFound,
@@ -412,8 +412,8 @@ pub struct PresenceUpdate {
 /// restart (v2 single-process invariant). Privacy is enforced here,
 /// server-side, keyed on the owner's visibility setting, so a hidden track
 /// is never serialized to other clients. Each mutation that v2 would
-/// broadcast over SSE bumps the generation instead; the SSE fan-out rides
-/// with the integrator.
+/// broadcast over SSE bumps the generation instead; no SSE fan-out
+/// consumes it yet.
 #[derive(Debug, Clone)]
 pub struct PresenceRegistry {
     entries: Arc<Mutex<HashMap<String, PresenceEntry>>>,
@@ -431,7 +431,7 @@ impl PresenceRegistry {
         }
     }
 
-    /// Broadcast count: bumped on every publish, so briefs can assert the
+    /// Broadcast count: bumped on every publish, so tests can assert the
     /// no-op-no-publish rule without an SSE bus.
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::SeqCst)

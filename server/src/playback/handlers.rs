@@ -26,7 +26,7 @@ use crate::auth::session::middleware::CurrentSession;
 
 /// The authenticated caller. The deny-by-default session middleware stashes
 /// the session; this extractor reads it without a store round-trip (all
-/// slice routes are plain authenticated-user routes, no role gating).
+/// playback routes are plain authenticated-user routes, no role gating).
 #[derive(Debug, Clone)]
 pub struct AuthenticatedUser {
     /// Owning user id.
@@ -276,7 +276,7 @@ pub async fn clear_now_playing(
 // Router
 // ---------------------------------------------------------------------------
 
-/// Every route in this slice. Mount under `/api/v3` behind the session
+/// Every playback route. Mount under `/api/v3` behind the session
 /// gate; see `mod.rs` for the wiring note.
 pub fn playback_router(deps: PlaybackDeps) -> axum::Router {
     use axum::routing::{get, post};

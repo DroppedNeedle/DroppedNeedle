@@ -1,4 +1,4 @@
-//! Pacing shared by every stage-10 loop: interval, jitter, and recovery.
+//! Pacing shared by every jobs loop: interval, jitter, and recovery.
 //!
 //! Each loop owns a [`Schedule`]: how long to wait between cycles, how much
 //! random spread to add so restarts do not synchronize fleets of timers, how

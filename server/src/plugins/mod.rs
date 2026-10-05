@@ -1,27 +1,27 @@
-//! Stage-10 plugins host plus the ListenBrainz and scrobble settings backend.
+//! Plugins host plus the ListenBrainz and scrobble settings backend.
 //!
 //! The host manages plugin packages the way v2 does: a folder on disk is
-//! inert until its `plugin.toml` validates AND an admin enables it. What it
+//! inert until its `plugin.toml` validates and an admin enables it. What it
 //! does not do yet is run plugin code. v2 imports Python in-process; v3 has
 //! no execution engine for that, so [`ModuleLoader`](runtime::ModuleLoader)
 //! is the seam where one plugs in: tests and future engines provide the
 //! modules, the host owns discovery, validation, settings, dispatch, and
 //! scheduling around them.
 //!
-//! Tick durability follows the D11 redesign on the sibling jobs slice:
-//! per-plugin tick state lives on the jobs tick store, loops run under the
-//! jobs registry as `plugin-tick:<name>`, and this slice adapts the host
-//! to those seams ([`ticks::HostTickAdapter`], [`ticks::PluginTickLoops`]).
-//! Loop mechanics and store durability are the jobs slice's briefs; the
-//! journey here proves the host side: install, enable, tick, and the
+//! Tick durability lives in jobs: per-plugin tick state is on the jobs
+//! tick store, loops run under the jobs registry as `plugin-tick:<name>`,
+//! and this module adapts the host to those seams
+//! ([`ticks::HostTickAdapter`], [`ticks::PluginTickLoops`]). Loop mechanics
+//! and store durability are tested with jobs; the journey here proves the
+//! host side: install, enable, tick, and the
 //! persisted state reading back from the jobs store.
 //!
-//! The scrobble half is the R9 settings backend only: per-user ListenBrainz
-//! links (verify-then-store, token sealed) and scrobble preference reads and
-//! writes. No UI lives here; that arrives in stage 12. The SQLite stores
-//! target the existing baseline tables (`user_connections` with
-//! `service = 'listenbrainz'`, and `user_listening_prefs`); this slice ships
-//! the traits plus memory stores behind the same shapes.
+//! The scrobble half is the settings backend only: per-user ListenBrainz
+//! links (verify-then-store, token sealed) and scrobble preference reads
+//! and writes. The SQLite stores target the existing baseline tables
+//! (`user_connections` with `service = 'listenbrainz'`, and
+//! `user_listening_prefs`), with memory stores behind the same traits for
+//! tests.
 //!
 //! The `plugins_*` integration tests drive these modules through the
 //! `droppedneedle` crate name, alongside the wired routers.

@@ -1,19 +1,19 @@
-//! Stage-10 jobs bundle: one registry plus the loops it owns.
+//! Jobs bundle: one registry plus the loops it owns.
 //!
 //! [`JobsSetup`] is the one `AppState` field jobs adds. It owns the single
-//! [`JobRegistry`] every stage-10 loop registers on — the five always-on
-//! boot loops, the events kick one-shot, precache runs, and the plugin
-//! tick loops (via the plugins bundle, which shares this registry rather
-//! than running its own). One registry, one rebuild choke point
+//! [`JobRegistry`] every jobs loop registers on: the five always-on boot
+//! loops, the events kick one-shot, precache runs, and the plugin tick
+//! loops (via the plugins bundle, which shares this registry rather than
+//! running its own). One registry, one rebuild choke point
 //! (`sync_ticks`), no duplicate loop mechanics.
 //!
 //! Production binds [`DurableRegistryStore`] (liveness rows survive
 //! restarts); test states bind [`MemoryRegistryStore`] behind the same
 //! [`StoreKind`] seam so the setup type stays concrete. Loop backends are
 //! real where they exist (checkpoint passes, Navidrome/events settings
-//! reads) and honest no-ops where their services have not landed yet
-//! (presence sources, the personal mixer, the playlist exporter, the
-//! events sweep); each interim adapter names its follow-up.
+//! reads) and no-ops where their services do not exist yet (presence
+//! sources, the personal mixer, the playlist exporter, the events sweep);
+//! each interim adapter says what is missing.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -121,7 +121,7 @@ impl CheckpointRunner for CheckpointInput {
 }
 
 /// Presence feed without a backend: sweeps and reconciles are no-ops
-/// until the now-playing feed slice lands its store here.
+/// until a now-playing store is wired here.
 #[derive(Clone, Debug, Default)]
 pub struct UnwiredPresenceStore;
 
@@ -136,7 +136,7 @@ impl PresenceStore for UnwiredPresenceStore {
 }
 
 /// Presence sources without pollers: every source reads disabled (nothing
-/// feeds the loop yet), so each cycle reconciles empty slices and moves
+/// feeds the loop yet), so each cycle reconciles empty sessions and moves
 /// on. The Jellyfin/Navidrome/Plex session pollers plug in here.
 #[derive(Clone, Debug, Default)]
 pub struct DisabledPresenceSources;
@@ -227,8 +227,8 @@ impl SyncRoles for StoreSyncRoles {
 }
 
 /// Playlist file writer without an exporter: every sync reports failure
-/// with the reason, so the loop backs off and the route answers honestly
-/// until the m3u8 exporter lands here.
+/// with the reason, so the loop backs off and the route reports the gap
+/// until an m3u8 exporter is wired here.
 #[derive(Clone, Debug, Default)]
 pub struct UnwiredPlaylistExporter;
 
@@ -257,8 +257,8 @@ impl EventsWatcher for UnwiredEventsWatcher {
 }
 
 /// Precache phases without an implementation: every run reports the reason
-/// and lands failed, so the trigger answers honestly until the artist,
-/// album, discovery, and AudioDB passes land here.
+/// and lands failed, so the trigger reports the gap until the artist,
+/// album, discovery, and AudioDB passes are wired here.
 #[derive(Clone, Debug, Default)]
 pub struct UnwiredPrecacheWork;
 
@@ -330,7 +330,7 @@ impl PollTimeSource for EventsPollTime {
     }
 }
 
-/// Everything `create_app` and `serve` need for the jobs slice: the shared
+/// Everything `create_app` and `serve` need for jobs: the shared
 /// registry, the playlist route state, and the boot-loop inputs.
 #[derive(Clone)]
 pub struct JobsSetup {
@@ -412,7 +412,7 @@ impl JobsSetup {
     }
 
     /// Settings-nested routes jobs owns: `POST
-    /// /settings/navidrome/playlist-sync` (the v1 path). Mounts inside the
+    /// /settings/navidrome/playlist-sync` (the v2 path). Mounts inside the
     /// session gate with the other `/api/v3` routes.
     pub fn settings_router(&self) -> Router {
         Router::new().nest("/settings", playlist_sync::router(self.playlist.clone()))
@@ -482,8 +482,8 @@ impl JobsSetup {
         Ok(())
     }
 
-    /// Cancel every live job — boot loops, the kick, precache runs, and
-    /// plugin ticks (`plugin-tick:*` shares this registry) — each with the
+    /// Cancel every live job (boot loops, the kick, precache runs, and
+    /// plugin ticks; `plugin-tick:*` shares this registry), each with the
     /// same grace. Shutdown calls this before awaiting the loops.
     pub async fn cancel_all(&self, grace: Duration) {
         self.registry.cancel_all(grace).await;

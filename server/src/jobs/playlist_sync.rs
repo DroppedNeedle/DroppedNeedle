@@ -1,4 +1,4 @@
-//! Navidrome playlist sync: route plus background loop (A:560).
+//! Navidrome playlist sync: route plus background loop.
 //!
 //! DroppedNeedle owns the playlists; Navidrome reads them as files. The loop
 //! polls every [`SYNC_INTERVAL`] (polling, not hooking every mutation, so no
@@ -9,8 +9,8 @@
 //! removed only when the settings say so.
 //!
 //! The route mounts at `/navidrome/playlist-sync` for the settings router to
-//! nest (v1 served it at `/settings/navidrome/playlist-sync`); the integrator
-//! nests it inside the session gate with the other settings routes.
+//! nest (v2 served it at `/settings/navidrome/playlist-sync`); the app nests
+//! it inside the session gate with the other settings routes.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -65,7 +65,7 @@ pub trait PlaylistExporter: Clone + Send + Sync + 'static {
     fn sync(&self, config: PlaylistSyncConfig) -> BoxFuture<'_, PlaylistSyncResult>;
 }
 
-/// Sync report, field for field with the v1 result shape.
+/// Sync report, field for field with the v2 result shape.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct PlaylistSyncResult {
     /// False when nothing synced (disabled, or the exporter refused).
@@ -90,7 +90,7 @@ pub struct PlaylistSyncResult {
     pub tracks_unrepresentable: u64,
 }
 
-/// The stage-10 cadence: v2's 5 minutes with a 30 s spread.
+/// The cadence: v2's 5 minutes with a 30 s spread.
 pub fn default_schedule() -> Schedule {
     Schedule::new(SYNC_INTERVAL)
         .with_jitter(DEFAULT_JITTER)
@@ -172,8 +172,8 @@ where
     }
 }
 
-/// Role lookups for the route gate. The users slice owns the rows; this
-/// seam keeps the jobs slice independent of that store. Async-native on
+/// Role lookups for the route gate. The users store owns the rows; this
+/// seam keeps jobs independent of that store. Async-native on
 /// purpose: the lookup awaits the store instead of bridging threads.
 pub trait SyncRoles: Send + Sync {
     /// One user's role, or `None` when the account is gone (stale session)

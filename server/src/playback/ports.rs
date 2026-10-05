@@ -1,12 +1,12 @@
-//! Ports behind the playback-reporting slice.
+//! Ports behind playback reporting.
 //!
 //! Services reach the outside world through these traits: the catalog for
 //! track resolution, the scrobble sinks for Last.fm/ListenBrainz forwarding,
 //! the remote reporters for Jellyfin/Navidrome/Plex session attribution, the
 //! history store for the local source of truth, and the prefs for per-user
-//! forwarding and visibility choices. Stage 6 runs these on fakes (see
-//! `fakes.rs`); later slices wire real providers behind the same traits
-//! without touching the services. Every fallible method returns a plain
+//! forwarding and visibility choices. Tests run these on fakes (see
+//! `fakes.rs`); production binds the SQLite stores in `sqlite.rs` behind
+//! the same traits. Every fallible method returns a plain
 //! string cause: provider detail stays in the log, never on the wire.
 
 use std::collections::HashMap;
@@ -203,7 +203,7 @@ pub trait ListeningPrefs: Send + Sync {
 }
 
 /// Display-name resolution for presence entries. Kept behind a port so the
-/// slice never joins the user store itself.
+/// playback code never joins the user store itself.
 pub trait DisplayNames: Send + Sync {
     /// Display name for the user.
     fn display_name(&self, user_id: &str) -> String;

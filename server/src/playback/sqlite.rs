@@ -1,4 +1,4 @@
-//! Production playback ports over the stage-2 schema.
+//! Production playback ports over the SQLite schema.
 //!
 //! The reporting traits are synchronous, so these stores open their own
 //! rusqlite handle on the runtime database instead of sharing the async
@@ -134,7 +134,7 @@ impl ListeningPrefs for PlaybackDb {
             Err(_) => return defaults(),
         };
         let Ok(Some(row)) = rows.next() else {
-            // No row yet: the column defaults are the honest answer.
+            // No row yet: the column defaults are the right answer.
             return defaults();
         };
         ScrobblePrefs {

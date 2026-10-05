@@ -1,8 +1,8 @@
 //! PluginHost: discover, validate, install, and run plugins.
 //!
 //! Trust model, stated plainly: a plugin is third-party code with the
-//! app's full privileges once loaded. Nothing loads until BOTH the manifest
-//! validates AND an admin has explicitly enabled the plugin. Dropping a
+//! app's full privileges once loaded. Nothing loads until both the manifest
+//! validates and an admin has explicitly enabled the plugin. Dropping a
 //! folder in the directory alone runs no code, and installing from GitHub
 //! stores code without running it: the install arrives disabled.
 //!
@@ -169,8 +169,8 @@ pub struct ArchiveEntry {
 }
 
 /// Unpack an install archive into entries. GitHub serves deflated zips,
-/// which need a zip crate the slice does not vendor; the integrator wires
-/// the real reader here and tests use scripted entries.
+/// so production passes the zip reader from `plugins::wiring`; tests use
+/// scripted entries.
 pub trait ArchiveUnpacker: Send + Sync {
     /// List every file in the archive.
     fn unpack(&self, bytes: &[u8]) -> Result<Vec<ArchiveEntry>, String>;

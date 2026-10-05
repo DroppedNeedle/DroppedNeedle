@@ -44,9 +44,9 @@ use super::scrobble::{
 };
 use super::ticks::TickLoopSync;
 
-/// Role lookups for route gating. The users slice owns the rows; this seam
-/// keeps the plugins slice independent of that store. The integrator wires
-/// it over the user store; tests use a fixed map.
+/// Role lookups for route gating. The users store owns the rows; this seam
+/// keeps plugins independent of that store. Production wires it over the
+/// user store; tests use a fixed map.
 pub trait UserRoles: Send + Sync {
     /// One user's role, or `None` when the account is gone (stale session).
     fn role_of(&self, user_id: &str) -> Option<Role>;
@@ -75,7 +75,7 @@ pub struct PluginsDeps {
 
 /// Scrobble-settings route dependencies.
 pub struct ScrobbleHttpDeps {
-    /// R9 service dependencies.
+    /// Scrobble settings service dependencies.
     pub deps: ScrobbleDeps,
     /// Role lookups (admins read approved-by-role mix state).
     pub roles: Arc<dyn UserRoles>,
@@ -1047,7 +1047,7 @@ pub async fn disconnect_listenbrainz_route(
 // Routers
 // ---------------------------------------------------------------------------
 
-/// Every plugin route in this slice. Mount under `/api/v3` behind the
+/// Every plugin route. Mount under `/api/v3` behind the
 /// session gate; see `mod.rs` for the wiring note.
 pub fn plugins_router(deps: PluginsDeps) -> axum::Router {
     use axum::routing::{get, post, put};
@@ -1070,7 +1070,7 @@ pub fn plugins_router(deps: PluginsDeps) -> axum::Router {
         .with_state(deps)
 }
 
-/// Every scrobble-settings route in this slice. Mount under `/api/v3`
+/// Every scrobble-settings route. Mount under `/api/v3`
 /// behind the session gate.
 pub fn scrobble_router(deps: ScrobbleHttpDeps) -> axum::Router {
     use axum::routing::get;

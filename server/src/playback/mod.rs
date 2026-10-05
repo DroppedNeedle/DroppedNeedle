@@ -1,4 +1,4 @@
-//! Stage-6 playback reporting: session lifecycle, native scrobbles, live
+//! Playback reporting: session lifecycle, native scrobbles, live
 //! presence, and MBID warmup loops.
 //!
 //! The native player reports `start`/`progress`/`stop` for each play; the
@@ -13,35 +13,34 @@
 //! Every behavior is a v2 port; the citations sit beside the code:
 //!
 //! - Session lifecycle (start resets, rewind restarts, stop thresholds,
-//!   once-only submits): `backend/services/compat/playback_report_service.py`
+//!   once-only submits): v2's compat playback report service
 //! - Session-driven scrobbles (client normalization, 5s mixed-report
 //!   dedup, presence writes, played-at backdating):
-//!   `backend/services/compat/compat_scrobble_adapter.py`
+//!   v2's compat scrobble adapter
 //! - Native submit/forward (hour dedup, always-record history, 30s gate,
 //!   Navidrome delegation, accepted quirks):
-//!   `backend/services/scrobble_service.py`
+//!   v2's scrobble service
 //! - Native threshold (omitted position counts, past 90%, within the last
-//!   second): `backend/api/compat/jellyfin/router.py::_should_scrobble`
+//!   second): v2's Jellyfin router `_should_scrobble`
 //! - Presence (45s TTL, owner-keyed visibility with fail-closed redaction,
 //!   silent idle reconciles, publish-if-removed sweeps):
-//!   `backend/services/now_playing_service.py` and `now_playing_poller.py`
+//!   v2's now-playing service and poller
 //! - Outbound attribution (per-source session reports, logged and
 //!   swallowed; per-user fail-closed): the three
-//!   `backend/services/*_playback_service.py` modules
+//!   v2 per-source playback services
 //! - Warmup cadences (Jellyfin one-shot after 8s; Navidrome/Plex every
-//!   four hours after 12s/15s): `backend/core/tasks.py`
+//!   four hours after 12s/15s): v2's task schedule
 //!
 //! ## Wiring
 //!
 //! Mounted as `playback` under `/api/v3` inside the session gate (next to
-//! the reads nest), with the stage-4 static snapshot retired:
-//! `now_playing_router` is removed from the `reads_router` merge and
-//! `GET /now-playing` serves this slice's live registry (same JSON shape).
-//! Utoipa paths are registered in `docs.rs`, and the warmup loops spawn in
-//! `main.rs` beside the stage-5 refresh loops over the same shutdown watch
-//! (handles awaited after axum serves).
+//! the reads nest). `GET /now-playing` serves the live presence registry
+//! here, not the static snapshot in `reads::discover`. Utoipa paths are
+//! registered in `docs.rs`, and the warmup loops spawn in `main.rs` beside
+//! the discover refresh loops over the same shutdown watch (handles
+//! awaited after axum serves).
 //!
-//! Follow-ups deliberately left out: the 4s presence poll loop (v2
+//! Not built yet: the 4s presence poll loop (v2
 //! `run_now_playing_presence_loop`) needs remote-session fetchers that do
 //! not exist behind these traits yet, so `reconcile_source` and `sweep`
 //! wait for it; the SSE fan-out consumes the registry's generation; and

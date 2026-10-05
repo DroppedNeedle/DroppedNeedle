@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use super::manifest::PluginManifest;
 
-/// Boxed future for trait methods. The slice holds modules behind
+/// Boxed future for trait methods. The host holds modules behind
 /// `Arc<dyn ...>`, so every async trait method returns this instead of
 /// `impl Future` (which is not dyn-compatible).
 pub type BoxFuture<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
@@ -326,7 +326,7 @@ pub trait TickStateAccess: Send + Sync {
 }
 
 /// What a tick may use: its own plugin name plus durable state. Library
-/// file mutations and HTTP stay out of v1 ticks; the module persists
+/// file mutations and HTTP stay out of ticks; the module persists
 /// whatever it needs through the state handle.
 pub struct TickContext<'a> {
     /// Ticking plugin name.

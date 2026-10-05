@@ -1,4 +1,4 @@
-//! Plugin scheduler ticks, with durable state on the store (D11).
+//! Plugin scheduler ticks, with durable state on the store.
 //!
 //! v2 kept tick state in files under each plugin's directory: unregistered
 //! durability that vanished with an uninstall and bypassed every backup.
@@ -166,7 +166,7 @@ pub fn validate_state_key(key: &str) -> Result<(), TickStoreError> {
 
 /// In-memory tick state: plugin names to their key maps. State outlives any
 /// one runner because the store is shared, not owned, which is what the
-/// durability brief leans on (drop the loops, keep the store, read it back).
+/// durability test relies on (drop the loops, keep the store, read it back).
 /// Plugin names to their state keys to raw bytes.
 type TickStateMap = HashMap<String, HashMap<String, Vec<u8>>>;
 
@@ -271,7 +271,7 @@ impl TickStore for MemoryTickStore {
 
 /// SQLite-backed tick state over `plugin_tick_state`: the production
 /// [`TickStore`]. Reads travel the reader pool, writes travel the writer
-/// lane, so state survives process restarts with the database (D11).
+/// lane, so state survives process restarts with the database.
 ///
 /// Plugin registration stays in memory: boot re-registers every desired
 /// plugin through `sync_ticks` before any loop reads, so only the key bytes
@@ -421,7 +421,7 @@ impl TickSyncState {
 /// Cancel-then-spawn races a replacement against the winding-down incumbent:
 /// `cancel` drops the registry entry at once, so the new loop can spawn
 /// while the old task still runs out its grace. Ticks are idempotent (one
-/// state write per sweep, keyed, last-writer-wins), so a brief overlap is
+/// state write per sweep, keyed, last-writer-wins), so a short overlap is
 /// harmless and no fencing is needed.
 pub async fn sync_ticks<S, H>(
     registry: &JobRegistry<S>,

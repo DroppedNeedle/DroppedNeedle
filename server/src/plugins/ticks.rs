@@ -1,6 +1,6 @@
-//! Plugin ticks on the jobs store design (D11).
+//! Plugin ticks on the jobs store.
 //!
-//! The jobs slice owns the loop mechanics, the registry, and the tick
+//! Jobs owns the loop mechanics, the registry, and the tick
 //! store; this module is the adapter that plugs the plugin host into it.
 //! [`HostTickAdapter`] implements the jobs [`TickHost`](jobs_tick_host)
 //! seam over [`PluginHost`], resolving modules fresh every sweep, and

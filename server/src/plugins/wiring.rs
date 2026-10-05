@@ -1,10 +1,10 @@
-//! Stage-10 plugins bundle: host, routes, scrobble backend, tick loops.
+//! Plugins bundle: host, routes, scrobble backend, tick loops.
 //!
 //! [`PluginsSetup`] is the one `AppState` field plugins adds. It builds the
 //! [`PluginHost`] over the deployment's plugins directory, assembles the
 //! plugin and scrobble route dependencies, and shares the jobs registry so
 //! tick loops register as `plugin-tick:{name}` through the one jobs choke
-//! point — the plugins slice never runs a second registry or its own loop
+//! point; plugins never run a second registry or their own loop
 //! mechanics.
 //!
 //! Production binds the real archive fetcher, a deflate zip reader, the
@@ -13,8 +13,8 @@
 //! database; so do prefs and links). Two seams stay interim by design:
 //! module loading (v3 has no execution engine for plugin code yet, so
 //! enabling a plugin records a per-plugin error instead of failing the
-//! host) and the personal-mix hooks (stage 7 owns the queue; the static
-//! reader answers until the service plugs in here).
+//! host) and the personal-mix hooks (`acquire::requests` owns the queue;
+//! the static reader answers until that service is wired here).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -76,7 +76,7 @@ impl UserRoles for StoreRoles {
 
 /// Module loader without an engine. v2 imports plugin code in-process;
 /// v3 has no execution engine for that yet, so every load fails the one
-/// plugin with the reason — discovery, validation, settings, and dispatch
+/// plugin with the reason. Discovery, validation, settings, and dispatch
 /// around it keep working, and the engine plugs in behind this seam.
 #[derive(Debug, Default)]
 pub struct NoEngineLoader;
@@ -95,7 +95,7 @@ impl ModuleLoader for NoEngineLoader {
 }
 
 /// Zip reader over stored and deflated entries (what GitHub serves).
-/// Caps apply while streaming, before the slice's own checks: entry
+/// Caps apply while streaming, before the host's own checks: entry
 /// count, per-file bytes, and total decompressed bytes, so an archive at
 /// the fetch cap cannot balloon past the decompressed budget. Anything
 /// outside the two methods, or a name escaping its root, refuses loudly.
@@ -179,7 +179,7 @@ impl ConnectionChangedHook for ListenBrainzCacheHook {
     }
 }
 
-/// Everything `create_app` needs to mount the plugins slice, plus the
+/// Everything `create_app` needs to mount the plugin routes, plus the
 /// tick loops over the shared jobs registry.
 #[derive(Clone)]
 pub struct PluginsSetup {

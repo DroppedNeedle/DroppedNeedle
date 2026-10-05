@@ -1,7 +1,7 @@
 //! WAL checkpoint loop: the steady-state 30 s `PASSIVE` pass plus reclaim.
 //!
 //! The pass itself lives in [`crate::db::checkpoint`]; this module is the
-//! registry half stage 10 owns. It spawns the loop under [`JOB_NAME`], beats
+//! registry half. It spawns the loop under [`JOB_NAME`], beats
 //! a heartbeat per pass, and spreads the cadence with a little jitter so a
 //! fleet restarting together does not checkpoint in lockstep. Checkpoint
 //! passes are infallible by construction (every outcome, busy locks included,
@@ -81,7 +81,7 @@ impl CheckpointRunner for FakeCheckpointRunner {
     }
 }
 
-/// The stage-10 cadence: GH-293's 30 s with a 5 s jitter spread.
+/// The cadence: GH-293's 30 s with a 5 s jitter spread.
 pub fn default_schedule() -> Schedule {
     Schedule::new(CHECKPOINT_CADENCE).with_jitter(DEFAULT_JITTER)
 }

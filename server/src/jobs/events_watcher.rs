@@ -10,7 +10,7 @@
 //! the next slot; the loop only exits on shutdown. All of that is the v2
 //! `run_events_watcher_periodically` contract.
 //!
-//! One deliberate change: v2 schedules in server-local wall time while v3
+//! One intended change: v2 schedules in server-local wall time while v3
 //! schedules in UTC (the container pins `TZ=UTC`, so the two agree in
 //! production) because the standard library cannot name the local zone
 //! portably. The [`WatchClock`] seam owns that choice; tests drive a manual

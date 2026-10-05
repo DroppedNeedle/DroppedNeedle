@@ -1,6 +1,6 @@
-//! Playback-reporting slice errors rendered into the shared envelope.
+//! Playback-reporting errors rendered into the shared envelope.
 //!
-//! Status mapping for this slice lives here in the handler layer. Services
+//! Status mapping for the playback routes lives here in the handler layer. Services
 //! return domain failures that handlers convert; anything unexpected becomes
 //! a fixed 5xx body naming an error id, with the cause going to the log only.
 //! Reporting itself almost never errors: a failed forward is logged and
@@ -34,7 +34,7 @@ pub const FIXED_UPSTREAM_MESSAGE: &str = "Upstream service error";
 /// Challenge sent on every 401.
 pub const WWW_AUTHENTICATE_BEARER: &str = "Bearer";
 
-/// Every failure this slice can return to a caller.
+/// Every failure the playback routes can return to a caller.
 #[derive(Debug)]
 pub enum PlaybackError {
     /// No valid session. Carries the `WWW-Authenticate` challenge.

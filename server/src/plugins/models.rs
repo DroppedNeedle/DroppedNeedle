@@ -138,7 +138,7 @@ pub struct PluginSourcesResponse {
 }
 
 /// One linked external account. Never carries the secret, only the name.
-/// The schema rename keeps this distinct from the stage-6 remotes
+/// The schema rename keeps this distinct from the remotes
 /// `ConnectionStatus` in the one OpenAPI document; the wire shape is
 /// unchanged.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

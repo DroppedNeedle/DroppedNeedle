@@ -4,7 +4,7 @@
 //! asks the mixer to rebuild all users' mixes. One user's failure never
 //! blocks the others: that isolation lives in the mixer, and the loop only
 //! sees a whole-cycle result for backoff. The per-user refresh route
-//! (`POST /personal-mix/refresh`) is stage 7's; this module owns just the
+//! (`POST /personal-mix/refresh`) lives in `acquire::requests`; this module owns just the
 //! background pass.
 
 use std::sync::Arc;
@@ -32,7 +32,7 @@ pub trait PersonalMixer: Send + Sync + 'static {
     fn run_for_all_users(&self) -> BoxFuture<'_, Result<(), String>>;
 }
 
-/// The stage-10 cadence: daily with a 5-minute spread and a slow backoff
+/// The cadence: daily with a 5-minute spread and a slow backoff
 /// (failures here usually mean a provider is down, not a blip).
 pub fn default_schedule() -> Schedule {
     Schedule::new(REFRESH_INTERVAL)

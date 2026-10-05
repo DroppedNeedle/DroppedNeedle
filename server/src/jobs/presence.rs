@@ -2,8 +2,8 @@
 //!
 //! Every [`POLL_INTERVAL`] the loop sweeps stale native sessions, then
 //! reconciles each upstream integration (Jellyfin, Navidrome, Plex)
-//! independently. A disabled source clears its own slice to empty; a failing
-//! source logs and keeps its last slice, and never breaks the cycle or the
+//! independently. A disabled source clears its own sessions; a failing
+//! source logs and keeps its last sessions, and never breaks the cycle or the
 //! other sources; the sweep failing just logs and carries on. That
 //! per-source isolation is the v2 contract from `now_playing_poller.py`,
 //! kept verbatim.
@@ -64,7 +64,7 @@ pub struct SourceStatus {
 pub trait PresenceStore: Send + Sync + 'static {
     /// Drop expired native and compat sessions.
     fn sweep(&self) -> BoxFuture<'_, ()>;
-    /// Replace one source's slice with the freshly polled sessions.
+    /// Replace one source's sessions with the freshly polled ones.
     fn reconcile(&self, source: &str, sessions: Vec<PresenceSession>) -> BoxFuture<'_, ()>;
 }
 
@@ -80,7 +80,7 @@ pub trait PresenceSources: Send + Sync + 'static {
     fn poll_plex(&self) -> BoxFuture<'_, Result<Vec<PresenceSession>, String>>;
 }
 
-/// The stage-10 cadence: v2's 4 s with a 1 s spread.
+/// The cadence: v2's 4 s with a 1 s spread.
 pub fn default_schedule() -> Schedule {
     Schedule::new(POLL_INTERVAL)
         .with_jitter(DEFAULT_JITTER)

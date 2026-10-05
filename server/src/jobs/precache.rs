@@ -6,7 +6,7 @@
 //! no progress for `stall_timeout` or a run past `max_timeout` cancels the
 //! work and fails the run, exactly the v2 `orchestrator.py` contract. The
 //! caller drives stop through the registry like any other job; the watchdog
-//! tick is the recovery path, and the clamped tick floor keeps it honest.
+//! tick is the recovery path, and the clamped tick floor bounds it.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

@@ -1,9 +1,8 @@
-//! Fake ports for stage 6: deterministic catalog, sinks, remotes, and
-//! stores over in-memory state. Later slices swap these for real providers
-//! behind the same traits; services never know.
+//! Fake playback ports: deterministic catalog, sinks, remotes, and stores
+//! over in-memory state, behind the same traits as the real providers.
 //!
 //! Fakes fail only when armed to: the `fail_*` methods take a log-only cause
-//! the leak briefs assert never reaches the wire.
+//! the leak tests assert never reaches the wire.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -48,7 +47,7 @@ impl Clock for ManualClock {
     }
 }
 
-/// Scripted catalog: tracks the briefs register, misses for the rest.
+/// Scripted catalog: tracks the tests register, misses for the rest.
 #[derive(Debug, Default)]
 pub struct FakeCatalog {
     tracks: Mutex<HashMap<String, TrackInfo>>,
@@ -66,7 +65,7 @@ impl FakeCatalog {
         }
     }
 
-    /// One four-minute library track with MBIDs, the briefs' workhorse.
+    /// One four-minute library track with MBIDs, the tests' workhorse.
     pub fn sample_track() -> TrackInfo {
         TrackInfo {
             track_id: "track-1".to_owned(),

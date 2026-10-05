@@ -42,7 +42,7 @@ pub const FIXED_RATE_LIMITED_MESSAGE: &str = "Too many requests";
 /// Challenge sent on every 401.
 pub const WWW_AUTHENTICATE_BEARER: &str = "Bearer";
 
-/// Every failure this slice can return to a caller.
+/// Every failure the plugin routes can return to a caller.
 #[derive(Debug)]
 pub enum PluginError {
     /// No valid session. Carries the `WWW-Authenticate` challenge.

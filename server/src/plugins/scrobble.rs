@@ -1,8 +1,8 @@
-//! ListenBrainz and scrobble settings backend (R9, backend only).
+//! ListenBrainz and scrobble settings backend.
 //!
 //! Two halves: per-user ListenBrainz links (verify-then-store, token sealed
 //! at rest, username-only reads) and per-user scrobble preference reads and
-//! writes. The stage-12 UI calls these; nothing here renders anything.
+//! writes. The web UI calls these; nothing here renders anything.
 //!
 //! Storage seams mirror the v2 tables: links behave like the
 //! `user_connections` rows with `service = 'listenbrainz'`
@@ -28,7 +28,7 @@ pub const PRIMARY_SOURCES: &[&str] = &["listenbrainz", "lastfm"];
 pub const NOW_PLAYING_VISIBILITIES: &[&str] = &["full", "track_hidden", "offline"];
 /// Production ListenBrainz API root.
 pub const LISTENBRAINZ_BASE_URL: &str = "https://api.listenbrainz.org";
-/// Longest token sent on the wire (stage-5 rule, kept here too).
+/// Longest token sent on the wire (the provider client's rule, kept here too).
 pub const MAX_TOKEN_LEN: usize = 1024;
 /// Verify call budget, mirroring the provider timeout.
 pub const VERIFY_TIMEOUT_SECS: u64 = 15;
@@ -276,7 +276,7 @@ pub struct ListenBrainzLink {
     pub username: String,
 }
 
-/// Per-user ListenBrainz links. Tokens seal at rest under the stage-2 key;
+/// Per-user ListenBrainz links. Tokens seal at rest under the config key;
 /// reads that cannot open the ciphertext behave as unlinked, never as an
 /// error to the caller.
 pub trait ListenBrainzLinkStore: Send + Sync {
@@ -344,7 +344,7 @@ impl std::fmt::Debug for MemoryListenBrainzLinkStore {
 
 #[cfg(any(test, feature = "test-support"))]
 impl MemoryListenBrainzLinkStore {
-    /// Empty store under one stage-2 key.
+    /// Empty store under one config key.
     pub fn new(crypto: Arc<crate::runtime_config::crypto::Crypto>) -> Self {
         Self {
             crypto,
@@ -418,7 +418,7 @@ impl ListenBrainzLinkStore for MemoryListenBrainzLinkStore {
 }
 
 /// SQLite links over `user_connections` (`service = 'listenbrainz'`): the
-/// production store, mirroring the auth slice's Last.fm rows. Reads travel
+/// production store, mirroring the auth Last.fm rows. Reads travel
 /// the reader pool; writes travel the writer lane. Failures degrade toward
 /// unlinked (safe: no token ever leaks through a failure) and log.
 pub struct SqliteListenBrainzLinkStore {
@@ -436,7 +436,7 @@ impl std::fmt::Debug for SqliteListenBrainzLinkStore {
 
 impl SqliteListenBrainzLinkStore {
     /// Bind the store over a migrated pool, the writer lane, and one
-    /// stage-2 key.
+    /// config key.
     pub fn new(
         pool: sqlx::SqlitePool,
         lane: WriteLane,
@@ -815,15 +815,15 @@ impl ListenBrainzVerifier for HttpListenBrainzVerifier {
     }
 }
 
-/// Standing-grant bookkeeping for personal-mix auto-request. Stage 7 owns
-/// the approval queue; this seam lets prefs updates notify it without the
-/// slice depending on that service.
+/// Standing-grant bookkeeping for personal-mix auto-request.
+/// `acquire::requests` owns the approval queue; this seam lets prefs
+/// updates notify it without depending on that service.
 pub trait MixApprovalHook: Send + Sync {
     /// The auto-request toggle changed value.
     fn on_auto_request_toggled(&self, user_id: &str, role: &str, enabled: bool);
 }
 
-/// No-op hook for tests and for builds without the stage-7 service wired.
+/// No-op hook for tests and for builds without the requests service wired.
 #[derive(Debug, Default)]
 pub struct NoopMixApprovalHook;
 
@@ -851,7 +851,7 @@ impl ConnectionChangedHook for NoopConnectionChangedHook {
 }
 
 /// Reads the standing-grant state for the prefs response
-/// (`none`, `pending`, `approved`, `rejected`, `revoked`). Stage 7 owns
+/// (`none`, `pending`, `approved`, `rejected`, `revoked`). `acquire::requests` owns
 /// the queue; this seam keeps the response complete without depending on
 /// it. Admins read `approved` by role whenever the toggle is on.
 pub trait MixStateReader: Send + Sync {
@@ -876,7 +876,7 @@ impl MixStateReader for StaticMixState {
     }
 }
 
-/// R9 service dependencies.
+/// Scrobble settings service dependencies.
 pub struct ScrobbleDeps {
     /// Prefs store.
     pub prefs: Arc<dyn ScrobblePrefsStore>,

@@ -1,4 +1,4 @@
-//! Test doubles for the plugins slice: scripted modules, loaders,
+//! Test doubles for plugins: scripted modules, loaders,
 //! fetchers, unpackers, verifiers, and roles.
 //!
 //! The memory stores (`MemoryTickStore`, `MemoryTickJobs`,

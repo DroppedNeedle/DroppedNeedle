@@ -6,8 +6,8 @@
 //! one by one, including its exact rejection messages, so a manifest that
 //! fails here fails for the same reason it fails on v2.
 //!
-//! TOML parsing is a strict subset reader, not a general parser: the slice
-//! has no TOML crate, and manifests only need comments, `[table]` and
+//! TOML parsing is a strict subset reader, not a general parser:
+//! manifests only need comments, `[table]` and
 //! `[[array]]` headers, and string, integer, boolean, and single-line
 //! string-array values. Anything outside that subset fails the manifest
 //! instead of guessing.

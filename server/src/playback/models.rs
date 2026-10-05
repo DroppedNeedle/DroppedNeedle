@@ -1,8 +1,8 @@
 //! Playback-reporting request and response shapes.
 //!
-//! Clean-slate native shapes for the stage-6 reporting surface. Field names
-//! stay close to the v2 schemas (`backend/api/v1/schemas/scrobble.py` and
-//! `now_playing.py`) so the web player keeps its vocabulary; validation
+//! Clean-slate native shapes for the playback reporting routes. Field names
+//! stay close to the v2 scrobble and now-playing schemas so the web player
+//! keeps its vocabulary; validation
 //! (timestamp bounds, non-negative durations) lives in the services, not
 //! here, because it needs the clock.
 
@@ -219,8 +219,8 @@ pub struct NowPlayingDeleteQuery {
     pub device: Option<String>,
 }
 
-/// One live session, already privacy-projected (same JSON as the stage-4
-/// read shape so the integrator swap stays transparent).
+/// One live session, already privacy-projected (same JSON as the
+/// `reads::discover` now-playing shape, so clients see no difference).
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct NowPlayingEntry {
     /// Session key (`user_id:device`).

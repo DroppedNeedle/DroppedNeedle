@@ -2,14 +2,14 @@
 //!
 //! Remote catalogs resolve faster when their MusicBrainz id index is warm,
 //! so each integration rebuilds its index off-request: one loop per source
-//! wakes on its honest interval, rebuilds through the single-flight
+//! wakes on its interval, rebuilds through the single-flight
 //! registry (so a manual trigger and the loop never rebuild the same index
 //! twice), logs failures and continues. Time and sleep are injected so
 //! tests drive loops with no real waits.
 //!
-//! Cadences are v2-exact (`backend/core/tasks.py`): Jellyfin builds once
-//! after a short startup delay; Navidrome and Plex rebuild every four
-//! hours after theirs. Production wiring: the integrator spawns the three
+//! Cadences match v2's task schedule: Jellyfin builds once after a short
+//! startup delay; Navidrome and Plex rebuild every four hours after
+//! theirs. Production wiring: `main` spawns the three
 //! loops with [`TokioSleeper`] over a shutdown watch (see the wiring block
 //! in `mod.rs`), flips the watch after axum serves, and awaits the tasks.
 
@@ -70,7 +70,7 @@ impl WarmupScope {
     }
 }
 
-/// What one warmup pass accomplished, for logs and briefs.
+/// What one warmup pass accomplished, for logs and tests.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WarmupStats {
     /// Scope key that warmed.
@@ -118,9 +118,8 @@ impl WarmupRegistry {
     }
 }
 
-/// Sleep seam so loops test without real waits. (The stage-5 refresh loops
-/// carry an identical seam; unifying the two behind one shared sleeper is
-/// a follow-up, not this slice.)
+/// Sleep seam so loops test without real waits. (The discover refresh
+/// loops carry an identical seam; the two could share one sleeper.)
 pub trait Sleeper: Send + Sync {
     /// Sleep `duration`, returning false when shutdown won the race.
     fn sleep(&self, duration: Duration) -> impl Future<Output = bool> + Send;
@@ -150,8 +149,8 @@ impl Sleeper for TokioSleeper {
 }
 
 /// Manual sleeper for tests: `wake` releases one waiter, `shut_down`
-/// releases all with false. Requested durations are recorded so briefs
-/// can assert the honest intervals.
+/// releases all with false. Requested durations are recorded so tests
+/// can assert the intervals.
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone)]
 pub struct ManualSleeper {
@@ -276,7 +275,7 @@ where
 
 /// Run the warmup loop for `scope` until the sleeper reports shutdown.
 /// Each loop sleeps its startup delay first (so boot never warms
-/// synchronously), runs one guarded pass, then repeats on the honest
+/// synchronously), runs one guarded pass, then repeats on the
 /// interval; the one-shot Jellyfin scope returns after its first pass.
 pub async fn run_warmup_loop<S, F, Fut>(
     registry: Arc<WarmupRegistry>,
@@ -304,7 +303,7 @@ pub async fn run_warmup_loop<S, F, Fut>(
 }
 
 /// One guarded loop iteration over borrowed work (the loop body factored
-/// for direct brief coverage).
+/// for direct test coverage).
 pub async fn warmup_once<F, Fut>(registry: &WarmupRegistry, scope: WarmupScope, work: F) -> bool
 where
     F: FnOnce() -> Fut,
