@@ -23,6 +23,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::routing::{get, post};
 
+use crate::compat::body::AudioBody;
 use crate::compat::settings::LiveSettings;
 
 use super::audio::*;
@@ -264,13 +265,16 @@ pub(super) fn outcome_response(outcome: &ByteOutcome) -> Response {
         }
         builder = builder.header(name.as_str(), value.as_str());
     }
-    let body = if sized {
-        Body::from(outcome.body.clone())
-    } else {
-        let bytes = outcome.body.clone();
-        Body::from_stream(futures_util::stream::once(async move {
-            Ok::<_, std::convert::Infallible>(bytes)
-        }))
+    let body = match &outcome.body {
+        // Streamed audio: file spans or the ffmpeg pipe, lease inside.
+        AudioBody::Live(live) => live.take().map_or_else(Body::empty, Body::from_stream),
+        AudioBody::Bytes(bytes) if sized => Body::from(bytes.clone()),
+        AudioBody::Bytes(bytes) => {
+            let bytes = bytes.clone();
+            Body::from_stream(futures_util::stream::once(async move {
+                Ok::<_, std::convert::Infallible>(bytes)
+            }))
+        }
     };
     builder
         .body(body)

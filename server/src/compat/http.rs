@@ -424,7 +424,8 @@ fn label_token(request: &Request) -> Option<String> {
 pub fn rendered_response(rendered: &Rendered, head_only: bool) -> Response {
     let status = StatusCode::from_u16(rendered.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let mut builder = Response::builder().status(status);
-    let mut sized = head_only || rendered.body.is_empty();
+    let live = rendered.stream.as_ref().and_then(|stream| stream.take());
+    let mut sized = head_only || (rendered.body.is_empty() && live.is_none());
     for (name, value) in &rendered.headers {
         if name.eq_ignore_ascii_case("content-length") {
             sized = true;
@@ -442,6 +443,9 @@ pub fn rendered_response(rendered: &Rendered, head_only: bool) -> Response {
             );
         }
         Body::empty()
+    } else if let Some(chunks) = live {
+        // Streamed audio; a Content-Length header, when set, is exact.
+        Body::from_stream(chunks)
     } else if sized {
         Body::from(rendered.body.clone())
     } else {

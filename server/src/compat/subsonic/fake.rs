@@ -15,7 +15,7 @@ use super::store::{
     PlaylistEntry, PlaylistRecord, PlaylistSummary, QueueState, Store, StreamDetailsData,
     TranscodeDecisionData,
 };
-use super::stream::{AudioBackend, AudioFacts, BackendError, StreamPlan};
+use super::stream::{AudioBackend, AudioBody, AudioFacts, BackendError, OpenedAudio, StreamPlan};
 use super::views::{ViewAlbum, ViewArtist, ViewGenre, ViewTrack};
 
 /// Fixed clock (2023-11-14T22:13:20Z): golden time fields pin to this.
@@ -1040,22 +1040,28 @@ impl AudioBackend for FakeAudio {
         }))
     }
 
-    async fn read_range(
-        &self,
-        file_id: &str,
-        start: u64,
-        end: u64,
-    ) -> Result<Vec<u8>, BackendError> {
-        Self::bytes(file_id)
-            .map(|bytes| bytes[start as usize..=end as usize].to_vec())
-            .ok_or_else(|| BackendError::failed(format!("no audio for {file_id}")))
+    async fn open_original(&self, file_id: &str) -> Result<Option<OpenedAudio>, BackendError> {
+        let (Some(facts), Some(bytes)) = (self.audio_facts(file_id).await?, Self::bytes(file_id))
+        else {
+            return Ok(None);
+        };
+        Ok(Some(OpenedAudio::new(facts, move |start, len| {
+            let start = usize::try_from(start).unwrap_or(usize::MAX);
+            let end = start.saturating_add(usize::try_from(len).unwrap_or(usize::MAX));
+            AudioBody::Bytes(
+                bytes
+                    .get(start..end.min(bytes.len()))
+                    .unwrap_or(&[])
+                    .to_vec(),
+            )
+        })))
     }
 
     async fn transcode(
         &self,
         file_id: &str,
         plan: &StreamPlan,
-    ) -> Result<(Vec<u8>, String), BackendError> {
+    ) -> Result<(AudioBody, String), BackendError> {
         if Self::bytes(file_id).is_none() {
             return Err(BackendError::failed(format!("no audio for {file_id}")));
         }
@@ -1063,6 +1069,9 @@ impl AudioBackend for FakeAudio {
             Some("opus") => "audio/ogg",
             _ => "audio/mpeg",
         };
-        Ok((b"TRANSCODED".to_vec(), content_type.to_owned()))
+        Ok((
+            AudioBody::Bytes(b"TRANSCODED".to_vec()),
+            content_type.to_owned(),
+        ))
     }
 }

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use droppedneedle::compat::subsonic::fake::{FakeAudio, FakeStore, FakeVerifier, NOW_UNIX};
 use droppedneedle::compat::subsonic::params::SubsonicParameters;
 use droppedneedle::compat::subsonic::stream::{
-    AudioBackend, AudioFacts, BackendError, StreamPlan, decide,
+    AudioBackend, AudioBody, AudioFacts, BackendError, OpenedAudio, StreamPlan, decide,
 };
 use droppedneedle::compat::subsonic::value::{Rendered, Val, obj};
 use droppedneedle::compat::subsonic::{Request, Settings, dispatch, dispatch_uses_envelope};
@@ -717,15 +717,14 @@ impl AudioBackend for NoPipe {
     async fn audio_facts(&self, file_id: &str) -> Result<Option<AudioFacts>, BackendError> {
         FakeAudio.audio_facts(file_id).await
     }
-    async fn read_range(
-        &self,
-        file_id: &str,
-        start: u64,
-        end: u64,
-    ) -> Result<Vec<u8>, BackendError> {
-        FakeAudio.read_range(file_id, start, end).await
+    async fn open_original(&self, file_id: &str) -> Result<Option<OpenedAudio>, BackendError> {
+        FakeAudio.open_original(file_id).await
     }
-    async fn transcode(&self, _: &str, _: &StreamPlan) -> Result<(Vec<u8>, String), BackendError> {
+    async fn transcode(
+        &self,
+        _: &str,
+        _: &StreamPlan,
+    ) -> Result<(AudioBody, String), BackendError> {
         panic!("HEAD must not run the transcode pipe");
     }
 }

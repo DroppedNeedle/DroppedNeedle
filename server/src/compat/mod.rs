@@ -36,6 +36,7 @@
 //! and `tests/it/compat_catalog.rs` runs both over a real database.
 
 pub mod adapters;
+pub mod body;
 pub mod http;
 pub mod jellyfin;
 pub mod settings;

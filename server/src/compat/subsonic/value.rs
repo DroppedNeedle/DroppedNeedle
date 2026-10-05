@@ -312,6 +312,8 @@ pub struct Rendered {
     pub headers: Vec<(String, String)>,
     /// Exact body bytes.
     pub body: Vec<u8>,
+    /// A streamed body, sent instead of `body` (audio only).
+    pub stream: Option<crate::compat::body::LiveBody>,
 }
 
 impl Rendered {
@@ -362,6 +364,7 @@ fn emit(body: Val, format: SubsonicFormat, callback: Option<&str>) -> Rendered {
                 content_type: "application/xml".to_owned(),
                 headers: Vec::new(),
                 body: xml.into_bytes(),
+                stream: None,
             }
         }
         SubsonicFormat::Json => Rendered {
@@ -371,6 +374,7 @@ fn emit(body: Val, format: SubsonicFormat, callback: Option<&str>) -> Rendered {
             body: obj(vec![("subsonic-response", body)])
                 .to_json()
                 .into_bytes(),
+            stream: None,
         },
         SubsonicFormat::Jsonp => {
             let payload = obj(vec![("subsonic-response", body)]).to_json();
@@ -380,12 +384,14 @@ fn emit(body: Val, format: SubsonicFormat, callback: Option<&str>) -> Rendered {
                     content_type: "application/javascript".to_owned(),
                     headers: Vec::new(),
                     body: format!("{cb}({payload});").into_bytes(),
+                    stream: None,
                 },
                 None => Rendered {
                     status: 200,
                     content_type: "application/json".to_owned(),
                     headers: Vec::new(),
                     body: payload.into_bytes(),
+                    stream: None,
                 },
             }
         }
@@ -441,5 +447,6 @@ pub fn render_binary_error(code: u8, message: &str) -> Rendered {
         content_type: "text/plain".to_owned(),
         headers: Vec::new(),
         body: message.as_bytes().to_vec(),
+        stream: None,
     }
 }

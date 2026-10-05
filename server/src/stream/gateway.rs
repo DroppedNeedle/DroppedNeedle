@@ -9,15 +9,17 @@
 //! adapters. Range slicing, 206/416 decisions, and headers stay in the
 //! routes file.
 //!
-//! Two known limits: the direct lease covers the open only (it bounds open
-//! concurrency, not response concurrency), and remote reads are whole and
-//! direct-only (the ffmpeg service takes a local path; per-source
-//! server-side transcode stays a remotes-adapter concern).
+//! The streaming open hands its direct lease back inside [`StreamMedia`],
+//! so a caller that moves it into the response body bounds response
+//! concurrency, not only opens (the compat adapters do). Remote reads are
+//! whole and direct-only (the ffmpeg service takes a local path;
+//! per-source server-side transcode stays a remotes-adapter concern).
 //!
 //! [`StreamEngine`]: super::routes::StreamEngine
 //! [`decide()`]: super::transcode::decide
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use super::leases::DirectGate;
 use futures_util::StreamExt as _;
@@ -61,7 +63,7 @@ pub struct Gateway<R, T> {
     transcoder: T,
     settings: TranscodeSettings,
     ffmpeg_present: bool,
-    direct: DirectGate,
+    direct: Arc<DirectGate>,
 }
 
 impl<R, T> Gateway<R, T> {
@@ -82,7 +84,7 @@ impl<R, T> Gateway<R, T> {
             transcoder,
             settings,
             ffmpeg_present,
-            direct: DirectGate::new(),
+            direct: Arc::new(DirectGate::new()),
         }
     }
 
@@ -116,18 +118,20 @@ impl<R: RemoteReader, T: Transcoder> StreamEngine for Gateway<R, T> {
         request: StreamOpen,
         head_only: bool,
     ) -> Result<StreamMedia, StreamFault> {
-        let _lease = self
+        let lease = self
             .direct
-            .acquire(&request.user_id)
+            .acquire_owned(&request.user_id)
             .await
             .map_err(|_| StreamFault::Capacity)?;
-        match request.source {
-            AudioSource::Local => self.stream_local(&request, head_only).await,
+        let mut media = match request.source {
+            AudioSource::Local => self.stream_local(&request, head_only).await?,
             source => self
                 .open_remote(source, &request)
                 .await
-                .map(StreamMedia::from),
-        }
+                .map(StreamMedia::from)?,
+        };
+        media.lease = Some(lease);
+        Ok(media)
     }
 }
 
@@ -217,6 +221,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
                     transcoded: false,
                     estimated_len: None,
                     body: MediaBody::File(path),
+                    lease: None,
                 })
             }
             StreamPlan::Transcode { .. } => {
@@ -239,6 +244,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
                     transcoded: true,
                     estimated_len: estimated_len(request, &plan),
                     body,
+                    lease: None,
                 })
             }
         }

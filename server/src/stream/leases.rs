@@ -8,11 +8,13 @@
 //! waiting at most 5s before the gateway answers 429 + `Retry-After`.
 //!
 //! [`DirectLease`] releases its slot exactly once, on drop, so cancellation
-//! cannot leak a slot. State lives behind a std mutex (short critical
+//! cannot leak a slot. [`OwnedDirectLease`] is the same slot holding its
+//! gate by `Arc`, so it can ride inside a response body and free the slot
+//! when the last byte (or the client) is gone. State lives behind a std mutex (short critical
 //! sections only) so release stays synchronous and `Drop`-safe.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::sync::Notify;
@@ -89,6 +91,28 @@ impl DirectGate {
     /// Take a direct slot for one principal, waiting fairly before giving up
     /// with [`CapacityExhausted`].
     pub async fn acquire(&self, principal: &str) -> Result<DirectLease<'_>, CapacityExhausted> {
+        self.take(principal).await?;
+        Ok(DirectLease {
+            gate: self,
+            principal: principal.to_owned(),
+        })
+    }
+
+    /// [`acquire`](Self::acquire) for a lease that outlives the borrow.
+    pub async fn acquire_owned(
+        self: &Arc<Self>,
+        principal: &str,
+    ) -> Result<OwnedDirectLease, CapacityExhausted> {
+        self.take(principal).await?;
+        Ok(OwnedDirectLease {
+            gate: Arc::clone(self),
+            principal: principal.to_owned(),
+        })
+    }
+
+    /// Wait fairly for a slot and count it taken. The caller wraps it in a
+    /// lease at once, with no await in between, so the slot cannot leak.
+    async fn take(&self, principal: &str) -> Result<(), CapacityExhausted> {
         let id = {
             let mut state = self.lock();
             if state.waiters.len() >= self.max_waiters {
@@ -131,10 +155,7 @@ impl DirectGate {
                     .entry(principal.to_owned())
                     .or_insert(0) += 1;
                 self.changed.notify_waiters();
-                Ok(DirectLease {
-                    gate: self,
-                    principal: principal.to_owned(),
-                })
+                Ok(())
             }
             Err(_) => {
                 state.waiters.retain(|waiter| waiter.id != id);
@@ -222,6 +243,20 @@ pub struct DirectLease<'a> {
 }
 
 impl Drop for DirectLease<'_> {
+    fn drop(&mut self) {
+        self.gate.release(&self.principal);
+    }
+}
+
+/// One held direct slot that owns its gate handle. Dropping releases the
+/// slot exactly once.
+#[derive(Debug)]
+pub struct OwnedDirectLease {
+    gate: Arc<DirectGate>,
+    principal: String,
+}
+
+impl Drop for OwnedDirectLease {
     fn drop(&mut self) {
         self.gate.release(&self.principal);
     }

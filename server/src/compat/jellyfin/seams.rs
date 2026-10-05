@@ -432,12 +432,12 @@ pub fn decide(input: &DecideInput) -> StreamPlan {
     }
 }
 
-/// Served audio bytes: status, headers, body.
+/// Served audio: status, headers, body (in memory or streamed).
 #[derive(Debug, Clone)]
 pub struct ByteOutcome {
     pub status: u16,
     pub headers: Vec<(String, String)>,
-    pub body: Vec<u8>,
+    pub body: crate::compat::body::AudioBody,
 }
 
 /// Audio bytes behind the `/Audio` routes. Production binds the stream

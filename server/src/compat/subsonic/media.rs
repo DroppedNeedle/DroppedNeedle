@@ -7,11 +7,34 @@ use super::ids::{IdKind, decode, decode_expect};
 use super::models::{Render, SStreamDetails, STranscodeDecision};
 use super::store::{ClientInfo, Store};
 use super::stream::{
-    AudioBackend, MAX_OFFSET_SECONDS, PLACEHOLDER_SVG, ServeError, ServedAudio, StreamPlan,
-    cover_bucket, decide, download_filename, estimate_transcode_length, serve_original,
+    AudioBackend, AudioBody, MAX_OFFSET_SECONDS, PLACEHOLDER_SVG, ServeError, ServedAudio,
+    StreamPlan, cover_bucket, decide, download_filename, estimate_transcode_length, serve_original,
     transcode_hint,
 };
 use super::{AVATAR_FORBIDDEN_MESSAGE, Ctx, Outcome};
+
+/// Audio as a binary outcome: bytes in memory, or a live stream.
+fn audio_outcome(
+    status: u16,
+    content_type: String,
+    headers: Vec<(String, String)>,
+    body: AudioBody,
+) -> Outcome {
+    match body {
+        AudioBody::Bytes(body) => Outcome::Binary {
+            status,
+            content_type,
+            headers,
+            body,
+        },
+        AudioBody::Live(body) => Outcome::Stream {
+            status,
+            content_type,
+            headers,
+            body,
+        },
+    }
+}
 
 /// Map a serve failure onto a binary outcome or a protocol error:
 /// 416 carries `Content-Range: bytes */N` with no body; a full pool is
@@ -19,12 +42,12 @@ use super::{AVATAR_FORBIDDEN_MESSAGE, Ctx, Outcome};
 /// split in dispatch.
 pub fn serve_outcome(served: Result<ServedAudio, ServeError>) -> Result<Outcome, SubsonicError> {
     match served {
-        Ok(audio) => Ok(Outcome::Binary {
-            status: audio.status,
-            content_type: audio.content_type,
-            headers: audio.headers,
-            body: audio.body,
-        }),
+        Ok(audio) => Ok(audio_outcome(
+            audio.status,
+            audio.content_type,
+            audio.headers,
+            audio.body,
+        )),
         Err(ServeError::RangeUnsatisfiable(size)) => Ok(Outcome::Binary {
             status: 416,
             content_type: "application/octet-stream".to_owned(),
@@ -311,12 +334,7 @@ pub async fn serve_transcode<P: Principal, S: Store, B: AudioBackend>(
             estimate_transcode_length(bitrate, duration_seconds, plan.start_seconds).to_string(),
         ));
     }
-    Ok(Outcome::Binary {
-        status: 200,
-        content_type,
-        headers,
-        body,
-    })
+    Ok(audio_outcome(200, content_type, headers, body))
 }
 
 /// Transcode client description, strict: unknown fields rejected at

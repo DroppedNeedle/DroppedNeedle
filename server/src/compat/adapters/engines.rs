@@ -1,8 +1,13 @@
 //! Compat streaming over the stream engine: both protocol seams call the
 //! same [`StreamEngine`](crate::stream::routes::StreamEngine) the native
-//! routes use, so bytes, leases, and transcode execution are shared. Range
-//! slicing stays in each protocol layer (already byte-identical rules);
-//! the adapters map whole-object opens onto the seam outcomes.
+//! routes use, so leases and transcode execution are shared.
+//!
+//! Each request opens the engine once with `open_stream`. A direct file is
+//! read by range as the response streams, a transcode streams ffmpeg's
+//! output chunk by chunk, and HEAD answers from file metadata without
+//! reading a byte or starting ffmpeg. The direct lease the open took moves
+//! into the body, so it stays held until the last byte is sent or the
+//! client goes away. Range rules stay in each protocol layer.
 //!
 //! Compat file ids pass through as local stream keys. Unknown ids
 //! fail exactly like native unknown ids (404/70), and exhausted leases
@@ -10,10 +15,15 @@
 
 use std::sync::Arc;
 
+use crate::compat::body::{AudioBody, LiveBody};
 use crate::compat::jellyfin::seams::{ByteOutcome, StreamEngine as JellyfinStreamEngine};
-use crate::compat::subsonic::stream::{AudioBackend, AudioFacts, BackendError, StreamPlan};
+use crate::compat::subsonic::stream::{
+    AudioBackend, AudioFacts, BackendError, OpenedAudio, StreamPlan,
+};
+use crate::stream::leases::OwnedDirectLease;
 use crate::stream::routes::{
-    AudioSource, OpenMedia, StreamEngine, StreamFault, StreamOpen, StreamParams,
+    AudioSource, MediaBody, StreamEngine, StreamFault, StreamMedia, StreamOpen, StreamParams,
+    file_range,
 };
 
 /// Suffix for an engine-resolved content type (direct-file facts only).
@@ -34,13 +44,45 @@ fn suffix_for_content_type(content_type: &str) -> String {
 
 /// Audio facts for one opened object (direct-file facts only: the
 /// engine reports no source bitrate or duration at this layer).
-fn facts_for(media: &OpenMedia) -> AudioFacts {
+fn facts_for(media: &StreamMedia) -> AudioFacts {
     AudioFacts {
         size: media.total_len,
         suffix: suffix_for_content_type(&media.content_type),
         bitrate_kbps: None,
         duration_seconds: None,
     }
+}
+
+/// `len` bytes from `start` of an opened body. File spans and transcode
+/// chunks stream with the lease inside; in-memory bytes are sliced (the
+/// lease then ends with the open, as the bytes are already read).
+fn span(body: MediaBody, lease: Option<OwnedDirectLease>, start: u64, len: u64) -> AudioBody {
+    match body {
+        MediaBody::File(path) => {
+            AudioBody::Live(LiveBody::new(file_range(path, start, len), lease))
+        }
+        MediaBody::Chunks(chunks) => AudioBody::Live(LiveBody::new(chunks, lease)),
+        MediaBody::Bytes(bytes) => {
+            let from = usize::try_from(start)
+                .unwrap_or(usize::MAX)
+                .min(bytes.len());
+            let to = from
+                .saturating_add(usize::try_from(len).unwrap_or(usize::MAX))
+                .min(bytes.len());
+            AudioBody::Bytes(bytes[from..to].to_vec())
+        }
+        MediaBody::Empty => AudioBody::empty(),
+    }
+}
+
+/// The whole of an opened body.
+fn whole(media: StreamMedia) -> AudioBody {
+    let len = if media.transcoded {
+        u64::MAX
+    } else {
+        media.total_len
+    };
+    span(media.body, media.lease, 0, len)
 }
 
 /// Map an engine fault onto the Subsonic backend error. The message is
@@ -59,6 +101,38 @@ fn backend_error(fault: StreamFault) -> BackendError {
             tracing::error!(%cause, "compat audio backend failed");
             BackendError::failed(crate::error::FIXED_INTERNAL_MESSAGE)
         }
+    }
+}
+
+/// One local open for a lease principal.
+async fn open<E: StreamEngine>(
+    engine: &E,
+    lease_user: &str,
+    file_id: &str,
+    params: StreamParams,
+    head_only: bool,
+) -> Result<StreamMedia, StreamFault> {
+    engine
+        .open_stream(
+            StreamOpen {
+                source: AudioSource::Local,
+                key: file_id.to_owned(),
+                user_id: lease_user.to_owned(),
+                params,
+            },
+            head_only,
+        )
+        .await
+}
+
+/// Engine params for a compat transcode verdict.
+fn transcode_params(format: Option<String>, bitrate_kbps: Option<i64>, start: f64) -> StreamParams {
+    StreamParams {
+        format,
+        max_bitrate_kbps: bitrate_kbps,
+        estimate_content_length: false,
+        start_seconds: start,
+        force_transcode: true,
     }
 }
 
@@ -97,102 +171,64 @@ impl<E: StreamEngine + 'static> AudioBackend for GatewayAudio<E> {
     }
 
     async fn audio_facts(&self, file_id: &str) -> Result<Option<AudioFacts>, BackendError> {
-        match self
-            .engine
-            .as_ref()
-            .open(StreamOpen {
-                source: AudioSource::Local,
-                key: file_id.to_owned(),
-                user_id: self.lease_user.clone(),
-                params: StreamParams::default(),
-            })
-            .await
-        {
+        let opened = open(
+            self.engine.as_ref(),
+            &self.lease_user,
+            file_id,
+            StreamParams::default(),
+            true,
+        )
+        .await;
+        match opened {
             Ok(media) => Ok(Some(facts_for(&media))),
             Err(StreamFault::NotFound) => Ok(None),
             Err(fault) => Err(backend_error(fault)),
         }
     }
 
-    async fn read_object(
-        &self,
-        file_id: &str,
-    ) -> Result<Option<(AudioFacts, Vec<u8>)>, BackendError> {
-        // Single engine open: `serve_original` slices facts and range from
-        // this one read instead of opening once for facts and again for
-        // bytes.
-        match self
-            .engine
-            .as_ref()
-            .open(StreamOpen {
-                source: AudioSource::Local,
-                key: file_id.to_owned(),
-                user_id: self.lease_user.clone(),
-                params: StreamParams::default(),
-            })
-            .await
-        {
+    async fn open_original(&self, file_id: &str) -> Result<Option<OpenedAudio>, BackendError> {
+        let opened = open(
+            self.engine.as_ref(),
+            &self.lease_user,
+            file_id,
+            StreamParams::default(),
+            false,
+        )
+        .await;
+        match opened {
             Ok(media) => {
                 let facts = facts_for(&media);
-                Ok(Some((facts, media.bytes)))
+                let StreamMedia { body, lease, .. } = media;
+                Ok(Some(OpenedAudio::new(facts, move |start, len| {
+                    span(body, lease, start, len)
+                })))
             }
             Err(StreamFault::NotFound) => Ok(None),
             Err(fault) => Err(backend_error(fault)),
         }
     }
 
-    async fn read_range(
-        &self,
-        file_id: &str,
-        start: u64,
-        end: u64,
-    ) -> Result<Vec<u8>, BackendError> {
-        let media = self
-            .engine
-            .as_ref()
-            .open(StreamOpen {
-                source: AudioSource::Local,
-                key: file_id.to_owned(),
-                user_id: self.lease_user.clone(),
-                params: StreamParams::default(),
-            })
-            .await
-            .map_err(backend_error)?;
-        let start = usize::try_from(start).unwrap_or(usize::MAX);
-        let end = usize::try_from(end).unwrap_or(0);
-        media
-            .bytes
-            .get(start..=end)
-            .map(|slice| slice.to_vec())
-            .ok_or_else(|| {
-                tracing::error!(file_id, "stream engine short-read a ranged object");
-                BackendError::failed(crate::error::FIXED_INTERNAL_MESSAGE)
-            })
-    }
-
     async fn transcode(
         &self,
         file_id: &str,
         plan: &StreamPlan,
-    ) -> Result<(Vec<u8>, String), BackendError> {
-        let media = self
-            .engine
-            .as_ref()
-            .open(StreamOpen {
-                source: AudioSource::Local,
-                key: file_id.to_owned(),
-                user_id: self.lease_user.clone(),
-                params: StreamParams {
-                    format: plan.out_format.clone(),
-                    max_bitrate_kbps: plan.out_bitrate_kbps,
-                    estimate_content_length: false,
-                    start_seconds: plan.start_seconds,
-                    force_transcode: true,
-                },
-            })
-            .await
-            .map_err(backend_error)?;
-        Ok((media.bytes, media.content_type))
+    ) -> Result<(AudioBody, String), BackendError> {
+        let params = transcode_params(
+            plan.out_format.clone(),
+            plan.out_bitrate_kbps,
+            plan.start_seconds,
+        );
+        let media = open(
+            self.engine.as_ref(),
+            &self.lease_user,
+            file_id,
+            params,
+            false,
+        )
+        .await
+        .map_err(backend_error)?;
+        let content_type = media.content_type.clone();
+        Ok((whole(media), content_type))
     }
 }
 
@@ -211,6 +247,25 @@ impl<E> Clone for GatewayStream<E> {
     }
 }
 
+/// A status-only outcome.
+fn status(code: u16, headers: Vec<(String, String)>) -> ByteOutcome {
+    ByteOutcome {
+        status: code,
+        headers,
+        body: AudioBody::empty(),
+    }
+}
+
+/// Headers of a whole transcode landing: never ranged, never sized.
+fn landing_headers(content_type: String) -> Vec<(String, String)> {
+    vec![
+        ("Content-Type".to_owned(), content_type),
+        ("Accept-Ranges".to_owned(), "none".to_owned()),
+        ("Cache-Control".to_owned(), "no-store".to_owned()),
+        ("Content-Encoding".to_owned(), "identity".to_owned()),
+    ]
+}
+
 impl<E> GatewayStream<E> {
     /// Wrap the engine. Leases run under `compat:jellyfin` until the audio
     /// routes scope the engine to the authenticated caller.
@@ -225,31 +280,98 @@ impl<E> GatewayStream<E> {
         &self,
         file_id: &str,
         params: StreamParams,
-    ) -> Result<OpenMedia, ByteOutcome>
+        head_only: bool,
+    ) -> Result<StreamMedia, ByteOutcome>
     where
         E: StreamEngine + 'static,
     {
-        self.engine
-            .as_ref()
-            .open(StreamOpen {
-                source: AudioSource::Local,
-                key: file_id.to_owned(),
-                user_id: self.lease_user.clone(),
-                params,
-            })
+        open(
+            self.engine.as_ref(),
+            &self.lease_user,
+            file_id,
+            params,
+            head_only,
+        )
+        .await
+        .map_err(|fault| match fault {
+            StreamFault::Capacity => status(429, vec![("Retry-After".to_owned(), "1".to_owned())]),
+            _ => status(404, Vec::new()),
+        })
+    }
+
+    /// GET and HEAD of the original: the same status and headers, and for
+    /// GET the asked span streamed.
+    async fn original(&self, file_id: &str, range: Option<&str>, head_only: bool) -> ByteOutcome
+    where
+        E: StreamEngine + 'static,
+    {
+        let media = match self
+            .open_media(file_id, StreamParams::default(), head_only)
             .await
-            .map_err(|fault| match fault {
-                StreamFault::Capacity => ByteOutcome {
-                    status: 429,
-                    headers: vec![("Retry-After".to_owned(), "1".to_owned())],
-                    body: Vec::new(),
-                },
-                _ => ByteOutcome {
-                    status: 404,
-                    headers: Vec::new(),
-                    body: Vec::new(),
-                },
-            })
+        {
+            Ok(media) => media,
+            Err(outcome) => return outcome,
+        };
+        // Transcode landings never serve ranges; the policy layer only
+        // calls `direct` for direct plans, so a landing here is served
+        // whole with the transcode header set.
+        if media.transcoded {
+            let headers = landing_headers(media.content_type.clone());
+            let body = if head_only {
+                AudioBody::empty()
+            } else {
+                whole(media)
+            };
+            return ByteOutcome {
+                status: 200,
+                headers,
+                body,
+            };
+        }
+        let total = media.total_len;
+        let span_asked = match range {
+            None => None,
+            Some(header) => match crate::stream::routes::parse_range(header, total) {
+                Some(resolved) => Some(resolved),
+                None => {
+                    return status(
+                        416,
+                        vec![("Content-Range".to_owned(), format!("bytes */{total}"))],
+                    );
+                }
+            },
+        };
+        let (code, start, len, content_range) = match span_asked {
+            None => (200, 0, total, None),
+            Some(resolved) => (
+                206,
+                resolved.start,
+                resolved.len(),
+                Some(format!(
+                    "bytes {}-{}/{}",
+                    resolved.start, resolved.end, total
+                )),
+            ),
+        };
+        let mut headers = vec![
+            ("Content-Type".to_owned(), media.content_type.clone()),
+            ("Content-Length".to_owned(), len.to_string()),
+        ];
+        if let Some(content_range) = content_range {
+            headers.push(("Content-Range".to_owned(), content_range));
+        }
+        headers.push(("Accept-Ranges".to_owned(), "bytes".to_owned()));
+        headers.push(("Content-Encoding".to_owned(), "identity".to_owned()));
+        let body = if head_only {
+            AudioBody::empty()
+        } else {
+            span(media.body, media.lease, start, len)
+        };
+        ByteOutcome {
+            status: code,
+            headers,
+            body,
+        }
     }
 }
 
@@ -262,153 +384,11 @@ impl<E: StreamEngine + 'static> JellyfinStreamEngine for GatewayStream<E> {
     }
 
     async fn direct(&self, file_id: &str, range: Option<&str>) -> ByteOutcome {
-        let media = match self.open_media(file_id, StreamParams::default()).await {
-            Ok(media) => media,
-            Err(outcome) => return outcome,
-        };
-        // Transcode landings never serve ranges; the policy layer only
-        // calls `direct` for direct plans, so a landing here is served
-        // whole with the transcode header set.
-        if media.transcoded {
-            return ByteOutcome {
-                status: 200,
-                headers: vec![
-                    ("Content-Type".to_owned(), media.content_type),
-                    ("Accept-Ranges".to_owned(), "none".to_owned()),
-                    ("Cache-Control".to_owned(), "no-store".to_owned()),
-                    ("Content-Encoding".to_owned(), "identity".to_owned()),
-                ],
-                body: media.bytes,
-            };
-        }
-        let total = media.total_len;
-        let span = match range {
-            None => None,
-            Some(header) => match crate::stream::routes::parse_range(header, total) {
-                Some(resolved) => Some(resolved),
-                None => {
-                    return ByteOutcome {
-                        status: 416,
-                        headers: vec![("Content-Range".to_owned(), format!("bytes */{total}"))],
-                        body: Vec::new(),
-                    };
-                }
-            },
-        };
-        match span {
-            None => ByteOutcome {
-                status: 200,
-                headers: vec![
-                    ("Content-Type".to_owned(), media.content_type),
-                    ("Content-Length".to_owned(), total.to_string()),
-                    ("Accept-Ranges".to_owned(), "bytes".to_owned()),
-                    ("Content-Encoding".to_owned(), "identity".to_owned()),
-                ],
-                body: media.bytes,
-            },
-            Some(resolved) => {
-                let start = usize::try_from(resolved.start).unwrap_or(usize::MAX);
-                let end = usize::try_from(resolved.end).unwrap_or(0);
-                let Some(slice) = media.bytes.get(start..=end) else {
-                    return ByteOutcome {
-                        status: 404,
-                        headers: Vec::new(),
-                        body: Vec::new(),
-                    };
-                };
-                ByteOutcome {
-                    status: 206,
-                    headers: vec![
-                        ("Content-Type".to_owned(), media.content_type),
-                        ("Content-Length".to_owned(), slice.len().to_string()),
-                        (
-                            "Content-Range".to_owned(),
-                            format!("bytes {}-{}/{}", resolved.start, resolved.end, total),
-                        ),
-                        ("Accept-Ranges".to_owned(), "bytes".to_owned()),
-                        ("Content-Encoding".to_owned(), "identity".to_owned()),
-                    ],
-                    body: slice.to_vec(),
-                }
-            }
-        }
+        self.original(file_id, range, false).await
     }
 
     async fn head(&self, file_id: &str, range: Option<&str>) -> ByteOutcome {
-        let media = match self.open_media(file_id, StreamParams::default()).await {
-            Ok(media) => media,
-            Err(outcome) => return outcome,
-        };
-        // GET-equivalent headers, empty body (transcode landings serve the
-        // whole-object header set, like `direct` does).
-        if media.transcoded {
-            return ByteOutcome {
-                status: 200,
-                headers: vec![
-                    ("Content-Type".to_owned(), media.content_type),
-                    ("Accept-Ranges".to_owned(), "none".to_owned()),
-                    ("Cache-Control".to_owned(), "no-store".to_owned()),
-                    ("Content-Encoding".to_owned(), "identity".to_owned()),
-                ],
-                body: Vec::new(),
-            };
-        }
-        let total = media.total_len;
-        let span = match range {
-            None => None,
-            Some(header) => match crate::stream::routes::parse_range(header, total) {
-                Some(resolved) => Some(resolved),
-                None => {
-                    return ByteOutcome {
-                        status: 416,
-                        headers: vec![("Content-Range".to_owned(), format!("bytes */{total}"))],
-                        body: Vec::new(),
-                    };
-                }
-            },
-        };
-        match span {
-            None => ByteOutcome {
-                status: 200,
-                headers: vec![
-                    ("Content-Type".to_owned(), media.content_type),
-                    ("Content-Length".to_owned(), total.to_string()),
-                    ("Accept-Ranges".to_owned(), "bytes".to_owned()),
-                    ("Content-Encoding".to_owned(), "identity".to_owned()),
-                ],
-                body: Vec::new(),
-            },
-            Some(resolved) => {
-                // Same short-read guard as `direct`: a HEAD must never
-                // promise bytes GET cannot serve.
-                let start = usize::try_from(resolved.start).unwrap_or(usize::MAX);
-                let end = usize::try_from(resolved.end).unwrap_or(0);
-                if media.bytes.get(start..=end).is_none() {
-                    return ByteOutcome {
-                        status: 404,
-                        headers: Vec::new(),
-                        body: Vec::new(),
-                    };
-                }
-                ByteOutcome {
-                    status: 206,
-                    headers: vec![
-                        ("Content-Type".to_owned(), media.content_type),
-                        (
-                            "Content-Length".to_owned(),
-                            (resolved.end - resolved.start + 1).to_string(),
-                        ),
-                        (
-                            "Content-Range".to_owned(),
-                            format!("bytes {}-{}/{}", resolved.start, resolved.end, total),
-                        ),
-                        ("Accept-Ranges".to_owned(), "bytes".to_owned()),
-                        ("Content-Encoding".to_owned(), "identity".to_owned()),
-                    ],
-                    body: Vec::new(),
-                }
-            }
-        }
+        self.original(file_id, range, true).await
     }
 
     async fn transcode(
@@ -418,19 +398,12 @@ impl<E: StreamEngine + 'static> JellyfinStreamEngine for GatewayStream<E> {
         bitrate_kbps: u32,
         start_seconds: f64,
     ) -> ByteOutcome {
-        let media = match self
-            .open_media(
-                file_id,
-                StreamParams {
-                    format: Some(format.to_owned()),
-                    max_bitrate_kbps: Some(i64::from(bitrate_kbps)),
-                    estimate_content_length: false,
-                    start_seconds,
-                    force_transcode: true,
-                },
-            )
-            .await
-        {
+        let params = transcode_params(
+            Some(format.to_owned()),
+            Some(i64::from(bitrate_kbps)),
+            start_seconds,
+        );
+        let media = match self.open_media(file_id, params, false).await {
             Ok(media) => media,
             Err(outcome) => return outcome,
         };
@@ -438,13 +411,8 @@ impl<E: StreamEngine + 'static> JellyfinStreamEngine for GatewayStream<E> {
         // streams the body unsized).
         ByteOutcome {
             status: 200,
-            headers: vec![
-                ("Content-Type".to_owned(), media.content_type),
-                ("Accept-Ranges".to_owned(), "none".to_owned()),
-                ("Cache-Control".to_owned(), "no-store".to_owned()),
-                ("Content-Encoding".to_owned(), "identity".to_owned()),
-            ],
-            body: media.bytes,
+            headers: landing_headers(media.content_type.clone()),
+            body: whole(media),
         }
     }
 }

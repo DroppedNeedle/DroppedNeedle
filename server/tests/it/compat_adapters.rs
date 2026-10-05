@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use droppedneedle::compat::adapters::engines::{GatewayAudio, GatewayStream};
+use droppedneedle::compat::body::AudioBody;
 use droppedneedle::compat::jellyfin::seams::StreamEngine as JellyfinEngine;
 use droppedneedle::compat::subsonic::stream::{
     AudioBackend, ServeError, StreamPlan, serve_original,
@@ -116,7 +117,7 @@ async fn subsonic_adapter_serves_ranges_and_forwards_transcodes() {
             content_range,
             "{case}"
         );
-        assert_eq!(served.body, body, "{case}");
+        assert_eq!(served.body, AudioBody::Bytes(body), "{case}");
     }
     assert_eq!(engine.recorded().len(), 5, "one engine open per request");
     let err = serve_original(&audio, "song.mp3", Some("bytes=100-"), false, None)
@@ -204,7 +205,7 @@ async fn jellyfin_adapter_serves_ranges_maps_faults_and_forwards_transcodes() {
                 "{case}"
             );
         }
-        assert_eq!(got.body, body, "{case}");
+        assert_eq!(got.body, AudioBody::Bytes(body), "{case}");
         // HEAD mirrors GET without a body.
         let head = stream.head(key, range).await;
         assert_eq!(head.status, status, "HEAD {case}");
@@ -234,4 +235,64 @@ async fn jellyfin_adapter_serves_ranges_maps_faults_and_forwards_transcodes() {
     assert_eq!(params.max_bitrate_kbps, Some(96));
     assert_eq!(params.start_seconds, 12.5);
     assert!(params.force_transcode);
+}
+
+/// Remote reader for a local-only gateway.
+struct NoRemote;
+
+impl droppedneedle::stream::gateway::RemoteReader for NoRemote {
+    async fn fetch(
+        &self,
+        _source: droppedneedle::stream::routes::AudioSource,
+        _key: &str,
+        _user_id: &str,
+    ) -> Result<droppedneedle::stream::gateway::RemoteMedia, StreamFault> {
+        Err(StreamFault::NotFound)
+    }
+}
+
+#[tokio::test]
+async fn real_gateway_streams_the_asked_span_from_the_file() {
+    use droppedneedle::stream::gateway::Gateway;
+    use droppedneedle::stream::transcode::{
+        FfmpegTranscoder, LocalTranscodeGate, StdFfmpegSpawner, TranscodeSettings,
+    };
+
+    let root = crate::common::ScratchDir::new("compat-stream");
+    std::fs::write(root.join("song.mp3"), (0..100u8).collect::<Vec<_>>()).unwrap();
+    let gateway = Arc::new(Gateway::new(
+        root.to_path_buf(),
+        NoRemote,
+        FfmpegTranscoder::new(
+            StdFfmpegSpawner::with_path("ffmpeg".into()),
+            Arc::new(LocalTranscodeGate::new()),
+        ),
+        TranscodeSettings::default(),
+        false,
+    ));
+
+    let jellyfin = GatewayStream::new(Arc::clone(&gateway)).for_caller("u1");
+    let got = jellyfin.direct("song.mp3", Some("bytes=10-19")).await;
+    assert_eq!(got.status, 206);
+    assert!(
+        matches!(got.body, AudioBody::Live(_)),
+        "files stream, never load whole"
+    );
+    assert_eq!(
+        got.body.collect().await.unwrap(),
+        (10..20u8).collect::<Vec<_>>()
+    );
+
+    let subsonic = GatewayAudio::new(gateway).for_caller("u1");
+    let served = serve_original(&subsonic, "song.mp3", Some("bytes=-5"), false, None)
+        .await
+        .expect("serves");
+    assert_eq!(
+        header(&served.headers, "Content-Length").as_deref(),
+        Some("5")
+    );
+    assert_eq!(
+        served.body.collect().await.unwrap(),
+        (95..100u8).collect::<Vec<_>>()
+    );
 }

@@ -250,6 +250,9 @@ pub struct StreamMedia {
     pub estimated_len: Option<u64>,
     /// The body source.
     pub body: MediaBody,
+    /// The direct lease the open took, when the engine hands it back.
+    /// Holding it until the body ends bounds response concurrency.
+    pub lease: Option<super::leases::OwnedDirectLease>,
 }
 
 impl From<OpenMedia> for StreamMedia {
@@ -260,6 +263,7 @@ impl From<OpenMedia> for StreamMedia {
             transcoded: media.transcoded,
             estimated_len: media.estimated_len,
             body: MediaBody::Bytes(media.bytes),
+            lease: None,
         }
     }
 }
@@ -1007,6 +1011,7 @@ mod tests {
             transcoded: true,
             estimated_len: Some(bytes.len() as u64),
             body: MediaBody::Bytes(bytes),
+            lease: None,
         }
     }
 

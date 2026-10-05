@@ -364,6 +364,18 @@ pub enum Outcome {
         /// Body bytes.
         body: Vec<u8>,
     },
+    /// Audio streamed as it is read, with status, content type, and
+    /// headers.
+    Stream {
+        /// HTTP status.
+        status: u16,
+        /// Content type.
+        content_type: String,
+        /// Extra headers.
+        headers: Vec<(String, String)>,
+        /// The live body.
+        body: crate::compat::body::LiveBody,
+    },
 }
 
 impl Outcome {
@@ -536,6 +548,19 @@ pub fn render_outcome(
             content_type,
             headers,
             body,
+            stream: None,
+        },
+        Outcome::Stream {
+            status,
+            content_type,
+            headers,
+            body,
+        } => Rendered {
+            status,
+            content_type,
+            headers,
+            body: Vec::new(),
+            stream: Some(body),
         },
     }
 }

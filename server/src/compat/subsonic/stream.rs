@@ -11,6 +11,7 @@
 //! `_download`, `_cover_size`).
 
 use super::error::{GENERIC, SubsonicError};
+pub use crate::compat::body::AudioBody;
 
 /// Minimum transcode bitrate kbps (v2 `_MIN_BITRATE_KBPS`).
 pub const MIN_BITRATE_KBPS: i64 = 32;
@@ -277,8 +278,8 @@ pub struct AudioFacts {
     pub duration_seconds: Option<f64>,
 }
 
-/// One served audio response: headers plus body bytes. The HTTP adapter
-/// maps this onto the real streaming response (ranges already applied).
+/// One served audio response: headers plus the body (already ranged).
+/// The HTTP adapter streams a live body as it is read.
 #[derive(Debug, Clone)]
 pub struct ServedAudio {
     /// 200 or 206.
@@ -287,8 +288,37 @@ pub struct ServedAudio {
     pub content_type: String,
     /// Headers (Content-Length, Content-Range, Accept-Ranges, ...).
     pub headers: Vec<(String, String)>,
-    /// Body bytes (already ranged).
-    pub body: Vec<u8>,
+    /// The body.
+    pub body: AudioBody,
+}
+
+/// Reads one byte span of an opened original: `(start, len)`.
+type SpanReader = Box<dyn FnOnce(u64, u64) -> AudioBody + Send>;
+
+/// An opened original: its facts now, one span of its bytes later. The
+/// backend's stream lease rides inside the reader and then the body.
+pub struct OpenedAudio {
+    /// Size, suffix and the rest, known before any byte is read.
+    pub facts: AudioFacts,
+    read: SpanReader,
+}
+
+impl OpenedAudio {
+    /// Facts plus the reader that serves one span.
+    pub fn new(
+        facts: AudioFacts,
+        read: impl FnOnce(u64, u64) -> AudioBody + Send + 'static,
+    ) -> Self {
+        Self {
+            facts,
+            read: Box::new(read),
+        }
+    }
+
+    /// The body for `len` bytes from `start`.
+    pub fn read(self, start: u64, len: u64) -> AudioBody {
+        (self.read)(start, len)
+    }
 }
 
 /// Backend failure: a plain storage failure (surfaced as code 0) or
@@ -331,11 +361,8 @@ impl std::fmt::Display for BackendError {
 impl std::error::Error for BackendError {}
 
 /// Minimal audio backend, implemented over the stream engine (local files
-/// plus the transcode pipeline) in `compat::adapters::engines`.
-/// Leases, concurrency pools, cancellation, and the plugin-stream
-/// fallback (local miss -> plugin ref -> bytes) all live behind this
-/// trait: resolve plugin refs inside `audio_facts`/`read_range` so a
-/// local miss still serves when a plugin claims the track.
+/// plus the transcode pipeline) in `compat::adapters::engines`. Leases,
+/// concurrency pools and cancellation live behind this trait.
 pub trait AudioBackend: Clone + Send + Sync {
     /// The backend scoped to one authenticated caller, so stream leases
     /// count against that user. Backends without leases return themselves.
@@ -343,48 +370,27 @@ pub trait AudioBackend: Clone + Send + Sync {
         self.clone()
     }
 
-    /// Facts for a file id, or None when nothing (local or plugin)
-    /// can serve the track.
+    /// Facts for a file id from metadata alone (HEAD), or None when
+    /// nothing can serve the track.
     fn audio_facts(
         &self,
         file_id: &str,
     ) -> impl Future<Output = Result<Option<AudioFacts>, BackendError>> + Send;
 
-    /// Byte slice `[start, end]` inclusive of the original file.
-    fn read_range(
+    /// Open the original once for a GET: facts first, then one span of
+    /// bytes read as the response streams.
+    fn open_original(
         &self,
         file_id: &str,
-        start: u64,
-        end: u64,
-    ) -> impl Future<Output = Result<Vec<u8>, BackendError>> + Send;
+    ) -> impl Future<Output = Result<Option<OpenedAudio>, BackendError>> + Send;
 
-    /// Facts plus the whole original object in one backend open, for the
-    /// GET path (`serve_original` slices facts and range from the single
-    /// read instead of opening twice). The default composes `audio_facts`
-    /// + `read_range`; engine-backed backends override it with one `open`.
-    fn read_object(
-        &self,
-        file_id: &str,
-    ) -> impl Future<Output = Result<Option<(AudioFacts, Vec<u8>)>, BackendError>> + Send {
-        async move {
-            let Some(facts) = self.audio_facts(file_id).await? else {
-                return Ok(None);
-            };
-            if facts.size == 0 {
-                return Ok(Some((facts, Vec::new())));
-            }
-            let bytes = self.read_range(file_id, 0, facts.size - 1).await?;
-            Ok(Some((facts, bytes)))
-        }
-    }
-
-    /// Transcoded bytes + content type for a plan (ffmpeg pipe behind
-    /// the seam).
+    /// Transcode output + content type for a plan (ffmpeg pipe behind
+    /// the seam), streamed as ffmpeg produces it.
     fn transcode(
         &self,
         file_id: &str,
         plan: &StreamPlan,
-    ) -> impl Future<Output = Result<(Vec<u8>, String), BackendError>> + Send;
+    ) -> impl Future<Output = Result<(AudioBody, String), BackendError>> + Send;
 }
 
 /// Failure serving original bytes: a protocol error, a 416 range
@@ -420,8 +426,8 @@ impl From<BackendError> for ServeError {
 /// minus the lease plumbing, which lives behind [`AudioBackend`]).
 /// HEAD answers the same status and headers GET would (200/206/416;
 /// HEAD honors Range, like the stream engine), always with an empty
-/// body. GET opens the backend exactly once ([`AudioBackend::read_object`])
-/// and slices facts and range from that single read.
+/// body. GET opens the backend exactly once
+/// ([`AudioBackend::open_original`]) and streams the asked span.
 pub async fn serve_original<B: AudioBackend>(
     backend: &B,
     file_id: &str,
@@ -432,12 +438,16 @@ pub async fn serve_original<B: AudioBackend>(
     if head_only {
         return serve_head(backend, file_id, range_header, content_disposition).await;
     }
-    let (facts, bytes) = backend
-        .read_object(file_id)
+    let opened = backend
+        .open_original(file_id)
         .await?
         .ok_or_else(|| SubsonicError::code_only(super::error::NOT_FOUND))?;
-    let content_type = content_type_for(&facts.suffix).ok_or_else(|| {
-        SubsonicError::new(GENERIC, format!("Cannot stream .{} files", facts.suffix))
+    let size = opened.facts.size;
+    let content_type = content_type_for(&opened.facts.suffix).ok_or_else(|| {
+        SubsonicError::new(
+            GENERIC,
+            format!("Cannot stream .{} files", opened.facts.suffix),
+        )
     })?;
     let mut headers = vec![
         ("Accept-Ranges".to_owned(), "bytes".to_owned()),
@@ -446,47 +456,31 @@ pub async fn serve_original<B: AudioBackend>(
     if let Some(disposition) = content_disposition {
         headers.push(("Content-Disposition".to_owned(), disposition));
     }
-    match parse_range(range_header, facts.size) {
+    match parse_range(range_header, size) {
         RangeOutcome::Full => {
-            // Exactly `size` bytes, as the old `read_range(0, size - 1)`
-            // served; a short object fails the same way it did there.
-            let len = usize::try_from(facts.size).unwrap_or(usize::MAX);
-            let body = bytes.get(..len).ok_or_else(|| {
-                ServeError::Subsonic(SubsonicError::new(
-                    GENERIC,
-                    "engine short-read the ranged object",
-                ))
-            })?;
-            headers.push(("Content-Length".to_owned(), facts.size.to_string()));
+            headers.push(("Content-Length".to_owned(), size.to_string()));
             Ok(ServedAudio {
                 status: 200,
                 content_type: content_type.to_owned(),
                 headers,
-                body: body.to_vec(),
+                body: opened.read(0, size),
             })
         }
         RangeOutcome::Partial(range) => {
-            let start = usize::try_from(range.start).unwrap_or(usize::MAX);
-            let end = usize::try_from(range.end).unwrap_or(0);
-            let body = bytes.get(start..=end).ok_or_else(|| {
-                ServeError::Subsonic(SubsonicError::new(
-                    GENERIC,
-                    "engine short-read the ranged object",
-                ))
-            })?;
-            headers.push(("Content-Length".to_owned(), body.len().to_string()));
+            let len = range.end - range.start + 1;
+            headers.push(("Content-Length".to_owned(), len.to_string()));
             headers.push((
                 "Content-Range".to_owned(),
-                format!("bytes {}-{}/{}", range.start, range.end, facts.size),
+                format!("bytes {}-{}/{}", range.start, range.end, size),
             ));
             Ok(ServedAudio {
                 status: 206,
                 content_type: content_type.to_owned(),
                 headers,
-                body: body.to_vec(),
+                body: opened.read(range.start, len),
             })
         }
-        RangeOutcome::Unsatisfiable => Err(ServeError::RangeUnsatisfiable(facts.size)),
+        RangeOutcome::Unsatisfiable => Err(ServeError::RangeUnsatisfiable(size)),
     }
 }
 
@@ -520,7 +514,7 @@ async fn serve_head<B: AudioBackend>(
                 status: 200,
                 content_type: content_type.to_owned(),
                 headers,
-                body: Vec::new(),
+                body: AudioBody::empty(),
             })
         }
         RangeOutcome::Partial(range) => {
@@ -537,7 +531,7 @@ async fn serve_head<B: AudioBackend>(
                 status: 206,
                 content_type: content_type.to_owned(),
                 headers,
-                body: Vec::new(),
+                body: AudioBody::empty(),
             })
         }
         RangeOutcome::Unsatisfiable => Err(ServeError::RangeUnsatisfiable(facts.size)),

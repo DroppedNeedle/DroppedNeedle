@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 
 use super::params::SortKey;
 use super::seams::*;
+use crate::compat::body::AudioBody;
 
 /// Deterministic `sha256("kind:internal")[:32]` with an in-memory reverse
 /// table (v2 `CompatIdMapService` derivation; the persisted table is not
@@ -700,7 +701,7 @@ fn unsatisfied(size: usize) -> ByteOutcome {
     ByteOutcome {
         status: 416,
         headers: vec![("Content-Range".to_owned(), format!("bytes */{size}"))],
-        body: Vec::new(),
+        body: AudioBody::empty(),
     }
 }
 
@@ -710,7 +711,7 @@ impl StreamEngine for MemoryEngine {
             return ByteOutcome {
                 status: 404,
                 headers: Vec::new(),
-                body: Vec::new(),
+                body: AudioBody::empty(),
             };
         };
         let size = bytes.len();
@@ -730,7 +731,7 @@ impl StreamEngine for MemoryEngine {
                     ("Accept-Ranges".to_owned(), "bytes".to_owned()),
                     ("Content-Encoding".to_owned(), "identity".to_owned()),
                 ],
-                body: bytes,
+                body: AudioBody::Bytes(bytes),
             },
             Some((start, end)) => ByteOutcome {
                 status: 206,
@@ -744,7 +745,7 @@ impl StreamEngine for MemoryEngine {
                     ("Accept-Ranges".to_owned(), "bytes".to_owned()),
                     ("Content-Encoding".to_owned(), "identity".to_owned()),
                 ],
-                body: bytes[start..=end].to_vec(),
+                body: AudioBody::Bytes(bytes[start..=end].to_vec()),
             },
         }
     }
@@ -754,7 +755,7 @@ impl StreamEngine for MemoryEngine {
             return ByteOutcome {
                 status: 404,
                 headers: Vec::new(),
-                body: Vec::new(),
+                body: AudioBody::empty(),
             };
         };
         let size = bytes.len();
@@ -774,7 +775,7 @@ impl StreamEngine for MemoryEngine {
                     ("Accept-Ranges".to_owned(), "bytes".to_owned()),
                     ("Content-Encoding".to_owned(), "identity".to_owned()),
                 ],
-                body: Vec::new(),
+                body: AudioBody::empty(),
             },
             Some((start, end)) => ByteOutcome {
                 status: 206,
@@ -788,7 +789,7 @@ impl StreamEngine for MemoryEngine {
                     ("Accept-Ranges".to_owned(), "bytes".to_owned()),
                     ("Content-Encoding".to_owned(), "identity".to_owned()),
                 ],
-                body: Vec::new(),
+                body: AudioBody::empty(),
             },
         }
     }
@@ -819,7 +820,9 @@ impl StreamEngine for MemoryEngine {
                 ("Cache-Control".to_owned(), "no-store".to_owned()),
                 ("Content-Encoding".to_owned(), "identity".to_owned()),
             ],
-            body: format!("transcoded:{format}:{bitrate_kbps}:{start_seconds:.3}").into_bytes(),
+            body: AudioBody::Bytes(
+                format!("transcoded:{format}:{bitrate_kbps}:{start_seconds:.3}").into_bytes(),
+            ),
         }
     }
 }
