@@ -1,7 +1,7 @@
 //! Library typed errors rendering the shared envelope.
 //!
 //! Shapes are byte-compatible with the crate `error` module plus the
-//! 4xx codes the sibling slices use: every failure renders as
+//! 4xx codes the other routes use: every failure renders as
 //! `{"error": {code, message, details}}`. Server faults carry the
 //! fixed generic message plus an error id; the cause goes to the log
 //! only.

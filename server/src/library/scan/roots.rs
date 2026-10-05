@@ -1,13 +1,13 @@
 //! Library roots: the registry, policy resolution, and the stream seam.
 //!
-//! This stage owns the root registry, replacing the stage-6 provisional
-//! `<root>/music` fallback (`media::local_root`). The stream gateway keeps
-//! its single-path constructor; the [`StreamRootSeam`] below is the seam the
-//! integrator wires in so local keys resolve against real roots instead.
+//! The root registry. The stream gateway still uses its single-path
+//! constructor (`media::local_root`); the [`StreamRootSeam`] below would
+//! let local keys resolve against the real roots instead, but nothing
+//! wires it yet.
 //!
-//! Policy surface is deliberately minimal: roots plus an enabled flag plus a
-//! revision string. Per-subpath rules arrive with the settings slice; until
-//! then every scope inherits its root's policy.
+//! The policy surface is minimal on purpose: roots plus an enabled flag
+//! plus a revision string. There are no per-subpath rules yet; every scope
+//! inherits its root's policy.
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
@@ -152,17 +152,17 @@ impl std::fmt::Display for RootSeamError {
 
 impl std::error::Error for RootSeamError {}
 
-/// Root-resolution seam for the stream gateway (integrator note).
+/// Root-resolution seam for the stream gateway (not wired yet).
 ///
 /// Today `Gateway::new` takes one `local_root` path and
 /// `sandboxed_path(key)` joins a bare key under it. This seam replaces that
 /// single root with per-root resolution: the gateway parses the root id out
-/// of the playback key (format owned by the catalog slice), calls
+/// of the playback key (format owned by the catalog), calls
 /// [`StreamRootSeam::resolve_key`], and keeps its existing refusal
 /// behavior. Sandboxing mirrors `sandboxed_path` exactly: component
 /// screening first, then canonicalize both sides so a symlink inside the
 /// root cannot point outside it; unresolvable paths skip the prefix check
-/// and fall through to the read, which reports them honestly.
+/// and fall through to the read, which reports them.
 ///
 /// Do not construct paths by joining untrusted keys anywhere else; every
 /// local-key join funnels through here.
@@ -203,7 +203,7 @@ impl StreamRootSeam {
     }
 
     /// First non-excluded root, for callers that still take a single path
-    /// (the stage-6 `<root>/music` stand-in). Returns `None` when no usable
+    /// (the `<root>/music` stand-in). Returns `None` when no usable
     /// root is configured, which callers must read as "local reads 404".
     pub fn primary_music_root(&self) -> Option<PathBuf> {
         self.registry

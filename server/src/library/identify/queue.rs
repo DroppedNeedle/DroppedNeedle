@@ -12,7 +12,7 @@ pub const PRIORITY_SUPPORTING_MAINTENANCE: u32 = 50;
 /// How long one worker holds a claimed job before it can be reclaimed.
 pub const LEASE_SECONDS: u64 = 60;
 
-/// F-IDENT-04 (owner-signed): the ladder is 30, 60, 120 ... doubling per
+/// The ladder is 30, 60, 120 ... doubling per
 /// deferral, capped so it always equals the largest delay the formula can
 /// schedule under the ten-attempt terminal bound: 30 through 7,680 s,
 /// 15,330 s cumulative before attempt ten terminalizes. A bounded-retry

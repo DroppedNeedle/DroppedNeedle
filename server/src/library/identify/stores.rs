@@ -1,5 +1,5 @@
-//! Ports the identify slice needs. Small traits, memory fakes beside
-//! them; the durable adapters land with the stage-8 wiring.
+//! Ports identify needs. Small traits, with memory fakes beside them; no
+//! durable adapters exist yet.
 
 use super::models::{
     AlbumIdentity, Alias, ArtistCredit, ArtistIdentity, CreditProof, IdentifyJob, JobState,

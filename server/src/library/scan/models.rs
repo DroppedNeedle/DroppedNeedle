@@ -1,6 +1,6 @@
 //! Scan models: runs, scopes, requests, inventory, failures.
 //!
-//! A direct port of `backend/models/library_work.py` scan structs. Field
+//! A direct port of v2's library work scan structs. Field
 //! names and state spellings match v2 exactly so later SQLite work can reuse
 //! the same durable vocabulary.
 

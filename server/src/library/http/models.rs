@@ -1,14 +1,14 @@
 //! Library HTTP models: request and response DTOs.
 //!
-//! These are the API contract, decoupled from slice internals:
-//! handlers map slice types onto these views explicitly.
+//! These are the API contract, decoupled from engine internals:
+//! handlers map engine types onto these views explicitly.
 
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-/// Snake-case label for a serializable slice enum. Falls back to
+/// Snake-case label for a serializable engine enum. Falls back to
 /// `"unknown"` instead of failing the whole response.
 pub fn snake<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_value(value)

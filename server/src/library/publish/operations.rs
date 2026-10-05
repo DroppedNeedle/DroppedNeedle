@@ -1,4 +1,4 @@
-//! Durable source operations (integrator-owned).
+//! Durable source operations.
 //!
 //! Undo replays the exact sealed bundle a past operation published:
 //! pinned identity, override revisions, and per-file fingerprints.

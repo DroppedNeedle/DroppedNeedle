@@ -21,9 +21,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TagDocument {
     /// Managed semantic fields; each holds an ordered value list so
-    /// multi-valued tags keep their boundaries (E21).
+    /// multi-valued tags keep their boundaries.
     pub managed: BTreeMap<String, Vec<String>>,
-    /// Custom and unknown-but-named tags, preserved by default (D4).
+    /// Custom and unknown-but-named tags, preserved by default.
     pub custom: BTreeMap<String, Vec<String>>,
     /// Unknown native frames as opaque bytes, keyed by native
     /// descriptor. The writer never inspects these.

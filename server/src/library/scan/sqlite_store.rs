@@ -9,7 +9,7 @@
 //! so [`commit_indexed`](ScanStore::commit_indexed) also writes the
 //! `local_*` rows the reads layer shows (`availability = 'indexed'`).
 //!
-//! Two deliberate simplifications versus the memory store:
+//! Two intended simplifications versus the memory store:
 //!
 //! * Deferred markers stay in-process. They re-arm whenever tag-read
 //!   exhaustion recurs, so a restart only loses the re-offer shortcut, and
@@ -1184,7 +1184,7 @@ impl ScanStore for SqliteScanStore {
         // every page seeks and reads only its rows. The generation join
         // probes the tiny scopes table per row; no sort, no offset rescan.
         // Read failures surface as Err: an empty page means end-of-run,
-        // and the caller retries, then fails honestly, instead of
+        // and the caller retries, then fails the run, instead of
         // completing the run short.
         let guard = self.lock();
         let mut stmt = match guard.conn.prepare(
@@ -1899,8 +1899,8 @@ fn commit_indexed_batch_inner(
     tx.commit()
 }
 
-/// Delete an album left with no tracks, with its scan-owned joins. Other
-/// slices' identity rows block the delete (all-or-nothing) and the album
+/// Delete an album left with no tracks, with its scan-owned joins.
+/// Identity rows owned elsewhere block the delete (all-or-nothing) and the album
 /// stays; the caller logs that at debug.
 fn cleanup_emptied_album(conn: &mut Connection, album_id: &str) -> rusqlite::Result<()> {
     let remaining: i64 = conn.query_row(
@@ -2136,7 +2136,7 @@ fn request_run_inner(
     for run in &current {
         scopes_by_run.insert(run.id.clone(), load_scopes(conn, &run.id)?);
     }
-    // F-SCAN-02: only a queued run may cover a request.
+    // Only a queued run may cover a request.
     let covering = current.iter().find(|run| {
         if run.state != ScanState::Queued || run.kind != request.kind {
             return false;
@@ -2197,7 +2197,7 @@ fn request_run_inner(
                 conflicting_kind: Some(queued.kind),
             });
         }
-        // F-INDEXREC-01: normalize the union; per root keep the broadest
+        // Normalize the union; per root keep the broadest
         // ancestor and drop its descendants.
         let additions: Vec<ScanScope> = request
             .scopes

@@ -1,10 +1,10 @@
 //! Per-root read/write leases and revision fences.
 //!
-//! Port of the scan-relevant half of v2
-//! `backend/services/native/library_filesystem_coordinator.py`. Scans hold a
+//! Port of the scan-relevant half of v2's library filesystem coordinator.
+//! Scans hold a
 //! read lease while walking; management publication takes the write lease
 //! and bumps the revision, which tells the walker its generation was
-//! superseded (F-022/F-030 re-walk). Only a clean, un-degraded walk records
+//! superseded and must re-walk. Only a clean, un-degraded walk records
 //! the scan fence that lets the reconciler trust missing detection.
 //!
 //! Also home to the management-artifact rule: any path with a
@@ -12,8 +12,8 @@
 //! never library content.
 //!
 //! Scan and identify never write music files. Nothing in this module (or
-//! anywhere else in the slice) opens a library file for writing; the write
-//! lease exists for the management slice, which owns publication.
+//! anywhere else in scan) opens a library file for writing; the write
+//! lease exists for the publisher, which owns publication.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -224,7 +224,7 @@ impl Drop for ReadGuard {
     }
 }
 
-/// RAII write lease. Reserved for the management slice.
+/// RAII write lease. Reserved for the publisher.
 pub struct WriteGuard {
     owner: FsCoordinator,
     root_id: String,

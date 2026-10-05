@@ -1,51 +1,38 @@
 //! Library scan: roots, discovery, scheduling, and supervision.
 //!
-//! Stage-8 scan slice. Owns the library root registry (replacing the
-//! stage-6 provisional `<root>/music`), the filesystem walk, scan runs,
-//! the rolling scheduler, the filesystem watcher, worker supervision, and
-//! the library-revision poller. v2 reference: `backend/services/native/`
-//! (`library_inventory_scanner`, `library_scan_coordinator`,
-//! `library_scan_scheduler`, `library_scan_supervisor`,
-//! `library_filesystem_watcher`, `library_revision_poller`,
-//! `library_filesystem_coordinator`, `library_indexer`,
-//! `library_reconciler`, `file_revision`, `library_scan_events`) plus the
-//! scan half of `NativeLibraryStore` and `models/library_work.py`.
+//! Owns the library root registry, the filesystem walk, scan runs, the
+//! rolling scheduler, the filesystem watcher, worker supervision, and the
+//! library-revision poller. Ported from v2's native library services
+//! (inventory scanner, scan coordinator, scheduler, supervisor, filesystem
+//! watcher and coordinator, revision poller, indexer, reconciler, file
+//! revision, scan events) plus the scan half of its library store and work
+//! models.
 //!
 //! ## Boundary
 //!
-//! * Tag parsing and provider identification belong to sibling slices.
-//!   This slice calls them only through [`seams::TagReader`] and
-//!   [`seams::IdentifyQueue`]; the null implementations here exist for
-//!   tests, not production.
-//! * The stream gateway keeps its own files. [`roots::StreamRootSeam`] is
-//!   the root-resolution seam the integrator wires in; see its docs.
+//! * Tag parsing and provider identification live in `library::tags` and
+//!   `library::identify`. Scan calls them only through [`seams::TagReader`]
+//!   and [`seams::IdentifyQueue`]; the null implementations exist for
+//!   tests only.
+//! * The stream gateway resolves local keys under a single root.
+//!   [`roots::StreamRootSeam`] is the per-root resolution seam it does not
+//!   use yet; see its docs.
 //! * Settings storage owns inclusion rules under excluded roots; the
 //!   scheduler resolves [`scheduler::InclusionRule`] values carried as
-//!   parameters until that slice lands.
+//!   parameters.
 //!
 //! ## Purity
 //!
 //! Scan and identify never write music files. The walk stats, the tag
-//! seam reads, and nothing in this slice opens a library file for
-//! writing. `server/tests/it/library_scan.rs` pins zero file writes across
-//! full runs.
+//! seam reads, and nothing in scan opens a library file for writing.
+//! `server/tests/it/library_scan.rs` pins zero file writes across full
+//! runs.
 //!
-//! ## Quirk citations
-//!
-//! F-029 (`revision`), F-021 (`walk::text_safe_posix`), F-020/NFC twins
-//! (`walk`), F-022 degraded walks (`walk`, `coordinator::reconcile`),
-//! F-023 probes (`walk`), F-024 detach cap (`walk`), F-025 heartbeat
-//! (`walk`), F-027 event throttle (`coordinator`), F-030 supersede
-//! re-walk (`walk`), F-SCAN-02 cover rule (`store`), F-INDEXREC-01 union
-//! (`store`), F-INDEXREC-02 fence release (`coordinator`),
-//! F-INDEXREC-06 control exits (`walk`, `coordinator`), F-12 deferred
-//! re-offer (`store`, `coordinator`), F-13 non-regular skip (`walk`),
-//! F-15/4.12 legacy band (`store`), F-16 NFC classify (`store`), F-32
-//! failure details (`walk`), GH-296 skip-and-report (`walk`),
-//! GH-444 timeout retry (`walk`), S-01 Hooks A/B/C (`supervisor`,
-//! `watcher`), S-05 tick dispositions (`scheduler`), R-02 settle bound
-//! (`coordinator`), R-05 single-start (`watcher`, `supervisor` via
-//! single-loop construction), E11 symlinks (`walk`).
+//! v2 quirks and bug fixes are cited where the code handles them: degraded
+//! and superseded walks, wedged probes and the detach cap, heartbeats,
+//! NFC twins, non-UTF-8 names, non-regular files, deferred tag reads,
+//! legacy float mtimes, skip-and-report on unreachable roots (GH-296),
+//! timeout retries (GH-444), and symlinks, which are never followed.
 
 pub mod coordinator;
 pub mod fs;

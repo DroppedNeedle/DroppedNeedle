@@ -1,12 +1,12 @@
 //! Single durable entry point for every scan trigger.
 //!
-//! Port of `backend/services/native/library_scan_coordinator.py` plus the
-//! indexing and reconciliation phases (v2 `library_indexer.py` /
-//! `library_reconciler.py`, reduced to this slice's needs: tag reads ride
+//! Port of v2's library scan coordinator plus the indexing and
+//! reconciliation phases (v2's library indexer and reconciler, reduced to
+//! what scanning needs: tag reads ride
 //! the [`TagReader`](super::seams::TagReader) seam, identify offers ride
 //! the [`IdentifyQueue`](super::seams::IdentifyQueue) seam, and grouping
-//! collapses to parent-directory album keys until the identify slice owns
-//! real grouping).
+//! collapses to parent-directory album keys until identify owns real
+//! grouping).
 //!
 //! Pipeline per run: discover (walk) -> index (tag + catalog) ->
 //! reconcile (missing detection) -> completed. Control (pause/stop) and
@@ -85,14 +85,14 @@ pub const INDEX_PAGE_SIZE: usize = 5_000;
 /// [`INDEX_CHECKPOINT_EVERY`] rows; only the SQLite flush is coarser, so
 /// a crash re-offers at most one window next run.
 pub const INDEX_FLUSH_EVERY: usize = 256;
-/// Inventory page read attempts before the run fails honestly. Each
+/// Inventory page read attempts before the run fails. Each
 /// attempt already rides the store's 5 s busy timeout; the retries only
 /// cover flakes between attempts, with the store lock released.
 pub const INDEX_PAGE_READ_ATTEMPTS: u32 = 3;
 /// Pause between page-read attempts; linear, no jitter needed for a
 /// single scan worker.
 pub const INDEX_PAGE_READ_RETRY: Duration = Duration::from_millis(25);
-/// Bound on stale retries when settling control (v2 R-02
+/// Bound on stale retries when settling control (v2
 /// `SETTLE_STALE_MAX_RETRIES`).
 pub const SETTLE_STALE_MAX_RETRIES: u32 = 10;
 /// Fixed settle retry sleep. v2 jitters 50ms; without a rand dependency
@@ -213,8 +213,8 @@ pub struct ScanEvent {
 }
 
 /// Durable-revision scan invalidations with counter-rate throttling (v2
-/// `library_scan_events.py`). Terminal states drop their throttle entry
-/// (F-027); runs end via store transitions, never publisher callbacks.
+/// scan events). Terminal states drop their throttle entry; runs end via
+/// store transitions, never publisher callbacks.
 #[derive(Clone)]
 pub struct ScanEventPublisher {
     sink: Arc<dyn Fn(ScanEvent) + Send + Sync>,
@@ -607,7 +607,7 @@ impl<S: ScanStore, T: TagReader + 'static, Q: IdentifyQueue> LibraryScanCoordina
         runs
     }
 
-    /// Settle a pausing/stopping run (v2 `_settle_pending_control`, R-02).
+    /// Settle a pausing/stopping run (v2 `_settle_pending_control`).
     fn settle_pending_control(&self, run_id: &str) -> ScanRun {
         let mut stale_retries = 0u32;
         loop {
@@ -629,7 +629,7 @@ impl<S: ScanStore, T: TagReader + 'static, Q: IdentifyQueue> LibraryScanCoordina
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .remove(&run.id);
                 // Every terminal state releases its revision entries,
-                // including scanner-created failed (F-INDEXREC-02).
+                // including scanner-created failed.
                 if matches!(
                     run.state,
                     ScanState::Completed
@@ -680,7 +680,7 @@ impl<S: ScanStore, T: TagReader + 'static, Q: IdentifyQueue> LibraryScanCoordina
                     return settled;
                 }
                 Err(_) => {
-                    // R-02: a racing writer keeps moving the revision.
+                    // A racing writer keeps moving the revision.
                     // Bounded retries, then the stop-signal path: return
                     // unsettled WITHOUT discarding the pending entry, so
                     // checkpoint keeps returning false.
@@ -989,7 +989,7 @@ impl<S: ScanStore, T: TagReader + 'static, Q: IdentifyQueue> LibraryScanCoordina
         }
     }
 
-    /// Fail an active run honestly (v2 `run_once` crash path).
+    /// Fail an active run (v2 `run_once` crash path).
     async fn fail_active(&self, run: &ScanRun, code: &str) -> ScanRun {
         let (current, _, _) = match self.store.get_run(&run.id) {
             Ok(found) => found,
@@ -1026,7 +1026,7 @@ impl<S: ScanStore, T: TagReader + 'static, Q: IdentifyQueue> LibraryScanCoordina
 
     /// One inventory page with bounded read retries. The store lock is
     /// released between attempts; only a persistent read error returns
-    /// `Err`, and the caller fails the run honestly on it.
+    /// `Err`, and the caller fails the run on it.
     async fn read_inventory_page(
         &self,
         run_id: &str,
@@ -1054,8 +1054,8 @@ impl<S: ScanStore, T: TagReader + 'static, Q: IdentifyQueue> LibraryScanCoordina
         let mut counts = IndexCounts::default();
         let mut counters = CounterBuffer::new();
         let mut commits: Vec<CommitIndexedItem> = Vec::new();
-        // Album grouping collapses to parent directories until the
-        // identify slice owns real grouping; one offer per directory.
+        // Album grouping collapses to parent directories until identify
+        // owns real grouping; one offer per directory.
         let mut album_tracks: HashMap<String, Vec<String>> = HashMap::new();
         let mut position = 0usize;
         let mut after: Option<(String, String)> = None;
@@ -1066,8 +1066,8 @@ impl<S: ScanStore, T: TagReader + 'static, Q: IdentifyQueue> LibraryScanCoordina
             let (page, cursor) = match self.read_inventory_page(&run.id, after_ref).await {
                 Ok(page) => page,
                 // A page that will not read is a persistent store error,
-                // not end-of-run: flush what landed and fail honestly
-                // instead of completing the run short.
+                // not end-of-run: flush what landed and fail the run
+                // instead of completing it short.
                 Err(error) => {
                     tracing::error!(%error, "scan inventory page read failed");
                     self.store.commit_indexed_batch(&commits);
@@ -1125,7 +1125,7 @@ impl<S: ScanStore, T: TagReader + 'static, Q: IdentifyQueue> LibraryScanCoordina
                 let outcome = self.pool.run(move || tags.read_tags(&path)).await;
                 match outcome {
                     Err(TagReadError::Deferred) => {
-                        // F-12: the persisted marker re-offers the file next
+                        // The persisted marker re-offers the file next
                         // run. v2 still counts the row errored this run.
                         self.store.record_failures(
                             &run.id,
@@ -1225,7 +1225,7 @@ impl<S: ScanStore, T: TagReader + 'static, Q: IdentifyQueue> LibraryScanCoordina
     /// Reconciliation phase: catalog rows under a cleanly-walked scope
     /// that the walk did not see are missing (v2 `LibraryReconciler`,
     /// reduced). Only completed scopes allow missing detection: a
-    /// partially-read scope keeps the reconciler conservative (F-022).
+    /// partially-read scope keeps the reconciler conservative.
     /// The missing set comes from the store, so reconcile holds no
     /// inventory or catalog listing resident.
     fn reconcile(&self, run_id: &str, scopes: &[ScanScope], frozen_policy_revision: &str) -> usize {

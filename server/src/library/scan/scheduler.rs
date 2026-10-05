@@ -1,7 +1,7 @@
 //! Automatic scan scheduling from durable terminal runs.
 //!
-//! Port of `backend/services/native/library_scan_scheduler.py` and the
-//! terminal-time math in `library_schedule_service.py`. The scheduler never
+//! Port of v2's library scan scheduler and the terminal-time math in its
+//! schedule service. The scheduler never
 //! scans on wall-clock guesses: every tick anchors on the latest
 //! filesystem terminal run, and only fires when the interval fully elapsed.
 //!
@@ -105,7 +105,7 @@ pub fn seconds_until_due(
         let Some(terminal) = terminal_at else {
             return Some(0.0);
         };
-        // Absolute-seconds arithmetic keeps the rolling gap honest across
+        // Absolute-seconds arithmetic keeps the rolling gap exact across
         // DST transitions (v2 schedule-service note).
         return Some((terminal + interval - now).max(0.0));
     }
@@ -147,9 +147,8 @@ fn parse_daily_time(daily_time: &str) -> (i64, i64) {
         .unwrap_or((3, 0))
 }
 
-/// One included subpath rule under an excluded root. The settings slice
-/// owns rule storage; the scheduler only resolves them. Carried as a
-/// parameter until that slice lands.
+/// One included subpath rule under an excluded root. Settings own rule
+/// storage; the scheduler only resolves them, carried as a parameter.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InclusionRule {
     pub root_id: String,
@@ -206,7 +205,7 @@ pub fn scheduled_scopes(registry: &RootRegistry, rules: &[InclusionRule]) -> Vec
 /// One scheduler tick (v2 `LibraryAutomaticScanScheduler.tick`).
 /// `request` issues the scan request; returns true when work will run.
 /// started/queued/coalesced/expanded all mean work runs; only conflict
-/// means "leave the queued follow-up alone" (S-05).
+/// means "leave the queued follow-up alone".
 pub fn tick<F>(
     request: F,
     registry: &RootRegistry,

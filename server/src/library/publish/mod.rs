@@ -1,20 +1,17 @@
-//! Library Management publisher slice (stage 8).
+//! Library Management publisher.
 //!
 //! This is the only file-writing boundary for managed audio: a planner
 //! builds an immutable preview, the administrator seals it, and the staged
 //! publisher moves bytes through prepare, publish, catalog commit, and
-//! cleanup. No other slice writes managed files.
+//! cleanup. Nothing else writes managed files.
 //!
-//! Authority: `.dev-notes/Plans/*Archive*/BeetsPicard/07-decisions.md`
-//! (owner-signed D-decisions plus engineering E-decisions) and the live
-//! acceptance checklist in `10-live-acceptance-checklist.md`. The port
-//! keeps the backend behavior from
-//! `backend/services/native/library_management_publisher.py` and its
-//! recovery/undo/baseline siblings; nothing working there is removed.
+//! The port keeps the behavior of v2's library management publisher and
+//! its recovery, undo and baseline services; nothing working there is
+//! removed.
 //!
-//! # Crash semantics (normative for this slice)
+//! # Crash semantics
 //!
-//! SQLite and the filesystem are never claimed as one transaction (E3).
+//! SQLite and the filesystem are never claimed as one transaction.
 //! Instead every audio file, sidecar, and external-art output owns a
 //! durable journal intent with a monotonic state machine
 //! (`journal::JournalState`), and the whole album bundle moves through
@@ -55,19 +52,19 @@
 //! disagreement) moves the whole bundle to `needs_attention` with
 //! structured evidence and deletes nothing.
 //!
-//! Supporting rules, all enforced here and covered by briefs in
+//! Supporting rules, all enforced here and covered by tests in
 //! `server/tests/it/library_publish.rs`:
 //!
 //! - Same-filesystem rename only: temps live in the destination
 //!   directory, so a cross-device move is impossible by construction.
 //! - Disk preflight runs before the first byte is staged.
-//! - Destinations are never overwritten while occupied (D10), even by
+//! - Destinations are never overwritten while occupied, even by
 //!   identical bytes; resolution is explicit.
-//! - Media symlinks are never followed (E11); symlinked inputs or path
+//! - Media symlinks are never followed; symlinked inputs or path
 //!   components fail closed.
 //! - Hardlinked audio publishes to an independent destination inode; the
 //!   other directory entry is untouched.
-//! - Snapshots are content-addressed (SHA-256) and deduplicated (D11);
+//! - Snapshots are content-addressed (SHA-256) and deduplicated;
 //!   first-management baselines are immutable and indefinite, while
 //!   per-operation snapshots expire.
 //! - Case/Unicode collisions use the NFC + full-casefold key, so two
@@ -103,21 +100,21 @@ pub use undo::{BaselineRestorePlan, UndoItem, UndoPlan, plan_baseline_restore, p
 
 /// Reserved hidden namespace for staging and backup artifacts.
 ///
-/// Discovery prunes files and directories under this prefix (E28), even
+/// Discovery prunes files and directories under this prefix, even
 /// if a future artifact name keeps an audio extension.
 pub const HIDDEN_PREFIX: &str = ".droppedneedle-management-";
 
-/// Maximum catalog subjects planned per transaction batch (E15).
+/// Maximum catalog subjects planned per transaction batch.
 pub const MAX_PLAN_SUBJECTS: usize = 500;
 
 /// Maximum recoverable bundles at startup before mutable runtime
-/// refuses to start (E30).
+/// refuses to start.
 pub const STARTUP_RECOVERY_LIMIT: usize = 500;
 
-/// Default per-operation undo retention in days (D11).
+/// Default per-operation undo retention in days.
 pub const DEFAULT_UNDO_RETENTION_DAYS: u32 = 90;
 
-/// Errors for the publisher slice. Variants name the gate that failed
+/// Publisher errors. Variants name the gate that failed
 /// so callers can tell a durable skip (stale input, late collision)
 /// from a deterministic failure.
 #[derive(Debug, thiserror::Error)]
@@ -149,7 +146,7 @@ pub enum PublishError {
     #[error("cleanup pending: {0}")]
     Cleanup(String),
     /// Cache invalidation ran after commit and reported a fault. Like
-    /// external notification (D27), this warns and never rolls back.
+    /// external notification, this warns and never rolls back.
     #[error("cache invalidation: {0}")]
     CacheInvalidation(String),
     /// Path safety: traversal, escape, symlink, or out-of-sandbox path.
@@ -161,11 +158,11 @@ pub enum PublishError {
     /// Disk preflight: insufficient destination space.
     #[error("insufficient space: {0}")]
     Space(String),
-    /// Injected crash for the crash-matrix briefs. Production never
+    /// Injected crash for the crash-matrix tests. Production never
     /// constructs this; tests use it to prove resume-or-compensate.
     #[error("injected crash at {0}")]
     InjectedCrash(String),
-    /// SQLite or serialization failure inside the slice stores.
+    /// SQLite or serialization failure inside the publisher stores.
     #[error("store: {0}")]
     Store(String),
     /// Filesystem I/O failure.

@@ -1,7 +1,7 @@
 //! Undo and baseline restore planning.
 //!
 //! Undo is a new previewed operation over the exact immediate before
-//! state, never an in-place rewind (E32). Planning pages the source
+//! state, never an in-place rewind. Planning pages the source
 //! operation's successful per-file snapshots and compares the current
 //! file to the operation's exact published fingerprint, root, and
 //! relative path. A later scan, edit, move, replacement, identity or
@@ -12,7 +12,7 @@
 //! published fingerprint is left alone.
 //!
 //! Baseline restore is selected restoration of the immutable
-//! pre-DroppedNeedle state (E33), and purge is a separate global
+//! pre-DroppedNeedle state, and purge is a separate global
 //! retention removal behind its own confirmation contract.
 
 use std::collections::BTreeMap;
@@ -140,8 +140,8 @@ impl UndoPlan {
 }
 
 /// Plan undo for one album bundle. `restore_occupied` reports whether
-/// a restore path currently exists; identical occupancy still blocks
-/// (D10), because the occupier may be a later external file.
+/// a restore path currently exists; identical occupancy still blocks,
+/// because the occupier may be a later external file.
 pub fn plan_undo(
     source_operation: &str,
     inputs: &[UndoInput],
@@ -301,7 +301,7 @@ pub const PURGE_PHRASE: &str = "PURGE BASELINES";
 
 /// Confirm a global baseline purge: requires the exact phrase, the
 /// matching impact token, and zero nonterminal journals or active
-/// restores (E33). Returns the purgeable baseline count.
+/// restores. Returns the purgeable baseline count.
 pub fn confirm_baseline_purge(
     phrase: &str,
     presented_token: &str,

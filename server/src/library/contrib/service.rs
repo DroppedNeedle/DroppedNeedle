@@ -121,7 +121,7 @@ impl ContributionService {
             .await
             .ok_or(ContribError::ContributionNotFound)?;
         // Quirk (v2): terminal rows never transition; stale input on an
-        // active row flips it to stale on READ.
+        // active row flips it to stale on read.
         let row = if row_is_stale(&row)
             && !matches!(
                 row.state,
@@ -505,7 +505,7 @@ impl ContributionService {
             if candidates.contains_key(&key) {
                 continue;
             }
-            // Quirk (v2): barcode evidence needs the barcode on BOTH sides.
+            // Quirk (v2): barcode evidence needs the barcode on both sides.
             let evidence_kind = if facts.barcode.is_some()
                 && verified.barcode.is_some()
                 && facts.barcode == verified.barcode
@@ -1238,7 +1238,7 @@ fn validate_public_base_url(base_url: &str) -> Result<(), ContribError> {
         .ok_or_else(|| invalid.clone())?;
     let authority = rest.split('/').next().unwrap_or("");
     let authority = authority.split(['?', '#']).next().unwrap_or("");
-    // Quirk (v2): userinfo is rejected but an explicit port is FINE.
+    // Quirk (v2): userinfo is rejected but an explicit port is fine.
     if authority.is_empty() || authority.contains('@') {
         return Err(invalid);
     }

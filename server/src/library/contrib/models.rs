@@ -1,9 +1,9 @@
 //! Contribution value types: states, drafts, snapshots, seeds, and the pure
 //! rules that govern them.
 //!
-//! Ported from v2 `backend/models/library_contribution.py` plus the pure
+//! Ported from v2's library contribution models plus the pure
 //! helpers on `LibraryContributionService`. Every intentional quirk keeps a
-//! `Quirk (v2 ...)` citation so a later reader can tell deliberate behavior
+//! `Quirk (v2 ...)` citation so a later reader can tell intended behavior
 //! from accident.
 
 use serde::{Deserialize, Serialize};

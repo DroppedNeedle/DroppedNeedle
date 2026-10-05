@@ -1,6 +1,6 @@
-//! Real tag staging: the publish→tags seam (integrator-owned).
+//! Real tag staging: the publish→tags seam.
 //!
-//! The publisher stages destination bytes through the tags slice save
+//! The publisher stages destination bytes through the tags save
 //! wrapper instead of appending a semantic sidecar. Staging runs on a
 //! hidden work copy carrying the real audio extension (the journal
 //! temps end in `.tmp`, which the tag router would refuse); on

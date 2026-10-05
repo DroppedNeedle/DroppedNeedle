@@ -1,12 +1,11 @@
 //! Zero-dependency recursive filesystem poller, work wakeups, dirty scopes.
 //!
-//! Port of `backend/services/native/library_filesystem_watcher.py` (S-01
-//! Hook C, D6). The poller takes a recursive stat-only snapshot of every
+//! Port of v2's library filesystem watcher (supervisor hook C). The poller takes a recursive stat-only snapshot of every
 //! library root once per poll interval and, when a snapshot moves, enqueues
 //! a single incremental/automatic scan after a batching window so rapid
 //! bursts collapse into one request.
 //!
-//! Recursion is load-bearing: on Linux only the immediate parent's mtime
+//! Recursion matters: on Linux only the immediate parent's mtime
 //! moves when a nested file changes, so a shallow poll misses nested
 //! mutations silently. The walk is stat-only (no tag reads, no hashing)
 //! and runs on the blocking pool. Symlinks are never followed.

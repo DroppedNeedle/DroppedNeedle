@@ -3,7 +3,7 @@
 //! Drop and acquisition inputs may arrive as archives. Before any
 //! entry is extracted, the manifest passes this pure validator:
 //! traversal and zip-slip entries are blocked, symlink entries are
-//! refused (E11 extends to archives), and file count, per-file size,
+//! refused (the no-symlinks rule extends to archives), and file count, per-file size,
 //! total size, nesting depth, and compression ratio are bounded so a
 //! decompression bomb cannot exhaust the staging disk.
 
@@ -91,7 +91,7 @@ pub struct ArchiveReport {
 ///
 /// No production archive-ingest path exists yet: nothing in the
 /// tree extracts archives, so nothing calls this outside the
-/// briefs. The first ingest path (drop or acquisition unpacking)
+/// tests. The first ingest path (drop or acquisition unpacking)
 /// must validate its manifest through this gate before it writes
 /// any entry.
 pub fn validate_archive(

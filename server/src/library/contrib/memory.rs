@@ -1,8 +1,8 @@
-//! In-memory store plus scripted fakes for contribution briefs.
+//! In-memory store plus scripted fakes for contribution tests.
 //!
 //! `MemoryStore` implements [`ContributionStore`] with v2's guards and state
 //! transitions (messages verbatim); the scripted providers/identity/evidence
-//! stand in for sibling slices and stage-5 adapters. `FakeReleaseEditor` is
+//! stand in for the identity, evidence and provider adapters. `FakeReleaseEditor` is
 //! the mocked submission endpoint: the seed form is POSTed to it instead of
 //! MusicBrainz, so tests never perform a live provider write.
 
@@ -753,7 +753,7 @@ impl MemoryStore {
             row.current_input_revision = fresh.input_revision.clone();
             row.current_album_row_revision = fresh.album_row_revision;
         } else {
-            // Unknown albums read as active + current so bare-bones briefs
+            // Unknown albums read as active + current so bare-bones tests
             // need no registration; staleness tests register explicitly.
             row.album_active = true;
             row.current_input_revision = row.input_revision.clone();

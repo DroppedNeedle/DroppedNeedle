@@ -1,15 +1,16 @@
 //! Sibling seams: tag reads, identification, and the scan checkpoint.
 //!
-//! Tag parsing and provider identification belong to sibling slices. This
+//! Tag parsing and provider identification live in `library::tags` and
+//! `library::identify`. This
 //! module defines the minimal traits the scan pipeline calls, plus null
 //! implementations the tests use. The contracts are small on purpose:
 //! read-only tag access, fire-and-forget identify enqueue, and a boolean
 //! checkpoint the coordinator backs.
 //!
 //! Purity rule: every implementation must treat library files as
-//! read-only. The `library_scan` purity brief pins zero file writes across
+//! read-only. The `library_scan` purity test pins zero file writes across
 //! full runs; a tag reader that writes (padding rewrites, mtime restores)
-//! fails that brief by design.
+//! fails that test.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -17,7 +18,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 /// Tags for one file, as the indexer needs them. The real tag shape is
-/// owned by the tag slice; this struct carries only what indexing consumes.
+/// owned by `library::tags`; this struct carries only what indexing consumes.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ScannedTags {
     pub artist: Option<String>,
@@ -32,7 +33,7 @@ pub struct ScannedTags {
 pub enum TagReadError {
     /// Transient exhaustion (too many wedged readers, contended disk). The
     /// indexer records a persisted `TAG_READ_DEFERRED` marker and the file
-    /// re-offers as changed next run (v2 F-12).
+    /// re-offers as changed next run.
     Deferred,
     /// The file cannot be tag-read at all. Counted in `errored_count`.
     Fatal,
@@ -120,7 +121,7 @@ impl TagReader for ArmableDeferTagReader {
     }
 }
 
-/// Fire-and-forget identify enqueue. The identify slice owns workers and
+/// Fire-and-forget identify enqueue. Identify owns workers and
 /// provider calls; the scan pipeline only offers album keys.
 pub trait IdentifyQueue: Send + Sync {
     /// Offer one album key with its fresh track ids. Returns tracks queued.
@@ -178,7 +179,7 @@ impl IdentifyQueue for NullIdentifyQueue {
 /// Scan checkpoint: true while the run may keep working. The coordinator
 /// implements this over live policy and control state; the walker and the
 /// indexer call it between batches. False means pause, stop, or a policy
-/// change superseded the run, never a filesystem error (v2 F-INDEXREC-06).
+/// change superseded the run, never a filesystem error.
 pub trait Checkpoint: Send + Sync {
     fn check(&self, run_id: &str, frozen_policy_revision: &str) -> bool;
 }

@@ -1,7 +1,7 @@
 //! Stable scan supervisor: recovery, dirty scopes, schedule, worker.
 //!
-//! Port of `backend/services/native/library_scan_supervisor.py`. One loop
-//! owns every trigger: S-01 Hook A (one-shot startup reconciliation),
+//! Port of v2's library scan supervisor. One loop owns every trigger:
+//! Hook A (one-shot startup reconciliation),
 //! Hook B (dirty scope marks from settings saves), the rolling schedule
 //! tick, and the single scan worker. Iterations never fail the loop: a
 //! failed iteration logs and retries after 1s; an idle loop sleeps on the
@@ -79,7 +79,7 @@ pub fn scopes_for_dirty_ids(
 }
 
 /// Startup recovery plus the Hook A one-shot reconciliation scan (v2
-/// supervisor preamble, D5 every boot). Guards mirror the loop gates:
+/// supervisor preamble, every boot). Guards mirror the loop gates:
 /// enabled, not manual, nothing resumable or current, non-empty scopes.
 /// Every request disposition is acceptable; failures log and the loop
 /// below still runs.
@@ -234,7 +234,7 @@ where
 /// The wired bundle drives those two directly from its own
 /// shutdown-watch loop (`LibrarySetup::scan_startup_recovery` /
 /// `supervisor_tick`), so no production caller reaches this; the
-/// scan briefs pin its Hook-A-then-exit behavior for embedders.
+/// scan tests pin its Hook-A-then-exit behavior.
 pub async fn supervise_target_scans<S, T, Q>(
     coordinator: &LibraryScanCoordinator<S, T, Q>,
     inputs: &SupervisorInputs,

@@ -1,4 +1,4 @@
-//! Library bundle: one setup the app mounts, following the stage-6 shape.
+//! Library bundle: one setup the app mounts.
 //!
 //! [`LibrarySetup`] owns the scan coordinator, the identify service
 //! and queue, the contribution service and worker, and the publish
@@ -8,12 +8,10 @@
 //! and memory stores. The routers nest under `/api/v3` inside the
 //! deny-by-default session gate.
 //!
-//! Store durability follows the stage-6 precedent: scan state runs
-//! on SQLite over the application database, while identify and
-//! contribution state run on the slices' memory stores (durable
-//! SQLite ports are a later persistence tier, as are durable root
-//! persistence, the rolling schedule settings, and the AcoustID key
-//! config). Publish journals, snapshots, baselines, and the catalog
+//! Store durability: scan state runs on SQLite over the application
+//! database, while identify and contribution state run on in-memory
+//! stores. Durable SQLite ports for those, durable roots, the rolling
+//! schedule settings, and the AcoustID key config do not exist yet. Publish journals, snapshots, baselines, and the catalog
 //! shadow run on a dedicated rusqlite database under the primary
 //! root with idempotent schema.
 
@@ -81,7 +79,7 @@ pub type ScanCoordinator = LibraryScanCoordinator<SqliteScanStore, LoftyTagReade
 /// Live root-registry source shared with the stream gateway.
 pub type RootSource = Arc<dyn Fn() -> RootRegistry + Send + Sync>;
 
-/// Scan supervisor idle ceiling. The slice's 47s recovery ceiling
+/// Scan supervisor idle ceiling. The supervisor's 47s recovery ceiling
 /// cannot wait on shutdown, so the wired loop re-checks the watch
 /// every 5s; operator-visible behavior is identical.
 const SUPERVISOR_IDLE_CEILING: Duration = Duration::from_secs(5);
@@ -98,11 +96,11 @@ const PREVIEW_TTL_DAYS: i64 = 1;
 /// Staged-bytes headroom over the source size for disk preflight.
 const STAGED_HEADROOM_BYTES: u64 = 65_536;
 
-/// Profile/naming/settings revisions before those slices land. All
-/// pinned at 1 so seal rechecks compare honestly against constants.
+/// Profile/naming/settings revisions while those settings have no store.
+/// All pinned at 1 so seal rechecks compare against constants.
 const PINNED_REVISION: u64 = 1;
 
-/// Override revision before the override slice lands.
+/// Override revision while overrides have no store.
 const PINNED_OVERRIDE: u64 = 0;
 
 /// Current unix time in milliseconds.
@@ -315,7 +313,7 @@ pub struct LibrarySetup {
 }
 
 impl LibrarySetup {
-    /// Build the production bundle over live stage-5 provider clients.
+    /// Build the production bundle over the live provider clients.
     /// MusicBrainz recall runs identity-critical; AcoustID support
     /// evidence runs without a key until the key config lands (the
     /// client answers `Missing` on an empty key, never dialing out).
@@ -369,7 +367,7 @@ impl LibrarySetup {
     }
 
     /// Test bundle over caller-supplied identify providers. Focused
-    /// shutdown briefs script provider timing here; the shared
+    /// shutdown tests script provider timing here; the shared
     /// `for_tests` shape stays the default everywhere else.
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests_with_providers(
@@ -536,7 +534,7 @@ impl LibrarySetup {
         }
     }
 
-    /// Watcher settings before the settings slice lands.
+    /// Watcher settings (fixed defaults; no settings section yet).
     fn watcher_settings(&self) -> WatcherSettings {
         WatcherSettings {
             enabled: true,
@@ -765,7 +763,7 @@ impl LibrarySetup {
     /// tag reads. Scan keys read `root::directory`; anything else
     /// keeps its seeded facts (HTTP manual enqueue always seeds).
     /// Albums with no surviving files seed empty facts so the job
-    /// lands an honest terminal outcome instead of sticking.
+    /// reaches a terminal outcome instead of sticking.
     ///
     /// Tag reads and probes ride the blocking pool: a full decode on
     /// a slow disk must never stall the async runtime.
@@ -819,7 +817,7 @@ impl LibrarySetup {
             });
         }
         // Album title and artist from the first tagged track; empty
-        // when nothing survived, which still terminates honestly.
+        // when nothing survived, which still terminates.
         let first_tagged = tracks
             .iter()
             .find(|track| !track.title.is_empty())
@@ -1329,7 +1327,7 @@ impl LibrarySetup {
             })
     }
 
-    /// Accepted exact identity for one track (D1: management needs an
+    /// Accepted exact identity for one track (management needs an
     /// accepted exact MusicBrainz release plus a full track mapping).
     fn resolve_identity(
         &self,

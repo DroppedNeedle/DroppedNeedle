@@ -5,12 +5,12 @@
 //! destination collision keys, and the settings/policy/catalog
 //! revisions. Planning never mutates library files; it only writes
 //! management metadata, content-addressed blobs, plan rows, and
-//! operation state (E25).
+//! operation state.
 //!
 //! Manual Apply consumes the exact sealed preview and rejects stale
 //! file, identity, profile, or policy state. Automatic work additionally
 //! requires an enabled root, an enabled trigger, an accepted exact
-//! MusicBrainz release, and a full track mapping (D25, E42).
+//! MusicBrainz release, and a full track mapping.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -26,7 +26,7 @@ pub struct FileFingerprint {
     pub sha256: String,
 }
 
-/// Accepted exact-edition identity for one file (D1, E14).
+/// Accepted exact-edition identity for one file.
 ///
 /// The release-track MBID is distinct from the recording MBID and is
 /// never inferred from it.
@@ -41,14 +41,14 @@ pub struct ReleaseIdentity {
     /// Release-track MBID for this track on the accepted release.
     pub release_track_mbid: String,
     /// Accepted album identity revision, pinned separately from the
-    /// per-track mapping revision (E29).
+    /// per-track mapping revision.
     pub album_identity_revision: u64,
     /// Per-track mapping revision.
     pub mapping_revision: u64,
 }
 
 /// Per-track mapping evidence: the accepted release-track MBID plus
-/// the medium/track positions automatic work requires (E42).
+/// the medium/track positions automatic work requires.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TrackMapping {
     /// Stable local track id.
@@ -61,7 +61,7 @@ pub struct TrackMapping {
     pub release_position: u32,
 }
 
-/// One independently toggleable management capability (D21, D28).
+/// One independently toggleable management capability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Capability {
     /// Write managed metadata tags.
@@ -74,11 +74,11 @@ pub enum Capability {
     Rename,
     /// Move within the same root.
     SameRootMove,
-    /// Manual cross-root move to an explicit destination root (D5).
+    /// Manual cross-root move to an explicit destination root.
     CrossRootMove,
     /// Move recognized sidecars with their album.
     Sidecars,
-    /// Full scrub of unmanaged tags (advanced, off by default, D4).
+    /// Full scrub of unmanaged tags (advanced, off by default).
     Scrub,
 }
 
@@ -142,7 +142,7 @@ pub struct PlanItem {
     pub staged_bytes_estimate: u64,
 }
 
-/// One sidecar travelling with its album (D6).
+/// One sidecar travelling with its album.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SidecarPlan {
     /// Source root and relative path.
@@ -166,14 +166,14 @@ pub struct PlanBundle {
     pub profile_revision: u64,
     /// Naming script revision pinned at plan time.
     pub naming_revision: u64,
-    /// Global typed-library policy revision (E42).
+    /// Global typed-library policy revision.
     pub policy_revision: u64,
     /// Catalog revision the plan was built against.
     pub catalog_revision: u64,
 }
 
 /// Capability gate: unsupported format/field combinations hard-block
-/// before mutation and are never silently half-managed (D20).
+/// before mutation and are never silently half-managed.
 #[derive(Debug, Clone, Default)]
 pub struct CapabilityGate {
     /// Formats the staged writer can handle.
@@ -183,7 +183,7 @@ pub struct CapabilityGate {
 }
 
 impl CapabilityGate {
-    /// Production gate: every admitted format (D20, E17) with the
+    /// Production gate: every admitted format with the
     /// known artwork restriction that raw AAC cannot embed art. WMA
     /// stays out of both sets: no staged writer, no artwork path.
     pub fn production() -> Self {
@@ -253,12 +253,12 @@ pub struct CollisionEvidence {
     pub root_id: String,
     pub rel_path: String,
     /// Whether the occupier holds identical bytes. Evidence and label
-    /// only: identical occupancy is still never overwritten (D10).
+    /// only: identical occupancy is still never overwritten.
     pub identical_bytes: bool,
 }
 
 /// Collision gate: no occupied destination is ever overwritten, even
-/// when the bytes look identical (D10). The gate reports exact, folded,
+/// when the bytes look identical. The gate reports exact, folded,
 /// and in-bundle collisions as explicit evidence.
 pub struct CollisionGate;
 
@@ -479,7 +479,7 @@ pub trait SpaceProbe {
 
 /// Sealed preview: the immutable plan plus the token and revisions
 /// Apply must recheck. Sealing never replans; Apply consumes exactly
-/// what was sealed (E31).
+/// what was sealed.
 #[derive(Debug, Clone)]
 pub struct SealedPreview {
     /// The immutable bundle.
@@ -606,12 +606,12 @@ impl SealedPreview {
     }
 }
 
-/// Why automatic work holds a unit in staging (D2).
+/// Why automatic work holds a unit in staging.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AutomaticHold {
     /// The root is not enabled for management.
     RootDisabled,
-    /// The trigger for this acquisition kind is off (D22).
+    /// The trigger for this acquisition kind is off.
     TriggerDisabled(String),
     /// No accepted exact MusicBrainz release for the unit.
     NoAcceptedRelease,
@@ -620,15 +620,15 @@ pub enum AutomaticHold {
 }
 
 /// Automatic eligibility: enabled root plus enabled trigger plus an
-/// accepted exact release plus a full track mapping (D25, E42).
+/// accepted exact release plus a full track mapping.
 pub struct AutomaticEligibility;
 
 impl AutomaticEligibility {
     /// Check one acquisition unit. Owning every track from the release
-    /// is not required; mapping every affected file is (D25).
+    /// is not required; mapping every affected file is.
     ///
     /// Manual Apply is the only wired trigger, so nothing calls this
-    /// outside the briefs yet. The first automatic trigger (root
+    /// outside the tests yet. The first automatic trigger (root
     /// watcher, scheduler, or acquisition completion) must gate its
     /// units through this check before planning.
     pub fn check(

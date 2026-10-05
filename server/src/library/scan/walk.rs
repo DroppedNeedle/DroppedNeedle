@@ -1,6 +1,6 @@
 //! One-walk, bounded-queue discovery.
 //!
-//! Port of `backend/services/native/library_inventory_scanner.py`. A
+//! Port of v2's library inventory scanner. A
 //! blocking producer walks each scope and streams file stats through a
 //! bounded channel; the async consumer dedups, classifies, and persists
 //! inventory in batches. Skip-and-report runs through everything: one bad
@@ -36,7 +36,7 @@ pub const INVENTORY_QUEUE_SIZE: usize = 256;
 /// Inventory rows persisted per batch (v2 `INVENTORY_BATCH_SIZE`).
 pub const INVENTORY_BATCH_SIZE: usize = 256;
 /// Reap horizon for wedged detached walkers as a multiple of the walk
-/// deadline (v2 `DETACHED_WALKER_REAP_MULTIPLIER`, F-12).
+/// deadline (v2 `DETACHED_WALKER_REAP_MULTIPLIER`).
 pub const DETACHED_WALKER_REAP_MULTIPLIER: f64 = 3.0;
 /// Default walk deadline (v2 `walk_deadline_seconds`).
 pub const DEFAULT_WALK_DEADLINE_SECS: f64 = 30.0;
@@ -61,7 +61,7 @@ pub fn is_audio_file(path: &Path) -> bool {
 }
 
 /// POSIX text for a path that is always bindable as stored TEXT (v2
-/// `_text_safe_posix`, F-021): names that are not valid UTF-8 are
+/// `_text_safe_posix`): names that are not valid UTF-8 are
 /// losslessly percent-encoded from their raw bytes instead.
 pub fn text_safe_posix(path: &Path) -> String {
     #[cfg(unix)]
@@ -129,7 +129,7 @@ pub fn inventory_key(path: &Path, root: &Path) -> String {
 }
 
 /// Class-name-plus-errno detail, never the message or filesystem paths
-/// (v2 `_walk_failure_detail`, F-032).
+/// (v2 `_walk_failure_detail`).
 fn walk_failure_detail(error: &std::io::Error) -> String {
     match error.raw_os_error() {
         Some(errno) => format!("IoError (errno={}) while walking.", errno_name(errno)),
@@ -164,7 +164,7 @@ fn walk_error_code(error: &std::io::Error) -> String {
 }
 
 /// Thread-safe liveness signal written by the walk producer (v2
-/// `_WalkHeartbeat`, F-025): `WALK_TIMEOUT` fires only when no progress
+/// `_WalkHeartbeat`): `WALK_TIMEOUT` fires only when no progress
 /// signal arrived for the whole deadline.
 #[derive(Debug)]
 struct WalkHeartbeat {
@@ -307,7 +307,7 @@ impl<S: ScanStore> InventoryScanner<S> {
     }
 
     fn reap_stale_detached_walkers(&self) -> usize {
-        // F-12: forget detached walkers older than the reap horizon so
+        // Forget detached walkers older than the reap horizon so
         // scans keep moving; a late finish stays a safe noop via the
         // reaper task's remove.
         let horizon = self.walk_deadline.mul_f64(self.detached_reap_multiplier);
@@ -328,7 +328,7 @@ impl<S: ScanStore> InventoryScanner<S> {
     }
 
     fn detach_walker(&self, handle: tokio::task::JoinHandle<()>) -> bool {
-        // F-024: the cap is enforced. Beyond max in-flight wedged walkers
+        // The cap is enforced. Beyond max in-flight wedged walkers
         // the task is refused (and counted as leaked) instead of being
         // tracked silently; the caller fails the run with
         // WALKER_UNAVAILABLE.
@@ -439,7 +439,7 @@ impl<S: ScanStore> InventoryScanner<S> {
     /// Probe one scope path on the pool with the walk deadline. Returns
     /// the probe outcome: directory or not.
     async fn probe_selected(&self, selected: &Path) -> Result<bool, ProbeOutcome> {
-        // F-023 capacity: one probe slot by default. When occupied, give
+        // One probe slot by default. When occupied, give
         // the wedged stat one bounded deadline to finish before failing
         // the run.
         if !self.claim_probe_slot() {
@@ -464,7 +464,7 @@ impl<S: ScanStore> InventoryScanner<S> {
             Ok(Ok(exists)) => Ok(exists),
             Ok(Err(_)) => Err(ProbeOutcome::Wedged),
             Err(_) => {
-                // F-023: tombstone the slot so it is recovered instead of
+                // Tombstone the slot so it is recovered instead of
                 // staying occupied for the process lifetime.
                 if !released.swap(true, Ordering::SeqCst) {
                     self.pending_probes.fetch_sub(1, Ordering::SeqCst);
@@ -502,7 +502,7 @@ impl<S: ScanStore> InventoryScanner<S> {
         checkpoint: &C,
     ) -> ScanRun {
         // GH-296 skip-and-report: a scope whose root cannot be resolved or
-        // probed is recorded honestly while remaining scopes keep walking.
+        // probed is recorded while remaining scopes keep walking.
         // The run fails wholesale only when nothing was discoverable.
         let mut current = run.clone();
         let mut unavailable_scopes = 0usize;
@@ -680,7 +680,7 @@ impl<S: ScanStore> InventoryScanner<S> {
                 };
                 let _lease = fs.read(&scope.root_id).await;
                 if fs.revision(&scope.root_id) == filesystem_revision.unwrap_or(0) {
-                    // F-022/F-030: only a clean, un-degraded walk records
+                    // Only a clean, un-degraded walk records
                     // the fence; a partially-read scope keeps the
                     // reconciler conservative.
                     if code.is_none() && !superseded_scope {
@@ -690,7 +690,7 @@ impl<S: ScanStore> InventoryScanner<S> {
                 }
                 restarts += 1;
                 if restarts >= 3 {
-                    // F-030: sustained concurrent publication would
+                    // Sustained concurrent publication would
                     // otherwise re-walk this scope forever.
                     tracing::warn!(run_id = %run.id, restarts, "library_scan event=walk_superseded");
                     superseded_scope = true;
@@ -748,7 +748,7 @@ impl<S: ScanStore> InventoryScanner<S> {
         }
         if unavailable_scopes > 0 && unavailable_scopes == scopes.len() {
             // GH-296: every scope proved unreachable, so the run fails
-            // honestly instead of completing silently green.
+            // instead of completing silently green.
             tracing::warn!(run_id = %run.id, count = unavailable_scopes, "library_scan event=all_scopes_unavailable");
             return self.fail_run(
                 &run.id,
@@ -800,17 +800,17 @@ impl<S: ScanStore> InventoryScanner<S> {
         let mut completed = true;
         let mut discard_remaining = false;
         let mut detached = false;
-        // F-INDEXREC-06: a checkpoint-false exit is pause/stop/supersede,
+        // A checkpoint-false exit is pause/stop/supersede,
         // not a filesystem error.
         let mut control_exit = false;
         let mut walk_failure_code: Option<String> = None;
-        // F-022: first degraded code becomes the scope diagnostic.
+        // First degraded code becomes the scope diagnostic.
         let mut degraded_code: Option<String> = None;
         let mut stale_cleanup_pending = true;
         let mut last_checkpoint = Instant::now();
         let mut last_log = Instant::now();
         let mut last_item_at = Instant::now();
-        // F-020: distinct persisted keys within one discovery generation.
+        // Distinct persisted keys within one discovery generation.
         let mut seen: HashSet<String> = HashSet::new();
         let mut discovered = 0usize;
 
@@ -844,10 +844,10 @@ impl<S: ScanStore> InventoryScanner<S> {
                         );
                         // The producer is wedged in a syscall; awaiting it
                         // would wedge the scan worker, so it is detached
-                        // instead (F-024: never awaited either way). This
+                        // instead (never awaited either way). This
                         // branch breaks right after, so the take below only
                         // misses if the branch ever re-runs; skipping then
-                        // keeps the timeout honest instead of panicking.
+                        // keeps the timeout in force instead of panicking.
                         if let Some(handle) = producer.take()
                             && !self.detach_walker(handle)
                         {
@@ -899,7 +899,7 @@ impl<S: ScanStore> InventoryScanner<S> {
                     }
                 }
                 WalkMessage::WalkError(error) => {
-                    // F-022/GH-296: record the row but keep consuming.
+                    // GH-296: record the row but keep consuming.
                     if degraded_code.is_none() {
                         degraded_code = Some(error.code.clone());
                     }
@@ -913,7 +913,7 @@ impl<S: ScanStore> InventoryScanner<S> {
                     );
                 }
                 WalkMessage::File(file) => {
-                    // F-020: an in-root alias resolves onto its target's
+                    // An in-root alias resolves onto its target's
                     // own path; dedupe against everything already
                     // persisted in this generation.
                     let key = inventory_key(&file.resolved, root);
@@ -1015,7 +1015,7 @@ impl<S: ScanStore> InventoryScanner<S> {
                 scope_error.as_deref(),
             );
         } else if let Some(code) = &degraded_code {
-            // F-022: the walk finished, but some paths were unreadable.
+            // The walk finished, but some paths were unreadable.
             self.store.complete_scope_discovery(
                 &run.id,
                 &scope.root_id,
@@ -1089,10 +1089,10 @@ impl<S: ScanStore> InventoryScanner<S> {
         };
         // Single-worker stores never go stale here; retry once with a
         // fresh revision so a racing writer costs one retry instead of a
-        // failed run. A second stale is recorded honestly and the batch
+        // failed run. A second stale is recorded and the batch
         // is skipped: losing one page with a failure row beats failing
         // the whole run. Any other store error (the SQLite store already
-        // retried its lock races) is recorded the same honest way: a
+        // retried its lock races) is recorded the same way: a
         // skipped page must never vanish silently.
         match self.store.add_inventory_batch(
             run_id,
@@ -1168,7 +1168,7 @@ fn produce_inventory(
     heartbeat: &WalkHeartbeat,
 ) {
     let mut stack = vec![selected.to_owned()];
-    // F-022: unreadable directories are collected and reported instead of
+    // Unreadable directories are collected and reported instead of
     // aborting the walk.
     let mut walk_errors: Vec<WalkErrorInfo> = Vec::new();
     match std::fs::read_dir(selected) {
@@ -1236,7 +1236,7 @@ fn produce_inventory(
                 continue;
             }
             if path.to_str().is_none() {
-                // F-021: non-UTF-8 names would poison downstream TEXT
+                // Non-UTF-8 names would poison downstream TEXT
                 // binds; skip and report with a percent-encoded key.
                 let relative = path
                     .strip_prefix(root)
@@ -1246,7 +1246,7 @@ fn produce_inventory(
                 continue;
             }
             // In-root file symlinks resolve onto their target's own path;
-            // escape-out links are audited below (E11: symlinks are never
+            // escape-out links are audited below (symlinks are never
             // followed into the library).
             let resolved = if file_type.is_symlink() {
                 match std::fs::canonicalize(&path) {
@@ -1285,12 +1285,12 @@ fn produce_inventory(
                 }
             };
             if file_type.is_symlink() && meta.is_dir() {
-                // E11: a symlinked directory is recorded as nothing and
+                // A symlinked directory is recorded as nothing and
                 // never descended.
                 continue;
             }
             if !meta.is_file() {
-                // F-13: FIFOs/sockets/devices with an audio suffix would
+                // FIFOs/sockets/devices with an audio suffix would
                 // wedge a tag reader in open(); skip them in the
                 // inventory phase without touching the tag-reader budget.
                 let relative = path
@@ -1322,7 +1322,7 @@ fn produce_inventory(
                 halted = true;
                 break;
             }
-            // F-025: delivery is a progress signal, not just reads.
+            // Delivery is a progress signal, not just reads.
             heartbeat.touch(&directory.display().to_string());
         }
         if halted {
@@ -1649,7 +1649,7 @@ mod tests {
         }
     }
 
-    /// A batch the store cannot persist is recorded honestly and never
+    /// A batch the store cannot persist is recorded and never
     /// silently skipped: the failure row names the scope, and the next
     /// batch still lands on the unchanged revision.
     #[test]
@@ -1802,7 +1802,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&sandbox);
     }
 
-    /// An inventory page that will not read fails the run honestly
+    /// An inventory page that will not read fails the run
     /// instead of completing it short: a read error is never
     /// end-of-run.
     #[tokio::test]

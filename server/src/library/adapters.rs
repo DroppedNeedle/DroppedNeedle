@@ -1,9 +1,9 @@
-//! Seam implementations between the library slices (integrator-owned).
+//! Seam implementations between the library modules.
 //!
-//! Each adapter is narrow by design: it translates at a slice
-//! boundary and owns no domain logic. Gaps that need a future slice
-//! (AcoustID key config, album projection for contributions) degrade
-//! loudly or dormantly, never silently wrong; each carries a note.
+//! Each adapter is narrow by design: it translates at a module boundary
+//! and owns no domain logic. Gaps with no implementation yet (AcoustID key
+//! config, album projection for contributions) fail loudly or stay
+//! dormant, never silently wrong; each carries a note.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -31,7 +31,7 @@ use super::scan::seams::{IdentifyQueue, ScannedTags, TagReadError, TagReader};
 use crate::ids::IdGenerator;
 
 // ---------------------------------------------------------------------------
-// Scan -> tags: read-only tag access over the tags slice.
+// Scan -> tags: read-only tag access over the tags module.
 // ---------------------------------------------------------------------------
 
 /// Read-only tag reader over [`crate::library::tags`]. Never writes:
@@ -333,15 +333,15 @@ fn free_bytes_for(dir: &Path) -> Result<u64, PublishError> {
 }
 
 // ---------------------------------------------------------------------------
-// Contrib ports: honest dormant implementations.
+// Contrib ports: dormant implementations.
 // ---------------------------------------------------------------------------
 
 /// Contribution identity over the (not yet projected) album catalog.
 /// Album rows with titles do not exist durably yet: scan commits
-/// per-file catalog entries without titles, and no album-projection
-/// slice has landed. Returning `None` keeps the service loud
-/// (`AlbumNotFound`) instead of drafting from empty titles; the
-/// verification worker idles honestly until the projection lands.
+/// per-file catalog entries without titles, and nothing projects albums
+/// yet. Returning `None` keeps the service loud (`AlbumNotFound`) instead
+/// of drafting from empty titles; the verification worker stays idle
+/// until a projection exists.
 pub struct EmptyContributionIdentity;
 
 impl ContributionIdentity for EmptyContributionIdentity {
@@ -362,7 +362,7 @@ impl ContributionIdentity for EmptyContributionIdentity {
 
 /// Contribution catalog port. Reads serve straight from SQLite with
 /// no identity-bearing cache to invalidate and no reindex hook to
-/// fire, so all three calls are honest no-ops (traced, so a future
+/// fire, so all three calls are no-ops (traced, so a future
 /// cache lands its invalidation here).
 pub struct NoopContributionCatalog;
 
@@ -469,9 +469,9 @@ fn titles_agree(draft: &str, verified: &str) -> bool {
     draft.trim().is_empty() || verified.trim().is_empty() || fold(draft) == fold(verified)
 }
 
-/// MusicBrainz contribution reads before the stage-5 port lands. The
-/// stage-5 clients speak different seams (no background-priority
-/// lanes), so porting them is a follow-up; until then verification
+/// MusicBrainz contribution reads with no client behind them. The
+/// provider clients speak different seams (no background-priority
+/// lanes) and are not adapted yet; until then verification
 /// lookups defer as unavailable (the worker retries inside its
 /// bounded window) and duplicate checks fail loudly. No live provider
 /// contact happens through this adapter, ever.

@@ -1,14 +1,14 @@
 //! AcoustID-style fingerprints through rusty-chromaprint.
 //!
-//! The stage-1 pipeline, wired as prescribed: symphonia decode, f64
+//! The pipeline measured against fpcalc: symphonia decode, f64
 //! downmix, first-120-seconds window, rubato SincFixedIn (sinc 256,
 //! cutoff 0.95, cubic, Blackman-Harris, oversampling 256) to 11025 Hz
 //! mono, truncate to the 120 s window, test2 preset, compress, base64
 //! with the URL-safe unpadded alphabet (what fpcalc emits and what
 //! AcoustID expects).
 //!
-//! Generation never touches the network; the AcoustID lookup itself is a
-//! later slice's job. A truncated duration of zero is carried, not
+//! Generation never touches the network; the AcoustID lookup lives in
+//! the identify providers. A truncated duration of zero is carried, not
 //! rejected: v2 refused to submit those (an empty result set would look
 //! like a genuine no-match), and the lookup side must keep that guard.
 
@@ -39,7 +39,7 @@ pub struct Fingerprint {
     pub duration_seconds: u32,
     /// True when the decode wobbled mid-stream but still yielded audio.
     pub partial_decode: bool,
-    /// Raw u32 items before compression (spike-report parity info).
+    /// Raw u32 items before compression (for parity checks against fpcalc).
     pub raw_items: usize,
 }
 
@@ -87,7 +87,7 @@ pub fn generate_fingerprint(path: &Path) -> Result<Fingerprint, TagsError> {
     })
 }
 
-/// Channel mean in f64, the spike's downmix.
+/// Channel mean in f64, the reference downmix.
 fn downmix_to_mono(samples: &[i16], channels: u32) -> Vec<f64> {
     let channels = channels.max(1) as usize;
     samples
@@ -96,9 +96,9 @@ fn downmix_to_mono(samples: &[i16], channels: u32) -> Vec<f64> {
         .collect()
 }
 
-/// Resample mono audio to 11025 Hz with the spike's cubic-256 setup, then
+/// Resample mono audio to 11025 Hz with the reference cubic-256 setup, then
 /// truncate to the 120 s window. Short inputs keep their (over-emitted)
-/// tail, exactly like the spike's reference pipe.
+/// tail, exactly like the reference pipe.
 fn resample_to_target(mono: &[f64], sample_rate: u32, path: &Path) -> Result<Vec<f64>, TagsError> {
     let fail = |reason: String| TagsError::Fingerprint {
         path: path.display().to_string(),
@@ -156,7 +156,7 @@ fn resample_to_target(mono: &[f64], sample_rate: u32, path: &Path) -> Result<Vec
     Ok(out)
 }
 
-/// `round(x * 32768)` clipped to s16, the spike's quantization.
+/// `round(x * 32768)` clipped to s16, the reference quantization.
 fn quantize(mono_11k: &[f64]) -> Vec<i16> {
     mono_11k
         .iter()

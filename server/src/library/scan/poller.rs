@@ -1,6 +1,6 @@
 //! Central library-revision poller feeding the event bus.
 //!
-//! Port of `backend/services/native/library_revision_poller.py`. One
+//! Port of v2's library revision poller. One
 //! process-wide poll replaces the per-connection poll loops library SSE
 //! streams used to run: every subscriber shares a single published feed.
 //! The loop publishes only when revisions change, re-resolves its getters
@@ -85,7 +85,7 @@ where
 ///
 /// The wired bundle publishes no library-revision feed yet, so no
 /// production loop calls this; the unit tests pin the iteration and
-/// the scan briefs pin the shutdown behavior. The first SSE or
+/// the scan tests pin the shutdown behavior. The first SSE or
 /// subscriber feed over [`RevisionSource`] state must drive this
 /// loop (or [`poll_once`] per tick) instead of polling per
 /// connection.

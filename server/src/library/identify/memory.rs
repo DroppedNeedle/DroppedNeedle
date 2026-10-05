@@ -1,4 +1,4 @@
-//! In-memory stores for briefs and slice-local tests.
+//! In-memory identify stores for tests and unwired runtimes.
 
 use std::collections::HashMap;
 use std::sync::Mutex;

@@ -1,14 +1,14 @@
 //! Identity product rules, ported verbatim from v2.
 //!
 //! Every function here is pure: the same inputs always give the same
-//! verdict, so the briefs pin behavior without any store or provider.
+//! verdict, so the tests pin behavior without any store or provider.
 
 use super::models::{
     ArtistCredit, CandidateEvidence, DecisionSource, EvidenceClass, IdentificationOutcome,
     ReleasePin,
 };
 
-/// F-IDENT-01 option-B verdict for the name-anchored retirement path.
+/// Verdict for the name-anchored retirement path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SubstitutionVerdict {
     /// Every precondition holds; the retirement may proceed.
@@ -32,7 +32,7 @@ pub enum SubstitutionRefusal {
     ConflictingDirectIdentity,
 }
 
-/// Inputs to the F-IDENT-01 option-B gate.
+/// Inputs to the name-anchored retirement gate.
 #[derive(Debug, Clone, Default)]
 pub struct SubstitutionCase {
     /// Accepted MusicBrainz release MBID on the source album, if any.
@@ -50,8 +50,8 @@ pub struct SubstitutionCase {
     pub name_evidence_present: bool,
 }
 
-/// F-IDENT-01 option B (owner 2026-08-20): album-level provider proof
-/// gates every name-anchored retirement.
+/// Album-level provider proof gates every name-anchored retirement; a
+/// name match alone never merges artists.
 ///
 /// Preconditions, all required:
 /// 1. An accepted MusicBrainz release MBID on the source album, OR a

@@ -532,7 +532,7 @@ pub fn without_discogs_values(
 }
 
 /// Expired Discogs values are redacted to None but keep their source marker
-/// (v2 `_redact_expired_discogs`), so the UI can show "refresh" honestly.
+/// (v2 `_redact_expired_discogs`), so the UI can offer a refresh.
 pub fn redact_expired_discogs(draft: &ReleaseDraft) -> ReleaseDraft {
     let mut result = draft.clone();
     for field in draft_fields_mut(&mut result) {
@@ -638,7 +638,7 @@ pub fn next_actions(
     use ContributionState as S;
     if state == S::Stale {
         // Quirk (v2): a stale contribution for a deleted album offers
-        // NOTHING - not even cancel.
+        // nothing, not even cancel.
         return if album_active {
             vec![A::Rebuild]
         } else {
@@ -680,7 +680,7 @@ pub fn next_actions(
 // ---------------------------------------------------------------------------
 
 /// Field-by-field diff between the draft and a verified MusicBrainz release;
-/// only fields set on BOTH sides can disagree (v2 `_duplicate_candidate`).
+/// only fields set on both sides can disagree (v2 `_duplicate_candidate`).
 pub fn duplicate_candidate(
     draft: &ReleaseDraft,
     verified: Option<&MusicBrainzVerifiedRelease>,
@@ -993,7 +993,7 @@ pub fn verification_retry_delay_seconds(attempts: u32, retry_after: Option<f64>)
 /// Build the release-editor seed form fields in v2's exact order: name,
 /// release_group (single id only), barcode, packaging, event date parts,
 /// country, labels, artist credit, mediums/tracks, Discogs URL pair,
-/// edit_note, and redirect_uri LAST.
+/// edit_note, and redirect_uri last.
 pub fn musicbrainz_seed_fields(
     draft: &ReleaseDraft,
     snapshot: &LocalReleaseSnapshot,
@@ -1021,7 +1021,7 @@ pub fn musicbrainz_seed_fields(
         .filter(|id| seen.insert(id.clone()))
         .collect();
     // Quirk (v2): a known local group id wins over discovered ones entirely;
-    // multiple discovered ids seed NOTHING (ambiguous).
+    // multiple discovered ids seed nothing (ambiguous).
     let group_ids: Vec<String> = snapshot
         .musicbrainz_release_group_id
         .clone()

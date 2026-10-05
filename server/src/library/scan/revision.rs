@@ -1,11 +1,11 @@
 //! Stat-derived change detection for hashless scans.
 //!
-//! Port of `backend/services/native/file_revision.py`, including the
-//! accepted F-029 tradeoff: a revision is `size:mtime_ns` only. A content
+//! Port of v2's file revision, including its accepted tradeoff: a
+//! revision is `size:mtime_ns` only. A content
 //! swap that preserves size and lands in the same mtime tick classifies as
 //! unchanged. Folding `ctime` into the revision would narrow this but
-//! mass-promote legacy entries to changed, so it needs explicit owner
-//! sign-off before anyone reaches for it.
+//! mass-promote legacy entries to changed, so it needs the owner's
+//! agreement before anyone reaches for it.
 
 use std::fs::Metadata;
 use std::time::UNIX_EPOCH;
@@ -34,7 +34,7 @@ fn ulp(value: f64) -> f64 {
 }
 
 /// Symmetric epsilon band for legacy float mtime compares (v2
-/// `_legacy_mtime_eps_seconds`, F-15/4.12): `max(1us, 4*ulp)`, so the band
+/// `_legacy_mtime_eps_seconds`): `max(1us, 4*ulp)`, so the band
 /// tracks epoch growth instead of silently drifting. Covers float error
 /// only; real rewrites still classify as changed.
 pub fn legacy_mtime_eps_seconds(file_mtime: f64) -> f64 {

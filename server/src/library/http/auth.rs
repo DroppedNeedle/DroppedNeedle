@@ -11,7 +11,7 @@ use axum::http::request::Parts;
 
 use super::error::LibraryError;
 
-/// Account role. Meanings match the sibling slices.
+/// Account role. Meanings match the other routes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
     /// Regular account.

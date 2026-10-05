@@ -1,17 +1,17 @@
-//! Local seams: the narrow traits this slice needs from sibling-owned
-//! systems, plus the store and clock it runs against.
+//! Local seams: the narrow traits contributions need from code they do not
+//! own, plus the store and clock they run against.
 //!
-//! Sibling ownership (NOT built here, noted for the stage-8 integrator):
-//! - [`ContributionIdentity`] - album identification context: owned by the
-//!   scan/identify slice (v2 `NativeLibraryStore.get_album_identification_context`).
+//! Owned elsewhere (implemented in `library::adapters`):
+//! - [`ContributionIdentity`] - album identification context, from scan and
+//!   identify (v2 `NativeLibraryStore.get_album_identification_context`).
 //! - [`AttachmentEvidence`] - the identification evidence decision for
-//!   attach/verify: owned by the identification slice (v2 `AlbumEvidenceEngine`).
-//! - [`ContributionCatalog`] - catalog invalidation + identified hook: owned
-//!   by the reads/catalog slice (v2 `invalidate_catalog_scope` / `on_identified`).
-//! - Provider reads (`DiscogsContrib`, `MusicBrainzContrib`) are satisfied by
-//!   the stage-5 provider adapters; every signature takes an explicit
+//!   attach/verify, from identify (v2 `AlbumEvidenceEngine`).
+//! - [`ContributionCatalog`] - catalog invalidation + identified hook, from
+//!   the catalog (v2 `invalidate_catalog_scope` / `on_identified`).
+//! - Provider reads (`DiscogsContrib`, `MusicBrainzContrib`) sit on the
+//!   provider clients; every signature takes an explicit
 //!   [`RequestPriority`](crate::providers::slots::RequestPriority) so
-//!   the background lane stays honest at each call site.
+//!   each call site states its lane.
 //!
 //! Futures are boxed by hand per repo idiom (no async-trait dependency).
 
@@ -44,7 +44,7 @@ impl ContributionClock for SystemClock {
 }
 
 // ---------------------------------------------------------------------------
-// Identity context (sibling-owned: scan/identify slice)
+// Identity context (owned by scan/identify)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq)]
@@ -95,8 +95,8 @@ pub struct AlbumIdentificationContext {
     pub tracks: Vec<IdentityTrack>,
 }
 
-/// Reads the album identification context. Sibling slice implements this
-/// against the real library store; this slice only consumes it.
+/// Reads the album identification context. Implemented against the real
+/// library store; contributions only consume it.
 pub trait ContributionIdentity: Send + Sync {
     fn album_context<'a>(
         &'a self,
@@ -110,10 +110,10 @@ pub trait ContributionIdentity: Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
-// Catalog port (sibling-owned: reads/catalog slice)
+// Catalog port (owned by the catalog)
 // ---------------------------------------------------------------------------
 
-/// Catalog invalidation plus the post-identify hook. Sibling slice implements.
+/// Catalog invalidation plus the post-identify hook.
 pub trait ContributionCatalog: Send + Sync {
     /// ST1 (v2): delete exactly the touched identity-bearing keys BEFORE the
     /// commit path returns; lists still sweep.
@@ -135,7 +135,7 @@ pub trait ContributionCatalog: Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
-// Attachment evidence (sibling-owned: identification slice)
+// Attachment evidence (owned by identify)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,7 +172,7 @@ pub struct AttachmentDecision {
 /// Decides whether a verified MusicBrainz release safely matches the current
 /// draft. v2 runs `AlbumEvidenceEngine.decide` with `require_lone_quorum =
 /// false` here (the curator verified this exact release; the engine keeps
-/// only contradiction detection). The identification slice owns the engine;
+/// only contradiction detection). Identify owns the engine;
 /// this trait is the seam.
 pub trait AttachmentEvidence: Send + Sync {
     /// Engine version stamped on verification attempts (v2 MATCHER_VERSION).
@@ -188,7 +188,7 @@ pub trait AttachmentEvidence: Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
-// Provider reads (stage-5 adapters; priority is explicit at every call)
+// Provider reads (priority is explicit at every call)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq)]
@@ -412,7 +412,7 @@ pub trait ContributionStore: Send + Sync {
         lease_seconds: f64,
     ) -> BoxFuture<'a, Option<VerificationJobRow>>;
 
-    /// Rebuild retires the stale row and inserts a FRESH row (new id,
+    /// Rebuild retires the stale row and inserts a fresh row (new id,
     /// state draft); returns the new row (v2 `rebuild_library_contribution`).
     #[allow(clippy::too_many_arguments)]
     fn rebuild<'a>(

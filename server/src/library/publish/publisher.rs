@@ -8,7 +8,7 @@
 //! instead of leaving half-renamed bundles.
 //!
 //! Crash injection (`CrashPoint`) stops the protocol between durable
-//! steps so the briefs can prove that restart recovery always resumes
+//! steps so the tests can prove that restart recovery always resumes
 //! or compensates. Production never sets a crash point.
 
 use std::collections::BTreeMap;
@@ -52,9 +52,9 @@ pub struct BundleCommit {
     pub tracks: Vec<TrackCommit>,
 }
 
-/// Catalog port. The real native catalog implements this in the wired
-/// build; the slice ships a SQLite shadow (`SqliteCatalog`) with the
-/// same CAS semantics so the protocol and briefs run standalone.
+/// Catalog port. Production uses `SqliteCatalog`, a SQLite shadow catalog
+/// with CAS semantics, so the protocol and its tests run without the
+/// reads catalog.
 pub trait Catalog {
     /// Current catalog revision.
     fn revision(&self, conn: &Connection) -> Result<u64, PublishError>;
@@ -75,13 +75,13 @@ pub trait Catalog {
         bundle_id: &str,
         track_ids: &[String],
     ) -> Result<(), PublishError>;
-    /// Mark a track missing so streaming and search stay honest when
+    /// Mark a track missing so streaming and search stay accurate when
     /// committed bytes cannot be recovered.
     fn mark_missing(&self, conn: &Connection, track_id: &str) -> Result<(), PublishError>;
 }
 
 /// SQLite shadow catalog with compare-and-swap commits. Stands in for
-/// the native catalog until the catalog slice wires the real port.
+/// the reads catalog, which has no publish port yet.
 #[derive(Debug, Clone, Default)]
 pub struct SqliteCatalog;
 
@@ -204,7 +204,7 @@ impl CrashPoint {
         }
     }
 
-    /// Every injection point, for the per-phase crash brief.
+    /// Every injection point, for the per-phase crash test.
     pub fn all() -> Vec<Self> {
         vec![
             Self::AfterStage,
@@ -241,7 +241,7 @@ pub struct Publisher<C: Catalog, P: SpaceProbe> {
 
 impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
     /// Open a publisher: the database path must sit under a sandbox
-    /// root, and the slice schema is applied idempotently.
+    /// root, and the publisher schema is applied idempotently.
     pub fn open(
         sandbox: Sandbox,
         db_path: PathBuf,
@@ -369,7 +369,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             }
             let temp = self.sandbox.temp_path_for(&dest, &journal_id)?;
             self.sandbox.ensure_under_roots(&temp)?;
-            // Real tag staging through the tags slice save wrapper.
+            // Real tag staging through the tags save wrapper.
             // Refusals surface before any journal or temp lands.
             let staged_bytes = super::staging::render_staged_bytes(
                 &source_bytes,
@@ -412,7 +412,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 source_sha256: item.fingerprint.sha256.clone(),
                 mgmt_state_before: prior_mgmt,
             };
-            // First-management baseline (D11): captured once, immutable
+            // First-management baseline: captured once, immutable
             // forever. A baseline that appeared concurrently wins; the
             // only Snapshot error capture raises is already-exists.
             if super::snapshots::BaselineStore::new(&self.conn)
@@ -909,7 +909,7 @@ fn write_staged_temp(temp: &Path, bytes: &[u8]) -> Result<(), PublishError> {
 
 /// Prune newly empty source parents up to (not including) the root.
 /// Stops at the first non-empty directory; unknown files are never
-/// deleted (D6).
+/// deleted.
 fn prune_empty_parents(
     sandbox: &Sandbox,
     root_id: &str,

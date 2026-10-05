@@ -2,13 +2,13 @@
 //!
 //! Sample rate, channel count, and codec come from the decode side.
 //! Duration is decode-counted (every delivered sample is tallied), except
-//! for ADTS, where the stage-1 verdict prescribes the demux-count fallback:
+//! for ADTS, which uses the demux-count fallback:
 //! packets x 1024 / rate, with no decode. Bitrate and bit depth ride along
 //! from lofty's header parse, with v2's suppression rules (meaningful bit
 //! depth only for lossless containers, and for M4A only when ALAC).
 //!
 //! Mid-stream decode wobbles are tolerated the way v2 tolerated fpcalc's
-//! nonzero exit with output (F-044): the samples decoded so far stand, and
+//! nonzero exit with output: the samples decoded so far stand, and
 //! the partial flag tells downstream to corroborate before acting.
 
 use std::fs::File;
@@ -49,12 +49,12 @@ pub(crate) struct DecodedPcm {
     pub samples: Vec<i16>,
     pub sample_rate: u32,
     pub channels: u32,
-    /// True when a mid-stream error was tolerated (v2 F-044).
+    /// True when a mid-stream error was tolerated.
     pub partial: bool,
 }
 
 /// Codec registry with every enabled symphonia codec plus Opus via the
-/// stage-1 adapter (`symphonia-adapter-libopus`). Built once: the
+/// libopus adapter (`symphonia-adapter-libopus`). Built once: the
 /// contents never vary, and rebuilding per file churns the scan heap.
 fn codec_registry() -> &'static CodecRegistry {
     static REGISTRY: OnceLock<CodecRegistry> = OnceLock::new();
@@ -281,8 +281,8 @@ fn open_stream(
     })
 }
 
-/// ADTS has no trustworthy container duration (stage-1 measured symphonia's
-/// at 10x wrong), so duration comes from the packet count: every ADTS
+/// ADTS has no trustworthy container duration (symphonia's measured
+/// 10x wrong), so duration comes from the packet count: every ADTS
 /// frame carries exactly 1024 samples.
 fn probe_adts(path: &Path, file_size_bytes: u64) -> Result<AudioInfo, TagsError> {
     let opened = open_reader(path, AudioFormat::Aac)?;
@@ -339,7 +339,7 @@ fn decode_count_duration(
 }
 
 /// Decode to interleaved s16, stopping after `max_seconds` of audio when
-/// set. Tolerates mid-stream errors with the partial flag (v2 F-044); a
+/// set. Tolerates mid-stream errors with the partial flag; a
 /// decode that yields nothing at all is a hard error.
 pub(crate) fn decode_pcm_s16(
     path: &Path,
@@ -419,7 +419,7 @@ fn append_interleaved(out: &mut Vec<i16>, decoded: &GenericAudioBufferRef) {
 
 /// Container-average bitrate. Packet-byte tallying is not available:
 /// symphonia 0.6 demuxers do not populate packet payload sizes uniformly
-/// (the OGG reader yields one-byte packet shells), so the honest uniform
+/// (the OGG reader yields one-byte packet shells), so the reliable uniform
 /// figure divides the whole file by the decode-counted duration.
 fn average_bitrate(file_size_bytes: u64, duration_seconds: f64) -> u32 {
     if duration_seconds <= 0.0 {

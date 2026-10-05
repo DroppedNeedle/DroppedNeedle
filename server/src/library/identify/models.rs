@@ -239,7 +239,7 @@ pub enum ReviewState {
     Rejected,
 }
 
-/// Brief-first identity brief: the whole case for one album on one card.
+/// Identity summary: the whole case for one album on one card.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IdentityBrief {
     pub local_album_id: String,

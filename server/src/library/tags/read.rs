@@ -1,6 +1,6 @@
 //! Tag reads through lofty's generic items, mirroring v2's field mapping.
 //!
-//! The stage-1 rule zero cuts both ways: native tags are for writes, and
+//! Rule zero (see `save.rs`) cuts both ways: native tags are for writes, and
 //! generic items are for reads. The generic `Tag` lofty builds on read is
 //! complete for every field v2 surfaces (multi-values arrive as separate
 //! items, UFID and TXXX spellings included), while the native round-trip
@@ -12,7 +12,7 @@
 //! raw text, and a v2.3 `TYER` now yields a year where mutagen's `TDRC`
 //! lookup found none. Both only affect files v2 already handled oddly.
 //!
-//! AAC carries an APEv2 tag lofty does not read, so this slice parses that
+//! AAC carries an APEv2 tag lofty does not read, so this module parses that
 //! tag itself (reads only; AAC stays read-only for writes).
 
 use std::io::Cursor;

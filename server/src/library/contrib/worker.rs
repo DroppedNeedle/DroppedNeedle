@@ -4,8 +4,8 @@
 //! jobs under a 90s lease, re-reads the release from MusicBrainz on the
 //! [`RequestPriority::BackgroundSync`] lane (never the user lane), runs the
 //! sibling-owned evidence decision, and finishes the job as linked or
-//! needs-review. Shutdown is a `watch` flag; `main.rs` wiring is owned by the
-//! stage-8 integrator - this module only exposes [`spawn_verification_worker`].
+//! needs-review. Shutdown is a `watch` flag; `LibrarySetup::spawn_loops`
+//! starts the worker through [`spawn_verification_worker`].
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -126,7 +126,7 @@ impl VerificationWorker {
             return Ok(VerificationOutcome::NoLongerVerifying);
         }
         let release_mbid = contribution.result_release_mbid.clone().unwrap_or_default();
-        // Honest background priority: verification never jumps the user queue.
+        // Background priority: verification never jumps the user queue.
         let verified = match self
             .musicbrainz
             .get_release_for_verification(&release_mbid, RequestPriority::BackgroundSync, true)
@@ -134,7 +134,7 @@ impl VerificationWorker {
         {
             Ok(verified) => verified,
             // Deterministic payload-shape failure: review immediately, no
-            // retry, breaker untouched (v2 owner option A, 2026-08-20).
+            // retry, breaker untouched (as v2 decided).
             Err(ProviderFailure::Unmappable) => {
                 return self
                     .finish_without_candidate(
@@ -340,8 +340,7 @@ pub fn shutdown_channel() -> (
 
 /// Spawn the background verification loop. Each tick recovers expired leases
 /// and drains every due job; any single-job error is logged and the loop
-/// moves on. Returns the join handle; the integrator owns supervision and
-/// must NOT wire this into `main.rs` from this slice.
+/// moves on. Returns the join handle; the caller owns supervision.
 pub fn spawn_verification_worker(
     worker: Arc<VerificationWorker>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,

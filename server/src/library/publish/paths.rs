@@ -3,8 +3,8 @@
 //! Every publisher write lands under a configured library root. Paths
 //! arrive as `(root id, relative path)` pairs and are resolved here:
 //! absolute inputs, `..` escapes, NUL bytes, and symlink components all
-//! fail closed before any mutation. Media symlinks are never followed
-//! (E11); that is a security boundary, not a profile toggle.
+//! fail closed before any mutation. Media symlinks are never followed;
+//! that is a security boundary, not a profile toggle.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -124,7 +124,7 @@ impl Sandbox {
 
     /// Hidden staging temp for a destination. It lives in the
     /// destination directory, so the publish rename never crosses
-    /// filesystems, and carries the reserved prefix (E28) so scan
+    /// filesystems, and carries the reserved prefix so scan
     /// discovery prunes it.
     pub fn temp_path_for(&self, dest: &Path, journal_id: &str) -> Result<PathBuf, PublishError> {
         let parent = dest.parent().ok_or_else(|| {

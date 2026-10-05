@@ -1,13 +1,13 @@
-//! Audio-tags slice: read tags, probe streams, fingerprint, and save safely.
+//! Audio tags: read tags, probe streams, fingerprint, and save safely.
 //!
-//! This is the stage-8 tags slice. Tag reads go through lofty, technical
+//! Tag reads go through lofty, technical
 //! probe and decode through symphonia (with the libopus adapter for Opus),
 //! and AcoustID-style fingerprints through rusty-chromaprint with the
-//! stage-1 pipeline (f64 downmix, rubato cubic-256 to 11025 Hz, test2
+//! measured pipeline (f64 downmix, rubato cubic-256 to 11025 Hz, test2
 //! preset, URL-safe unpadded base64). Every mutation goes through the
 //! save wrapper, which refuses loudly rather than silently dropping data.
 //!
-//! WMA is unrecognized everywhere in this slice: there is no ASF code here,
+//! WMA is unrecognized everywhere here: there is no ASF code,
 //! and every entry point rejects `.wma` before touching the file.
 
 pub mod fingerprint;
@@ -24,7 +24,7 @@ use std::path::Path;
 
 use thiserror::Error;
 
-/// Audio container this slice understands, routed by file extension.
+/// Audio container the tag code understands, routed by file extension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AudioFormat {
     Flac,
@@ -74,7 +74,7 @@ pub fn format_for_path(path: &Path) -> Result<AudioFormat, TagsError> {
     }
 }
 
-/// Every failure in this slice. Save refusals carry their own rich reason.
+/// Every tag failure. Save refusals carry their own rich reason.
 #[derive(Debug, Error)]
 pub enum TagsError {
     #[error("unrecognized audio extension '.{extension}' (WMA is cut)")]

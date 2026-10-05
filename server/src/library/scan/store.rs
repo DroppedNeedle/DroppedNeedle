@@ -1,10 +1,10 @@
 //! Durable scan state: the store trait plus an in-memory implementation.
 //!
 //! v2 persists runs, scopes, inventory, failures, and the track catalog in
-//! SQLite (`NativeLibraryStore`). This slice defines the [`ScanStore`] seam
-//! with the exact disposition and transition semantics and ships
-//! [`MemoryScanStore`], an honest in-process store the tests and the first
-//! runtime use. A SQLite implementation can replace it later without
+//! SQLite (`NativeLibraryStore`). This module defines the [`ScanStore`] seam
+//! with the exact disposition and transition semantics, plus
+//! [`MemoryScanStore`], a complete in-process store for tests. The SQLite
+//! implementation ([`super::SqliteScanStore`]) replaces it in production without
 //! touching the coordinator or the walker.
 //!
 //! Cover and transition rules cite the v2 functions they port.
@@ -26,7 +26,7 @@ use super::revision::{exact_stat_revision, legacy_mtime_eps_seconds};
 
 /// Stat-revision lineage for one catalog row. `exact` rows compare the
 /// `size:mtime_ns` string; `legacy_float` rows use the symmetric epsilon
-/// band and promote to exact on an unchanged verdict (v2 F-15/4.12).
+/// band and promote to exact on an unchanged verdict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RevisionKind {
     Exact,
@@ -189,7 +189,7 @@ pub trait ScanStore: Send + Sync {
     /// no sort. The default sorts the full listing; SQLite seeks its
     /// primary key. Processing order is path order in both. A read
     /// failure is `Err`, never an empty page: an empty page means
-    /// end-of-run, and the caller must fail honestly on `Err` instead
+    /// end-of-run, and the caller must fail the run on `Err` instead
     /// of completing the run short.
     fn inventory_page(
         &self,
@@ -338,7 +338,7 @@ struct MemoryState {
     catalog_dirty: bool,
 }
 
-/// In-memory [`ScanStore`]. Honest about every disposition and transition;
+/// In-memory [`ScanStore`]. Exact about every disposition and transition;
 /// persistence across restarts is the one thing it does not offer.
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
@@ -396,7 +396,7 @@ fn bump_counters(run: &mut ScanRun, name: &str, delta: i64) {
 
 #[cfg(any(test, feature = "test-support"))]
 fn normalize_key(raw: &str) -> String {
-    // Step 4.13 / F-16 belt-and-braces: NFC-normalize incoming keys so the
+    // Belt and braces: NFC-normalize incoming keys so the
     // catalog join matches the walker's normalized keys.
     use unicode_normalization::UnicodeNormalization;
     raw.nfc().collect()
@@ -457,7 +457,7 @@ impl ScanStore for MemoryScanStore {
             })
             .map(|id| (*id).clone());
 
-        // F-SCAN-02: only a queued run may cover a request. A matching
+        // Only a queued run may cover a request. A matching
         // request during active work falls through to the queued follow-up
         // instead of being acknowledged against work that can still fail.
         let covering: Option<String> = current
@@ -523,7 +523,7 @@ impl ScanStore for MemoryScanStore {
                     conflicting_kind: Some(kind),
                 };
             }
-            // F-INDEXREC-01: normalize the union inside the transaction.
+            // Normalize the union inside the transaction.
             // For each root retain the broadest ancestor and drop its
             // descendants; a root "." supersedes every scope for that root.
             // A missing row (only if the map changed under its own lock,
@@ -1264,7 +1264,7 @@ impl ScanStore for MemoryScanStore {
                 }
             };
             if unchanged && guard.deferred.contains(&(root_id.to_owned(), key.clone())) {
-                // F-12: a file deferred by tag-read exhaustion still carries
+                // A file deferred by tag-read exhaustion still carries
                 // the marker, so it re-offers as changed; a clean read
                 // clears the marker in commit_indexed.
                 verdicts.insert(key, (Verdict::Changed, Some(entry.track_id)));
@@ -1295,7 +1295,7 @@ impl ScanStore for MemoryScanStore {
         }
         if let Some(run_id) = run_id {
             // Skew evidence lands as discovering-phase failure rows, the
-            // same family as the WALK codes.
+            // same family as the walk codes.
             let records: Vec<ScanFailureRecord> = skew
                 .into_iter()
                 .map(|(relative_path, _kind)| ScanFailureRecord {
@@ -1428,7 +1428,7 @@ impl ScanStore for MemoryScanStore {
         track_id: String,
         tags_read_at: f64,
     ) {
-        // A clean read clears the TAG_READ_DEFERRED marker (F-12) and
+        // A clean read clears the TAG_READ_DEFERRED marker and
         // upserts the catalog row as exact.
         let mut guard = self.lock();
         guard

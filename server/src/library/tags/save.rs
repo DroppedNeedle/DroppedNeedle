@@ -1,6 +1,6 @@
 //! The save wrapper: every tag mutation passes through here.
 //!
-//! Rule zero is the stage-1 rule: never round-trip music through the
+//! Rule zero: never round-trip music through the
 //! generic `Tag` API. The generic round-trip is lossy in ways that matter
 //! here: known `TXXX` descriptions are rewritten to map-canonical spelling
 //! (`Artists` becomes `ARTISTS`), `Work` becomes an invalid `WORK` frame
@@ -21,7 +21,7 @@
 //! outside the edit.
 //!
 //! `WAV` and `AAC` are read-only (the ID3-chunk fork and the never-persist
-//! APE tag, per the stage-1 matrix), and WMA is unrecognized like everywhere.
+//! APE tag, per the measured format matrix), and WMA is unrecognized like everywhere.
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
@@ -189,7 +189,7 @@ pub fn save_tags(path: &Path, edits: &[TagEdit]) -> Result<SaveReport, TagsError
 }
 
 // ---------------------------------------------------------------------------
-// Pre-save scan: the stage-1 unencodable catalog.
+// Pre-save scan: the measured unencodable catalog.
 // ---------------------------------------------------------------------------
 
 /// Frame ids that only exist in ID3v2.4. Any of them inside a v2.3 tag

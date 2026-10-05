@@ -1,6 +1,6 @@
 //! Startup reconciliation: resume or compensate, never guess.
 //!
-//! Recovery decides at album-bundle scope (E30). It never treats file
+//! Recovery decides at album-bundle scope. It never treats file
 //! existence as ownership: source, temp, backup, and destination are
 //! inspected as symlink-free regular files and compared with their
 //! journaled SHA-256 fingerprints. The state machine recognizes
@@ -54,7 +54,7 @@ pub struct BundleRecovery {
 }
 
 /// Refuse mutable runtime when more than `STARTUP_RECOVERY_LIMIT`
-/// bundles still hold nonterminal journals (E30).
+/// bundles still hold nonterminal journals.
 pub fn startup_gate(conn: &Connection) -> Result<(), PublishError> {
     let active = JournalStore::new(conn).active_bundles()?;
     if active.len() > super::STARTUP_RECOVERY_LIMIT {
@@ -68,7 +68,7 @@ pub fn startup_gate(conn: &Connection) -> Result<(), PublishError> {
 
 /// Reconcile every bundle with nonterminal journals, in bundle-id
 /// order. Runs at startup after schema ratchets and before scan,
-/// import, acquisition, or operation workers (E30).
+/// import, acquisition, or operation workers.
 pub fn reconcile<C: Catalog>(
     conn: &mut Connection,
     sandbox: &Sandbox,

@@ -383,7 +383,7 @@ impl IdentifyService {
         }
     }
 
-    /// A curator approves a review: the chosen candidate seals as a MANUAL
+    /// A curator approves a review: the chosen candidate seals as a manual
     /// identity, which later automatic passes can never overwrite.
     pub fn approve_candidate(
         &self,
@@ -446,8 +446,8 @@ impl IdentifyService {
         reject_review(self.deps.reviews.as_ref(), review_id, by_user_id)
     }
 
-    /// Retire one local artist into another through the F-IDENT-01
-    /// option-B gate. Allowed retirements keep the retired id as an
+    /// Retire one local artist into another through the album-level proof
+    /// gate. Allowed retirements keep the retired id as an
     /// alias and retarget live references; anything else parks or refuses.
     pub fn retire_artist(
         &self,

@@ -1,11 +1,11 @@
 //! Content-addressed snapshots and immutable baselines.
 //!
 //! Snapshot bytes live under the sandbox metadata directory at
-//! `blobs/<sha256>`, deduplicated by content hash (D11). SQLite rows
+//! `blobs/<sha256>`, deduplicated by content hash. SQLite rows
 //! own references: per-operation snapshots expire by
 //! `undo_retention_days`, while first-management baselines are
 //! immutable and indefinite and are removed only by explicit
-//! administrator purge (D11, E33).
+//! administrator purge.
 
 use std::path::{Path, PathBuf};
 
@@ -97,7 +97,7 @@ impl BlobStore {
     }
 }
 
-/// Per-operation before-state snapshots (E4, E32). Each successful
+/// Per-operation before-state snapshots. Each successful
 /// publisher call captures the semantic audio snapshot plus the exact
 /// sidecar/external-art manifest; rows expire by retention day.
 pub struct SnapshotStore<'a> {
@@ -138,7 +138,7 @@ impl<'a> SnapshotStore<'a> {
     }
 
     /// Add a blob reference row; shared hashes are reused even across
-    /// owner kinds instead of duplicating blob-kind metadata (E32).
+    /// owner kinds instead of duplicating blob-kind metadata.
     pub fn add_ref(
         &self,
         sha256: &str,
@@ -228,7 +228,7 @@ impl<'a> SnapshotStore<'a> {
 }
 
 /// First-management baselines: immutable pre-DroppedNeedle semantic
-/// state, kept until explicit administrator purge (D11, E33).
+/// state, kept until explicit administrator purge.
 pub struct BaselineStore<'a> {
     conn: &'a Connection,
 }
@@ -294,7 +294,7 @@ impl<'a> BaselineStore<'a> {
     }
 
     /// Baseline count plus distinct referenced blob count for the purge
-    /// impact report (E33).
+    /// impact report.
     pub fn impact(&self) -> Result<(usize, usize), PublishError> {
         let baselines: i64 =
             self.conn

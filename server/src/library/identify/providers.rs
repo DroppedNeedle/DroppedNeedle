@@ -1,6 +1,6 @@
 //! Provider seams: MusicBrainz recall plus AcoustID support evidence.
 //!
-//! Both seams sit on the stage-5 clients. Priority is honest: proof
+//! Both seams sit on the provider clients. Priority is explicit: proof
 //! lookups run [`Criticality::IdentityCritical`] so a dead provider
 //! defers the job instead of silently misidentifying, while edition
 //! steering and display enrichment run [`Criticality::BestEffort`].
@@ -18,7 +18,7 @@ use crate::providers::musicbrainz::{
 use super::models::{CandidateEvidence, LocalAlbumFacts, RecallResult};
 
 /// What the identify service needs from providers. The live adapter owns
-/// stage-5 clients; the fake answers from scripts. No live network in tests.
+/// provider clients; the fake answers from scripts. No live network in tests.
 pub trait IdentifyProviders: Send + Sync {
     /// Recall release candidates for the album facts.
     fn recall_candidates(
@@ -28,7 +28,7 @@ pub trait IdentifyProviders: Send + Sync {
     ) -> std::pin::Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>>;
 }
 
-/// Recall result with the honest criticality each call ran under.
+/// Recall result with the criticality each call ran under.
 #[derive(Debug, Clone, Default)]
 pub struct RecallOutcome {
     pub result: RecallResult,
@@ -36,7 +36,7 @@ pub struct RecallOutcome {
     pub recall_criticality: Option<Criticality>,
 }
 
-/// Live adapter over the stage-5 provider clients.
+/// Live adapter over the provider clients.
 pub struct LiveProviders<T, P, S>
 where
     T: MbTransport,
@@ -183,7 +183,7 @@ where
     }
 }
 
-/// Scripted providers for briefs: no network, fully deterministic.
+/// Scripted providers for tests: no network, fully deterministic.
 #[derive(Debug, Default)]
 pub struct FakeProviders {
     pub recall: std::sync::Mutex<Option<RecallResult>>,
@@ -207,7 +207,7 @@ impl FakeProviders {
             .unwrap_or_default()
     }
 
-    /// Replace the scripted recall. The stage-8 wiring uses this to
+    /// Replace the scripted recall. Test wiring uses this to
     /// seed case-specific recall after scan assigns real track ids.
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_recall(&self, result: RecallResult) {
@@ -223,7 +223,7 @@ impl IdentifyProviders for FakeProviders {
         _facts: &LocalAlbumFacts,
         _limit: u32,
     ) -> std::pin::Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>> {
-        // The fake mirrors the live adapter's honest priority: proof
+        // The fake mirrors the live adapter's priority: proof
         // recall always runs identity-critical.
         if let Ok(mut seen) = self.criticality_seen.lock() {
             seen.push(Criticality::IdentityCritical);

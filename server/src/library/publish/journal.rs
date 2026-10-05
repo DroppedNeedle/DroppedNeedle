@@ -333,7 +333,7 @@ fn read_journal(row: &rusqlite::Row<'_>) -> Result<FileJournal, rusqlite::Error>
     })
 }
 
-/// Create the slice tables. Idempotent so scratch stores and the wired
+/// Create the publisher tables. Idempotent so scratch stores and the wired
 /// build can both apply it safely.
 pub fn apply_schema(conn: &Connection) -> Result<(), PublishError> {
     conn.execute_batch(
