@@ -17,7 +17,24 @@ use droppedneedle::{
 };
 use tokio::{net::TcpListener, sync::oneshot, task::JoinHandle};
 
-fn scratch(name: &str) -> PathBuf {
+/// A scratch directory removed when the test ends, pass or fail.
+struct Scratch(PathBuf);
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+impl std::ops::Deref for Scratch {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+fn scratch(name: &str) -> Scratch {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let dir = std::env::temp_dir().join(format!(
         "dn-boot-{name}-{}-{}",
@@ -26,7 +43,7 @@ fn scratch(name: &str) -> PathBuf {
     ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    dir
+    Scratch(dir)
 }
 
 /// Config rooted at `dir`, with breach screening off so setup never
