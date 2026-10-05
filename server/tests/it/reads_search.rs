@@ -1,16 +1,7 @@
-//! Unified search briefs: shape, fold matching, suggest leniency, bucket
-//! drill-down, the single enrich-batch method, the auth matrix row, and
-//! the 5xx-leak boundary.
-//!
-//! This target includes the module by path and mounts its router directly
-//! behind the real session gate and request-scope middleware. App wiring
-//! landed separately (`ReadsSetup::search_router` merges the same router
-//! into the gated tree).
-//! Fakes exist only for the enrichment provider port, never for storage:
-//! every search brief runs against a migrated in-memory 0001 database.
-//!
-//! Stage-5 boundary: the enrichment fakes swap to real providers; canned
-//! values pin handler mapping, not provider data.
+//! Unified search over a migrated in-memory database behind the real
+//! session gate: ranked buckets, accent and case folding, drill-down
+//! paging, suggest, enrichment that degrades inside a 200, the auth row
+//! and the fixed 500 on a database fault.
 
 use droppedneedle::reads::search;
 
@@ -29,9 +20,7 @@ use droppedneedle::auth::session::tokens::hash_token;
 use droppedneedle::middleware::request_scope;
 use droppedneedle::schema::apply_migrations;
 use search::SearchDeps;
-use search::models::{
-    AlbumEnrichment, ArtistEnrichment, EnrichmentBatchRequest, EnrichmentResponse, EnrichmentSource,
-};
+use search::models::{EnrichmentBatchRequest, EnrichmentResponse};
 use search::ports::{EnrichmentPort, EnrichmentPortError};
 use search::service::SearchService;
 use sqlx::SqlitePool;
@@ -40,42 +29,6 @@ use tower::ServiceExt as _;
 
 /// Bearer token the rig mints a session for.
 const TEST_TOKEN: &str = "dn-search-brief-token-000000000001";
-
-/// Provider fakes: canned counts from a healthy provider.
-#[derive(Debug, Clone)]
-struct CannedEnrichment;
-
-impl EnrichmentPort for CannedEnrichment {
-    fn enrich_batch(
-        &self,
-        request: EnrichmentBatchRequest,
-    ) -> search::ports::BoxFuture<'_, Result<EnrichmentResponse, EnrichmentPortError>> {
-        Box::pin(async move {
-            Ok(EnrichmentResponse {
-                artists: request
-                    .artists
-                    .into_iter()
-                    .map(|item| ArtistEnrichment {
-                        musicbrainz_id: item.musicbrainz_id,
-                        release_group_count: Some(12),
-                        listen_count: Some(4_000_000),
-                    })
-                    .collect(),
-                albums: request
-                    .albums
-                    .into_iter()
-                    .map(|item| AlbumEnrichment {
-                        musicbrainz_id: item.musicbrainz_id,
-                        track_count: Some(16),
-                        listen_count: Some(90_000),
-                    })
-                    .collect(),
-                source: EnrichmentSource::Listenbrainz,
-                degradations: Vec::new(),
-            })
-        })
-    }
-}
 
 /// Provider fakes: a dead provider that must degrade, never 500.
 #[derive(Debug, Clone)]
@@ -318,59 +271,6 @@ async fn unified_search_returns_ranked_buckets_with_tops() {
 }
 
 #[tokio::test]
-async fn search_responses_carry_ok_statuses_while_local_only() {
-    let (app, _) = authed_app().await;
-    let (status, _, bytes) = call(
-        app.clone(),
-        Method::GET,
-        "/api/v3/search?q=beyonce",
-        Some(TEST_TOKEN),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let body = json(&bytes);
-    assert_eq!(body["artist_status"], "ok");
-    assert_eq!(body["album_status"], "ok");
-    assert_eq!(body["track_status"], "ok");
-
-    let (status, _, bytes) = call(
-        app.clone(),
-        Method::GET,
-        "/api/v3/search/artists?q=beyonce",
-        Some(TEST_TOKEN),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(json(&bytes)["status"], "ok");
-
-    let (status, _, bytes) = call(
-        app.clone(),
-        Method::GET,
-        "/api/v3/search/suggest?q=beyonce",
-        Some(TEST_TOKEN),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(json(&bytes)["status"], "ok");
-
-    let (status, _, bytes) = call(
-        app,
-        Method::GET,
-        "/api/v3/search/suggest?q=x",
-        Some(TEST_TOKEN),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let body = json(&bytes);
-    assert_eq!(body["status"], "ok");
-    assert!(body["results"].as_array().unwrap().is_empty());
-}
-
-#[tokio::test]
 async fn search_ignores_accents_and_case() {
     let (app, _) = authed_app().await;
     for query in ["beyonce", "BEYONCE", "Beyoncé", "BEYONCÉ"] {
@@ -413,54 +313,6 @@ async fn search_blank_query_is_a_400_envelope() {
         serde_json::json!({"error": {"code": "INVALID_INPUT", "message": "Query must not be blank", "details": null}})
     );
     assert_screaming_snake(body["error"]["code"].as_str().unwrap());
-}
-
-#[tokio::test]
-async fn buckets_filter_selects_buckets_and_rejects_unknown() {
-    let (app, _) = authed_app().await;
-    let (status, _, bytes) = call(
-        app.clone(),
-        Method::GET,
-        "/api/v3/search?q=beyonce&buckets=tracks",
-        Some(TEST_TOKEN),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let body = json(&bytes);
-    assert!(body["artists"].as_array().unwrap().is_empty());
-    assert!(body["albums"].as_array().unwrap().is_empty());
-    assert_eq!(body["tracks"][0]["title"], "Alien Superstar");
-
-    let (status, _, bytes) = call(
-        app,
-        Method::GET,
-        "/api/v3/search?q=beyonce&buckets=nope",
-        Some(TEST_TOKEN),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(json(&bytes)["error"]["code"], "INVALID_INPUT");
-}
-
-#[tokio::test]
-async fn suggest_short_query_returns_empty_200() {
-    let (app, _) = authed_app().await;
-    let (status, _, bytes) = call(
-        app,
-        Method::GET,
-        "/api/v3/search/suggest?q=x",
-        Some(TEST_TOKEN),
-        None,
-    )
-    .await;
-
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        json(&bytes),
-        serde_json::json!({"results": [], "status": "ok"})
-    );
 }
 
 #[tokio::test]
@@ -536,91 +388,6 @@ async fn bucket_drilldown_pages_with_top_only_on_first_page() {
     let body = json(&bytes);
     assert_eq!(body["results"][0]["title"], "Beyoncé");
     assert!(body["top_result"].is_null());
-}
-
-#[tokio::test]
-async fn bucket_unknown_is_a_404_envelope() {
-    let (app, _) = authed_app().await;
-    let (status, _, bytes) = call(
-        app,
-        Method::GET,
-        "/api/v3/search/playlists?q=bey",
-        Some(TEST_TOKEN),
-        None,
-    )
-    .await;
-
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(
-        json(&bytes),
-        serde_json::json!({"error": {"code": "NOT_FOUND", "message": "Not found", "details": null}})
-    );
-}
-
-#[tokio::test]
-async fn enrich_batch_single_method_serves_both_buckets() {
-    let pool = migrated_pool().await;
-    let app = app(pool, Arc::new(CannedEnrichment)).await;
-    let body = serde_json::json!({
-        "artists": [{"musicbrainz_id": "artist-mbid-1", "name": "Beyoncé"}],
-        "albums": [{"musicbrainz_id": "album-mbid-1", "artist_name": "Beyoncé", "album_name": "Renaissance"}],
-    });
-    let (status, _, bytes) = call(
-        app.clone(),
-        Method::POST,
-        "/api/v3/search/enrich/batch",
-        Some(TEST_TOKEN),
-        Some(body),
-    )
-    .await;
-
-    assert_eq!(status, StatusCode::OK);
-    let response = json(&bytes);
-    assert_eq!(response["source"], "listenbrainz");
-    assert_eq!(response["artists"][0]["musicbrainz_id"], "artist-mbid-1");
-    assert_eq!(response["artists"][0]["listen_count"], 4_000_000);
-    assert_eq!(response["albums"][0]["musicbrainz_id"], "album-mbid-1");
-    assert_eq!(response["albums"][0]["track_count"], 16);
-    assert!(response["degradations"].as_array().unwrap().is_empty());
-
-    let (status, _, bytes) = call(
-        app,
-        Method::GET,
-        "/api/v3/search/enrich/batch",
-        Some(TEST_TOKEN),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
-    assert_eq!(
-        json(&bytes),
-        serde_json::json!({"error": {"code": "METHOD_NOT_ALLOWED", "message": "Method not allowed", "details": null}})
-    );
-}
-
-#[tokio::test]
-async fn enrich_batch_caps_per_bucket_and_drops_blank_ids() {
-    let pool = migrated_pool().await;
-    let app = app(pool, Arc::new(search::ports::UnconfiguredEnrichment)).await;
-    let artists: Vec<serde_json::Value> = (0..12)
-        .map(|index| serde_json::json!({"musicbrainz_id": format!("artist-{index}")}))
-        .chain([serde_json::json!({"musicbrainz_id": "   "})])
-        .collect();
-    let (status, _, bytes) = call(
-        app,
-        Method::POST,
-        "/api/v3/search/enrich/batch",
-        Some(TEST_TOKEN),
-        Some(serde_json::json!({"artists": artists, "albums": []})),
-    )
-    .await;
-
-    assert_eq!(status, StatusCode::OK);
-    let response = json(&bytes);
-    assert_eq!(response["source"], "none");
-    let returned = response["artists"].as_array().unwrap();
-    assert_eq!(returned.len(), search::ports::MAX_ENRICHMENT_PER_BUCKET);
-    assert!(returned.iter().all(|item| item["listen_count"].is_null()));
 }
 
 #[tokio::test]

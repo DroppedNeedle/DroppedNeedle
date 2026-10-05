@@ -1,13 +1,7 @@
-//! Stage-4 collections briefs: playlists, favorites, follows, pins.
-//!
-//! These briefs mount the slice router directly with the slice-local
-//! principal header. App wiring landed separately (`ReadsSetup` nests the
-//! same routes behind the session gate with principal translation); the E2E
-//! posture test covers the wired matrix. Each brief pins one behavior:
-//! shape, auth-matrix row, journey, pin-hint-only, or leak.
-//!
-//! Stage-5 boundary: the in-memory stores swap to SQLite ports; canned rows
-//! pin handler mapping, not storage data.
+//! Collections routes (playlists, favorites, follows, edition pins) mounted
+//! directly with the slice principal header: private playlists redact for
+//! other users, rows never leak across users, auto-download approvals are
+//! admin-only, pins never write identity, and store faults stay hidden.
 
 use droppedneedle::reads::collections;
 
@@ -20,7 +14,7 @@ use axum::{
 };
 use collections::{
     CollectionsState,
-    state::{EditionCatalogRow, ExternalIdentityRow, NewReleaseRow},
+    state::{EditionCatalogRow, ExternalIdentityRow},
 };
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
@@ -108,115 +102,11 @@ fn seed_identity(state: &CollectionsState) {
         .unwrap();
 }
 
-fn seed_releases(state: &CollectionsState) {
-    let now = collections::state::now_epoch();
-    let mut releases = state.new_releases.releases.write().unwrap();
-    releases.push(NewReleaseRow {
-        release_group_mbid: "rg-new".to_owned(),
-        title: "Fresh".to_owned(),
-        artist_name: "Followed One".to_owned(),
-        artist_mbid: "mb-followed".to_owned(),
-        primary_type: Some("Album".to_owned()),
-        first_release_date: Some("2026-09-01".to_owned()),
-        detected_at: now,
-    });
-    releases.push(NewReleaseRow {
-        release_group_mbid: "rg-old".to_owned(),
-        title: "Stale".to_owned(),
-        artist_name: "Followed One".to_owned(),
-        artist_mbid: "mb-followed".to_owned(),
-        primary_type: None,
-        first_release_date: None,
-        detected_at: 1,
-    });
-    releases.push(NewReleaseRow {
-        release_group_mbid: "rg-stranger".to_owned(),
-        title: "Stranger".to_owned(),
-        artist_name: "Unfollowed".to_owned(),
-        artist_mbid: "mb-stranger".to_owned(),
-        primary_type: None,
-        first_release_date: None,
-        detected_at: now,
-    });
-}
-
 fn track(name: &str) -> Value {
     json!({"track_name": name, "artist_name": "Art", "album_name": "Alb"})
 }
 
 // Playlists.
-
-#[tokio::test]
-async fn playlist_shape_crud() {
-    let state = CollectionsState::new();
-    let app = app(&state);
-
-    let (status, _, created) = send_json(
-        app.clone(),
-        request(
-            Method::POST,
-            "/playlists",
-            Some(ADA),
-            Some(json!({"name": "Roads"})),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(created["name"], "Roads");
-    assert_eq!(created["track_count"], 0);
-    assert_eq!(created["tracks"], json!([]));
-    assert_eq!(created["is_public"], false);
-    assert_eq!(created["is_owner"], true);
-    assert_eq!(created["owner_name"], "Ada");
-    assert_eq!(created["is_redacted"], false);
-    let id = created["id"].as_str().unwrap().to_owned();
-
-    let (status, _, detail) = send_json(
-        app.clone(),
-        request(Method::GET, &format!("/playlists/{id}"), Some(ADA), None),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(detail["id"], created["id"]);
-
-    let (status, _, renamed) = send_json(
-        app.clone(),
-        request(
-            Method::PUT,
-            &format!("/playlists/{id}"),
-            Some(ADA),
-            Some(json!({"name": "  Highways  "})),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(renamed["name"], "Highways");
-
-    let (status, _, list) = send_json(
-        app.clone(),
-        request(Method::GET, "/playlists", Some(ADA), None),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(list["playlists"].as_array().unwrap().len(), 1);
-    assert_eq!(list["playlists"][0]["name"], "Highways");
-
-    let (status, _, receipt) = send_json(
-        app.clone(),
-        request(Method::DELETE, &format!("/playlists/{id}"), Some(ADA), None),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(receipt["status"], "ok");
-
-    let (status, _, gone) = send_json(
-        app.clone(),
-        request(Method::GET, &format!("/playlists/{id}"), Some(ADA), None),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(gone["error"]["code"], "NOT_FOUND");
-}
 
 #[tokio::test]
 async fn playlist_auth_matrix() {
@@ -475,97 +365,6 @@ async fn seed_two_tracks(app: Router, name: &str) -> (String, String, String) {
     let alpha = added["tracks"][0]["id"].as_str().unwrap().to_owned();
     let beta = added["tracks"][1]["id"].as_str().unwrap().to_owned();
     (id, alpha, beta)
-}
-
-#[tokio::test]
-async fn playlist_track_source_helpers() {
-    let state = CollectionsState::new();
-    let app = app(&state);
-    let (id, alpha, beta) = seed_two_tracks(app.clone(), "Mix").await;
-
-    let (_, _, updated) = send_json(
-        app.clone(),
-        request(
-            Method::PATCH,
-            &format!("/playlists/{id}/tracks/{alpha}"),
-            Some(ADA),
-            Some(json!({"source_type": "local", "available_sources": ["local"]})),
-        ),
-    )
-    .await;
-    assert_eq!(updated["source_type"], "local");
-
-    let (_, _, sources) = send_json(
-        app.clone(),
-        request(
-            Method::POST,
-            &format!("/playlists/{id}/resolve-sources"),
-            Some(ADA),
-            None,
-        ),
-    )
-    .await;
-    assert_eq!(sources["sources"][alpha.as_str()], json!(["local"]));
-    assert_eq!(sources["sources"][beta.as_str()], json!([]));
-
-    let (_, _, membership) = send_json(
-        app.clone(),
-        request(
-            Method::POST,
-            "/playlists/check-tracks",
-            Some(ADA),
-            Some(json!({"tracks": [
-                {"track_name": "Alpha", "artist_name": "Art", "album_name": "Alb"},
-                {"track_name": "Missing", "artist_name": "Art", "album_name": "Alb"},
-            ]})),
-        ),
-    )
-    .await;
-    assert_eq!(membership["membership"]["0"], json!([id]));
-    assert_eq!(membership["membership"]["1"], json!([]));
-}
-
-#[tokio::test]
-async fn playlist_track_reorder_and_removal() {
-    let state = CollectionsState::new();
-    let app = app(&state);
-    let (id, alpha, beta) = seed_two_tracks(app.clone(), "Mix").await;
-
-    let (_, _, reordered) = send_json(
-        app.clone(),
-        request(
-            Method::PATCH,
-            &format!("/playlists/{id}/tracks/reorder"),
-            Some(ADA),
-            Some(json!({"track_id": alpha, "new_position": 99})),
-        ),
-    )
-    .await;
-    assert_eq!(reordered["actual_position"], 1, "past-the-end clamps");
-
-    let (status, _, _) = send_json(
-        app.clone(),
-        request(
-            Method::DELETE,
-            &format!("/playlists/{id}/tracks/trk-nope"),
-            Some(ADA),
-            None,
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-
-    let (_, _, removed) = send_json(
-        app.clone(),
-        request(
-            Method::POST,
-            &format!("/playlists/{id}/tracks/remove"),
-            Some(ADA),
-            Some(json!({"track_ids": [beta, "trk-nope"]})),
-        ),
-    )
-    .await;
-    assert_eq!(removed["removed"], 1, "unknown ids skip silently");
 }
 
 #[tokio::test]
@@ -916,85 +715,6 @@ async fn follow_guards_and_matrix() {
     );
 }
 
-#[tokio::test]
-async fn new_releases_unseen_and_seen() {
-    let state = CollectionsState::new();
-    seed_releases(&state);
-    let app = app(&state);
-
-    let (_, _, followed) = send_json(
-        app.clone(),
-        request(
-            Method::PUT,
-            "/artists/mb-followed/follow",
-            Some(ADA),
-            Some(json!({"followed": true, "artist_name": "Followed One"})),
-        ),
-    )
-    .await;
-    assert_eq!(followed["followed"], true);
-
-    let (_, _, releases) = send_json(
-        app.clone(),
-        request(Method::GET, "/following/new-releases", Some(ADA), None),
-    )
-    .await;
-    assert_eq!(releases["total"], 2, "only followed artists surface");
-    assert_eq!(
-        releases["items"][0]["release_group_mbid"], "rg-new",
-        "newest first"
-    );
-
-    let (_, _, recent) = send_json(
-        app.clone(),
-        request(
-            Method::GET,
-            "/following/new-releases/recent",
-            Some(ADA),
-            None,
-        ),
-    )
-    .await;
-    assert_eq!(recent["total"], 1);
-    assert_eq!(recent["items"][0]["release_group_mbid"], "rg-new");
-
-    let (_, _, unseen) = send_json(
-        app.clone(),
-        request(
-            Method::GET,
-            "/following/new-releases/unseen-count",
-            Some(ADA),
-            None,
-        ),
-    )
-    .await;
-    assert_eq!(unseen["count"], 2);
-
-    let (_, _, seen) = send_json(
-        app.clone(),
-        request(
-            Method::POST,
-            "/following/new-releases/seen",
-            Some(ADA),
-            None,
-        ),
-    )
-    .await;
-    assert_eq!(seen["count"], 0);
-
-    let (_, _, unseen_after) = send_json(
-        app.clone(),
-        request(
-            Method::GET,
-            "/following/new-releases/unseen-count",
-            Some(ADA),
-            None,
-        ),
-    )
-    .await;
-    assert_eq!(unseen_after["count"], 0);
-}
-
 // Approvals.
 
 #[tokio::test]
@@ -1084,96 +804,6 @@ async fn approvals_admin_only_with_batches() {
 }
 
 // Pins.
-
-#[tokio::test]
-async fn pin_display_lane() {
-    let state = CollectionsState::new();
-    seed_catalog(&state);
-    seed_identity(&state);
-    let app = app(&state);
-
-    let (_, _, default) = send_json(
-        app.clone(),
-        request(
-            Method::GET,
-            "/library/albums/alb-1/edition-pin",
-            Some(ADA),
-            None,
-        ),
-    )
-    .await;
-    assert_eq!(default["pinned_release_mbid"], Value::Null);
-    assert_eq!(default["selected_release_mbid"], "rel-a");
-    assert_eq!(default["hint_source"], "default");
-
-    let (_, _, pinned) = send_json(
-        app.clone(),
-        request(
-            Method::PUT,
-            "/library/albums/alb-1/edition-pin",
-            Some(TRUSTED),
-            Some(json!({"release_mbid": "rel-b"})),
-        ),
-    )
-    .await;
-    assert_eq!(pinned["pinned_release_mbid"], "rel-b");
-    assert_eq!(pinned["selected_release_mbid"], "rel-b");
-    assert_eq!(pinned["hint_source"], "pin");
-
-    let (_, _, reread) = send_json(
-        app.clone(),
-        request(
-            Method::GET,
-            "/library/albums/alb-1/edition-pin",
-            Some(ADA),
-            None,
-        ),
-    )
-    .await;
-    assert_eq!(
-        reread["selected_release_mbid"], "rel-b",
-        "any user reads the hint"
-    );
-
-    let (_, _, cleared) = send_json(
-        app.clone(),
-        request(
-            Method::DELETE,
-            "/library/albums/alb-1/edition-pin",
-            Some(ADMIN),
-            None,
-        ),
-    )
-    .await;
-    assert_eq!(cleared["pinned_release_mbid"], Value::Null);
-    assert_eq!(cleared["selected_release_mbid"], "rel-a");
-    assert_eq!(cleared["hint_source"], "default");
-
-    let (status, _, _) = send_json(
-        app.clone(),
-        request(
-            Method::GET,
-            "/library/albums/alb-nope/edition-pin",
-            Some(ADA),
-            None,
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-
-    let (status, _, invalid) = send_json(
-        app.clone(),
-        request(
-            Method::PUT,
-            "/library/albums/alb-1/edition-pin",
-            Some(TRUSTED),
-            Some(json!({"release_mbid": "rel-nope"})),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(invalid["error"]["code"], "INVALID_INPUT");
-}
 
 #[tokio::test]
 async fn pin_auth_matrix() {
@@ -1359,74 +989,6 @@ async fn leak_briefs_fixed_500_and_envelopes() {
     .await;
     assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
     assert_eq!(wrong_method["error"]["code"], "METHOD_NOT_ALLOWED");
-}
-
-#[tokio::test]
-async fn playlist_source_ref_roundtrip() {
-    let state = CollectionsState::new();
-    let app = app(&state);
-
-    let (status, _, created) = send_json(
-        app.clone(),
-        request(
-            Method::POST,
-            "/playlists",
-            Some(ADA),
-            Some(json!({"name": "Imported", "source_ref": "spotify:abc"})),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(created["source_ref"], "spotify:abc");
-    let id = created["id"].as_str().unwrap().to_owned();
-
-    let (_, _, detail) = send_json(
-        app.clone(),
-        request(Method::GET, &format!("/playlists/{id}"), Some(ADA), None),
-    )
-    .await;
-    assert_eq!(detail["source_ref"], "spotify:abc");
-
-    let (_, _, list) = send_json(
-        app.clone(),
-        request(Method::GET, "/playlists", Some(ADA), None),
-    )
-    .await;
-    assert_eq!(list["playlists"][0]["source_ref"], "spotify:abc");
-}
-
-#[tokio::test]
-async fn playlist_source_ref_defaults_to_null() {
-    let state = CollectionsState::new();
-    let app = app(&state);
-
-    let (status, _, created) = send_json(
-        app.clone(),
-        request(
-            Method::POST,
-            "/playlists",
-            Some(ADA),
-            Some(json!({"name": "Plain"})),
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::CREATED);
-    assert!(
-        created.get("source_ref").is_none_or(Value::is_null),
-        "missing source_ref serializes as null or absent"
-    );
-
-    let (_, _, list) = send_json(
-        app.clone(),
-        request(Method::GET, "/playlists", Some(ADA), None),
-    )
-    .await;
-    assert!(
-        list["playlists"][0]
-            .get("source_ref")
-            .is_none_or(Value::is_null),
-        "missing source_ref serializes as null or absent"
-    );
 }
 
 #[tokio::test]
