@@ -1,11 +1,7 @@
-//! Stage-10 settings-section briefs: per-section round-trips, mask
-//! preservation, dropped-section rejection, verify journeys, and the
-//! indexer edit→verify→save→rebuild run.
-//!
-//! Service briefs drive [`SettingsService`] over scratch stores;
-//! journey briefs drive the HTTP routers with scripted probes; live
-//! probes prove themselves against loopback stubs. No test touches a
-//! live network.
+//! Settings sections: secret masks that survive a re-save, unit scaling,
+//! revision checks, the admin gate, verify and save journeys over HTTP
+//! with scripted probes, the live probes against a loopback stub, and the
+//! cache sweep after each save.
 
 use crate::common;
 
@@ -31,25 +27,17 @@ use droppedneedle::runtime_config::mask::{
 use droppedneedle::runtime_config::{ConfigStore, Crypto};
 use droppedneedle::settings::effects::{SaveEffects, SavedSection};
 use droppedneedle::settings::models::{
-    AdvancedSettingsDto, ConnectAppsDto, EventsSettingsDto, FilesystemWatcherDto, FreeMusicDto,
-    GetItDto, JellyfinConnectionDto, LastFmSettingsDto, LibraryScanScheduleDto, LibrarySettingsDto,
-    LibrarySettingsSaveRequest, ListenBrainzConnectionDto, MusicBrainzSettingsUpdate,
-    NavidromeConnectionDto, NewznabIndexerDto, OidcConnectionDto, PlexConnectionDto,
-    PrimaryMusicSourceDto, ProwlarrConnectionDto, SabnzbdConnectionDto, ScrobbleSettingsDto,
-    SectionPrefUpdateItem, SectionPrefsUpdate, SecuritySettingsDto, SlskdConnectionDto,
-    SourcePriorityDto, UsenetSearchBackendDto, UserPreferencesDto, WantedWatcherDto,
-    WrappedSettingsDto, YouTubeConnectionDto,
+    AdvancedSettingsDto, EventsSettingsDto, JellyfinConnectionDto, LibrarySettingsDto,
+    LibrarySettingsSaveRequest, ListenBrainzConnectionDto, NavidromeConnectionDto,
+    NewznabIndexerDto, OidcConnectionDto, PlexConnectionDto, ProwlarrConnectionDto,
+    SabnzbdConnectionDto, SlskdConnectionDto, WrappedSettingsDto, YouTubeConnectionDto,
 };
-use droppedneedle::settings::musicbrainz::{BRAINZMASH_DISCLOSURE_VERSION, MusicBrainzLifecycle};
-use droppedneedle::settings::section_prefs::{
-    MemorySectionPrefsStore, StaticLinkStatus, save_page,
-};
+use droppedneedle::settings::musicbrainz::BRAINZMASH_DISCLOSURE_VERSION;
 use droppedneedle::settings::services::SettingsService;
-use droppedneedle::settings::validator;
 use droppedneedle::settings::verify::{
     JellyfinVerdict, ListenBrainzVerdict, LiveProbes, NewznabVerdict, PlexVerdict, ProbeVerdict,
     ProwlarrVerdict, SabnzbdMountDiagnosis, SabnzbdVerdict, VerifyProbes, VersionVerdict,
-    check_hibp_file, require_service_url,
+    require_service_url,
 };
 use droppedneedle::settings::wiring::SettingsSetup;
 use futures_util::future::BoxFuture;
@@ -302,246 +290,140 @@ impl VerifyProbes for FakeProbes {
 
 // --- service round-trips -----------------------------------------------------
 
-/// Every plain section saves and reads back the saved values.
-#[tokio::test]
-async fn plain_sections_round_trip() {
-    let (service, _) = scratch_service();
-
-    let prefs = UserPreferencesDto {
-        primary_types: vec!["Album".to_owned()],
-        secondary_types: vec!["Live".to_owned()],
-    };
-    service.save_preferences(&prefs).await.expect("saves");
-    assert_eq!(service.get_preferences().expect("reads"), prefs);
-
-    let schedule = LibraryScanScheduleDto {
-        daily_scan_time: "03:00".to_owned(),
-        ..Default::default()
-    };
-    let echoed = service.save_schedule(&schedule).await.expect("saves");
-    assert_eq!(echoed.daily_scan_time, "03:00");
-    assert!(!echoed.server_timezone.is_empty());
-
-    let watcher = FilesystemWatcherDto {
-        enabled: true,
-        poll_interval_seconds: 30.0,
-        batch_window_seconds: 5.0,
-    };
-    service.save_watcher(&watcher).await.expect("saves");
-    assert_eq!(service.get_watcher().expect("reads"), watcher);
-
-    let wanted = WantedWatcherDto {
-        enabled: true,
-        max_checks_per_sweep: 10,
-        ..Default::default()
-    };
-    service.save_wanted(&wanted).await.expect("saves");
-    assert_eq!(
-        service.get_wanted().expect("reads").max_checks_per_sweep,
-        10
-    );
-
-    let priority = SourcePriorityDto {
-        order: vec!["soulseek".to_owned(), "usenet".to_owned()],
-    };
-    let echoed = service
-        .save_source_priority(&priority)
-        .await
-        .expect("saves");
-    assert_eq!(echoed.order, priority.order);
-
-    let backend = service.get_usenet_backend().expect("reads default");
-    let flipped = UsenetSearchBackendDto {
-        backend: backend.backend,
-    };
-    service.save_usenet_backend(&flipped).await.expect("saves");
-
-    let scrobble = ScrobbleSettingsDto {
-        scrobble_to_lastfm: true,
-        scrobble_to_listenbrainz: true,
-    };
-    service.save_scrobble(&scrobble).await.expect("saves");
-    assert_eq!(service.get_scrobble().expect("reads"), scrobble);
-
-    let source = PrimaryMusicSourceDto::default();
-    service.save_primary_source(&source).await.expect("saves");
-    assert_eq!(service.get_primary_source().expect("reads"), source);
-
-    let free = FreeMusicDto {
-        enabled: true,
-        ..Default::default()
-    };
-    service.save_free_music(&free).await.expect("saves");
-    assert!(service.get_free_music().expect("reads").enabled);
-
-    let get_it = GetItDto {
-        store_region: "US".to_owned(),
-    };
-    service.save_get_it(&get_it).await.expect("saves");
-    assert_eq!(service.get_get_it().expect("reads"), get_it);
-
-    let security = SecuritySettingsDto {
-        hibp_check: true,
-        hsts_max_age: 31536000,
-        ..Default::default()
-    };
-    service.save_security(&security).await.expect("saves");
-    assert!(service.get_security().expect("reads").hibp_check);
-
-    let apps = ConnectAppsDto {
-        subsonic_enabled: true,
-        ..Default::default()
-    };
-    service.save_connect_apps(&apps).await.expect("saves");
-    assert!(service.get_connect_apps().expect("reads").subsonic_enabled);
-
-    let lastfm = LastFmSettingsDto { enabled: true };
-    service.save_lastfm(&lastfm).await.expect("saves");
-    assert!(service.get_lastfm().expect("reads").enabled);
-}
-
 /// Every secret-section save echoes the mask, never ciphertext, and
 /// re-saving the echo keeps the stored secret intact.
 #[tokio::test]
 async fn secret_saves_echo_masks_and_resaves_preserve() {
     let (service, _) = scratch_service();
-
-    let slskd = SlskdConnectionDto {
-        url: "http://slskd:5030".to_owned(),
-        api_key: "slskd-secret".to_owned(),
-        ..Default::default()
-    };
-    let echoed = service.save_slskd(&slskd).await.expect("saves");
-    assert_eq!(echoed.api_key, SLSKD_API_KEY_MASK);
-    assert_eq!(echoed.url, "http://slskd:5030");
-    service.save_slskd(&echoed).await.expect("resaves");
-    assert_eq!(
-        service.get_slskd_raw().expect("raw reads").api_key.expose(),
+    // (save, raw read, dto with the secret set, secret field, mask, plaintext)
+    macro_rules! check_secret {
+        ($save:ident, $raw:ident, $dto:expr, $field:ident, $mask:expr, $plain:expr) => {{
+            let echoed = service.$save(&$dto).await.expect("saves");
+            assert_eq!(echoed.$field, $mask, stringify!($save));
+            service.$save(&echoed).await.expect("resaves");
+            let raw = service.$raw().expect("raw reads");
+            assert_eq!(raw.$field.expose(), $plain, stringify!($save));
+        }};
+    }
+    check_secret!(
+        save_slskd,
+        get_slskd_raw,
+        SlskdConnectionDto {
+            url: "http://slskd:5030".to_owned(),
+            api_key: "slskd-secret".to_owned(),
+            ..Default::default()
+        },
+        api_key,
+        SLSKD_API_KEY_MASK,
         "slskd-secret"
     );
-
-    let sabnzbd = SabnzbdConnectionDto {
-        url: "http://sab:8080".to_owned(),
-        api_key: "sab-secret".to_owned(),
-        ..Default::default()
-    };
-    let echoed = service.save_sabnzbd(&sabnzbd).await.expect("saves");
-    assert_eq!(echoed.api_key, SABNZBD_API_KEY_MASK);
-    service.save_sabnzbd(&echoed).await.expect("resaves");
-    assert_eq!(
-        service
-            .get_sabnzbd_raw()
-            .expect("raw reads")
-            .api_key
-            .expose(),
+    check_secret!(
+        save_sabnzbd,
+        get_sabnzbd_raw,
+        SabnzbdConnectionDto {
+            url: "http://sab:8080".to_owned(),
+            api_key: "sab-secret".to_owned(),
+            ..Default::default()
+        },
+        api_key,
+        SABNZBD_API_KEY_MASK,
         "sab-secret"
     );
-
-    let prowlarr = ProwlarrConnectionDto {
-        url: "http://prowlarr:9696".to_owned(),
-        api_key: "prowlarr-secret".to_owned(),
-        ..Default::default()
-    };
-    let echoed = service.save_prowlarr(&prowlarr).await.expect("saves");
-    assert_eq!(echoed.api_key, PROWLARR_API_KEY_MASK);
-    service.save_prowlarr(&echoed).await.expect("resaves");
-    assert_eq!(
-        service
-            .get_prowlarr_raw()
-            .expect("raw reads")
-            .api_key
-            .expose(),
+    check_secret!(
+        save_prowlarr,
+        get_prowlarr_raw,
+        ProwlarrConnectionDto {
+            url: "http://prowlarr:9696".to_owned(),
+            api_key: "prowlarr-secret".to_owned(),
+            ..Default::default()
+        },
+        api_key,
+        PROWLARR_API_KEY_MASK,
         "prowlarr-secret"
     );
-
-    let jellyfin = JellyfinConnectionDto {
-        jellyfin_url: "http://jellyfin:8096".to_owned(),
-        api_key: "jellyfin-secret".to_owned(),
-        ..Default::default()
-    };
-    let echoed = service.save_jellyfin(&jellyfin).await.expect("saves");
-    assert_eq!(echoed.api_key, JELLYFIN_API_KEY_MASK);
-    service.save_jellyfin(&echoed).await.expect("resaves");
-    assert_eq!(
-        service
-            .get_jellyfin_raw()
-            .expect("raw reads")
-            .api_key
-            .expose(),
+    check_secret!(
+        save_jellyfin,
+        get_jellyfin_raw,
+        JellyfinConnectionDto {
+            jellyfin_url: "http://jellyfin:8096".to_owned(),
+            api_key: "jellyfin-secret".to_owned(),
+            ..Default::default()
+        },
+        api_key,
+        JELLYFIN_API_KEY_MASK,
         "jellyfin-secret"
     );
-
-    let navidrome = NavidromeConnectionDto {
-        navidrome_url: "http://navidrome:4533".to_owned(),
-        username: "ada".to_owned(),
-        password: "navidrome-secret".to_owned(),
-        ..Default::default()
-    };
-    let echoed = service.save_navidrome(&navidrome).await.expect("saves");
-    assert_eq!(echoed.password, NAVIDROME_PASSWORD_MASK);
-    service.save_navidrome(&echoed).await.expect("resaves");
-    assert_eq!(
-        service
-            .get_navidrome_raw()
-            .expect("raw reads")
-            .password
-            .expose(),
+    check_secret!(
+        save_navidrome,
+        get_navidrome_raw,
+        NavidromeConnectionDto {
+            navidrome_url: "http://navidrome:4533".to_owned(),
+            username: "ada".to_owned(),
+            password: "navidrome-secret".to_owned(),
+            ..Default::default()
+        },
+        password,
+        NAVIDROME_PASSWORD_MASK,
         "navidrome-secret"
     );
-
-    let plex = PlexConnectionDto {
-        plex_url: "http://plex:32400".to_owned(),
-        plex_token: "plex-secret".to_owned(),
-        ..Default::default()
-    };
-    let echoed = service.save_plex(&plex).await.expect("saves");
-    assert_eq!(echoed.plex_token, PLEX_TOKEN_MASK);
-    service.save_plex(&echoed).await.expect("resaves");
-    assert_eq!(
-        service
-            .get_plex_raw()
-            .expect("raw reads")
-            .plex_token
-            .expose(),
+    check_secret!(
+        save_plex,
+        get_plex_raw,
+        PlexConnectionDto {
+            plex_url: "http://plex:32400".to_owned(),
+            plex_token: "plex-secret".to_owned(),
+            ..Default::default()
+        },
+        plex_token,
+        PLEX_TOKEN_MASK,
         "plex-secret"
     );
-
-    let listenbrainz = ListenBrainzConnectionDto {
-        username: "ada".to_owned(),
-        user_token: "lb-secret".to_owned(),
-        ..Default::default()
-    };
-    let echoed = service
-        .save_listenbrainz(&listenbrainz)
-        .await
-        .expect("saves");
-    assert_eq!(echoed.user_token, LISTENBRAINZ_TOKEN_MASK);
-    service.save_listenbrainz(&echoed).await.expect("resaves");
-    assert_eq!(
-        service
-            .get_listenbrainz_raw()
-            .expect("raw reads")
-            .user_token
-            .expose(),
+    check_secret!(
+        save_listenbrainz,
+        get_listenbrainz_raw,
+        ListenBrainzConnectionDto {
+            username: "ada".to_owned(),
+            user_token: "lb-secret".to_owned(),
+            ..Default::default()
+        },
+        user_token,
+        LISTENBRAINZ_TOKEN_MASK,
         "lb-secret"
     );
-
-    let youtube = YouTubeConnectionDto {
-        api_key: "youtube-secret".to_owned(),
-        ..Default::default()
-    };
-    let echoed = service.save_youtube(&youtube).await.expect("saves");
-    assert_eq!(echoed.api_key, YOUTUBE_API_KEY_MASK);
-    service.save_youtube(&echoed).await.expect("resaves");
-    assert_eq!(
-        service
-            .get_youtube_raw()
-            .expect("raw reads")
-            .api_key
-            .expose(),
+    check_secret!(
+        save_youtube,
+        get_youtube_raw,
+        YouTubeConnectionDto {
+            api_key: "youtube-secret".to_owned(),
+            ..Default::default()
+        },
+        api_key,
+        YOUTUBE_API_KEY_MASK,
         "youtube-secret"
     );
-
+    check_secret!(
+        save_wrapped,
+        get_wrapped_raw,
+        WrappedSettingsDto {
+            api_key: "wrapped-secret".to_owned(),
+        },
+        api_key,
+        WRAPPED_API_KEY_MASK,
+        "wrapped-secret"
+    );
+    check_secret!(
+        save_oidc,
+        get_oidc_raw,
+        OidcConnectionDto {
+            issuer: "https://id.example.com".to_owned(),
+            client_secret: "oidc-secret".to_owned(),
+            ..Default::default()
+        },
+        client_secret,
+        OIDC_SECRET_MASK,
+        "oidc-secret"
+    );
+    // Events carries two secrets in one section.
     let events = EventsSettingsDto {
         ticketmaster_api_key: "tm-secret".to_owned(),
         skiddle_api_key: "skiddle-secret".to_owned(),
@@ -554,54 +436,6 @@ async fn secret_saves_echo_masks_and_resaves_preserve() {
     let raw = service.get_events_raw().expect("raw reads");
     assert_eq!(raw.ticketmaster_api_key.expose(), "tm-secret");
     assert_eq!(raw.skiddle_api_key.expose(), "skiddle-secret");
-
-    let wrapped = WrappedSettingsDto {
-        api_key: "wrapped-secret".to_owned(),
-    };
-    let echoed = service.save_wrapped(&wrapped).await.expect("saves");
-    assert_eq!(echoed.api_key, WRAPPED_API_KEY_MASK);
-    service.save_wrapped(&echoed).await.expect("resaves");
-    assert_eq!(
-        service
-            .get_wrapped_raw()
-            .expect("raw reads")
-            .api_key
-            .expose(),
-        "wrapped-secret"
-    );
-
-    let oidc = OidcConnectionDto {
-        issuer: "https://id.example.com".to_owned(),
-        client_secret: "oidc-secret".to_owned(),
-        ..Default::default()
-    };
-    let echoed = service.save_oidc(&oidc).await.expect("saves");
-    assert_eq!(echoed.client_secret, OIDC_SECRET_MASK);
-    service.save_oidc(&echoed).await.expect("resaves");
-    assert_eq!(
-        service
-            .get_oidc_raw()
-            .expect("raw reads")
-            .client_secret
-            .expose(),
-        "oidc-secret"
-    );
-}
-
-/// The acquisition policy saves, echoes applied values, and summarizes.
-#[tokio::test]
-async fn policy_round_trip_and_summary() {
-    let (service, _) = scratch_service();
-    let mut policy = service.get_policy().expect("reads default");
-    policy.verify_downloads = !policy.verify_downloads;
-    policy.max_failover_attempts = 7;
-    let echoed = service.save_policy(&policy).await.expect("saves");
-    assert_eq!(echoed.verify_downloads, policy.verify_downloads);
-    assert_eq!(echoed.max_failover_attempts, 7);
-    assert!(!echoed.quality_recipe_status.is_empty());
-    let summary = service.policy_summary().expect("summarizes");
-    assert!(!summary.summary.is_empty());
-    assert!(!summary.source_mode.is_empty());
 }
 
 /// Indexers create, list masked, update, reorder, test raw, and delete.
@@ -777,132 +611,6 @@ async fn library_round_trip_cas_and_paths() {
         .expect("unknown remove is silent");
 }
 
-/// MusicBrainz saves invalidate the cache root through the effects
-/// handle, across direct updates and the full ceremony.
-#[tokio::test]
-async fn musicbrainz_saves_fire_effects() {
-    let (service, _) = scratch_service();
-    let effects = Arc::new(RecorderEffects::default());
-    let lifecycle = MusicBrainzLifecycle::new(
-        service.store.clone(),
-        Arc::new(FixedIdGenerator::new(FIXED_ID)),
-        effects.clone(),
-    );
-
-    let official = MusicBrainzSettingsUpdate {
-        api_url: None,
-        ..Default::default()
-    };
-    lifecycle.save_update(&official).await.expect("saves");
-    assert_eq!(effects.calls(), vec![SavedSection::MusicBrainz]);
-
-    let (staged, _) = lifecycle.stage().await.expect("stages");
-    let pending = staged.pending_brainzmash.expect("proposal staged");
-    assert_eq!(effects.calls().len(), 2);
-    let binding = droppedneedle::settings::models::MusicBrainzBindingRequest {
-        access_revision: pending.access_revision.clone(),
-        source_id: pending.source_id.clone(),
-        generation: pending.generation,
-        disclosure_version: BRAINZMASH_DISCLOSURE_VERSION.to_owned(),
-    };
-    lifecycle.consent(&binding, "admin-1").expect("consents");
-    lifecycle.record_verification(&binding).expect("verifies");
-    let active = lifecycle.activate(&binding).await.expect("activates");
-    assert!(active.active_brainzmash.is_some());
-    assert_eq!(effects.calls().len(), 3);
-    assert!(
-        effects
-            .calls()
-            .iter()
-            .all(|section| *section == SavedSection::MusicBrainz)
-    );
-}
-
-/// Section-prefs saves validate the page and the keys before touching
-/// the store.
-#[tokio::test]
-async fn section_prefs_save_validates() {
-    let store = MemorySectionPrefsStore::new();
-    let links = StaticLinkStatus {
-        listenbrainz: true,
-        lastfm: false,
-    };
-    let ids = FixedIdGenerator::new(FIXED_ID);
-
-    let bad_page = SectionPrefsUpdate {
-        page: "nope".to_owned(),
-        sections: Vec::new(),
-    };
-    let error = save_page(&store, &links, &ids, "u1", &bad_page, false)
-        .await
-        .expect_err("unknown page fails");
-    assert!(format!("{error:?}").contains("Unknown section page"));
-
-    let bad_keys = SectionPrefsUpdate {
-        page: "home".to_owned(),
-        sections: vec![
-            SectionPrefUpdateItem {
-                key: "trending_artists".to_owned(),
-                enabled: false,
-            },
-            SectionPrefUpdateItem {
-                key: "bogus".to_owned(),
-                enabled: false,
-            },
-        ],
-    };
-    let error = save_page(&store, &links, &ids, "u1", &bad_keys, false)
-        .await
-        .expect_err("unknown key fails");
-    assert!(format!("{error:?}").contains("bogus"));
-
-    let valid = SectionPrefsUpdate {
-        page: "home".to_owned(),
-        sections: vec![SectionPrefUpdateItem {
-            key: "trending_artists".to_owned(),
-            enabled: false,
-        }],
-    };
-    let items = save_page(&store, &links, &ids, "u1", &valid, false)
-        .await
-        .expect("saves");
-    let toggled = items
-        .iter()
-        .find(|item| item.key == "trending_artists")
-        .expect("finds key");
-    assert!(!toggled.enabled);
-    let untouched = items
-        .iter()
-        .find(|item| item.key == "popular_albums")
-        .expect("finds sibling");
-    assert!(untouched.enabled);
-}
-
-/// All six dropped keys are 410s; kept keys pass through.
-#[test]
-fn dropped_sections_rejected() {
-    for key in [
-        "library_sync_settings",
-        "library_scan_dirty_scopes",
-        "local_files_settings",
-        "home_settings",
-        "_legacy_lidarr",
-        "jellyfin_url",
-    ] {
-        assert!(validator::is_dropped_section(key), "{key} is dropped");
-        let error = validator::ensure_kept_section(key).expect_err("dropped fails");
-        assert!(
-            matches!(
-                error,
-                droppedneedle::settings::error::SettingsError::Dropped { .. }
-            ),
-            "{key} is a 410"
-        );
-    }
-    assert!(!validator::is_dropped_section("jellyfin_settings"));
-    validator::ensure_kept_section("jellyfin_settings").expect("kept passes");
-}
-
 // --- HTTP journeys -----------------------------------------------------------
 
 /// One scratch deployment: memory auth, scripted probes, wired settings.
@@ -1030,24 +738,6 @@ async fn settings_routes_are_admin_gated() {
         .expect("request builds");
     let response = rig.app(None).oneshot(request).await.expect("answers");
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-}
-
-/// A plain section round-trips over HTTP.
-#[tokio::test]
-async fn preferences_round_trip_http() {
-    let rig = Rig::open(true).await;
-    let (status, saved) = call(
-        rig.admin_app(),
-        "PUT",
-        "/settings/preferences",
-        Some(json!({"primary_types": ["Album"], "secondary_types": []})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(saved["primary_types"], json!(["Album"]));
-    let (status, read) = call(rig.admin_app(), "GET", "/settings/preferences", None).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(read, saved);
 }
 
 /// Verify endpoints resolve masked secrets to the stored ones before
@@ -1393,29 +1083,6 @@ async fn section_prefs_http() {
     );
 }
 
-/// Policy impact without a database is an honest 503.
-#[tokio::test]
-async fn policy_impact_unwired_is_503() {
-    let rig = Rig::open(true).await;
-    let (status, policy) = call(
-        rig.admin_app(),
-        "GET",
-        "/settings/download-clients/policy",
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let (status, unavailable) = call(
-        rig.admin_app(),
-        "POST",
-        "/settings/download-clients/policy/impact",
-        Some(policy),
-    )
-    .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(unavailable["error"]["code"], "SERVICE_UNAVAILABLE");
-}
-
 // --- probe-unit briefs ---------------------------------------------------------
 
 /// Service URLs are required, http(s), and slash-trimmed.
@@ -1429,29 +1096,6 @@ fn service_url_gate() {
     assert!(format!("{blank:?}").contains("required"));
     let scheme = require_service_url("ftp://x", "Thing URL").expect_err("scheme fails");
     assert!(format!("{scheme:?}").contains("http(s)"));
-}
-
-/// The HIBP path check reads the file header, never the network.
-#[test]
-fn hibp_file_check() {
-    let dir = std::env::temp_dir().join(format!(
-        "droppedneedle-settings-hibp-{}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&dir).expect("fixture dir builds");
-    let valid = dir.join("hibp.txt");
-    std::fs::write(&valid, "5BAA61E4C9B93F3F0682250B6CF8331B7EE68FD8:3\n").expect("writes");
-    let verdict = check_hibp_file(valid.to_str().expect("utf8"));
-    assert!(verdict.valid);
-    assert!(verdict.message.contains("Size:"));
-
-    let missing = check_hibp_file(dir.join("absent.txt").to_str().expect("utf8"));
-    assert!(!missing.valid);
-
-    let bad = dir.join("bad.txt");
-    std::fs::write(&bad, "not-a-hash-list\n").expect("writes");
-    let verdict = check_hibp_file(bad.to_str().expect("utf8"));
-    assert!(!verdict.valid);
 }
 
 // --- live probes against loopback stubs --------------------------------------

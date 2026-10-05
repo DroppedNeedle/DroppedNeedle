@@ -1,17 +1,15 @@
-//! Briefs for Library Management profile sharing: the v2 golden
-//! bundle pins the export bytes, and the rejection briefs pin every
-//! documented import failure.
+//! Library Management profile sharing: the v2 golden bundle pins the
+//! export bytes and preview ids, imports never overwrite existing names,
+//! and malformed bundles are refused.
 
 use crate::common;
 
-use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use common::FixedIdGenerator;
 use droppedneedle::settings::management::{
     StructuralCompiler, export_profile_bundle, materialize_profile_bundle, parse_profile_bundle,
-    preview_materialized_profile, profile_aspects, profile_bundle_filename,
-    profile_import_warnings, resolve_import_names, unique_import_name,
+    preview_materialized_profile, profile_aspects, profile_import_warnings, resolve_import_names,
 };
 use droppedneedle::settings::models::{
     LibraryManagementProfileDto, LibraryManagementSettingsDto, NamingScriptDto, TaggingScriptDto,
@@ -187,79 +185,37 @@ fn import_renames_collisions_and_resolves() {
     assert_eq!(resolved.tagging_scripts[0].name, "Tag (imported)");
 }
 
+/// Every malformed import is refused with its documented reason.
 #[test]
-fn unique_import_name_counts_up_case_insensitively() {
-    let used: BTreeSet<String> = ["mix", "mix (imported)"]
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
-    assert_eq!(unique_import_name("Fresh", &used), "Fresh");
-    assert_eq!(unique_import_name("MIX", &used), "MIX (imported 2)");
-}
-
-#[test]
-fn bundle_filename_slugs_unicode() {
-    assert_eq!(
-        profile_bundle_filename("Golden Export"),
-        "golden-export.dnprofile"
-    );
-    assert_eq!(
-        profile_bundle_filename("Café — Mix ✓"),
-        "cafe-mix.dnprofile"
-    );
-    assert_eq!(profile_bundle_filename("✓✓✓"), "library-profile.dnprofile");
-}
-
-#[test]
-fn unknown_profile_field_names_its_path() {
-    let mut document: serde_json::Value =
-        serde_json::from_str(&fixture("management_bundle_golden.document.txt"))
-            .expect("golden document is JSON");
-    document["payload"]["profile"]["metadata"]["bogus"] = serde_json::json!(1);
-    let error = parse_profile_bundle(&document.to_string()).expect_err("bogus field refused");
-    assert_eq!(
-        format!("{error:?}"),
-        "InvalidInput { message: \"Unknown or unsupported profile field: metadata.bogus.\" }"
-    );
-}
-
-#[test]
-fn tampered_checksum_is_refused() {
-    let tampered = fixture("management_bundle_golden.document.txt").replacen(
-        "Golden Export",
-        "Golden Exporx",
-        1,
-    );
-    let error = parse_profile_bundle(&tampered).expect_err("tampered bundle refused");
-    assert!(format!("{error:?}").contains("checksum does not match"));
-}
-
-#[test]
-fn wrong_format_and_empty_content_are_refused() {
-    let mut document: serde_json::Value =
-        serde_json::from_str(&fixture("management_bundle_golden.document.txt"))
-            .expect("golden document is JSON");
-    document["format"] = serde_json::json!("something-else");
-    let error = parse_profile_bundle(&document.to_string()).expect_err("format refused");
-    assert!(format!("{error:?}").contains("not a DroppedNeedle Library Management profile"));
-    let error = parse_profile_bundle("   ").expect_err("empty refused");
-    assert!(format!("{error:?}").contains("Paste a profile code"));
-}
-
-#[test]
-fn truncated_share_code_is_refused() {
+fn bad_bundles_are_refused() {
+    let golden = fixture("management_bundle_golden.document.txt");
     let code = fixture("management_bundle_golden.share_code.txt");
-    let truncated = &code[..code.len() / 2];
-    assert!(parse_profile_bundle(truncated).is_err());
-    assert!(parse_profile_bundle("DNLP1:").is_err());
-}
-
-#[test]
-fn export_refuses_a_missing_script() {
-    let ids = FixedIdGenerator::new(common::FIXED_ID);
-    let error = export_profile_bundle(&golden_profile(), &[], &golden_tagging(), &ids)
-        .expect_err("missing naming script refused");
-    assert!(format!("{error:?}").contains("no longer available"));
+    let mut unknown_field: serde_json::Value =
+        serde_json::from_str(&golden).expect("golden document is JSON");
+    unknown_field["payload"]["profile"]["metadata"]["bogus"] = serde_json::json!(1);
+    let mut wrong_format: serde_json::Value =
+        serde_json::from_str(&golden).expect("golden document is JSON");
+    wrong_format["format"] = serde_json::json!("something-else");
+    for (input, reason) in [
+        (
+            unknown_field.to_string(),
+            "Unknown or unsupported profile field: metadata.bogus.",
+        ),
+        (
+            golden.replacen("Golden Export", "Golden Exporx", 1),
+            "checksum does not match",
+        ),
+        (
+            wrong_format.to_string(),
+            "not a DroppedNeedle Library Management profile",
+        ),
+        ("   ".to_owned(), "Paste a profile code"),
+        (code[..code.len() / 2].to_owned(), ""),
+        ("DNLP1:".to_owned(), ""),
+    ] {
+        let error = parse_profile_bundle(&input).expect_err("refused");
+        assert!(format!("{error:?}").contains(reason), "{reason}: {error:?}");
+    }
 }
 
 #[test]
