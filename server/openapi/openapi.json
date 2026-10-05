@@ -1553,7 +1553,7 @@
         "tags": [
           "crate::auth::routes::native"
         ],
-        "summary": "First-admin setup. Creates the admin and logs them in (201 + session,\nv2 parity) iff no users exist; otherwise 409. Concurrent setups serialize\non the state guard: the loser probes after the winner commits and lands\non 409. (The users table has no empty-table constraint, so without the\nguard two distinct usernames would both succeed.)",
+        "summary": "First-admin setup. Creates the admin and logs them in (201 + session,\nv2 parity) iff no users exist; otherwise 409. The emptiness check runs\ninside the insert transaction, so concurrent setups, or a setup racing\na first federated login (whose role is also decided in its insert),\nleave exactly one admin. The early probe only skips the password hash.",
         "operationId": "setup_handler",
         "requestBody": {
           "content": {

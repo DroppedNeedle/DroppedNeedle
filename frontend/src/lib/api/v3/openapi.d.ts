@@ -965,10 +965,10 @@ export interface paths {
         put?: never;
         /**
          * First-admin setup. Creates the admin and logs them in (201 + session,
-         *     v2 parity) iff no users exist; otherwise 409. Concurrent setups serialize
-         *     on the state guard: the loser probes after the winner commits and lands
-         *     on 409. (The users table has no empty-table constraint, so without the
-         *     guard two distinct usernames would both succeed.)
+         *     v2 parity) iff no users exist; otherwise 409. The emptiness check runs
+         *     inside the insert transaction, so concurrent setups, or a setup racing
+         *     a first federated login (whose role is also decided in its insert),
+         *     leave exactly one admin. The early probe only skips the password hash.
          */
         post: operations["setup_handler"];
         delete?: never;
