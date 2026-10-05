@@ -698,7 +698,7 @@ async fn migration_0002_download_idempotency() {
     let db_path = dir.join("migrate.db");
 
     // Baseline only, exactly as a pre-stage-7 database would hold it.
-    let baseline = include_str!("../migrations/0001_baseline.sql");
+    let baseline = include_str!("../../migrations/0001_baseline.sql");
     {
         let conn = rusqlite::Connection::open(&db_path).expect("scratch opens");
         conn.execute_batch(baseline).expect("baseline applies");

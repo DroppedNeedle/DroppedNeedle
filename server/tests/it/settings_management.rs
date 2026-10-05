@@ -2,7 +2,7 @@
 //! bundle pins the export bytes, and the rejection briefs pin every
 //! documented import failure.
 
-mod common;
+use crate::common;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;

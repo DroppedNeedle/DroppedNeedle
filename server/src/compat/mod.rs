@@ -29,7 +29,7 @@
 //! There is no on-disk byte corpus and no corpus runner: every golden is
 //! inline in a test target, in exactly two shapes.
 //!
-//! - Journey traces + pinned references (`tests/compat_journeys.rs`,
+//! - Journey traces + pinned references (`tests/it/compat_journeys.rs`,
 //!   fixtures in `tests/fixtures/compat/`): multi-step `*.trace.json`
 //!   lifecycles (request, status, header sidecar, body per step) plus
 //!   single-response `pinned_*.json` shapes, compared by `diff_golden`
@@ -37,7 +37,7 @@
 //!   string leaves are whole-leaf regexes for volatile ids and dates;
 //!   `ignore` lists skip paths). `COMPAT_BLESS=1` regenerates both;
 //!   re-add `re:` markers afterwards.
-//! - Protocol suites (`tests/compat_subsonic.rs`, `tests/compat_jellyfin.rs`):
+//! - Protocol suites (`tests/it/compat_subsonic.rs`, `tests/it/compat_jellyfin.rs`):
 //!   dispatches against fixture seams, asserting status, content type,
 //!   headers, and body per brief. Subsonic asserts on the `Rendered`
 //!   struct (exact bytes for key rows, field asserts elsewhere);

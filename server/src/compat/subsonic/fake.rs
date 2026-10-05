@@ -1,6 +1,6 @@
 //! In-memory fixture: fake store, audio backend, and verifier.
 //!
-//! The golden briefs in `server/tests/compat_subsonic.rs` run dispatch
+//! The golden briefs in `server/tests/it/compat_subsonic.rs` run dispatch
 //! against this fixture. The clock is FIXED ([`NOW_UNIX`]) to keep
 //! time-derived fields (`minutesAgo`) deterministic.
 

@@ -7,7 +7,7 @@
 //! probes prove themselves against loopback stubs. No test touches a
 //! live network.
 
-mod common;
+use crate::common;
 
 use std::collections::HashMap;
 use std::sync::Arc;

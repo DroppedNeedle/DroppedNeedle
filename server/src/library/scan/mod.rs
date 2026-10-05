@@ -27,7 +27,7 @@
 //!
 //! Scan and identify never write music files. The walk stats, the tag
 //! seam reads, and nothing in this slice opens a library file for
-//! writing. `server/tests/library_scan.rs` pins zero file writes across
+//! writing. `server/tests/it/library_scan.rs` pins zero file writes across
 //! full runs.
 //!
 //! ## Quirk citations

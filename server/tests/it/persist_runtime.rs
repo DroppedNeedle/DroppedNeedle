@@ -4,7 +4,7 @@
 //! Each brief pins one behavior of the SQLite runtime against scratch
 //! databases under the system temp directory. No fixture files, no network.
 
-mod common;
+use crate::common;
 
 use std::{
     path::PathBuf,

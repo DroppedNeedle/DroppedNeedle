@@ -1,7 +1,7 @@
 //! Health-shape brief: `/health` keeps the exact v2 payload, answers JSON,
 //! and resolves request ids (echoing the caller's, minting otherwise).
 
-mod common;
+use crate::common;
 
 use axum::{
     body::Body,

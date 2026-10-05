@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-mod common;
+use crate::common;
 
 /// Scratch-dir sequence so parallel tests never share a directory.
 static CLI_SEQ: AtomicU64 = AtomicU64::new(0);

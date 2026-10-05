@@ -3,8 +3,7 @@
 //! Each brief pins one error or warning of the standalone export
 //! validator. No database, no passphrase, no filesystem.
 
-#[path = "import_support/mod.rs"]
-mod support;
+use crate::import_support as support;
 
 use serde_json::json;
 use support::Fixture;

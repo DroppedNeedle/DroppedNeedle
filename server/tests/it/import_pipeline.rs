@@ -4,8 +4,7 @@
 //! Every brief imports into scratch state only: in-memory databases
 //! and temp-dir config files.
 
-#[path = "import_support/mod.rs"]
-mod support;
+use crate::import_support as support;
 
 use serde_json::{Value, json};
 use support::{

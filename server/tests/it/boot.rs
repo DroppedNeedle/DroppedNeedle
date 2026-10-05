@@ -1,7 +1,7 @@
 //! Boot-ready brief: the app binds an ephemeral port, answers `/health`
 //! over real TCP, and stops cleanly.
 
-mod common;
+use crate::common;
 
 use std::time::Duration;
 

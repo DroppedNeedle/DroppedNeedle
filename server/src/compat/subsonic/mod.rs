@@ -92,7 +92,7 @@
 //!
 //! # Golden harness (inline, no on-disk corpus)
 //!
-//! One brief per matrix row in `tests/compat_subsonic.rs`, replayed
+//! One brief per matrix row in `tests/it/compat_subsonic.rs`, replayed
 //! against a live [`dispatch`] with the [`fake`] fixture (fixed clock)
 //! and the fake verifier. Each brief asserts status, content type,
 //! headers, and body on the [`Rendered`](value::Rendered) struct:

@@ -14,7 +14,7 @@
 
 use droppedneedle::reads::search;
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 

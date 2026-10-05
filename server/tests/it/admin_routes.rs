@@ -4,7 +4,7 @@
 //! The router mounts directly with sessions injected; health rides the full
 //! app. Scratch runtimes only — no network, no production database.
 
-mod common;
+use crate::common;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

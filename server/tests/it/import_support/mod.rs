@@ -7,10 +7,6 @@
 //! scratch pools; config files live under the system temp dir in
 //! per-brief unique dirs, left for the OS to reclaim.
 
-// Each brief target uses a different slice of this harness, so
-// per-target dead code is expected, not a smell.
-#![allow(dead_code)]
-
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -125,7 +121,6 @@ impl Fixture {
     }
 
     /// An approval row for `user_id` and `mbid`.
-    #[allow(dead_code)]
     pub fn approval(&self, user_id: &str, mbid: &str) -> Value {
         json!({
             "user_id": user_id,

@@ -3,8 +3,7 @@
 //!
 //! Scratch state only: in-memory databases, temp-dir configs.
 
-#[path = "import_support/mod.rs"]
-mod support;
+use crate::import_support as support;
 
 use serde_json::json;
 use support::{

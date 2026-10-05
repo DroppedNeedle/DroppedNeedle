@@ -2,7 +2,7 @@
 //! with a SCREAMING_SNAKE code, and the `__test__` failure hooks stay out of
 //! production-like apps.
 
-mod common;
+use crate::common;
 
 use axum::{
     body::Body,

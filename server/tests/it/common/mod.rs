@@ -33,7 +33,6 @@ fn test_http() -> HttpClientFactory {
 }
 
 /// State with the failure hooks mounted and fixed ids.
-#[allow(dead_code)]
 pub fn hooked_state() -> AppState {
     let auth = test_auth();
     let ids = Arc::new(FixedIdGenerator::new(FIXED_ID));
@@ -82,7 +81,6 @@ pub fn hooked_state() -> AppState {
 }
 
 /// State with the compat kill switches set explicitly (wiring tests).
-#[allow(dead_code)]
 pub fn hooked_state_with_compat(subsonic: bool, jellyfin: bool) -> AppState {
     let auth = test_auth();
     let ids = Arc::new(FixedIdGenerator::new(FIXED_ID));
@@ -131,9 +129,7 @@ pub fn hooked_state_with_compat(subsonic: bool, jellyfin: bool) -> AppState {
     )
 }
 
-/// Production-like state: real UUID generator, hooks off. Only some test
-/// targets use it; each target compiles this module separately.
-#[allow(dead_code)]
+/// Production-like state: real UUID generator, hooks off.
 pub fn prod_like_state() -> AppState {
     let auth = test_auth();
     let ids = Arc::new(droppedneedle::ids::UuidGenerator);

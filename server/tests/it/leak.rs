@@ -2,7 +2,7 @@
 //! envelope naming the request id, and no leak marker (path, host, secret)
 //! reaches the wire.
 
-mod common;
+use crate::common;
 
 use axum::{
     Router,

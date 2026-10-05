@@ -6,7 +6,7 @@
 //! session gate with the shared layers, kill switches default OFF, and the
 //! compat auth posture (never the session gate) answers compat paths.
 
-mod common;
+use crate::common;
 
 use axum::Router;
 use axum::body::Body;
