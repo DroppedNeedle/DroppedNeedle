@@ -15,7 +15,7 @@
         "tags": [
           "crate::acquire::imports::handlers"
         ],
-        "summary": "Acquisition health smoke: Free OR slskd OR Usenet readiness plus the\nindependent per-source release gates.",
+        "summary": "Acquisition health smoke: Free or slskd or Usenet readiness plus the\nindependent per-source release gates.",
         "operationId": "get_health",
         "responses": {
           "200": {
@@ -11585,7 +11585,7 @@
     "schemas": {
       "AcquireHealth": {
         "type": "object",
-        "description": "Acquisition health smoke (v2 `StatusReport` shape, extended). `ready`\nis Free OR slskd OR Usenet readiness; the gates unpack per source.",
+        "description": "Acquisition health smoke (v2 `StatusReport` shape, extended). `ready`\nis Free or slskd or Usenet readiness; the gates unpack per source.",
         "required": [
           "status",
           "ready",
@@ -14165,7 +14165,7 @@
       },
       "ConnectAppsDto": {
         "type": "object",
-        "description": "Inbound Connect Apps config. Both protocols default OFF.",
+        "description": "Inbound Connect Apps config. Both protocols default off.",
         "properties": {
           "advertise_server_name": {
             "type": "string",
@@ -15216,7 +15216,7 @@
       },
       "DownloadAccessDto": {
         "type": "string",
-        "description": "Who may download library files. `trusted` admits trusted AND admin.",
+        "description": "Who may download library files. `trusted` admits trusted and admin.",
         "enum": [
           "everyone",
           "trusted",
@@ -22691,7 +22691,7 @@
       },
       "SabnzbdConnectionDto": {
         "type": "object",
-        "description": "SABnzbd connection. `api_key` is the FULL key (the add-only nzbkey\ncannot do queue/history/delete); masked on read, preserved on a masked\nsave.",
+        "description": "SABnzbd connection. `api_key` is the full key (the add-only nzbkey\ncannot do queue/history/delete); masked on read, preserved on a masked\nsave.",
         "properties": {
           "api_key": {
             "type": "string",
@@ -25216,7 +25216,7 @@
       },
       "TransportDto": {
         "type": "string",
-        "description": "Credential handoff for session-issuing routes. Mirrors the sibling\n`TransportParam` (which owns the mechanism) so this layer stays the only\nplace that needs `ToSchema`.",
+        "description": "Credential handoff for session-issuing routes. Mirrors the session login\n`TransportParam` (which owns the mechanism) so this layer stays the only\nplace that needs `ToSchema`.",
         "enum": [
           "cookie",
           "bearer"

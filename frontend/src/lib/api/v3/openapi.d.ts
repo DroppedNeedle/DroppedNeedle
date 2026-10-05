@@ -12,7 +12,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Acquisition health smoke: Free OR slskd OR Usenet readiness plus the
+         * Acquisition health smoke: Free or slskd or Usenet readiness plus the
          *     independent per-source release gates.
          */
         get: operations["get_health"];
@@ -5371,7 +5371,7 @@ export interface components {
     schemas: {
         /**
          * @description Acquisition health smoke (v2 `StatusReport` shape, extended). `ready`
-         *     is Free OR slskd OR Usenet readiness; the gates unpack per source.
+         *     is Free or slskd or Usenet readiness; the gates unpack per source.
          */
         AcquireHealth: {
             /** @description Independent per-source release gates. */
@@ -6781,7 +6781,7 @@ export interface components {
             /** @description Whether a row was cleared. */
             success: boolean;
         };
-        /** @description Inbound Connect Apps config. Both protocols default OFF. */
+        /** @description Inbound Connect Apps config. Both protocols default off. */
         ConnectAppsDto: {
             /**
              * @description Advertised server name.
@@ -7199,7 +7199,7 @@ export interface components {
             display_name: string;
         };
         /**
-         * @description Who may download library files. `trusted` admits trusted AND admin.
+         * @description Who may download library files. `trusted` admits trusted and admin.
          * @enum {string}
          */
         DownloadAccessDto: "everyone" | "trusted" | "admin";
@@ -10782,7 +10782,7 @@ export interface components {
             scopes: components["schemas"]["ScanScopeView"][];
         };
         /**
-         * @description SABnzbd connection. `api_key` is the FULL key (the add-only nzbkey
+         * @description SABnzbd connection. `api_key` is the full key (the add-only nzbkey
          *     cannot do queue/history/delete); masked on read, preserved on a masked
          *     save.
          */
@@ -11987,7 +11987,7 @@ export interface components {
             year?: number | null;
         };
         /**
-         * @description Credential handoff for session-issuing routes. Mirrors the sibling
+         * @description Credential handoff for session-issuing routes. Mirrors the session login
          *     `TransportParam` (which owns the mechanism) so this layer stays the only
          *     place that needs `ToSchema`.
          * @enum {string}
