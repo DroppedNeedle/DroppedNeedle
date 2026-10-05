@@ -199,7 +199,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
     media
         .stream
         .engine
-        .attach_plugins(plugin_host.clone(), http.no_redirect().clone());
+        .attach_plugins(plugin_host.clone(), http.direct_no_redirect().clone());
     let acquire = AcquireSetup::build(
         crate::acquire::db::AcquireDb::from_runtime(&runtime),
         &config,

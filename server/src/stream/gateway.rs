@@ -408,15 +408,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
                     MediaBody::Empty
                 } else {
                     MediaBody::Chunks(
-                        futures_util::stream::unfold(Some(response), |state| async move {
-                            let mut response = state?;
-                            match response.chunk().await {
-                                Ok(Some(bytes)) => Some((Ok(bytes.to_vec()), Some(response))),
-                                Ok(None) => None,
-                                Err(error) => Some((Err(std::io::Error::other(error)), None)),
-                            }
-                        })
-                        .boxed(),
+                        crate::plugins::capabilities::stream::proxy_chunks(response).boxed(),
                     )
                 };
                 // Served like a landing: whole, never ranged.
@@ -563,11 +555,17 @@ async fn whole_media(media: StreamMedia) -> Result<OpenMedia, StreamFault> {
             })?
             .map_err(io_fault)?,
         MediaBody::Chunks(mut chunks) => {
+            let cap = crate::plugins::capabilities::stream::PROXY_MAX_BYTES as usize;
             let mut bytes = Vec::new();
             while let Some(chunk) = chunks.next().await {
                 bytes.extend_from_slice(&chunk.map_err(|error| StreamFault::Internal {
                     cause: error.to_string(),
                 })?);
+                if bytes.len() > cap {
+                    return Err(StreamFault::Internal {
+                        cause: "plugin stream is over 500 MiB".to_owned(),
+                    });
+                }
             }
             bytes
         }

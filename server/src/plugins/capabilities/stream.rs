@@ -10,8 +10,8 @@
 //! An answer is a `path` or a `url`, never both, and the host checks it
 //! before a byte moves:
 //! - A path (relative paths are inside the plugin folder) must resolve,
-//!   after symlinks, to a file inside the plugin folder, the folder in its
-//!   `downloads_dir` setting, or a library root.
+//!   after symlinks, to a file inside the plugin folder, its data folder,
+//!   the folder in its `downloads_dir` setting, or a library root.
 //! - A URL must be `http(s)` and every address its host resolves to must
 //!   be public: loopback, private, link-local, CGNAT, multicast and
 //!   unspecified addresses are refused. The proxy re-checks the address it
@@ -36,6 +36,10 @@ const DNS_TIMEOUT: Duration = Duration::from_secs(5);
 pub const MAX_REDIRECTS: usize = 3;
 /// Connect-and-headers budget for the proxy.
 pub const PROXY_TIMEOUT: Duration = Duration::from_secs(10);
+/// Longest wait for the next chunk of a proxied stream.
+pub const PROXY_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Largest proxied stream (500 MiB).
+pub const PROXY_MAX_BYTES: u64 = 500 * 1024 * 1024;
 
 /// A plugin's answer.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -124,7 +128,7 @@ impl PluginHost {
         let name = plugin.manifest.name.clone();
         match (answer.path.trim(), answer.url.trim()) {
             (path, "") if !path.is_empty() => {
-                let mut roots = vec![PathBuf::from(&plugin.directory)];
+                let mut roots = vec![PathBuf::from(&plugin.directory), self.data_dir(&name)];
                 if plugin
                     .manifest
                     .settings
@@ -194,11 +198,14 @@ pub fn contained_file(candidate: &Path, roots: &[PathBuf]) -> Result<PathBuf, St
     Ok(resolved)
 }
 
-/// Whether an address is one a plugin URL may reach.
+/// Whether an address is one a plugin URL may reach: globally routable
+/// only, like Python's `is_global` (v2's rule). IPv6 must be global
+/// unicast (2000::/3) outside the special ranges, and addresses that embed
+/// an IPv4 address (mapped, 6to4) are judged by that address.
 pub fn public_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
-            let [a, b, ..] = v4.octets();
+            let [a, b, c, _] = v4.octets();
             !(v4.is_loopback()
                 || v4.is_private()
                 || v4.is_link_local()
@@ -208,6 +215,7 @@ pub fn public_ip(ip: IpAddr) -> bool {
                 || v4.is_documentation()
                 || a == 0
                 || (a == 100 && (64..128).contains(&b))
+                || (a == 192 && b == 0 && c == 0)
                 || (a == 198 && (b == 18 || b == 19))
                 || a >= 240)
         }
@@ -215,13 +223,17 @@ pub fn public_ip(ip: IpAddr) -> bool {
             if let Some(mapped) = v6.to_ipv4_mapped() {
                 return public_ip(IpAddr::V4(mapped));
             }
-            let first = v6.segments()[0];
-            !(v6.is_loopback()
-                || v6.is_unspecified()
-                || v6.is_multicast()
-                || (first & 0xfe00) == 0xfc00
-                || (first & 0xffc0) == 0xfe80
-                || first == 0x2001 && v6.segments()[1] == 0x0db8)
+            let segments = v6.segments();
+            if segments[0] == 0x2002 {
+                // 6to4: the IPv4 address sits in the next 32 bits.
+                let [_, _, a, b, c, d, ..] = v6.octets();
+                return public_ip(IpAddr::V4(std::net::Ipv4Addr::new(a, b, c, d)));
+            }
+            let global_unicast = (segments[0] & 0xe000) == 0x2000;
+            // 2001::/23 (IETF assignments, Teredo inside) and 2001:db8::/32
+            // (documentation).
+            let special = segments[0] == 0x2001 && (segments[1] < 0x0200 || segments[1] == 0x0db8);
+            global_unicast && !special
         }
     }
 }
@@ -268,11 +280,16 @@ pub async fn open_url(
 ) -> Result<reqwest::Response, String> {
     let mut current = url;
     for _ in 0..=MAX_REDIRECTS {
-        let mut request = client.get(current.clone()).timeout(PROXY_TIMEOUT);
+        let mut request = client.get(current.clone());
         if let Some(range) = range {
             request = request.header(reqwest::header::RANGE, range);
         }
-        let response = request.send().await.map_err(|error| error.to_string())?;
+        // Only connect and headers are bounded here; the body is paced by
+        // [`proxy_chunks`], so a long track is never cut off mid-play.
+        let response = tokio::time::timeout(PROXY_TIMEOUT, request.send())
+            .await
+            .map_err(|_| "the server did not answer in time".to_owned())?
+            .map_err(|error| error.to_string())?;
         match response.remote_addr() {
             Some(address) if public_ip(address.ip()) => {}
             _ => return Err("the connection went to a local or private address".to_owned()),
@@ -293,6 +310,32 @@ pub async fn open_url(
     Err("too many redirects".to_owned())
 }
 
+/// The body of a proxied response as chunks: each chunk must arrive within
+/// [`PROXY_IDLE_TIMEOUT`], and the stream ends in an error past
+/// [`PROXY_MAX_BYTES`].
+pub fn proxy_chunks(
+    response: reqwest::Response,
+) -> impl futures_util::Stream<Item = Result<Vec<u8>, std::io::Error>> + Send + 'static {
+    futures_util::stream::unfold(Some((response, 0u64)), |state| async move {
+        let (mut response, sent) = state?;
+        match tokio::time::timeout(PROXY_IDLE_TIMEOUT, response.chunk()).await {
+            Ok(Ok(Some(bytes))) => {
+                let sent = sent + bytes.len() as u64;
+                if sent > PROXY_MAX_BYTES {
+                    return Some((
+                        Err(std::io::Error::other("plugin stream is over 500 MiB")),
+                        None,
+                    ));
+                }
+                Some((Ok(bytes.to_vec()), Some((response, sent))))
+            }
+            Ok(Ok(None)) => None,
+            Ok(Err(error)) => Some((Err(std::io::Error::other(error)), None)),
+            Err(_) => Some((Err(std::io::Error::other("plugin stream stalled")), None)),
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -311,10 +354,16 @@ mod tests {
             "fe80::1",
             "fd00::1",
             "::ffff:127.0.0.1",
+            "2002:7f00:1::",
+            "64:ff9b::7f00:1",
+            "2001::1",
+            "::127.0.0.1",
+            "fec0::1",
+            "2001:db8::1",
         ] {
             assert!(!public_ip(blocked.parse().unwrap()), "{blocked}");
         }
-        for open in ["93.184.216.34", "2606:4700::1111"] {
+        for open in ["93.184.216.34", "2606:4700::1111", "2002:5db8:d822::1"] {
             assert!(public_ip(open.parse().unwrap()), "{open}");
         }
     }
