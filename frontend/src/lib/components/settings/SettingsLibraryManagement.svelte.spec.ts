@@ -1200,4 +1200,90 @@ describe('SettingsLibraryManagement', () => {
 			})
 		);
 	});
+
+	it('deletes the final custom profile in the scrollable card list', async () => {
+		const settings = baseSettings();
+		const profileIds = [
+			'1c56cd00-4f7d-42ee-97df-2710110a31d2',
+			'94bf55a3-b553-4cf5-b18c-671194f67783',
+			'32607bf8-19a4-44d0-9757-d93b26de4052',
+			'a945fc94-c072-4a0c-991d-e0cc4db5bd54'
+		];
+		const copies = profileIds.map((id, index) => ({
+			...structuredClone(settings.profiles[0]),
+			id,
+			name: `Profile ${index + 1}`,
+			preset_origin: null,
+			preset_version: null,
+			revision: `profile-${index + 2}`
+		}));
+		settings.profiles.push(...copies);
+		h.settings = { data: settings, isLoading: false, isError: false, refetch: vi.fn() };
+		h.copy.mockResolvedValue({ profile: copies[3], settings_revision: 'settings-2' });
+		h.deleteProfile.mockResolvedValue({
+			...settings,
+			profiles: settings.profiles.filter((profile) => profile.id !== copies[3].id),
+			settings_revision: 'settings-3'
+		});
+
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		const profileRegion = page.getByRole('region', {
+			name: 'Saved organization profiles'
+		});
+		await expect.element(profileRegion).toHaveAttribute('tabindex', '0');
+		expect(profileRegion.getByRole('button', { name: /^Delete Profile/ }).all()).toHaveLength(4);
+
+		await page.getByRole('textbox', { name: 'New profile name' }).fill('Profile 4');
+		await page.getByRole('button', { name: 'Create copy' }).click();
+		expect(profileRegion.getByRole('button', { name: 'Delete Profile 4' }).all()).toHaveLength(1);
+
+		const profileDialog = page.getByRole('dialog', { name: 'Profile 4', exact: true });
+		await profileDialog.getByRole('button', { name: 'Cancel' }).click();
+		await profileRegion.getByRole('button', { name: 'Delete Profile 4' }).click();
+		const deleteDialog = page.getByRole('dialog', { name: 'Delete Profile 4?' });
+		await expect
+			.element(deleteDialog.getByRole('heading', { name: 'Delete Profile 4?' }))
+			.toHaveFocus();
+		await deleteDialog.getByRole('button', { name: 'Delete profile', exact: true }).click();
+
+		expect(h.deleteProfile).toHaveBeenCalledWith({
+			profileId: copies[3].id,
+			request: { expected_settings_revision: 'settings-2' }
+		});
+		await expect
+			.element(profileRegion.getByRole('button', { name: 'Delete Profile 4' }))
+			.not.toBeInTheDocument();
+	});
+
+	it('resets one preset section in the draft and confirms before discarding changes', async () => {
+		await render(SettingsLibraryManagement, { roots, policyRevision: 'policy-1' });
+		await page.getByRole('button', { name: 'Edit' }).click();
+		const profileDialog = page.getByRole('dialog', { name: 'Picard-style Organizer' });
+		const resetButton = profileDialog.getByRole('button', { name: 'Reset Metadata' });
+		await resetButton.click();
+
+		const resetDialog = page.getByRole('dialog', { name: 'Reset Metadata?' });
+		await expect
+			.element(resetDialog.getByRole('heading', { name: 'Reset Metadata?' }))
+			.toHaveFocus();
+		await expect
+			.element(resetDialog.getByText(/Review the values, then save the profile/))
+			.toBeVisible();
+		await resetDialog.getByRole('button', { name: 'Reset section' }).click();
+		await profileDialog.getByText('Metadata fields').click();
+		await expect
+			.element(profileDialog.getByRole('combobox', { name: 'Mode for title' }))
+			.toHaveValue('replace');
+		await expect.element(resetButton).not.toBeInTheDocument();
+
+		const cancelButton = profileDialog.getByRole('button', { name: 'Cancel' });
+		await cancelButton.click();
+		const discardDialog = page.getByRole('dialog', { name: 'Discard your changes?' });
+		await expect
+			.element(discardDialog.getByRole('heading', { name: 'Discard your changes?' }))
+			.toHaveFocus();
+		await discardDialog.getByRole('button', { name: 'Keep editing' }).click();
+		await expect.element(cancelButton).toHaveFocus();
+		await expect.element(profileDialog).toBeVisible();
+	});
 });
