@@ -21,10 +21,9 @@ use crate::auth::federated::plex::{
     PlexConnectionLink, PlexJourney, PlexPinClient, PlexPoll, PlexPurpose, PlexStartDenied,
 };
 use crate::auth::federated::users::FederatedUserStore;
+use crate::auth::routes::native::PeerAddr;
 use crate::auth::session::cookies;
-use crate::auth::session::extract;
-use crate::auth::session::login::{LoginSuccess, TransportParam};
-use crate::auth::session::middleware::CurrentSession;
+use crate::auth::session::middleware::{CurrentSession, TrustedProxies};
 use crate::auth::users::handlers::ValidJson;
 use crate::ids::IdGenerator;
 use axum::{
@@ -106,6 +105,9 @@ pub struct OidcRouteState<S, I, T, E, N, F> {
     pub ids: Arc<dyn IdGenerator>,
     /// Deployment base path (`""` at the domain root).
     pub base_path: String,
+    /// Proxies trusted to set `X-Forwarded-Proto` for the cookie `Secure`
+    /// flag; loopback by default.
+    pub trusted_proxies: TrustedProxies,
 }
 
 impl<S, I, T, E, N, F> OidcRouteState<S, I, T, E, N, F>
@@ -129,7 +131,14 @@ where
             config,
             ids,
             base_path: base_path.to_owned(),
+            trusted_proxies: TrustedProxies::default(),
         }
+    }
+
+    /// Trust the given proxies for the forwarded proto.
+    pub fn with_trusted_proxies(mut self, trusted: TrustedProxies) -> Self {
+        self.trusted_proxies = trusted;
+        self
     }
 }
 
@@ -252,6 +261,7 @@ pub async fn oidc_exchange_handler<S, I, T, E, N, F>(
     State(state): State<OidcRouteState<S, I, T, E, N, F>>,
     uri: Uri,
     headers: HeaderMap,
+    peer: PeerAddr,
     ValidJson(body): ValidJson<OidcExchangeBody>,
 ) -> Result<Response, AuthRouteError>
 where
@@ -269,12 +279,13 @@ where
             Ok(federated_login_response(
                 &Handoff {
                     base_path: &state.base_path,
-                    scheme: uri.scheme_str().unwrap_or("http"),
-                    headers: &headers,
+                    secure: cookies::is_secure_trusted(
+                        uri.scheme_str().unwrap_or("http"),
+                        &headers,
+                        state.trusted_proxies.is_trusted(peer.0),
+                    ),
                     transport: body.transport,
                 },
-                &user.id,
-                &user.display_name,
                 body_value,
                 raw_token,
             ))
@@ -296,6 +307,9 @@ pub struct JellyfinRouteState<S, I, L, N> {
     pub ids: Arc<dyn IdGenerator>,
     /// Deployment base path (`""` at the domain root).
     pub base_path: String,
+    /// Proxies trusted to set `X-Forwarded-Proto` for the cookie `Secure`
+    /// flag; loopback by default.
+    pub trusted_proxies: TrustedProxies,
 }
 
 impl<S, I, L, N> JellyfinRouteState<S, I, L, N>
@@ -318,7 +332,14 @@ where
             login: JellyfinLogin::new(users, idp, links, sessions),
             ids,
             base_path: base_path.to_owned(),
+            trusted_proxies: TrustedProxies::default(),
         }
+    }
+
+    /// Trust the given proxies for the forwarded proto.
+    pub fn with_trusted_proxies(mut self, trusted: TrustedProxies) -> Self {
+        self.trusted_proxies = trusted;
+        self
     }
 }
 
@@ -352,6 +373,7 @@ pub async fn jellyfin_login_handler<S, I, L, N>(
     State(state): State<JellyfinRouteState<S, I, L, N>>,
     uri: Uri,
     headers: HeaderMap,
+    peer: PeerAddr,
     ValidJson(body): ValidJson<JellyfinLoginBody>,
 ) -> Result<Response, AuthRouteError>
 where
@@ -372,12 +394,13 @@ where
             Ok(federated_login_response(
                 &Handoff {
                     base_path: &state.base_path,
-                    scheme: uri.scheme_str().unwrap_or("http"),
-                    headers: &headers,
+                    secure: cookies::is_secure_trusted(
+                        uri.scheme_str().unwrap_or("http"),
+                        &headers,
+                        state.trusted_proxies.is_trusted(peer.0),
+                    ),
                     transport: body.transport,
                 },
-                &user.id,
-                &user.display_name,
                 body_value,
                 raw_token,
             ))
@@ -399,6 +422,9 @@ pub struct PlexRouteState<S, C, L, N> {
     pub ids: Arc<dyn IdGenerator>,
     /// Deployment base path (`""` at the domain root).
     pub base_path: String,
+    /// Proxies trusted to set `X-Forwarded-Proto` for the cookie `Secure`
+    /// flag; loopback by default.
+    pub trusted_proxies: TrustedProxies,
 }
 
 impl<S, C, L, N> PlexRouteState<S, C, L, N>
@@ -421,7 +447,14 @@ where
             journey: PlexJourney::new(users, client, links, sessions),
             ids,
             base_path: base_path.to_owned(),
+            trusted_proxies: TrustedProxies::default(),
         }
+    }
+
+    /// Trust the given proxies for the forwarded proto.
+    pub fn with_trusted_proxies(mut self, trusted: TrustedProxies) -> Self {
+        self.trusted_proxies = trusted;
+        self
     }
 }
 
@@ -517,6 +550,7 @@ pub async fn plex_poll_login_handler<S, C, L, N>(
     State(state): State<PlexRouteState<S, C, L, N>>,
     uri: Uri,
     headers: HeaderMap,
+    peer: PeerAddr,
     ValidJson(body): ValidJson<PlexLoginPollBody>,
 ) -> Result<Response, AuthRouteError>
 where
@@ -546,17 +580,14 @@ where
             .map_err(|cause| AuthRouteError::internal(&cause, state.ids.as_ref()))?;
             let handoff = Handoff {
                 base_path: &state.base_path,
-                scheme: uri.scheme_str().unwrap_or("http"),
-                headers: &headers,
+                secure: cookies::is_secure_trusted(
+                    uri.scheme_str().unwrap_or("http"),
+                    &headers,
+                    state.trusted_proxies.is_trusted(peer.0),
+                ),
                 transport: body.transport,
             };
-            let rendered = federated_login_response(
-                &handoff,
-                &user.id,
-                &user.display_name,
-                body_value,
-                raw_token,
-            );
+            let rendered = federated_login_response(&handoff, body_value, raw_token);
             Ok(rendered)
         }
         Err(FederatedError::Authentication(cause)) => {
@@ -674,43 +705,26 @@ fn federated_unavailable(error: &FederatedError, ids: &dyn IdGenerator) -> AuthR
 /// How one login-shaped response hands the session over.
 struct Handoff<'a> {
     base_path: &'a str,
-    scheme: &'a str,
-    headers: &'a HeaderMap,
+    /// Mark the cookie `Secure`: direct TLS, or HTTPS at a trusted proxy.
+    secure: bool,
     transport: TransportDto,
 }
 
-/// One login-shaped federated response: the user JSON plus the session under
-/// the login transport rule (cookie or Bearer), `no-store` always. The session row already exists
-/// (the `SessionIssuer` wrote it); this only hands the token over. In Bearer mode
-/// the session login renderer adds the `token` field to the object body.
+/// One login-shaped federated response. The session row already exists (the
+/// `SessionIssuer` wrote it); this only hands the token over under the login
+/// transport rule.
 fn federated_login_response(
     handoff: &Handoff<'_>,
-    user_id: &str,
-    display_name: &str,
     user_json: serde_json::Value,
     raw_token: String,
 ) -> Response {
-    let param = handoff.transport.as_param();
-    let session_transport = match param {
-        TransportParam::Cookie => extract::Transport::Cookie,
-        TransportParam::Bearer => extract::Transport::Bearer,
-    };
-    let set_cookie = match param {
-        TransportParam::Cookie => Some(cookies::set_cookie_value(
-            &raw_token,
-            handoff.base_path,
-            cookies::is_secure(handoff.scheme, handoff.headers),
-        )),
-        TransportParam::Bearer => None,
-    };
-    let success = LoginSuccess {
-        user_id: user_id.to_owned(),
-        display_name: display_name.to_owned(),
-        transport: session_transport,
-        raw_token,
-        set_cookie,
-    };
-    crate::auth::session::login::login_response(user_json, &success)
+    super::login_handoff(
+        handoff.base_path,
+        handoff.secure,
+        user_json,
+        handoff.transport.as_param().into(),
+        &raw_token,
+    )
 }
 
 /// Calling `User-Agent`, when the client sent one.

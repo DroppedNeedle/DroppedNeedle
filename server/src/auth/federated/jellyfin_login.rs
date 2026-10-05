@@ -112,6 +112,7 @@ where
                 provider_uid: profile.jellyfin_user_id.clone(),
                 display_name: profile.username.clone(),
                 email: None,
+                email_verified: false,
                 avatar_url: profile.avatar_url.clone(),
                 token_json: jellyfin_token_json(&profile.access_token),
             },

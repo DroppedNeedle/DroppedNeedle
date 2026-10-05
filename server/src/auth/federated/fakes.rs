@@ -103,10 +103,6 @@ impl FederatedUserStore for FakeUserStore {
         Ok(id.and_then(|id| rows.by_id.get(&id).cloned()))
     }
 
-    async fn has_any_users(&self) -> Result<bool, FederatedError> {
-        Ok(!locked(&self.rows)?.by_id.is_empty())
-    }
-
     async fn create_user(&self, user: NewFederatedUser) -> Result<StoredUser, FederatedError> {
         let mut rows = locked(&self.rows)?;
         if rows.by_username.contains_key(&user.username) {
@@ -117,11 +113,16 @@ impl FederatedUserStore for FakeUserStore {
         {
             return Err(FederatedError::UsernameTaken);
         }
+        let role = if rows.by_id.is_empty() {
+            super::users::ROLE_ADMIN
+        } else {
+            super::users::ROLE_USER
+        };
         rows.next_user += 1;
         let stored = StoredUser {
             id: format!("user-{}", rows.next_user),
             display_name: user.display_name,
-            role: user.role,
+            role: role.to_owned(),
             email: user.email.clone(),
             avatar_url: user.avatar_url,
             username: user.username.clone(),

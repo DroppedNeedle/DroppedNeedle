@@ -88,3 +88,41 @@ pub mod error;
 pub mod federated;
 pub mod models;
 pub mod native;
+
+use axum::{
+    Json,
+    http::{HeaderValue, StatusCode, header},
+    response::{IntoResponse, Response},
+};
+
+use crate::auth::session::{cookies, extract::Transport, login::NO_STORE};
+
+/// Hand a fresh session to the client. `user_json` is the route's own body
+/// object; Bearer mode adds the raw token to it once, cookie mode sets the
+/// session cookie and keeps the token out of the body. Always `no-store`.
+pub fn login_handoff(
+    base_path: &str,
+    secure: bool,
+    mut user_json: serde_json::Value,
+    transport: Transport,
+    raw_token: &str,
+) -> Response {
+    if transport == Transport::Bearer
+        && let Some(object) = user_json.as_object_mut()
+    {
+        object.insert(
+            "token".to_owned(),
+            serde_json::Value::String(raw_token.to_owned()),
+        );
+    }
+    let mut response = (StatusCode::OK, Json(user_json)).into_response();
+    let headers = response.headers_mut();
+    if transport == Transport::Cookie {
+        cookies::push_set_cookie(
+            headers,
+            &cookies::set_cookie_value(raw_token, base_path, secure),
+        );
+    }
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static(NO_STORE));
+    response
+}

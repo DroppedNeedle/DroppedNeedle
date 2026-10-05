@@ -9,7 +9,7 @@ use super::{
     render_local_data, row_exists,
 };
 use crate::auth::federated::users::ProviderBinding;
-use crate::auth::session::login::{CredentialLookup, LocalCredential};
+use crate::auth::session::login::{CredentialLookup, LocalCredential, LoginError};
 use crate::auth::times::{parse_iso, to_iso};
 use crate::auth::users::models::{LocalCredential as UsersLocalCredential, UserRecord};
 use crate::auth::users::roles::Role;
@@ -653,8 +653,10 @@ impl SqliteCredentialLookup {
 }
 
 impl CredentialLookup for SqliteCredentialLookup {
-    async fn local_user(&self, username_lc: &str) -> Option<LocalCredential> {
-        let (pool, _) = self.db.live()?;
+    async fn local_user(&self, username_lc: &str) -> Result<Option<LocalCredential>, LoginError> {
+        let Some((pool, _)) = self.db.live() else {
+            return Err(LoginError::Unavailable);
+        };
         let row = sqlx::query(
             "SELECT u.id AS id, u.display_name AS display_name, \
              p.provider_data AS provider_data FROM auth_users u \
@@ -664,13 +666,21 @@ impl CredentialLookup for SqliteCredentialLookup {
         .bind(username_lc)
         .fetch_optional(pool)
         .await
-        .ok()??;
+        .map_err(|error| {
+            tracing::error!(error = %map_sqlx_busy("auth.login.lookup", error), "login lookup failed");
+            LoginError::Unavailable
+        })?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
         let data: Option<String> = row.get("provider_data");
-        let (scheme, hash) = parse_local_data(data.as_deref()?)?;
-        Some(LocalCredential {
+        let Some((scheme, hash)) = data.as_deref().and_then(parse_local_data) else {
+            return Ok(None);
+        };
+        Ok(Some(LocalCredential {
             user_id: row.get("id"),
             display_name: row.get("display_name"),
             stored_hash: format!("{scheme}${hash}"),
-        })
+        }))
     }
 }

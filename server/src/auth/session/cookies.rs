@@ -14,15 +14,8 @@ use super::tokens::SESSION_MAX_AGE_SECS;
 pub const COOKIE_NAME: &str = "droppedneedle_session";
 
 /// True when the request arrived over HTTPS: direct TLS (caller passes the
-/// effective scheme) or `X-Forwarded-Proto: https` behind a proxy. This form
-/// trusts the forwarded value unconditionally; new callers must use
-/// [`is_secure_trusted`] with the peer verdict instead.
-pub fn is_secure(scheme: &str, headers: &HeaderMap) -> bool {
-    is_secure_trusted(scheme, headers, true)
-}
-
-/// Trust-aware form of [`is_secure`]: the forwarded proto (first entry only)
-/// is honored only when the peer is a trusted proxy, so a spoofed
+/// effective scheme) or `X-Forwarded-Proto: https` (first entry only) from a
+/// trusted proxy. A spoofed
 /// `X-Forwarded-Proto` from an untrusted peer cannot mark `Secure` on plain
 /// HTTP. Direct TLS always wins regardless of headers.
 pub fn is_secure_trusted(scheme: &str, headers: &HeaderMap, from_trusted_proxy: bool) -> bool {
@@ -118,16 +111,16 @@ mod tests {
     #[test]
     fn secure_detection_covers_direct_and_proxied_tls() {
         let plain = HeaderMap::new();
-        assert!(is_secure("https", &plain));
-        assert!(!is_secure("http", &plain));
+        assert!(is_secure_trusted("https", &plain, false));
+        assert!(!is_secure_trusted("http", &plain, true));
 
         let mut forwarded = HeaderMap::new();
         forwarded.insert("x-forwarded-proto", "https".parse().unwrap());
-        assert!(is_secure("http", &forwarded));
+        assert!(is_secure_trusted("http", &forwarded, true));
 
         let mut mixed = HeaderMap::new();
         mixed.insert("x-forwarded-proto", "http, https".parse().unwrap());
-        assert!(!is_secure("http", &mixed));
+        assert!(!is_secure_trusted("http", &mixed, true));
     }
 
     #[test]

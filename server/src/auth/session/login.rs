@@ -9,8 +9,10 @@
 //!   the raw token only inside the `Set-Cookie` value and the body carries no
 //!   token field (v2 returned it alongside the cookie; that leak is closed).
 //!   Bearer mode returns the raw token once in the body and sets no cookie.
-//! - Every login response (and every token mint) carries
-//!   `Cache-Control: no-store`.
+//!   The handoff itself renders in the route layer
+//!   ([`crate::auth::routes::login_handoff`]).
+//! - Password hashing runs on the blocking pool, never on an async worker.
+//! - A store outage is [`LoginError::Unavailable`], never a failed login.
 //!
 //! Password hashing seam: production wires bcrypt verification for imported
 //! rows with opportunistic Argon2id rehash on success, rows tagged
@@ -27,8 +29,7 @@ use std::sync::{
 use thiserror::Error;
 
 use super::{
-    cookies,
-    extract::{Transport, unauthorized_response},
+    extract::Transport,
     store::{SessionKind, SessionRecord, SessionStore},
     tokens,
 };
@@ -60,28 +61,22 @@ pub struct LoginRequest {
 /// Per-request login inputs owned by the transport layer.
 #[derive(Debug, Clone)]
 pub struct LoginContext {
-    /// Deployment base path (`""` at the domain root).
-    pub base_path: String,
-    /// Whether to mark the cookie `Secure` (HTTPS direct or proxied).
-    pub secure: bool,
     /// Client label recorded on the session.
     pub user_agent: Option<String>,
     /// Now, unix seconds.
     pub now_unix: i64,
 }
 
-/// Successful login: who, how the token travels, and where it is.
+/// Successful login: who, and the token with the transport it travels on.
 pub struct LoginSuccess {
     /// Authenticated user id.
     pub user_id: String,
     /// Display name for the response body.
     pub display_name: String,
-    /// Transport that carried the credential out.
+    /// Transport that carries the credential out.
     pub transport: Transport,
-    /// Raw token; cookie mode embeds it only in `set_cookie`.
+    /// Raw token; cookie mode puts it only in `Set-Cookie`.
     pub raw_token: String,
-    /// `Set-Cookie` value in cookie mode, `None` in Bearer mode.
-    pub set_cookie: Option<String>,
 }
 
 /// Login failure. Both variants render identically on the wire.
@@ -108,9 +103,12 @@ pub struct LocalCredential {
 
 /// User-lookup port. Production reads `auth_users` + the `local` provider row.
 pub trait CredentialLookup: Clone + Send + Sync + 'static {
-    /// Local credential for a lowercased username, or `None`.
-    fn local_user(&self, username_lc: &str)
-    -> impl Future<Output = Option<LocalCredential>> + Send;
+    /// Local credential for a lowercased username, `None` when the user or
+    /// its local credential is absent, `Err` when the store failed.
+    fn local_user(
+        &self,
+        username_lc: &str,
+    ) -> impl Future<Output = Result<Option<LocalCredential>, LoginError>> + Send;
 }
 
 /// Password-hash port. Production verifies bcrypt/argon2id by scheme tag and
@@ -160,17 +158,22 @@ where
         ctx: LoginContext,
     ) -> Result<LoginSuccess, LoginError> {
         let username_lc = request.username.trim().to_lowercase();
-        let credential = self.users.local_user(&username_lc).await;
-        let Some(credential) = credential else {
-            self.verifier.dummy_verify();
+        let credential = self.users.local_user(&username_lc).await?;
+        let verifier = self.verifier.clone();
+        let stored = credential.as_ref().map(|found| found.stored_hash.clone());
+        let password = request.password;
+        let verified = tokio::task::spawn_blocking(move || match stored {
+            Some(stored) => verifier.verify(&password, &stored),
+            None => {
+                verifier.dummy_verify();
+                false
+            }
+        })
+        .await
+        .map_err(|_| LoginError::Unavailable)?;
+        let Some(credential) = credential.filter(|_| verified) else {
             return Err(LoginError::InvalidCredentials);
         };
-        if !self
-            .verifier
-            .verify(&request.password, &credential.stored_hash)
-        {
-            return Err(LoginError::InvalidCredentials);
-        }
         let raw_token = tokens::mint_token().map_err(|_| LoginError::Unavailable)?;
         let record = SessionRecord {
             id: uuid_simple(&raw_token, ctx.now_unix),
@@ -188,68 +191,20 @@ where
             .insert(record)
             .await
             .map_err(|_| LoginError::Unavailable)?;
-        Ok(match request.transport {
-            TransportParam::Cookie => LoginSuccess {
-                user_id: credential.user_id,
-                display_name: credential.display_name,
-                transport: Transport::Cookie,
-                set_cookie: Some(cookies::set_cookie_value(
-                    &raw_token,
-                    &ctx.base_path,
-                    ctx.secure,
-                )),
-                raw_token,
-            },
-            TransportParam::Bearer => LoginSuccess {
-                user_id: credential.user_id,
-                display_name: credential.display_name,
-                transport: Transport::Bearer,
-                raw_token,
-                set_cookie: None,
-            },
+        Ok(LoginSuccess {
+            user_id: credential.user_id,
+            display_name: credential.display_name,
+            transport: request.transport.into(),
+            raw_token,
         })
     }
 }
 
-/// Render a login success. `user_json` is the caller-supplied user object (its
-/// shape belongs to the caller); this adds the token only in Bearer mode,
-/// sets the cookie only in cookie mode, and always stamps `no-store`.
-pub fn login_response(
-    user_json: serde_json::Value,
-    success: &LoginSuccess,
-) -> axum::response::Response {
-    use axum::{Json, http::StatusCode, response::IntoResponse};
-    let mut body = user_json;
-    if success.transport == Transport::Bearer
-        && let Some(object) = body.as_object_mut()
-    {
-        object.insert(
-            "token".to_owned(),
-            serde_json::Value::String(success.raw_token.clone()),
-        );
-    }
-    let mut response = (StatusCode::OK, Json(body)).into_response();
-    let headers = response.headers_mut();
-    if let Some(set_cookie) = &success.set_cookie {
-        cookies::push_set_cookie(headers, set_cookie);
-    }
-    if let Ok(value) = NO_STORE.parse() {
-        headers.insert(axum::http::header::CACHE_CONTROL, value);
-    }
-    response
-}
-
-/// Render a login failure: uniform 401 for bad credentials, fixed 500 body
-/// for outages (the request-scope middleware enforces the fixed body too).
-pub fn login_error_response(error: &LoginError) -> axum::response::Response {
-    match error {
-        LoginError::InvalidCredentials => unauthorized_response(INVALID_CREDENTIALS),
-        LoginError::Unavailable => {
-            use axum::{Json, http::StatusCode, response::IntoResponse};
-            let body = serde_json::json!({
-                "error": { "code": "INTERNAL_ERROR", "message": "Internal server error", "details": null }
-            });
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(body)).into_response()
+impl From<TransportParam> for Transport {
+    fn from(param: TransportParam) -> Self {
+        match param {
+            TransportParam::Cookie => Transport::Cookie,
+            TransportParam::Bearer => Transport::Bearer,
         }
     }
 }
@@ -347,8 +302,8 @@ impl FakeUserTable {
 
 #[cfg(any(test, feature = "test-support"))]
 impl CredentialLookup for FakeUserTable {
-    async fn local_user(&self, username_lc: &str) -> Option<LocalCredential> {
-        self.users.get(username_lc).cloned()
+    async fn local_user(&self, username_lc: &str) -> Result<Option<LocalCredential>, LoginError> {
+        Ok(self.users.get(username_lc).cloned())
     }
 }
 
@@ -371,8 +326,6 @@ mod tests {
 
     fn ctx() -> LoginContext {
         LoginContext {
-            base_path: String::new(),
-            secure: false,
             user_agent: None,
             now_unix: 1_700_000_000,
         }
@@ -423,10 +376,7 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(success.user_id, "user-1");
-            assert_eq!(
-                success.set_cookie.is_some(),
-                transport == TransportParam::Cookie
-            );
+            assert_eq!(success.transport, Transport::from(transport));
             let stored = tokens::hash_token(&success.raw_token);
             let found = service
                 .sessions
@@ -435,42 +385,5 @@ mod tests {
                 .unwrap();
             assert_eq!(found.map(|r| r.user_id).as_deref(), Some("user-1"));
         }
-    }
-
-    #[test]
-    fn response_adds_token_only_for_bearer_and_cookie_only_for_cookie() {
-        let user = serde_json::json!({"id": "user-1"});
-        let cookie = LoginSuccess {
-            user_id: "user-1".to_owned(),
-            display_name: "Ada".to_owned(),
-            transport: Transport::Cookie,
-            raw_token: "raw".to_owned(),
-            set_cookie: Some("droppedneedle_session=raw; Path=/api/v3".to_owned()),
-        };
-        let response = login_response(user.clone(), &cookie);
-        assert!(
-            response
-                .headers()
-                .contains_key(axum::http::header::SET_COOKIE)
-        );
-        assert_eq!(
-            response
-                .headers()
-                .get(axum::http::header::CACHE_CONTROL)
-                .unwrap(),
-            NO_STORE
-        );
-
-        let bearer = LoginSuccess {
-            set_cookie: None,
-            transport: Transport::Bearer,
-            ..cookie
-        };
-        let response = login_response(user, &bearer);
-        assert!(
-            !response
-                .headers()
-                .contains_key(axum::http::header::SET_COOKIE)
-        );
     }
 }

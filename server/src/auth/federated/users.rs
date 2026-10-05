@@ -6,6 +6,12 @@
 //! to that user; otherwise a new user is created (admin when the instance
 //! is empty, `user` otherwise) with an auto-derived username so a local
 //! password can be set later without a choose-username step.
+//!
+//! Two rules tighten v2: an email links accounts (and is stored) only when
+//! the provider says it verified it, so nobody can claim an existing
+//! account by typing its address into an IdP profile; and the store decides
+//! the first-user admin role inside the insert, so two first logins racing
+//! on an empty instance cannot both become admin.
 
 use super::FederatedError;
 
@@ -56,14 +62,14 @@ pub struct ProviderBinding {
     pub provider_uid: String,
 }
 
-/// Fields for creating a user from a federated profile.
+/// Fields for creating a user from a federated profile. The store picks
+/// the role: [`ROLE_ADMIN`] when the instance has no users at insert time,
+/// else [`ROLE_USER`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewFederatedUser {
     /// Display name from the provider.
     pub display_name: String,
-    /// [`ROLE_ADMIN`] for the first user, else [`ROLE_USER`].
-    pub role: String,
-    /// Lowercased email, when the provider supplies one.
+    /// Lowercased, provider-verified email, when there is one.
     pub email: Option<String>,
     /// Avatar URL from the provider.
     pub avatar_url: Option<String>,
@@ -82,6 +88,8 @@ pub struct FederatedProfile {
     pub display_name: String,
     /// Lowercased email, when the provider supplies one.
     pub email: Option<String>,
+    /// Whether the provider vouches that the email belongs to this user.
+    pub email_verified: bool,
     /// Avatar URL from the provider.
     pub avatar_url: Option<String>,
     /// Plaintext token JSON, e.g. `{"access_token":"..."}`. The production
@@ -118,10 +126,8 @@ pub trait FederatedUserStore: Clone + Send + Sync + 'static {
         username: &str,
     ) -> impl Future<Output = Result<Option<StoredUser>, FederatedError>> + Send;
 
-    /// True when at least one user exists.
-    fn has_any_users(&self) -> impl Future<Output = Result<bool, FederatedError>> + Send;
-
-    /// Insert a user; maps a unique-username race to
+    /// Insert a user, making it admin when no user exists yet (decided in
+    /// the same transaction as the insert). Maps a unique-username race to
     /// [`FederatedError::UsernameTaken`] so the caller re-derives.
     fn create_user(
         &self,
@@ -160,7 +166,9 @@ pub async fn find_or_create_federated_user<S: FederatedUserStore>(
             .ok_or_else(|| FederatedError::Authentication("Linked account not found".to_owned()));
     }
 
-    if let Some(email) = profile.email.as_deref()
+    // An unverified address neither links nor sticks to the new account.
+    let email = profile.email.as_deref().filter(|_| profile.email_verified);
+    if let Some(email) = email
         && let Some(user) = store.get_user_by_email(email).await?
     {
         store
@@ -174,19 +182,13 @@ pub async fn find_or_create_federated_user<S: FederatedUserStore>(
         return Ok(user);
     }
 
-    let role = if store.has_any_users().await? {
-        ROLE_USER
-    } else {
-        ROLE_ADMIN
-    };
     for _ in 0..CREATE_RETRIES {
         let (username, username_display) =
             derive_username(store, profile.email.as_deref(), &profile.display_name).await?;
         let created = store
             .create_user(NewFederatedUser {
                 display_name: profile.display_name.clone(),
-                role: role.to_owned(),
-                email: profile.email.clone(),
+                email: email.map(str::to_owned),
                 avatar_url: profile.avatar_url.clone(),
                 username,
                 username_display,

@@ -235,6 +235,9 @@ where
                 provider_uid: profile.uuid.clone(),
                 display_name: profile.display_name.clone(),
                 email,
+                // plex.tv does not say whether the address was confirmed,
+                // so it never links or claims an existing account.
+                email_verified: false,
                 avatar_url: profile.thumb.clone(),
                 token_json: plex_token_json(&profile.auth_token),
             },

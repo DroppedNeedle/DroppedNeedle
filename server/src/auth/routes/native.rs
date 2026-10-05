@@ -7,8 +7,7 @@
 use crate::auth::session::cookies;
 use crate::auth::session::extract;
 use crate::auth::session::login::{
-    INVALID_CREDENTIALS, LoginContext, LoginError, LoginRequest, LoginService, LoginSuccess,
-    TransportParam,
+    INVALID_CREDENTIALS, LoginContext, LoginError, LoginRequest, LoginService,
 };
 use crate::auth::session::middleware::TrustedProxies;
 use crate::auth::session::store::{SessionKind, SessionRecord, SessionStore, now_unix};
@@ -28,6 +27,7 @@ use axum::{
 };
 
 use super::error::AuthRouteError;
+use super::login_handoff;
 use super::models::{LoginBody, SetupBody, SetupStatusBody};
 use serde::Serialize;
 use std::net::SocketAddr;
@@ -148,8 +148,6 @@ where
         state.trusted_proxies.is_trusted(peer.0),
     );
     let ctx = LoginContext {
-        base_path: state.base_path.clone(),
-        secure,
         user_agent: user_agent_of(&headers),
         now_unix: now_unix(),
     };
@@ -161,13 +159,13 @@ where
     match state.login.login(request, ctx).await {
         Ok(success) => {
             let user = login_user(&state.users, &success.user_id).await?;
-            let rendered = render_login(
+            Ok(login_handoff(
                 &state.base_path,
                 secure,
                 serde_json::json!({ "user": user }),
-                &success,
-            );
-            Ok(rendered)
+                success.transport,
+                &success.raw_token,
+            ))
         }
         Err(LoginError::InvalidCredentials) => {
             Err(AuthRouteError::unauthorized(INVALID_CREDENTIALS))
@@ -292,23 +290,17 @@ where
         .touch_login(&user.id, now)
         .await
         .map_err(|error| AuthRouteError::from(store_failure(&error, state.users.ids.as_ref())))?;
-    let success = LoginSuccess {
-        user_id: user.id.clone(),
-        display_name: user.display_name.clone(),
-        transport: transport_of(body.transport.as_param()),
-        raw_token,
-        set_cookie: None,
-    };
     let secure = cookies::is_secure_trusted(
         uri.scheme_str().unwrap_or("http"),
         &headers,
         state.trusted_proxies.is_trusted(peer.0),
     );
-    let mut rendered = render_login(
+    let mut rendered = login_handoff(
         &state.base_path,
         secure,
         serde_json::json!({ "user": user }),
-        &success,
+        body.transport.as_param().into(),
+        &raw_token,
     );
     *rendered.status_mut() = StatusCode::CREATED;
     Ok(rendered)
@@ -373,35 +365,6 @@ async fn login_user(users: &UsersDeps, user_id: &str) -> Result<UserResponse, Au
     })
 }
 
-/// Render a login success through the session login renderer: cookie in cookie
-/// mode, `token` field only in Bearer mode, `no-store` always. The cookie value
-/// is derived here because setup and login share this renderer while only
-/// login mints through the service. `secure` is resolved by the caller from
-/// the direct scheme plus the trusted-proxy verdict.
-fn render_login(
-    base_path: &str,
-    secure: bool,
-    user_json: serde_json::Value,
-    success: &LoginSuccess,
-) -> Response {
-    let cookie = match success.transport {
-        extract::Transport::Cookie => Some(cookies::set_cookie_value(
-            &success.raw_token,
-            base_path,
-            secure,
-        )),
-        extract::Transport::Bearer => None,
-    };
-    let with_cookie = LoginSuccess {
-        user_id: success.user_id.clone(),
-        display_name: success.display_name.clone(),
-        transport: success.transport,
-        raw_token: success.raw_token.clone(),
-        set_cookie: cookie,
-    };
-    crate::auth::session::login::login_response(user_json, &with_cookie)
-}
-
 /// Calling `User-Agent`, when the client sent one.
 fn user_agent_of(headers: &HeaderMap) -> Option<String> {
     headers
@@ -410,18 +373,10 @@ fn user_agent_of(headers: &HeaderMap) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Mechanism transport from the request param.
-fn transport_of(param: TransportParam) -> extract::Transport {
-    match param {
-        TransportParam::Cookie => extract::Transport::Cookie,
-        TransportParam::Bearer => extract::Transport::Bearer,
-    }
-}
-
 /// Optional peer address: `Some` when the server runs with connect info,
 /// `None` in-process or without it (untrusted either way). Infallible so
 /// login and setup stay reachable however the server is wired.
-pub struct PeerAddr(Option<SocketAddr>);
+pub struct PeerAddr(pub Option<SocketAddr>);
 
 impl<S> FromRequestParts<S> for PeerAddr
 where

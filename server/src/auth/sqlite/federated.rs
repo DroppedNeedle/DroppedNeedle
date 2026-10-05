@@ -8,7 +8,7 @@ use sqlx::Row as _;
 use super::{AuthDb, USER_COLUMNS, is_write_conflict, op_error, store_unavailable};
 use crate::auth::federated::FederatedError;
 use crate::auth::federated::users::{
-    FederatedUserStore, NewFederatedUser, ProviderBinding, StoredUser,
+    FederatedUserStore, NewFederatedUser, ProviderBinding, ROLE_ADMIN, ROLE_USER, StoredUser,
 };
 use crate::auth::times::to_iso;
 use crate::db::{Lane, map_sqlx_busy};
@@ -136,55 +136,51 @@ impl FederatedUserStore for SqliteFederatedStore {
         Ok(row.as_ref().map(map_federated_user))
     }
 
-    async fn has_any_users(&self) -> Result<bool, FederatedError> {
-        let Some((pool, _)) = self.db.live() else {
-            return Err(store_unavailable("auth federated store is not wired"));
-        };
-        let found: Option<i64> = sqlx::query_scalar("SELECT 1 FROM auth_users LIMIT 1")
-            .fetch_optional(pool)
-            .await
-            .map_err(|error| store_unavailable(map_sqlx_busy("auth.federated.get", error)))?;
-        Ok(found.is_some())
-    }
-
     async fn create_user(&self, user: NewFederatedUser) -> Result<StoredUser, FederatedError> {
         let Some((_, lane)) = self.db.live() else {
             return Err(store_unavailable("auth federated store is not wired"));
         };
         let id = self.ids.new_id();
         let created = to_iso(AuthDb::now_unix());
-        let stored = StoredUser {
-            id: id.clone(),
-            display_name: user.display_name.clone(),
-            role: user.role.clone(),
-            email: user.email.clone(),
-            avatar_url: user.avatar_url.clone(),
-            username: user.username.clone(),
-            username_display: user.username_display.clone(),
-        };
-        let outcome: Result<(), crate::db::DbError> = lane
+        let row = user.clone();
+        let row_id = id.clone();
+        let outcome = lane
             .write(Lane::Foreground, "auth.federated.create", move |tx| {
+                let has_users: bool = tx
+                    .query_row("SELECT EXISTS (SELECT 1 FROM auth_users)", [], |found| {
+                        found.get(0)
+                    })
+                    .map_err(op_error)?;
+                let role = if has_users { ROLE_USER } else { ROLE_ADMIN };
                 tx.execute(
                     "INSERT INTO auth_users (id, display_name, email, avatar_url, role, \
                      created_at, username, username_display) \
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     rusqlite::params![
-                        id,
-                        user.display_name,
-                        user.email,
-                        user.avatar_url,
-                        user.role,
+                        row_id,
+                        row.display_name,
+                        row.email,
+                        row.avatar_url,
+                        role,
                         created,
-                        user.username,
-                        user.username_display,
+                        row.username,
+                        row.username_display,
                     ],
                 )
                 .map_err(op_error)?;
-                Ok(())
+                Ok(role)
             })
             .await;
         match outcome {
-            Ok(()) => Ok(stored),
+            Ok(role) => Ok(StoredUser {
+                id,
+                display_name: user.display_name,
+                role: role.to_owned(),
+                email: user.email,
+                avatar_url: user.avatar_url,
+                username: user.username,
+                username_display: user.username_display,
+            }),
             // Only a uniqueness conflict retries with a fresh username; any
             // other failure must surface, not spin the retry loop.
             Err(error) if is_write_conflict(&error) => Err(FederatedError::UsernameTaken),

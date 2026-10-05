@@ -96,6 +96,8 @@ pub struct RawClaims {
     pub sub: Option<String>,
     /// Email; optional.
     pub email: Option<String>,
+    /// The IdP's `email_verified` claim; absent reads as unverified.
+    pub email_verified: Option<bool>,
     /// Display name candidates, tried in order.
     pub name: Option<String>,
     /// Display name candidates, tried in order.
@@ -115,6 +117,8 @@ pub struct OidcClaims {
     pub sub: String,
     /// Lowercased email, or `None` when absent/blank.
     pub email: Option<String>,
+    /// True only when the IdP sent `email_verified: true`.
+    pub email_verified: bool,
     /// Resolved display name.
     pub name: String,
     /// Avatar URL, or `None` when absent/blank.
@@ -277,6 +281,7 @@ where
                 provider_uid: claims.sub,
                 display_name: claims.name,
                 email: claims.email,
+                email_verified: claims.email_verified,
                 avatar_url: claims.thumb,
                 token_json: sealed_token_json(&tokens.access_token, &tokens.refresh_token),
             },
@@ -426,6 +431,7 @@ pub fn normalise_claims(raw: &RawClaims) -> Result<OidcClaims, FederatedError> {
     Ok(OidcClaims {
         sub: sub.to_owned(),
         email,
+        email_verified: raw.email_verified == Some(true),
         name,
         thumb,
     })
@@ -455,6 +461,7 @@ pub fn jwt_payload_claims(id_token: &str) -> Option<RawClaims> {
     Some(RawClaims {
         sub: str_field(obj, "sub"),
         email: str_field(obj, "email"),
+        email_verified: bool_field(obj, "email_verified"),
         name: str_field(obj, "name"),
         preferred_username: str_field(obj, "preferred_username"),
         nickname: str_field(obj, "nickname"),
@@ -465,6 +472,15 @@ pub fn jwt_payload_claims(id_token: &str) -> Option<RawClaims> {
 
 fn str_field(obj: &Map<String, Value>, key: &str) -> Option<String> {
     obj.get(key)?.as_str().map(str::to_owned)
+}
+
+/// A boolean claim; some IdPs send `"true"`/`"false"` strings instead.
+fn bool_field(obj: &Map<String, Value>, key: &str) -> Option<bool> {
+    match obj.get(key)? {
+        Value::Bool(flag) => Some(*flag),
+        Value::String(text) => text.parse().ok(),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
