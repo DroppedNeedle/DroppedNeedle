@@ -11,8 +11,8 @@
 //! `SortBy` allowlist), [`builders`] (view → DTO shaping), [`seams`]
 //! (boundary traits), `fake` (test doubles). The handlers live in `router`
 //! (state, registration, shared helpers), `system`, `browse`, `images`,
-//! `audio`, `playstate` and `playlists`; `query` holds the pure paging and
-//! sort helpers.
+//! `audio`, `playstate` and `playlists`; `query` holds the item-type and
+//! short-list paging helpers.
 //!
 //! Wiring: this module lives in the tree under
 //! [`compat`](crate::compat) and mounts through

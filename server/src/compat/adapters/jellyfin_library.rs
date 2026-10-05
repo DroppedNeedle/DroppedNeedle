@@ -1,9 +1,9 @@
 //! The production Jellyfin library and id map.
 //!
 //! [`JellyfinLibrary`] serves the Jellyfin routes from the v3 catalog and
-//! the shared collections. The routes filter, sort and page the snapshot
-//! they get, as the seam requires; reads carry the caller's favorites and
-//! play counts.
+//! the shared collections. Every list is one SQL page (filter, order,
+//! LIMIT) plus its count; the caller's favorites and play counts are read
+//! for that page only, and image tags come from the rows themselves.
 //!
 //! [`CatalogIds`] keeps v2's deterministic `sha256("kind:internal")[:32]`
 //! ids. Because an id is a pure function of what it names, nothing needs
@@ -16,13 +16,14 @@ use std::time::{Duration, Instant};
 
 use super::library::{CompatError, CompatLibrary};
 use crate::compat::jellyfin::builders::LIBRARY_INTERNAL_ID;
+use crate::compat::jellyfin::params::SortKey;
 use crate::compat::jellyfin::seams::{
-    AlbumView, ArtistScope, ArtistView, CoverBytes, GenreView, IdMap, LibraryRead, PlaylistDetail,
-    PlaylistEntry, PlaylistView, TrackView,
+    AlbumFilter, AlbumView, ArtistScope, ArtistView, CoverBytes, GenreView, IdMap, ItemSort,
+    LibraryRead, PlaylistDetail, PlaylistEntry, PlaylistView, TrackFilter, TrackView,
 };
 use crate::compat::subsonic::views::genre_slug;
 use crate::reads::library::player::{
-    AlbumOrder, AlbumQuery, PlayerAlbum, PlayerTrack, TrackOrder, TrackQuery,
+    AlbumOrder, AlbumQuery, OrderKey, PlayerAlbum, PlayerTrack, TrackOrder, TrackQuery,
 };
 use crate::reads::library::stores::{ArtistRecord, ArtistScope as CatalogScope};
 
@@ -42,6 +43,8 @@ fn to_u32(value: Option<i64>) -> Option<u32> {
 }
 
 fn track_view(track: PlayerTrack) -> TrackView {
+    let album_image_tag = (track.cover_available || track.release_group_mbid.is_some())
+        .then(|| tag_for(&format!("album:{}", track.album_id)));
     TrackView {
         file_id: track.id,
         title: track.title,
@@ -67,11 +70,14 @@ fn track_view(track: PlayerTrack) -> TrackView {
         starred: false,
         play_count: 0,
         last_played: None,
+        album_image_tag,
     }
 }
 
 fn album_view(album: PlayerAlbum) -> AlbumView {
     let record = album.record;
+    let image_tag = (record.cover_available || record.release_group_mbid.is_some())
+        .then(|| tag_for(&format!("album:{}", record.id)));
     AlbumView {
         rg_mbid: record.id,
         title: record.title,
@@ -85,16 +91,22 @@ fn album_view(album: PlayerAlbum) -> AlbumView {
         starred: false,
         play_count: 0,
         last_played: None,
+        image_tag,
     }
 }
 
 fn artist_view(artist: ArtistRecord) -> ArtistView {
+    let image_tag = artist
+        .artist_mbid
+        .is_some()
+        .then(|| tag_for(&format!("artist:{}", artist.id)));
     ArtistView {
         artist_mbid: artist.id,
         name: artist.name,
         album_count: artist.album_count as usize,
         date_added: artist.date_added,
         starred: false,
+        image_tag,
     }
 }
 
@@ -174,24 +186,6 @@ impl JellyfinLibrary {
         Ok(views)
     }
 
-    async fn all_tracks(&self, user_id: &str) -> Result<Vec<TrackView>, CompatError> {
-        let (tracks, _) = self
-            .library
-            .tracks(&TrackQuery::default(), TrackOrder::Album, u64::MAX >> 1, 0)
-            .await?;
-        self.overlay_tracks(user_id, tracks.into_iter().map(track_view).collect())
-            .await
-    }
-
-    async fn all_albums(&self, user_id: &str) -> Result<Vec<AlbumView>, CompatError> {
-        let (albums, _) = self
-            .library
-            .albums(&AlbumQuery::default(), AlbumOrder::Title, u64::MAX >> 1, 0)
-            .await?;
-        self.overlay_albums(user_id, albums.into_iter().map(album_view).collect())
-            .await
-    }
-
     async fn readable_entries(
         &self,
         user_id: &str,
@@ -221,58 +215,180 @@ impl JellyfinLibrary {
     }
 }
 
+/// The catalog order for a Jellyfin page order.
+fn order_key(key: SortKey) -> Option<OrderKey> {
+    match key {
+        SortKey::Recent => Some(OrderKey::Added),
+        SortKey::Title => Some(OrderKey::Title),
+        SortKey::Year | SortKey::PremiereDate => Some(OrderKey::Year),
+        SortKey::DatePlayed => Some(OrderKey::LastPlayed),
+        SortKey::PlayCount => Some(OrderKey::PlayCount),
+        SortKey::Random => None,
+    }
+}
+
+fn track_order(sort: ItemSort) -> TrackOrder {
+    match sort {
+        ItemSort::Catalog => TrackOrder::Title,
+        ItemSort::Disc => TrackOrder::Disc,
+        ItemSort::By(key, descending) => {
+            order_key(key).map_or(TrackOrder::Random, |key| TrackOrder::By(key, descending))
+        }
+    }
+}
+
+fn album_order(sort: ItemSort) -> AlbumOrder {
+    match sort {
+        ItemSort::Catalog | ItemSort::Disc => AlbumOrder::Title,
+        ItemSort::By(key, descending) => {
+            order_key(key).map_or(AlbumOrder::Random, |key| AlbumOrder::By(key, descending))
+        }
+    }
+}
+
+/// The caller, when the order reads their play history (which also drops
+/// what they never played).
+fn history_user(sort: ItemSort, user_id: &str) -> Option<String> {
+    matches!(sort, ItemSort::By(key, _) if key.is_history()).then(|| user_id.to_owned())
+}
+
+fn to_u64(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+fn to_usize(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+/// Keep `ids` order; unknown ids drop out, repeats stay.
+fn in_order<T: Clone>(ids: &[String], found: Vec<T>, id_of: impl Fn(&T) -> &str) -> Vec<T> {
+    let by_id = found
+        .into_iter()
+        .map(|item| (id_of(&item).to_owned(), item))
+        .collect::<HashMap<_, _>>();
+    ids.iter().filter_map(|id| by_id.get(id).cloned()).collect()
+}
+
 impl LibraryRead for JellyfinLibrary {
-    async fn tracks(&self, user_id: &str) -> Vec<TrackView> {
-        logged("tracks", self.all_tracks(user_id).await)
+    async fn track_page(
+        &self,
+        user_id: &str,
+        filter: &TrackFilter,
+        sort: ItemSort,
+        start: usize,
+        limit: usize,
+    ) -> (Vec<TrackView>, usize) {
+        let outcome = async {
+            let query = TrackQuery {
+                q: filter.search.clone(),
+                album_id: filter.album.clone(),
+                artist_ids: filter.artists.clone(),
+                album_artist_ids: filter.album_artists.clone(),
+                played_by: history_user(sort, user_id),
+                ..TrackQuery::default()
+            };
+            let (tracks, total) = self
+                .library
+                .tracks(&query, track_order(sort), to_u64(limit), to_u64(start))
+                .await?;
+            let views = tracks.into_iter().map(track_view).collect();
+            Ok((self.overlay_tracks(user_id, views).await?, to_usize(total)))
+        }
+        .await;
+        logged("track_page", outcome)
+    }
+
+    async fn tracks_by_ids(&self, user_id: &str, ids: &[String]) -> Vec<TrackView> {
+        let outcome = async {
+            let mut unique = ids.to_vec();
+            unique.sort();
+            unique.dedup();
+            let found = self.library.tracks_by_ids(&unique).await?;
+            let views = found.into_iter().map(track_view).collect();
+            let views = self.overlay_tracks(user_id, views).await?;
+            Ok(in_order(ids, views, |view| view.file_id.as_str()))
+        }
+        .await;
+        logged("tracks_by_ids", outcome)
     }
 
     async fn track(&self, user_id: &str, file_id: &str) -> Option<TrackView> {
-        let outcome = async {
-            let Some(track) = self.library.track(file_id).await? else {
-                return Ok(None);
-            };
-            Ok(self
-                .overlay_tracks(user_id, vec![track_view(track)])
-                .await?
-                .pop())
-        }
-        .await;
-        logged("track", outcome)
+        self.tracks_by_ids(user_id, &[file_id.to_owned()])
+            .await
+            .pop()
     }
 
-    async fn albums(&self, user_id: &str) -> Vec<AlbumView> {
-        logged("albums", self.all_albums(user_id).await)
+    async fn album_page(
+        &self,
+        user_id: &str,
+        filter: &AlbumFilter,
+        sort: ItemSort,
+        start: usize,
+        limit: usize,
+    ) -> (Vec<AlbumView>, usize) {
+        let outcome = async {
+            let query = AlbumQuery {
+                q: filter.search.clone(),
+                album_artist_ids: filter.artists.clone(),
+                appears_on: filter.appears_on.clone(),
+                played_by: history_user(sort, user_id),
+                ..AlbumQuery::default()
+            };
+            let (albums, total) = self
+                .library
+                .albums(&query, album_order(sort), to_u64(limit), to_u64(start))
+                .await?;
+            let views = albums.into_iter().map(album_view).collect();
+            Ok((self.overlay_albums(user_id, views).await?, to_usize(total)))
+        }
+        .await;
+        logged("album_page", outcome)
+    }
+
+    async fn albums_by_ids(&self, user_id: &str, ids: &[String]) -> Vec<AlbumView> {
+        let outcome = async {
+            let found = self
+                .library
+                .albums_in_order(ids)
+                .await?
+                .into_iter()
+                .filter(|album| album.record.track_count > 0)
+                .map(album_view)
+                .collect();
+            self.overlay_albums(user_id, found).await
+        }
+        .await;
+        logged("albums_by_ids", outcome)
     }
 
     async fn album(&self, user_id: &str, rg_mbid: &str) -> Option<AlbumView> {
-        let outcome = async {
-            let Some(album) = self.library.album(rg_mbid).await? else {
-                return Ok(None);
-            };
-            if album.record.track_count == 0 {
-                return Ok(None);
-            }
-            Ok(self
-                .overlay_albums(user_id, vec![album_view(album)])
-                .await?
-                .pop())
-        }
-        .await;
-        logged("album", outcome)
+        self.albums_by_ids(user_id, &[rg_mbid.to_owned()])
+            .await
+            .pop()
     }
 
-    async fn artists(&self, user_id: &str, scope: ArtistScope) -> Vec<ArtistView> {
+    async fn artist_page(
+        &self,
+        user_id: &str,
+        scope: ArtistScope,
+        search: Option<&str>,
+        start: usize,
+        limit: usize,
+    ) -> (Vec<ArtistView>, usize) {
         let outcome = async {
             let scope = match scope {
                 ArtistScope::All => CatalogScope::All,
                 ArtistScope::Album => CatalogScope::AlbumArtists,
             };
-            let artists = self.library.all_artists(scope).await?;
-            self.overlay_artists(user_id, artists.into_iter().map(artist_view).collect())
-                .await
+            let (artists, total) = self
+                .library
+                .artist_page(scope, search, to_u64(limit), to_u64(start))
+                .await?;
+            let views = artists.into_iter().map(artist_view).collect();
+            Ok((self.overlay_artists(user_id, views).await?, to_usize(total)))
         }
         .await;
-        logged("artists", outcome)
+        logged("artist_page", outcome)
     }
 
     async fn artist(&self, user_id: &str, mbid: &str) -> Option<ArtistView> {
@@ -399,22 +515,6 @@ impl LibraryRead for JellyfinLibrary {
             bytes,
             content_type,
         })
-    }
-
-    async fn cover_tag(&self, rg_mbid: &str) -> Option<String> {
-        let outcome = self.library.album(rg_mbid).await;
-        logged("cover_tag", outcome)
-            .filter(|album| {
-                album.record.cover_available || album.record.release_group_mbid.is_some()
-            })
-            .map(|album| tag_for(&format!("album:{}", album.record.id)))
-    }
-
-    async fn artist_tag(&self, mbid: &str) -> Option<String> {
-        let outcome = self.library.artist(mbid).await;
-        logged("artist_tag", outcome)
-            .filter(|artist| artist.artist_mbid.is_some())
-            .map(|artist| tag_for(&format!("artist:{}", artist.id)))
     }
 }
 

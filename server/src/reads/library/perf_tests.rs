@@ -35,14 +35,14 @@ struct Fixture {
     runtime: DbRuntime,
     pool: SqlitePool,
     catalog: SqliteCatalog,
+    /// Dropped last: removes the scratch database.
+    _dir: crate::tooling::scratch::ScratchDir,
 }
 
 async fn seed_small() -> Fixture {
     let seq = PERF_SEQ.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!(
-        "droppedneedle-reads-perf-{seq}-{}",
-        std::process::id()
-    ));
+    let dir = crate::tooling::scratch::ScratchDir::new(&format!("reads-perf-{seq}"))
+        .expect("scratch dir");
     let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
         .await
         .expect("scratch runtime opens");
@@ -61,6 +61,7 @@ async fn seed_small() -> Fixture {
         runtime,
         pool,
         catalog: SqliteCatalog::new(&db),
+        _dir: dir,
     }
 }
 
@@ -1507,4 +1508,76 @@ async fn perf_100k_endpoints_hold_p95() {
         }
     }
     eprintln!("100k catalog p95:\n{}", report.join("\n"));
+}
+
+/// Acceptance: the player pages the Jellyfin and Subsonic browse routes
+/// read (default track and album pages, a title-search miss, the newest
+/// albums) hold the same 10 ms p95 budget on the seeded 100k catalog.
+#[tokio::test]
+#[ignore = "100k acceptance timing; run explicitly with --release on reference hardware"]
+async fn perf_100k_player_pages_hold_p95() {
+    use library::player::{
+        AlbumOrder, AlbumQuery, OrderKey, PlayerCatalog, SqlitePlayerCatalog, TrackOrder,
+        TrackQuery,
+    };
+
+    let fixture = seed_small().await;
+    seed_100k(&fixture).await;
+    let player = SqlitePlayerCatalog::new(&LibraryDb::new(&fixture.pool));
+    let miss = TrackQuery {
+        q: Some("zzz-no-such-thing-zzz".to_owned()),
+        ..TrackQuery::default()
+    };
+    let mut report = Vec::new();
+    let mut over = Vec::new();
+    for (name, read) in [
+        ("player_tracks_title", 0),
+        ("player_tracks_search_miss", 1),
+        ("player_albums_title", 2),
+        ("player_albums_newest", 3),
+    ] {
+        let mut samples = Vec::new();
+        for round in 0..53 {
+            let tick = std::time::Instant::now();
+            let rows = match read {
+                0 => player
+                    .tracks(&TrackQuery::default(), TrackOrder::Title, 100, 0)
+                    .await
+                    .map(|page| page.0.len()),
+                1 => player
+                    .tracks(&miss, TrackOrder::Title, 100, 0)
+                    .await
+                    .map(|page| page.0.len()),
+                2 => player
+                    .albums(&AlbumQuery::default(), AlbumOrder::Title, 100, 0)
+                    .await
+                    .map(|page| page.0.len()),
+                _ => player
+                    .albums(
+                        &AlbumQuery::default(),
+                        AlbumOrder::By(OrderKey::Added, true),
+                        10,
+                        0,
+                    )
+                    .await
+                    .map(|page| page.0.len()),
+            };
+            rows.expect("page reads");
+            // The first rounds warm the page cache.
+            if round >= 3 {
+                samples.push(tick.elapsed().as_secs_f64() * 1000.0);
+            }
+        }
+        let p95 = percentile(&mut samples, 95.0);
+        let p50 = percentile(&mut samples, 50.0);
+        report.push(format!("{name}: p50 {p50:.2} ms, p95 {p95:.2} ms"));
+        if p95 >= 10.0 {
+            over.push(name);
+        }
+    }
+    eprintln!("100k player pages:\n{}", report.join("\n"));
+    // The budget binds release runs; debug runs report only.
+    if !cfg!(debug_assertions) {
+        assert!(over.is_empty(), "over budget:\n{}", report.join("\n"));
+    }
 }

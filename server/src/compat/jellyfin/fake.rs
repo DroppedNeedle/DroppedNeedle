@@ -7,6 +7,7 @@ use std::sync::Mutex;
 
 use sha2::{Digest, Sha256};
 
+use super::params::SortKey;
 use super::seams::*;
 
 /// Deterministic `sha256("kind:internal")[:32]` with an in-memory reverse
@@ -157,20 +158,190 @@ impl FakeLibrary {
     }
 }
 
+/// `tag-{rg}` when any cover size is seeded for the album.
+fn cover_tag(rows: &MemoryRows, rg_mbid: &str) -> Option<String> {
+    rows.covers
+        .keys()
+        .any(|(rg, _)| rg == rg_mbid)
+        .then(|| format!("tag-{rg_mbid}"))
+}
+
+fn is_favorite(rows: &MemoryRows, user_id: &str, kind: &str, id: &str) -> bool {
+    rows.favorites
+        .contains(&(user_id.to_owned(), kind.to_owned(), id.to_owned()))
+}
+
+fn track_for(rows: &MemoryRows, user_id: &str, track: &TrackView) -> TrackView {
+    let mut track = track.clone();
+    track.starred = is_favorite(rows, user_id, "track", &track.file_id);
+    track.album_image_tag = track.rg_mbid.as_deref().and_then(|rg| cover_tag(rows, rg));
+    track
+}
+
+fn album_for(rows: &MemoryRows, user_id: &str, album: &AlbumView) -> AlbumView {
+    let mut album = album.clone();
+    album.starred = is_favorite(rows, user_id, "album", &album.rg_mbid);
+    album.image_tag = cover_tag(rows, &album.rg_mbid);
+    album
+}
+
+fn artist_for(rows: &MemoryRows, user_id: &str, artist: &ArtistView) -> ArtistView {
+    let mut artist = artist.clone();
+    artist.starred = is_favorite(rows, user_id, "artist", &artist.artist_mbid);
+    artist.image_tag = rows
+        .artist_images
+        .contains_key(&artist.artist_mbid)
+        .then(|| format!("tag-{}", artist.artist_mbid));
+    artist
+}
+
+/// `[start, start + limit)` of an already-ordered list, plus its length.
+fn slice<T>(mut items: Vec<T>, start: usize, limit: usize) -> (Vec<T>, usize) {
+    let total = items.len();
+    if start >= total {
+        return (Vec::new(), total);
+    }
+    let end = start.saturating_add(limit).min(total);
+    items.truncate(end);
+    (items.split_off(start), total)
+}
+
+fn matches(haystacks: &[Option<&str>], needle: &str) -> bool {
+    let needle = needle.to_lowercase();
+    haystacks
+        .iter()
+        .flatten()
+        .any(|h| h.to_lowercase().contains(&needle))
+}
+
+fn flip(desc: bool, ord: std::cmp::Ordering) -> std::cmp::Ordering {
+    if desc { ord.reverse() } else { ord }
+}
+
+/// Stable stand-in shuffle for `SortBy=Random`: tests pin stability and
+/// completeness, not randomness.
+fn fnv(s: &str) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in s.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn sort_tracks(tracks: &mut [TrackView], key: SortKey, desc: bool) {
+    tracks.sort_by(|a, b| {
+        let ord = match key {
+            SortKey::Recent => a
+                .created_at
+                .partial_cmp(&b.created_at)
+                .unwrap_or(std::cmp::Ordering::Equal),
+            SortKey::Title => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
+            SortKey::Year | SortKey::PremiereDate => a.year.cmp(&b.year),
+            SortKey::Random => fnv(&a.file_id).cmp(&fnv(&b.file_id)),
+            SortKey::DatePlayed => a
+                .last_played
+                .partial_cmp(&b.last_played)
+                .unwrap_or(std::cmp::Ordering::Equal),
+            SortKey::PlayCount => a.play_count.cmp(&b.play_count),
+        };
+        flip(desc, ord.then_with(|| a.file_id.cmp(&b.file_id)))
+    });
+}
+
+fn sort_albums(albums: &mut [AlbumView], key: SortKey, desc: bool) {
+    albums.sort_by(|a, b| {
+        let ord = match key {
+            SortKey::Recent => a
+                .date_added
+                .partial_cmp(&b.date_added)
+                .unwrap_or(std::cmp::Ordering::Equal),
+            SortKey::Title => a.title.to_lowercase().cmp(&b.title.to_lowercase()),
+            SortKey::Year | SortKey::PremiereDate => a.year.cmp(&b.year),
+            SortKey::Random => fnv(&a.rg_mbid).cmp(&fnv(&b.rg_mbid)),
+            SortKey::DatePlayed => a
+                .last_played
+                .partial_cmp(&b.last_played)
+                .unwrap_or(std::cmp::Ordering::Equal),
+            SortKey::PlayCount => a.play_count.cmp(&b.play_count),
+        };
+        flip(desc, ord.then_with(|| a.rg_mbid.cmp(&b.rg_mbid)))
+    });
+}
+
 impl LibraryRead for FakeLibrary {
-    async fn tracks(&self, user_id: &str) -> Vec<TrackView> {
+    async fn track_page(
+        &self,
+        user_id: &str,
+        filter: &TrackFilter,
+        sort: ItemSort,
+        start: usize,
+        limit: usize,
+    ) -> (Vec<TrackView>, usize) {
+        let mut tracks = self
+            .with_rows(|rows| {
+                rows.tracks
+                    .iter()
+                    .filter(|t| {
+                        filter
+                            .album
+                            .as_ref()
+                            .is_none_or(|album| t.rg_mbid.as_ref() == Some(album))
+                            && (filter.artists.is_empty()
+                                || t.artist_mbid
+                                    .as_ref()
+                                    .is_some_and(|m| filter.artists.contains(m)))
+                            && (filter.album_artists.is_empty()
+                                || t.album_artist_mbid
+                                    .as_ref()
+                                    .is_some_and(|m| filter.album_artists.contains(m)))
+                            && filter.search.as_deref().is_none_or(|needle| {
+                                matches(
+                                    &[
+                                        Some(t.title.as_str()),
+                                        t.artist_name.as_deref(),
+                                        t.album_title.as_deref(),
+                                    ],
+                                    needle,
+                                )
+                            })
+                    })
+                    .map(|t| track_for(rows, user_id, t))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        match sort {
+            ItemSort::Catalog => {}
+            ItemSort::Disc => tracks.sort_by(|a, b| {
+                (
+                    a.disc_number.unwrap_or(0),
+                    a.track_number.unwrap_or(0),
+                    &a.file_id,
+                )
+                    .cmp(&(
+                        b.disc_number.unwrap_or(0),
+                        b.track_number.unwrap_or(0),
+                        &b.file_id,
+                    ))
+            }),
+            ItemSort::By(key, desc) => {
+                // History sorts page from play history: unplayed drop out.
+                if key == SortKey::DatePlayed {
+                    tracks.retain(|t| t.last_played.is_some());
+                } else if key == SortKey::PlayCount {
+                    tracks.retain(|t| t.play_count > 0);
+                }
+                sort_tracks(&mut tracks, key, desc);
+            }
+        }
+        slice(tracks, start, limit)
+    }
+
+    async fn tracks_by_ids(&self, user_id: &str, ids: &[String]) -> Vec<TrackView> {
         self.with_rows(|rows| {
-            rows.tracks
-                .iter()
-                .map(|t| {
-                    let mut t = t.clone();
-                    t.starred = rows.favorites.contains(&(
-                        user_id.to_owned(),
-                        "track".to_owned(),
-                        t.file_id.clone(),
-                    ));
-                    t
-                })
+            ids.iter()
+                .filter_map(|id| rows.tracks.iter().find(|t| &t.file_id == id))
+                .map(|t| track_for(rows, user_id, t))
                 .collect()
         })
         .unwrap_or_default()
@@ -178,32 +349,70 @@ impl LibraryRead for FakeLibrary {
 
     async fn track(&self, user_id: &str, file_id: &str) -> Option<TrackView> {
         self.with_rows(|rows| {
-            rows.tracks.iter().find(|t| t.file_id == file_id).map(|t| {
-                let mut t = t.clone();
-                t.starred = rows.favorites.contains(&(
-                    user_id.to_owned(),
-                    "track".to_owned(),
-                    t.file_id.clone(),
-                ));
-                t
-            })
+            rows.tracks
+                .iter()
+                .find(|t| t.file_id == file_id)
+                .map(|t| track_for(rows, user_id, t))
         })
         .flatten()
     }
 
-    async fn albums(&self, user_id: &str) -> Vec<AlbumView> {
+    async fn album_page(
+        &self,
+        user_id: &str,
+        filter: &AlbumFilter,
+        sort: ItemSort,
+        start: usize,
+        limit: usize,
+    ) -> (Vec<AlbumView>, usize) {
+        let mut albums = self
+            .with_rows(|rows| {
+                let appears_on: HashSet<&str> = rows
+                    .tracks
+                    .iter()
+                    .filter(|t| {
+                        t.artist_mbid
+                            .as_ref()
+                            .is_some_and(|m| filter.appears_on.contains(m))
+                            && t.album_artist_mbid
+                                .as_ref()
+                                .is_none_or(|m| !filter.appears_on.contains(m))
+                    })
+                    .filter_map(|t| t.rg_mbid.as_deref())
+                    .collect();
+                rows.albums
+                    .iter()
+                    .filter(|a| {
+                        (filter.artists.is_empty()
+                            || a.artist_mbid
+                                .as_ref()
+                                .is_some_and(|m| filter.artists.contains(m)))
+                            && (filter.appears_on.is_empty()
+                                || appears_on.contains(a.rg_mbid.as_str()))
+                            && filter.search.as_deref().is_none_or(|needle| {
+                                matches(&[Some(a.title.as_str()), a.artist_name.as_deref()], needle)
+                            })
+                    })
+                    .map(|a| album_for(rows, user_id, a))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if let ItemSort::By(key, desc) = sort {
+            if key == SortKey::DatePlayed {
+                albums.retain(|a| a.last_played.is_some());
+            } else if key == SortKey::PlayCount {
+                albums.retain(|a| a.play_count > 0);
+            }
+            sort_albums(&mut albums, key, desc);
+        }
+        slice(albums, start, limit)
+    }
+
+    async fn albums_by_ids(&self, user_id: &str, ids: &[String]) -> Vec<AlbumView> {
         self.with_rows(|rows| {
-            rows.albums
-                .iter()
-                .map(|a| {
-                    let mut a = a.clone();
-                    a.starred = rows.favorites.contains(&(
-                        user_id.to_owned(),
-                        "album".to_owned(),
-                        a.rg_mbid.clone(),
-                    ));
-                    a
-                })
+            ids.iter()
+                .filter_map(|id| rows.albums.iter().find(|a| &a.rg_mbid == id))
+                .map(|a| album_for(rows, user_id, a))
                 .collect()
         })
         .unwrap_or_default()
@@ -211,38 +420,36 @@ impl LibraryRead for FakeLibrary {
 
     async fn album(&self, user_id: &str, rg_mbid: &str) -> Option<AlbumView> {
         self.with_rows(|rows| {
-            rows.albums.iter().find(|a| a.rg_mbid == rg_mbid).map(|a| {
-                let mut a = a.clone();
-                a.starred = rows.favorites.contains(&(
-                    user_id.to_owned(),
-                    "album".to_owned(),
-                    a.rg_mbid.clone(),
-                ));
-                a
-            })
+            rows.albums
+                .iter()
+                .find(|a| a.rg_mbid == rg_mbid)
+                .map(|a| album_for(rows, user_id, a))
         })
         .flatten()
     }
 
-    async fn artists(&self, user_id: &str, scope: ArtistScope) -> Vec<ArtistView> {
-        self.with_rows(|rows| {
-            rows.artists
-                .iter()
-                .filter(|a| {
-                    scope == ArtistScope::All || rows.album_artist_mbids.contains(&a.artist_mbid)
-                })
-                .map(|a| {
-                    let mut a = a.clone();
-                    a.starred = rows.favorites.contains(&(
-                        user_id.to_owned(),
-                        "artist".to_owned(),
-                        a.artist_mbid.clone(),
-                    ));
-                    a
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    async fn artist_page(
+        &self,
+        user_id: &str,
+        scope: ArtistScope,
+        search: Option<&str>,
+        start: usize,
+        limit: usize,
+    ) -> (Vec<ArtistView>, usize) {
+        let artists = self
+            .with_rows(|rows| {
+                rows.artists
+                    .iter()
+                    .filter(|a| {
+                        (scope == ArtistScope::All
+                            || rows.album_artist_mbids.contains(&a.artist_mbid))
+                            && search.is_none_or(|needle| matches(&[Some(a.name.as_str())], needle))
+                    })
+                    .map(|a| artist_for(rows, user_id, a))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        slice(artists, start, limit)
     }
 
     async fn artist(&self, user_id: &str, mbid: &str) -> Option<ArtistView> {
@@ -250,15 +457,7 @@ impl LibraryRead for FakeLibrary {
             rows.artists
                 .iter()
                 .find(|a| a.artist_mbid == mbid)
-                .map(|a| {
-                    let mut a = a.clone();
-                    a.starred = rows.favorites.contains(&(
-                        user_id.to_owned(),
-                        "artist".to_owned(),
-                        a.artist_mbid.clone(),
-                    ));
-                    a
-                })
+                .map(|a| artist_for(rows, user_id, a))
         })
         .flatten()
     }
@@ -425,25 +624,6 @@ impl LibraryRead for FakeLibrary {
     async fn artist_image(&self, mbid: &str) -> Option<CoverBytes> {
         self.with_rows(|rows| rows.artist_images.get(mbid).cloned())
             .flatten()
-    }
-
-    async fn cover_tag(&self, rg_mbid: &str) -> Option<String> {
-        self.with_rows(|rows| {
-            rows.covers
-                .keys()
-                .any(|(rg, _)| rg == rg_mbid)
-                .then(|| format!("tag-{rg_mbid}"))
-        })
-        .flatten()
-    }
-
-    async fn artist_tag(&self, mbid: &str) -> Option<String> {
-        self.with_rows(|rows| {
-            rows.artist_images
-                .contains_key(mbid)
-                .then(|| format!("tag-{mbid}"))
-        })
-        .flatten()
     }
 }
 
@@ -744,5 +924,35 @@ impl PlaybackSessions for MemorySessions {
             user_id: user_id.to_owned(),
             file_id: file_id.to_owned(),
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn track(id: &str, title: &str, year: i32) -> TrackView {
+        TrackView {
+            file_id: id.to_owned(),
+            title: title.to_owned(),
+            year: Some(year),
+            ..TrackView::default()
+        }
+    }
+
+    #[test]
+    fn sorts_break_ties_by_id_and_flip_whole_order() {
+        let mut tracks = vec![track("b", "Same", 2000), track("a", "Same", 1990)];
+        sort_tracks(&mut tracks, SortKey::Title, false);
+        assert_eq!(tracks[0].file_id, "a", "ties fall back to the id");
+        sort_tracks(&mut tracks, SortKey::Year, true);
+        assert_eq!(tracks[0].year, Some(2000));
+    }
+
+    #[test]
+    fn slices_clamp_to_the_list() {
+        assert_eq!(slice(vec![1, 2, 3, 4], 1, 2), (vec![2, 3], 4));
+        assert_eq!(slice(vec![1, 2, 3, 4], 1, ALL), (vec![2, 3, 4], 4));
+        assert_eq!(slice(vec![1, 2], 5, 1), (Vec::new(), 2));
     }
 }

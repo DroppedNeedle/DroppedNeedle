@@ -108,7 +108,7 @@ pub fn ids_param(params: &CiParams, keys: &[&str]) -> Vec<String> {
 
 // ===== SortBy allowlist (v2 `_browse_sort`) =====
 
-/// Resolved sort key: native in-memory sorts plus the two history sorts.
+/// Resolved sort key: the catalog sorts plus the two play-history sorts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortKey {
     /// `DateCreated`: newest first by default.

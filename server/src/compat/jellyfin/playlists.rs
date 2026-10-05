@@ -9,6 +9,7 @@ use axum::response::Response;
 use super::models::{BaseItemDtoQueryResult, CreatePlaylistDto};
 use super::params::{self, CiParams};
 use super::playstate::*;
+use super::query::page;
 use super::router::*;
 use super::seams::{IdMap, LibraryRead, PlaybackSessions, StreamEngine};
 
@@ -173,25 +174,36 @@ where
     // case-insensitive so both spellings are one key.
     let start = params::qint(q, "startIndex", 0).max(0) as usize;
     let limit = params::qint(q, "limit", 0).max(0) as usize;
+    // One batch read for every linked file; entries whose file is gone
+    // drop out before paging, so the total counts what is served.
+    let file_ids = detail
+        .entries
+        .iter()
+        .filter_map(|entry| entry.file_id.clone())
+        .collect::<Vec<_>>();
+    let tracks = state
+        .library
+        .tracks_by_ids(user_id, &file_ids)
+        .await
+        .into_iter()
+        .map(|track| (track.file_id.clone(), track))
+        .collect::<std::collections::HashMap<_, _>>();
+    let served = detail
+        .entries
+        .iter()
+        .filter_map(|entry| {
+            let track = tracks.get(entry.file_id.as_deref()?)?;
+            Some((entry.id.clone(), track))
+        })
+        .collect::<Vec<_>>();
+    let (served, total) = page(&served, start, limit);
     let b = builder(state);
-    let mut items = Vec::new();
-    for entry in detail.entries.iter().filter(|e| e.file_id.is_some()) {
-        let file_id = entry.file_id.as_deref().unwrap_or("");
-        let Some(track) = state.library.track(user_id, file_id).await else {
-            continue;
-        };
-        let mut dto = b.audio(&track).await;
-        dto.playlist_item_id = Some(entry.id.clone());
+    let mut items = Vec::with_capacity(served.len());
+    for (entry_id, track) in served {
+        let mut dto = b.audio(track).await;
+        dto.playlist_item_id = Some(entry_id);
         items.push(dto);
     }
-    let total = items.len();
-    let items = if start >= total {
-        Vec::new()
-    } else if limit == 0 {
-        items[start..].to_vec()
-    } else {
-        items[start..(start.saturating_add(limit)).min(total)].to_vec()
-    };
     json(
         StatusCode::OK,
         &BaseItemDtoQueryResult {

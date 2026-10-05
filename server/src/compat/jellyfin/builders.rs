@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use super::models::{BaseItemDto, MediaStream, NameGuidPair, UserItemDataDto};
 use super::seams::{
-    AlbumView, ArtistView, GenreView, IdMap, LibraryRead, PlaylistView, TICKS_PER_SECOND, TrackView,
+    AlbumView, ArtistView, GenreView, IdMap, PlaylistView, TICKS_PER_SECOND, TrackView,
 };
 
 /// Internal id of the single music library (v2 `LIBRARY_INTERNAL_ID`).
@@ -156,21 +156,17 @@ pub fn music_view(library_id: &str, server_id: &str) -> BaseItemDto {
     dto
 }
 
-/// View → DTO builder (v2 `JellyfinBuilder`).
-pub struct Builder<'a, I, L> {
+/// View → DTO builder (v2 `JellyfinBuilder`). Image tags ride the views,
+/// so shaping a page never reads the library again.
+pub struct Builder<'a, I> {
     ids: &'a I,
-    library: &'a L,
     server_id: &'a str,
 }
 
-impl<'a, I: IdMap, L: LibraryRead> Builder<'a, I, L> {
-    /// Borrow the id map, library reads, and server id.
-    pub fn new(ids: &'a I, library: &'a L, server_id: &'a str) -> Self {
-        Self {
-            ids,
-            library,
-            server_id,
-        }
+impl<'a, I: IdMap> Builder<'a, I> {
+    /// Borrow the id map and server id.
+    pub fn new(ids: &'a I, server_id: &'a str) -> Self {
+        Self { ids, server_id }
     }
 
     /// Track → `Audio` DTO (v2 `JellyfinBuilder.audio`).
@@ -189,10 +185,7 @@ impl<'a, I: IdMap, L: LibraryRead> Builder<'a, I, L> {
             Some(m) => Some(self.ids.to_jf("artist", m).await),
             None => None,
         };
-        let album_tag = match t.rg_mbid.as_deref() {
-            Some(rg) => self.library.cover_tag(rg).await,
-            None => None,
-        };
+        let album_tag = t.album_image_tag.clone();
         let mut dto = base(track_id.clone(), t.title.clone(), self.server_id);
         dto.item_type = "Audio".to_owned();
         dto.media_type = "Audio".to_owned();
@@ -255,7 +248,7 @@ impl<'a, I: IdMap, L: LibraryRead> Builder<'a, I, L> {
             Some(m) => Some(self.ids.to_jf("artist", m).await),
             None => None,
         };
-        let tag = self.library.cover_tag(&a.rg_mbid).await;
+        let tag = a.image_tag.clone();
         let mut dto = base(album_id.clone(), a.title.clone(), self.server_id);
         dto.item_type = "MusicAlbum".to_owned();
         dto.is_folder = true;
@@ -290,7 +283,7 @@ impl<'a, I: IdMap, L: LibraryRead> Builder<'a, I, L> {
     /// Artist → `MusicArtist` DTO (v2 `JellyfinBuilder.artist`).
     pub async fn artist(&self, ar: &ArtistView) -> BaseItemDto {
         let artist_id = self.ids.to_jf("artist", &ar.artist_mbid).await;
-        let tag = self.library.artist_tag(&ar.artist_mbid).await;
+        let tag = ar.image_tag.clone();
         let mut dto = base(artist_id.clone(), ar.name.clone(), self.server_id);
         dto.item_type = "MusicArtist".to_owned();
         dto.is_folder = true;

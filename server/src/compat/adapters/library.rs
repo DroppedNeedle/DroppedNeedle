@@ -123,13 +123,19 @@ impl CompatLibrary {
         Ok((artists, total))
     }
 
-    /// Every credited artist, name order.
-    pub async fn all_artists(&self, scope: ArtistScope) -> Result<Vec<ArtistRecord>, CompatError> {
-        let (artists, _, _, _) = self
+    /// One page of artists in name order, plus the total.
+    pub async fn artist_page(
+        &self,
+        scope: ArtistScope,
+        query: Option<&str>,
+        limit: u64,
+        offset: u64,
+    ) -> Result<(Vec<ArtistRecord>, u64), CompatError> {
+        let (artists, total, _, _) = self
             .catalog
-            .list_artists(scope, None, ArtistSort::Name, false, u64::MAX >> 1, 0)
+            .list_artists(scope, query, ArtistSort::Name, false, limit, offset)
             .await?;
-        Ok(artists)
+        Ok((artists, total))
     }
 
     /// One artist.

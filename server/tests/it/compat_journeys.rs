@@ -106,6 +106,7 @@ pub(crate) fn seed_jellyfin(library: &FakeLibrary, engine: &MemoryEngine) {
                 album_count: albums,
                 date_added: Some(added),
                 starred: false,
+                image_tag: None,
             },
             album_artist,
         );
@@ -136,6 +137,7 @@ pub(crate) fn seed_jellyfin(library: &FakeLibrary, engine: &MemoryEngine) {
             starred: false,
             play_count: plays,
             last_played,
+            image_tag: None,
         });
     }
     let track = |id: &str, title: &str, rg: &str, album: &str, artist: (&str, &str)| TrackView {

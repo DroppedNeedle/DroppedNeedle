@@ -7,12 +7,15 @@ use axum::extract::{Path, State};
 use axum::http::{Request, StatusCode};
 use axum::response::Response;
 
-use super::builders::{self, LIBRARY_INTERNAL_ID};
-use super::models::BaseItemDtoQueryResult;
+use super::builders::{self, Builder, LIBRARY_INTERNAL_ID};
+use super::models::{BaseItemDto, BaseItemDtoQueryResult};
 use super::params::{self, CiParams, SortKey};
-use super::query::*;
+use super::query::{page, primary_type};
 use super::router::*;
-use super::seams::{ArtistScope, IdMap, LibraryRead, PlaybackSessions, StreamEngine};
+use super::seams::{
+    ALL, AlbumFilter, AlbumView, ArtistScope, ArtistView, IdMap, ItemSort, LibraryRead,
+    PlaybackSessions, StreamEngine, TrackFilter, TrackView,
+};
 
 // ===== Library browsing =====
 
@@ -109,6 +112,80 @@ where
     }
 }
 
+/// One query result over already-built DTOs.
+fn result(items: Vec<BaseItemDto>, total: usize, start: usize) -> Response {
+    json(
+        StatusCode::OK,
+        &BaseItemDtoQueryResult {
+            items,
+            total_record_count: total,
+            start_index: start,
+        },
+    )
+}
+
+/// The empty result (unknown parent, filter that resolved to nothing).
+fn nothing(start: usize) -> Response {
+    result(Vec::new(), 0, start)
+}
+
+/// `Limit=0` means everything from `start` (v2 `_build_page`).
+fn or_all(limit: usize) -> usize {
+    if limit == 0 { ALL } else { limit }
+}
+
+/// The page order for a parsed `SortBy`, else `fallback`.
+fn sort_or(sort_key: Option<SortKey>, desc: bool, fallback: ItemSort) -> ItemSort {
+    sort_key.map_or(fallback, |key| ItemSort::By(key, desc))
+}
+
+/// Decode artist ids; undecodable ids drop out.
+async fn decode_artists<S, L, E, P, I>(
+    state: &JellyfinState<S, L, E, P, I>,
+    jf_ids: &[String],
+) -> Vec<String>
+where
+    S: JellyfinPasswordStore,
+    L: LibraryRead,
+    E: StreamEngine,
+    P: PlaybackSessions,
+    I: IdMap,
+{
+    let mut mbids = Vec::new();
+    for jf_id in jf_ids {
+        if let Some(mbid) = decode_artist(state, jf_id).await
+            && !mbids.contains(&mbid)
+        {
+            mbids.push(mbid);
+        }
+    }
+    mbids
+}
+
+async fn build_tracks<I: IdMap>(b: &Builder<'_, I>, tracks: &[TrackView]) -> Vec<BaseItemDto> {
+    let mut built = Vec::with_capacity(tracks.len());
+    for track in tracks {
+        built.push(b.audio(track).await);
+    }
+    built
+}
+
+async fn build_albums<I: IdMap>(b: &Builder<'_, I>, albums: &[AlbumView]) -> Vec<BaseItemDto> {
+    let mut built = Vec::with_capacity(albums.len());
+    for album in albums {
+        built.push(b.album(album).await);
+    }
+    built
+}
+
+async fn build_artists<I: IdMap>(b: &Builder<'_, I>, artists: &[ArtistView]) -> Vec<BaseItemDto> {
+    let mut built = Vec::with_capacity(artists.len());
+    for artist in artists {
+        built.push(b.artist(artist).await);
+    }
+    built
+}
+
 /// Main browse, both dialects (v2 `_browse`, same branch order).
 pub(super) async fn browse<S, L, E, P, I>(
     State(state): State<JellyfinState<S, L, E, P, I>>,
@@ -154,14 +231,7 @@ where
             }
         }
         let (items, total) = page(&built, start, limit);
-        return json(
-            StatusCode::OK,
-            &BaseItemDtoQueryResult {
-                items,
-                total_record_count: total,
-                start_index: start,
-            },
-        );
+        return result(items, total, start);
     }
 
     let mut parent_kind: Option<String> = None;
@@ -172,16 +242,7 @@ where
                 parent_kind = Some(kind);
                 parent_internal = internal;
             }
-            None => {
-                return json(
-                    StatusCode::OK,
-                    &BaseItemDtoQueryResult {
-                        items: Vec::new(),
-                        total_record_count: 0,
-                        start_index: start,
-                    },
-                );
-            }
+            None => return nothing(start),
         }
     }
 
@@ -190,99 +251,48 @@ where
     }
 
     if parent_kind.as_deref() == Some("album") {
-        let mut tracks: Vec<_> = state
+        let filter = TrackFilter {
+            album: Some(parent_internal),
+            ..TrackFilter::default()
+        };
+        let (tracks, total) = state
             .library
-            .tracks(&user_id)
-            .await
-            .into_iter()
-            .filter(|t| t.rg_mbid.as_deref() == Some(parent_internal.as_str()))
-            .collect();
-        tracks.sort_by(|a, b| {
-            (
-                a.disc_number.unwrap_or(0),
-                a.track_number.unwrap_or(0),
-                &a.file_id,
-            )
-                .cmp(&(
-                    b.disc_number.unwrap_or(0),
-                    b.track_number.unwrap_or(0),
-                    &b.file_id,
-                ))
-        });
-        let mut built = Vec::with_capacity(tracks.len());
-        for t in &tracks {
-            built.push(b.audio(t).await);
-        }
-        let (items, total) = page(&built, start, limit);
-        return json(
-            StatusCode::OK,
-            &BaseItemDtoQueryResult {
-                items,
-                total_record_count: total,
-                start_index: start,
-            },
-        );
+            .track_page(&user_id, &filter, ItemSort::Disc, start, or_all(limit))
+            .await;
+        return result(build_tracks(&b, &tracks).await, total, start);
     }
 
     match primary_type(&types) {
         "MusicArtist" => {
-            let mut artists = state.library.artists(&user_id, ArtistScope::All).await;
-            if let Some(needle) = search.as_deref() {
-                artists.retain(|a| matches(&[Some(a.name.clone())], needle));
-            }
-            let total = artists.len();
             let size = if limit == 0 { 100_000 } else { limit };
-            let items = artists.get(start..(start + size).min(total)).unwrap_or(&[]);
-            let mut built = Vec::with_capacity(items.len());
-            for a in items {
-                built.push(b.artist(a).await);
-            }
-            json(
-                StatusCode::OK,
-                &BaseItemDtoQueryResult {
-                    items: built,
-                    total_record_count: total,
-                    start_index: start,
-                },
-            )
+            let (artists, total) = state
+                .library
+                .artist_page(&user_id, ArtistScope::All, search.as_deref(), start, size)
+                .await;
+            result(build_artists(&b, &artists).await, total, start)
         }
         "MusicGenre" => {
             let genres = state.library.genres().await;
+            let (genres, total) = page(&genres, start, limit);
             let mut built = Vec::with_capacity(genres.len());
             for g in &genres {
                 built.push(b.genre(g).await);
             }
-            let (items, total) = page(&built, start, limit);
-            json(
-                StatusCode::OK,
-                &BaseItemDtoQueryResult {
-                    items,
-                    total_record_count: total,
-                    start_index: start,
-                },
-            )
+            result(built, total, start)
         }
         "Playlist" => {
             let views = state.library.playlists(&user_id).await;
+            let (views, total) = page(&views, start, limit);
             let mut built = Vec::with_capacity(views.len());
             for v in &views {
                 built.push(b.playlist(v).await);
             }
-            let (items, total) = page(&built, start, limit);
-            json(
-                StatusCode::OK,
-                &BaseItemDtoQueryResult {
-                    items,
-                    total_record_count: total,
-                    start_index: start,
-                },
-            )
+            result(built, total, start)
         }
         "Audio" => {
             audio_browse(
                 &state,
                 &user_id,
-                &q,
                 search.as_deref(),
                 &album_artist_ids,
                 &artist_ids,
@@ -297,7 +307,6 @@ where
             album_browse(
                 &state,
                 &user_id,
-                &q,
                 search.as_deref(),
                 &album_artist_ids,
                 &artist_ids,
@@ -312,7 +321,8 @@ where
     }
 }
 
-/// Favorite listing for browse (v2 `_favorite_items`).
+/// Favorite listing for browse (v2 `_favorite_items`): one batch read per
+/// kind, DTOs for the page only.
 pub(super) async fn favorites_browse<S, L, E, P, I>(
     state: &JellyfinState<S, L, E, P, I>,
     user_id: &str,
@@ -327,27 +337,35 @@ where
     P: PlaybackSessions,
     I: IdMap,
 {
+    let b = builder(state);
     let kind = match primary_type(types) {
         "MusicArtist" => "artist",
         "MusicAlbum" => "album",
-        "Audio" => "track",
         _ => "track",
     };
-    let mut built = Vec::new();
-    for internal in state.library.favorites(user_id, kind).await {
-        if let Some(item) = fetch_item(state, user_id, kind, &internal).await {
-            built.push(item);
+    let ids = state.library.favorites(user_id, kind).await;
+    match kind {
+        "track" => {
+            let tracks = state.library.tracks_by_ids(user_id, &ids).await;
+            let (tracks, total) = page(&tracks, start, limit);
+            result(build_tracks(&b, &tracks).await, total, start)
+        }
+        "album" => {
+            let albums = state.library.albums_by_ids(user_id, &ids).await;
+            let (albums, total) = page(&albums, start, limit);
+            result(build_albums(&b, &albums).await, total, start)
+        }
+        _ => {
+            let mut artists = Vec::with_capacity(ids.len());
+            for id in &ids {
+                if let Some(artist) = state.library.artist(user_id, id).await {
+                    artists.push(artist);
+                }
+            }
+            let (artists, total) = page(&artists, start, limit);
+            result(build_artists(&b, &artists).await, total, start)
         }
     }
-    let (items, total) = page(&built, start, limit);
-    json(
-        StatusCode::OK,
-        &BaseItemDtoQueryResult {
-            items,
-            total_record_count: total,
-            start_index: start,
-        },
-    )
 }
 
 /// Track browse arm (v2 `_browse` `Audio` branch).
@@ -355,7 +373,6 @@ where
 pub(super) async fn audio_browse<S, L, E, P, I>(
     state: &JellyfinState<S, L, E, P, I>,
     user_id: &str,
-    _q: &CiParams,
     search: Option<&str>,
     album_artist_ids: &[String],
     artist_ids: &[String],
@@ -372,111 +389,39 @@ where
     I: IdMap,
 {
     let b = builder(state);
-    let size = if limit == 0 { 100 } else { limit };
-    if !album_artist_ids.is_empty() {
-        let mut mbids = Vec::new();
-        for jf_id in album_artist_ids {
-            if let Some(m) = decode_artist(state, jf_id).await {
-                mbids.push(m);
-            }
+    let sort = sort_or(sort_key, sort_desc, ItemSort::Catalog);
+    let (filter, size) = if !album_artist_ids.is_empty() {
+        let album_artists = decode_artists(state, album_artist_ids).await;
+        if album_artists.is_empty() {
+            return nothing(start);
         }
-        let mut tracks: Vec<_> = state
-            .library
-            .tracks(user_id)
-            .await
-            .into_iter()
-            .filter(|t| {
-                t.album_artist_mbid
-                    .as_ref()
-                    .is_some_and(|m| mbids.contains(m))
-            })
-            .collect();
-        if let Some(key) = sort_key {
-            sort_tracks(&mut tracks, key, sort_desc);
+        let filter = TrackFilter {
+            album_artists,
+            ..TrackFilter::default()
+        };
+        (filter, or_all(limit))
+    } else if !artist_ids.is_empty() {
+        let artists = decode_artists(state, artist_ids).await;
+        if artists.is_empty() {
+            return nothing(start);
         }
-        let mut built = Vec::with_capacity(tracks.len());
-        for t in &tracks {
-            built.push(b.audio(t).await);
-        }
-        let (items, total) = page(&built, start, limit);
-        return json(
-            StatusCode::OK,
-            &BaseItemDtoQueryResult {
-                items,
-                total_record_count: total,
-                start_index: start,
-            },
-        );
-    }
-    if !artist_ids.is_empty() {
-        let mut mbids = Vec::new();
-        for jf_id in artist_ids {
-            if let Some(m) = decode_artist(state, jf_id).await {
-                mbids.push(m);
-            }
-        }
-        let mut tracks: Vec<_> = state
-            .library
-            .tracks(user_id)
-            .await
-            .into_iter()
-            .filter(|t| t.artist_mbid.as_ref().is_some_and(|m| mbids.contains(m)))
-            .collect();
-        if let Some(key) = sort_key {
-            sort_tracks(&mut tracks, key, sort_desc);
-        }
-        let mut built = Vec::with_capacity(tracks.len());
-        for t in &tracks {
-            built.push(b.audio(t).await);
-        }
-        let (items, total) = page(&built, start, limit);
-        return json(
-            StatusCode::OK,
-            &BaseItemDtoQueryResult {
-                items,
-                total_record_count: total,
-                start_index: start,
-            },
-        );
-    }
-    let mut tracks = state.library.tracks(user_id).await;
-    if let Some(needle) = search {
-        tracks.retain(|t| {
-            matches(
-                &[
-                    Some(t.title.clone()),
-                    t.artist_name.clone(),
-                    t.album_title.clone(),
-                ],
-                needle,
-            )
-        });
-    }
-    if let Some(key) = sort_key.filter(|k| k.is_history()) {
-        // History sorts page from play history: unplayed tracks are excluded.
-        if key == SortKey::DatePlayed {
-            tracks.retain(|t| t.last_played.is_some());
-        } else {
-            tracks.retain(|t| t.play_count > 0);
-        }
-        sort_tracks(&mut tracks, key, sort_desc);
-    } else if let Some(key) = sort_key {
-        sort_tracks(&mut tracks, key, sort_desc);
-    }
-    let total = tracks.len();
-    let items = tracks.get(start..(start + size).min(total)).unwrap_or(&[]);
-    let mut built = Vec::with_capacity(items.len());
-    for t in items {
-        built.push(b.audio(t).await);
-    }
-    json(
-        StatusCode::OK,
-        &BaseItemDtoQueryResult {
-            items: built,
-            total_record_count: total,
-            start_index: start,
-        },
-    )
+        let filter = TrackFilter {
+            artists,
+            ..TrackFilter::default()
+        };
+        (filter, or_all(limit))
+    } else {
+        let filter = TrackFilter {
+            search: search.map(str::to_owned),
+            ..TrackFilter::default()
+        };
+        (filter, if limit == 0 { 100 } else { limit })
+    };
+    let (tracks, total) = state
+        .library
+        .track_page(user_id, &filter, sort, start, size)
+        .await;
+    result(build_tracks(&b, &tracks).await, total, start)
 }
 
 /// Album browse arm (v2 `_browse` fallthrough branch).
@@ -484,7 +429,6 @@ where
 pub(super) async fn album_browse<S, L, E, P, I>(
     state: &JellyfinState<S, L, E, P, I>,
     user_id: &str,
-    _q: &CiParams,
     search: Option<&str>,
     album_artist_ids: &[String],
     artist_ids: &[String],
@@ -503,156 +447,66 @@ where
 {
     let b = builder(state);
     let size = if limit == 0 { 100 } else { limit };
-    if !contributing_ids.is_empty() {
-        let mut mbids = Vec::new();
-        for jf_id in contributing_ids {
-            if let Some(m) = decode_artist(state, jf_id).await {
-                mbids.push(m);
-            }
-        }
-        if mbids.is_empty() {
+    let (filter, sort, offset, size) = if !contributing_ids.is_empty() {
+        let appears_on = decode_artists(state, contributing_ids).await;
+        if appears_on.is_empty() {
             // A contributor filter must never fall through to the full catalog.
-            return json(
-                StatusCode::OK,
-                &BaseItemDtoQueryResult {
-                    items: Vec::new(),
-                    total_record_count: 0,
-                    start_index: start,
-                },
-            );
+            return nothing(start);
         }
-        // Appears-on: albums whose artist is not the contributor but whose
-        // tracks credit them (in-memory approximation of the discover call).
-        let tracks = state.library.tracks(user_id).await;
-        let mut appears_on: Vec<String> = tracks
+        let filter = AlbumFilter {
+            appears_on,
+            ..AlbumFilter::default()
+        };
+        let newest = ItemSort::By(SortKey::Recent, true);
+        (
+            filter,
+            sort_or(sort_key, sort_desc, newest),
+            start,
+            or_all(limit),
+        )
+    } else if !album_artist_ids.is_empty() || !artist_ids.is_empty() {
+        let ids = album_artist_ids
             .iter()
-            .filter(|t| {
-                t.artist_mbid.as_ref().is_some_and(|m| mbids.contains(m))
-                    && t.album_artist_mbid
-                        .as_ref()
-                        .is_none_or(|m| !mbids.contains(m))
-            })
-            .filter_map(|t| t.rg_mbid.clone())
-            .collect();
-        appears_on.sort();
-        appears_on.dedup();
-        let mut albums = Vec::new();
-        for rg in &appears_on {
-            if let Some(a) = state.library.album(user_id, rg).await {
-                albums.push(a);
-            }
+            .chain(artist_ids)
+            .cloned()
+            .collect::<Vec<_>>();
+        let artists = decode_artists(state, &ids).await;
+        if artists.is_empty() {
+            return nothing(start);
         }
-        match sort_key {
-            Some(key) => sort_albums(&mut albums, key, sort_desc),
-            None => sort_albums(&mut albums, SortKey::Recent, true),
-        }
-        let mut built = Vec::with_capacity(albums.len());
-        for a in &albums {
-            built.push(b.album(a).await);
-        }
-        let (items, total) = page(&built, start, limit);
-        return json(
-            StatusCode::OK,
-            &BaseItemDtoQueryResult {
-                items,
-                total_record_count: total,
-                start_index: start,
-            },
-        );
-    }
-    if !album_artist_ids.is_empty() || !artist_ids.is_empty() {
-        let mut albums = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        let all = state.library.albums(user_id).await;
-        for jf_id in album_artist_ids.iter().chain(artist_ids.iter()) {
-            let Some(mb) = decode_artist(state, jf_id).await else {
-                continue;
-            };
-            for a in &all {
-                if a.artist_mbid.as_deref() == Some(mb.as_str()) && seen.insert(a.rg_mbid.clone()) {
-                    albums.push(a.clone());
-                }
-            }
-        }
-        if let Some(key) = sort_key {
-            sort_albums(&mut albums, key, sort_desc);
-        }
-        let mut built = Vec::with_capacity(albums.len());
-        for a in &albums {
-            built.push(b.album(a).await);
-        }
-        let (items, total) = page(&built, start, limit);
-        return json(
-            StatusCode::OK,
-            &BaseItemDtoQueryResult {
-                items,
-                total_record_count: total,
-                start_index: start,
-            },
-        );
-    }
-    let mut albums = state.library.albums(user_id).await;
-    if let Some(needle) = search {
-        albums.retain(|a| matches(&[Some(a.title.clone()), a.artist_name.clone()], needle));
-    }
-    if let Some(key) = sort_key.filter(|k| k.is_history()) {
-        if key == SortKey::DatePlayed {
-            albums.retain(|a| a.last_played.is_some());
-        } else {
-            albums.retain(|a| a.play_count > 0);
-        }
-        sort_albums(&mut albums, key, sort_desc);
-        let total = albums.len();
-        let items = albums.get(start..(start + size).min(total)).unwrap_or(&[]);
-        let mut built = Vec::with_capacity(items.len());
-        for a in items {
-            built.push(b.album(a).await);
-        }
-        return json(
-            StatusCode::OK,
-            &BaseItemDtoQueryResult {
-                items: built,
-                total_record_count: total,
-                start_index: start,
-            },
-        );
-    }
-    if let Some(key) = sort_key {
-        sort_albums(&mut albums, key, sort_desc);
-        let total = albums.len();
-        let items = albums.get(start..(start + size).min(total)).unwrap_or(&[]);
-        let mut built = Vec::with_capacity(items.len());
-        for a in items {
-            built.push(b.album(a).await);
-        }
-        return json(
-            StatusCode::OK,
-            &BaseItemDtoQueryResult {
-                items: built,
-                total_record_count: total,
-                start_index: start,
-            },
-        );
-    }
-    // Legacy order: v2's `page = start // limit + 1` service paging.
-    let page_no = if limit == 0 { 1 } else { start / limit + 1 };
-    let offset = (page_no - 1) * size;
-    let total = albums.len();
-    let items = albums
-        .get(offset..(offset + size).min(total))
-        .unwrap_or(&[]);
-    let mut built = Vec::with_capacity(items.len());
-    for a in items {
-        built.push(b.album(a).await);
-    }
-    json(
-        StatusCode::OK,
-        &BaseItemDtoQueryResult {
-            items: built,
-            total_record_count: total,
-            start_index: start,
-        },
-    )
+        let filter = AlbumFilter {
+            artists,
+            ..AlbumFilter::default()
+        };
+        (
+            filter,
+            sort_or(sort_key, sort_desc, ItemSort::Catalog),
+            start,
+            or_all(limit),
+        )
+    } else {
+        let filter = AlbumFilter {
+            search: search.map(str::to_owned),
+            ..AlbumFilter::default()
+        };
+        // Without SortBy, v2 pages by `page = start // limit + 1`.
+        let offset = match (sort_key, limit) {
+            (Some(_), _) => start,
+            (None, 0) => 0,
+            (None, _) => (start / limit) * size,
+        };
+        (
+            filter,
+            sort_or(sort_key, sort_desc, ItemSort::Catalog),
+            offset,
+            size,
+        )
+    };
+    let (albums, total) = state
+        .library
+        .album_page(user_id, &filter, sort, offset, size)
+        .await;
+    result(build_albums(&b, &albums).await, total, start)
 }
 
 /// Jellify Recently Added: a bare JSON array of the newest albums (v2
@@ -681,7 +535,7 @@ where
     if let Some(parent) = q.get("ParentId") {
         match state.ids.from_jf(parent).await {
             Some((kind, _)) if kind == "library" => {}
-            _ => return json(StatusCode::OK, &Vec::<super::models::BaseItemDto>::new()),
+            _ => return json(StatusCode::OK, &Vec::<BaseItemDto>::new()),
         }
     }
     let mut limit = params::qint(&q, "Limit", 10);
@@ -689,13 +543,17 @@ where
         limit = 10;
     }
     let b = builder(&state);
-    let mut albums = state.library.albums(&authed.principal.id).await;
-    sort_albums(&mut albums, SortKey::Recent, true);
-    let mut built = Vec::new();
-    for a in albums.iter().take(limit as usize) {
-        built.push(b.album(a).await);
-    }
-    json(StatusCode::OK, &built)
+    let (albums, _) = state
+        .library
+        .album_page(
+            &authed.principal.id,
+            &AlbumFilter::default(),
+            ItemSort::By(SortKey::Recent, true),
+            0,
+            limit as usize,
+        )
+        .await;
+    json(StatusCode::OK, &build_albums(&b, &albums).await)
 }
 
 pub(super) async fn artists<S, L, E, P, I>(
@@ -750,26 +608,19 @@ where
     let q = CiParams::parse(raw_query.as_deref());
     let start = params::qint(&q, "StartIndex", 0).max(0) as usize;
     let limit = params::qint(&q, "Limit", 100).max(0) as usize;
-    let mut artists = state.library.artists(&authed.principal.id, scope).await;
-    if let Some(needle) = q.get("SearchTerm") {
-        artists.retain(|a| matches(&[Some(a.name.clone())], needle));
-    }
-    let total = artists.len();
     let size = if limit == 0 { 100_000 } else { limit };
-    let items = artists.get(start..(start + size).min(total)).unwrap_or(&[]);
+    let (artists, total) = state
+        .library
+        .artist_page(
+            &authed.principal.id,
+            scope,
+            q.get("SearchTerm"),
+            start,
+            size,
+        )
+        .await;
     let b = builder(&state);
-    let mut built = Vec::with_capacity(items.len());
-    for a in items {
-        built.push(b.artist(a).await);
-    }
-    json(
-        StatusCode::OK,
-        &BaseItemDtoQueryResult {
-            items: built,
-            total_record_count: total,
-            start_index: start,
-        },
-    )
+    result(build_artists(&b, &artists).await, total, start)
 }
 
 /// Both genre dialects share one handler (v2 `_genres`).
@@ -798,20 +649,13 @@ where
     let start = params::qint(&q, "StartIndex", 0).max(0) as usize;
     let limit = params::qint(&q, "Limit", 100).max(0) as usize;
     let genres = state.library.genres().await;
+    let (genres, total) = page(&genres, start, limit);
     let b = builder(&state);
     let mut built = Vec::with_capacity(genres.len());
     for g in &genres {
         built.push(b.genre(g).await);
     }
-    let (items, total) = page(&built, start, limit);
-    json(
-        StatusCode::OK,
-        &BaseItemDtoQueryResult {
-            items,
-            total_record_count: total,
-            start_index: start,
-        },
-    )
+    result(built, total, start)
 }
 
 /// Manet's boot call: a 404 here can leave the library empty (v2
@@ -932,27 +776,17 @@ where
         let Some(artist_mbid) = artist_mbid else {
             return json(StatusCode::OK, &empty);
         };
-        let tracks: Vec<_> = state
+        let filter = TrackFilter {
+            artists: vec![artist_mbid],
+            ..TrackFilter::default()
+        };
+        let (tracks, _) = state
             .library
-            .tracks(&ctx.principal.id)
-            .await
-            .into_iter()
-            .filter(|t| t.artist_mbid.as_deref() == Some(artist_mbid.as_str()))
-            .take(limit)
-            .collect();
+            .track_page(&ctx.principal.id, &filter, ItemSort::Catalog, 0, limit)
+            .await;
         let b = builder(&state);
-        let mut built = Vec::with_capacity(tracks.len());
-        for t in &tracks {
-            built.push(b.audio(t).await);
-        }
+        let built = build_tracks(&b, &tracks).await;
         let total = built.len();
-        json(
-            StatusCode::OK,
-            &BaseItemDtoQueryResult {
-                items: built,
-                total_record_count: total,
-                start_index: 0,
-            },
-        )
+        result(built, total, 0)
     })
 }

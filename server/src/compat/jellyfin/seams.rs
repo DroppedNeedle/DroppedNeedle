@@ -6,17 +6,17 @@
 //!   (from `compat_auth`). This file only adds the thin [`Principal`]
 //!   view over its `JellyfinUser`. Login bodies reuse `compat_auth`'s
 //!   `login_echo_json`, so the Finamp/Manet login contract has one owner.
-//! - Library reads: [`LibraryRead`]. Real view services (to be bound)
-//!   (paged, user-scoped, real search); the router's in-memory filtering,
-//!   sorting, and paging over the snapshot only pins the quirk contract.
+//! - Library reads: [`LibraryRead`]. The routes describe one page
+//!   ([`TrackFilter`], [`AlbumFilter`], [`ItemSort`], start, limit) and the
+//!   library answers that page plus the match total, so production filters,
+//!   orders and pages in SQL and the routes shape only the page.
 //! - Streaming: [`StreamEngine`]. Production binds the stream engine
-//!   (real `stream_track` byte contract, ffmpeg pipe, concurrency leases).
-//!   [`MemoryEngine`] replays the same range/status contract over seeded
-//!   bytes so the goldens pin it; [`decide`] ports v2's transcode policy rules
-//!   verbatim for the PlaybackInfo direct/transcode fork.
-//! - Ids: [`IdMap`]. A persisted compat id map is the intended binding;
-//!   [`MemoryIds`] ports the deterministic `sha256("kind:internal")[:32]`
-//!   derivation with an in-memory reverse table.
+//!   (real `stream_track` byte contract, ffmpeg pipe, concurrency leases);
+//!   the `fake` engine replays the same range/status contract over seeded
+//!   bytes so the goldens pin it. [`decide`] ports v2's transcode policy
+//!   rules verbatim for the PlaybackInfo direct/transcode fork.
+//! - Ids: [`IdMap`]. Production derives v2's deterministic
+//!   `sha256("kind:internal")[:32]` ids from the catalog.
 //! - Playback sessions: [`PlaybackSessions`]. Production binds the
 //!   scrobble adapter (presence + scrobble forwarding).
 
@@ -150,6 +150,8 @@ pub struct TrackView {
     pub play_count: u64,
     /// Unix seconds of the last play, for the history sorts.
     pub last_played: Option<f64>,
+    /// `AlbumPrimaryImageTag` of the owning album, when it has art.
+    pub album_image_tag: Option<String>,
 }
 
 /// Album row (v2 `ViewAlbum` subset).
@@ -168,6 +170,8 @@ pub struct AlbumView {
     pub starred: bool,
     pub play_count: u64,
     pub last_played: Option<f64>,
+    /// `ImageTags.Primary`, when the album has art.
+    pub image_tag: Option<String>,
 }
 
 /// Artist row (v2 `ViewArtist` subset).
@@ -179,6 +183,8 @@ pub struct ArtistView {
     /// Unix seconds added.
     pub date_added: Option<f64>,
     pub starred: bool,
+    /// `ImageTags.Primary`, when the artist has an image.
+    pub image_tag: Option<String>,
 }
 
 /// Genre row (v2 `ViewGenre` subset).
@@ -229,22 +235,93 @@ pub enum ArtistScope {
     Album,
 }
 
-/// Library reads behind the browse routes. List methods take the caller so
-/// the adapter can fill caller-scoped `starred` flags (v2 `user=user`
-/// parity); the router does filtering, sorting, and paging over the
-/// returned snapshot.
+/// Track filters for one page; every set field narrows.
+#[derive(Debug, Clone, Default)]
+pub struct TrackFilter {
+    /// Tracks of one album.
+    pub album: Option<String>,
+    /// Tracks crediting any of these artists.
+    pub artists: Vec<String>,
+    /// Tracks on albums by any of these album artists.
+    pub album_artists: Vec<String>,
+    /// Title, artist or album substring, case-insensitive.
+    pub search: Option<String>,
+}
+
+/// Album filters for one page; every set field narrows.
+#[derive(Debug, Clone, Default)]
+pub struct AlbumFilter {
+    /// Albums by any of these album artists.
+    pub artists: Vec<String>,
+    /// Albums where one of these artists is credited on a track but is not
+    /// the album artist ("appears on").
+    pub appears_on: Vec<String>,
+    /// Title or artist substring, case-insensitive.
+    pub search: Option<String>,
+}
+
+/// Page order. The play-history keys (`DatePlayed`, `PlayCount`) also
+/// drop items the caller never played (v2 history paging).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemSort {
+    /// The library's own order: title for tracks and albums.
+    Catalog,
+    /// Disc then track number (one album's running order).
+    Disc,
+    /// One `SortBy` key, ascending or (`true`) descending.
+    By(super::params::SortKey, bool),
+}
+
+/// Everything from `start`; the page reads stop at the match total.
+pub const ALL: usize = usize::MAX;
+
+/// Library reads behind the browse routes. Reads take the caller so the
+/// adapter can fill caller-scoped `starred` flags and play counts (v2
+/// `user=user` parity). Page reads return the page plus the match total.
 pub trait LibraryRead: Clone + Send + Sync + 'static {
-    fn tracks(&self, user_id: &str) -> impl Future<Output = Vec<TrackView>> + Send;
+    /// One page of tracks; `limit` [`ALL`] means every match.
+    fn track_page(
+        &self,
+        user_id: &str,
+        filter: &TrackFilter,
+        sort: ItemSort,
+        start: usize,
+        limit: usize,
+    ) -> impl Future<Output = (Vec<TrackView>, usize)> + Send;
+    /// Tracks by id in the order asked; unknown ids drop out.
+    fn tracks_by_ids(
+        &self,
+        user_id: &str,
+        ids: &[String],
+    ) -> impl Future<Output = Vec<TrackView>> + Send;
     fn track(&self, user_id: &str, file_id: &str)
     -> impl Future<Output = Option<TrackView>> + Send;
-    fn albums(&self, user_id: &str) -> impl Future<Output = Vec<AlbumView>> + Send;
+    /// One page of albums; `limit` [`ALL`] means every match.
+    fn album_page(
+        &self,
+        user_id: &str,
+        filter: &AlbumFilter,
+        sort: ItemSort,
+        start: usize,
+        limit: usize,
+    ) -> impl Future<Output = (Vec<AlbumView>, usize)> + Send;
+    /// Albums by id in the order asked; unknown ids drop out.
+    fn albums_by_ids(
+        &self,
+        user_id: &str,
+        ids: &[String],
+    ) -> impl Future<Output = Vec<AlbumView>> + Send;
     fn album(&self, user_id: &str, rg_mbid: &str)
     -> impl Future<Output = Option<AlbumView>> + Send;
-    fn artists(
+    /// One page of artists in name order, optionally name-filtered.
+    fn artist_page(
         &self,
         user_id: &str,
         scope: ArtistScope,
-    ) -> impl Future<Output = Vec<ArtistView>> + Send;
+        search: Option<&str>,
+        start: usize,
+        limit: usize,
+    ) -> impl Future<Output = (Vec<ArtistView>, usize)> + Send;
     fn artist(&self, user_id: &str, mbid: &str) -> impl Future<Output = Option<ArtistView>> + Send;
     fn genres(&self) -> impl Future<Output = Vec<GenreView>> + Send;
     fn playlists(&self, user_id: &str) -> impl Future<Output = Vec<PlaylistView>> + Send;
@@ -286,9 +363,6 @@ pub trait LibraryRead: Clone + Send + Sync + 'static {
     /// 404 with no placeholder, unlike Subsonic (v2 `_image`).
     fn cover(&self, rg_mbid: &str, size: &str) -> impl Future<Output = Option<CoverBytes>> + Send;
     fn artist_image(&self, mbid: &str) -> impl Future<Output = Option<CoverBytes>> + Send;
-    /// Etags for `ImageTags.Primary` / `AlbumPrimaryImageTag`.
-    fn cover_tag(&self, rg_mbid: &str) -> impl Future<Output = Option<String>> + Send;
-    fn artist_tag(&self, mbid: &str) -> impl Future<Output = Option<String>> + Send;
 }
 
 // ===== Streaming seam =====

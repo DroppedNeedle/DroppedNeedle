@@ -12,7 +12,9 @@ use std::collections::{HashMap, HashSet};
 
 use sqlx::{Row as _, SqlitePool};
 
-use super::sqlite::{ALBUM_COLUMNS, ALBUM_JOINS, LibraryDb};
+use std::sync::{Arc, Mutex};
+
+use super::sqlite::{ALBUM_COLUMNS, ALBUM_JOINS, LibraryDb, TRACK_MISS_ORACLE, fts_match_phrase};
 use super::stores::{AlbumRecord, BoxFuture, StoreError};
 
 /// One streamable track with everything a player shows.
@@ -80,6 +82,8 @@ pub struct PlayerTrack {
     pub replaygain_track_peak: Option<f64>,
     /// Replay gain: album peak.
     pub replaygain_album_peak: Option<f64>,
+    /// Whether the album has stored artwork.
+    pub cover_available: bool,
 }
 
 /// One album with the extra facts players show.
@@ -114,6 +118,24 @@ pub struct TrackQuery {
     pub year_to: Option<i64>,
     /// Exact track or album artist name, matched folded.
     pub artist_name: Option<String>,
+    /// Only tracks this user has played; also the user the play-history
+    /// orders read.
+    pub played_by: Option<String>,
+}
+
+/// A sort key the player protocols can ask for in either direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderKey {
+    /// Import time.
+    Added,
+    /// Title.
+    Title,
+    /// Year; unknown years sort first ascending.
+    Year,
+    /// The `played_by` user's last play.
+    LastPlayed,
+    /// The `played_by` user's play count.
+    PlayCount,
 }
 
 /// Track orders.
@@ -121,12 +143,17 @@ pub struct TrackQuery {
 pub enum TrackOrder {
     /// Album artist, album, disc, track.
     Album,
+    /// Disc then track (one album's running order).
+    Disc,
     /// Title.
     Title,
     /// Newest import first.
     Newest,
     /// Random.
     Random,
+    /// One key, ascending or (`true`) descending; ids break ties in the
+    /// same direction.
+    By(OrderKey, bool),
 }
 
 /// Album filters; every set field narrows.
@@ -136,12 +163,20 @@ pub struct AlbumQuery {
     pub q: Option<String>,
     /// One album artist.
     pub artist_id: Option<String>,
+    /// Any of these album artists.
+    pub album_artist_ids: Vec<String>,
+    /// Albums where one of these artists is credited on a track but is
+    /// not the album artist ("appears on").
+    pub appears_on: Vec<String>,
     /// Genre, matched folded on any track.
     pub genre: Option<String>,
     /// Lowest year, inclusive.
     pub year_from: Option<i64>,
     /// Highest year, inclusive.
     pub year_to: Option<i64>,
+    /// Only albums this user has played; also the user the play-history
+    /// orders read.
+    pub played_by: Option<String>,
 }
 
 /// Album orders.
@@ -159,6 +194,9 @@ pub enum AlbumOrder {
     YearDesc,
     /// Random.
     Random,
+    /// One key, ascending or (`true`) descending; ids break ties in the
+    /// same direction.
+    By(OrderKey, bool),
 }
 
 /// Play statistics for one item: count and last play (unix seconds).
@@ -247,7 +285,9 @@ const TRACK_SELECT: &str = "SELECT t.id AS id, t.title AS title, t.local_album_i
     tae.provider_artist_id AS artist_mbid, aae.provider_artist_id AS album_artist_mbid, \
     ae.release_group_mbid AS release_group_mbid, t.release_type AS release_type, \
     t.replaygain_track_gain AS rg_track_gain, t.replaygain_album_gain AS rg_album_gain, \
-    t.replaygain_track_peak AS rg_track_peak, t.replaygain_album_peak AS rg_album_peak \
+    t.replaygain_track_peak AS rg_track_peak, t.replaygain_album_peak AS rg_album_peak, \
+    EXISTS (SELECT 1 FROM local_album_artwork w WHERE w.local_album_id = a.id) \
+    AS cover_available \
     FROM local_tracks t \
     JOIN local_albums a ON a.id = t.local_album_id \
     LEFT JOIN local_artists an ON an.id = a.album_artist_id \
@@ -303,6 +343,7 @@ fn map_track(row: &sqlx::sqlite::SqliteRow) -> Result<PlayerTrack, sqlx::Error> 
         replaygain_album_gain: row.try_get("rg_album_gain")?,
         replaygain_track_peak: row.try_get("rg_track_peak")?,
         replaygain_album_peak: row.try_get("rg_album_peak")?,
+        cover_available: row.try_get("cover_available")?,
     })
 }
 
@@ -374,19 +415,6 @@ impl Clause {
         } else {
             self.sql.join(" AND ")
         }
-    }
-
-    fn bind<'q>(
-        &'q self,
-        mut query: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>>,
-    ) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>> {
-        for bind in &self.binds {
-            query = match bind {
-                Bind::Text(value) => query.bind(value.as_str()),
-                Bind::Int(value) => query.bind(*value),
-            };
-        }
-        query
     }
 
     fn bind_scalar<'q, O>(
@@ -464,25 +492,123 @@ fn track_clause(query: &TrackQuery) -> Clause {
             [Bind::Text(folded.clone()), Bind::Text(folded)],
         );
     }
+    if let Some(user_id) = &query.played_by {
+        clause.push(
+            "t.id IN (SELECT h.local_track_id FROM library_play_history h WHERE h.user_id = ?)",
+            [Bind::Text(user_id.clone())],
+        );
+    }
     clause
 }
 
-fn track_order_sql(order: TrackOrder) -> &'static str {
-    match order {
-        TrackOrder::Album => {
-            "a.album_artist_name_folded ASC, a.title_folded ASC, a.id ASC, \
-             t.disc_number ASC, t.track_number ASC, t.id ASC"
+/// Whether the track filters read the album row.
+fn track_query_reads_album(query: &TrackQuery) -> bool {
+    !query.album_artist_ids.is_empty()
+}
+
+/// No filter beyond streamability: the maintained total applies.
+fn track_query_is_open(query: &TrackQuery) -> bool {
+    query.q.is_none()
+        && query.album_id.is_none()
+        && query.artist_ids.is_empty()
+        && query.album_artist_ids.is_empty()
+        && query.genre.is_none()
+        && query.year_from.is_none()
+        && query.year_to.is_none()
+        && query.artist_name.is_none()
+        && query.played_by.is_none()
+}
+
+/// No filter beyond "has a streamable track".
+fn album_query_is_open(query: &AlbumQuery) -> bool {
+    query.q.is_none()
+        && query.artist_id.is_none()
+        && query.album_artist_ids.is_empty()
+        && query.appears_on.is_empty()
+        && query.genre.is_none()
+        && query.year_from.is_none()
+        && query.year_to.is_none()
+        && query.played_by.is_none()
+}
+
+/// An ORDER BY plus the user its play-history keys read.
+struct Order {
+    sql: String,
+    user: Option<String>,
+}
+
+impl Order {
+    fn fixed(sql: &str) -> Self {
+        Self {
+            sql: sql.to_owned(),
+            user: None,
         }
-        TrackOrder::Title => "t.title_folded ASC, t.id ASC",
-        TrackOrder::Newest => "t.imported_at DESC, t.id ASC",
-        TrackOrder::Random => "RANDOM()",
+    }
+
+    /// `key` over one row kind (`t`/`local_track_id` or `a`/`local_album_id`).
+    fn keyed(
+        key: OrderKey,
+        descending: bool,
+        columns: (&str, &str, &str),
+        alias: &str,
+        history_column: &str,
+        played_by: Option<&String>,
+    ) -> Self {
+        let (added, title, year) = columns;
+        let direction = if descending { "DESC" } else { "ASC" };
+        let history = |aggregate: &str| {
+            format!(
+                "(SELECT {aggregate} FROM library_play_history h \
+                 WHERE h.user_id = ? AND h.{history_column} = {alias}.id)"
+            )
+        };
+        let (expression, user) = match key {
+            OrderKey::Added => (added.to_owned(), None),
+            OrderKey::Title => (title.to_owned(), None),
+            OrderKey::Year => (year.to_owned(), None),
+            OrderKey::LastPlayed => (
+                history("MAX(h.played_at)"),
+                Some(played_by.cloned().unwrap_or_default()),
+            ),
+            OrderKey::PlayCount => (
+                history("COUNT(*)"),
+                Some(played_by.cloned().unwrap_or_default()),
+            ),
+        };
+        Self {
+            sql: format!("{expression} {direction}, {alias}.id {direction}"),
+            user,
+        }
+    }
+}
+
+fn track_order_sql(order: TrackOrder, played_by: Option<&String>) -> Order {
+    match order {
+        TrackOrder::Album => Order::fixed(
+            "a.album_artist_name_folded ASC, a.title_folded ASC, a.id ASC, \
+             t.disc_number ASC, t.track_number ASC, t.id ASC",
+        ),
+        TrackOrder::Disc => Order::fixed("t.disc_number ASC, t.track_number ASC, t.id ASC"),
+        TrackOrder::Title => Order::fixed("t.title_folded ASC, t.id ASC"),
+        TrackOrder::Newest => Order::fixed("t.imported_at DESC, t.id ASC"),
+        TrackOrder::Random => Order::fixed("RANDOM()"),
+        TrackOrder::By(key, descending) => Order::keyed(
+            key,
+            descending,
+            ("t.imported_at", "t.title_folded", "t.year"),
+            "t",
+            "local_track_id",
+            played_by,
+        ),
     }
 }
 
 fn album_clause(query: &AlbumQuery) -> Clause {
     let mut clause = Clause::default();
+    // The unary plus keeps the planner off the retired index, so the
+    // ordered pages walk the title and created-at indexes and stop early.
     clause.push(
-        "a.retired_into_album_id IS NULL AND EXISTS (SELECT 1 FROM local_tracks t \
+        "+a.retired_into_album_id IS NULL AND EXISTS (SELECT 1 FROM local_tracks t \
          WHERE t.local_album_id = a.id AND t.availability = 'indexed')",
         [],
     );
@@ -495,6 +621,35 @@ fn album_clause(query: &AlbumQuery) -> Clause {
     }
     if let Some(artist_id) = &query.artist_id {
         clause.push("a.album_artist_id = ?", [Bind::Text(artist_id.clone())]);
+    }
+    if !query.album_artist_ids.is_empty() {
+        clause.push(
+            &format!(
+                "a.album_artist_id IN ({})",
+                placeholders(query.album_artist_ids.len())
+            ),
+            texts(&query.album_artist_ids),
+        );
+    }
+    if !query.appears_on.is_empty() {
+        let marks = placeholders(query.appears_on.len());
+        clause.push(
+            &format!(
+                "a.album_artist_id NOT IN ({marks}) AND EXISTS (SELECT 1 FROM local_tracks t \
+                 JOIN local_track_artists x ON x.local_track_id = t.id \
+                 WHERE t.local_album_id = a.id AND t.availability = 'indexed' \
+                 AND x.local_artist_id IN ({marks}))"
+            ),
+            texts(&query.appears_on)
+                .into_iter()
+                .chain(texts(&query.appears_on)),
+        );
+    }
+    if let Some(user_id) = &query.played_by {
+        clause.push(
+            "a.id IN (SELECT h.local_album_id FROM library_play_history h WHERE h.user_id = ?)",
+            [Bind::Text(user_id.clone())],
+        );
     }
     if let Some(genre) = &query.genre {
         let folded = crate::db::fold_text(genre.trim());
@@ -515,14 +670,28 @@ fn album_clause(query: &AlbumQuery) -> Clause {
     clause
 }
 
-fn album_order_sql(order: AlbumOrder) -> &'static str {
+fn album_order_sql(order: AlbumOrder, played_by: Option<&String>) -> Order {
     match order {
-        AlbumOrder::Newest => "a.created_at DESC, a.id ASC",
-        AlbumOrder::Title => "a.title_folded ASC, a.id ASC",
-        AlbumOrder::Artist => "a.album_artist_name_folded ASC, a.title_folded ASC, a.id ASC",
-        AlbumOrder::YearAsc => "(a.year IS NULL) ASC, a.year ASC, a.title_folded ASC, a.id ASC",
-        AlbumOrder::YearDesc => "(a.year IS NULL) ASC, a.year DESC, a.title_folded ASC, a.id ASC",
-        AlbumOrder::Random => "RANDOM()",
+        AlbumOrder::Newest => Order::fixed("a.created_at DESC, a.id ASC"),
+        AlbumOrder::Title => Order::fixed("a.title_folded ASC, a.id ASC"),
+        AlbumOrder::Artist => {
+            Order::fixed("a.album_artist_name_folded ASC, a.title_folded ASC, a.id ASC")
+        }
+        AlbumOrder::YearAsc => {
+            Order::fixed("(a.year IS NULL) ASC, a.year ASC, a.title_folded ASC, a.id ASC")
+        }
+        AlbumOrder::YearDesc => {
+            Order::fixed("(a.year IS NULL) ASC, a.year DESC, a.title_folded ASC, a.id ASC")
+        }
+        AlbumOrder::Random => Order::fixed("RANDOM()"),
+        AlbumOrder::By(key, descending) => Order::keyed(
+            key,
+            descending,
+            ("a.created_at", "a.title_folded", "a.year"),
+            "a",
+            "local_album_id",
+            played_by,
+        ),
     }
 }
 
@@ -535,12 +704,72 @@ const ALBUM_EXTRAS: &str = "a.primary_genre AS primary_genre, \
 #[derive(Clone, Debug)]
 pub struct SqlitePlayerCatalog {
     db: LibraryDb,
+    /// Browseable album total at one catalog revision: counting it probes
+    /// every album, and the open album list asks for it on every page.
+    album_total: Arc<Mutex<Option<(i64, u64)>>>,
 }
 
 impl SqlitePlayerCatalog {
     /// Adapter over one handle.
     pub fn new(db: &LibraryDb) -> Self {
-        Self { db: db.clone() }
+        Self {
+            db: db.clone(),
+            album_total: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    async fn tracks_in(
+        pool: &SqlitePool,
+        ids: &[String],
+    ) -> Result<HashMap<String, PlayerTrack>, StoreError> {
+        let mut out = HashMap::with_capacity(ids.len());
+        for chunk in ids.chunks(500) {
+            let sql = format!(
+                "{TRACK_SELECT} WHERE t.availability = 'indexed' AND t.id IN ({})",
+                placeholders(chunk.len())
+            );
+            let mut query = sqlx::query(&sql);
+            for id in chunk {
+                query = query.bind(id);
+            }
+            let rows = query
+                .fetch_all(pool)
+                .await
+                .map_err(read_error("player.tracks_in"))?;
+            for row in &rows {
+                let track = map_track(row).map_err(read_error("player.tracks_in"))?;
+                out.insert(track.id.clone(), track);
+            }
+        }
+        Ok(out)
+    }
+
+    /// The open album total, recounted only when the catalog changed.
+    async fn open_album_total(
+        &self,
+        pool: &SqlitePool,
+        count_sql: &str,
+    ) -> Result<u64, StoreError> {
+        let revision = self.revision().await?;
+        let cached = *self
+            .album_total
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some((at, total)) = cached
+            && at == revision
+        {
+            return Ok(total);
+        }
+        let total: i64 = sqlx::query_scalar(count_sql)
+            .fetch_one(pool)
+            .await
+            .map_err(read_error("player.albums.count"))?;
+        let total = total.max(0) as u64;
+        *self
+            .album_total
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((revision, total));
+        Ok(total)
     }
 
     fn pool(&self) -> Result<&SqlitePool, StoreError> {
@@ -584,25 +813,7 @@ impl PlayerCatalog for SqlitePlayerCatalog {
     ) -> BoxFuture<'a, Result<Vec<PlayerTrack>, StoreError>> {
         Box::pin(async move {
             let pool = self.pool()?;
-            let mut out = Vec::with_capacity(ids.len());
-            for chunk in ids.chunks(500) {
-                let sql = format!(
-                    "{TRACK_SELECT} WHERE t.availability = 'indexed' AND t.id IN ({})",
-                    placeholders(chunk.len())
-                );
-                let mut query = sqlx::query(&sql);
-                for id in chunk {
-                    query = query.bind(id);
-                }
-                let rows = query
-                    .fetch_all(pool)
-                    .await
-                    .map_err(read_error("player.tracks_by_ids"))?;
-                for row in &rows {
-                    out.push(map_track(row).map_err(read_error("player.tracks_by_ids"))?);
-                }
-            }
-            Ok(out)
+            Ok(Self::tracks_in(pool, ids).await?.into_values().collect())
         })
     }
 
@@ -615,33 +826,66 @@ impl PlayerCatalog for SqlitePlayerCatalog {
     ) -> BoxFuture<'a, Result<(Vec<PlayerTrack>, u64), StoreError>> {
         Box::pin(async move {
             let pool = self.pool()?;
+            // Miss oracle: a trigram-eligible query no track text contains
+            // matches nothing, whatever the other filters say.
+            if let Some(phrase) = query.q.as_deref().and_then(fts_match_phrase) {
+                let hit: bool = sqlx::query_scalar(TRACK_MISS_ORACLE)
+                    .bind(phrase)
+                    .fetch_one(pool)
+                    .await
+                    .map_err(read_error("player.tracks.search"))?;
+                if !hit {
+                    return Ok((Vec::new(), 0));
+                }
+            }
             let clause = track_clause(query);
             let where_sql = clause.render();
+            let from = |with_album: bool| {
+                if with_album {
+                    "local_tracks t JOIN local_albums a ON a.id = t.local_album_id"
+                } else {
+                    "local_tracks t"
+                }
+            };
+            let page_from = from(track_query_reads_album(query) || order == TrackOrder::Album);
+            let order = track_order_sql(order, query.played_by.as_ref());
+            // Page the ids over the narrow join, then read the rich rows
+            // for the page alone.
             let sql = format!(
-                "{TRACK_SELECT} WHERE {where_sql} ORDER BY {} LIMIT ? OFFSET ?",
-                track_order_sql(order)
+                "SELECT t.id FROM {page_from} WHERE {where_sql} ORDER BY {} LIMIT ? OFFSET ?",
+                order.sql
             );
-            let rows = clause
-                .bind(sqlx::query(&sql))
+            let mut page = clause.bind_scalar(sqlx::query_scalar(&sql));
+            if let Some(user) = &order.user {
+                page = page.bind(user.as_str());
+            }
+            let ids: Vec<String> = page
                 .bind(limit.min(i64::MAX as u64) as i64)
                 .bind(offset.min(i64::MAX as u64) as i64)
                 .fetch_all(pool)
                 .await
                 .map_err(read_error("player.tracks"))?;
-            let tracks = rows
-                .iter()
-                .map(map_track)
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(read_error("player.tracks"))?;
-            let count_sql = format!(
-                "SELECT COUNT(*) FROM local_tracks t JOIN local_albums a \
-                 ON a.id = t.local_album_id WHERE {where_sql}"
-            );
-            let total: i64 = clause
-                .bind_scalar(sqlx::query_scalar(&count_sql))
+            let mut by_id = Self::tracks_in(pool, &ids).await?;
+            let tracks = ids.iter().filter_map(|id| by_id.remove(id)).collect();
+            let total: i64 = if track_query_is_open(query) {
+                // Maintained exact count of indexed tracks (migration 0005).
+                sqlx::query_scalar(
+                    "SELECT COALESCE(SUM(indexed_tracks), 0) FROM library_track_format_stats",
+                )
                 .fetch_one(pool)
                 .await
-                .map_err(read_error("player.tracks.count"))?;
+                .map_err(read_error("player.tracks.count"))?
+            } else {
+                let count_sql = format!(
+                    "SELECT COUNT(*) FROM {} WHERE {where_sql}",
+                    from(track_query_reads_album(query))
+                );
+                clause
+                    .bind_scalar(sqlx::query_scalar(&count_sql))
+                    .fetch_one(pool)
+                    .await
+                    .map_err(read_error("player.tracks.count"))?
+            };
             Ok((tracks, total.max(0) as u64))
         })
     }
@@ -667,12 +911,16 @@ impl PlayerCatalog for SqlitePlayerCatalog {
             let pool = self.pool()?;
             let clause = album_clause(query);
             let where_sql = clause.render();
+            let order = album_order_sql(order, query.played_by.as_ref());
             let sql = format!(
                 "SELECT a.id FROM local_albums a WHERE {where_sql} ORDER BY {} LIMIT ? OFFSET ?",
-                album_order_sql(order)
+                order.sql
             );
-            let ids: Vec<String> = clause
-                .bind_scalar(sqlx::query_scalar(&sql))
+            let mut page = clause.bind_scalar(sqlx::query_scalar(&sql));
+            if let Some(user) = &order.user {
+                page = page.bind(user.as_str());
+            }
+            let ids: Vec<String> = page
                 .bind(limit.min(i64::MAX as u64) as i64)
                 .bind(offset.min(i64::MAX as u64) as i64)
                 .fetch_all(pool)
@@ -681,12 +929,17 @@ impl PlayerCatalog for SqlitePlayerCatalog {
             let mut by_id = Self::albums_in(pool, &ids).await?;
             let albums = ids.iter().filter_map(|id| by_id.remove(id)).collect();
             let count_sql = format!("SELECT COUNT(*) FROM local_albums a WHERE {where_sql}");
-            let total: i64 = clause
-                .bind_scalar(sqlx::query_scalar(&count_sql))
-                .fetch_one(pool)
-                .await
-                .map_err(read_error("player.albums.count"))?;
-            Ok((albums, total.max(0) as u64))
+            let total = if album_query_is_open(query) {
+                self.open_album_total(pool, &count_sql).await?
+            } else {
+                let total: i64 = clause
+                    .bind_scalar(sqlx::query_scalar(&count_sql))
+                    .fetch_one(pool)
+                    .await
+                    .map_err(read_error("player.albums.count"))?;
+                total.max(0) as u64
+            };
+            Ok((albums, total))
         })
     }
 

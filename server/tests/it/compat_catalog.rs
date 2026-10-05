@@ -6,7 +6,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use droppedneedle::compat::CompatSetup;
-use droppedneedle::compat::jellyfin::seams::LibraryRead as _;
+use droppedneedle::compat::jellyfin::params::SortKey;
+use droppedneedle::compat::jellyfin::seams::{
+    AlbumFilter, ItemSort, LibraryRead as _, TrackFilter,
+};
 use droppedneedle::compat::subsonic::fake::{FakeAudio, FakeVerifier, NOW_UNIX, USER_ID};
 use droppedneedle::compat::subsonic::params::SubsonicParameters;
 use droppedneedle::compat::subsonic::{Request, Settings, dispatch};
@@ -139,11 +142,37 @@ async fn subsonic_and_jellyfin_read_the_scanned_library() {
     assert!(genre.contains("tr-trk-1"), "{genre}");
 
     let jellyfin = rig.compat.jellyfin_state();
-    let tracks = jellyfin.library.tracks(USER_ID).await;
-    assert_eq!(tracks.len(), 1);
-    assert_eq!(tracks[0].title, "Mysterons");
-    let albums = jellyfin.library.albums(USER_ID).await;
-    assert_eq!(albums[0].title, "Dummy");
+    let search = TrackFilter {
+        search: Some("myster".to_owned()),
+        ..TrackFilter::default()
+    };
+    let (tracks, total) = jellyfin
+        .library
+        .track_page(USER_ID, &search, ItemSort::Catalog, 0, 10)
+        .await;
+    assert_eq!((total, tracks[0].title.as_str()), (1, "Mysterons"));
+    let (albums, total) = jellyfin
+        .library
+        .album_page(
+            USER_ID,
+            &AlbumFilter::default(),
+            ItemSort::By(SortKey::Recent, true),
+            0,
+            1,
+        )
+        .await;
+    assert_eq!((total, albums[0].title.as_str()), (1, "Dummy"));
+    let (played, total) = jellyfin
+        .library
+        .track_page(
+            USER_ID,
+            &TrackFilter::default(),
+            ItemSort::By(SortKey::PlayCount, true),
+            0,
+            10,
+        )
+        .await;
+    assert_eq!((played.len(), total), (0, 0), "history sorts skip unplayed");
 }
 
 #[tokio::test]

@@ -349,14 +349,11 @@ pub(super) fn local_address<S, L, E, P, I>(
     format!("http://{host}{}/jellyfin", state.base_path)
 }
 
-pub(super) fn builder<'a, S, L, E, P, I>(
-    state: &'a JellyfinState<S, L, E, P, I>,
-) -> Builder<'a, I, L>
+pub(super) fn builder<'a, S, L, E, P, I>(state: &'a JellyfinState<S, L, E, P, I>) -> Builder<'a, I>
 where
     I: IdMap,
-    L: LibraryRead,
 {
-    Builder::new(&state.ids, &state.library, &state.server_id)
+    Builder::new(&state.ids, &state.server_id)
 }
 
 macro_rules! authed_handler {
