@@ -4,8 +4,9 @@
 //! (`TRUSTED_PROXY_IPS`); then `X-Forwarded-For` is walked from the right
 //! and the first untrusted hop wins, or the leftmost entry when every hop
 //! is trusted. These are uvicorn's `ProxyHeadersMiddleware` rules, which
-//! v2 ran behind. Rate limits and lockouts key on this value and never on
-//! a raw header, so an untrusted client cannot pick its own bucket.
+//! v2 ran behind, plus a stop at the first unreadable hop. Rate limits and
+//! lockouts key on this value and never on a raw header, so a client
+//! cannot pick its own bucket.
 
 use std::net::{IpAddr, SocketAddr};
 
@@ -18,36 +19,53 @@ use crate::auth::session::middleware::TrustedProxies;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClientIp(pub IpAddr);
 
-/// The client address for one request from `peer`.
+/// The client address for one request from `peer`, the one place the
+/// server reads `X-Forwarded-For`.
+///
+/// Hops are walked from the right, starting next to the trusted peer. The
+/// first untrusted hop is the client. An unreadable hop stops the walk and
+/// the nearest readable hop to its right wins (the peer when there is
+/// none): anything left of it was written by whoever wrote the junk, so a
+/// client cannot steer its bucket by adding garbage. When every hop is
+/// trusted, the leftmost one wins.
 pub fn client_ip(peer: SocketAddr, headers: &HeaderMap, trusted: &TrustedProxies) -> IpAddr {
     let peer_ip = peer.ip().to_canonical();
     if !trusted.is_trusted(Some(peer)) {
         return peer_ip;
     }
-    let mut hops = Vec::new();
+    let mut hops: Vec<Option<IpAddr>> = Vec::new();
     for value in headers.get_all("x-forwarded-for") {
-        let Ok(text) = value.to_str() else {
-            return peer_ip;
-        };
-        for entry in text.split(',').map(str::trim).filter(|e| !e.is_empty()) {
-            match parse_hop(entry) {
-                Some(ip) => hops.push(ip),
-                // One unreadable hop makes the chain untrustworthy.
-                None => return peer_ip,
-            }
+        match value.to_str() {
+            Ok(text) => hops.extend(
+                text.split(',')
+                    .map(str::trim)
+                    .filter(|entry| !entry.is_empty())
+                    .map(parse_hop),
+            ),
+            Err(_) => hops.push(None),
         }
     }
-    let untrusted = hops
-        .iter()
-        .rev()
-        .find(|ip| !trusted.is_trusted(Some(SocketAddr::new(**ip, 0))));
-    untrusted.or(hops.first()).copied().unwrap_or(peer_ip)
+    let mut nearest = peer_ip;
+    for hop in hops.iter().rev() {
+        let Some(ip) = *hop else {
+            return nearest;
+        };
+        if !trusted.is_trusted(Some(SocketAddr::new(ip, 0))) {
+            return ip;
+        }
+        nearest = ip;
+    }
+    nearest
 }
 
-/// One `X-Forwarded-For` entry: a bare IP, or an IP with a port.
+/// One `X-Forwarded-For` entry: a bare IP, a bracketed IPv6, or either
+/// with a port.
 fn parse_hop(entry: &str) -> Option<IpAddr> {
-    entry
-        .parse::<IpAddr>()
+    let bare = entry
+        .strip_prefix('[')
+        .and_then(|inner| inner.strip_suffix(']'))
+        .unwrap_or(entry);
+    bare.parse::<IpAddr>()
         .or_else(|_| entry.parse::<SocketAddr>().map(|addr| addr.ip()))
         .ok()
         .map(|ip| ip.to_canonical())
@@ -80,7 +98,17 @@ mod tests {
             resolve("127.0.0.1:1", &["[2001:db8::1]:443"]),
             "2001:db8::1"
         );
+        assert_eq!(resolve("127.0.0.1:1", &["[2001:db8::2]"]), "2001:db8::2");
         assert_eq!(resolve("127.0.0.1:1", &["junk"]), "127.0.0.1");
+        // Junk left of a real hop cannot move the bucket off that hop.
+        assert_eq!(
+            resolve("127.0.0.1:1", &["junk, 198.51.100.1"]),
+            "198.51.100.1"
+        );
+        assert_eq!(
+            resolve("10.0.0.2:1", &["198.51.100.9, junk, 10.0.0.7"]),
+            "10.0.0.7"
+        );
         assert_eq!(
             resolve("[::ffff:127.0.0.1]:1", &["198.51.100.1"]),
             "198.51.100.1"
