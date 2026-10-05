@@ -10,10 +10,11 @@
 //! Production binds [`DurableRegistryStore`] (liveness rows survive
 //! restarts); test states bind [`MemoryRegistryStore`] behind the same
 //! [`StoreKind`] seam so the setup type stays concrete. Loop backends are
-//! real where they exist (checkpoint passes, Navidrome/events settings
-//! reads) and no-ops where their services do not exist yet (presence
-//! sources, the personal mixer, the playlist exporter, the events sweep);
-//! each interim adapter says what is missing.
+//! real where they exist (checkpoint passes, the now-playing feed and its
+//! upstream session pollers, the Navidrome playlist export, events
+//! settings reads) and no-ops where their services do not exist yet (the
+//! personal mixer, the events sweep); each interim adapter says what is
+//! missing.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,13 +26,13 @@ use crate::db::{CheckpointService, DurableWorkWakeups, WriteLane};
 use crate::jobs::checkpoint::{self, CheckpointRunner};
 use crate::jobs::events_kick::{self, EventsKick, FnKick, KickOutcome};
 use crate::jobs::events_watcher::{self, EventsWatcher, PollTimeSource, SystemWatchClock};
+use crate::jobs::media::{M3uPlaylistExporter, MediaJobs, RegistryFeed, RemoteSessionPollers};
 use crate::jobs::personal_mix::{self, PersonalMixer};
 use crate::jobs::playlist_sync::{
-    self, PlaylistExporter, PlaylistSyncConfig, PlaylistSyncResult, PlaylistSyncSettings,
-    PlaylistSyncState, SyncRoles,
+    self, PlaylistSyncConfig, PlaylistSyncSettings, PlaylistSyncState, SyncRoles,
 };
 use crate::jobs::precache::{self, PrecacheLimits, PrecacheWork};
-use crate::jobs::presence::{self, PresenceSession, PresenceSources, PresenceStore, SourceStatus};
+use crate::jobs::presence;
 use crate::jobs::registry::{
     AlreadyRunning, BoxFuture, DurableRegistryStore, JobKind, JobRegistry, MemoryRegistryStore,
     RegistryStore, WakeupChannel,
@@ -119,45 +120,6 @@ impl CheckpointRunner for CheckpointInput {
     }
 }
 
-/// Presence feed without a backend: sweeps and reconciles are no-ops
-/// until a now-playing store is wired here.
-#[derive(Clone, Debug, Default)]
-pub struct UnwiredPresenceStore;
-
-impl PresenceStore for UnwiredPresenceStore {
-    fn sweep(&self) -> BoxFuture<'_, ()> {
-        Box::pin(async {})
-    }
-
-    fn reconcile(&self, _source: &str, _sessions: Vec<PresenceSession>) -> BoxFuture<'_, ()> {
-        Box::pin(async {})
-    }
-}
-
-/// Presence sources without pollers: every source reads disabled (nothing
-/// feeds the loop yet), so each cycle reconciles empty sessions and moves
-/// on. The Jellyfin/Navidrome/Plex session pollers plug in here.
-#[derive(Clone, Debug, Default)]
-pub struct DisabledPresenceSources;
-
-impl PresenceSources for DisabledPresenceSources {
-    fn status(&self) -> BoxFuture<'_, SourceStatus> {
-        Box::pin(async { SourceStatus::default() })
-    }
-
-    fn poll_jellyfin(&self) -> BoxFuture<'_, Result<Vec<PresenceSession>, String>> {
-        Box::pin(async { Ok(Vec::new()) })
-    }
-
-    fn poll_navidrome(&self) -> BoxFuture<'_, Result<Vec<PresenceSession>, String>> {
-        Box::pin(async { Ok(Vec::new()) })
-    }
-
-    fn poll_plex(&self) -> BoxFuture<'_, Result<Vec<PresenceSession>, String>> {
-        Box::pin(async { Ok(Vec::new()) })
-    }
-}
-
 /// Personal-mix refresh without a mixer: cycles succeed without rebuilding
 /// until the all-users mixer lands behind this seam.
 #[derive(Clone, Debug, Default)]
@@ -221,25 +183,6 @@ impl SyncRoles for StoreSyncRoles {
                 .ok()
                 .flatten()
                 .map(|user| user.role)
-        })
-    }
-}
-
-/// Playlist file writer without an exporter: every sync reports failure
-/// with the reason, so the loop backs off and the route reports the gap
-/// until an m3u8 exporter is wired here.
-#[derive(Clone, Debug, Default)]
-pub struct UnwiredPlaylistExporter;
-
-impl PlaylistExporter for UnwiredPlaylistExporter {
-    fn sync(&self, _config: PlaylistSyncConfig) -> BoxFuture<'_, PlaylistSyncResult> {
-        Box::pin(async {
-            PlaylistSyncResult {
-                success: false,
-                message: "Playlist file export is not wired yet; the sync stays pending."
-                    .to_owned(),
-                ..PlaylistSyncResult::default()
-            }
         })
     }
 }
@@ -335,7 +278,8 @@ impl PollTimeSource for EventsPollTime {
 pub struct JobsSetup {
     registry: JobRegistry<StoreKind>,
     checkpoint: CheckpointInput,
-    playlist: PlaylistSyncState<NavidromeSyncSettings, UnwiredPlaylistExporter>,
+    playlist: PlaylistSyncState<NavidromeSyncSettings, M3uPlaylistExporter>,
+    presence: (RegistryFeed, RemoteSessionPollers),
     poll_time: EventsPollTime,
     watcher: UnwiredEventsWatcher,
     config: Option<Arc<ConfigStore>>,
@@ -343,14 +287,15 @@ pub struct JobsSetup {
 
 impl JobsSetup {
     /// Bind the production backends: durable rows, live checkpoint passes,
-    /// settings reads over the shared store, and the route's admin gate over
-    /// the user store.
+    /// settings reads over the shared store, the route's admin gate over
+    /// the user store, and the media feeds (presence, playlist export).
     pub fn build(
         users: UsersDeps,
         wakeups: DurableWorkWakeups,
         lane: WriteLane,
         checkpoint: CheckpointService,
         config: Arc<ConfigStore>,
+        media: MediaJobs,
     ) -> Self {
         Self {
             registry: JobRegistry::new(StoreKind::Durable(DurableRegistryStore::new(
@@ -363,9 +308,10 @@ impl JobsSetup {
                 settings: NavidromeSyncSettings {
                     store: Some(Arc::clone(&config)),
                 },
-                exporter: UnwiredPlaylistExporter,
+                exporter: media.exporter(),
                 roles: Arc::new(StoreSyncRoles { users }),
             },
+            presence: (media.feed(), media.pollers()),
             poll_time: EventsPollTime {
                 store: Some(Arc::clone(&config)),
             },
@@ -380,14 +326,16 @@ impl JobsSetup {
     /// directly.
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(users: UsersDeps) -> Self {
+        let media = MediaJobs::for_tests();
         Self {
             registry: JobRegistry::new(StoreKind::Memory(MemoryRegistryStore::new())),
             checkpoint: CheckpointInput { service: None },
             playlist: PlaylistSyncState {
                 settings: NavidromeSyncSettings { store: None },
-                exporter: UnwiredPlaylistExporter,
+                exporter: media.exporter(),
                 roles: Arc::new(StoreSyncRoles { users }),
             },
+            presence: (media.feed(), media.pollers()),
             poll_time: EventsPollTime { store: None },
             watcher: UnwiredEventsWatcher,
             config: None,
@@ -449,8 +397,8 @@ impl JobsSetup {
         .map_err(|_| format!("{} is already running", checkpoint::JOB_NAME))?;
         presence::spawn_on(
             &self.registry,
-            UnwiredPresenceStore,
-            DisabledPresenceSources,
+            self.presence.0.clone(),
+            self.presence.1.clone(),
             presence::default_schedule(),
         )
         .await

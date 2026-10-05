@@ -37,6 +37,7 @@
 pub mod checkpoint;
 pub mod events_kick;
 pub mod events_watcher;
+pub mod media;
 pub mod personal_mix;
 pub mod playlist_sync;
 pub mod plugin_ticks;

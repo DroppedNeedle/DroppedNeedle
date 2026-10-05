@@ -884,7 +884,12 @@ impl JellyfinAdapter {
                 );
             }
             let play_state = entry.get("PlayState").cloned().unwrap_or(Value::Null);
+            let image_url = str_field(now_playing, "AlbumId")
+                .filter(|id| !id.is_empty())
+                .or_else(|| str_field(now_playing, "Id"))
+                .and_then(|id| image_url_for(SourceName::Jellyfin, id, None));
             sessions.push(SessionView {
+                image_url,
                 source: SourceName::Jellyfin,
                 session_id: str_field(entry, "Id").unwrap_or("").to_owned(),
                 user_name: str_field(entry, "UserName").unwrap_or("").to_owned(),

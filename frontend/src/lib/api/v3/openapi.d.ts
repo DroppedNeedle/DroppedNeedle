@@ -12134,6 +12134,8 @@ export interface components {
              * @description Track length in milliseconds.
              */
             duration_ms: number;
+            /** @description Relative images URL under `/api/v3` for the playing track's art. */
+            image_url?: string | null;
             /** @description True when paused. */
             is_paused: boolean;
             /**

@@ -27,7 +27,7 @@ use crate::{
     db::{BackupService, DbConfig, error::DbError, open_runtime},
     http_client::{HttpClientError, HttpClientFactory},
     ids::UuidGenerator,
-    jobs::wiring::JobsSetup,
+    jobs::{media::MediaJobs, wiring::JobsSetup},
     library::wiring::LibrarySetup,
     media::MediaSetup,
     plugins::wiring::PluginsSetup,
@@ -251,6 +251,12 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         runtime.lane().clone(),
         runtime.checkpoint().clone(),
         config_store.clone(),
+        MediaJobs {
+            presence: media.playback.presence.clone(),
+            resolver: Some(media.remotes.service.resolver().clone()),
+            http: http.shared().clone(),
+            pool: Some(runtime.pool().clone()),
+        },
     );
     let admin = admin.with_precache(jobs.precache_trigger());
     let effects: Arc<dyn SaveEffects> = Arc::new(LiveSaveEffects::new(

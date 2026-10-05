@@ -1006,3 +1006,45 @@ async fn routes_manage_folder_preferences() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(error_code(&body), "CONFLICT");
 }
+
+// ---------------------------------------------------------------------------
+// Presence
+// ---------------------------------------------------------------------------
+
+/// One presence cycle folds the Plex server's live session into the feed
+/// `GET /now-playing` serves; a source the admin did not configure stays
+/// out of it.
+#[tokio::test]
+async fn presence_poll_merges_a_remote_session() {
+    use droppedneedle::jobs::media::MediaJobs;
+    use droppedneedle::playback::services::PresenceRegistry;
+
+    let plex = serve_plex().await.expect("mock serves");
+    let resolver = Arc::new(ConnectionResolver::new(
+        Arc::new(MemoryConnectionStore::new()),
+        Arc::new(CredentialCoder::new(Arc::new(test_crypto()))),
+        Arc::new(
+            FixedServers::default()
+                .with(SourceName::Plex, server(&plex.base_url, "", PLEX_TOKEN, "")),
+        ),
+    ));
+    let registry = PresenceRegistry::new();
+    let media = MediaJobs {
+        presence: registry.clone(),
+        resolver: Some(resolver),
+        http: http_client(),
+        pool: None,
+    };
+    droppedneedle::jobs::presence::run_once(&media.feed(), &media.pollers())
+        .await
+        .expect("cycle polls");
+    let feed = registry.snapshot();
+    assert_eq!(feed.len(), 1, "{feed:?}");
+    let entry = &feed[0];
+    assert_eq!(entry.id, "plex:px-session-1");
+    assert_eq!(entry.source, "plex");
+    assert_eq!(entry.user_name, "Listener");
+    assert_eq!(entry.device_name, "Plexamp");
+    assert_eq!(entry.progress_ms, Some(45_000));
+    assert!(!entry.redacted);
+}

@@ -847,22 +847,36 @@ impl NavidromeAdapter {
             source: SourceName::Navidrome,
             sessions: entries
                 .iter()
-                .map(|entry| SessionView {
-                    source: SourceName::Navidrome,
-                    session_id: format!(
-                        "{}:{}",
-                        str_field(entry, "playerName").unwrap_or(""),
-                        entry.get("playerId").and_then(value_to_i64).unwrap_or(0),
-                    ),
-                    user_name: str_field(entry, "username").unwrap_or("").to_owned(),
-                    device_name: str_field(entry, "playerName").unwrap_or("").to_owned(),
-                    track_title: str_field(entry, "title").unwrap_or("").to_owned(),
-                    artist_name: str_field(entry, "artist").unwrap_or("").to_owned(),
-                    album_name: str_field(entry, "album").unwrap_or("").to_owned(),
-                    progress_ms: entry.get("minutesAgo").and_then(value_to_i64).unwrap_or(0)
-                        * 60_000,
-                    duration_ms: entry.get("duration").and_then(value_to_i64).unwrap_or(0) * 1000,
-                    is_paused: false,
+                .map(|entry| {
+                    let duration_ms =
+                        entry.get("duration").and_then(value_to_i64).unwrap_or(0) * 1000;
+                    let minutes_ago = entry.get("minutesAgo").and_then(value_to_i64).unwrap_or(0);
+                    SessionView {
+                        source: SourceName::Navidrome,
+                        session_id: format!(
+                            "{}:{}:{}:{}",
+                            str_field(entry, "username").unwrap_or(""),
+                            str_field(entry, "playerName").unwrap_or(""),
+                            str_field(entry, "albumId").unwrap_or(""),
+                            str_field(entry, "title").unwrap_or(""),
+                        ),
+                        user_name: str_field(entry, "username").unwrap_or("").to_owned(),
+                        device_name: str_field(entry, "playerName").unwrap_or("").to_owned(),
+                        track_title: str_field(entry, "title").unwrap_or("").to_owned(),
+                        artist_name: str_field(entry, "artist").unwrap_or("").to_owned(),
+                        album_name: str_field(entry, "album").unwrap_or("").to_owned(),
+                        // getNowPlaying reports only minutes since the play
+                        // started; v2 estimates the position from it.
+                        progress_ms: if minutes_ago > 0 {
+                            (duration_ms - minutes_ago * 60_000).max(0)
+                        } else {
+                            0
+                        },
+                        duration_ms,
+                        // getNowPlaying carries no play/pause state.
+                        is_paused: false,
+                        image_url: cover_url(str_field(entry, "coverArt").unwrap_or("")),
+                    }
                 })
                 .collect(),
         })

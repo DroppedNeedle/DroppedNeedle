@@ -40,12 +40,11 @@
 //! the discover refresh loops over the same shutdown watch (handles
 //! awaited after axum serves).
 //!
-//! Not built yet: the 4s presence poll loop (v2
-//! `run_now_playing_presence_loop`) needs remote-session fetchers that do
-//! not exist behind these traits yet, so `reconcile_source` and `sweep`
-//! wait for it; the SSE fan-out consumes the registry's generation; and
-//! the compat inbound endpoints (Subsonic/Jellyfin reports) will call the
-//! session-driven scrobble entry with their own thresholds.
+//! The 4s presence poll loop (v2 `run_now_playing_presence_loop`) lives in
+//! `jobs::presence`; `jobs::media` feeds it this registry and the
+//! Jellyfin/Navidrome/Plex session pollers. Scrobble forwarding to Last.fm
+//! and ListenBrainz drains through `forwarding`. Not built yet: the SSE
+//! fan-out that would consume the registry's generation.
 
 pub mod error;
 #[cfg(any(test, feature = "test-support"))]

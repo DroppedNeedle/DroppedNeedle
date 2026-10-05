@@ -759,7 +759,12 @@ impl PlexAdapter {
             let user = track.get("User").cloned().unwrap_or(Value::Null);
             let player = track.get("Player").cloned().unwrap_or(Value::Null);
             let session = track.get("Session").cloned().unwrap_or(Value::Null);
+            let art = str_field(&track, "parentRatingKey")
+                .filter(|key| !key.is_empty())
+                .or_else(|| str_field(&track, "ratingKey"))
+                .unwrap_or("");
             sessions.push(SessionView {
+                image_url: (!art.is_empty()).then(|| format!("/api/v3/remotes/plex/images/{art}")),
                 source: SourceName::Plex,
                 session_id: str_field(&session, "id").unwrap_or("").to_owned(),
                 user_name: str_field(&user, "title").unwrap_or("").to_owned(),

@@ -385,6 +385,8 @@ pub struct SessionView {
     pub duration_ms: i64,
     /// True when paused.
     pub is_paused: bool,
+    /// Relative images URL under `/api/v3` for the playing track's art.
+    pub image_url: Option<String>,
 }
 
 /// Active sessions for one source.

@@ -316,12 +316,14 @@ async fn media_connect_browse_play_seek_stop() {
     // Connect: the admin saves the Plex server; the mock accepts its token.
     let plex = serve_plex().await.expect("mock plex serves");
     e2e.store
-        .save_secret(droppedneedle::runtime_config::secret_sections::PlexConnection {
-            plex_url: plex.base_url.clone(),
-            plex_token: droppedneedle::runtime_config::Secret::new(PLEX_TOKEN),
-            enabled: true,
-            ..Default::default()
-        })
+        .save_secret(
+            droppedneedle::runtime_config::secret_sections::PlexConnection {
+                plex_url: plex.base_url.clone(),
+                plex_token: droppedneedle::runtime_config::Secret::new(PLEX_TOKEN),
+                enabled: true,
+                ..Default::default()
+            },
+        )
         .expect("plex settings save");
     let (status, body, _) = call(
         app.clone(),
