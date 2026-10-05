@@ -15,10 +15,6 @@ fn anonymous_paths() {
         ("POST", "/jellyfin/users/authenticatebyname"),
         ("GET", "/jellyfin/Items/abc/Images/Primary"),
         ("GET", "/jellyfin/Items/abc/Images/Primary/0"),
-        ("GET", "/jellyfin/Audio/abc/universal"),
-        ("GET", "/jellyfin/Audio/abc/stream"),
-        ("GET", "/jellyfin/Audio/abc/stream.mp3"),
-        ("HEAD", "/jellyfin/Audio/abc/stream"),
     ];
     for (method, path) in anonymous {
         assert!(auth::jellyfin_is_anonymous(method, path), "{method} {path}");
@@ -31,6 +27,9 @@ fn anonymous_paths() {
         ("GET", "/jellyfin/Items/abc"),
         ("POST", "/jellyfin/Items/abc/PlaybackInfo"),
         ("GET", "/jellyfin/Audio/abc"),
+        ("GET", "/jellyfin/Audio/abc/universal"),
+        ("GET", "/jellyfin/Audio/abc/stream.mp3"),
+        ("HEAD", "/jellyfin/Audio/abc/stream"),
         ("DELETE", "/jellyfin/Items/abc/Images/Primary"),
     ];
     for (method, path) in authed {

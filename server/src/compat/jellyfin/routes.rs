@@ -2,11 +2,11 @@
 //! `api/compat/jellyfin/router.py`.
 //!
 //! Wire contract: PascalCase JSON, real HTTP statuses, empty error bodies
-//! (not the native envelope). Streaming is anonymous: real Jellyfin audio
-//! routes have no `[Authorize]`, and native players (Jellify, Finamp, Manet)
-//! fetch with no auth header. Still gated by protocol-enabled + a valid
-//! opaque item id (v2 `_handle(auth=False)`: players fetch audio URLs
-//! without headers).
+//! (not the native envelope). Audio needs the caller's token like every
+//! other library route. Headerless players (Jellify, Finamp, Manet) still
+//! work: the URLs PlaybackInfo hands out carry `api_key=<token>`, and the
+//! token is read from the query as well as the headers. Anonymous audio is
+//! a 401, so nobody can stream or start transcodes without an account.
 //!
 //! Route notes: `/Items/Filters` must stay registered
 //! alongside (before, for clarity) `/Items/{item_id}` or "Filters" would be
@@ -1764,6 +1764,9 @@ where
     // holding it across an await would break the `Handler` impl.
     let headers = request.headers().clone();
     let query = request.uri().query().map(str::to_owned);
+    if let Err(denied) = authed(&state.passwords, &headers, query.as_deref()).await {
+        return denied;
+    }
     if tail == "universal" {
         return universal(&state, &headers, query.as_deref(), &item_id).await;
     }
@@ -1797,6 +1800,10 @@ where
         return error(StatusCode::NOT_FOUND);
     }
     let headers = request.headers().clone();
+    let query = request.uri().query().map(str::to_owned);
+    if let Err(denied) = authed(&state.passwords, &headers, query.as_deref()).await {
+        return denied;
+    }
     let range = headers
         .get(axum::http::header::RANGE)
         .and_then(|value| value.to_str().ok())
@@ -2026,8 +2033,8 @@ where
         // against the advertised origin, so a bare path would escape the
         // base path under non-empty BASE_PATH deployments (v2 `_playback_info`).
         src.transcoding_url = Some(format!(
-            "{}/jellyfin/Audio/{item_id}/universal?AudioCodec={out}&Container={out}&PlaySessionId={psid}",
-            state.base_path,
+            "{}/jellyfin/Audio/{item_id}/universal?AudioCodec={out}&Container={out}&PlaySessionId={psid}&api_key={}",
+            state.base_path, authed.principal.token,
         ));
         src.transcoding_sub_protocol = Some("http".to_owned());
         src.transcoding_container = Some(if out == "mp3" {

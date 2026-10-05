@@ -3,7 +3,8 @@
 //!
 //! Symfonium (Subsonic) and Finamp (Jellyfin) each run browse, stream,
 //! favorite, playlist and scrobble; Jellify fetches `Latest` and plays the
-//! stream URL with no auth headers (v2 serves compat audio anonymously).
+//! stream URL with no auth headers, the token in its `api_key` query
+//! (audio is never anonymous).
 //! Every step lands in a golden trace under `tests/fixtures/compat/`, next
 //! to the pinned reference shapes. `COMPAT_BLESS=1` rewrites both; re-add
 //! the `re:` markers for volatile leaves and review the diff before
@@ -558,7 +559,7 @@ async fn finamp_browse_stream_favorite_playlist_progress() {
     let full = trace.get(app, &stream_url, &auth).await;
     assert_eq!(full["byte_len"], json!(1024));
     let slice = trace
-        .get(app, &stream_url, &[("Range", "bytes=0-99")])
+        .get(app, &stream_url, &[auth[0], ("Range", "bytes=0-99")])
         .await;
     assert_eq!(slice["byte_len"], json!(100));
 
@@ -641,9 +642,10 @@ async fn jellify_latest_then_headerless_play() {
         )
         .await;
     let track_id = tracks["Items"][0]["Id"].as_str().expect("track id");
-    let stream_url = format!("/jellyfin/Audio/{track_id}/stream.mp3?static=true");
+    let stream_url =
+        format!("/jellyfin/Audio/{track_id}/stream.mp3?static=true&api_key={ALICE_SECRET}");
 
-    // No auth headers from here on.
+    // No auth headers from here on; the token rides in the query.
     let full = trace.get(app, &stream_url, &[]).await;
     assert_eq!(full["byte_len"], json!(256));
     let slice = trace
@@ -812,7 +814,7 @@ async fn streaming_ranges_and_head_on_both_protocols() {
         ),
         (
             &apps.jellyfin,
-            format!("/jellyfin/Audio/{flac}/stream"),
+            format!("/jellyfin/Audio/{flac}/stream?api_key={ALICE_SECRET}"),
             512,
             "audio/flac",
         ),
@@ -882,19 +884,25 @@ async fn streaming_ranges_and_head_on_both_protocols() {
     let (status, headers, _) = raw_call(&apps.subsonic, "GET", &missing, &[]).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(header_str(&headers, "content-type"), "text/plain");
-    let (status, _, _) = raw_call(&apps.jellyfin, "GET", "/jellyfin/Audio/nope/stream", &[]).await;
+    let (status, _, _) = raw_call(
+        &apps.jellyfin,
+        "GET",
+        &format!("/jellyfin/Audio/nope/stream?api_key={ALICE_SECRET}"),
+        &[],
+    )
+    .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     // The container suffix is cosmetic and `universal` serves the same bytes.
     let (_, _, plain) = raw_call(
         &apps.jellyfin,
         "GET",
-        &format!("/jellyfin/Audio/{flac}/stream"),
+        &format!("/jellyfin/Audio/{flac}/stream?api_key={ALICE_SECRET}"),
         &[],
     )
     .await;
     for tail in ["stream.mp3", "universal"] {
-        let uri = format!("/jellyfin/Audio/{flac}/{tail}");
+        let uri = format!("/jellyfin/Audio/{flac}/{tail}?api_key={ALICE_SECRET}");
         let (status, _, bytes) = raw_call(&apps.jellyfin, "GET", &uri, &[]).await;
         assert_eq!(status, StatusCode::OK, "{tail}");
         assert_eq!(bytes, plain, "{tail}");

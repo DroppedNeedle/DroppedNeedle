@@ -188,7 +188,7 @@
         "content-length": "256",
         "content-type": "audio/mpeg"
       },
-      "request": "GET /jellyfin/Audio/4db941e5bc6fc477f4110c60047a4439/stream.mp3?static=true",
+      "request": "GET /jellyfin/Audio/4db941e5bc6fc477f4110c60047a4439/stream.mp3?static=true&api_key=***",
       "status": 200
     },
     {
@@ -211,7 +211,7 @@
         "content-range": "bytes 100-199/256",
         "content-type": "audio/mpeg"
       },
-      "request": "GET /jellyfin/Audio/4db941e5bc6fc477f4110c60047a4439/stream.mp3?static=true",
+      "request": "GET /jellyfin/Audio/4db941e5bc6fc477f4110c60047a4439/stream.mp3?static=true&api_key=***",
       "status": 206
     },
     {
@@ -221,7 +221,7 @@
         "content-length": "256",
         "content-type": "audio/mpeg"
       },
-      "request": "HEAD /jellyfin/Audio/4db941e5bc6fc477f4110c60047a4439/stream.mp3?static=true",
+      "request": "HEAD /jellyfin/Audio/4db941e5bc6fc477f4110c60047a4439/stream.mp3?static=true&api_key=***",
       "status": 200
     },
     {
@@ -243,7 +243,7 @@
         "content-length": "256",
         "content-type": "audio/mpeg"
       },
-      "request": "GET /jellyfin/Audio/4db941e5bc6fc477f4110c60047a4439/universal?static=true",
+      "request": "GET /jellyfin/Audio/4db941e5bc6fc477f4110c60047a4439/universal?static=true&api_key=***",
       "status": 200
     }
   ]

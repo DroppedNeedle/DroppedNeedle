@@ -32,22 +32,19 @@ pub fn subsonic_is_public(raw_endpoint: &str) -> bool {
 }
 
 /// Jellyfin routes that skip token auth (v2 `auth=False` call sites):
-/// public system info, QuickConnect flag, logout, login, item images,
-/// and anonymous audio (real Jellyfin audio routes carry no
-/// `[Authorize]`; Jellify/Finamp/Manet fetch headerless). Case-insensitive
-/// on the canonical path; `{id}` segments match any single segment.
+/// public system info, QuickConnect flag, logout, login, and item images.
+/// Audio is not among them: it needs the token, in a header or as
+/// `api_key` in the query (the URLs PlaybackInfo returns carry it).
+/// Case-insensitive on the canonical path; `{id}` segments match any
+/// single segment.
 pub fn jellyfin_is_anonymous(method: &str, path: &str) -> bool {
-    let method = method.to_ascii_uppercase();
     let low = path.to_lowercase();
-    let m = method.as_str();
-    match m {
+    match method.to_ascii_uppercase().as_str() {
         "GET" => {
             low == "/jellyfin/system/info/public"
                 || low == "/jellyfin/quickconnect/enabled"
                 || is_image_route(&low)
-                || is_audio_route(&low, false)
         }
-        "HEAD" => is_audio_route(&low, true),
         "POST" => low == "/jellyfin/sessions/logout" || low == "/jellyfin/users/authenticatebyname",
         _ => false,
     }
@@ -66,21 +63,6 @@ fn is_image_route(low: &str) -> bool {
         && segs[4] == "images"
         && !segs[5].is_empty()
         && (segs.len() == 6 || !segs[6].is_empty())
-}
-
-/// `GET /Audio/{id}/universal`, `GET /Audio/{id}/stream[.ext]`
-/// (v2 `_universal` / `_audio_stream`, anon).
-fn is_audio_route(low: &str, head: bool) -> bool {
-    let _ = head;
-    let segs: Vec<&str> = low.split('/').collect();
-    if segs.len() != 5 || !segs[0].is_empty() || segs[1] != "jellyfin" || segs[2] != "audio" {
-        return false;
-    }
-    if segs[3].is_empty() {
-        return false;
-    }
-    let leaf = segs[4];
-    leaf == "universal" || leaf == "stream" || leaf.starts_with("stream.")
 }
 
 /// Rate-limit principal label (v2 `_media_principal`): the authed user

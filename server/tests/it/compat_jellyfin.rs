@@ -580,8 +580,19 @@ async fn favorite_dialects_and_played_markers() {
 #[tokio::test]
 async fn audio_routes_negotiate_direct_or_transcode() {
     let fx = fixture().await;
+    let auth = finamp(ALICE);
     let audio = |tail: &str| format!("/jellyfin/Audio/{}/{tail}", fx.track1);
-    let direct = fx.get(&audio("stream.mp3?static=true"), None).await;
+    // No credential at all: 401, so nobody streams or transcodes anonymously.
+    let anonymous = fx.get(&audio("stream.mp3?static=true"), None).await;
+    assert_eq!(anonymous.status, 401);
+    // Headerless players carry the token as `api_key`, the way PlaybackInfo
+    // hands out its URLs.
+    let direct = fx
+        .get(
+            &audio(&format!("stream.mp3?static=true&api_key={ALICE}")),
+            None,
+        )
+        .await;
     assert_eq!(direct.status, 200);
     assert_eq!(direct.header("content-encoding"), "identity");
     assert_eq!(direct.body.len(), 1024);
@@ -592,7 +603,7 @@ async fn audio_routes_negotiate_direct_or_transcode() {
         ("HEAD", audio("bogus")),
         ("GET", format!("/jellyfin/Audio/{}/stream", fx.album1)),
     ] {
-        let reply = fx.send(method, &uri, None, b"").await;
+        let reply = fx.send(method, &uri, Some(&auth), b"").await;
         assert_eq!((reply.status, reply.body.len()), (404, 0), "{method} {uri}");
     }
 
@@ -612,7 +623,7 @@ async fn audio_routes_negotiate_direct_or_transcode() {
         ),
         ("stream?audioBitRate=64000", Some("transcoded:mp3:64:")),
     ] {
-        let reply = fx.get(&audio(tail), None).await;
+        let reply = fx.get(&audio(tail), Some(&auth)).await;
         assert_eq!(reply.status, 200, "{tail}");
         match transcoded {
             None => assert_eq!(reply.body.len(), 1024, "{tail}"),
@@ -876,7 +887,9 @@ async fn playlists_create_add_move_remove() {
     assert_eq!(detail["Name"], "Playlist");
 
     // A playlist id on a track route is a bare 404, never a native envelope.
-    let reply = fx.get(&format!("/jellyfin/Audio/{pid}/stream"), None).await;
+    let reply = fx
+        .get(&format!("/jellyfin/Audio/{pid}/stream"), Some(&auth))
+        .await;
     assert_eq!((reply.status, reply.body.len()), (404, 0));
 }
 
