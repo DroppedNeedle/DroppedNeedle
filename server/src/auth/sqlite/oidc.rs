@@ -11,7 +11,8 @@ use crate::db::Lane;
 /// Short-lived OIDC PKCE states over `auth_oidc_states`.
 ///
 /// Consumption is single-use and atomic: the row is deleted in the same
-/// transaction that reads it, and expired rows consume as absent.
+/// transaction that reads it, and expired rows consume as absent. Storing
+/// a state sweeps the expired ones.
 #[derive(Clone, Debug)]
 pub struct SqliteOidcStateStore {
     db: AuthDb,
@@ -32,6 +33,13 @@ impl OidcStateStore for SqliteOidcStateStore {
         let (state, code_verifier) = (state.to_owned(), code_verifier.to_owned());
         lane.write(Lane::Foreground, "auth.oidc.store", move |tx| {
             let now = AuthDb::now_unix();
+            // Abandoned logins leave states behind; sweep the expired ones
+            // in the same transaction so the table stays small.
+            tx.execute(
+                "DELETE FROM auth_oidc_states WHERE expires_at <= ?",
+                rusqlite::params![to_iso(now)],
+            )
+            .map_err(op_error)?;
             tx.execute(
                 "INSERT OR REPLACE INTO auth_oidc_states \
                  (state, created_at, expires_at, code_verifier) VALUES (?, ?, ?, ?)",

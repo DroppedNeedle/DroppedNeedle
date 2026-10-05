@@ -27,6 +27,9 @@ const LAST_SEEN_TOUCH_SECS: i64 = 5 * 60;
 
 /// Session storage for logins and the middleware, over `auth_tokens`.
 ///
+/// Each insert also deletes a batch of revoked and expired rows, so the
+/// table does not grow without bound.
+///
 /// Successful lookups refresh `last_seen_at` when it is older than
 /// [`LAST_SEEN_TOUCH_SECS`]; the refresh is best-effort (a failed touch logs
 /// and the request still authenticates). Companion labels round-trip through
@@ -94,6 +97,7 @@ impl SessionStore for SqliteSessionStore {
                     ],
                 )
                 .map_err(op_error)?;
+                sweep_dead_tokens(tx, record.issued_at)?;
                 apply_pending_rehash(tx, &record.user_id, pending)
             })
             .await;
@@ -191,6 +195,22 @@ impl SessionStore for SqliteSessionStore {
             user_agent,
         }))
     }
+}
+
+/// Most dead token rows one login removes. Logins are frequent enough
+/// that small batches keep the table clean without a background loop.
+const TOKEN_SWEEP_BATCH: i64 = 500;
+
+/// Delete revoked and expired token rows (no request can use them again),
+/// in the login's own transaction.
+fn sweep_dead_tokens(tx: &rusqlite::Transaction, now_unix: i64) -> Result<(), crate::db::OpError> {
+    tx.execute(
+        "DELETE FROM auth_tokens WHERE id IN (SELECT id FROM auth_tokens \
+         WHERE revoked = 1 OR expires_at <= ? LIMIT ?)",
+        rusqlite::params![to_iso(now_unix), TOKEN_SWEEP_BATCH],
+    )
+    .map_err(op_error)?;
+    Ok(())
 }
 
 /// Persist the queued bcrypt upgrade for `user_id`, if any entry matches
