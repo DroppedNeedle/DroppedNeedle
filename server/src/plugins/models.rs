@@ -164,10 +164,15 @@ pub struct PluginInstallPreview {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct PluginSourceUpdateRequest {
     /// A release tag, tag, branch or commit to move to. Without one, a
-    /// plugin installed from releases moves to the latest release; one
-    /// pinned to a tag, branch or commit is checked against the same ref.
+    /// plugin installed from releases moves to the latest release, one
+    /// installed from a branch moves to the branch tip, and one pinned to a
+    /// tag or commit stays.
     #[serde(default)]
     pub reference: Option<String>,
+    /// The exact commit the admin expects (from a preview). When set and
+    /// the source now resolves elsewhere, the update stops with 409.
+    #[serde(default)]
+    pub commit: Option<String>,
 }
 
 /// Outcome of an update from GitHub.

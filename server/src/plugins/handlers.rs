@@ -455,6 +455,7 @@ pub async fn install_plugin(
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Admin access required"),
         (status = 404, description = "Unknown plugin"),
+        (status = 409, description = "The repository moved since the preview"),
     )
 )]
 pub async fn update_plugin_from_source(
@@ -470,9 +471,13 @@ pub async fn update_plugin_from_source(
         .ok_or_else(|| map_install(InstallError::NoSource, deps.ids.as_ref()))?;
     let reference = match body.reference.as_deref().map(str::trim) {
         Some(reference) if !reference.is_empty() => Some(reference.to_owned()),
+        // Releases move to the newest release.
         _ if record.ref_kind == "release" => None,
+        // Branches move to their tip.
         _ if record.ref_kind == "branch" && record.reference == "HEAD" => None,
-        _ => Some(record.reference.clone()),
+        _ if record.ref_kind == "branch" => Some(record.reference.clone()),
+        // Tags and commits stay pinned.
+        _ => Some(record.commit.clone()),
     };
     let url = format!("https://github.com/{}", record.repository);
     let staged = stage_request(&deps, &url, reference.as_deref()).await?;
@@ -482,6 +487,17 @@ pub async fn update_plugin_from_source(
                 "That repository now holds a plugin named '{}', not '{name}'",
                 staged.manifest.name
             ),
+        });
+    }
+    if let Some(expected) = body
+        .commit
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        && !expected.eq_ignore_ascii_case(&staged.resolved.commit)
+    {
+        return Err(PluginError::Conflict {
+            message: "The repository changed since the preview. Preview it again to see what would be installed".to_owned(),
         });
     }
     let updated = staged.resolved.commit != record.commit;
