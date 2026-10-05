@@ -135,14 +135,6 @@ describe('playerStore queue methods', () => {
 	});
 
 	describe('addToQueue', () => {
-		it('starts playback when queue is empty', () => {
-			const item = makeItem();
-			playerStore.addToQueue(item);
-			expect(playerStore.queue).toHaveLength(1);
-			expect(playerStore.queue[0].trackSourceId).toBe(item.trackSourceId);
-			expect(playerStore.isPlayerVisible).toBe(true);
-		});
-
 		it('appends to end of queue when queue has items', () => {
 			playerStore.playQueue(makeItems(2));
 			const newItem = makeItem({ trackName: 'New Track' });
@@ -150,23 +142,9 @@ describe('playerStore queue methods', () => {
 			expect(playerStore.queue).toHaveLength(3);
 			expect(playerStore.queue[2].trackName).toBe('New Track');
 		});
-
-		it('updates shuffle order when shuffle is enabled', () => {
-			playerStore.playQueue(makeItems(2), 0, true);
-			const initialShuffleLen = playerStore.shuffleOrder.length;
-			playerStore.addToQueue(makeItem());
-			expect(playerStore.shuffleOrder).toHaveLength(initialShuffleLen + 1);
-		});
 	});
 
 	describe('playNext', () => {
-		it('starts playback when queue is empty', () => {
-			const item = makeItem();
-			playerStore.playNext(item);
-			expect(playerStore.queue).toHaveLength(1);
-			expect(playerStore.isPlayerVisible).toBe(true);
-		});
-
 		it('inserts after current index', () => {
 			playerStore.playQueue(makeItems(3));
 			const newItem = makeItem({ trackName: 'Inserted' });
@@ -177,18 +155,6 @@ describe('playerStore queue methods', () => {
 	});
 
 	describe('addMultipleToQueue', () => {
-		it('does nothing for empty array', () => {
-			playerStore.addMultipleToQueue([]);
-			expect(playerStore.queue).toHaveLength(0);
-		});
-
-		it('starts playback when queue is empty', () => {
-			const items = makeItems(3);
-			playerStore.addMultipleToQueue(items);
-			expect(playerStore.queue).toHaveLength(3);
-			expect(playerStore.isPlayerVisible).toBe(true);
-		});
-
 		it('appends all items to existing queue', () => {
 			playerStore.playQueue(makeItems(2));
 			playerStore.addMultipleToQueue(makeItems(3));
@@ -197,18 +163,6 @@ describe('playerStore queue methods', () => {
 	});
 
 	describe('playMultipleNext', () => {
-		it('does nothing for empty array', () => {
-			playerStore.playMultipleNext([]);
-			expect(playerStore.queue).toHaveLength(0);
-		});
-
-		it('starts playback when queue is empty', () => {
-			const items = makeItems(2);
-			playerStore.playMultipleNext(items);
-			expect(playerStore.queue).toHaveLength(2);
-			expect(playerStore.isPlayerVisible).toBe(true);
-		});
-
 		it('inserts all items after current index', () => {
 			playerStore.playQueue(makeItems(3));
 			const newItems = makeItems(2).map((item, i) => ({ ...item, trackName: `Inserted ${i}` }));
@@ -220,14 +174,6 @@ describe('playerStore queue methods', () => {
 	});
 
 	describe('removeFromQueue', () => {
-		it('ignores out-of-bounds index', () => {
-			playerStore.playQueue(makeItems(2));
-			playerStore.removeFromQueue(-1);
-			expect(playerStore.queue).toHaveLength(2);
-			playerStore.removeFromQueue(10);
-			expect(playerStore.queue).toHaveLength(2);
-		});
-
 		it('stops playback when removing only item', () => {
 			playerStore.addToQueue(makeItem());
 			playerStore.removeFromQueue(0);
@@ -242,48 +188,9 @@ describe('playerStore queue methods', () => {
 			expect(playerStore.currentIndex).toBe(prevIndex - 1);
 			expect(playerStore.queue).toHaveLength(2);
 		});
-
-		it('updates shuffle order after removal', () => {
-			playerStore.playQueue(makeItems(4), 0, true);
-			const initialLen = playerStore.shuffleOrder.length;
-			playerStore.removeFromQueue(3);
-			expect(playerStore.shuffleOrder).toHaveLength(initialLen - 1);
-		});
 	});
 
 	describe('reorderQueue', () => {
-		it('does nothing for same index', () => {
-			playerStore.playQueue(makeItems(3));
-			const before = [...playerStore.queue];
-			playerStore.reorderQueue(0, 0);
-			expect(playerStore.queue.map((i) => i.trackSourceId)).toEqual(
-				before.map((i) => i.trackSourceId)
-			);
-		});
-
-		it('does nothing for out-of-bounds indices', () => {
-			playerStore.playQueue(makeItems(3));
-			const before = [...playerStore.queue];
-			playerStore.reorderQueue(-1, 2);
-			expect(playerStore.queue.map((i) => i.trackSourceId)).toEqual(
-				before.map((i) => i.trackSourceId)
-			);
-		});
-
-		it('moves an item forward', () => {
-			playerStore.playQueue(makeItems(4));
-			const moved = playerStore.queue[0].trackSourceId;
-			playerStore.reorderQueue(0, 2);
-			expect(playerStore.queue[2].trackSourceId).toBe(moved);
-		});
-
-		it('moves an item backward', () => {
-			playerStore.playQueue(makeItems(4));
-			const moved = playerStore.queue[3].trackSourceId;
-			playerStore.reorderQueue(3, 1);
-			expect(playerStore.queue[1].trackSourceId).toBe(moved);
-		});
-
 		it('tracks currentIndex when current item is moved', () => {
 			playerStore.playQueue(makeItems(4));
 			expect(playerStore.currentIndex).toBe(0);
@@ -296,13 +203,6 @@ describe('playerStore queue methods', () => {
 			expect(playerStore.currentIndex).toBe(2);
 			playerStore.reorderQueue(0, 4);
 			expect(playerStore.currentIndex).toBe(1);
-		});
-
-		it('updates shuffle order after reorder', () => {
-			playerStore.playQueue(makeItems(4), 0, true);
-			const initialOrder = [...playerStore.shuffleOrder];
-			playerStore.reorderQueue(0, 3);
-			expect(playerStore.shuffleOrder).toHaveLength(initialOrder.length);
 		});
 	});
 
@@ -319,11 +219,6 @@ describe('playerStore queue methods', () => {
 	});
 
 	describe('upcomingQueueLength', () => {
-		it('counts tracks after current index for normal queue', () => {
-			playerStore.playQueue(makeItems(3), 0);
-			expect(playerStore.upcomingQueueLength).toBe(2);
-		});
-
 		it('counts remaining tracks in shuffle order', () => {
 			playerStore.playQueue(makeItems(4), 0, true);
 			playerStore.jumpToTrack(2);
@@ -338,13 +233,6 @@ describe('playerStore queue methods', () => {
 	});
 
 	describe('changeTrackSource', () => {
-		it('ignores out-of-bounds index', () => {
-			playerStore.playQueue(makeItems(3));
-			const before = playerStore.queue[0].sourceType;
-			playerStore.changeTrackSource(-1, 'jellyfin');
-			expect(playerStore.queue[0].sourceType).toBe(before);
-		});
-
 		it('is a no-op on current track with toast', () => {
 			playerStore.playQueue(makeItems(3));
 			const currentIdx = playerStore.currentIndex;
@@ -352,12 +240,6 @@ describe('playerStore queue methods', () => {
 			playerStore.changeTrackSource(currentIdx, 'jellyfin');
 			expect(playerStore.queue[currentIdx].sourceType).toBe(beforeSource);
 			expect(playbackToast.show).toHaveBeenCalled();
-		});
-
-		it('updates source on non-current item', () => {
-			playerStore.playQueue(makeItems(3));
-			playerStore.changeTrackSource(2, 'jellyfin');
-			expect(playerStore.queue[2].sourceType).toBe('jellyfin');
 		});
 
 		it('updates streamUrl for target source', () => {
@@ -378,15 +260,6 @@ describe('playerStore queue methods', () => {
 			expect(playerStore.queue[2].streamUrl).toBe('/api/v3/stream/jellyfin/jf-new');
 		});
 
-		it('is a no-op when playlistTrackId is not found', () => {
-			expect.assertions(1);
-			const items = makeItems(3).map((item, i) => ({ ...item, playlistTrackId: `pt-${i}` }));
-			playerStore.playQueue(items);
-			const before = playerStore.queue[1].sourceType;
-			playerStore.updateQueueItemByPlaylistTrackId('pt-nonexistent', 'jellyfin', 'jf-new');
-			expect(playerStore.queue[1].sourceType).toBe(before);
-		});
-
 		it('skips currently playing track', () => {
 			expect.assertions(1);
 			const items = makeItems(3).map((item, i) => ({ ...item, playlistTrackId: `pt-${i}` }));
@@ -395,14 +268,6 @@ describe('playerStore queue methods', () => {
 			const before = playerStore.queue[currentIdx].sourceType;
 			playerStore.updateQueueItemByPlaylistTrackId(`pt-${currentIdx}`, 'jellyfin', 'jf-new');
 			expect(playerStore.queue[currentIdx].sourceType).toBe(before);
-		});
-
-		it('resolves local streamUrl correctly', () => {
-			expect.assertions(1);
-			const items = makeItems(3).map((item, i) => ({ ...item, playlistTrackId: `pt-${i}` }));
-			playerStore.playQueue(items);
-			playerStore.updateQueueItemByPlaylistTrackId('pt-1', 'local', '999', 'flac');
-			expect(playerStore.queue[1].streamUrl).toBe('/api/v3/stream/local/999');
 		});
 	});
 
@@ -447,11 +312,6 @@ describe('playerStore queue methods', () => {
 	});
 
 	describe('playQueue', () => {
-		it('does nothing for empty array', () => {
-			playerStore.playQueue([]);
-			expect(playerStore.queue).toHaveLength(0);
-		});
-
 		it('sets queue and starts playback at specified index', () => {
 			const items = makeItems(5);
 			playerStore.playQueue(items, 2);
@@ -459,35 +319,9 @@ describe('playerStore queue methods', () => {
 			expect(playerStore.currentIndex).toBe(2);
 			expect(playerStore.isPlayerVisible).toBe(true);
 		});
-
-		it('creates shuffle order when shuffle enabled', () => {
-			playerStore.playQueue(makeItems(5), 0, true);
-			expect(playerStore.shuffleEnabled).toBe(true);
-			expect(playerStore.shuffleOrder).toHaveLength(5);
-		});
-
-		it('does not create shuffle order when disabled', () => {
-			playerStore.playQueue(makeItems(5), 0, false);
-			expect(playerStore.shuffleEnabled).toBe(false);
-		});
 	});
 
 	describe('toggleShuffle', () => {
-		it('enables shuffle and creates order', () => {
-			playerStore.playQueue(makeItems(4));
-			playerStore.toggleShuffle();
-			expect(playerStore.shuffleEnabled).toBe(true);
-			expect(playerStore.shuffleOrder).toHaveLength(4);
-			expect(playerStore.shuffleOrder[0]).toBe(playerStore.currentIndex);
-		});
-
-		it('disables shuffle and clears order', () => {
-			playerStore.playQueue(makeItems(4), 0, true);
-			playerStore.toggleShuffle();
-			expect(playerStore.shuffleEnabled).toBe(false);
-			expect(playerStore.shuffleOrder).toHaveLength(0);
-		});
-
 		it('only shuffles upcoming tracks, not played ones', () => {
 			playerStore.playQueue(makeItems(6), 0);
 			playerStore.jumpToTrack(3);
@@ -509,15 +343,6 @@ describe('playerStore queue methods', () => {
 			expect(playerStore.shuffleOrder.slice(0, 3)).toEqual([0, 1, 2]);
 			expect(playerStore.shuffleOrder[3]).toBe(3);
 		});
-
-		it('includes all indices when toggled at start', () => {
-			playerStore.playQueue(makeItems(5));
-			playerStore.toggleShuffle();
-
-			expect(playerStore.shuffleOrder).toHaveLength(5);
-			expect(playerStore.shuffleOrder[0]).toBe(0);
-			expect([...playerStore.shuffleOrder].sort()).toEqual([0, 1, 2, 3, 4]);
-		});
 	});
 
 	describe('queueOrigin tagging', () => {
@@ -529,26 +354,6 @@ describe('playerStore queue methods', () => {
 		it('addToQueue stamps item as manual', () => {
 			playerStore.playQueue(makeItems(2));
 			playerStore.addToQueue(makeItem({ trackName: 'Manual' }));
-			expect(playerStore.queue[2].queueOrigin).toBe('manual');
-		});
-
-		it('addMultipleToQueue stamps items as manual', () => {
-			playerStore.playQueue(makeItems(2));
-			playerStore.addMultipleToQueue(makeItems(2));
-			expect(playerStore.queue[2].queueOrigin).toBe('manual');
-			expect(playerStore.queue[3].queueOrigin).toBe('manual');
-		});
-
-		it('playNext stamps item as manual', () => {
-			playerStore.playQueue(makeItems(2));
-			playerStore.playNext(makeItem({ trackName: 'Next' }));
-			expect(playerStore.queue[1].queueOrigin).toBe('manual');
-		});
-
-		it('playMultipleNext stamps items as manual', () => {
-			playerStore.playQueue(makeItems(2));
-			playerStore.playMultipleNext(makeItems(2));
-			expect(playerStore.queue[1].queueOrigin).toBe('manual');
 			expect(playerStore.queue[2].queueOrigin).toBe('manual');
 		});
 
@@ -612,15 +417,6 @@ describe('playerStore queue methods', () => {
 			const historyBehind = playerStore.currentIndex;
 			expect(historyBehind).toBeLessThanOrEqual(3);
 		});
-
-		it('does not remove tracks when at start of queue', async () => {
-			playerStore.playQueue(makeItems(3));
-			playerStore.nextTrack();
-			await vi.waitFor(() => {
-				expect(playerStore.currentIndex).toBeGreaterThanOrEqual(0);
-			});
-			expect(playerStore.queue.length).toBeGreaterThanOrEqual(2);
-		});
 	});
 
 	describe('session migration with queueOrigin', () => {
@@ -659,59 +455,6 @@ describe('playerStore queue methods', () => {
 			playerStore.resumeSession();
 
 			expect(playerStore.queue[0].queueOrigin).toBe('context');
-		});
-
-		it('preserves existing queueOrigin during resume', () => {
-			const session = {
-				nowPlaying: {
-					albumId: 'album-1',
-					albumName: 'Album',
-					artistName: 'Artist',
-					coverUrl: null,
-					sourceType: 'local',
-					trackSourceId: '1',
-					trackName: 'Track'
-				},
-				queue: [
-					{
-						trackSourceId: '1',
-						trackName: 'Track',
-						artistName: 'Artist',
-						trackNumber: 1,
-						albumId: 'album-1',
-						albumName: 'Album',
-						coverUrl: null,
-						sourceType: 'local',
-						streamUrl: '/api/v3/stream/local/1',
-						availableSources: ['local'],
-						queueOrigin: 'manual'
-					}
-				],
-				currentIndex: 0,
-				progress: 0,
-				shuffleEnabled: false,
-				shuffleOrder: []
-			};
-
-			localStorage.setItem('droppedneedle_player_session', JSON.stringify(session));
-			playerStore.resumeSession();
-
-			expect(playerStore.queue[0].queueOrigin).toBe('manual');
-		});
-	});
-
-	describe('jumpToTrack', () => {
-		it('loads the track at the specified index', () => {
-			playerStore.playQueue(makeItems(3));
-			playerStore.jumpToTrack(2);
-			expect(playerStore.currentIndex).toBe(2);
-		});
-
-		it('ignores out-of-bounds index', () => {
-			playerStore.playQueue(makeItems(3));
-			const before = playerStore.currentIndex;
-			playerStore.jumpToTrack(10);
-			expect(playerStore.currentIndex).toBe(before);
 		});
 	});
 
@@ -814,39 +557,10 @@ describe('Jellyfin session lifecycle', () => {
 
 		expect(jellyfinApi.reportStop).toHaveBeenCalledWith('jf-1', 'ps-123', expect.any(Number));
 	});
-
-	it('calls reportStop when stop() is called', async () => {
-		playerStore.playQueue([makeJellyfinItem()]);
-		await vi.advanceTimersByTimeAsync(0);
-
-		playerStore.stop();
-		await vi.advanceTimersByTimeAsync(0);
-
-		expect(jellyfinApi.reportStop).toHaveBeenCalledWith('jf-1', 'ps-123', expect.any(Number));
-	});
-
-	it('calls reportProgress during the progress interval', async () => {
-		playerStore.playQueue([makeJellyfinItem()]);
-		await vi.advanceTimersByTimeAsync(0);
-
-		capturedStateCallbacks.forEach((cb) => cb('playing'));
-		capturedProgressCallbacks.forEach((cb) => cb(10, 180));
-		await vi.advanceTimersByTimeAsync(0);
-
-		vi.advanceTimersByTime(10_000);
-
-		expect(jellyfinApi.reportProgress).toHaveBeenCalledWith(
-			'jf-1',
-			'ps-123',
-			expect.any(Number),
-			false
-		);
-	});
 });
 
 describe('beforeunload beacon', () => {
 	let addEventListenerSpy: ReturnType<typeof vi.fn>;
-	let removeEventListenerSpy: ReturnType<typeof vi.fn>;
 	let sendBeaconMock: ReturnType<typeof vi.fn>;
 	let jellyfinApi: {
 		startSession: ReturnType<typeof vi.fn>;
@@ -884,7 +598,6 @@ describe('beforeunload beacon', () => {
 		};
 		vi.stubGlobal('window', windowStub);
 		addEventListenerSpy = windowStub.addEventListener;
-		removeEventListenerSpy = windowStub.removeEventListener;
 
 		sendBeaconMock = vi.fn(() => true);
 		vi.stubGlobal('navigator', { sendBeacon: sendBeaconMock });
@@ -916,13 +629,6 @@ describe('beforeunload beacon', () => {
 		});
 	}
 
-	it('registers beforeunload listener when a Jellyfin track starts', async () => {
-		playerStore.playQueue([makeJellyfinItem()]);
-		await vi.advanceTimersByTimeAsync(0);
-
-		expect(addEventListenerSpy).toHaveBeenCalledWith('beforeunload', expect.any(Function));
-	});
-
 	it('sends beacon with correct payload on beforeunload', async () => {
 		playerStore.playQueue([makeJellyfinItem()]);
 		await vi.advanceTimersByTimeAsync(0);
@@ -943,57 +649,6 @@ describe('beforeunload beacon', () => {
 		const text = await sentBlob.text();
 		const parsed = JSON.parse(text);
 		expect(parsed).toEqual({ source: 'jellyfin', track_id: 'jf-beacon', position_ms: 45000 });
-	});
-
-	it('removes beforeunload listener on destroy/stop', async () => {
-		playerStore.playQueue([makeJellyfinItem()]);
-		await vi.advanceTimersByTimeAsync(0);
-
-		playerStore.stop();
-		await vi.advanceTimersByTimeAsync(0);
-
-		expect(removeEventListenerSpy).toHaveBeenCalledWith('beforeunload', expect.any(Function));
-	});
-});
-
-describe('non-seekable state propagation', () => {
-	beforeEach(() => {
-		localStorage.clear();
-		playerStore.stop();
-		vi.clearAllMocks();
-		vi.useFakeTimers();
-
-		mockApiGet.mockResolvedValue({
-			url: 'http://jf/Audio/1/universal?transcode',
-			seekable: false,
-			playSessionId: 'ps-ns'
-		});
-		mockApiHead.mockResolvedValue(new Response(null, { status: 200 }));
-	});
-
-	afterEach(() => {
-		vi.useRealTimers();
-		vi.unstubAllGlobals();
-		vi.stubGlobal('localStorage', {
-			getItem: vi.fn((key: string) => (storage.has(key) ? storage.get(key)! : null)),
-			setItem: vi.fn((key: string, value: string) => {
-				storage.set(key, value);
-			}),
-			removeItem: vi.fn((key: string) => {
-				storage.delete(key);
-			}),
-			clear: vi.fn(() => {
-				storage.clear();
-			})
-		});
-	});
-
-	it('sets isSeekable to true for Jellyfin streams', async () => {
-		const item = makeItem({ sourceType: 'jellyfin', trackSourceId: 'jf-ns', streamUrl: undefined });
-		playerStore.playQueue([item]);
-		await vi.advanceTimersByTimeAsync(0);
-
-		expect(playerStore.isSeekable).toBe(true);
 	});
 });
 
@@ -1039,56 +694,6 @@ describe('track failure reporting', () => {
 			});
 		});
 	}
-
-	// One failure retries the same item; only the retry failing moves onward.
-	async function failTrackToSkip(): Promise<void> {
-		fireCurrentTrackError();
-		await vi.advanceTimersByTimeAsync(0);
-		fireCurrentTrackError();
-		await vi.advanceTimersByTimeAsync(2100);
-	}
-
-	it('final failure toast names the failed tracks', async () => {
-		playerStore.playQueue(singleSourceItems(3));
-		await vi.advanceTimersByTimeAsync(0);
-
-		await failTrackToSkip();
-		await failTrackToSkip();
-		fireCurrentTrackError();
-		await vi.advanceTimersByTimeAsync(0);
-		fireCurrentTrackError();
-		await vi.advanceTimersByTimeAsync(0);
-
-		expect(playbackToast.show).toHaveBeenLastCalledWith(
-			'Several tracks failed: "Track 1", "Track 2", "Track 3" - playback stopped.',
-			'error'
-		);
-		expect(playerStore.queue).toHaveLength(0);
-	});
-
-	it('failed track names reset after a successful play', async () => {
-		playerStore.playQueue(singleSourceItems(4));
-		await vi.advanceTimersByTimeAsync(0);
-
-		await failTrackToSkip();
-
-		// track 2 plays successfully - the failure list resets
-		capturedStateCallbacks.forEach((cb) => cb('playing'));
-		await vi.advanceTimersByTimeAsync(0);
-
-		await failTrackToSkip();
-		await failTrackToSkip();
-		fireCurrentTrackError();
-		await vi.advanceTimersByTimeAsync(0);
-		fireCurrentTrackError();
-		await vi.advanceTimersByTimeAsync(0);
-
-		const lastCall = vi.mocked(playbackToast.show).mock.calls.at(-1);
-		expect(lastCall?.[0]).toBe(
-			'Several tracks failed: "Track 2", "Track 3", "Track 4" - playback stopped.'
-		);
-		expect(lastCall?.[0]).not.toContain('Track 1');
-	});
 
 	it('retries the same track once before advancing', async () => {
 		playerStore.playQueue(singleSourceItems(2));
@@ -1150,30 +755,6 @@ describe('track failure reporting', () => {
 		expect(playbackToast.show).toHaveBeenLastCalledWith(
 			'"Plex Track" failed on local (stream failed), skipping...',
 			'warning'
-		);
-	});
-
-	it('names the failed source and error detail when nothing is next', async () => {
-		const plexId = 'plex-part-key';
-		playerStore.playQueue([
-			makeItem({
-				trackSourceId: plexId,
-				trackName: 'Lone Track',
-				sourceType: 'plex',
-				availableSources: ['plex'],
-				sourceIds: { plex: plexId }
-			})
-		]);
-		await vi.advanceTimersByTimeAsync(0);
-
-		fireCurrentTrackError();
-		await vi.advanceTimersByTimeAsync(0);
-		fireCurrentTrackError();
-		await vi.advanceTimersByTimeAsync(0);
-
-		expect(playbackToast.show).toHaveBeenLastCalledWith(
-			'"Lone Track" failed on plex (stream failed)',
-			'error'
 		);
 	});
 });

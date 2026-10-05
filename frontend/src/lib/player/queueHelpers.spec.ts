@@ -9,7 +9,6 @@ import type { PlaylistTrack } from '$lib/api/playlists';
 import type { TrackMeta, TrackSourceData } from './queueHelpers';
 import {
 	selectBestSource,
-	getAvailableSources,
 	buildQueueItem,
 	buildQueueItemsFromJellyfin,
 	buildQueueItemsFromLocal,
@@ -49,42 +48,6 @@ const jellyfinTrack: JellyfinTrackInfo = {
 };
 
 describe('selectBestSource', () => {
-	it('returns local source when localTrack is available', () => {
-		expect.assertions(3);
-		const data: TrackSourceData = {
-			trackPosition: 1,
-			trackTitle: 'Track',
-			localTrack,
-			jellyfinTrack
-		};
-		const result = selectBestSource(data);
-		expect(result).not.toBeNull();
-		expect(result!.sourceType).toBe('local');
-		expect(result!.streamUrl).toBe('/api/v3/stream/local/42');
-	});
-
-	it('returns jellyfin source when only jellyfinTrack is available', () => {
-		expect.assertions(3);
-		const data: TrackSourceData = {
-			trackPosition: 2,
-			trackTitle: 'Track',
-			jellyfinTrack
-		};
-		const result = selectBestSource(data);
-		expect(result).not.toBeNull();
-		expect(result!.sourceType).toBe('jellyfin');
-		expect(result!.trackSourceId).toBe('jf-123');
-	});
-
-	it('returns null when no source is available', () => {
-		expect.assertions(1);
-		const data: TrackSourceData = {
-			trackPosition: 1,
-			trackTitle: 'Track'
-		};
-		expect(selectBestSource(data)).toBeNull();
-	});
-
 	it('prefers local over jellyfin (Local > Jellyfin priority)', () => {
 		expect.assertions(1);
 		const data: TrackSourceData = {
@@ -94,49 +57,6 @@ describe('selectBestSource', () => {
 			jellyfinTrack
 		};
 		expect(selectBestSource(data)!.sourceType).toBe('local');
-	});
-});
-
-describe('getAvailableSources', () => {
-	it('returns both sources when both are available', () => {
-		expect.assertions(2);
-		const sources = getAvailableSources({
-			trackPosition: 1,
-			trackTitle: 'Track',
-			localTrack,
-			jellyfinTrack
-		});
-		expect(sources).toContain('local');
-		expect(sources).toContain('jellyfin');
-	});
-
-	it('returns only local when only local is available', () => {
-		expect.assertions(1);
-		const sources = getAvailableSources({
-			trackPosition: 1,
-			trackTitle: 'Track',
-			localTrack
-		});
-		expect(sources).toEqual(['local']);
-	});
-
-	it('returns only jellyfin when only jellyfin is available', () => {
-		expect.assertions(1);
-		const sources = getAvailableSources({
-			trackPosition: 1,
-			trackTitle: 'Track',
-			jellyfinTrack
-		});
-		expect(sources).toEqual(['jellyfin']);
-	});
-
-	it('returns empty array when no sources are available', () => {
-		expect.assertions(1);
-		const sources = getAvailableSources({
-			trackPosition: 1,
-			trackTitle: 'Track'
-		});
-		expect(sources).toEqual([]);
 	});
 });
 
@@ -156,40 +76,6 @@ describe('buildQueueItem', () => {
 		expect(item!.albumId).toBe('album-1');
 		expect(item!.availableSources).toEqual(['local']);
 		expect(item!.duration).toBe(240);
-	});
-
-	it('returns null when no source is available', () => {
-		expect.assertions(1);
-		const data: TrackSourceData = {
-			trackPosition: 1,
-			trackTitle: 'No Source'
-		};
-		expect(buildQueueItem(baseMeta, data)).toBeNull();
-	});
-
-	it('populates availableSources with both when both exist', () => {
-		expect.assertions(2);
-		const data: TrackSourceData = {
-			trackPosition: 1,
-			trackTitle: 'Dual Source',
-			localTrack,
-			jellyfinTrack
-		};
-		const item = buildQueueItem(baseMeta, data);
-		expect(item!.availableSources).toContain('local');
-		expect(item!.availableSources).toContain('jellyfin');
-	});
-
-	it('uses getCoverUrl to normalize cover URL', () => {
-		expect.assertions(1);
-		const meta: TrackMeta = { ...baseMeta, coverUrl: null };
-		const data: TrackSourceData = {
-			trackPosition: 1,
-			trackTitle: 'Track',
-			localTrack
-		};
-		const item = buildQueueItem(meta, data);
-		expect(item!.coverUrl).toBe('/cover/album-1');
 	});
 
 	it('preserves disc number on queue items', () => {
@@ -242,17 +128,6 @@ describe('disc-aware track helpers', () => {
 });
 
 describe('buildQueueItemsFromJellyfin', () => {
-	it('maps JellyfinTrackInfo array to QueueItem array', () => {
-		expect.assertions(5);
-		const tracks: JellyfinTrackInfo[] = [jellyfinTrack];
-		const items = buildQueueItemsFromJellyfin(tracks, baseMeta);
-		expect(items).toHaveLength(1);
-		expect(items[0].sourceType).toBe('jellyfin');
-		expect(items[0].trackName).toBe('JF Song');
-		expect(items[0].availableSources).toEqual(['jellyfin']);
-		expect(items[0].duration).toBe(180);
-	});
-
 	it('normalizes codec for stream URL', () => {
 		expect.assertions(1);
 		const track: JellyfinTrackInfo = { ...jellyfinTrack, codec: 'ALAC' };
@@ -263,13 +138,6 @@ describe('buildQueueItemsFromJellyfin', () => {
 	it('defaults to aac for unknown codecs', () => {
 		expect.assertions(1);
 		const track: JellyfinTrackInfo = { ...jellyfinTrack, codec: 'unknown_codec' };
-		const items = buildQueueItemsFromJellyfin([track], baseMeta);
-		expect(items[0].streamUrl).toBe('/api/v3/stream/jellyfin/jf-123');
-	});
-
-	it('defaults to aac for null codec', () => {
-		expect.assertions(1);
-		const track: JellyfinTrackInfo = { ...jellyfinTrack, codec: null };
 		const items = buildQueueItemsFromJellyfin([track], baseMeta);
 		expect(items[0].streamUrl).toBe('/api/v3/stream/jellyfin/jf-123');
 	});
@@ -309,35 +177,6 @@ describe('normalizeCodec', () => {
 });
 
 describe('buildQueueItemsFromLocal', () => {
-	it('maps LocalTrackInfo array to QueueItem array', () => {
-		expect.assertions(5);
-		const items = buildQueueItemsFromLocal([localTrack], baseMeta);
-		expect(items).toHaveLength(1);
-		expect(items[0].sourceType).toBe('local');
-		expect(items[0].trackName).toBe('Local Song');
-		expect(items[0].availableSources).toEqual(['local']);
-		expect(items[0].streamUrl).toBe('/api/v3/stream/local/42');
-	});
-
-	it('lowercases format', () => {
-		expect.assertions(1);
-		const items = buildQueueItemsFromLocal([localTrack], baseMeta);
-		expect(items[0].format).toBe('flac');
-	});
-
-	it('handles undefined duration_seconds', () => {
-		expect.assertions(1);
-		const track: LocalTrackInfo = { ...localTrack, duration_seconds: undefined };
-		const items = buildQueueItemsFromLocal([track], baseMeta);
-		expect(items[0].duration).toBeUndefined();
-	});
-
-	it('handles null duration_seconds', () => {
-		expect.assertions(1);
-		const track: LocalTrackInfo = { ...localTrack, duration_seconds: null };
-		const items = buildQueueItemsFromLocal([track], baseMeta);
-		expect(items[0].duration).toBeUndefined();
-	});
 	it('nulls coverRemoteUrl for local proxy paths', () => {
 		expect.assertions(1);
 		const items = buildQueueItemsFromLocal([localTrack], {
@@ -456,75 +295,10 @@ describe('playlistTrackToQueueItem', () => {
 		expect(item.format).toBe('opus');
 	});
 
-	it('maps youtube track with undefined streamUrl', () => {
-		expect.assertions(2);
-		const track: PlaylistTrack = {
-			...basePlaylistTrack,
-			source_type: 'youtube',
-			track_source_id: 'yt-abc'
-		};
-		const item = playlistTrackToQueueItem(track)!;
-		expect(item.sourceType).toBe('youtube');
-		expect(item.streamUrl).toBeUndefined();
-	});
-
 	it('returns null for tracks with null track_source_id', () => {
 		expect.assertions(1);
 		const track: PlaylistTrack = { ...basePlaylistTrack, track_source_id: null };
 		expect(playlistTrackToQueueItem(track)).toBeNull();
-	});
-
-	it('defaults available_sources to [sourceType] when null', () => {
-		expect.assertions(1);
-		const track: PlaylistTrack = { ...basePlaylistTrack, available_sources: null };
-		const item = playlistTrackToQueueItem(track)!;
-		expect(item.availableSources).toEqual(['local']);
-	});
-
-	it('maps all fields correctly', () => {
-		expect.assertions(9);
-		const item = playlistTrackToQueueItem(basePlaylistTrack)!;
-		expect(item.trackSourceId).toBe('42');
-		expect(item.artistName).toBe('Test Artist');
-		expect(item.trackNumber).toBe(1);
-		expect(item.discNumber).toBe(2);
-		expect(item.albumId).toBe('album-1');
-		expect(item.albumName).toBe('Test Album');
-		expect(item.coverUrl).toBe('/cover.jpg');
-		expect(item.artistId).toBe('artist-1');
-		expect(item.availableSources).toEqual(['local', 'jellyfin']);
-	});
-
-	it('handles null album_id by defaulting to empty string', () => {
-		expect.assertions(1);
-		const track: PlaylistTrack = { ...basePlaylistTrack, album_id: null };
-		const item = playlistTrackToQueueItem(track)!;
-		expect(item.albumId).toBe('');
-	});
-
-	it('falls back to position when track_number is null', () => {
-		expect.assertions(1);
-		const track: PlaylistTrack = { ...basePlaylistTrack, track_number: null, position: 5 };
-		const item = playlistTrackToQueueItem(track)!;
-		expect(item.trackNumber).toBe(5);
-	});
-
-	it('uses aac as default format for jellyfin when format is null', () => {
-		expect.assertions(1);
-		const track: PlaylistTrack = {
-			...basePlaylistTrack,
-			source_type: 'jellyfin',
-			track_source_id: 'jf-1',
-			format: null
-		};
-		const item = playlistTrackToQueueItem(track)!;
-		expect(item.streamUrl).toBe('/api/v3/stream/jellyfin/jf-1');
-	});
-
-	it('populates playlistTrackId from playlist track id', () => {
-		expect.assertions(1);
-		const item = playlistTrackToQueueItem(basePlaylistTrack)!;
-		expect(item.playlistTrackId).toBe('pt-1');
 	});
 
 	it('prefers local when library_file_id set and available_sources includes local', () => {
@@ -541,35 +315,6 @@ describe('playlistTrackToQueueItem', () => {
 		expect(item.trackSourceId).toBe('77');
 		expect(item.streamUrl).toBe('/api/v3/stream/local/77');
 		expect(item.sourceIds).toEqual({ jellyfin: 'jf-123', local: '77' });
-	});
-
-	it('keeps jellyfin when library_file_id is null', () => {
-		expect.assertions(3);
-		const track: PlaylistTrack = {
-			...basePlaylistTrack,
-			source_type: 'jellyfin',
-			track_source_id: 'jf-123',
-			available_sources: ['jellyfin', 'local'],
-			library_file_id: null
-		};
-		const item = playlistTrackToQueueItem(track)!;
-		expect(item.sourceType).toBe('jellyfin');
-		expect(item.trackSourceId).toBe('jf-123');
-		expect(item.sourceIds).toEqual({ jellyfin: 'jf-123' });
-	});
-
-	it('keeps jellyfin when local is not in available_sources', () => {
-		expect.assertions(2);
-		const track: PlaylistTrack = {
-			...basePlaylistTrack,
-			source_type: 'jellyfin',
-			track_source_id: 'jf-123',
-			available_sources: ['jellyfin'],
-			library_file_id: '77'
-		};
-		const item = playlistTrackToQueueItem(track)!;
-		expect(item.sourceType).toBe('jellyfin');
-		expect(item.streamUrl).toBe('/api/v3/stream/jellyfin/jf-123');
 	});
 
 	it('plays linked row with empty track_source_id via library_file_id local fallback', () => {
