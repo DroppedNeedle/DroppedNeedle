@@ -639,8 +639,6 @@ struct HostRequests {
     host: Weak<PluginHost>,
 }
 
-/// Longest state key.
-const STATE_KEY_MAX: usize = 128;
 /// Largest state value (1 MiB).
 const STATE_VALUE_MAX: usize = 1024 * 1024;
 
@@ -649,19 +647,13 @@ fn state_key(params: &Value) -> Result<String, RpcError> {
         .get("key")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let safe = !key.is_empty()
-        && key.len() <= STATE_KEY_MAX
-        && key
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ':'));
-    if safe {
-        Ok(key.to_owned())
-    } else {
-        Err(RpcError::new(
+    crate::jobs::plugin_ticks::validate_state_key(key).map_err(|_| {
+        RpcError::new(
             codes::INVALID_PARAMS,
-            "state keys are 1-128 characters of letters, digits, _ - . :",
-        ))
-    }
+            "state keys are 1-64 lowercase letters, digits, _ - or /, starting with a letter or digit",
+        )
+    })?;
+    Ok(key.to_owned())
 }
 
 impl HostServices for HostRequests {

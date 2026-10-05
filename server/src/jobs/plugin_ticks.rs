@@ -38,6 +38,12 @@ pub const DEFAULT_INTERVAL_MINUTES: u64 = 60;
 /// Per-key state cap, carried over from the v2 file cap.
 pub const STATE_MAX_BYTES: usize = 10 * 1024 * 1024;
 
+/// Most state keys one plugin may hold.
+pub const STATE_MAX_KEYS: usize = 1000;
+
+/// Most state bytes one plugin may hold across all its keys (64 MiB).
+pub const STATE_MAX_TOTAL_BYTES: usize = 64 * 1024 * 1024;
+
 /// Longest state key the validator accepts.
 const STATE_KEY_MAX_LEN: usize = 64;
 
@@ -263,6 +269,16 @@ impl TickStore for MemoryTickStore {
             let Some(keys) = guard.get_mut(&plugin) else {
                 return Err(TickStoreError::UnknownPlugin(plugin));
             };
+            let (count, total) = keys
+                .iter()
+                .filter(|(name, _)| **name != key)
+                .fold((0usize, 0usize), |(count, total), (_, value)| {
+                    (count + 1, total + value.len())
+                });
+            if count + 1 > STATE_MAX_KEYS || total + bytes.len() > STATE_MAX_TOTAL_BYTES {
+                tracing::warn!(plugin = %plugin, "plugin state write rejected: plugin over its total cap");
+                return Err(TickStoreError::OverCap);
+            }
             keys.insert(key, bytes);
             Ok(())
         })
@@ -370,9 +386,23 @@ impl TickStore for SqliteTickStore {
             if !store.is_known(&plugin) {
                 return Err(TickStoreError::UnknownPlugin(plugin));
             }
-            store
+            let refused_plugin = plugin.clone();
+            let stored = store
                 .lane
                 .write(Lane::Background, "tick-state-write", move |tx| {
+                    // Totals for the plugin's other keys, so a plugin cannot
+                    // grow without bound through many small keys.
+                    let (count, total): (i64, i64) = tx.query_row(
+                        "SELECT COUNT(*), COALESCE(SUM(length(value)), 0)
+                         FROM plugin_tick_state WHERE plugin = ?1 AND key <> ?2",
+                        rusqlite::params![plugin, key],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )?;
+                    if count.max(0) as usize + 1 > STATE_MAX_KEYS
+                        || total.max(0) as usize + bytes.len() > STATE_MAX_TOTAL_BYTES
+                    {
+                        return Ok(false);
+                    }
                     tx.execute(
                         "INSERT INTO plugin_tick_state (plugin, key, value, updated_at)
                      VALUES (?1, ?2, ?3, ?4)
@@ -381,13 +411,17 @@ impl TickStore for SqliteTickStore {
                          updated_at = excluded.updated_at",
                         rusqlite::params![plugin, key, bytes, now_unix()],
                     )?;
-                    Ok(())
+                    Ok(true)
                 })
                 .await
                 .map_err(|error| {
                     tracing::warn!(%error, "tick state write failed");
                     TickStoreError::Unavailable(error.to_string())
                 })?;
+            if !stored {
+                tracing::warn!(plugin = %refused_plugin, "plugin state write rejected: plugin over its total cap");
+                return Err(TickStoreError::OverCap);
+            }
             Ok(())
         })
     }
