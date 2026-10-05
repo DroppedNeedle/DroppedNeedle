@@ -40,6 +40,7 @@ fn ok(message: &str) -> StatusResponse {
 #[utoipa::path(
     get,
     path = "/api/v3/playlists",
+    tag = "collections",
     responses(
         (status = 200, description = "Visible playlists", body = PlaylistListResponse),
         (status = 401, description = "Not authenticated"),
@@ -60,6 +61,7 @@ pub async fn list_playlists_handler(
 #[utoipa::path(
     post,
     path = "/api/v3/playlists",
+    tag = "collections",
     request_body = CreatePlaylistBody,
     responses(
         (status = 201, description = "Created playlist", body = PlaylistDetail),
@@ -82,6 +84,7 @@ pub async fn create_playlist_handler(
 #[utoipa::path(
     get,
     path = "/api/v3/playlists/{playlist_id}",
+    tag = "collections",
     params(("playlist_id" = String, Path, description = "Playlist id")),
     responses(
         (status = 200, description = "Playlist detail", body = PlaylistDetail),
@@ -105,6 +108,7 @@ pub async fn get_playlist_handler(
 #[utoipa::path(
     put,
     path = "/api/v3/playlists/{playlist_id}",
+    tag = "collections",
     params(("playlist_id" = String, Path, description = "Playlist id")),
     request_body = UpdatePlaylistBody,
     responses(
@@ -132,6 +136,7 @@ pub async fn update_playlist_handler(
 #[utoipa::path(
     delete,
     path = "/api/v3/playlists/{playlist_id}",
+    tag = "collections",
     params(("playlist_id" = String, Path, description = "Playlist id")),
     responses(
         (status = 200, description = "Deletion receipt", body = StatusResponse),
@@ -155,6 +160,7 @@ pub async fn delete_playlist_handler(
 #[utoipa::path(
     patch,
     path = "/api/v3/playlists/{playlist_id}/visibility",
+    tag = "collections",
     params(("playlist_id" = String, Path, description = "Playlist id")),
     request_body = VisibilityBody,
     responses(
@@ -182,6 +188,7 @@ pub async fn set_visibility_handler(
 #[utoipa::path(
     post,
     path = "/api/v3/playlists/{playlist_id}/tracks",
+    tag = "collections",
     params(("playlist_id" = String, Path, description = "Playlist id")),
     request_body = AddTracksBody,
     responses(
@@ -209,6 +216,7 @@ pub async fn add_tracks_handler(
 #[utoipa::path(
     post,
     path = "/api/v3/playlists/{playlist_id}/tracks/remove",
+    tag = "collections",
     params(("playlist_id" = String, Path, description = "Playlist id")),
     request_body = RemoveTracksBody,
     responses(
@@ -239,6 +247,7 @@ pub async fn remove_tracks_handler(
 #[utoipa::path(
     delete,
     path = "/api/v3/playlists/{playlist_id}/tracks/{track_id}",
+    tag = "collections",
     params(
         ("playlist_id" = String, Path, description = "Playlist id"),
         ("track_id" = String, Path, description = "Track row id")
@@ -265,6 +274,7 @@ pub async fn remove_track_handler(
 #[utoipa::path(
     patch,
     path = "/api/v3/playlists/{playlist_id}/tracks/reorder",
+    tag = "collections",
     params(("playlist_id" = String, Path, description = "Playlist id")),
     request_body = ReorderBody,
     responses(
@@ -300,6 +310,7 @@ pub async fn reorder_track_handler(
 #[utoipa::path(
     patch,
     path = "/api/v3/playlists/{playlist_id}/tracks/{track_id}",
+    tag = "collections",
     params(
         ("playlist_id" = String, Path, description = "Playlist id"),
         ("track_id" = String, Path, description = "Track row id")
@@ -330,6 +341,7 @@ pub async fn update_track_handler(
 #[utoipa::path(
     post,
     path = "/api/v3/playlists/check-tracks",
+    tag = "collections",
     request_body = CheckTracksBody,
     responses(
         (status = 200, description = "Membership map", body = CheckTracksResponse),
@@ -353,6 +365,7 @@ pub async fn check_tracks_handler(
 #[utoipa::path(
     post,
     path = "/api/v3/playlists/{playlist_id}/resolve-sources",
+    tag = "collections",
     params(("playlist_id" = String, Path, description = "Playlist id")),
     responses(
         (status = 200, description = "Source map", body = ResolveSourcesResponse),
@@ -376,6 +389,7 @@ pub async fn resolve_sources_handler(
 #[utoipa::path(
     post,
     path = "/api/v3/playlists/{playlist_id}/cover",
+    tag = "collections",
     params(("playlist_id" = String, Path, description = "Playlist id")),
     request_body = CoverUploadBody,
     responses(
@@ -402,6 +416,7 @@ pub async fn upload_cover_handler(
 #[utoipa::path(
     get,
     path = "/api/v3/playlists/{playlist_id}/cover",
+    tag = "collections",
     params(("playlist_id" = String, Path, description = "Playlist id")),
     responses(
         (status = 200, description = "Cover bytes"),
@@ -429,6 +444,7 @@ pub async fn get_cover_handler(
 #[utoipa::path(
     delete,
     path = "/api/v3/playlists/{playlist_id}/cover",
+    tag = "collections",
     params(("playlist_id" = String, Path, description = "Playlist id")),
     responses(
         (status = 200, description = "Removal receipt", body = StatusResponse),
@@ -452,6 +468,7 @@ pub async fn remove_cover_handler(
 #[utoipa::path(
     get,
     path = "/api/v3/favorites",
+    tag = "collections",
     params(("kind" = Option<String>, Query, description = "Kind filter: album, artist, or track")),
     responses(
         (status = 200, description = "Caller favorites", body = FavoriteListResponse),
@@ -475,6 +492,7 @@ pub async fn list_favorites_handler(
 #[utoipa::path(
     put,
     path = "/api/v3/favorites/{kind}/{item_id}",
+    tag = "collections",
     params(
         ("kind" = String, Path, description = "Kind: album, artist, or track"),
         ("item_id" = String, Path, description = "Favorited item id")
@@ -503,6 +521,7 @@ pub async fn set_favorite_handler(
 #[utoipa::path(
     get,
     path = "/api/v3/artists/{artist_mbid}/follow-status",
+    tag = "collections",
     params(("artist_mbid" = String, Path, description = "Artist MBID")),
     responses(
         (status = 200, description = "Follow status", body = FollowStatusResponse),
@@ -525,6 +544,7 @@ pub async fn get_follow_status_handler(
 #[utoipa::path(
     put,
     path = "/api/v3/artists/{artist_mbid}/follow",
+    tag = "collections",
     params(("artist_mbid" = String, Path, description = "Artist MBID")),
     request_body = FollowBody,
     responses(
@@ -555,6 +575,7 @@ pub async fn set_follow_handler(
 #[utoipa::path(
     put,
     path = "/api/v3/artists/{artist_mbid}/auto-download",
+    tag = "collections",
     params(("artist_mbid" = String, Path, description = "Artist MBID")),
     request_body = AutoDownloadBody,
     responses(
@@ -582,6 +603,7 @@ pub async fn set_auto_download_handler(
 #[utoipa::path(
     get,
     path = "/api/v3/following/artists",
+    tag = "collections",
     responses(
         (status = 200, description = "Followed artists", body = FollowedArtistListResponse),
         (status = 401, description = "Not authenticated"),
@@ -602,6 +624,7 @@ pub async fn list_followed_artists_handler(
 #[utoipa::path(
     get,
     path = "/api/v3/following/new-releases",
+    tag = "collections",
     responses(
         (status = 200, description = "New releases", body = NewReleaseListResponse),
         (status = 401, description = "Not authenticated"),
@@ -622,6 +645,7 @@ pub async fn list_new_releases_handler(
 #[utoipa::path(
     get,
     path = "/api/v3/following/new-releases/recent",
+    tag = "collections",
     responses(
         (status = 200, description = "Recent releases", body = NewReleaseListResponse),
         (status = 401, description = "Not authenticated"),
@@ -642,6 +666,7 @@ pub async fn list_recent_releases_handler(
 #[utoipa::path(
     get,
     path = "/api/v3/following/new-releases/unseen-count",
+    tag = "collections",
     responses(
         (status = 200, description = "Unseen count", body = UnseenCountResponse),
         (status = 401, description = "Not authenticated"),
@@ -662,6 +687,7 @@ pub async fn unseen_count_handler(
 #[utoipa::path(
     post,
     path = "/api/v3/following/new-releases/seen",
+    tag = "collections",
     responses(
         (status = 200, description = "Zeroed count", body = UnseenCountResponse),
         (status = 401, description = "Not authenticated"),
@@ -682,6 +708,7 @@ pub async fn mark_seen_handler(
 #[utoipa::path(
     get,
     path = "/api/v3/requests/auto-download-approvals",
+    tag = "collections",
     responses(
         (status = 200, description = "Pending approvals", body = AutoDownloadApprovalListResponse),
         (status = 401, description = "Not authenticated"),
@@ -703,6 +730,7 @@ pub async fn list_approvals_handler(
 #[utoipa::path(
     get,
     path = "/api/v3/requests/auto-download-approval-batches",
+    tag = "collections",
     responses(
         (status = 200, description = "Approval batches", body = ApprovalBatchListResponse),
         (status = 401, description = "Not authenticated"),
@@ -724,6 +752,7 @@ pub async fn list_approval_batches_handler(
 #[utoipa::path(
     get,
     path = "/api/v3/library/albums/{album_id}/edition-pin",
+    tag = "collections",
     params(("album_id" = String, Path, description = "Album id")),
     responses(
         (status = 200, description = "Pin display", body = EditionPinResponse),
@@ -747,6 +776,7 @@ pub async fn get_pin_handler(
 #[utoipa::path(
     put,
     path = "/api/v3/library/albums/{album_id}/edition-pin",
+    tag = "collections",
     params(("album_id" = String, Path, description = "Album id")),
     request_body = EditionPinBody,
     responses(
@@ -774,6 +804,7 @@ pub async fn set_pin_handler(
 #[utoipa::path(
     delete,
     path = "/api/v3/library/albums/{album_id}/edition-pin",
+    tag = "collections",
     params(("album_id" = String, Path, description = "Album id")),
     responses(
         (status = 200, description = "Pin display", body = EditionPinResponse),
