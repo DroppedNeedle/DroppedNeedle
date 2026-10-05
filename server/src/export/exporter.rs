@@ -302,6 +302,14 @@ fn open_v2_db(path: &Path) -> Result<Connection, ExportError> {
             detail: format!("{} is not a file", path.display()),
         });
     }
+    // An immutable open ignores the write-ahead log, so committed writes
+    // still sitting in it would be silently missing from the export.
+    let mut wal = path.as_os_str().to_owned();
+    wal.push("-wal");
+    let wal = PathBuf::from(wal);
+    if std::fs::metadata(&wal).is_ok_and(|meta| meta.len() > 0) {
+        return Err(ExportError::V2WalPresent { path: wal });
+    }
     let uri = format!("file:{}?immutable=1", uri_path(path));
     Connection::open_with_flags(
         uri,

@@ -156,6 +156,7 @@ Those only happen if you turned Library Management on and applied changes.
 |---|---|---|
 | `V2_KEY_NOT_FOUND` | v2's `config/.env` is missing | Restore it from the backup, export again |
 | `V2_KEY_MISMATCH` | The key in `config/.env` does not decrypt your stored secrets | Use the `config/.env` that v2 actually ran with |
+| `V2_WAL_PRESENT` | v2's database still has writes in its `-wal` file | Start v2 once and stop it cleanly, then export again |
 | `DANGLING_USER_REF` | Orphan follows or approvals in v2 | Step 4 cleanup, export again |
 | `INSTANCE_MISMATCH` | The export came from a different v2 instance | Export from the right `V2_ROOT` |
 | `ENVELOPE_AUTH_FAILED` | Wrong passphrase | Re-run with the right passphrase file; no records were imported |

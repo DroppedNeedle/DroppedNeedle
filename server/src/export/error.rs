@@ -47,6 +47,13 @@ pub enum ExportError {
         /// Which stored value failed, never its contents.
         field: String,
     },
+    /// The v2 database has a non-empty write-ahead log: v2 did not stop
+    /// cleanly, and an immutable read would leave those writes out.
+    #[error("v2 database {} has unmerged writes in its -wal file; start v2 and stop it cleanly, then export again", .path.display())]
+    V2WalPresent {
+        /// The `-wal` file.
+        path: PathBuf,
+    },
     /// The v2 config file cannot be read.
     #[error("cannot read v2 config {}: {reason}", .path.display())]
     V2ConfigUnreadable {
@@ -97,6 +104,7 @@ impl ExportError {
             Self::V2KeyNotFound { .. } => "V2_KEY_NOT_FOUND",
             Self::V2KeyInvalid => "V2_KEY_INVALID",
             Self::V2KeyMismatch { .. } => "V2_KEY_MISMATCH",
+            Self::V2WalPresent { .. } => "V2_WAL_PRESENT",
             Self::V2ConfigUnreadable { .. } => "V2_CONFIG_UNREADABLE",
             Self::V2ConfigInvalid => "V2_CONFIG_INVALID",
             Self::InstanceIdMissing => "MISSING_INSTANCE_ID",

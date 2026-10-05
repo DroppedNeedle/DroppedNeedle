@@ -589,4 +589,9 @@ fn export_reads_the_database_immutable() {
     assert!(!shm.exists());
     export_v2(&request(&dir)).unwrap();
     assert!(!shm.exists(), "an immutable open touches no side files");
+
+    // Unmerged writes in the log would be skipped: refuse instead.
+    std::fs::write(dir.join("cache/library.db-wal"), b"pending").unwrap();
+    let error = export_v2(&request(&dir)).unwrap_err();
+    assert_eq!(error.code(), "V2_WAL_PRESENT");
 }
