@@ -12,11 +12,7 @@
 	import { withBasePath } from '$lib/utils/basePath';
 	import { createPlexStartMutation } from '$lib/queries/plex/PlexAuthMutations.svelte';
 	import { pollPlexFlow } from '$lib/queries/plex/PlexFlowApi';
-	import {
-		toAuthUser,
-		type AuthProviders,
-		type SessionUserLike
-	} from '$lib/queries/auth/types';
+	import { toAuthUser, type AuthProviders, type SessionUserLike } from '$lib/queries/auth/types';
 	import { onDestroy } from 'svelte';
 	import { Eye, EyeOff } from 'lucide-svelte';
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';

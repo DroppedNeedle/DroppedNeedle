@@ -3,12 +3,7 @@
 export type DropImportJobStatus = 'processing' | 'completed' | 'failed';
 
 export type DropImportItemStatus =
-	| 'processing'
-	| 'imported'
-	| 'skipped'
-	| 'needs_review'
-	| 'failed'
-	| 'discarded';
+	'processing' | 'imported' | 'skipped' | 'needs_review' | 'failed' | 'discarded';
 
 export interface DropImportItem {
 	id: number;

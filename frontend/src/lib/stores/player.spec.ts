@@ -936,10 +936,7 @@ describe('beforeunload beacon', () => {
 		expect(beforeUnloadHandler).toBeDefined();
 		beforeUnloadHandler!();
 
-		expect(sendBeaconMock).toHaveBeenCalledWith(
-			'/api/v3/playback/stop',
-			expect.any(Blob)
-		);
+		expect(sendBeaconMock).toHaveBeenCalledWith('/api/v3/playback/stop', expect.any(Blob));
 
 		const sentBlob = sendBeaconMock.mock.calls[0][1] as Blob;
 		expect(sentBlob.type).toBe('application/json');

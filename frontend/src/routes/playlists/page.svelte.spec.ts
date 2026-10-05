@@ -27,8 +27,7 @@ vi.mock('$lib/queries/connections/ConnectionsQuery.svelte', () => ({
 
 // PlaylistCard pulls this in; the list tests never trigger it.
 vi.mock('$lib/api/playlists', () => ({
-	isRedactedPlaylist: (p: { is_redacted?: boolean } | null | undefined) =>
-		p?.is_redacted === true,
+	isRedactedPlaylist: (p: { is_redacted?: boolean } | null | undefined) => p?.is_redacted === true,
 	fetchPlaylist: vi.fn()
 }));
 

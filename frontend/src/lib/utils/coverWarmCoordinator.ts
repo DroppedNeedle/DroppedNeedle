@@ -6,9 +6,7 @@ const RETRY_DELAYS_MS = [1500, 3000, 5000, 8000, 12000, 20000] as const;
 const REQUEST_TIMEOUT_MS = 10_000;
 
 export type CoverWarmUpdate =
-	| { status: 'warming' }
-	| { status: 'ready'; url: string }
-	| { status: 'failed' };
+	{ status: 'warming' } | { status: 'ready'; url: string } | { status: 'failed' };
 
 type Listener = (update: CoverWarmUpdate) => void;
 

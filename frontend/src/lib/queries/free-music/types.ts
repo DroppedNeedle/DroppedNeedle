@@ -1,12 +1,7 @@
 // Hand-mirrors backend/api/v1/schemas/free_music.py (snake_case wire format).
 
 export type FreeMusicStatus =
-	| 'searching'
-	| 'downloading'
-	| 'importing'
-	| 'completed'
-	| 'failed'
-	| 'cancelled';
+	'searching' | 'downloading' | 'importing' | 'completed' | 'failed' | 'cancelled';
 
 export interface FreeMusicTask {
 	id: string;

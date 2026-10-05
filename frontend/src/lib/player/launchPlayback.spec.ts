@@ -6,7 +6,6 @@ vi.mock('$lib/stores/player.svelte', () => ({
 	playerStore: { playQueue: vi.fn() }
 }));
 
-
 import { playerStore } from '$lib/stores/player.svelte';
 import { launchLocalPlayback } from './launchLocalPlayback';
 import { launchJellyfinPlayback } from './launchJellyfinPlayback';

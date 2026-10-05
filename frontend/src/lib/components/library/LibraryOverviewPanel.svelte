@@ -87,9 +87,7 @@
 		drain?.pending_identification ??
 			(identificationActivity?.waiting_count ?? 0) + (identificationActivity?.deferred_count ?? 0)
 	);
-	const drainActive = $derived(
-		Boolean(drain?.synthetic) && (drainPending ?? 0) > 0
-	);
+	const drainActive = $derived(Boolean(drain?.synthetic) && (drainPending ?? 0) > 0);
 	const primary = $derived(items[0] ?? null);
 	const additional = $derived(items.slice(1));
 	const scanActive = $derived(scanIsActive(items));
@@ -305,8 +303,8 @@
 								><Clock3 class="h-3.5 w-3.5" /> {timing(primary)}</span
 							>
 							{#if libraryWorkContext(primary)}<span>{libraryWorkContext(primary)}</span>{/if}
-							{#if scanActive && isQueuedPreview(primary)}<span
-									class="text-base-content/55">{WAITING_FOR_SCAN_HINT}</span
+							{#if scanActive && isQueuedPreview(primary)}<span class="text-base-content/55"
+									>{WAITING_FOR_SCAN_HINT}</span
 								>{/if}
 						</div>
 					</div>

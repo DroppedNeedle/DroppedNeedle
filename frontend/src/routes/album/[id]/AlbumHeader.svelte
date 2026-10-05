@@ -643,13 +643,13 @@
 		</div>
 	</div>
 </div>
-	<EditionPinConflictDialog
-		bind:this={conflictDialog}
-		releaseMbid={pendingIntent ?? null}
-		{localCopies}
-		{onrefresh}
-		onclose={() => (pendingIntent = undefined)}
-	/>
+<EditionPinConflictDialog
+	bind:this={conflictDialog}
+	releaseMbid={pendingIntent ?? null}
+	{localCopies}
+	{onrefresh}
+	onclose={() => (pendingIntent = undefined)}
+/>
 
 <style>
 	.album-hero {

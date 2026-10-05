@@ -66,8 +66,7 @@
 		aria-controls={`management-profile-options-${id}`}
 		onclick={() => (expanded = !expanded)}
 	>
-		<span class="management-profile-picker-mark" aria-hidden="true"
-			><Layers class="h-5 w-5" /></span
+		<span class="management-profile-picker-mark" aria-hidden="true"><Layers class="h-5 w-5" /></span
 		>
 		<span class="min-w-0">
 			<span class="management-step">{eyebrow}</span>

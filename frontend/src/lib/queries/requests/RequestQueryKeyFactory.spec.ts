@@ -41,9 +41,9 @@ describe('RequestQueryKeyFactory', () => {
 		expect(RequestQueryKeyFactory.history('userA', { page: 1 })).not.toEqual(
 			RequestQueryKeyFactory.history('userA', { page: 2 })
 		);
-		expect(
-			RequestQueryKeyFactory.history('userA', { status: 'failed' })
-		).not.toEqual(RequestQueryKeyFactory.history('userA', { status: 'imported' }));
+		expect(RequestQueryKeyFactory.history('userA', { status: 'failed' })).not.toEqual(
+			RequestQueryKeyFactory.history('userA', { status: 'imported' })
+		);
 	});
 
 	it('lets one prefix invalidation sweep active, history, and approvals', () => {

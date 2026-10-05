@@ -39,7 +39,10 @@
 	let enrichmentQuery = $state('');
 
 	let normalizedQuery = $derived(data.query.trim());
-	const searchQuery = getUnifiedSearchV3Query(() => normalizedQuery, () => COMBINED_SEARCH_LIMITS);
+	const searchQuery = getUnifiedSearchV3Query(
+		() => normalizedQuery,
+		() => COMBINED_SEARCH_LIMITS
+	);
 	const enrichCollector = new SearchEnrichCollector();
 	const enrichQuery = getSearchEnrichBatchV3Query(() => enrichCollector.body);
 
@@ -61,13 +64,13 @@
 		const top = searchQuery.data?.top_artist;
 		if (!top) return null;
 		const id = top.musicbrainz_id ?? top.id;
-		return (artists.find((artist) => artist.musicbrainz_id === id) ?? null);
+		return artists.find((artist) => artist.musicbrainz_id === id) ?? null;
 	});
 	let topAlbum = $derived.by(() => {
 		const top = searchQuery.data?.top_album;
 		if (!top) return null;
 		const id = top.musicbrainz_id ?? top.id;
-		return (albums.find((album) => album.musicbrainz_id === id) ?? null);
+		return albums.find((album) => album.musicbrainz_id === id) ?? null;
 	});
 	let artistStatus: SearchRemoteStatus = $derived(
 		searchQuery.isError ? 'error' : toSearchRemoteStatus(searchQuery.data?.artist_status ?? 'ok')

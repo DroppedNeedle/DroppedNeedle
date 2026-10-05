@@ -152,13 +152,9 @@ export interface TerminalOperationLike {
 }
 
 /** Pure-invalidation terminal: the job stopped only because its inputs moved. */
-export function isStaleInputTerminal(
-	operation: TerminalOperationLike | null | undefined
-): boolean {
+export function isStaleInputTerminal(operation: TerminalOperationLike | null | undefined): boolean {
 	if (!operation) return false;
-	return (
-		operation.state === 'failed' && operation.terminal_code === STALE_INPUT_TERMINAL_CODE
-	);
+	return operation.state === 'failed' && operation.terminal_code === STALE_INPUT_TERMINAL_CODE;
 }
 
 export interface FailedGroupSource {
@@ -232,9 +228,7 @@ const ACTIVE_SCAN_STATES = new Set([
 ]);
 
 /** True while a scan work item is actively holding the library worker. */
-export function scanIsActive(
-	items: Array<Pick<LibraryWorkItem, 'kind' | 'state'>>
-): boolean {
+export function scanIsActive(items: Array<Pick<LibraryWorkItem, 'kind' | 'state'>>): boolean {
 	return items.some((item) => item.kind === 'scan' && ACTIVE_SCAN_STATES.has(item.state));
 }
 

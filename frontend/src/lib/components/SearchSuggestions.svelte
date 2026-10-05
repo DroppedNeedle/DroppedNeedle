@@ -3,10 +3,7 @@
 	import { Disc3, Search } from 'lucide-svelte';
 	import type { SearchRemoteStatus, SuggestResult } from '$lib/types';
 	import { getSearchSuggestionsV3Query } from '$lib/queries/search/SearchV3Queries.svelte';
-	import {
-		toSearchRemoteStatus,
-		toSuggestResultsV1
-	} from '$lib/queries/search/SearchV3Adapters';
+	import { toSearchRemoteStatus, toSuggestResultsV1 } from '$lib/queries/search/SearchV3Adapters';
 
 	interface Props {
 		query: string;

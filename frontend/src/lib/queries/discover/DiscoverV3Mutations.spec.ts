@@ -115,9 +115,13 @@ describe('DiscoverV3Mutations', () => {
 			mbid: 'rg-1',
 			signal
 		});
-		expect(api.global.v3.POST).toHaveBeenCalledWith('/api/v3/discover/queue/preview/rg-1', undefined, {
-			signal
-		});
+		expect(api.global.v3.POST).toHaveBeenCalledWith(
+			'/api/v3/discover/queue/preview/rg-1',
+			undefined,
+			{
+				signal
+			}
+		);
 		expect(mutation<{ mbid: string; signal: AbortSignal }>().onSuccess).toBeUndefined();
 	});
 

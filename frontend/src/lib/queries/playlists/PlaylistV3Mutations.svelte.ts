@@ -48,8 +48,7 @@ function invalidateListAndDetail(userId: PlaylistV3UserId, id: string): Promise<
 
 export const createPlaylistV3 = () =>
 	createMutation(() => ({
-		mutationFn: (name: string) =>
-			api.global.v3.POST(PlaylistV3Api.create(), { name }),
+		mutationFn: (name: string) => api.global.v3.POST(PlaylistV3Api.create(), { name }),
 		onSuccess: () => invalidateList(authStore.user?.id)
 	}));
 
@@ -162,15 +161,13 @@ export const deletePlaylistCoverV3 = () =>
 export const checkPlaylistTracksV3 = () =>
 	createMutation(() => ({
 		// Pure read: membership answers are never cached, so no invalidation.
-		mutationFn: (body: CheckTracksBodyV3) =>
-			api.global.v3.POST(PlaylistV3Api.checkTracks(), body)
+		mutationFn: (body: CheckTracksBodyV3) => api.global.v3.POST(PlaylistV3Api.checkTracks(), body)
 	}));
 
 export const resolvePlaylistSourcesV3 = () =>
 	createMutation(() => ({
 		// Pure read: source answers are never cached, so no invalidation.
-		mutationFn: (id: string) =>
-			api.global.v3.POST(PlaylistV3Api.resolveSources(id))
+		mutationFn: (id: string) => api.global.v3.POST(PlaylistV3Api.resolveSources(id))
 	}));
 
 export interface SetFavoriteV3Variables {

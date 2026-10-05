@@ -8,11 +8,7 @@ import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFact
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { musicBrainzSourceKey } from '$lib/queries/musicbrainz/sourceScope.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
-import type {
-	AlbumEditionsResponse,
-	EditionAcquireResponse,
-	EditionPinResponse
-} from '$lib/types';
+import type { AlbumEditionsResponse, EditionAcquireResponse, EditionPinResponse } from '$lib/types';
 
 // CollectionManagement Feature E: the picker is an admin/trusted surface,
 // viewing the list is open to any authenticated user.
@@ -95,10 +91,8 @@ export function acquireEdition() {
 export const localAlbumEditionPinUrl = (localAlbumId: string) =>
 	`/api/v1/library/albums/${encodeURIComponent(localAlbumId)}/edition`;
 
-export const localAlbumEditionPinKey = (
-	userId: EditionUserId,
-	localAlbumId: string
-) => ['albums', 'edition-pin', userId ?? null, localAlbumId] as const;
+export const localAlbumEditionPinKey = (userId: EditionUserId, localAlbumId: string) =>
+	['albums', 'edition-pin', userId ?? null, localAlbumId] as const;
 
 export const getLocalAlbumEditionPinQuery = (
 	getUserId: Getter<EditionUserId>,

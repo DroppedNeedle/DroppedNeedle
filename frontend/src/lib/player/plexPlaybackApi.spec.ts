@@ -30,8 +30,6 @@ vi.mock('$lib/api/client', () => {
 	};
 });
 
-
-
 import {
 	reportPlexScrobble,
 	reportPlexNowPlaying,
@@ -54,7 +52,10 @@ describe('plexPlaybackApi', () => {
 
 			await reportPlexScrobble('12345');
 
-			expect(mockPost).toHaveBeenCalledWith('/api/v3/playback/stop', { source: 'plex', track_id: '12345' });
+			expect(mockPost).toHaveBeenCalledWith('/api/v3/playback/stop', {
+				source: 'plex',
+				track_id: '12345'
+			});
 			expect(mockGet).toHaveBeenCalledWith('/api/v3/settings/plex');
 		});
 
@@ -96,7 +97,10 @@ describe('plexPlaybackApi', () => {
 
 			await reportPlexNowPlaying('67890');
 
-			expect(mockPost).toHaveBeenCalledWith('/api/v3/playback/start', { source: 'plex', track_id: '67890' });
+			expect(mockPost).toHaveBeenCalledWith('/api/v3/playback/start', {
+				source: 'plex',
+				track_id: '67890'
+			});
 		});
 
 		it('warns on error without throwing', async () => {
@@ -165,7 +169,10 @@ describe('plexPlaybackApi', () => {
 
 			await reportPlexStopped('99999');
 
-			expect(mockPost).toHaveBeenCalledWith('/api/v3/playback/stop', { source: 'plex', track_id: '99999' });
+			expect(mockPost).toHaveBeenCalledWith('/api/v3/playback/stop', {
+				source: 'plex',
+				track_id: '99999'
+			});
 		});
 
 		it('warns on error without throwing', async () => {

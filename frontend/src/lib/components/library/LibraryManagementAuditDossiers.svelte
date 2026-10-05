@@ -244,8 +244,7 @@
 									<span><FolderCog class="h-3 w-3" /> {changeCount(dossier, 'path')} path</span>
 								{/if}
 								{#if changeCount(dossier, 'sidecars')}
-									<span
-										><Layers class="h-3 w-3" /> {changeCount(dossier, 'sidecars')} sidecars</span
+									<span><Layers class="h-3 w-3" /> {changeCount(dossier, 'sidecars')} sidecars</span
 									>
 								{/if}
 							</div>

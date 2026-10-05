@@ -13,9 +13,7 @@ import { AuthQueryKeyFactory } from './AuthQueryKeyFactory';
 import { AUTH_ENDPOINTS } from './endpoints';
 import { getImportCandidatesQuery } from './ImportCandidatesQuery.svelte';
 
-const mockGet = vi.mocked(api.v3.GET) as unknown as Mock<
-	(...args: unknown[]) => Promise<unknown>
->;
+const mockGet = vi.mocked(api.v3.GET) as unknown as Mock<(...args: unknown[]) => Promise<unknown>>;
 
 type QueryResult = {
 	queryKey?: unknown;

@@ -5,14 +5,7 @@
 		getReleaseHistoryQuery
 	} from '$lib/queries/VersionQuery.svelte';
 	import { renderMarkdown } from '$lib/utils/markdown';
-	import {
-		ExternalLink,
-		RefreshCw,
-		Info,
-		Tag,
-		Calendar,
-		CircleArrowUp
-	} from 'lucide-svelte';
+	import { ExternalLink, RefreshCw, Info, Tag, Calendar, CircleArrowUp } from 'lucide-svelte';
 	import GitHubIcon from '$lib/components/GitHubIcon.svelte';
 
 	const versionQuery = getVersionQuery();

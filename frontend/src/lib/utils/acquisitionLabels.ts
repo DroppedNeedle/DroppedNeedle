@@ -214,11 +214,7 @@ export function batchRequestCopy(requested: number, skipped: number, overflow: n
 // ---------------------------------------------------------------------------
 
 export type AcquisitionEmptyState =
-	| 'probe-mismatch'
-	| 'unknown-only'
-	| 'all-outside-policy'
-	| 'nothing-found'
-	| 'source-failure';
+	'probe-mismatch' | 'unknown-only' | 'all-outside-policy' | 'nothing-found' | 'source-failure';
 
 export interface EmptyStateSource {
 	status?: string;

@@ -71,7 +71,9 @@ describe('AudioEngine', () => {
 		};
 
 		mockCtx = createMockContext(mockSource, filterFactory, mockAnalyser);
-		vi.mocked(AudioContext).mockImplementation(function () { return mockCtx as unknown as AudioContext; });
+		vi.mocked(AudioContext).mockImplementation(function () {
+			return mockCtx as unknown as AudioContext;
+		});
 	});
 
 	describe('connect', () => {

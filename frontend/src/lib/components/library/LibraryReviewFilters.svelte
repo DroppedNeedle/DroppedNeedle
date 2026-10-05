@@ -90,8 +90,8 @@
 			onchange={(event) => update('state', event.currentTarget.value)}
 			><option value="">All states</option><option value="needs_review">Needs review</option><option
 				value="edition_to_confirm">Edition to confirm</option
-			><option value="keep_tagged">Keep as tagged</option
-			><option value="excluded">Excluded</option></select
+			><option value="keep_tagged">Keep as tagged</option><option value="excluded">Excluded</option
+			></select
 		>
 		<select
 			class="select select-bordered select-sm"
@@ -102,9 +102,8 @@
 			><option value="AMBIGUOUS">Several equally likely releases</option><option
 				value="CONTRADICTORY">Conflicting track evidence</option
 			><option value="EDITION_UNCERTAIN">Edition to confirm</option><option
-				value="MAX_DEFERRALS_EXCEEDED">Retry limit reached</option><option
-				value="SUBJECT_NOT_AVAILABLE">Album no longer available</option
-			></select
+				value="MAX_DEFERRALS_EXCEEDED">Retry limit reached</option
+			><option value="SUBJECT_NOT_AVAILABLE">Album no longer available</option></select
 		>
 		<select
 			class="select select-bordered select-sm"
@@ -181,26 +180,24 @@
 					class="select select-bordered"
 					value={filters.state ?? ''}
 					onchange={(event) => update('state', event.currentTarget.value)}
-				><option value="">All states</option><option value="needs_review">Needs review</option><option
-					value="edition_to_confirm">Edition to confirm</option
-				><option value="keep_tagged">Keep as tagged</option><option value="excluded"
-					>Excluded</option
-				></select
-			></label
+					><option value="">All states</option><option value="needs_review">Needs review</option
+					><option value="edition_to_confirm">Edition to confirm</option><option value="keep_tagged"
+						>Keep as tagged</option
+					><option value="excluded">Excluded</option></select
+				></label
 			><label class="form-control"
 				><span class="label-text">Reason</span><select
 					class="select select-bordered"
 					value={filters.reasonCode ?? ''}
 					onchange={(event) => update('reasonCode', event.currentTarget.value)}
-				><option value="">All reasons</option><option value="NO_CANDIDATE"
-					>No external result</option
-				><option value="AMBIGUOUS">Several equally likely releases</option><option
-					value="CONTRADICTORY">Conflicting track evidence</option
-				><option value="EDITION_UNCERTAIN">Edition to confirm</option><option
-					value="MAX_DEFERRALS_EXCEEDED">Retry limit reached</option><option
-					value="SUBJECT_NOT_AVAILABLE">Album no longer available</option
-			></select
-			></label
+					><option value="">All reasons</option><option value="NO_CANDIDATE"
+						>No external result</option
+					><option value="AMBIGUOUS">Several equally likely releases</option><option
+						value="CONTRADICTORY">Conflicting track evidence</option
+					><option value="EDITION_UNCERTAIN">Edition to confirm</option><option
+						value="MAX_DEFERRALS_EXCEEDED">Retry limit reached</option
+					><option value="SUBJECT_NOT_AVAILABLE">Album no longer available</option></select
+				></label
 			><label class="form-control"
 				><span class="label-text">Library root</span><select
 					class="select select-bordered"
@@ -221,7 +218,7 @@
 						>Excluded</option
 					></select
 				></label
-		><label class="form-control"
+			><label class="form-control"
 				><span class="label-text">Sort</span><select
 					class="select select-bordered"
 					value={filters.sort ?? 'newest'}

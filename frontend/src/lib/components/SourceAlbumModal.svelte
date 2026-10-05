@@ -2,7 +2,7 @@
 	import { Shuffle, Play, X, ListPlus, ListStart, ListMusic, Info, Download } from 'lucide-svelte';
 	import { goto } from '$app/navigation';
 	import { API } from '$lib/constants';
-import { gatewayStreamUrl } from '$lib/player/playbackGateway';
+	import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 	import { downloadAlbumArchive, downloadTrackFile } from '$lib/utils/downloadActions';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { launchJellyfinPlayback } from '$lib/player/launchJellyfinPlayback';

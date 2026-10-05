@@ -21,7 +21,9 @@
 		audiodb_prewarm: Image
 	};
 
-	let PhaseIcon = $derived(syncStatus.phase ? (phaseIcons[syncStatus.phase] ?? LoaderCircle) : LoaderCircle);
+	let PhaseIcon = $derived(
+		syncStatus.phase ? (phaseIcons[syncStatus.phase] ?? LoaderCircle) : LoaderCircle
+	);
 
 	let isComplete = $derived(!syncStatus.isActive && !syncStatus.error && syncStatus.showIndicator);
 

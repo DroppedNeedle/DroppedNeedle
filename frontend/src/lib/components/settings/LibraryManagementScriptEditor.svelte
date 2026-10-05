@@ -167,8 +167,7 @@
 					class="textarea textarea-bordered min-h-32 w-full bg-base-100 font-mono text-xs leading-relaxed"
 					value={selectedScript.source}
 					oninput={(event) => updateScript({ source: event.currentTarget.value })}
-					aria-label={`${kind} script source`}
-				></textarea>
+					aria-label={`${kind} script source`}></textarea>
 			</label>
 			{#if localProblem}
 				<p class="mt-2 text-xs text-error" role="alert">{localProblem}</p>

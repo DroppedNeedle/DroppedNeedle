@@ -70,7 +70,10 @@ describe('PlaylistV3Queries', () => {
 		};
 		expect(query.queryKey).toEqual(FavoriteQueryKeyFactory.list('user-1', 'album'));
 		await query.queryFn({});
-		expect(api.global.v3.GET).toHaveBeenCalledWith('/api/v3/favorites?kind=album', expect.anything());
+		expect(api.global.v3.GET).toHaveBeenCalledWith(
+			'/api/v3/favorites?kind=album',
+			expect.anything()
+		);
 		expect(PlaylistV3Api.favorites(null)).toBe('/api/v3/favorites');
 	});
 

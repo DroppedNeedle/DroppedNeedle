@@ -56,7 +56,10 @@ export const createCancelRequestMutation = () =>
 			toastStore.show({ message: data.message || 'Request cancelled', type: 'info' });
 		},
 		onError: (err) =>
-			toastStore.show({ message: errorMessage(err, 'Could not cancel that request'), type: 'error' })
+			toastStore.show({
+				message: errorMessage(err, 'Could not cancel that request'),
+				type: 'error'
+			})
 	}));
 
 export const createRetryRequestMutation = () =>
@@ -86,7 +89,10 @@ export const createApproveRequestMutation = () =>
 			toastStore.show({ message: data.message || 'Request approved', type: 'success' });
 		},
 		onError: (err) =>
-			toastStore.show({ message: errorMessage(err, 'Could not approve that request'), type: 'error' })
+			toastStore.show({
+				message: errorMessage(err, 'Could not approve that request'),
+				type: 'error'
+			})
 	}));
 
 export const createRejectRequestMutation = () =>
@@ -101,7 +107,10 @@ export const createRejectRequestMutation = () =>
 			toastStore.show({ message: data.message || 'Request rejected', type: 'info' });
 		},
 		onError: (err) =>
-			toastStore.show({ message: errorMessage(err, 'Could not reject that request'), type: 'error' })
+			toastStore.show({
+				message: errorMessage(err, 'Could not reject that request'),
+				type: 'error'
+			})
 	}));
 
 export const createBatchCancelRequestsMutation = () =>
@@ -126,7 +135,10 @@ export const createBatchCancelRequestsMutation = () =>
 			});
 		},
 		onError: (err) =>
-			toastStore.show({ message: errorMessage(err, 'Could not cancel those requests'), type: 'error' })
+			toastStore.show({
+				message: errorMessage(err, 'Could not cancel those requests'),
+				type: 'error'
+			})
 	}));
 
 export const createClearHistoryMutation = () =>

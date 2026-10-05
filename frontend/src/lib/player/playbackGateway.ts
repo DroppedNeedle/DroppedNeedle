@@ -69,9 +69,7 @@ export async function startPlaybackSession(
 	return api.global.v3.POST(GATEWAY_ENDPOINTS.playbackStart(), request);
 }
 
-export async function reportPlaybackProgress(
-	request: PlaybackProgressRequest
-): Promise<void> {
+export async function reportPlaybackProgress(request: PlaybackProgressRequest): Promise<void> {
 	await api.global.v3.POST(GATEWAY_ENDPOINTS.playbackProgress(), request);
 }
 

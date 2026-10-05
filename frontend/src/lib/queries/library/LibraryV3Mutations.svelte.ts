@@ -76,8 +76,7 @@ export function clearLibraryEditionPinV3() {
 
 export function enqueueLibraryIdentifyV3() {
 	return createMutation(() => ({
-		mutationFn: (body: IdentifyBodyV3) =>
-			api.global.v3.POST(LibraryV3Api.identify(), body),
+		mutationFn: (body: IdentifyBodyV3) => api.global.v3.POST(LibraryV3Api.identify(), body),
 		onSuccess: async () => {
 			await invalidateLibraryCatalog();
 			toastStore.show({ message: 'Identification started', type: 'success' });
@@ -97,8 +96,7 @@ export function previewLibraryManageV3() {
 
 export function applyLibraryManageV3() {
 	return createMutation(() => ({
-		mutationFn: (body: ManageApplyBodyV3) =>
-			api.global.v3.POST(LibraryV3Api.manageApply(), body),
+		mutationFn: (body: ManageApplyBodyV3) => api.global.v3.POST(LibraryV3Api.manageApply(), body),
 		onSuccess: async () => {
 			await invalidateLibraryCatalog();
 			toastStore.show({ message: 'Changes published', type: 'success' });
@@ -110,8 +108,7 @@ export function applyLibraryManageV3() {
 
 export function undoLibraryManageV3() {
 	return createMutation(() => ({
-		mutationFn: (body: ManageUndoBodyV3) =>
-			api.global.v3.POST(LibraryV3Api.manageUndo(), body),
+		mutationFn: (body: ManageUndoBodyV3) => api.global.v3.POST(LibraryV3Api.manageUndo(), body),
 		onSuccess: async () => {
 			await invalidateLibraryCatalog();
 			toastStore.show({ message: 'Changes undone', type: 'success' });

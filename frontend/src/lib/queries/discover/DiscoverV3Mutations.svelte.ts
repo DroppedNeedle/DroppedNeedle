@@ -235,9 +235,7 @@ export async function removeDiscoveryBatchV3(
 	removeAlbums: boolean
 ): Promise<DiscoveryBatchRemoveResultV3 | null> {
 	try {
-		const result = await api.global.v3.DELETE(
-			DiscoverV3Api.batchRemove(batchId, removeAlbums)
-		);
+		const result = await api.global.v3.DELETE(DiscoverV3Api.batchRemove(batchId, removeAlbums));
 		const removed = result.removed_albums ?? 0;
 		if (removeAlbums) {
 			toastStore.show({

@@ -114,7 +114,9 @@ describe('saveDownloadClientConfig', () => {
 
 		expect(mockPut).toHaveBeenCalledWith(DOWNLOAD_SETTINGS_ENDPOINTS.slskdConfig(), config);
 		await mutation.onSuccess?.();
-		const keys = mockInvalidate.mock.calls.map((call) => (call[0] as { queryKey: unknown }).queryKey);
+		const keys = mockInvalidate.mock.calls.map(
+			(call) => (call[0] as { queryKey: unknown }).queryKey
+		);
 		expect(keys).toContainEqual(DownloadQueryKeyFactory.clientConfig());
 		expect(keys).toContainEqual(DownloadQueryKeyFactory.clientStatus());
 		expect(keys).toContainEqual(HomeQueryKeyFactory.prefix);

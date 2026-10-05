@@ -143,8 +143,7 @@ export const getLibraryAlbumDetailV3QueryOptions = (userId: LibraryV3UserId, alb
 		enabled: Boolean(userId && albumId),
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: LibraryQueryKeyFactory.v3.albumDetail(userId, albumId),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(LibraryV3Api.albumDetail(albumId), { signal })
+		queryFn: ({ signal }) => api.global.v3.GET(LibraryV3Api.albumDetail(albumId), { signal })
 	});
 
 export const getLibraryAlbumDetailV3Query = (getAlbumId: Getter<string>) =>
@@ -161,8 +160,7 @@ export const getLibraryAlbumCopiesV3QueryOptions = (userId: LibraryV3UserId, alb
 		enabled: Boolean(userId && albumId),
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: LibraryQueryKeyFactory.v3.albumCopies(userId, albumId),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(LibraryV3Api.albumCopies(albumId), { signal })
+		queryFn: ({ signal }) => api.global.v3.GET(LibraryV3Api.albumCopies(albumId), { signal })
 	});
 
 export const getLibraryAlbumCopiesV3Query = (getAlbumId: Getter<string>) =>
@@ -189,8 +187,7 @@ export const getLibraryArtistDetailV3QueryOptions = (userId: LibraryV3UserId, ar
 		enabled: Boolean(userId && artistId),
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: LibraryQueryKeyFactory.v3.artistDetail(userId, artistId),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(LibraryV3Api.artistDetail(artistId), { signal })
+		queryFn: ({ signal }) => api.global.v3.GET(LibraryV3Api.artistDetail(artistId), { signal })
 	});
 
 export const getLibraryArtistDetailV3Query = (getArtistId: Getter<string>) =>
@@ -250,8 +247,7 @@ export const getLibraryTrackDetailV3QueryOptions = (userId: LibraryV3UserId, tra
 		enabled: Boolean(userId && trackId),
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: LibraryQueryKeyFactory.v3.trackDetail(userId, trackId),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(LibraryV3Api.trackDetail(trackId), { signal })
+		queryFn: ({ signal }) => api.global.v3.GET(LibraryV3Api.trackDetail(trackId), { signal })
 	});
 
 export const getLibraryTrackDetailV3Query = (getTrackId: Getter<string>) =>
@@ -297,8 +293,7 @@ export const getLibraryReviewsV3QueryOptions = (userId: LibraryV3UserId, albumId
 		enabled: Boolean(userId && albumId),
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: LibraryQueryKeyFactory.v3.reviews(userId, albumId),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(LibraryV3Api.reviews(albumId), { signal })
+		queryFn: ({ signal }) => api.global.v3.GET(LibraryV3Api.reviews(albumId), { signal })
 	});
 
 export const getLibraryReviewsV3Query = (getAlbumId: Getter<string>) =>
@@ -309,8 +304,7 @@ export const getLibraryEditionPinV3QueryOptions = (userId: LibraryV3UserId, albu
 		enabled: Boolean(userId && albumId),
 		staleTime: CACHE_TTL.ALBUM_DETAIL_EDITIONS,
 		queryKey: LibraryQueryKeyFactory.v3.editionPin(userId, albumId),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(LibraryV3Api.editionPin(albumId), { signal })
+		queryFn: ({ signal }) => api.global.v3.GET(LibraryV3Api.editionPin(albumId), { signal })
 	});
 
 export const getLibraryEditionPinV3Query = (getAlbumId: Getter<string>) =>

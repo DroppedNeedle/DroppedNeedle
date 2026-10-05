@@ -1,8 +1,5 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-import {
-	fetchNowPlayingSnapshot,
-	type NowPlayingEntry
-} from '$lib/player/playbackGateway';
+import { fetchNowPlayingSnapshot, type NowPlayingEntry } from '$lib/player/playbackGateway';
 import {
 	muxEventStream,
 	type MuxEventStream,

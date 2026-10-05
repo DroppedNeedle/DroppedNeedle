@@ -162,7 +162,9 @@ describe('search result enrichment demand', () => {
 	});
 
 	it('renders the top hit plus five artist cards from the six-row fetch', async () => {
-		const rows = Array.from({ length: 6 }, (_, index) => v3Artist(`Artist ${index + 1}`, `a${index + 1}`));
+		const rows = Array.from({ length: 6 }, (_, index) =>
+			v3Artist(`Artist ${index + 1}`, `a${index + 1}`)
+		);
 		globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
 			const url = String(input);
 			if (url.startsWith('/api/v3/search?')) {
@@ -176,14 +178,14 @@ describe('search result enrichment demand', () => {
 		for (const title of ['Artist 1', 'Artist 2', 'Artist 3', 'Artist 4', 'Artist 5', 'Artist 6']) {
 			await expect.element(page.getByText(title)).toBeInTheDocument();
 		}
-		const searchCall = String(
-			(globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]
-		);
+		const searchCall = String((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]);
 		expect(searchCall).toContain('limit_artists=6');
 	});
 
 	it('keeps a top result visible when it falls outside the first six results', async () => {
-		const rows = Array.from({ length: 6 }, (_, index) => v3Artist(`Artist ${index + 1}`, `a${index + 1}`));
+		const rows = Array.from({ length: 6 }, (_, index) =>
+			v3Artist(`Artist ${index + 1}`, `a${index + 1}`)
+		);
 		const topResult = v3Artist('Top Result Artist', 'top-result-artist');
 		globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
 			const url = String(input);

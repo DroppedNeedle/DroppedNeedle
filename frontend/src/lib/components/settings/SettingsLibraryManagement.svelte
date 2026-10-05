@@ -1228,9 +1228,7 @@
 													value={assignment.overrides.multi_disc_naming_mode}
 													onchange={(event) => {
 														const mode = event.currentTarget.value as
-															| 'inherit'
-															| 'standard'
-															| 'script';
+															'inherit' | 'standard' | 'script';
 														updateOverrides(root.id, {
 															multi_disc_naming_mode: mode,
 															multi_disc_naming_script_id:
@@ -1504,11 +1502,11 @@
 						<strong class="text-sm">Automatic writes paused — needs attention</strong>
 						<p class="text-xs text-base-content/50">
 							{#if blockedActivationRootLabels.length === 1}
-								{blockedActivationRootLabels[0]} needs attention before automatic writes can
-								resume. Check the library roots and the assignment below, then recheck.
+								{blockedActivationRootLabels[0]} needs attention before automatic writes can resume. Check
+								the library roots and the assignment below, then recheck.
 							{:else}
-								{blockedActivationRootLabels.length} roots need attention before automatic
-								writes can resume. Check the library roots and assignments below, then recheck.
+								{blockedActivationRootLabels.length} roots need attention before automatic writes can
+								resume. Check the library roots and assignments below, then recheck.
 							{/if}
 						</p>
 						{#if blockedActivationReason}

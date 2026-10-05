@@ -314,8 +314,7 @@
 							class="textarea textarea-bordered mt-2 h-28 w-full resize-y bg-base-200/50 font-mono text-[11px]"
 							readonly
 							aria-label="Profile share code"
-							value={shareResult.share_code}
-						></textarea>
+							value={shareResult.share_code}></textarea>
 					</details>
 				</section>
 				<p class="flex items-center gap-2 font-mono text-[10px] text-base-content/40">
@@ -416,8 +415,7 @@
 							class="textarea textarea-bordered mt-3 min-h-36 flex-1 resize-y bg-base-100 font-mono text-xs"
 							placeholder="DNLP1:…"
 							value={importFilename ? '' : importContent}
-							oninput={(event) => updateContent(event.currentTarget.value)}
-						></textarea>
+							oninput={(event) => updateContent(event.currentTarget.value)}></textarea>
 					</section>
 				</div>
 				{#if importError}<div class="alert alert-error mt-4 text-sm" role="alert">

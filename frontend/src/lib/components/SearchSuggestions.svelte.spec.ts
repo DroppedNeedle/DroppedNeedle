@@ -205,9 +205,7 @@ describe('SearchSuggestions.svelte', () => {
 		fetchSpy.mockImplementation((input: RequestInfo | URL) => {
 			const url = String(input);
 			if (url.startsWith('/api/v3/search/suggest?')) {
-				return Promise.resolve(
-					makeResponse({ results: [mockRows[0]], status: 'partial' })
-				);
+				return Promise.resolve(makeResponse({ results: [mockRows[0]], status: 'partial' }));
 			}
 			throw new Error(`Unexpected request: ${url}`);
 		});

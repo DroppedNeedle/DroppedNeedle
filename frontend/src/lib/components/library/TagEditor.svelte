@@ -408,8 +408,7 @@
 		{#if field.cardinality === 'ordered_strings'}
 			<textarea
 				class="textarea textarea-bordered min-h-20 sm:col-span-2"
-				bind:value={drafts[field.field_name]}
-			></textarea>
+				bind:value={drafts[field.field_name]}></textarea>
 		{:else if field.cardinality === 'boolean'}
 			<select
 				class="select select-bordered select-sm sm:col-span-2"

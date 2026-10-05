@@ -77,7 +77,7 @@
 			Object.entries(filters)
 				.filter(([key]) => !['cursor', 'sort'].includes(key))
 				.filter(([, value]) => value !== undefined && value !== '')
-			.map(([key, value]) => [
+				.map(([key, value]) => [
 					key === 'reasonCode'
 						? 'reason_code'
 						: key === 'rootId'
@@ -284,15 +284,17 @@
 						</div>
 					{/if}
 				{/if}
-			<p>
-					<strong>{preview.data.eligible_count.toLocaleString()} eligible</strong>, {preview.data
-						.ineligible_count.toLocaleString()} ineligible, {preview.data.stale_count.toLocaleString()}
+				<p>
+					<strong>{preview.data.eligible_count.toLocaleString()} eligible</strong>, {preview.data.ineligible_count.toLocaleString()}
+					ineligible, {preview.data.stale_count.toLocaleString()}
 					changed since selection — nothing changed yet. Covers {preview.data.album_count.toLocaleString()}
 					albums and {preview.data.root_count.toLocaleString()} roots.
 				</p>
 				{#if selection.normalized_filter.reason_code}
 					<p class="text-xs text-base-content/60">
-						Scope: {String(selection.normalized_filter.reason_code).replaceAll('_', ' ').toLowerCase()}
+						Scope: {String(selection.normalized_filter.reason_code)
+							.replaceAll('_', ' ')
+							.toLowerCase()}
 					</p>
 				{/if}
 				{#if preview.data.ineligible_count || preview.data.stale_count}<details

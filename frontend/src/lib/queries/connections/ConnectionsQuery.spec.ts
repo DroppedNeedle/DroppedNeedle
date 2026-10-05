@@ -16,8 +16,7 @@ vi.mock('../QueryClient', () => {
 	const keyOf = (key: unknown) => JSON.stringify(key);
 	const fakeClient = {
 		getQueryData: vi.fn(
-			<T = unknown>(key: unknown): T | undefined =>
-				queryCache.map.get(keyOf(key)) as T | undefined
+			<T = unknown>(key: unknown): T | undefined => queryCache.map.get(keyOf(key)) as T | undefined
 		),
 		setQueryData: vi.fn((key: unknown, updater: unknown) => {
 			const next =

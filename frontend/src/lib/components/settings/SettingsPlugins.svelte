@@ -56,11 +56,11 @@
 			<h2 class="card-title">Plugins</h2>
 			<span class="badge badge-warning badge-sm">experimental</span>
 		</div>
-	<p class="text-sm text-base-content/60">
-		Third-party extensions loaded from the <code>plugins/</code> folder in your data directory. A plugin
-		runs with the server's full privileges. Only enable code you trust. See PLUGINS.md in the repository
-		for the API.
-	</p>
+		<p class="text-sm text-base-content/60">
+			Third-party extensions loaded from the <code>plugins/</code> folder in your data directory. A plugin
+			runs with the server's full privileges. Only enable code you trust. See PLUGINS.md in the repository
+			for the API.
+		</p>
 
 		<form class="mt-2 flex flex-wrap items-end gap-2" onsubmit={submitInstall}>
 			<div class="form-control min-w-0 flex-1">
@@ -87,10 +87,10 @@
 				{install.isPending ? 'Installing…' : 'Install'}
 			</button>
 		</form>
-	<p class="text-xs text-base-content/45">
-		Downloads the repository into your plugins folder. Nothing runs until you enable it. Read the
-		code first.
-	</p>
+		<p class="text-xs text-base-content/45">
+			Downloads the repository into your plugins folder. Nothing runs until you enable it. Read the
+			code first.
+		</p>
 
 		{#if pluginsQuery.isLoading}
 			<div class="skeleton h-20 w-full rounded-xl"></div>

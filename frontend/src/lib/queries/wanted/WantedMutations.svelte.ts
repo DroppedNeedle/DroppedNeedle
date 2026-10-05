@@ -20,8 +20,7 @@ export interface WantedActionVars {
 // mbid is the mutation variable so one instance serves every card in the tab
 export const createStopWatchMutation = () =>
 	createMutation(() => ({
-		mutationFn: ({ mbid }: WantedActionVars) =>
-			api.global.v3.POST(WANTED_ENDPOINTS.stop(mbid)),
+		mutationFn: ({ mbid }: WantedActionVars) => api.global.v3.POST(WANTED_ENDPOINTS.stop(mbid)),
 		onSuccess: (_data, { albumTitle }) => {
 			toastStore.show({
 				message: `Stopped watching ${albumTitle} - it won't be searched again.`,
@@ -38,8 +37,7 @@ export const createStopWatchMutation = () =>
 
 export const createResumeWatchMutation = () =>
 	createMutation(() => ({
-		mutationFn: ({ mbid }: WantedActionVars) =>
-			api.global.v3.POST(WANTED_ENDPOINTS.resume(mbid)),
+		mutationFn: ({ mbid }: WantedActionVars) => api.global.v3.POST(WANTED_ENDPOINTS.resume(mbid)),
 		onSuccess: (_data, { albumTitle }) => {
 			toastStore.show({
 				message: `Watching ${albumTitle} - it'll be checked again soon.`,
@@ -57,8 +55,7 @@ export const createResumeWatchMutation = () =>
 // silent badge acknowledgment (the mark-seen pattern) - no toast on purpose
 export const createMarkWantedSeenMutation = () =>
 	createMutation(() => ({
-		mutationFn: ({ mbid }: WantedActionVars) =>
-			api.global.v3.POST(WANTED_ENDPOINTS.seen(mbid)),
+		mutationFn: ({ mbid }: WantedActionVars) => api.global.v3.POST(WANTED_ENDPOINTS.seen(mbid)),
 		onSettled: () => {
 			void invalidateWanted();
 		}

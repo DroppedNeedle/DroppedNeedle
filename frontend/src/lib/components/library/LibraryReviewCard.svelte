@@ -1,10 +1,7 @@
 <script lang="ts">
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import type { ReviewListItem } from '$lib/queries/library/LibraryOperationsTypes';
-	import {
-		isStillMatchingJobState,
-		reviewReasonShortLabel
-	} from './LibraryReviewTable.svelte';
+	import { isStillMatchingJobState, reviewReasonShortLabel } from './LibraryReviewTable.svelte';
 
 	interface Props {
 		item: ReviewListItem;

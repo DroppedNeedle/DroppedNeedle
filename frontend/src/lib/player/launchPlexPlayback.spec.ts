@@ -6,7 +6,6 @@ vi.mock('$lib/stores/player.svelte', () => ({
 	playerStore: { playQueue: vi.fn() }
 }));
 
-
 vi.mock('$lib/utils/errorHandling', () => ({
 	getCoverUrl: (url: string | null, albumId: string) => url || `/api/v1/covers/${albumId}`
 }));

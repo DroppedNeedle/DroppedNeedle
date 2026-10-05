@@ -92,7 +92,9 @@ describe('IndexerQueries (B9 invalidation pin)', () => {
 		reorderIndexersMutation();
 		mutation = captured.current as unknown as Mutation;
 		await mutation.mutationFn(['i1']);
-		expect(mockPost).toHaveBeenCalledWith(DOWNLOAD_SETTINGS_ENDPOINTS.indexersReorder(), { ordered_ids: ['i1'] });
+		expect(mockPost).toHaveBeenCalledWith(DOWNLOAD_SETTINGS_ENDPOINTS.indexersReorder(), {
+			ordered_ids: ['i1']
+		});
 		await mutation.onSuccess?.();
 		expect(sweptKeys()).toContainEqual(HomeQueryKeyFactory.prefix);
 	});

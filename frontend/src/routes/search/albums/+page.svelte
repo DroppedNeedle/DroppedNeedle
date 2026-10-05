@@ -53,9 +53,7 @@
 	const enrichQuery = getSearchEnrichBatchV3Query(() => enrichCollector.body);
 
 	let baseAlbums = $derived(
-		[...pages.entries()]
-			.sort(([left], [right]) => left - right)
-			.flatMap(([, page]) => page.items)
+		[...pages.entries()].sort(([left], [right]) => left - right).flatMap(([, page]) => page.items)
 	);
 	let albums = $derived(enrichment ? applyAlbumEnrichment(baseAlbums, enrichment) : baseAlbums);
 	let topAlbum = $derived(pages.get(0)?.top ?? null);

@@ -20,8 +20,7 @@ const getIndexersQueryOptions = () =>
 	queryOptions({
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: DownloadQueryKeyFactory.indexers(),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.indexers(), { signal })
+		queryFn: ({ signal }) => api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.indexers(), { signal })
 	});
 
 export const getIndexersQuery = () => createQuery(() => getIndexersQueryOptions());
@@ -45,8 +44,7 @@ export function saveIndexerMutation() {
 
 export function deleteIndexerMutation() {
 	return createMutation(() => ({
-		mutationFn: (id: string) =>
-			api.global.v3.DELETE(DOWNLOAD_SETTINGS_ENDPOINTS.indexer(id)),
+		mutationFn: (id: string) => api.global.v3.DELETE(DOWNLOAD_SETTINGS_ENDPOINTS.indexer(id)),
 		onSuccess: invalidateIndexers
 	}));
 }

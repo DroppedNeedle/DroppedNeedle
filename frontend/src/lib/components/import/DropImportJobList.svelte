@@ -109,7 +109,10 @@
 										{#if item.status === 'imported'}
 											<CircleCheckBig class="h-4 w-4 shrink-0 text-success" aria-hidden="true" />
 										{:else if item.status === 'needs_review'}
-											<CircleQuestionMark class="h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+											<CircleQuestionMark
+												class="h-4 w-4 shrink-0 text-warning"
+												aria-hidden="true"
+											/>
 										{:else if item.status === 'failed'}
 											<CircleAlert class="h-4 w-4 shrink-0 text-error" aria-hidden="true" />
 										{:else if item.status === 'skipped' || item.status === 'discarded'}
@@ -118,7 +121,10 @@
 												aria-hidden="true"
 											/>
 										{:else}
-											<LoaderCircle class="h-4 w-4 shrink-0 animate-spin text-info" aria-hidden="true" />
+											<LoaderCircle
+												class="h-4 w-4 shrink-0 animate-spin text-info"
+												aria-hidden="true"
+											/>
 										{/if}
 										<p class="truncate text-sm font-medium">
 											{#if item.album_title}

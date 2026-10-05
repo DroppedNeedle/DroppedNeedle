@@ -25,8 +25,6 @@ describe('discover route load prefetch', () => {
 
 		expect(result).toEqual({});
 		expect(prefetch).toHaveBeenCalledTimes(1);
-		expect(prefetch.mock.calls[0][0].queryKey).toEqual(
-			DiscoverQueryKeyFactory.v3.home(undefined)
-		);
+		expect(prefetch.mock.calls[0][0].queryKey).toEqual(DiscoverQueryKeyFactory.v3.home(undefined));
 	});
 });

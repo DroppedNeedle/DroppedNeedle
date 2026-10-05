@@ -92,7 +92,9 @@ describe('createImportSpotifyPlaylistMutation', () => {
 
 		expect(mockPost).toHaveBeenCalledWith(SPOTIFY_ENDPOINTS.importPlaylist('spotify-9'));
 		mutation.onSuccess?.();
-		const keys = mockInvalidate.mock.calls.map((call) => (call[0] as { queryKey: unknown }).queryKey);
+		const keys = mockInvalidate.mock.calls.map(
+			(call) => (call[0] as { queryKey: unknown }).queryKey
+		);
 		expect(keys).toContainEqual(PlaylistQueryKeyFactory.list('userA'));
 		expect(keys).toContainEqual(['spotify-playlists', userIdSegment('userA')]);
 	});

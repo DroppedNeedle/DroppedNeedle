@@ -431,9 +431,9 @@
 					class={`alert ${terminalPresentation.className}`}
 					role={operation.state === 'failed' ? 'alert' : 'status'}
 				>
-					{#if operation.state === 'succeeded'}<CircleCheckBig class="h-5 w-5" />{:else}<TriangleAlert
+					{#if operation.state === 'succeeded'}<CircleCheckBig
 							class="h-5 w-5"
-						/>{/if}<span
+						/>{:else}<TriangleAlert class="h-5 w-5" />{/if}<span
 						><strong>{terminalPresentation.label}</strong><br />{terminalPresentation.detail}</span
 					>
 				</div>{/if}

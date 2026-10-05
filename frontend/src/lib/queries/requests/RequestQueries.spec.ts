@@ -117,4 +117,3 @@ describe('getApprovalsQuery', () => {
 		expect(options.queryKey).toEqual(RequestQueryKeyFactory.approvals('userA'));
 	});
 });
-

@@ -91,9 +91,7 @@
 	const recentRunning = $derived(recent.filter((item) => item.operation.state !== 'failed'));
 	const recentFailed = $derived(recent.filter((item) => item.operation.state === 'failed'));
 	const failedGroups = $derived(
-		groupFailedOperationsByAlbum(recentFailed, (item) =>
-			isStaleInputTerminal(item.operation)
-		)
+		groupFailedOperationsByAlbum(recentFailed, (item) => isStaleInputTerminal(item.operation))
 	);
 	let bulkPending = $state(false);
 	let bulkSummary = $state<string | null>(null);
@@ -110,8 +108,7 @@
 		(recoveryQuery.data?.needs_attention_count ?? 0) +
 			(recoveryQuery.data?.cleanup_pending_count ?? 0) +
 			history.filter(
-				(item) =>
-					item.operation.state === 'failed' && !isStaleInputTerminal(item.operation)
+				(item) => item.operation.state === 'failed' && !isStaleInputTerminal(item.operation)
 			).length
 	);
 	const recoveryUnavailable = $derived(recoveryQuery.isError);
@@ -476,8 +473,8 @@
 											<p class="mt-1 text-xs text-base-content/55">{STALE_INPUT_HINT}</p>
 										{:else if group.staleCount > 0}
 											<p class="mt-1 text-xs text-base-content/55">
-												{group.staleCount} of {group.items.length} attempts only found moved
-												inputs and can be retried; the rest failed for other reasons.
+												{group.staleCount} of {group.items.length} attempts only found moved inputs and
+												can be retried; the rest failed for other reasons.
 											</p>
 										{/if}
 										<ul class="mt-2 space-y-1">
@@ -492,9 +489,8 @@
 													<span
 														>{title(member.mode)} · {isStaleInputTerminal(member.operation)
 															? 'Superseded · inputs moved'
-															: `${title(member.operation.state)}${member.operation.terminal_code ? ` · ${title(member.operation.terminal_code)}` : ''}`} · {date(
-															member.operation.updated_at
-														)}</span
+															: `${title(member.operation.state)}${member.operation.terminal_code ? ` · ${title(member.operation.terminal_code)}` : ''}`}
+														· {date(member.operation.updated_at)}</span
 													>
 													<a
 														class="link link-hover font-semibold"
@@ -543,11 +539,12 @@
 										><strong>{single.profile_name}</strong><small
 											>{title(single.mode)} · {singleStale
 												? 'Superseded · inputs moved'
-												: title(single.operation.state)} · {date(single.operation.updated_at)}</small
+												: title(single.operation.state)} · {date(
+												single.operation.updated_at
+											)}</small
 										>
 										{#if singleStale}
-											<span class="mt-1 block text-xs text-base-content/55"
-												>{STALE_INPUT_HINT}</span
+											<span class="mt-1 block text-xs text-base-content/55">{STALE_INPUT_HINT}</span
 											>
 										{/if}
 										<span class="mt-1 flex flex-wrap gap-1"
@@ -555,9 +552,7 @@
 													class="badge badge-success badge-sm"
 													>{single.operation.succeeded_count} succeeded</span
 												>{/if}{#if single.operation.failed_count}<span
-													class="badge {singleStale
-														? 'badge-ghost'
-														: 'badge-error'} badge-sm"
+													class="badge {singleStale ? 'badge-ghost' : 'badge-error'} badge-sm"
 													>{single.operation.failed_count} failed</span
 												>{/if}{#if single.operation.skipped_count}<span
 													class="badge badge-warning badge-sm"

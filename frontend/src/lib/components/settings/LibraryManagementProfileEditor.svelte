@@ -1629,8 +1629,7 @@
 									value={draft.metadata.format_compatibility.id3_version}
 									onchange={(event) => {
 										draft.metadata.format_compatibility.id3_version = event.currentTarget.value as
-											| '2.4'
-											| '2.3';
+											'2.4' | '2.3';
 										if (event.currentTarget.value === '2.3')
 											draft.metadata.format_compatibility.id3_text_encoding = 'utf16';
 									}}

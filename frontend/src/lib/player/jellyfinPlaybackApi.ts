@@ -1,6 +1,10 @@
 import { ApiError } from '$lib/api/client';
 
-import { reportPlaybackProgress, startPlaybackSession, stopPlaybackSession } from './playbackGateway';
+import {
+	reportPlaybackProgress,
+	startPlaybackSession,
+	stopPlaybackSession
+} from './playbackGateway';
 
 // Thin Jellyfin leg over the single gateway session flow. Signatures stay
 // stable so the player store keeps compiling; the v1 play-session id the

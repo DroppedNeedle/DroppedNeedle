@@ -92,8 +92,7 @@ export const getDiscoverQueueV3QueryOptions = (
 		enabled: Boolean(userId),
 		staleTime: ttl('discover', CACHE_TTL.DISCOVER_QUEUE),
 		queryKey: DiscoverQueryKeyFactory.v3.queue(userId, count),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(DiscoverV3Api.queue(count), { signal })
+		queryFn: ({ signal }) => api.global.v3.GET(DiscoverV3Api.queue(count), { signal })
 	});
 
 export const getDiscoverQueueV3Query = (getCount: Getter<number | null> = () => null) =>
@@ -127,8 +126,7 @@ export const getDiscoverIgnoredV3Query = () =>
 		enabled: Boolean(authStore.user?.id),
 		staleTime: ttl('discover', CACHE_TTL.DISCOVER),
 		queryKey: DiscoverQueryKeyFactory.v3.ignored(authStore.user?.id),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(DiscoverV3Api.ignored(), { signal })
+		queryFn: ({ signal }) => api.global.v3.GET(DiscoverV3Api.ignored(), { signal })
 	}));
 
 export const getDiscoveryBatchesV3Query = (getEnabled: Getter<boolean> = () => true) =>
@@ -136,8 +134,7 @@ export const getDiscoveryBatchesV3Query = (getEnabled: Getter<boolean> = () => t
 		enabled: getEnabled() && Boolean(authStore.user?.id),
 		staleTime: 15_000,
 		queryKey: DiscoverQueryKeyFactory.v3.batches(authStore.user?.id),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(DiscoverV3Api.batches(), { signal })
+		queryFn: ({ signal }) => api.global.v3.GET(DiscoverV3Api.batches(), { signal })
 	}));
 
 export const getDiscoveryBatchV3Query = (getBatchId: Getter<string>) =>
@@ -253,10 +250,9 @@ export const getDiscoverAlbumPreviewV3Query = (
 				count
 			),
 			queryFn: ({ signal }: { signal?: AbortSignal }) =>
-				api.global.v3.GET(
-					DiscoverV3Api.albumPreview(params.artist, params.album, count),
-					{ signal }
-				),
+				api.global.v3.GET(DiscoverV3Api.albumPreview(params.artist, params.album, count), {
+					signal
+				}),
 			enabled: Boolean(authStore.user?.id && params.artist && params.album)
 		};
 	});
@@ -274,10 +270,7 @@ export const getDiscoverTrackPreviewV3Query = (
 				params.track
 			),
 			queryFn: ({ signal }: { signal?: AbortSignal }) =>
-				api.global.v3.GET(
-					DiscoverV3Api.trackPreview(params.artist, params.track),
-					{ signal }
-				),
+				api.global.v3.GET(DiscoverV3Api.trackPreview(params.artist, params.track), { signal }),
 			enabled: Boolean(authStore.user?.id && params.artist && params.track)
 		};
 	});
@@ -295,10 +288,7 @@ export const getDiscoverYouTubeSearchV3Query = (
 				params.album
 			),
 			queryFn: ({ signal }: { signal?: AbortSignal }) =>
-				api.global.v3.GET(
-					DiscoverV3Api.youtubeSearch(params.artist, params.album),
-					{ signal }
-				),
+				api.global.v3.GET(DiscoverV3Api.youtubeSearch(params.artist, params.album), { signal }),
 			enabled: Boolean(authStore.user?.id && params.artist && params.album)
 		};
 	});
@@ -316,10 +306,9 @@ export const getDiscoverYouTubeTrackSearchV3Query = (
 				params.track
 			),
 			queryFn: ({ signal }: { signal?: AbortSignal }) =>
-				api.global.v3.GET(
-					DiscoverV3Api.youtubeTrackSearch(params.artist, params.track),
-					{ signal }
-				),
+				api.global.v3.GET(DiscoverV3Api.youtubeTrackSearch(params.artist, params.track), {
+					signal
+				}),
 			enabled: Boolean(authStore.user?.id && params.artist && params.track)
 		};
 	});
@@ -329,8 +318,7 @@ export const getDiscoverYouTubeQuotaV3Query = () =>
 		enabled: Boolean(authStore.user?.id),
 		staleTime: ttl('discover', CACHE_TTL.DISCOVER),
 		queryKey: DiscoverQueryKeyFactory.v3.youtubeQuota(authStore.user?.id),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(DiscoverV3Api.youtubeQuota(), { signal })
+		queryFn: ({ signal }) => api.global.v3.GET(DiscoverV3Api.youtubeQuota(), { signal })
 	}));
 
 export const getDiscoverYouTubeCacheCheckV3QueryOptions = (
@@ -342,11 +330,7 @@ export const getDiscoverYouTubeCacheCheckV3QueryOptions = (
 		staleTime: ttl('discover', CACHE_TTL.DISCOVER),
 		queryKey: DiscoverQueryKeyFactory.v3.youtubeCacheCheck(userId, items),
 		queryFn: ({ signal }) =>
-			api.global.v3.POST(
-				DiscoverV3Api.youtubeCacheCheck(),
-				{ items },
-				{ signal }
-			)
+			api.global.v3.POST(DiscoverV3Api.youtubeCacheCheck(), { items }, { signal })
 	});
 
 export const getDiscoverYouTubeCacheCheckV3Query = (getItems: Getter<DiscoverV3CacheCheckItem[]>) =>

@@ -140,8 +140,7 @@ export const getSearchEnrichBatchV3QueryOptions = (
 		enabled: Boolean(userId && (body.artists?.length || body.albums?.length)),
 		staleTime: successfulEnrichStaleTime,
 		queryKey: SearchQueryKeyFactory.v3.enrich(userId, enrichFingerprint(body)),
-		queryFn: ({ signal }) =>
-			api.global.v3.POST(SearchV3Api.enrichBatch(), body, { signal })
+		queryFn: ({ signal }) => api.global.v3.POST(SearchV3Api.enrichBatch(), body, { signal })
 	});
 
 export const getSearchEnrichBatchV3Query = (getBody: Getter<EnrichmentBatchRequestV3>) =>

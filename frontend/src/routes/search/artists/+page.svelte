@@ -52,13 +52,9 @@
 	const enrichQuery = getSearchEnrichBatchV3Query(() => enrichCollector.body);
 
 	let baseArtists = $derived(
-		[...pages.entries()]
-			.sort(([left], [right]) => left - right)
-			.flatMap(([, page]) => page.items)
+		[...pages.entries()].sort(([left], [right]) => left - right).flatMap(([, page]) => page.items)
 	);
-	let artists = $derived(
-		enrichment ? applyArtistEnrichment(baseArtists, enrichment) : baseArtists
-	);
+	let artists = $derived(enrichment ? applyArtistEnrichment(baseArtists, enrichment) : baseArtists);
 	let topArtist = $derived(pages.get(0)?.top ?? null);
 	let remoteStatus: SearchRemoteStatus = $derived(
 		pageQuery.isError ? 'error' : (pages.get(0)?.status ?? 'ok')

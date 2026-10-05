@@ -194,9 +194,7 @@
 	const activeItems = $derived(activeListQuery.data?.items ?? []);
 	const activeCount = $derived(activeListQuery.data?.count ?? activeItems.length);
 	const activeLoading = $derived(activeListQuery.isPending);
-	const activeError = $derived(
-		activeListQuery.isError ? "Couldn't load active requests" : null
-	);
+	const activeError = $derived(activeListQuery.isError ? "Couldn't load active requests" : null);
 	const isPolling = $derived(activeListQuery.isFetching);
 
 	let historyPage = $state(1);
@@ -224,9 +222,7 @@
 	const approvalItems = $derived<RequestItem[]>(approvalsQuery.data?.items ?? []);
 	const approvalCount = $derived(approvalsQuery.data?.count ?? approvalItems.length);
 	const approvalLoading = $derived(approvalsQuery.isPending);
-	const approvalError = $derived(
-		approvalsQuery.isError ? "Couldn't load pending approvals" : null
-	);
+	const approvalError = $derived(approvalsQuery.isError ? "Couldn't load pending approvals" : null);
 
 	let toastShow = $state(false);
 	let toastMessage = $state('');
@@ -596,10 +592,7 @@
 						>
 							Cancel selected
 						</button>
-						<button
-							class="btn btn-sm btn-ghost"
-							onclick={() => (selectedKeys = new Set())}
-						>
+						<button class="btn btn-sm btn-ghost" onclick={() => (selectedKeys = new Set())}>
 							Clear
 						</button>
 					</div>

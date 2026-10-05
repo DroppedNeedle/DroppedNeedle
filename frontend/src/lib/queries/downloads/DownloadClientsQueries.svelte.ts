@@ -63,8 +63,7 @@ const policyOptions = () =>
 	queryOptions({
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: DownloadQueryKeyFactory.policy(),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.policy(), { signal })
+		queryFn: ({ signal }) => api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.policy(), { signal })
 	});
 
 // enabled-getter so non-admin pages can render without firing the admin-only
@@ -82,10 +81,7 @@ async function invalidateClients() {
 export function saveSabnzbdConfig() {
 	return createMutation(() => ({
 		mutationFn: (config: SabnzbdConnectionSettings) =>
-			api.global.v3.PUT(
-				DOWNLOAD_SETTINGS_ENDPOINTS.sabnzbdConfig(),
-				config
-			),
+			api.global.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.sabnzbdConfig(), config),
 		onSuccess: invalidateClients
 	}));
 }
@@ -114,8 +110,7 @@ const wantedSettingsOptions = () =>
 	queryOptions({
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: DownloadQueryKeyFactory.wantedSettings(),
-		queryFn: ({ signal }) =>
-			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.wanted(), { signal })
+		queryFn: ({ signal }) => api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.wanted(), { signal })
 	});
 
 export const getWantedSettingsQuery = () => createQuery(() => wantedSettingsOptions());
