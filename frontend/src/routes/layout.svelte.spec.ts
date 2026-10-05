@@ -14,11 +14,6 @@ const { routeState, shellModuleState } = vi.hoisted(() => ({
 }));
 const { batchRequestMock } = vi.hoisted(() => ({ batchRequestMock: vi.fn() }));
 
-vi.mock('$env/dynamic/public', () => ({
-	env: {
-		PUBLIC_API_URL: ''
-	}
-}));
 vi.mock('$app/environment', () => ({ browser: true, building: false, dev: false }));
 vi.mock('$app/navigation', () => ({
 	goto: vi.fn(),

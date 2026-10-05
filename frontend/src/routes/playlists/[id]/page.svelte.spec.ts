@@ -3,10 +3,6 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import type { PlaylistDetailV3 } from '$lib/queries/playlists/PlaylistV3Queries.svelte';
 
-vi.mock('$env/dynamic/public', () => ({
-	env: { PUBLIC_API_URL: '' }
-}));
-
 const mockShareMutate = vi.fn();
 const mockDeleteMutate = vi.fn();
 const mockResolveMutate = vi.fn();

@@ -4,8 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import type { ServiceHealthItem } from '$lib/types';
 
-vi.mock('$env/dynamic/public', () => ({ env: { PUBLIC_API_URL: '' } }));
-
 type QueryData = { degraded: ServiceHealthItem[] };
 
 const queryState = vi.hoisted(() => {
