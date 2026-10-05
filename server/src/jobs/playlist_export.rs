@@ -149,9 +149,11 @@ async fn read_entries(
     playlist_id: &str,
 ) -> Result<Vec<ExportEntry>, sqlx::Error> {
     // Entries with no local file (remote or YouTube tracks) come back with
-    // no path so they can be counted, not silently dropped.
-    let rows: Vec<(String, String, Option<i64>, Option<String>)> = sqlx::query_as(
-        "SELECT pt.track_name, pt.artist_name, pt.duration, t.file_path \
+    // no path so they can be counted, not silently dropped. Collections
+    // keeps the local track id in `library_file_id`, and stores durations
+    // as float seconds, so the column is read as REAL and truncated (v2).
+    let rows: Vec<(String, String, Option<f64>, Option<String>)> = sqlx::query_as(
+        "SELECT pt.track_name, pt.artist_name, CAST(pt.duration AS REAL), t.file_path \
          FROM playlist_tracks pt LEFT JOIN local_tracks t ON t.id = pt.library_file_id \
          WHERE pt.playlist_id = ?1 ORDER BY pt.position",
     )
@@ -164,7 +166,7 @@ async fn read_entries(
             |(track_name, artist_name, duration, file_path)| ExportEntry {
                 track_name,
                 artist_name,
-                duration,
+                duration: duration.map(|secs| secs as i64),
                 file_path,
             },
         )

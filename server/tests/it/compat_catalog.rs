@@ -1,6 +1,6 @@
 //! Compat over the real catalog: Subsonic and Jellyfin read the scanned
 //! library from SQLite, and playlists and favorites are one set of rows
-//! shared with the native routes.
+//! shared with the native routes and the Navidrome m3u export.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -301,4 +301,75 @@ async fn playlist_refusals_keep_their_codes_and_repeats_stay() {
     .await;
     let listed = rig.subsonic("getPlaylist", &[("id", &ours)]).await;
     assert!(listed.contains("\"songCount\":2"), "{listed}");
+}
+
+/// The Navidrome m3u export reads the playlists the web UI saves: a local
+/// entry resolves to its file, and a fractional duration (the web player
+/// sends float seconds) does not make the playlist read fail.
+#[tokio::test]
+async fn native_playlists_export_to_m3u_with_their_files() {
+    use droppedneedle::jobs::playlist_export::M3uPlaylistExporter;
+    use droppedneedle::jobs::playlist_sync::{PlaylistExporter as _, PlaylistSyncConfig};
+
+    let rig = Rig::open().await;
+    let native = CollectionsService::new(&rig.reads.collections);
+    let made = native
+        .create_playlist(
+            USER_ID,
+            &CreatePlaylistBody {
+                name: "Export me".to_owned(),
+                source_ref: None,
+            },
+        )
+        .await
+        .unwrap();
+    native
+        .add_tracks(
+            USER_ID,
+            &made.id,
+            &AddTracksBody {
+                tracks: vec![TrackInput {
+                    track_name: "Mysterons".to_owned(),
+                    artist_name: "Portishead".to_owned(),
+                    album_name: "Dummy".to_owned(),
+                    album_id: None,
+                    artist_id: None,
+                    track_source_id: Some("trk-1".to_owned()),
+                    cover_url: None,
+                    source_type: "local".to_owned(),
+                    available_sources: None,
+                    format: None,
+                    track_number: None,
+                    disc_number: None,
+                    duration: Some(305.6),
+                    plex_rating_key: None,
+                }],
+                position: None,
+            },
+        )
+        .await
+        .unwrap();
+
+    let out = ScratchDir::new("m3u-export");
+    let folder = out.join("playlists");
+    let report = M3uPlaylistExporter::new(Some(rig.runtime.pool().clone()))
+        .sync(PlaylistSyncConfig {
+            target_dir: folder.display().to_string(),
+            scope: "all".to_owned(),
+            remove_deleted: true,
+        })
+        .await;
+    assert!(report.success, "{}", report.message);
+    assert_eq!(report.written, 1, "{}", report.message);
+    let file = std::fs::read_dir(&folder)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "m3u8"))
+        .unwrap();
+    let text = std::fs::read_to_string(file).unwrap();
+    assert!(
+        text.contains("#EXTINF:305,Portishead - Mysterons"),
+        "{text}"
+    );
+    assert!(text.contains("music/dummy/01.flac"), "{text}");
 }
