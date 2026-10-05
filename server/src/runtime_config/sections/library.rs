@@ -16,7 +16,9 @@ pub const DEFAULT_NAMING_TEMPLATE: &str =
 /// Automatic-scan cadence values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
 pub enum ScanFrequency {
-    /// Never scan automatically.
+    /// Never scan automatically. `Manual` is still read: earlier builds
+    /// wrote the variant name.
+    #[serde(rename = "manual", alias = "Manual")]
     Manual,
     /// Every 5 minutes.
     #[serde(rename = "5min")]

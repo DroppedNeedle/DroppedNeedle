@@ -652,6 +652,25 @@ async fn verify_resolves_masks_and_maps_verdicts() {
     assert_eq!(limited["error"]["code"], "RATE_LIMITED");
 }
 
+/// The scan cadence keeps v2's wire values: `manual` saves and reads
+/// back as `manual` (the v2 importer writes that value too).
+#[tokio::test]
+async fn schedule_manual_round_trips() {
+    let rig = Rig::open(true).await;
+    let (status, saved) = call(
+        rig.admin_app(),
+        "PUT",
+        "/settings/library/schedule",
+        Some(json!({"scan_frequency": "manual", "daily_scan_time": "03:00"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["scan_frequency"], "manual");
+    let (status, read) = call(rig.admin_app(), "GET", "/settings/library/schedule", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(read["scan_frequency"], "manual");
+}
+
 /// The dropped catalog-sync section answers 410 on both methods; the
 /// home section is back and enforces v2's ranges.
 #[tokio::test]

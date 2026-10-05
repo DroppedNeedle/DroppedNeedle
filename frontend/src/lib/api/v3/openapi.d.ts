@@ -12448,7 +12448,7 @@ export interface components {
          * @description Automatic-scan cadence values.
          * @enum {string}
          */
-        ScanFrequency: "Manual" | "5min" | "10min" | "30min" | "1hr" | "6hr" | "12hr" | "24hr" | "3d" | "7d" | "daily";
+        ScanFrequency: "manual" | "5min" | "10min" | "30min" | "1hr" | "6hr" | "12hr" | "24hr" | "3d" | "7d" | "daily";
         /** @description Scan request answer. */
         ScanResponse: {
             /**

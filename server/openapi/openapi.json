@@ -25591,7 +25591,7 @@
         "type": "string",
         "description": "Automatic-scan cadence values.",
         "enum": [
-          "Manual",
+          "manual",
           "5min",
           "10min",
           "30min",
