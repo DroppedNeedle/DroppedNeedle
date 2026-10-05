@@ -2234,7 +2234,11 @@ async fn failed_authentications_are_throttled_per_client() {
     }
     assert_eq!(last, StatusCode::TOO_MANY_REQUESTS);
     let other = call_from(app, "198.51.100.8:1", "/api/v3/me", None).await;
-    assert_eq!(other, StatusCode::UNAUTHORIZED, "another client is untouched");
+    assert_eq!(
+        other,
+        StatusCode::UNAUTHORIZED,
+        "another client is untouched"
+    );
 }
 
 #[tokio::test]

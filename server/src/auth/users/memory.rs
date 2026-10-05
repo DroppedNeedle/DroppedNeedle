@@ -308,6 +308,20 @@ impl UserStore for MemoryUserStore {
         })
     }
 
+    fn insert_first_user<'a>(
+        &'a self,
+        user: UserRecord,
+        credential: LocalCredential,
+    ) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(async move {
+            if !self.state.read().await.users.is_empty() {
+                return Ok(false);
+            }
+            self.insert_with_local_credential(user, credential).await?;
+            Ok(true)
+        })
+    }
+
     fn update_profile<'a>(
         &'a self,
         id: &'a str,

@@ -171,6 +171,37 @@ impl UserStore for SqliteUserStore {
         })
     }
 
+    fn insert_first_user<'a>(
+        &'a self,
+        user: UserRecord,
+        credential: UsersLocalCredential,
+    ) -> BoxFuture<'a, Result<bool, StoreError>> {
+        Box::pin(async move {
+            let Some((_, lane)) = self.db.live() else {
+                return Err(internal("auth user store is not wired"));
+            };
+            let outcome = lane
+                .write(Lane::Foreground, "auth.users.create_first", move |tx| {
+                    let any: Option<i64> = tx
+                        .query_row("SELECT 1 FROM auth_users LIMIT 1", [], |row| row.get(0))
+                        .optional()
+                        .map_err(op_error)?;
+                    if any.is_some() {
+                        return Ok(false);
+                    }
+                    insert_user_row(tx, &user)?;
+                    insert_local_row(tx, &credential)?;
+                    Ok(true)
+                })
+                .await;
+            match outcome {
+                Ok(created) => Ok(created),
+                Err(error) if is_write_conflict(&error) => Err(StoreError::Conflict),
+                Err(error) => Err(internal(error)),
+            }
+        })
+    }
+
     fn update_profile<'a>(
         &'a self,
         id: &'a str,

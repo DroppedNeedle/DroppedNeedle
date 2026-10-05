@@ -96,6 +96,15 @@ pub trait UserStore: Send + Sync {
         user: UserRecord,
         credential: LocalCredential,
     ) -> BoxFuture<'a, Result<(), StoreError>>;
+    /// First-run setup: insert the user and its local credential only when
+    /// no user exists yet, decided inside the same transaction. `Ok(false)`
+    /// when any user (local or federated) is already there; nothing is
+    /// written then.
+    fn insert_first_user<'a>(
+        &'a self,
+        user: UserRecord,
+        credential: LocalCredential,
+    ) -> BoxFuture<'a, Result<bool, StoreError>>;
     /// Update display name and/or avatar URL. None fields stay untouched.
     fn update_profile<'a>(
         &'a self,

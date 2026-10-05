@@ -353,6 +353,33 @@ async fn user_creation_is_one_transaction() {
 }
 
 #[tokio::test]
+async fn first_user_insert_refuses_once_anyone_exists() {
+    let fx = fixture("first-user").await;
+    let users = &fx.auth.users;
+    let credential = |id: &str, user_id: &str| LocalCredential {
+        id: id.to_owned(),
+        user_id: user_id.to_owned(),
+        scheme: "argon2id".to_owned(),
+        hash: "h".to_owned(),
+    };
+    // A federated first login got there first: setup must not add a
+    // second admin.
+    let mut federated = user_row("fed-1", "ignored", Role::Admin);
+    federated.username = None;
+    federated.username_display = None;
+    users.insert(federated).await.unwrap();
+    let created = users
+        .insert_first_user(
+            user_row("admin-1", "ada", Role::Admin),
+            credential("cred-1", "admin-1"),
+        )
+        .await
+        .unwrap();
+    assert!(!created);
+    assert!(users.get_by_id("admin-1").await.unwrap().is_none());
+}
+
+#[tokio::test]
 async fn last_admin_guard_runs_inside_the_write() {
     let fx = fixture("last-admin").await;
     let users = &fx.auth.users;

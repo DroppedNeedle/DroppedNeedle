@@ -16,7 +16,6 @@ use crate::auth::session::tokens;
 use crate::auth::users::UsersDeps;
 use crate::auth::users::handlers::ValidJson;
 use crate::auth::users::models::UserResponse;
-use crate::auth::users::roles::Role;
 use crate::auth::users::{clock_now, services};
 use crate::ids::IdGenerator;
 use axum::{
@@ -65,8 +64,6 @@ pub struct NativeAuthState<S, V, C> {
     /// Proxies trusted to set `X-Forwarded-*`; loopback by default (v2
     /// parity). Gates `Secure` marking from `X-Forwarded-Proto`.
     pub trusted_proxies: TrustedProxies,
-    /// Serializes first-run setup (see `setup_handler`).
-    pub setup_guard: Arc<tokio::sync::Mutex<()>>,
     /// Request limiter; login also takes a per-username token from it.
     pub limits: Arc<RateLimiter>,
 }
@@ -92,7 +89,6 @@ where
             users,
             base_path: base_path.to_owned(),
             trusted_proxies: TrustedProxies::default(),
-            setup_guard: Arc::new(tokio::sync::Mutex::new(())),
             limits: Arc::new(RateLimiter::new()),
         }
     }
@@ -238,10 +234,10 @@ where
 }
 
 /// First-admin setup. Creates the admin and logs them in (201 + session,
-/// v2 parity) iff no users exist; otherwise 409. Concurrent setups serialize
-/// on the state guard: the loser probes after the winner commits and lands
-/// on 409. (The users table has no empty-table constraint, so without the
-/// guard two distinct usernames would both succeed.)
+/// v2 parity) iff no users exist; otherwise 409. The emptiness check runs
+/// inside the insert transaction, so concurrent setups, or a setup racing
+/// a first federated login (whose role is also decided in its insert),
+/// leave exactly one admin. The early probe only skips the password hash.
 #[utoipa::path(
     post,
     path = "/api/v3/auth/setup",
@@ -264,23 +260,21 @@ where
     V: crate::auth::session::login::PasswordVerifier,
     C: crate::auth::session::login::CredentialLookup,
 {
-    let _setup = state.setup_guard.lock().await;
     if users_exist(&state.users).await? {
         return Err(AuthRouteError::Conflict {
             message: SETUP_ALREADY_COMPLETED.to_owned(),
         });
     }
-    let user = services::admin_create_user(
+    let user = services::create_first_admin(
         &state.users,
         &body.username,
         &body.password,
         body.display_name.as_deref(),
         body.email.as_deref(),
-        Role::Admin,
+        SETUP_ALREADY_COMPLETED,
     )
     .await
     .map_err(AuthRouteError::from)?;
-    drop(_setup);
     let now = clock_now(&state.users);
     let raw_token =
         tokens::mint_token().map_err(|error| AuthRouteError::internal(&error, id_gen(&state)))?;

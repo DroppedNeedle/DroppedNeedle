@@ -653,6 +653,48 @@ pub async fn admin_create_user(
     email: Option<&str>,
     role: Role,
 ) -> Result<UserResponse, UsersError> {
+    create_local_user(deps, username, password, display_name, email, role, false).await
+}
+
+/// First-run setup: create the first admin, or [`UsersError::Conflict`]
+/// with `setup_done` when any user already exists. Emptiness is decided in
+/// the insert transaction, so a concurrent setup or first federated login
+/// cannot leave two admins.
+pub async fn create_first_admin(
+    deps: &UsersDeps,
+    username: &str,
+    password: &str,
+    display_name: Option<&str>,
+    email: Option<&str>,
+    setup_done: &str,
+) -> Result<UserResponse, UsersError> {
+    create_local_user(
+        deps,
+        username,
+        password,
+        display_name,
+        email,
+        Role::Admin,
+        true,
+    )
+    .await
+    .map_err(|error| match error {
+        UsersError::Conflict { .. } => UsersError::Conflict {
+            message: setup_done.to_owned(),
+        },
+        other => other,
+    })
+}
+
+async fn create_local_user(
+    deps: &UsersDeps,
+    username: &str,
+    password: &str,
+    display_name: Option<&str>,
+    email: Option<&str>,
+    role: Role,
+    first_user: bool,
+) -> Result<UserResponse, UsersError> {
     let (lower, display) = validate_username(username)?;
     validate_password(password)?;
     screen_password(deps, password).await?;
@@ -702,18 +744,27 @@ pub async fn admin_create_user(
     };
     // One transaction for the account and its password: a crash between
     // two writes would leave a passwordless account (fatal for first setup).
-    deps.users
-        .insert_with_local_credential(
-            user.clone(),
-            LocalCredential {
-                id: deps.ids.new_id(),
-                user_id,
-                scheme: native_scheme().to_owned(),
-                hash,
-            },
-        )
-        .await
-        .map_err(|error| create_insert_error(deps, error))?;
+    let credential = LocalCredential {
+        id: deps.ids.new_id(),
+        user_id,
+        scheme: native_scheme().to_owned(),
+        hash,
+    };
+    if first_user {
+        let created = deps
+            .users
+            .insert_first_user(user.clone(), credential)
+            .await
+            .map_err(|error| create_insert_error(deps, error))?;
+        if !created {
+            return Err(vague_create_conflict());
+        }
+    } else {
+        deps.users
+            .insert_with_local_credential(user.clone(), credential)
+            .await
+            .map_err(|error| create_insert_error(deps, error))?;
+    }
     user_response(deps, &user).await
 }
 
