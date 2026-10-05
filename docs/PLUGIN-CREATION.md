@@ -5,7 +5,9 @@ Every field, method and limit is in [PLUGINS.md](../PLUGINS.md); this page
 shows how the pieces fit.
 
 We will build **catalog-watch**: once an hour it checks that a JSON feed you
-host still answers, and it adds a "Where to buy" link for one artist.
+host still answers, and it offers a "Where to buy" link for one artist.
+(Album pages do not show plugin buy links yet; the plugin is ready for when
+they do.)
 
 ## 1. Make the folder
 

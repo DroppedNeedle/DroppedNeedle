@@ -56,7 +56,7 @@
 			<h2 class="card-title">Plugins</h2>
 		</div>
 		<p class="text-sm text-base-content/60">
-			Plugins add download sources, scrobble webhooks, buy links and more. Each one runs as its own
+			Plugins add download sources, scrobble webhooks, streaming and more. Each one runs as its own
 			program on your server, with the same file and network access as DroppedNeedle. It is not
 			sandboxed: only install plugins you trust. See PLUGINS.md in the repository.
 		</p>

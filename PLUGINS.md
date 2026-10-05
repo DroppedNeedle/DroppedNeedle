@@ -1,8 +1,8 @@
 # DroppedNeedle plugins
 
 Plugins add things DroppedNeedle does not do on its own: another place to
-download from, a webhook for every play, buy links on album pages, a bit of
-extra metadata. They work much like community plugins in Lidarr: someone
+download from, a webhook for every play, audio for tracks you do not have,
+events for your home automation. They work much like community plugins in Lidarr: someone
 publishes a plugin in a GitHub repository, you paste the URL, and DroppedNeedle
 installs it.
 
@@ -62,10 +62,17 @@ The preview lists the plugin's name, version, author, the exact commit, and
 what the plugin asks to do. Press **Install** to write it. The plugin arrives
 disabled; enable it, fill in its settings, and save.
 
-To update later, press **Update** on the plugin. A plugin installed from
-releases moves to the newest release. One pinned to a tag, branch or commit
-stays where it is unless you give it a new version. Updating keeps your
-settings and the plugin's data.
+To update later, press **Update** on the plugin. What moves depends on how
+it was installed:
+
+- From releases (a plain repository URL): to the newest release.
+- From a branch (a `/tree/` URL, or the default branch of a repository with
+  no releases): to the branch's newest commit, only when you press Update.
+- From a tag or a commit: nowhere. Those pins stay until you install a
+  different version.
+
+Nothing updates on its own. Updating keeps your settings and the plugin's
+data.
 
 ### By hand
 
@@ -184,10 +191,10 @@ server carries on as if the plugin had said nothing.
 | Capability | Methods | Time limit | When a plugin fails |
 |---|---|---|---|
 | `scrobbler` | `on_scrobble(event)` | 10 s | the play is still recorded |
-| `purchase_links` | `purchase_links(artist, album, release_group_mbid)` | 10 s | no links from it |
+| `purchase_links` (not shown yet) | `purchase_links(artist, album, release_group_mbid)` | 10 s | no links from it |
 | `subscriber` | `on_event(event)` | 5 s | that event is skipped |
 | `publisher` | `handle_route(method, subpath, query, body)` for `[[route]]`s; `await ctx.publish(kind, payload)` | 5 s | the route answers 502 |
-| `metadata_provider` | `enrich_artist(...)`, `enrich_album(...)` | 15 s | nothing is filled in |
+| `metadata_provider` (not shown yet) | `enrich_artist(...)`, `enrich_album(...)` | 15 s | nothing is filled in |
 | `scheduler` | `on_tick()` | the interval | the next tick runs as normal |
 | `streaming_source` | `resolve_stream(recording_mbid, user_id)` | 5 s | the next plugin is asked |
 | `indexer` | `search_album(...)`, `search_track(...)` | 35 s | no results from it |
@@ -206,6 +213,10 @@ the background; the player never waits for it.
 Example: `examples/plugins/webhook-scrobbler`.
 
 ### purchase_links
+
+**Not shown yet.** The server accepts and runs `purchase_links` plugins, but
+the album page in this version does not ask them for links yet. The
+contract below is what the page will use.
 
 `purchase_links(artist, album, release_group_mbid)` returns a list of
 `PluginPurchaseLink(label, url, kind)`, where `kind` is `digital`, `physical`
@@ -270,6 +281,10 @@ Example: `examples/plugins/events-echo-toy`.
 
 ### metadata_provider
 
+**Not shown yet.** The server accepts and runs `metadata_provider` plugins,
+but the artist and album pages in this version do not ask them yet. The
+contract and merge rules below are what the pages will use.
+
 `enrich_artist(*, artist_name, mbid=None, timeout=...)` and
 `enrich_album(*, artist_name, album_title, mbid=None, timeout=...)` return a
 `PluginArtistEnrichment` / `PluginAlbumEnrichment` (`biography`, `links`,
@@ -292,7 +307,8 @@ is logged and the next one runs as normal; missed ticks are not made up. With
 
 For state that should survive restarts, use `await ctx.state_set(key, value)`
 and `await ctx.state_get(key)`: small strings (up to 1 MiB each) that the
-server keeps in its database for you. Files in `ctx.data_dir` also survive.
+server keeps in its database for you (at most 1000 keys and 64 MiB per
+plugin). Files in `ctx.data_dir` also survive.
 
 Example: `examples/plugins/http-catalog`.
 
@@ -308,14 +324,18 @@ not have the track. They are asked in name order and the first answer wins.
 Before anything is served, DroppedNeedle checks the answer:
 
 - A `path` (relative paths are inside the plugin folder) must resolve, after
-  symlinks, to a file inside the plugin folder, the folder in the plugin's
-  `downloads_dir` setting if it has one, or a library folder. It is then
-  served like a library file, with seeking and transcoding.
+  symlinks, to a file inside the plugin folder, its data folder, the folder
+  in the plugin's `downloads_dir` setting if it has one, or a library
+  folder. It is then served like a library file, with seeking and
+  transcoding.
 - A `url` must be `http` or `https`, and the host must resolve to public
-  addresses only: no `localhost`, private networks, link-local or similar.
-  The server checks the address it actually connects to and up to three
-  redirects, each checked again. The audio is passed through as-is, without
-  seeking or transcoding.
+  internet addresses only: no `localhost`, private networks, link-local,
+  or IPv6 addresses outside global unicast (IPv4 hidden inside IPv6 is
+  checked as IPv4). The server connects directly, without any proxy, checks
+  the address it actually connected to, and follows up to three redirects,
+  each checked again. The server must answer within 10 seconds and keep
+  sending at least every 30 seconds; a stream stops at 500 MiB. The audio
+  is passed through as-is, without seeking or transcoding.
 
 Plugin streams are reachable through Subsonic and Jellyfin clients (when the
 library misses) and at `/api/v3/stream/plugin/<recording mbid>`.
@@ -492,8 +512,9 @@ Answer an unknown method with error code `-32601`; the server treats that as
 | `host.state.get` | `{key}` | `{value}` (`null` when unset) |
 | `host.state.set` | `{key, value}` | `{}` |
 
-State keys are 1-128 letters, digits, `_`, `-`, `.` or `:`; values are
-strings up to 1 MiB. `host.log` is a notification with `{level, message}`
+State keys are 1-64 lowercase letters, digits, `_`, `-` or `/`, starting
+with a letter or digit; values are strings up to 1 MiB. One plugin may keep
+at most 1000 keys and 64 MiB in total. `host.log` is a notification with `{level, message}`
 (`error`, `warning`, `info`, `debug`) for plugins that prefer it to stderr.
 
 ## Examples
