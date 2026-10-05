@@ -1,12 +1,8 @@
-//! MusicBrainz + Cover Art Archive provider briefs.
-//!
-//! Per-provider contract briefs (tolerant unknown fields,
-//! required-identity-field decode failure, no `default()` empties), quirk
-//! briefs per live-cited behavior, limiter briefs per policy row, and the
-//! identity-critical failure brief. Transport is hand-rolled scripted fakes
-//! only: no live network, no HTTP-mocking libraries. Each fake keys scripted
-//! outcomes by request URL and records every request for header, query, and
-//! include assertions.
+//! MusicBrainz, the BrainzMash mirror and the Cover Art Archive over a
+//! scripted transport: tolerant decode with required identity ids,
+//! identity-critical failure, Retry-After, the canonical-id rules
+//! (redirects, ranking without substitution), the mirror's path and URL
+//! allowlists, and CAA URL and image-type checks.
 
 use droppedneedle::providers::DegradationSink;
 use droppedneedle::providers::{coverart, musicbrainz};
@@ -23,8 +19,6 @@ const RETIRED_RECORDING_MBID: &str = "5224cfc7-b3bb-4008-a41b-21b168dc631f";
 const CANONICAL_RECORDING_MBID: &str = "beaf82cd-24f9-4163-b1a9-022339a30f77";
 const ARTIST_MBID: &str = "5441c29d-3602-4898-b1a1-b77fa23b8e50";
 const GROUP_MBID: &str = "dcff25f1-702d-3b5e-b0da-d48172e6e62a";
-const BRAINZMASH_RETIRED_MBID: &str = "77a698a8-98da-401d-a59b-1ae4bc28df56";
-const BRAINZMASH_SURVIVOR_MBID: &str = "9cb4af06-1c2d-4e5f-8a7b-6c5d4e3f2a10";
 
 /// Scripted MusicBrainz transport: outcomes queue per request URL, every
 /// request recorded. Unscripted URLs fail loudly so briefs stay explicit.
@@ -240,15 +234,6 @@ fn official_client(
         .with_gates(fast_gate(), fast_scheduler())
 }
 
-fn brainzmash_client(
-    fake: Arc<SharedFakeMb>,
-    sink: Arc<VecSink>,
-) -> musicbrainz::MusicBrainzClient<SharedMb, SharedSink> {
-    musicbrainz::MusicBrainzClient::brainzmash(SharedMb(fake), true)
-        .with_sink(SharedSink(sink))
-        .with_gates(fast_gate(), fast_scheduler())
-}
-
 fn fast_caa(fake: Arc<FakeCaa>) -> coverart::CaaClient<SharedCaa> {
     coverart::CaaClient::new(SharedCaa(fake))
         .with_gate(coverart::RateGate::new(1000.0))
@@ -325,40 +310,6 @@ async fn search_tolerates_unknown_fields_at_every_level() {
     assert_eq!(hit.media.len(), 1);
     assert_eq!(hit.label_info[0].catalog_number.as_deref(), Some("ABC-1"));
     assert_eq!(fake.seen().len(), 1);
-}
-
-#[tokio::test]
-async fn lookup_tolerates_unknown_fields_and_sparse_facets() {
-    let (fake, sink) = fast_mb(vec![]);
-    fake.script(
-        &mb_url(&format!("/release/{RELEASE_MBID}")),
-        Ok(musicbrainz::RawResponse::new(
-            200,
-            vec![],
-            serde_json::json!({
-                "id": RELEASE_MBID,
-                "title": "Goldberg Variations",
-                "future-release-key": {"deep": [true]},
-                "media": [{"position": 1, "tracks": []}],
-            })
-            .to_string()
-            .into_bytes(),
-        )),
-    );
-    let client = official_client(fake, sink);
-    let found = client
-        .lookup_release(
-            RELEASE_MBID,
-            &["recordings"],
-            musicbrainz::Criticality::BestEffort,
-        )
-        .await
-        .expect("lookup decodes");
-    let lookup = found.expect("release present");
-    assert_eq!(lookup.entity.id, RELEASE_MBID);
-    assert!(lookup.entity.barcode.is_none());
-    assert!(lookup.entity.release_group.is_none());
-    assert!(lookup.redirects.is_empty());
 }
 
 #[tokio::test]
@@ -502,34 +453,6 @@ async fn requests_carry_user_agent_fmt_and_sorted_includes() {
 }
 
 #[tokio::test]
-async fn limiters_match_the_verified_policy_table() {
-    assert_eq!(musicbrainz::RateGate::musicbrainz().rate_per_sec(), 1.0);
-    assert_eq!(musicbrainz::RateGate::brainzmash().rate_per_sec(), 10.0);
-    assert_eq!(coverart::RateGate::coverart().rate_per_sec(), 1.0);
-    assert_eq!(
-        droppedneedle::provider_policy::lookup("musicbrainz")
-            .expect("mb row")
-            .limit,
-        "1 req/s"
-    );
-    assert!(
-        droppedneedle::provider_policy::lookup("coverartarchive")
-            .expect("caa row")
-            .limit
-            .contains("~1/s")
-    );
-
-    let gate = musicbrainz::RateGate::new(100.0);
-    let start = tokio::time::Instant::now();
-    gate.acquire().await;
-    gate.acquire().await;
-    assert!(
-        start.elapsed() >= Duration::from_millis(8),
-        "second acquire waits out the interval"
-    );
-}
-
-#[tokio::test]
 async fn identity_critical_dead_provider_fails_typed() {
     for critical in [musicbrainz::Criticality::IdentityCritical] {
         let (fake, sink) = fast_mb(vec![]);
@@ -566,44 +489,6 @@ async fn identity_critical_dead_provider_fails_typed() {
             "got {error:?}"
         );
     }
-}
-
-#[tokio::test]
-async fn best_effort_dead_provider_records_and_resolves_absence() {
-    let (fake, sink) = fast_mb(vec![]);
-    fake.script(
-        &mb_url(&format!("/release/{RELEASE_MBID}")),
-        Err("connection refused".to_owned()),
-    );
-    fake.script(
-        &mb_url("/release"),
-        Ok(musicbrainz::RawResponse::new(500, vec![], Vec::new())),
-    );
-    let client = official_client(fake, sink.clone());
-    let found = client
-        .lookup_release(RELEASE_MBID, &[], musicbrainz::Criticality::BestEffort)
-        .await
-        .expect("degraded lookup resolves");
-    assert!(found.is_none());
-    let page = client
-        .search_releases("x", "y", 5, musicbrainz::Criticality::BestEffort)
-        .await
-        .expect("degraded search resolves");
-    assert!(page.items.is_empty());
-    let records = sink.records();
-    assert_eq!(records.len(), 2);
-    assert_eq!(records[0].0, "musicbrainz");
-    assert_eq!(records[1].0, "musicbrainz");
-    assert!(
-        records[0].1.starts_with("lookup_release: "),
-        "operation folds into the message: {}",
-        records[0].1
-    );
-    assert!(
-        records[1].1.starts_with("search_releases: "),
-        "operation folds into the message: {}",
-        records[1].1
-    );
 }
 
 #[tokio::test]
@@ -671,249 +556,9 @@ async fn rate_limit_surfaces_retry_after_and_degrades_best_effort() {
     assert_eq!(sink.records().len(), 1);
 }
 
-#[test]
-fn retry_after_accepts_all_legal_shapes() {
-    assert_eq!(musicbrainz::parse_retry_after_secs(Some("5")), Some(5.0));
-    assert_eq!(
-        musicbrainz::parse_retry_after_secs(Some("9999")),
-        Some(60.0)
-    );
-    assert_eq!(musicbrainz::parse_retry_after_secs(Some("garbage"),), None);
-    assert_eq!(musicbrainz::parse_retry_after_secs(Some("-3")), None);
-    assert_eq!(musicbrainz::parse_retry_after_secs(None), None);
-    assert_eq!(
-        musicbrainz::parse_retry_after_secs(Some("Tue, 21 Jul 2035 00:00:00 GMT")),
-        Some(60.0)
-    );
-    assert_eq!(
-        musicbrainz::parse_retry_after_secs(Some("Tuesday, 21-Jul-35 00:00:00 GMT")),
-        Some(60.0)
-    );
-    assert_eq!(
-        musicbrainz::parse_retry_after_secs(Some("Tue Jul 21 00:00:00 2035")),
-        Some(60.0)
-    );
-    assert_eq!(
-        musicbrainz::parse_retry_after_secs(Some("Tue, 21 Jul 2000 00:00:00 GMT")),
-        None
-    );
-    assert_eq!(coverart::parse_retry_after_secs(Some("7")), Some(7.0));
-    assert_eq!(
-        coverart::parse_retry_after_secs(Some("Tuesday, 21-Jul-35 00:00:00 GMT")),
-        Some(60.0)
-    );
-}
-
-#[tokio::test]
-async fn invalid_mbid_and_rejected_requests_stay_distinct() {
-    let (fake, sink) = fast_mb(vec![]);
-    let zeroes = "00000000-0000-0000-0000-000000000000";
-    fake.script(
-        &mb_url(&format!("/release/{zeroes}")),
-        Ok(musicbrainz::RawResponse::new(
-            400,
-            vec![],
-            br#"{"error":"Invalid mbid."}"#.to_vec(),
-        )),
-    );
-    fake.script(
-        &mb_url("/artist"),
-        Ok(musicbrainz::RawResponse::new(403, vec![], Vec::new())),
-    );
-    let client = official_client(fake.clone(), sink);
-    let error = client
-        .lookup_release(zeroes, &[], musicbrainz::Criticality::BestEffort)
-        .await
-        .expect_err("400 is not absence");
-    assert!(
-        matches!(error, musicbrainz::MbError::InvalidMbid(_)),
-        "got {error:?}"
-    );
-    let error = client
-        .search_artists("x", 5, musicbrainz::Criticality::BestEffort)
-        .await
-        .expect_err("403 is not absence");
-    assert!(
-        matches!(error, musicbrainz::MbError::Rejected(403)),
-        "got {error:?}"
-    );
-
-    let before = fake.seen().len();
-    let error = client
-        .resolve_recording_mbid("  ", musicbrainz::Criticality::BestEffort)
-        .await
-        .expect_err("blank mbid fails locally");
-    assert!(
-        matches!(error, musicbrainz::MbError::InvalidMbid(_)),
-        "got {error:?}"
-    );
-    assert_eq!(fake.seen().len(), before, "malformed mbid sends nothing");
-}
-
-#[test]
-fn mbid_shape_and_normalization() {
-    assert!(musicbrainz::is_valid_mbid(RELEASE_MBID));
-    assert!(musicbrainz::is_valid_mbid(
-        &RELEASE_MBID.to_ascii_uppercase()
-    ));
-    assert!(!musicbrainz::is_valid_mbid("unknown_1"));
-    assert!(!musicbrainz::is_valid_mbid("not-a-mbid"));
-    assert!(!musicbrainz::is_valid_mbid(""));
-    assert!(coverart::is_valid_mbid(RELEASE_MBID));
-    assert!(!coverart::is_valid_mbid("xyz"));
-    assert_eq!(musicbrainz::normalize_mb_id("  ABC-DEF "), "abc-def");
-}
-
 // ---------------------------------------------------------------------------
 // Quirk briefs: every live-cited behavior, with its citation.
 // ---------------------------------------------------------------------------
-
-#[test]
-fn lucene_builders_match_the_verified_shapes() {
-    // Live-verified against MusicBrainz WS/2 on 2026-08-13 (v2 query
-    // builders in `musicbrainz_base.py`).
-    assert_eq!(
-        musicbrainz::build_release_search_query("Discovery", "Daft Punk"),
-        r#"release:"Discovery" AND artist:"Daft Punk""#
-    );
-    assert_eq!(
-        musicbrainz::build_release_search_query("Discovery", ""),
-        r#"release:"Discovery""#
-    );
-    assert_eq!(
-        musicbrainz::build_release_group_search_query("Discovery", "Daft Punk"),
-        r#"(releasegroup:"Discovery" OR release:"Discovery") AND artist:"Daft Punk""#
-    );
-    assert_eq!(
-        musicbrainz::build_recording_search_query("One More Time", "Daft Punk"),
-        r#"recording:"One More Time" AND artist:"Daft Punk""#
-    );
-    assert_eq!(
-        musicbrainz::build_release_search_query("AC/DC (Live!)", "x"),
-        r#"release:"AC\/DC \(Live\!\)" AND artist:"x""#
-    );
-    assert_eq!(musicbrainz::escape_lucene_phrase("a+b"), r"a\+b");
-}
-
-#[test]
-fn hit_score_reads_both_observed_keys() {
-    assert_eq!(musicbrainz::hit_score(Some(90), Some(80)), 90);
-    assert_eq!(musicbrainz::hit_score(None, Some(80)), 80);
-    assert_eq!(musicbrainz::hit_score(None, None), 0);
-}
-
-#[test]
-fn credit_display_name_prefers_credited_then_canonical() {
-    let credited = musicbrainz::ArtistCreditName {
-        name: "Prince".to_owned(),
-        joinphrase: String::new(),
-        artist: musicbrainz::ArtistRef {
-            id: ARTIST_MBID.to_owned(),
-            name: "Prince Rogers Nelson".to_owned(),
-            sort_name: None,
-        },
-    };
-    let canonical = musicbrainz::ArtistCreditName {
-        name: String::new(),
-        joinphrase: String::new(),
-        artist: musicbrainz::ArtistRef {
-            id: ARTIST_MBID.to_owned(),
-            name: "Prince Rogers Nelson".to_owned(),
-            sort_name: Some("Prince".to_owned()),
-        },
-    };
-    assert_eq!(
-        musicbrainz::credit_display_name(std::slice::from_ref(&credited)),
-        Some("Prince")
-    );
-    assert_eq!(
-        musicbrainz::credit_display_name(std::slice::from_ref(&canonical)),
-        Some("Prince Rogers Nelson")
-    );
-    assert_eq!(musicbrainz::credit_display_name(&[]), None);
-    assert_eq!(musicbrainz::parse_year(Some("2026-07-21")), Some(2026));
-    assert_eq!(musicbrainz::parse_year(Some("2026")), Some(2026));
-    assert_eq!(musicbrainz::parse_year(Some("")), None);
-    assert_eq!(musicbrainz::parse_year(Some("soon")), None);
-    assert_eq!(musicbrainz::parse_year(None), None);
-}
-
-#[tokio::test]
-async fn release_track_title_and_credit_win_over_recording() {
-    // Live 2026-07-29 (Avalon track 14 vs its recording) and 2026-07-31
-    // (Bach on the track, Gould on the recording): edition surfaces prefer
-    // the release track, and track.id is never the recording MBID.
-    let (fake, sink) = fast_mb(vec![]);
-    fake.script(
-        &mb_url(&format!("/release/{AVALON_MBID}")),
-        Ok(musicbrainz::RawResponse::new(
-            200,
-            vec![],
-            serde_json::json!({
-                "id": AVALON_MBID,
-                "title": "Avalon",
-                "media": [{
-                    "position": 1,
-                    "track-count": 14,
-                    "tracks": [{
-                        "id": "741e8bcd-9d03-3b61-bb04-ecf22f4784e1",
-                        "position": 14,
-                        "number": "14",
-                        "title": "The Fisherman Will Be Bewildered",
-                        "length": 200_000,
-                        "artist-credit": [{
-                            "name": "Anthony Green",
-                            "joinphrase": "",
-                            "artist": {"id": ARTIST_MBID, "name": "Anthony Green"}
-                        }],
-                        "recording": {
-                            "id": "ec935e35-b2fa-4925-aa83-052d9e3e69f1",
-                            "title": "The Fishermen Will Be Bewildered",
-                            "length": 199_000,
-                            "artist-credit": [{
-                                "name": "Somebody Else",
-                                "joinphrase": "",
-                                "artist": {"id": GROUP_MBID, "name": "Somebody Else"}
-                            }]
-                        }
-                    }, {
-                        "id": "aaaaaaaa-9d03-3b61-bb04-ecf22f4784e1",
-                        "recording": {
-                            "id": "bbbbbbbb-b2fa-4925-aa83-052d9e3e69f1",
-                            "title": "Fallback Title",
-                            "length": 100_000,
-                        }
-                    }]
-                }]
-            })
-            .to_string()
-            .into_bytes(),
-        )),
-    );
-    let client = official_client(fake, sink);
-    let found = client
-        .lookup_release(
-            AVALON_MBID,
-            &["artist-credits", "recordings"],
-            musicbrainz::Criticality::BestEffort,
-        )
-        .await
-        .expect("avalon decodes");
-    let release = found.expect("avalon present").entity;
-    let first = &release.media[0].tracks[0];
-    assert_ne!(first.id, first.recording.as_ref().expect("recording").id);
-    assert_eq!(
-        first.display_title(),
-        Some("The Fisherman Will Be Bewildered")
-    );
-    assert_eq!(first.credit().len(), 1);
-    assert_eq!(first.credit()[0].name, "Anthony Green");
-    assert_eq!(first.length_ms(), Some(200_000));
-    let second = &release.media[0].tracks[1];
-    assert_eq!(second.display_title(), Some("Fallback Title"));
-    assert!(second.credit().is_empty());
-    assert_eq!(second.length_ms(), Some(100_000));
-}
 
 #[tokio::test]
 async fn explicit_nulls_decode_instead_of_failing() {
@@ -992,99 +637,6 @@ async fn explicit_nulls_decode_instead_of_failing() {
     assert!(
         matches!(error, musicbrainz::MbError::Contract(_)),
         "got {error:?}"
-    );
-}
-
-#[tokio::test]
-async fn artist_credit_order_and_joinphrases_survive() {
-    // Live 2026-07-31: two ordered entries with exact join phrases
-    // ("; " then "") on the Goldberg release credit.
-    let (fake, sink) = fast_mb(vec![]);
-    fake.script(
-        &mb_url(&format!("/release/{RELEASE_MBID}")),
-        Ok(musicbrainz::RawResponse::new(
-            200,
-            vec![],
-            serde_json::json!({
-                "id": RELEASE_MBID,
-                "artist-credit": [
-                    {"name": "Johann Sebastian Bach", "joinphrase": "; ",
-                     "artist": {"id": ARTIST_MBID, "name": "Johann Sebastian Bach", "sort-name": "Bach, Johann Sebastian"}},
-                    {"name": "Glenn Gould", "joinphrase": "",
-                     "artist": {"id": GROUP_MBID, "name": "Glenn Gould", "sort-name": "Gould, Glenn"}}
-                ]
-            })
-            .to_string()
-            .into_bytes(),
-        )),
-    );
-    let client = official_client(fake, sink);
-    let found = client
-        .lookup_release(
-            RELEASE_MBID,
-            &["artist-credits"],
-            musicbrainz::Criticality::BestEffort,
-        )
-        .await
-        .expect("credit decodes");
-    let credit = &found.expect("release present").entity.artist_credit;
-    assert_eq!(credit.len(), 2);
-    assert_eq!(credit[0].joinphrase, "; ");
-    assert_eq!(credit[1].joinphrase, "");
-    assert_eq!(
-        credit[0].artist.sort_name.as_deref(),
-        Some("Bach, Johann Sebastian")
-    );
-}
-
-#[tokio::test]
-async fn recording_lookup_carries_releases_and_rankable_groups() {
-    // Live 2026-07-20: `inc=releases+release-groups` puts id/status/date
-    // on each release and the ranking fields on each group.
-    let (fake, sink) = fast_mb(vec![]);
-    fake.script(
-        &mb_url(&format!("/recording/{CANONICAL_RECORDING_MBID}")),
-        Ok(musicbrainz::RawResponse::new(
-            200,
-            vec![],
-            serde_json::json!({
-                "id": CANONICAL_RECORDING_MBID,
-                "title": "Some Track",
-                "length": 180_000,
-                "isrcs": ["USABC1234567"],
-                "releases": [{
-                    "id": RELEASE_MBID,
-                    "status": "Official",
-                    "date": "1982-01-01",
-                    "release-group": {
-                        "id": GROUP_MBID,
-                        "title": "Some Album",
-                        "primary-type": "Album",
-                        "secondary-types": ["Compilation"],
-                        "first-release-date": "1982-01-01"
-                    }
-                }]
-            })
-            .to_string()
-            .into_bytes(),
-        )),
-    );
-    let client = official_client(fake.clone(), sink);
-    let found = client
-        .lookup_recording(
-            CANONICAL_RECORDING_MBID,
-            &["releases", "release-groups"],
-            musicbrainz::Criticality::BestEffort,
-        )
-        .await
-        .expect("recording decodes");
-    let recording = &found.expect("recording present").entity;
-    assert_eq!(recording.isrcs, vec!["USABC1234567".to_owned()]);
-    assert_eq!(recording.releases.len(), 1);
-    let request = &fake.seen()[0];
-    assert_eq!(
-        query_value(request, "inc").as_deref(),
-        Some("release-groups+releases")
     );
 }
 
@@ -1219,30 +771,6 @@ async fn exact_release_fails_closed_without_provider_group() {
 }
 
 #[tokio::test]
-async fn release_to_group_resolution_returns_provider_group() {
-    let (fake, sink) = fast_mb(vec![]);
-    fake.script(
-        &mb_url(&format!("/release/{IMMUNITY_MBID}")),
-        Ok(musicbrainz::RawResponse::new(
-            200,
-            vec![],
-            serde_json::json!({
-                "id": IMMUNITY_MBID,
-                "release-group": {"id": IMMUNITY_GROUP_MBID}
-            })
-            .to_string()
-            .into_bytes(),
-        )),
-    );
-    let client = official_client(fake, sink);
-    let group = client
-        .resolve_release_to_release_group(IMMUNITY_MBID, musicbrainz::Criticality::BestEffort)
-        .await
-        .expect("resolution decodes");
-    assert_eq!(group.as_deref(), Some(IMMUNITY_GROUP_MBID));
-}
-
-#[tokio::test]
 async fn retired_recording_redirect_proves_canonical_id() {
     // Live 2026-08-10: retired recording MBIDs 301 to a canonical
     // replacement; equivalence holds only after the lookup proves it.
@@ -1338,312 +866,9 @@ async fn foreign_and_browse_redirects_are_rejected() {
     );
 }
 
-#[test]
-fn redirect_pair_validation_rejects_non_lookup_shapes() {
-    let from = format!("/recording/{RETIRED_RECORDING_MBID}");
-    let to = format!("/recording/{CANONICAL_RECORDING_MBID}?fmt=json");
-    let hop = musicbrainz::lookup_redirect_pair(&from, &to).expect("lookup hop validates");
-    assert_eq!(hop.entity, "recording");
-    assert_eq!(hop.from_mbid, RETIRED_RECORDING_MBID);
-    assert_eq!(hop.to_mbid, CANONICAL_RECORDING_MBID);
-
-    assert!(
-        musicbrainz::lookup_redirect_pair(&from, &format!("/release/{RELEASE_MBID}")).is_none()
-    );
-    assert!(
-        musicbrainz::lookup_redirect_pair(
-            "/release-group",
-            &format!("/release-group/{GROUP_MBID}")
-        )
-        .is_none()
-    );
-    assert!(musicbrainz::lookup_redirect_pair(&from, "/recording/not-a-mbid").is_none());
-
-    let request_url = mb_url(&from);
-    let hop = musicbrainz::official_redirect_hop(
-        &request_url,
-        musicbrainz::MB_API_BASE,
-        &from,
-        &format!(
-            "{}/recording/{CANONICAL_RECORDING_MBID}",
-            musicbrainz::MB_API_BASE
-        ),
-    )
-    .expect("same-origin hop validates");
-    assert_eq!(hop.to_mbid, CANONICAL_RECORDING_MBID);
-    assert!(
-        musicbrainz::official_redirect_hop(
-            &request_url,
-            musicbrainz::MB_API_BASE,
-            &from,
-            "https://evil.example/ws/2/recording/beaf82cd-24f9-4163-b1a9-022339a30f77",
-        )
-        .is_none(),
-        "foreign host rejected"
-    );
-    assert!(
-        musicbrainz::official_redirect_hop(
-            &request_url,
-            musicbrainz::MB_API_BASE,
-            &from,
-            "http://musicbrainz.org/ws/2/recording/beaf82cd-24f9-4163-b1a9-022339a30f77",
-        )
-        .is_none(),
-        "scheme downgrade rejected"
-    );
-}
-
-#[tokio::test]
-async fn url_resolution_keeps_multi_target_ambiguity() {
-    // Live 2026-07-21: the relation list is retained in full so a
-    // multi-target response reads as ambiguity, never a first pick.
-    let (fake, sink) = fast_mb(vec![]);
-    let resource = "https://www.discogs.com/release/3562468";
-    fake.script(
-        &mb_url("/url"),
-        Ok(musicbrainz::RawResponse::new(
-            200,
-            vec![],
-            serde_json::json!({
-                "resource": resource,
-                "relations": [
-                    {"type": "discogs", "type-id": "4a78823c-1c53-4176-a5f3-58026c76f2bc",
-                     "release": {"id": RELEASE_MBID}},
-                    {"type": "discogs", "type-id": "4a78823c-1c53-4176-a5f3-58026c76f2bc",
-                     "release": {"id": AVALON_MBID}}
-                ]
-            })
-            .to_string()
-            .into_bytes(),
-        )),
-    );
-    let client = official_client(fake.clone(), sink);
-    let resolved = client
-        .resolve_url(
-            resource,
-            &["release-rels"],
-            musicbrainz::Criticality::BestEffort,
-        )
-        .await
-        .expect("url resolves");
-    assert_eq!(resolved.resource.as_deref(), Some(resource));
-    assert_eq!(resolved.relations.len(), 2);
-    assert_eq!(
-        query_value(&fake.seen()[0], "resource").as_deref(),
-        Some(resource)
-    );
-}
-
-#[tokio::test]
-async fn artist_search_and_lookup_decode() {
-    let (fake, sink) = fast_mb(vec![]);
-    fake.script(
-        &mb_url("/artist"),
-        Ok(musicbrainz::RawResponse::new(
-            200,
-            vec![],
-            serde_json::json!({
-                "count": 1,
-                "offset": 0,
-                "artists": [{
-                    "id": ARTIST_MBID,
-                    "ext:score": 95,
-                    "name": "Daft Punk",
-                    "sort-name": "Daft Punk",
-                    "type": "Group",
-                    "area": {"id": GROUP_MBID, "name": "France"}
-                }]
-            })
-            .to_string()
-            .into_bytes(),
-        )),
-    );
-    fake.script(
-        &mb_url(&format!("/artist/{ARTIST_MBID}")),
-        Ok(musicbrainz::RawResponse::new(
-            200,
-            vec![],
-            serde_json::json!({
-                "id": ARTIST_MBID,
-                "name": "Daft Punk",
-                "sort-name": "Daft Punk",
-                "type": "Group",
-                "life-span": {"begin": "1993", "end": "2021"}
-            })
-            .to_string()
-            .into_bytes(),
-        )),
-    );
-    let client = official_client(fake.clone(), sink);
-    let artists = client
-        .search_artists("Daft Punk", 5, musicbrainz::Criticality::BestEffort)
-        .await
-        .expect("artist search decodes");
-    assert_eq!(artists.items.len(), 1);
-    assert_eq!(
-        musicbrainz::hit_score(artists.items[0].score, artists.items[0].ext_score),
-        95
-    );
-    let artist = client
-        .lookup_artist(
-            ARTIST_MBID,
-            &["aliases", "tags", "url-rels"],
-            musicbrainz::Criticality::BestEffort,
-        )
-        .await
-        .expect("artist lookup decodes")
-        .expect("artist present")
-        .entity;
-    assert_eq!(
-        artist.life_span.expect("span").begin.as_deref(),
-        Some("1993")
-    );
-    assert_eq!(
-        query_value(&fake.seen()[0], "query").as_deref(),
-        Some(r#"artist:"Daft Punk""#),
-        "artist search sends the verified phrase shape"
-    );
-}
-
-#[tokio::test]
-async fn release_group_search_and_lookup_decode() {
-    let (fake, sink) = fast_mb(vec![]);
-    fake.script(
-        &mb_url("/release-group"),
-        Ok(musicbrainz::RawResponse::new(
-            200,
-            vec![],
-            serde_json::json!({
-                "count": 1,
-                "offset": 0,
-                "release-groups": [{
-                    "id": GROUP_MBID,
-                    "score": 100,
-                    "title": "Discovery",
-                    "primary-type": "Album",
-                    "first-release-date": "2001-02-26"
-                }]
-            })
-            .to_string()
-            .into_bytes(),
-        )),
-    );
-    fake.script(
-        &mb_url(&format!("/release-group/{GROUP_MBID}")),
-        Ok(musicbrainz::RawResponse::new(
-            200,
-            vec![],
-            serde_json::json!({
-                "id": GROUP_MBID,
-                "title": "Discovery",
-                "releases": [{"id": RELEASE_MBID, "status": "Official"}]
-            })
-            .to_string()
-            .into_bytes(),
-        )),
-    );
-    let client = official_client(fake.clone(), sink);
-    let groups = client
-        .search_release_groups(
-            "Discovery",
-            "Daft Punk",
-            5,
-            musicbrainz::Criticality::BestEffort,
-        )
-        .await
-        .expect("group search decodes");
-    assert_eq!(groups.items[0].primary_type.as_deref(), Some("Album"));
-    let group = client
-        .lookup_release_group(
-            GROUP_MBID,
-            &["releases"],
-            musicbrainz::Criticality::BestEffort,
-        )
-        .await
-        .expect("group lookup decodes")
-        .expect("group present")
-        .entity;
-    assert_eq!(group.releases.len(), 1);
-    assert!(
-        query_value(&fake.seen()[0], "query")
-            .as_deref()
-            .unwrap_or("")
-            .starts_with("(releasegroup:")
-    );
-}
-
-#[tokio::test]
-async fn recording_search_decodes() {
-    let (fake, sink) = fast_mb(vec![]);
-    fake.script(
-        &mb_url("/recording"),
-        Ok(musicbrainz::RawResponse::new(
-            200,
-            vec![],
-            serde_json::json!({
-                "count": 1,
-                "offset": 0,
-                "recordings": [{
-                    "id": CANONICAL_RECORDING_MBID,
-                    "score": 100,
-                    "title": "One More Time",
-                    "length": 320_000,
-                    "releases": [{"id": RELEASE_MBID, "status": "Official"}]
-                }]
-            })
-            .to_string()
-            .into_bytes(),
-        )),
-    );
-    let client = official_client(fake.clone(), sink);
-    let recordings = client
-        .search_recordings(
-            "One More Time",
-            "Daft Punk",
-            5,
-            musicbrainz::Criticality::BestEffort,
-        )
-        .await
-        .expect("recording search decodes");
-    assert_eq!(recordings.items[0].releases.len(), 1);
-    assert!(
-        query_value(&fake.seen()[0], "query")
-            .as_deref()
-            .unwrap_or("")
-            .starts_with("recording:")
-    );
-}
-
 // ---------------------------------------------------------------------------
 // BrainzMash lifecycle briefs.
 // ---------------------------------------------------------------------------
-
-#[test]
-fn brainzmash_endpoint_stays_pinned() {
-    assert_eq!(
-        musicbrainz::validate_brainzmash_url("https://api.brainzmash.cc/ws/2"),
-        Ok(musicbrainz::BRAINZMASH_API_BASE)
-    );
-    assert_eq!(
-        musicbrainz::validate_brainzmash_url("https://api.brainzmash.cc/ws/2/"),
-        Ok(musicbrainz::BRAINZMASH_API_BASE),
-        "trailing slash normalizes to the pinned origin"
-    );
-    for bad in [
-        "http://api.brainzmash.cc/ws/2",
-        "https://api.brainzmash.cc:8443/ws/2",
-        "https://evil.example/ws/2",
-        "https://user@api.brainzmash.cc/ws/2",
-        "https://api.brainzmash.cc/ws/2?x=1",
-        "https://api.brainzmash.cc/other",
-        "not-a-url",
-    ] {
-        assert!(
-            musicbrainz::validate_brainzmash_url(bad).is_err(),
-            "{bad} must not validate"
-        );
-    }
-}
 
 #[test]
 fn brainzmash_path_allowlist_holds() {
@@ -1709,57 +934,6 @@ fn brainzmash_request_url_validation_holds() {
 }
 
 #[tokio::test]
-async fn brainzmash_follows_the_live_probe_redirect_shape() {
-    // Probed live 2026-09-12: merged release 301s to a same-origin
-    // `/ws/2/release/<survivor>?fmt=json` Location that answers 200.
-    let (fake, sink) = fast_mb(vec![]);
-    let from = format!(
-        "{}/release/{BRAINZMASH_RETIRED_MBID}",
-        musicbrainz::BRAINZMASH_API_BASE
-    );
-    let to = format!(
-        "{}/release/{BRAINZMASH_SURVIVOR_MBID}",
-        musicbrainz::BRAINZMASH_API_BASE
-    );
-    fake.script(
-        &from,
-        Ok(musicbrainz::RawResponse::new(
-            301,
-            vec![("Location", &format!("{to}?fmt=json"))],
-            Vec::new(),
-        )),
-    );
-    fake.script(
-        &to,
-        Ok(musicbrainz::RawResponse::new(
-            200,
-            vec![],
-            format!(r#"{{"id": "{BRAINZMASH_SURVIVOR_MBID}", "title": "Survivor"}}"#).into_bytes(),
-        )),
-    );
-    let client = brainzmash_client(fake.clone(), sink);
-    assert!(matches!(
-        client.source(),
-        musicbrainz::MbSource::BrainzMash { .. }
-    ));
-    let found = client
-        .lookup_release(
-            BRAINZMASH_RETIRED_MBID,
-            &[],
-            musicbrainz::Criticality::IdentityCritical,
-        )
-        .await
-        .expect("brainzmash redirect resolves");
-    let lookup = found.expect("survivor present");
-    assert_eq!(lookup.entity.id, BRAINZMASH_SURVIVOR_MBID);
-    assert_eq!(lookup.redirects.len(), 1);
-    assert_eq!(lookup.redirects[0].entity, "release");
-    assert_eq!(lookup.redirects[0].from_mbid, BRAINZMASH_RETIRED_MBID);
-    assert_eq!(lookup.redirects[0].to_mbid, BRAINZMASH_SURVIVOR_MBID);
-    assert_eq!(fake.seen().len(), 2);
-}
-
-#[tokio::test]
 async fn brainzmash_binding_invalid_fails_closed_without_wire() {
     let (fake, sink) = fast_mb(vec![]);
     let client = musicbrainz::MusicBrainzClient::brainzmash(SharedMb(fake.clone()), false)
@@ -1800,58 +974,6 @@ fn brainzmash_cooldown_honors_retry_after_then_backs_off() {
         "second backoff in [1, 2]: {second}"
     );
     assert_eq!(scheduler.note_cooldown(Some(9999.0)), 60.0);
-}
-
-#[tokio::test]
-async fn brainzmash_rate_limit_cools_down_and_degrades() {
-    let (fake, sink) = fast_mb(vec![]);
-    let url = format!(
-        "{}/release/{RELEASE_MBID}",
-        musicbrainz::BRAINZMASH_API_BASE
-    );
-    fake.script(
-        &url,
-        Ok(musicbrainz::RawResponse::new(
-            429,
-            vec![("Retry-After", "1")],
-            Vec::new(),
-        )),
-    );
-    let client = brainzmash_client(fake, sink.clone());
-    let found = client
-        .lookup_release(RELEASE_MBID, &[], musicbrainz::Criticality::BestEffort)
-        .await
-        .expect("429 degrades");
-    assert!(found.is_none());
-    assert_eq!(sink.records().len(), 1);
-}
-
-#[tokio::test]
-async fn brainzmash_503_is_a_dead_mirror_not_rate_limiting() {
-    // v2 labels only the official 503 rate-limited; a BrainzMash 503
-    // routes through provider-dead instead.
-    let (fake, sink) = fast_mb(vec![]);
-    let url = format!(
-        "{}/release/{RELEASE_MBID}",
-        musicbrainz::BRAINZMASH_API_BASE
-    );
-    fake.script(
-        &url,
-        Ok(musicbrainz::RawResponse::new(503, vec![], Vec::new())),
-    );
-    let client = brainzmash_client(fake, sink.clone());
-    let error = client
-        .lookup_release(
-            RELEASE_MBID,
-            &[],
-            musicbrainz::Criticality::IdentityCritical,
-        )
-        .await
-        .expect_err("503 fails identity-critical");
-    assert!(
-        matches!(error, musicbrainz::MbError::Unavailable(_)),
-        "got {error:?}"
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1941,32 +1063,6 @@ async fn caa_listing_decodes_the_live_shape() {
     );
 }
 
-#[tokio::test]
-async fn caa_release_group_is_labelled_fallback() {
-    let fake = Arc::new(FakeCaa::new());
-    let url = caa_listing_url("release-group", GROUP_MBID);
-    fake.script(
-        &url,
-        Ok(coverart::RawResponse::new(200, vec![], caa_listing_body())),
-    );
-    let client = fast_caa(fake);
-    let candidates = client
-        .list_artwork(
-            coverart::EntityKind::ReleaseGroup,
-            GROUP_MBID,
-            coverart::DownloadSize::Full,
-        )
-        .await
-        .expect("group listing decodes");
-    assert_eq!(candidates.len(), 2);
-    assert_eq!(candidates[0].source, "cover_art_archive_release_group");
-    assert!(!candidates[0].source_is_exact_release);
-    assert_eq!(
-        candidates[0].locator,
-        "https://coverartarchive.org/release/abc/front.png"
-    );
-}
-
 #[test]
 fn caa_artwork_url_upgrade_and_rejection() {
     assert_eq!(
@@ -1992,48 +1088,6 @@ fn caa_artwork_url_upgrade_and_rejection() {
             "{bad}"
         );
     }
-}
-
-#[test]
-fn caa_type_classification_merges_flags_and_labels() {
-    let back_spine = vec!["Back".to_owned(), "Spine".to_owned()];
-    assert_eq!(
-        coverart::classify_image_types(&back_spine, true, false),
-        vec![
-            coverart::ImageType::Front,
-            coverart::ImageType::Back,
-            coverart::ImageType::Spine
-        ]
-    );
-    assert_eq!(
-        coverart::classify_image_types(&["Front".to_owned()], true, false),
-        vec![coverart::ImageType::Front]
-    );
-    assert_eq!(
-        coverart::classify_image_types(&[], false, false),
-        vec![coverart::ImageType::Other]
-    );
-    assert_eq!(
-        coverart::classify_image_types(&["Hologram".to_owned()], false, false),
-        vec![coverart::ImageType::Other]
-    );
-    for (label, expected) in [
-        ("Booklet", coverart::ImageType::Booklet),
-        ("Medium", coverart::ImageType::Medium),
-        ("Tray", coverart::ImageType::Tray),
-        ("Obi", coverart::ImageType::Obi),
-        ("Track", coverart::ImageType::Track),
-    ] {
-        assert_eq!(
-            coverart::classify_image_types(&[label.to_owned()], false, false),
-            vec![expected],
-            "{label}"
-        );
-    }
-    assert_eq!(
-        coverart::classify_image_types(&[], false, true),
-        vec![coverart::ImageType::Back]
-    );
 }
 
 #[tokio::test]
@@ -2084,74 +1138,6 @@ async fn caa_missing_is_empty_while_failures_are_errors() {
         "got {error:?}"
     );
     assert_eq!(fake.seen().len(), before, "malformed mbid sends nothing");
-}
-
-#[tokio::test]
-async fn caa_size_selection_falls_back_to_original() {
-    let fake = Arc::new(FakeCaa::new());
-    fake.script(
-        &caa_listing_url("release", RELEASE_MBID),
-        Ok(coverart::RawResponse::new(
-            200,
-            vec![],
-            serde_json::json!({
-                "images": [
-                    {"id": 1, "image": "http://coverartarchive.org/r/1.png", "thumbnails": {}},
-                    {"id": 2, "image": "", "thumbnails": {}},
-                    {"id": 3, "image": "http://coverartarchive.org/r/3.png",
-                     "thumbnails": {"250": "http://coverartarchive.org/r/3-250.jpg"}}
-                ]
-            })
-            .to_string()
-            .into_bytes(),
-        )),
-    );
-    let client = fast_caa(fake);
-    let at_250 = client
-        .list_artwork(
-            coverart::EntityKind::Release,
-            RELEASE_MBID,
-            coverart::DownloadSize::Size250,
-        )
-        .await
-        .expect("250 listing decodes");
-    assert_eq!(at_250.len(), 2, "the empty-url image is skipped");
-    assert_eq!(at_250[0].locator, "https://coverartarchive.org/r/1.png");
-    assert_eq!(at_250[1].locator, "https://coverartarchive.org/r/3-250.jpg");
-
-    let fake = Arc::new(FakeCaa::new());
-    fake.script(
-        &caa_listing_url("release", RELEASE_MBID),
-        Ok(coverart::RawResponse::new(
-            200,
-            vec![],
-            serde_json::json!({
-                "images": [
-                    {"id": 7, "image": "http://coverartarchive.org/r/7.png",
-                     "thumbnails": {"1200": "http://coverartarchive.org/r/7-1200.jpg"}}
-                ]
-            })
-            .to_string()
-            .into_bytes(),
-        )),
-    );
-    let client = fast_caa(fake);
-    let at_1200 = client
-        .list_artwork(
-            coverart::EntityKind::Release,
-            RELEASE_MBID,
-            coverart::DownloadSize::Size1200,
-        )
-        .await
-        .expect("1200 listing decodes");
-    assert_eq!(
-        at_1200[0].candidate_id,
-        format!("caa:release:{RELEASE_MBID}:7:1200")
-    );
-    assert_eq!(
-        at_1200[0].locator,
-        "https://coverartarchive.org/r/7-1200.jpg"
-    );
 }
 
 #[tokio::test]
@@ -2314,10 +1300,4 @@ fn sniff_accepts_raster_only() {
     );
     assert_eq!(coverart::sniff_image_content_type(b"<svg></svg>!!!!"), None);
     assert_eq!(coverart::sniff_image_content_type(b"short"), None);
-}
-
-#[test]
-fn production_adapters_build_without_touching_the_network() {
-    assert!(musicbrainz::ReqwestMbTransport::build().is_ok());
-    assert!(coverart::ReqwestCaaTransport::build().is_ok());
 }

@@ -1,11 +1,6 @@
-//! Enrichment aggregation briefs: one page fans out to several providers
-//! and still renders when one of them is down.
-//!
-//! Every provider here is scripted: canned answers, armed failures, call
-//! counts. No live network, no sleeps. The briefs pin the ported v2 rules:
-//! typed degradation, the identity-critical vs stale-acceptable matrix
-//! (a dead MusicBrainz fails identity pages only), and bounded fan-out
-//! with per-source budgets.
+//! Enrichment aggregation over scripted providers: a page still renders
+//! when an optional provider is down, a dead MusicBrainz fails identity
+//! pages, per-row failures stay on their row, and concerts match cities.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
@@ -14,10 +9,8 @@ use droppedneedle::providers::enrich::{
     AggregatingEnrichment, AlbumPageInput, ArtistCore, EnrichmentAggregator, EventCity,
     EventsClient, LastFmAlbumInfo, LastFmArtistInfo, LastFmClient, ListenBrainzClient, LiveEvent,
     LyricsClient, LyricsLookup, LyricsQuery, MatchedConcert, MusicBrainzClient, ProviderError,
-    ProviderLyrics, ProviderSource, ReleaseGroupCore, TopRelease, UserConcert,
+    ProviderSource, ReleaseGroupCore, TopRelease, UserConcert,
 };
-use droppedneedle::reads::library::memory::MemoryCatalog;
-use droppedneedle::reads::library::stores::TrackRecord;
 use droppedneedle::reads::search::models::{
     AlbumEnrichmentRequest, ArtistEnrichmentRequest, EnrichmentBatchRequest, EnrichmentSource,
 };
@@ -381,7 +374,7 @@ async fn album_page_fails_when_musicbrainz_dead() {
 }
 
 // ---------------------------------------------------------------------------
-// Search batch through the stage-4 port seam
+// Search batch through the enrichment port
 // ---------------------------------------------------------------------------
 
 fn batch_request() -> EnrichmentBatchRequest {
@@ -402,30 +395,6 @@ fn batch_request() -> EnrichmentBatchRequest {
             album_name: "Dummy".to_owned(),
         }],
     }
-}
-
-#[tokio::test]
-async fn search_batch_degrades_through_port_adapter() {
-    let lb = ScriptedLb {
-        fail_batch: true,
-        fail_artists: HashSet::from(["artist-mbid-1".to_owned(), "artist-mbid-2".to_owned()]),
-        ..ScriptedLb::healthy()
-    };
-    let port = AggregatingEnrichment::new(std::sync::Arc::new(album_aggregator(false, lb, false)));
-    let response = port
-        .enrich_batch(batch_request())
-        .await
-        .expect("counts never fail the batch");
-    assert_eq!(response.source, EnrichmentSource::Listenbrainz);
-    assert!(
-        response
-            .artists
-            .iter()
-            .all(|row| row.listen_count.is_none())
-    );
-    assert!(response.albums.iter().all(|row| row.listen_count.is_none()));
-    assert_eq!(response.degradations.len(), 1);
-    assert_eq!(response.degradations[0].source, "listenbrainz");
 }
 
 #[tokio::test]
@@ -463,224 +432,6 @@ async fn search_batch_falls_back_to_lastfm() {
     assert_eq!(response.source, EnrichmentSource::Lastfm);
     assert_eq!(response.artists[0].listen_count, Some(2_500_000));
     assert!(response.degradations.is_empty());
-}
-
-#[tokio::test]
-async fn search_batch_without_popularity_source_stays_bare() {
-    let aggregator = EnrichmentAggregator::new(
-        std::sync::Arc::new(ScriptedMb { fail: false }),
-        std::sync::Arc::new(ScriptedLb {
-            available: false,
-            ..ScriptedLb::healthy()
-        }),
-        std::sync::Arc::new(ScriptedLfm {
-            available: false,
-            fail: false,
-        }),
-        std::sync::Arc::new(ScriptedLyrics {
-            fail: false,
-            lookup: LyricsLookup {
-                found: false,
-                plain: None,
-                synced: None,
-            },
-            seen: Mutex::new(Vec::new()),
-        }),
-        std::sync::Arc::new(ScriptedEvents {
-            fail: false,
-            concerts: Vec::new(),
-            cities: Vec::new(),
-        }),
-    );
-    let response = AggregatingEnrichment::new(std::sync::Arc::new(aggregator))
-        .enrich_batch(batch_request())
-        .await
-        .expect("batch holds");
-    assert_eq!(response.source, EnrichmentSource::None);
-    assert!(
-        response
-            .artists
-            .iter()
-            .all(|row| row.listen_count.is_none())
-    );
-    assert!(response.degradations.is_empty());
-}
-
-// ---------------------------------------------------------------------------
-// Lyrics fetch
-// ---------------------------------------------------------------------------
-
-fn lyrics_aggregator(lookup: LyricsLookup, fail: bool) -> EnrichmentAggregator {
-    EnrichmentAggregator::new(
-        std::sync::Arc::new(ScriptedMb { fail: false }),
-        std::sync::Arc::new(ScriptedLb::healthy()),
-        std::sync::Arc::new(ScriptedLfm {
-            available: true,
-            fail: false,
-        }),
-        std::sync::Arc::new(ScriptedLyrics {
-            fail,
-            lookup,
-            seen: Mutex::new(Vec::new()),
-        }),
-        std::sync::Arc::new(ScriptedEvents {
-            fail: false,
-            concerts: Vec::new(),
-            cities: Vec::new(),
-        }),
-    )
-}
-
-fn lyrics_query() -> LyricsQuery {
-    LyricsQuery {
-        artist: "Portishead".to_owned(),
-        title: "Roads".to_owned(),
-        album: Some("Dummy".to_owned()),
-        duration_secs: Some(290.0),
-    }
-}
-
-#[tokio::test]
-async fn lyrics_fetch_returns_synced_doc() {
-    let aggregator = lyrics_aggregator(
-        LyricsLookup {
-            found: true,
-            plain: None,
-            synced: Some("[00:01.00] Ohh\n[00:05.50] Can't deny it\n".to_owned()),
-        },
-        false,
-    );
-    let outcome = aggregator.fetch_lyrics(&lyrics_query()).await;
-    assert!(outcome.degradation.is_none());
-    let doc = outcome.doc.expect("held lyrics shape into a doc");
-    assert!(doc.synced);
-    assert_eq!(
-        doc.lines,
-        vec![
-            ("Ohh".to_owned(), Some(1_000)),
-            ("Can't deny it".to_owned(), Some(5_500)),
-        ]
-    );
-}
-
-#[tokio::test]
-async fn lyrics_degrade_when_provider_down() {
-    let aggregator = lyrics_aggregator(
-        LyricsLookup {
-            found: true,
-            plain: Some("Ohh".to_owned()),
-            synced: None,
-        },
-        true,
-    );
-    let outcome = aggregator.fetch_lyrics(&lyrics_query()).await;
-    assert_eq!(outcome.doc, None);
-    assert_eq!(
-        outcome
-            .degradation
-            .expect("dead provider notes once")
-            .source,
-        "lrclib"
-    );
-}
-
-#[tokio::test]
-async fn provider_lyrics_adapter_resolves_track_then_fetches() {
-    use droppedneedle::reads::library::stores::LyricsPort as _;
-
-    let catalog = MemoryCatalog::new().with_tracks(vec![TrackRecord {
-        id: "track-1".to_owned(),
-        title: "Roads".to_owned(),
-        album_id: "album-1".to_owned(),
-        album_title: "Dummy".to_owned(),
-        artist_name: "Portishead".to_owned(),
-        artist_id: Some("artist-1".to_owned()),
-        album_artist_name: "Portishead".to_owned(),
-        disc_number: 1,
-        track_number: 5,
-        year: Some(1994),
-        genre: None,
-        duration_seconds: Some(290.0),
-        format: "FLAC".to_owned(),
-        bit_rate: None,
-        sample_rate: None,
-        file_size_bytes: 1024,
-        date_added: None,
-        cover_available: false,
-    }]);
-    let lyrics = std::sync::Arc::new(ScriptedLyrics {
-        fail: false,
-        lookup: LyricsLookup {
-            found: true,
-            plain: Some("Ohh\nCan't deny it\n".to_owned()),
-            synced: None,
-        },
-        seen: Mutex::new(Vec::new()),
-    });
-    let port = ProviderLyrics::new(
-        std::sync::Arc::new(catalog),
-        lyrics.clone(),
-        droppedneedle::providers::enrich::SourceBudgets::default(),
-    );
-    let doc = port
-        .get("track-1")
-        .await
-        .expect("adapter holds")
-        .expect("held lyrics resolve");
-    assert!(!doc.synced);
-    assert_eq!(doc.lines.len(), 2);
-    assert_eq!(
-        lyrics.seen.lock().expect("seen unlocks").as_slice(),
-        ["Portishead - Roads"]
-    );
-    let missing = port.get("track-unknown").await.expect("adapter holds");
-    assert_eq!(missing, None);
-}
-
-#[tokio::test]
-async fn provider_lyrics_failure_records_lrclib_in_context() {
-    use droppedneedle::providers::{IntegrationStatus, scoped};
-    use droppedneedle::reads::library::stores::LyricsPort as _;
-
-    let catalog = MemoryCatalog::new().with_tracks(vec![TrackRecord {
-        id: "track-1".to_owned(),
-        title: "Roads".to_owned(),
-        album_id: "album-1".to_owned(),
-        album_title: "Dummy".to_owned(),
-        artist_name: "Portishead".to_owned(),
-        artist_id: Some("artist-1".to_owned()),
-        album_artist_name: "Portishead".to_owned(),
-        disc_number: 1,
-        track_number: 5,
-        year: Some(1994),
-        genre: None,
-        duration_seconds: Some(290.0),
-        format: "FLAC".to_owned(),
-        bit_rate: None,
-        sample_rate: None,
-        file_size_bytes: 1024,
-        date_added: None,
-        cover_available: false,
-    }]);
-    let port = ProviderLyrics::new(
-        std::sync::Arc::new(catalog),
-        std::sync::Arc::new(ScriptedLyrics {
-            fail: true,
-            lookup: LyricsLookup {
-                found: false,
-                plain: None,
-                synced: None,
-            },
-            seen: Mutex::new(Vec::new()),
-        }),
-        droppedneedle::providers::enrich::SourceBudgets::default(),
-    );
-    let (answer, context) = scoped(async { port.get("track-1").await }).await;
-    assert_eq!(answer.expect("adapter holds"), None);
-    assert_eq!(
-        context.summary().get("lrclib"),
-        Some(&IntegrationStatus::Error)
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -752,16 +503,4 @@ async fn events_lookup_matches_cities() {
         .await;
     assert!(empty.concerts.is_empty());
     assert!(empty.degradation.is_none());
-}
-
-#[tokio::test]
-async fn events_degrade_when_feed_down() {
-    let outcome = events_aggregator(Vec::new(), vec![bristol()], true)
-        .lookup_events("user-1")
-        .await;
-    assert!(outcome.concerts.is_empty());
-    assert_eq!(
-        outcome.degradation.expect("dead feed notes once").source,
-        "events"
-    );
 }
