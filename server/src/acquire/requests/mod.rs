@@ -26,31 +26,29 @@ pub mod service;
 pub mod state;
 pub mod views;
 
-use axum::{Router, middleware, routing};
+use axum::{Router, routing};
 
 pub use state::RequestsState;
 
-/// Build the requests router. Registration order is specific routes first,
-/// then parameterized ones; the slice-local auth gate wraps everything.
-/// Wiring replaces the gate with the session middleware (route posture per
-/// handler docs: reads and intake need any authenticated user, approval
-/// verbs need admin, edition acquire needs curator).
+/// The requests routes behind the header test gate, for tests that mount
+/// them without the session middleware. Route posture per handler docs:
+/// reads and intake need any authenticated user, approval verbs need
+/// admin, edition acquire needs curator.
+#[cfg(any(test, feature = "test-support"))]
 pub fn requests_router(state: RequestsState) -> Router {
-    requests_routes(state).layer(middleware::from_fn(auth::gate))
+    requests_routes(state).layer(axum::middleware::from_fn(auth::gate))
 }
 
-/// Build the requests routes without the slice-local gate. The app mounts
-/// this inside the session gate with a principal-translation layer; the
-/// standalone briefs keep [`requests_router`].
+/// Every requests route without an auth layer, including the two
+/// approval-read GETs the app serves from the collections routes instead.
+#[cfg(any(test, feature = "test-support"))]
 pub fn requests_routes(state: RequestsState) -> Router {
     requests_core_routes(state.clone()).merge(approval_read_routes(state))
 }
 
-/// App-facing routes: everything except the two approval-read GETs. Those
-/// paths stay served by the reads collections legs (same paths, same admin
-/// posture), which read this slice's approval store once wiring connects
-/// them; mounting both would collide. The standalone briefs keep the full
-/// [`requests_routes`].
+/// App-facing routes: everything except the two approval-read GETs. The
+/// reads collections routes serve those paths (same paths, same admin
+/// posture); mounting both would collide.
 pub fn requests_core_routes(state: RequestsState) -> Router {
     Router::new()
         .route(
@@ -164,8 +162,9 @@ pub fn requests_core_routes(state: RequestsState) -> Router {
         .with_state(state)
 }
 
-/// The two approval-read GETs, kept for the standalone briefs. The app
+/// The two approval-read GETs over this module's approval store. The app
 /// does not mount these (see [`requests_core_routes`]).
+#[cfg(any(test, feature = "test-support"))]
 pub fn approval_read_routes(state: RequestsState) -> Router {
     Router::new()
         .route(

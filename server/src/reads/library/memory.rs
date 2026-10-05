@@ -1,15 +1,22 @@
-//! Test fakes: a scriptable in-memory catalog, favorite flags, lyrics,
-//! and failing stores proving the 5xx leak contract.
+//! In-memory library reads. [`MemoryLyrics`] is also the empty lyrics
+//! store when no database is wired; everything else is a test fake (a
+//! scriptable catalog, favorite flags, and failing stores proving the 5xx
+//! leak contract) built only with the `test-support` feature.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+#[cfg(any(test, feature = "test-support"))]
+use std::collections::HashSet;
 use std::sync::Mutex;
 
+#[cfg(any(test, feature = "test-support"))]
 use super::stores::{
     AlbumFilter, AlbumRecord, AlbumSort, ArtistListing, ArtistRecord, ArtistScope, ArtistSort,
-    BoxFuture, DecadeRecord, FavoriteReads, GenreRecord, LibraryCatalog, LyricDoc, LyricsPort,
-    StatsRecord, StoreError, TrackFilter, TrackRecord, TrackSort,
+    DecadeRecord, FavoriteReads, GenreRecord, LibraryCatalog, StatsRecord, TrackFilter,
+    TrackRecord, TrackSort,
 };
+use super::stores::{BoxFuture, LyricDoc, LyricsPort, StoreError};
 
+#[cfg(any(test, feature = "test-support"))]
 fn fail() -> StoreError {
     StoreError::Internal("injected fault with /tmp/secret.db host=db.internal".to_owned())
 }
@@ -669,10 +676,12 @@ impl LyricsPort for MemoryLyrics {
 }
 
 /// Catalog that fails every call. The fault text carries a fake path and
-/// host so leak briefs can prove neither reaches the wire.
+/// host so leak tests can prove neither reaches the wire.
 #[derive(Debug, Default)]
+#[cfg(any(test, feature = "test-support"))]
 pub struct FailingCatalog;
 
+#[cfg(any(test, feature = "test-support"))]
 impl FailingCatalog {
     /// Failing store.
     pub fn new() -> Self {
@@ -680,6 +689,7 @@ impl FailingCatalog {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 macro_rules! fail_catalog {
     ($name:ident ( $($arg:ident : $type:ty),* ) -> $ret:ty) => {
         fn $name<'a>(
@@ -692,6 +702,7 @@ macro_rules! fail_catalog {
     };
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl LibraryCatalog for FailingCatalog {
     fail_catalog!(list_albums(filter: &'a AlbumFilter, sort: AlbumSort, descending: bool, limit: u64, offset: u64) -> (Vec<AlbumRecord>, u64));
     fail_catalog!(get_album(id: &'a str) -> Option<AlbumRecord>);
@@ -716,8 +727,10 @@ impl LibraryCatalog for FailingCatalog {
 
 /// Favorites that fail every call.
 #[derive(Debug, Default)]
+#[cfg(any(test, feature = "test-support"))]
 pub struct FailingFavorites;
 
+#[cfg(any(test, feature = "test-support"))]
 impl FailingFavorites {
     /// Failing store.
     pub fn new() -> Self {
@@ -725,6 +738,7 @@ impl FailingFavorites {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl FavoriteReads for FailingFavorites {
     fn filter_favorites<'a>(
         &'a self,
@@ -745,8 +759,10 @@ impl FavoriteReads for FailingFavorites {
 
 /// Lyrics port that fails every call.
 #[derive(Debug, Default)]
+#[cfg(any(test, feature = "test-support"))]
 pub struct FailingLyrics;
 
+#[cfg(any(test, feature = "test-support"))]
 impl FailingLyrics {
     /// Failing port.
     pub fn new() -> Self {
@@ -754,6 +770,7 @@ impl FailingLyrics {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl LyricsPort for FailingLyrics {
     fn get<'a>(
         &'a self,

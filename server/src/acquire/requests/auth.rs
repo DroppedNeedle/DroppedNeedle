@@ -1,23 +1,24 @@
-//! Slice-local principal and auth gate.
+//! Requests principal and role extractor.
 //!
-//! The app wiring replaces this seam: the integrator mounts the bare routes
-//! inside the session gate with a principal-translation layer that resolves
-//! the role fresh from the user store (mirroring the reads collections
-//! slice). The gate below reads a `x-slice-principal` header of the form
-//! `<user-id>:<role>[:<username>]` so the standalone briefs can still drive
-//! the auth matrix. Response shapes mirror the session slice: 401 carries
+//! The app mounts the routes inside the session gate with a
+//! principal-translation layer that resolves the role fresh from the user
+//! store, as the reads collections routes do. Tests that mount the routes
+//! alone use the header gate below (`x-slice-principal:
+//! <user-id>:<role>[:<username>]`), compiled only with the `test-support`
+//! feature. Response shapes match the session layer: 401 carries
 //! `WWW-Authenticate: Bearer`, role denials are 403.
 
+use axum::{extract::FromRequestParts, http::request::Parts};
+#[cfg(any(test, feature = "test-support"))]
 use axum::{
-    extract::{FromRequestParts, Request},
-    http::request::Parts,
+    extract::Request,
     middleware::Next,
     response::{IntoResponse, Response},
 };
 
 use super::error::RequestsError;
 
-/// Account role. Meanings match v2 and stage-3 roles: `user` requests wait
+/// Account role. Meanings match v2 and the session roles: `user` requests wait
 /// for approval; `trusted` and `admin` auto-approve and skip quotas.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
@@ -122,10 +123,12 @@ impl<S: Send + Sync> FromRequestParts<S> for Principal {
     }
 }
 
-/// Header carrying the slice-local credential. Wiring deletes this gate.
+/// Header carrying the test credential.
+#[cfg(any(test, feature = "test-support"))]
 pub const PRINCIPAL_HEADER: &str = "x-slice-principal";
 
 /// Parse one header value into a principal. Anything malformed fails closed.
+#[cfg(any(test, feature = "test-support"))]
 fn parse_header(value: &str) -> Option<Principal> {
     let mut parts = value.splitn(3, ':');
     let user_id = parts.next().unwrap_or_default().trim();
@@ -146,8 +149,10 @@ fn parse_header(value: &str) -> Option<Principal> {
     })
 }
 
-/// Slice-local auth gate. Missing or malformed credentials are 401; the
-/// principal lands in the request extensions for the extractor.
+/// Header auth gate for tests that mount the routes without the session
+/// middleware. Missing or malformed credentials are 401; the principal
+/// lands in the request extensions for the extractor.
+#[cfg(any(test, feature = "test-support"))]
 pub async fn gate(mut req: Request, next: Next) -> Response {
     let principal = req
         .headers()

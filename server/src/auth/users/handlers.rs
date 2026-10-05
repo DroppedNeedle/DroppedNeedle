@@ -12,7 +12,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use serde::{Serialize, de::DeserializeOwned};
+use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use utoipa::ToSchema;
 
@@ -31,7 +31,7 @@ use super::models::{
     LastFmTokenResponse, LocalPasswordSet, PasswordChange, PasswordReset, ProfileResponse,
     RecoveryCodeResponse, RoleUpdate, SessionListResponse, UserResponse, UsernameUpdate,
 };
-use super::roles::{CurrentAdmin, CurrentCurator, CurrentUser, Role};
+use super::roles::{CurrentAdmin, CurrentUser, Role};
 use super::services;
 
 /// Avatar upload body cap: 8 MiB of JSON holds the 5 MiB image plus base64
@@ -656,15 +656,19 @@ pub async fn admin_import_users(
     directory.map(Json)
 }
 
-/// Marker for the curator-matrix briefs: proves the extractor gates.
-#[derive(Debug, Serialize, ToSchema)]
+/// Curator probe body: proves the extractor admitted the caller.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Debug, serde::Serialize, ToSchema)]
 pub struct CuratorProbeResponse {
     /// Always true when this response is returned.
     pub curator: bool,
 }
 
-/// Test-only curator probe. NOT mounted by any production router; the
-/// briefs mount it to pin `CurrentCurator` behavior per route class.
-pub async fn curator_probe(CurrentCurator(_): CurrentCurator) -> Json<CuratorProbeResponse> {
+/// Curator probe for tests: no production router mounts it; tests mount it
+/// to pin `CurrentCurator` behavior per route class.
+#[cfg(any(test, feature = "test-support"))]
+pub async fn curator_probe(
+    super::roles::CurrentCurator(_): super::roles::CurrentCurator,
+) -> Json<CuratorProbeResponse> {
     Json(CuratorProbeResponse { curator: true })
 }

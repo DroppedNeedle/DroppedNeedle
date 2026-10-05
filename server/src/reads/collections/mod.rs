@@ -16,22 +16,22 @@ pub mod pins;
 pub mod playlists;
 pub mod state;
 
-use axum::{Router, middleware, routing};
+use axum::{Router, routing};
 
 pub use state::CollectionsState;
 
-/// Build the collections router. Registration order is specific routes first,
-/// then parameterized ones; the slice-local auth gate wraps everything.
-/// Wiring replaces the gate with the session middleware (route posture per
-/// handler docs: playlists/favorites/follows reads and writes need any
-/// authenticated user, approvals need admin, pin writes need curator).
+/// The collections routes behind the header test gate, for tests that
+/// mount them without the session middleware. Route posture per handler
+/// docs: playlists, favorites and follows need any authenticated user,
+/// approvals need admin, pin writes need curator.
+#[cfg(any(test, feature = "test-support"))]
 pub fn collections_router(state: CollectionsState) -> Router {
-    collections_routes(state).layer(middleware::from_fn(auth::gate))
+    collections_routes(state).layer(axum::middleware::from_fn(auth::gate))
 }
 
-/// Build the collections routes without the slice-local gate. The app
-/// mounts this inside the session gate with a principal-translation layer;
-/// the standalone briefs keep [`collections_router`].
+/// Build the collections routes without an auth layer. The app mounts this
+/// inside the session gate with a principal-translation layer.
+/// Registration order is specific routes first, then parameterized ones.
 pub fn collections_routes(state: CollectionsState) -> Router {
     Router::new()
         .route(

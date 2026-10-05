@@ -1,23 +1,17 @@
 //! Download-task HTTP: the admin reimport behind the request card.
 //!
-//! One route only. The broader task/held/quarantine surfaces stay
-//! unserved until their stages land; this leg exists because the request
-//! history card offers an admin reimport and the v3 server must answer
-//! it. Auth reuses the requests slice's principal and gate (same header
-//! in briefs, same translation layer in the app), so one layer serves
-//! both routers.
+//! One route only: the request history card offers an admin reimport and
+//! the server must answer it. The task, held and quarantine views are not
+//! served yet. Auth reuses the requests principal and its translation
+//! layer, so one layer serves both routers.
 
 use std::sync::Arc;
 
 use crate::acquire::dispatch::Journal;
-use crate::acquire::requests::{
-    auth::{Principal, gate},
-    error::RequestsError,
-};
+use crate::acquire::requests::{auth::Principal, error::RequestsError};
 use axum::{
     Json, Router,
     extract::{Path, State},
-    middleware,
     response::IntoResponse,
     routing,
 };
@@ -68,9 +62,8 @@ pub async fn reimport_task_handler(
     }))
 }
 
-/// Task routes without the slice-local gate. The app mounts this inside
-/// the session gate under the shared principal-translation layer; the
-/// standalone briefs keep [`downloads_router`].
+/// Task routes without an auth layer. The app mounts this inside the
+/// session gate under the shared principal-translation layer.
 pub fn downloads_core_routes(journal: Arc<Journal>) -> Router {
     Router::new()
         .route(
@@ -80,9 +73,12 @@ pub fn downloads_core_routes(journal: Arc<Journal>) -> Router {
         .with_state(journal)
 }
 
-/// Task routes behind the slice-local gate for standalone briefs.
+/// Task routes behind the header test gate.
+#[cfg(any(test, feature = "test-support"))]
 pub fn downloads_router(journal: Arc<Journal>) -> Router {
-    downloads_core_routes(journal).layer(middleware::from_fn(gate))
+    downloads_core_routes(journal).layer(axum::middleware::from_fn(
+        crate::acquire::requests::auth::gate,
+    ))
 }
 
 /// Current unix time as the float seconds the journal stores.

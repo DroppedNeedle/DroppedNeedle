@@ -244,8 +244,9 @@ impl IdentityStore {
         Ok(())
     }
 
-    /// Fixture seeding. Bypasses the write counter so the brief can assert
-    /// zero product writes against a seeded table.
+    /// Seed an identity row for tests. Bypasses the write counter so a test
+    /// can assert zero product writes against a seeded table.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn seed_identity(&self, row: ExternalIdentityRow) -> Result<(), CollectionsError> {
         write_store(&self.identities, "identity")?.insert(row.album_id.clone(), row);
         Ok(())

@@ -191,10 +191,12 @@ pub trait Jitter: Send + Sync {
     fn factor(&self) -> f64;
 }
 
-/// No jitter: every sleep runs its honest interval. For briefs.
+/// No jitter: every sleep runs its exact interval. For tests.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct NoJitter;
 
+#[cfg(any(test, feature = "test-support"))]
 impl Jitter for NoJitter {
     fn factor(&self) -> f64 {
         1.0

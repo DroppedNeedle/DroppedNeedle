@@ -43,10 +43,10 @@ impl PlatformState {
     }
 }
 
-/// Merge the three slice routers. The result carries relative paths; wiring
-/// nests the covers/version routers inside the session gate and mounts the
-/// wrapped router outside it (see [`wrapped_router`] and
-/// [`session_router`]).
+/// All three platform routers merged, for tests. The app nests
+/// [`session_router`] inside the session gate and mounts
+/// [`wrapped_router`] outside it.
+#[cfg(any(test, feature = "test-support"))]
 pub fn platform_router(state: PlatformState) -> Router {
     session_router(&state).merge(wrapped_router(&state))
 }

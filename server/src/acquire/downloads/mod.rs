@@ -30,7 +30,9 @@ pub mod state;
 pub mod store;
 pub mod watchdog;
 
-pub use http::{ReimportResponse, downloads_core_routes, downloads_router};
+#[cfg(any(test, feature = "test-support"))]
+pub use http::downloads_router;
+pub use http::{ReimportResponse, downloads_core_routes};
 pub use manifest::{DownloadManifest, ExpectedFile, ExpectedTrack, ManifestCodec, TaskHandle};
 pub use orphans::{
     OrphanDecision, OrphanEvidence, OrphanPolicy, RecycleBin, evaluate_orphan, job_name_parts,
@@ -38,8 +40,7 @@ pub use orphans::{
 pub use quarantine::{QUARANTINE_TTL_SECONDS, QuarantineDir, canonical_soulseek_identity};
 pub use recovery::{RetrySpawn, StartupAction, classify_startup, plan_retry};
 pub use sources::{
-    DownloadSource, FetchOutcome, Materialization, OrphanOwnership, SourceError, SourceHandle,
-    TransferProgress,
+    DownloadSource, Materialization, OrphanOwnership, SourceError, SourceHandle, TransferProgress,
 };
 pub use state::{AttemptState, TaskStatus, can_transition, is_terminal};
 #[cfg(any(test, feature = "test-support"))]

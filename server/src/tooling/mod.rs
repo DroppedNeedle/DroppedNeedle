@@ -15,5 +15,6 @@
 //! Everything here is offline: file and SQLite reads/writes only.
 
 pub mod covers_debug;
+#[cfg(any(test, feature = "test-support"))]
 pub mod fixture;
 pub mod restore;

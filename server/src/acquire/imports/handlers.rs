@@ -113,9 +113,10 @@ impl ImportsDeps {
     }
 }
 
-/// Full slice router: the gated routes plus the OAuth callback. The
-/// standalone briefs keep this; the app mounts [`imports_gated_router`]
-/// inside the session gate and [`imports_callback_router`] outside it.
+/// The gated routes plus the OAuth callback in one router, for tests. The
+/// app mounts [`imports_gated_router`] inside the session gate and
+/// [`imports_callback_router`] outside it.
+#[cfg(any(test, feature = "test-support"))]
 pub fn imports_router(deps: ImportsDeps) -> axum::Router {
     imports_gated_router(deps.clone()).merge(imports_callback_router(deps))
 }

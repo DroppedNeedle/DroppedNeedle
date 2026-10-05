@@ -1,16 +1,16 @@
-//! Slice-local principal and auth gate.
+//! Collections principal and role extractor.
 //!
-//! The app wiring replaces this seam: `ReadsSetup` mounts the routes inside
-//! the session gate with a principal-translation layer that resolves the
-//! role fresh from the user store. The gate below reads a
-//! `x-slice-principal` header of the form `<user-id>:<role>[:<username>]`
-//! so the standalone briefs can still drive the auth matrix.
-//! Response shapes mirror the crate session slice: 401 carries
-//! `WWW-Authenticate: Bearer`, role denials are 403.
+//! `ReadsSetup` mounts the routes inside the session gate with a
+//! principal-translation layer that resolves the role fresh from the user
+//! store. Tests that mount the routes alone use the header gate below
+//! (`x-slice-principal: <user-id>:<role>[:<username>]`), compiled only with
+//! the `test-support` feature. Response shapes match the session layer:
+//! 401 carries `WWW-Authenticate: Bearer`, role denials are 403.
 
+use axum::{extract::FromRequestParts, http::request::Parts};
+#[cfg(any(test, feature = "test-support"))]
 use axum::{
-    extract::{FromRequestParts, Request},
-    http::request::Parts,
+    extract::Request,
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -37,15 +37,6 @@ impl Role {
             "trusted" => Some(Self::Trusted),
             "admin" => Some(Self::Admin),
             _ => None,
-        }
-    }
-
-    /// Storage/wire form.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::User => "user",
-            Self::Trusted => "trusted",
-            Self::Admin => "admin",
         }
     }
 
@@ -116,10 +107,12 @@ impl<S: Send + Sync> FromRequestParts<S> for Principal {
     }
 }
 
-/// Header carrying the slice-local credential. Wiring deletes this gate.
+/// Header carrying the test credential.
+#[cfg(any(test, feature = "test-support"))]
 pub const PRINCIPAL_HEADER: &str = "x-slice-principal";
 
 /// Parse one header value into a principal. Anything malformed fails closed.
+#[cfg(any(test, feature = "test-support"))]
 fn parse_header(value: &str) -> Option<Principal> {
     let mut parts = value.splitn(3, ':');
     let user_id = parts.next().unwrap_or_default().trim();
@@ -140,8 +133,10 @@ fn parse_header(value: &str) -> Option<Principal> {
     })
 }
 
-/// Slice-local auth gate. Missing or malformed credentials are 401; the
-/// principal lands in the request extensions for the extractor.
+/// Header auth gate for tests that mount the routes without the session
+/// middleware. Missing or malformed credentials are 401; the principal
+/// lands in the request extensions for the extractor.
+#[cfg(any(test, feature = "test-support"))]
 pub async fn gate(mut req: Request, next: Next) -> Response {
     let principal = req
         .headers()
@@ -157,48 +152,5 @@ pub async fn gate(mut req: Request, next: Next) -> Response {
             message: "Authentication required".to_owned(),
         }
         .into_response(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn header_parses_user_role_and_optional_name() {
-        let full = parse_header("u-1:admin:Ada").expect("valid header parses");
-        assert_eq!(full.user_id, "u-1");
-        assert_eq!(full.role, Role::Admin);
-        assert_eq!(full.username.as_deref(), Some("Ada"));
-        let bare = parse_header("u-2:user").expect("name is optional");
-        assert_eq!(bare.username, None);
-    }
-
-    #[test]
-    fn malformed_headers_fail_closed() {
-        for bad in ["", ":", "u-1", "u-1:owner", ":admin"] {
-            assert!(parse_header(bad).is_none(), "{bad:?} must fail closed");
-        }
-        assert!(
-            parse_header("u-1:admin:extra:bits").is_some(),
-            "names may hold colons"
-        );
-    }
-
-    #[test]
-    fn role_parse_round_trip() {
-        for role in [Role::User, Role::Trusted, Role::Admin] {
-            assert_eq!(Role::parse(role.as_str()), Some(role));
-        }
-        assert_eq!(Role::parse("owner"), None);
-    }
-
-    #[test]
-    fn curator_is_trusted_or_admin() {
-        assert!(!Role::User.is_curator());
-        assert!(Role::Trusted.is_curator());
-        assert!(Role::Admin.is_curator());
-        assert!(Role::Admin.is_admin());
-        assert!(!Role::Trusted.is_admin());
     }
 }

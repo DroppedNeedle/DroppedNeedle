@@ -122,6 +122,7 @@ impl PrecacheLimits {
     }
 
     /// Override the watchdog tick (tests run it fast).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn with_watchdog_tick(mut self, tick: Duration) -> Self {
         self.watchdog_tick = tick;
         self

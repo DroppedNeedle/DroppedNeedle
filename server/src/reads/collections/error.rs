@@ -198,12 +198,14 @@ impl<T: DeserializeOwned, S: Send + Sync> FromRequest<S> for ValidQuery<T> {
     }
 }
 
-/// 404 fallback for the slice test router. Wiring uses the app fallback.
+/// 404 fallback for tests that mount the routes alone; the app has its own.
+#[cfg(any(test, feature = "test-support"))]
 pub async fn fallback_404() -> Response {
     CollectionsError::NotFound.into_response()
 }
 
-/// 405 fallback for the slice test router. Wiring uses the app fallback.
+/// 405 fallback for tests that mount the routes alone; the app has its own.
+#[cfg(any(test, feature = "test-support"))]
 pub async fn fallback_405() -> Response {
     let body = ErrorEnvelope {
         error: ErrorBody {
