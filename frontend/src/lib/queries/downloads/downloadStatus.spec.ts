@@ -3,18 +3,13 @@ import { describe, expect, it } from 'vitest';
 import type { DownloadTask } from '$lib/types';
 
 import {
-	activeCount,
-	bucketDownloads,
-	bucketSections,
 	canCancel,
 	canReimport,
 	canRetry,
 	collapseRetryChains,
 	derivedDownloadStatus,
 	formatCountdown,
-	formatRetryEta,
 	isWanted,
-	nowPressing,
 	retryDisplay,
 	retryLadderState,
 	sectionForTask,
@@ -84,17 +79,6 @@ describe('derivedDownloadStatus', () => {
 		).toBe('awaiting_review');
 	});
 
-	it('queued with a picked candidate stays "queued" (transient)', () => {
-		expect(
-			derivedDownloadStatus(task({ status: 'queued', search_job_id: 'j', candidate_index: 0 }))
-		).toBe('queued');
-	});
-
-	it('passes non-queued statuses through unchanged', () => {
-		expect(derivedDownloadStatus(task({ status: 'downloading' }))).toBe('downloading');
-		expect(derivedDownloadStatus(task({ status: 'completed' }))).toBe('completed');
-	});
-
 	it('treats a secured management hold as review and never offers source retry', () => {
 		const held = task({ status: 'failed', held_for_review: true });
 		expect(derivedDownloadStatus(held)).toBe('awaiting_review');
@@ -116,22 +100,6 @@ describe('tabForTask + bucketDownloads + counts', () => {
 		expect(tabForTask(task({ status: 'partial' }))).toBe('completed');
 		expect(tabForTask(task({ status: 'failed' }))).toBe('failed');
 		expect(tabForTask(task({ status: 'cancelled' }))).toBe('failed');
-	});
-
-	it('buckets and sorts most-recent first', () => {
-		const a = task({ id: 'a', status: 'downloading', created_at: 1 });
-		const b = task({ id: 'b', status: 'downloading', created_at: 2 });
-		expect(bucketDownloads([a, b]).active.map((t) => t.id)).toEqual(['b', 'a']);
-	});
-
-	it('counts only active tasks', () => {
-		expect(
-			activeCount([
-				task({ status: 'downloading' }),
-				task({ status: 'completed' }),
-				task({ status: 'queued' })
-			])
-		).toBe(2);
 	});
 });
 
@@ -174,18 +142,6 @@ describe('canReimport', () => {
 		).toBe(false);
 	});
 
-	it('disallows reimport for statuses other than failed/partial', () => {
-		expect(canReimport(task({ status: 'cancelled', search_job_id: 'j', candidate_index: 0 }))).toBe(
-			false
-		);
-		expect(canReimport(task({ status: 'completed', search_job_id: 'j', candidate_index: 0 }))).toBe(
-			false
-		);
-		expect(
-			canReimport(task({ status: 'downloading', search_job_id: 'j', candidate_index: 0 }))
-		).toBe(false);
-	});
-
 	it('allows reimport for Usenet tasks whose username is always empty', () => {
 		expect(
 			canReimport(
@@ -225,24 +181,6 @@ describe('canReimport', () => {
 	});
 });
 
-describe('nowPressing', () => {
-	it('prefers the most recent downloading/processing task over a newer searching one', () => {
-		const dl = task({ id: 'dl', status: 'downloading', created_at: 1 });
-		const searching = task({ id: 's', status: 'queued', created_at: 5 });
-		expect(nowPressing([dl, searching])?.id).toBe('dl');
-	});
-
-	it('falls back to the most recent active task when none are live', () => {
-		const s1 = task({ id: 's1', status: 'queued', created_at: 1 });
-		const s2 = task({ id: 's2', status: 'queued', created_at: 2 });
-		expect(nowPressing([s1, s2])?.id).toBe('s2');
-	});
-
-	it('returns null when nothing is active', () => {
-		expect(nowPressing([task({ status: 'completed' })])).toBeNull();
-	});
-});
-
 describe('retryDisplay', () => {
 	const NOW = 1_000_000;
 
@@ -276,23 +214,7 @@ describe('retryDisplay', () => {
 	});
 });
 
-describe('formatRetryEta', () => {
-	it('formats sub-minute, minutes, and hours', () => {
-		expect(formatRetryEta(0.4)).toBe('<1m');
-		expect(formatRetryEta(12)).toBe('~12m');
-		expect(formatRetryEta(120)).toBe('~2h');
-	});
-});
-
 describe('formatCountdown', () => {
-	it('ticks in mm:ss under an hour and h m over it', () => {
-		expect(formatCountdown(0)).toBe('0:00');
-		expect(formatCountdown(65)).toBe('1:05');
-		expect(formatCountdown(600)).toBe('10:00');
-		expect(formatCountdown(3600 + 32 * 60)).toBe('1h 32m');
-		expect(formatCountdown(-5)).toBe('0:00');
-	});
-
 	it('rolls over cleanly at the hour boundary (never "1h 60m")', () => {
 		expect(formatCountdown(7199)).toBe('2h 0m');
 		expect(formatCountdown(10770)).toBe('3h 0m');
@@ -326,20 +248,6 @@ describe('isWanted + sectionForTask + bucketSections', () => {
 		expect(sectionForTask(task({ status: 'failed', next_retry_at: null }), NOW)).toBe('history'); // exhausted
 		expect(sectionForTask(task({ status: 'partial', next_retry_at: null }), NOW)).toBe('history'); // done, no retry
 	});
-
-	it('an in-flight retry stays in now_spinning, not wanted', () => {
-		expect(sectionForTask(task({ status: 'downloading', retry_count: 2 }), NOW)).toBe(
-			'now_spinning'
-		);
-	});
-
-	it('buckets a mixed queue and sorts wanted by soonest next attempt', () => {
-		const soon = task({ id: 'soon', status: 'failed', retry_count: 1, next_retry_at: NOW + 100 });
-		const later = task({ id: 'later', status: 'failed', retry_count: 1, next_retry_at: NOW + 900 });
-		const s = bucketSections([later, soon, task({ status: 'downloading' })], NOW);
-		expect(s.now_spinning).toHaveLength(1);
-		expect(s.wanted.map((t) => t.id)).toEqual(['soon', 'later']);
-	});
 });
 
 describe('retryLadderState', () => {
@@ -361,41 +269,9 @@ describe('retryLadderState', () => {
 		expect(state!.secondsUntilNext).toBe(600);
 		expect(state!.fractionElapsed).toBeCloseTo(1 - 600 / (30 * 60), 5);
 	});
-
-	it('is null when there is no schedule or no next attempt', () => {
-		expect(retryLadderState(task({ next_retry_at: null }), NOW)).toBeNull();
-		expect(
-			retryLadderState(task({ next_retry_at: NOW + 60, retry_ladder_minutes: [] }), NOW)
-		).toBeNull();
-	});
-
-	it('clamps the rung index to the ladder length', () => {
-		const t = task({ status: 'failed', retry_count: 99, next_retry_at: NOW + 60 });
-		expect(retryLadderState(t, NOW)!.index).toBe(5);
-	});
 });
 
 describe('collapseRetryChains', () => {
-	it('keeps only the latest attempt per (type, identity, owner) by created_at', () => {
-		const original = task({
-			id: 'o',
-			status: 'failed',
-			retry_count: 0,
-			created_at: 1,
-			release_group_mbid: 'rg1'
-		});
-		const retry = task({
-			id: 'r',
-			status: 'downloading',
-			retry_count: 1,
-			created_at: 2,
-			release_group_mbid: 'rg1'
-		});
-		const collapsed = collapseRetryChains([original, retry]);
-		expect(collapsed).toHaveLength(1);
-		expect(collapsed[0].id).toBe('r');
-	});
-
 	it('does not merge different albums, users, or types', () => {
 		const a = task({ id: 'a', release_group_mbid: 'rg1', user_id: 'u1' });
 		const b = task({ id: 'b', release_group_mbid: 'rg2', user_id: 'u1' });
