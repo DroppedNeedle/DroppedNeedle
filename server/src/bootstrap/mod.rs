@@ -32,11 +32,11 @@ use crate::{
     media::MediaSetup,
     plugins::wiring::PluginsSetup,
     providers::{InMemoryProviderCache, Providers, adapters::production_enrichment},
-    reads::ReadsSetup,
+    reads::{ReadsSetup, platform::wrapped::ConfigWrappedKey},
     runtime_config::{
         ConfigStore, Crypto,
         crypto::CryptoError,
-        secret_sections::{ListenBrainzConnection, WrappedSettings},
+        secret_sections::ListenBrainzConnection,
         sections::{ConnectApps, LyricsSettings},
     },
     settings::{
@@ -113,9 +113,6 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
     )?
     .with_trusted_proxies(config.trusted_proxies.clone());
 
-    let wrapped_api_key = config_store
-        .get_raw::<WrappedSettings>()
-        .map(|settings| settings.api_key.expose().to_owned())?;
     // Shared provider deps first: the reads enrichment pair paces through
     // these same limiters, so production holds one limiter set. The byte
     // cache stays shared with the admin stats and clear routes.
@@ -145,7 +142,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         runtime.pool(),
         auth.users.clone(),
         ids.clone(),
-        wrapped_api_key,
+        ConfigWrappedKey::new(config_store.clone()),
         Some(enrichment),
     );
     let connect_apps = match config_store.get::<ConnectApps>() {

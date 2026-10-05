@@ -24,10 +24,14 @@ use axum::{
     Json, Router,
     extract::{FromRequestParts, Path, State},
     http::{HeaderMap, StatusCode, request::Parts},
-    response::{IntoResponse, Response},
+    response::Response,
     routing::get,
 };
 use futures_util::future::BoxFuture;
+use sha2::{Digest, Sha256};
+
+use crate::auth::session::tokens::constant_time_eq;
+use crate::runtime_config::{ConfigStore, secret_sections::WrappedSettings};
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -35,8 +39,6 @@ use utoipa::ToSchema;
 pub const WRAPPED_API_KEY_HEADER: &str = "x-wrapped-api-key";
 /// Rejection message, v2 wording kept verbatim.
 pub const WRAPPED_UNAUTHORIZED_MESSAGE: &str = "Invalid or missing wrapped API key";
-/// Machine code for key rejections, matching the v3 401 code.
-const UNAUTHORIZED: &str = "UNAUTHORIZED";
 
 /// One user row in the listing.
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -242,21 +244,62 @@ impl WrappedData for FakeWrappedData {
     }
 }
 
-/// Handler state: the expected shared secret plus the data port. The secret
-/// arrives decrypted from settings at wiring; an empty secret fails every
-/// request closed (v2 `not expected` rule kept).
+/// Where the expected shared secret comes from. Read on every request, so a
+/// rotated key takes effect without a restart.
+pub trait WrappedKeySource: Send + Sync {
+    /// The current secret; empty means unconfigured (deny all).
+    fn current(&self) -> String;
+}
+
+/// A fixed secret (tests, and callers that hold no config store).
+impl WrappedKeySource for String {
+    fn current(&self) -> String {
+        self.clone()
+    }
+}
+
+/// The live `wrapped_settings` secret from the config store. A store that
+/// cannot be read denies every request (logged) rather than guessing.
+pub struct ConfigWrappedKey {
+    store: Arc<ConfigStore>,
+}
+
+impl ConfigWrappedKey {
+    /// Read the secret from `store` on every request.
+    pub fn new(store: Arc<ConfigStore>) -> Self {
+        Self { store }
+    }
+}
+
+impl WrappedKeySource for ConfigWrappedKey {
+    fn current(&self) -> String {
+        match self.store.get_raw::<WrappedSettings>() {
+            Ok(settings) => settings.api_key.expose().to_owned(),
+            Err(error) => {
+                tracing::error!(%error, "cannot read the wrapped API key; denying");
+                String::new()
+            }
+        }
+    }
+}
+
+/// Handler state: the expected shared secret plus the data port. An empty
+/// secret fails every request closed (v2 `not expected` rule kept).
 #[derive(Clone)]
 pub struct WrappedState {
-    /// Expected shared secret; empty means unconfigured (deny all).
-    pub api_key: String,
+    /// Expected shared secret, read per request.
+    pub api_key: Arc<dyn WrappedKeySource>,
     /// Wrapped data (the fake until an aggregation is wired).
     pub data: Arc<dyn WrappedData>,
 }
 
 impl WrappedState {
-    /// Wire the state from the expected secret and any port implementation.
-    pub fn new(api_key: String, data: Arc<dyn WrappedData>) -> Self {
-        Self { api_key, data }
+    /// Wire the state from a key source and any port implementation.
+    pub fn new(api_key: impl WrappedKeySource + 'static, data: Arc<dyn WrappedData>) -> Self {
+        Self {
+            api_key: Arc::new(api_key),
+            data,
+        }
     }
 }
 
@@ -272,46 +315,33 @@ pub fn routes(state: WrappedState) -> Router {
         .with_state(state)
 }
 
-/// Key check, v2 `verify_wrapped_api_key` semantics kept byte for byte:
-/// the header name is matched case-insensitively (HTTP rule, same as v2 via
-/// Starlette), the value is compared exactly with no trimming, an empty
-/// expected secret denies everything, and a missing or non-matching header
-/// denies. Only an exact match passes.
+/// Key check, v2 `verify_wrapped_api_key` semantics: the header name is
+/// matched case-insensitively (HTTP rule, same as v2 via Starlette), the
+/// value is compared exactly with no trimming, an empty expected secret
+/// denies everything, and a missing or non-matching header denies. The
+/// comparison runs in constant time over the digests, so response timing
+/// says nothing about how much of a guess was right.
 pub fn check_key(headers: &HeaderMap, expected: &str) -> bool {
     if expected.is_empty() {
         return false;
     }
-    headers
-        .get(WRAPPED_API_KEY_HEADER)
-        .is_some_and(|value| value.as_bytes() == expected.as_bytes())
-}
-
-/// Shared error envelope, byte-identical in shape to `crate::error`.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-struct WrappedErrorBody {
-    code: String,
-    message: String,
-    details: Option<serde_json::Value>,
-}
-
-/// Shared error envelope, byte-identical in shape to `crate::error`.
-#[derive(Debug, Clone, Serialize, ToSchema)]
-struct WrappedErrorEnvelope {
-    error: WrappedErrorBody,
+    let Some(presented) = headers.get(WRAPPED_API_KEY_HEADER) else {
+        return false;
+    };
+    let digest = |bytes: &[u8]| format!("{:x}", Sha256::digest(bytes));
+    constant_time_eq(&digest(presented.as_bytes()), &digest(expected.as_bytes()))
 }
 
 /// Key-gate rejection. Status 401 with the v2 message verbatim, and
 /// no `WWW-Authenticate` header on purpose: v2 sends none, and a Bearer
 /// challenge would misdescribe a shared-secret header scheme.
 fn wrapped_rejection() -> Response {
-    let body = WrappedErrorEnvelope {
-        error: WrappedErrorBody {
-            code: UNAUTHORIZED.to_owned(),
-            message: WRAPPED_UNAUTHORIZED_MESSAGE.to_owned(),
-            details: None,
-        },
-    };
-    (StatusCode::UNAUTHORIZED, Json(body)).into_response()
+    crate::error::envelope_response(
+        StatusCode::UNAUTHORIZED,
+        crate::error::UNAUTHORIZED,
+        WRAPPED_UNAUTHORIZED_MESSAGE,
+        None,
+    )
 }
 
 /// Extractor enforcing the wrapped key gate before the handler runs.
@@ -324,7 +354,7 @@ impl FromRequestParts<WrappedState> for WrappedKey {
         parts: &mut Parts,
         state: &WrappedState,
     ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
-        let allowed = check_key(&parts.headers, &state.api_key);
+        let allowed = check_key(&parts.headers, &state.api_key.current());
         async move {
             if allowed {
                 Ok(Self)
@@ -450,6 +480,25 @@ mod tests {
         let presented = headers(&[("x-wrapped-api-key", "secret")]);
         assert!(!check_key(&presented, ""));
         assert!(!check_key(&HeaderMap::new(), ""));
+    }
+
+    #[test]
+    fn rotated_key_applies_without_a_restart() {
+        use crate::runtime_config::{Crypto, Secret};
+        let dir = std::env::temp_dir().join(format!("dn-wrapped-key-{}", std::process::id()));
+        let crypto = || Crypto::from_key_bytes(&[7u8; 32]).unwrap();
+        let store = Arc::new(ConfigStore::open(&dir.join("config.json"), crypto()).unwrap());
+        let source = ConfigWrappedKey::new(store.clone());
+        for key in ["first-key", "rotated-key"] {
+            store
+                .save_secret(WrappedSettings {
+                    api_key: Secret::new(key),
+                })
+                .unwrap();
+            let presented = headers(&[("x-wrapped-api-key", key)]);
+            assert!(check_key(&presented, &source.current()), "{key}");
+        }
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

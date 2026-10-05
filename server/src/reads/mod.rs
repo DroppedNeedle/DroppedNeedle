@@ -52,7 +52,7 @@ pub struct ReadsSetup {
 impl ReadsSetup {
     /// Build the production bundle. `pool` serves library and search reads;
     /// `users` resolves library favorites and collections roles;
-    /// `wrapped_api_key` is the decrypted `wrapped_settings` secret (empty
+    /// `wrapped_key` yields the `wrapped_settings` secret per request (empty
     /// denies every wrapped request, the fail-closed rule); `enrichment`
     /// carries the live provider pair (`None` keeps the
     /// unconfigured ports: bare enrichment echoes and empty lyrics).
@@ -60,7 +60,7 @@ impl ReadsSetup {
         pool: &sqlx::SqlitePool,
         users: UsersDeps,
         ids: Arc<dyn IdGenerator>,
-        wrapped_api_key: String,
+        wrapped_key: impl platform::wrapped::WrappedKeySource + 'static,
         enrichment: Option<crate::providers::adapters::ProductionEnrichment>,
     ) -> Self {
         let library_db = library::sqlite::LibraryDb::new(pool);
@@ -102,7 +102,7 @@ impl ReadsSetup {
             search,
             discover: discover_deps(ids.clone()),
             collections: collections::CollectionsState::new(),
-            platform: platform_state(wrapped_api_key),
+            platform: platform_state(wrapped_key),
         }
     }
 
@@ -186,7 +186,9 @@ fn discover_deps(ids: Arc<dyn IdGenerator>) -> discover::ReadsDeps {
 
 /// Platform states: empty art, tagged version with no known
 /// releases, and empty wrapped data behind the configured key.
-fn platform_state(wrapped_api_key: String) -> platform::PlatformState {
+fn platform_state(
+    wrapped_key: impl platform::wrapped::WrappedKeySource + 'static,
+) -> platform::PlatformState {
     use platform::{
         covers::{CoversState, FakeCoverArt},
         version::{FakeReleases, VersionState},
@@ -199,7 +201,7 @@ fn platform_state(wrapped_api_key: String) -> platform::PlatformState {
     platform::PlatformState::new(
         CoversState::new(Arc::new(FakeCoverArt::empty())),
         VersionState::new(Arc::new(FakeReleases::tagged(env!("CARGO_PKG_VERSION")))),
-        WrappedState::new(wrapped_api_key, Arc::new(FakeWrappedData::empty(year))),
+        WrappedState::new(wrapped_key, Arc::new(FakeWrappedData::empty(year))),
     )
 }
 
