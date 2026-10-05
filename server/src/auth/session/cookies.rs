@@ -1,6 +1,6 @@
 //! Session cookie build/parse.
 //!
-//! Policy (spec D3): name `droppedneedle_session`, httpOnly,
+//! Policy: name `droppedneedle_session`, httpOnly,
 //! `SameSite=Lax`, `Secure` auto-marked on HTTPS (direct scheme or
 //! `X-Forwarded-Proto`, so plain-HTTP LAN installs keep working),
 //! `Path=<base>/api/v3`, 30-day max-age. The `__Host-` prefix stays rejected

@@ -2,7 +2,7 @@
 //!
 //! The 0001 baseline keeps v2's TEXT time columns, and v2 wrote them as
 //! ISO-8601 with an explicit offset (`datetime.now(timezone.utc).isoformat()`).
-//! The stage-11 importer carries those values verbatim, so the v3 adapters read
+//! The v2 importer carries those values verbatim, so the v3 adapters read
 //! and write the same shape. Writes use whole seconds (`...+00:00`); reads
 //! accept the v2 fractional form plus `Z` and numeric offsets, truncating
 //! sub-second precision. Years 0000-9999 round-trip; anything else fails

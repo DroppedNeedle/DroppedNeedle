@@ -1,4 +1,4 @@
-//! Admin user import from Jellyfin and Plex (stage0-auth D5).
+//! Admin user import from Jellyfin and Plex.
 //!
 //! Pre-provisions DroppedNeedle accounts from the shared media server: each
 //! import creates an `auth_users` row (role forced to `user`) plus a
@@ -6,11 +6,10 @@
 //! identity, not a credential store). The first SSO login matches the
 //! pre-seeded `provider_uid`, so no admin-set password is needed.
 //!
-//! The join key MUST equal exactly what the live login produces: the
+//! The join key must equal exactly what the live login produces: the
 //! Jellyfin user id from `GET /Users`, the Plex account uuid.
 //!
-//! v2 provenance (read-only): `backend/services/user_import_service.py`,
-//! `backend/api/v1/routes/auth.py` (`/admin/import/*`).
+//! Ported from v2's user import service and its `/admin/import/*` routes.
 
 use std::collections::HashMap;
 
@@ -36,7 +35,7 @@ use crate::ids::IdGenerator;
 
 /// Failures the import endpoints can return. Directory outages render the
 /// federated 503 posture (same as the login flows); everything else
-/// delegates to the slice error.
+/// delegates to the users error.
 #[derive(Debug)]
 pub enum ImportError {
     /// Slice failure (store fault, bad input, conflict).
@@ -82,7 +81,7 @@ impl IntoResponse for ImportError {
 }
 
 /// Jellyfin directory with no live client: every listing reports
-/// unconfigured (honest 503). The live-client step replaces this at the
+/// unconfigured (503). A live client would replace this at the
 /// handler with the real directory, threaded through wiring like the login
 /// IdPs.
 #[derive(Debug, Clone, Default)]
@@ -101,7 +100,7 @@ impl UserDirectory for DisabledJellyfinDirectory {
 }
 
 /// Plex directory with no live client: every listing reports unconfigured
-/// (honest 503). Replaced the same way as its Jellyfin twin.
+/// (503). Replaced the same way as its Jellyfin twin.
 #[derive(Debug, Clone, Default)]
 pub struct DisabledPlexDirectory;
 

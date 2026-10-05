@@ -8,12 +8,11 @@
 //! Argon2id success returns no upgrade; unknown users cost one dummy
 //! verify so bad-user and bad-password stay indistinguishable.
 //!
-//! Sessions do NOT survive import ([`SESSIONS_SURVIVE_IMPORT`]): the
-//! import pipeline deletes every `auth_tokens` row plus the transient
-//! tables (recovery codes, OIDC states, Spotify states), so each user
-//! re-logs-in once. App passwords DO survive (owned by the import slice,
-//! stage 11): `secret_sha256` carries over verbatim and
-//! `secret_encrypted` is re-sealed under the v3 key at import.
+//! Sessions do not survive import ([`SESSIONS_SURVIVE_IMPORT`]): the export
+//! carries no sessions or transient rows (recovery codes, OIDC states,
+//! Spotify states), so each user logs in once more. App passwords do
+//! survive: `secret_sha256` carries over verbatim and `secret_encrypted` is
+//! re-sealed under the v3 key at import.
 
 /// Hash scheme tag for a local credential row. Imports land as
 /// [`HashScheme::Bcrypt`]; every new or rehashed row is
@@ -137,11 +136,8 @@ pub fn verify_and_maybe_rehash<H: PasswordHasher>(
     }
 }
 
-/// Import drops every session: users re-log-in once after migration.
-/// STAGE-11 HANDOFF: production enforcement (the actual clearing) is owned
-/// by the stage-11 importer; the fake-scoped brief here only proves the
-/// re-login shape. The stage-11 clearing test must prove each of these is
-/// empty post-import while app passwords still verify:
-/// `auth_tokens`, `auth_password_recovery_codes`, `auth_oidc_states`, and
-/// `spotify_oauth_states`.
+/// Import drops every session: users log in once more after migration.
+/// None of `auth_tokens`, `auth_password_recovery_codes`,
+/// `auth_oidc_states` or `spotify_oauth_states` is exported from v2, while
+/// app passwords are and still verify after import.
 pub const SESSIONS_SURVIVE_IMPORT: bool = false;

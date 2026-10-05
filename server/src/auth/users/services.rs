@@ -168,7 +168,7 @@ async fn screen_password(deps: &UsersDeps, password: &str) -> Result<(), UsersEr
     Ok(())
 }
 
-/// Hash off the IO loop: Argon2id is deliberately slow. A hashing failure
+/// Hash off the IO loop: Argon2id is slow by design. A hashing failure
 /// fails the request (fixed 500); no sentinel hash is ever persisted.
 async fn hash_password(deps: &UsersDeps, password: &str) -> Result<String, UsersError> {
     let hasher = Arc::clone(&deps.passwords);
@@ -473,7 +473,7 @@ pub async fn get_avatar(
 }
 
 // ---------------------------------------------------------------------------
-// Sessions (R6 UI backend)
+// Sessions (session-list UI backend)
 // ---------------------------------------------------------------------------
 
 /// Strip the companion marker prefix back to the device label for display.
@@ -634,8 +634,8 @@ pub async fn admin_get_user(deps: &UsersDeps, user_id: &str) -> Result<UserRespo
     user_response(deps, &user).await
 }
 
-/// POST /admin/users: create a local account. Conflicts stay deliberately
-/// vague (no username/email oracle for admins either).
+/// POST /admin/users: create a local account. Conflicts stay vague on
+/// purpose (no username/email oracle for admins either).
 pub async fn admin_create_user(
     deps: &UsersDeps,
     username: &str,
@@ -933,7 +933,7 @@ pub async fn reset_password(deps: &UsersDeps, body: &PasswordReset) -> Result<()
 }
 
 // ---------------------------------------------------------------------------
-// Per-user Last.fm (R7: the admin-global pair is deleted)
+// Per-user Last.fm (v3 has no admin-global pair)
 // ---------------------------------------------------------------------------
 
 /// Last.fm master-switch guard. Reads live on every call.
@@ -1363,7 +1363,7 @@ pub async fn admin_revoke_app_password(
     }
 }
 
-/// Compat verification contract (stage 9 calls this; native paths never do).
+/// Compat verification contract (the compat APIs call this; native paths never do).
 ///
 /// SHA-256(secret) resolves the live row, the stored digest compares in
 /// constant time, and a successful verification stamps last use. Returns

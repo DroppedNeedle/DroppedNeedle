@@ -1,8 +1,8 @@
 //! Production auth adapters: the wiring surface the app owns.
 //!
-//! This module is the single import point for the stage-3 close-out: the
-//! Argon2id password hasher and the SQLite adapters over the 0001 baseline
-//! tables. Slices define ports; this module re-exports the production types
+//! This module is the single import point for the production auth types:
+//! the Argon2id password hasher and the SQLite adapters over the 0001
+//! baseline tables. The auth modules define ports; this module re-exports the production types
 //! behind them plus one bundle constructor, so app wiring touches one path.
 //!
 //! ## What the wiring calls
@@ -84,7 +84,7 @@ pub struct ProdAuth {
     pub hasher: Argon2idHasher,
     /// Logins + middleware over `auth_tokens`.
     pub sessions: SqliteSessionStore,
-    /// R6 list/revoke surface over `auth_tokens`.
+    /// Session list/revoke surface over `auth_tokens`.
     pub session_manager: SqliteSessionManager,
     /// Accounts + local credentials over `auth_users` / `auth_providers`.
     pub users: SqliteUserStore,

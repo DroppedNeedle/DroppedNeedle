@@ -1,4 +1,4 @@
-//! Unified Plex journey (R4): one PIN start plus one poll per purpose.
+//! Unified Plex journey: one PIN start plus one poll per purpose.
 //!
 //! v2 ran three PIN flows through two services and three route pairs:
 //! login (`/auth/plex/pin` + `/auth/plex/poll`, membership gated only

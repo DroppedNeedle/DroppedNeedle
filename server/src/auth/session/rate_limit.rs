@@ -6,7 +6,7 @@
 //! `auth/setup`, `auth/jellyfin/login`, `auth/plex/*` for the unified journey)
 //! plus the three new strict rows the spec orders at login-class strictness:
 //! `auth/password-recovery/reset`, `auth/oidc/exchange`, `auth/device-sessions`.
-//! (v2's search/discover/covers overrides are endpoint slices' business.)
+//! (v2's search/discover/covers overrides belong to those endpoints.)
 
 use std::sync::{Arc, Mutex};
 use std::time::Instant;

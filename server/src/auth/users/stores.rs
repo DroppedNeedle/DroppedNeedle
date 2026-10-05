@@ -1,10 +1,9 @@
-//! Ports: the seams this slice depends on.
+//! Ports: the seams the users routes depend on.
 //!
 //! Every external behavior sits behind one of these traits so tests inject
-//! fakes (see `memory.rs`). The SQLite implementations are a wiring-step
-//! follow-up over the stage-2 baseline tables; each trait documents its
-//! table mapping. Futures are boxed by hand because `async fn` is not
-//! object-safe and this slice adds no new dependencies.
+//! fakes (see `memory.rs`). The SQLite implementations live in
+//! [`crate::auth::sqlite`]; each trait documents its table mapping. Futures
+//! are boxed by hand because `async fn` is not object-safe.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -155,11 +154,11 @@ pub trait UserStore: Send + Sync {
     ) -> BoxFuture<'a, Result<(), StoreError>>;
 }
 
-/// Session management rows (the R6 backend).
+/// Session management rows (the session-list backend).
 ///
-/// The sibling session slice owns the middleware/login store
+/// The session module owns the middleware/login store
 /// (`session::store::SessionStore`: insert + valid lookup) and assigns the
-/// list/revoke surface to this slice. This port is that surface, plus the
+/// list/revoke surface to the users routes. This port is that surface, plus the
 /// atomic companion replace and a lookup used only to pin native/compat
 /// credential separation. The wiring-step SQLite adapter implements both
 /// traits over the one `auth_tokens` table; the memory fake in `memory.rs`
@@ -199,7 +198,7 @@ pub trait SessionManager: Send + Sync {
         expires_at: i64,
     ) -> BoxFuture<'a, Result<ManagedSession, StoreError>>;
     /// Resolve a live token hash to its owner. None for unknown, revoked,
-    /// or expired hashes. Exists so the briefs can pin that app-password
+    /// or expired hashes. Exists so tests can pin that app-password
     /// secrets never resolve as native sessions.
     fn owner_by_hash<'a>(
         &'a self,
@@ -248,7 +247,7 @@ pub trait AppPasswordStore: Send + Sync {
     ) -> BoxFuture<'a, Result<(), StoreError>>;
 }
 
-/// Per-user Last.fm links (R7: no admin-global pair exists).
+/// Per-user Last.fm links (v3 has no admin-global pair).
 ///
 /// Table mapping: `user_connections` with `service = 'lastfm'`;
 /// `connection_data` is `v3:` ciphertext of the JSON
@@ -311,11 +310,11 @@ pub trait AvatarStore: Send + Sync {
     ) -> BoxFuture<'a, Result<Option<LoadedAvatar>, StoreError>>;
 }
 
-/// Password hashing comes from the federated slice:
+/// Password hashing comes from the federated module:
 /// [`PasswordHasher`](super::super::federated::password_import::PasswordHasher)
 /// (bcrypt verify, Argon2id hash, dummy verify) with scheme dispatch on
 /// [`HashScheme`](super::super::federated::password_import::HashScheme).
-/// This slice holds it as `Arc<dyn FalliblePasswordHasher>` in
+/// The users routes hold it as `Arc<dyn FalliblePasswordHasher>` in
 /// [`UsersDeps`](super::UsersDeps) and always writes the `argon2id` scheme
 /// tag on new hashes. Tests use the SHA-256 test hasher in `memory.rs`,
 /// never valid in production.
@@ -334,7 +333,7 @@ pub enum HashError {
 
 /// Password hashing with a fallible Argon2id entry point. The federated
 /// [`PasswordHasher`] port stays infallible (its contract), so production
-/// code in this slice hashes only through [`try_hash_argon2id`](Self::try_hash_argon2id)
+/// code here hashes only through [`try_hash_argon2id`](Self::try_hash_argon2id)
 /// and fails the request on error. A failed hash must never persist: there
 /// is no sentinel value that reads as "no hash".
 pub trait FalliblePasswordHasher: PasswordHasher {
@@ -349,7 +348,7 @@ pub trait PasswordScreen: Send + Sync {
     fn screen<'a>(&'a self, password: &'a str, policy: &'a HibpPolicy) -> BoxFuture<'a, bool>;
 }
 
-/// The HIBP knobs this slice reads. The wiring step bridges these to the
+/// The HIBP knobs the users routes read. The wiring bridges these to the
 /// `security` config section on every password write.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HibpPolicy {
@@ -374,7 +373,7 @@ pub trait LastFmSwitch: Send + Sync {
 }
 
 /// The two Last.fm auth web calls, behind a seam so tests never touch the
-/// network. Production implementation arrives with the stage-5 provider.
+/// network. No live implementation exists yet.
 pub trait LastFmAuthClient: Send + Sync {
     /// `auth.getToken` with the user's own API key.
     fn request_token<'a>(
@@ -407,7 +406,7 @@ pub enum LastFmError {
 /// One account enumerated from a media-server user directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirectoryUser {
-    /// Provider-side id. MUST equal exactly what the live login produces
+    /// Provider-side id. Must equal exactly what the live login produces
     /// (Jellyfin user id, Plex account uuid): it is the import join key.
     pub provider_uid: String,
     /// Display name on the provider.
@@ -432,7 +431,7 @@ pub enum DirectoryError {
 
 /// Network edge for admin user import: enumerate the accounts on one media
 /// server (Jellyfin `GET /Users`, Plex users). Production has no live
-/// client yet, so the slice serves an honest 503 through its disabled
+/// client yet, so the import serves a 503 through its disabled
 /// implementations until the provider clients land (same posture as the
 /// login IdPs). Tests use the scripted fakes in `memory.rs`.
 pub trait UserDirectory: Send + Sync {

@@ -14,9 +14,8 @@
 //!
 //! Password hashing seam: production wires bcrypt verification for imported
 //! rows with opportunistic Argon2id rehash on success, rows tagged
-//! `bcrypt | argon2id` (spec D6). That needs the `bcrypt` + `argon2` deps plus
-//! a provider-table adapter; this slice defines the `PasswordVerifier` port
-//! and a fake, and the rehash-on-login step lands with the user slice.
+//! `bcrypt | argon2id`. This module defines the `PasswordVerifier` port and
+//! a fake; [`crate::auth::passwords`] holds the production verifier.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -49,7 +48,7 @@ pub enum TransportParam {
 /// `transport` param is mechanism and lives here.
 #[derive(Debug, Clone, Deserialize)]
 pub struct LoginRequest {
-    /// Username (matched case-insensitively, v2 D3).
+    /// Username (matched case-insensitively, as in v2).
     pub username: String,
     /// Account password.
     pub password: String,
@@ -115,7 +114,7 @@ pub trait CredentialLookup: Clone + Send + Sync + 'static {
 }
 
 /// Password-hash port. Production verifies bcrypt/argon2id by scheme tag and
-/// rehashes legacy rows on success (spec D6); the dummy path runs the same
+/// rehashes legacy rows on success; the dummy path runs the same
 /// cost class so unknown users cost one verify, exactly like wrong passwords.
 pub trait PasswordVerifier: Clone + Send + Sync + 'static {
     /// Verify a candidate against the tagged stored hash.
@@ -213,8 +212,8 @@ where
 }
 
 /// Render a login success. `user_json` is the caller-supplied user object (its
-/// shape is API-design scope); this adds the token ONLY in Bearer mode, sets
-/// the cookie ONLY in cookie mode, and always stamps `no-store`.
+/// shape belongs to the caller); this adds the token only in Bearer mode,
+/// sets the cookie only in cookie mode, and always stamps `no-store`.
 pub fn login_response(
     user_json: serde_json::Value,
     success: &LoginSuccess,

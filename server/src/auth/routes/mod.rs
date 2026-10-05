@@ -1,6 +1,6 @@
 //! Native auth HTTP routes: login, logout, setup, and federated login.
 //!
-//! Thin Axum routers over the slice services (services own logic; this layer
+//! Thin Axum routers over the auth services (services own logic; this layer
 //! owns status mapping, cookies, and envelopes only). Paths are relative;
 //! the orchestrator nests each router under `/api/v3` inside the session
 //! middleware and registers the `utoipa::path` handlers in `ApiDoc`.

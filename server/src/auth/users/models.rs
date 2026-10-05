@@ -47,8 +47,8 @@ pub struct LocalCredential {
 }
 
 /// One session row as the management surface sees it. No token hash:
-/// listings must never expose credential material. The sibling session
-/// slice owns the full row (with hash) for middleware and login.
+/// listings must never expose credential material. The session module
+/// owns the full row (with hash) for middleware and login.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManagedSession {
     /// Session id.
@@ -165,7 +165,7 @@ pub struct UserResponse {
 }
 
 /// Own profile. Identity only; connected services and library stats belong
-/// to the connections and library slices.
+/// to the connections and library routes.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
 pub struct ProfileResponse {
     /// The account.

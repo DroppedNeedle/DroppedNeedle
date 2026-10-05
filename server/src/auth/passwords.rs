@@ -101,7 +101,7 @@ impl RehashQueue {
     }
 }
 
-/// Production hasher: real Argon2id and bcrypt primitives behind both slice
+/// Production hasher: real Argon2id and bcrypt primitives behind both
 /// ports (the federated [`PasswordHasher`] and the session [`SessionPasswordVerifier`]).
 /// Verification is fail-closed everywhere: malformed hashes, overlong
 /// passwords, and unknown scheme tags all verify as false.

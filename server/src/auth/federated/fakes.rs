@@ -1,4 +1,4 @@
-//! Scripted fakes for the federated slice: in-memory stores, canned IdP
+//! Scripted fakes for federated login: in-memory stores, canned IdP
 //! answers, and a deterministic session issuer. No network, no clock, no
 //! real crypto. Clones share state through `Arc`, so a test can hold one
 //! handle while the service under test holds another.

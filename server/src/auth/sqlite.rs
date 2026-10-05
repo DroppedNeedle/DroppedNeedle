@@ -1,10 +1,10 @@
 //! Production SQLite adapters over the 0001 baseline tables.
 //!
-//! One adapter per slice port, all sharing a single [`AuthDb`] handle (the
-//! reader pool plus the writer lane, cloned out of the stage-2 runtime):
+//! One adapter per auth port, all sharing a single [`AuthDb`] handle (the
+//! reader pool plus the writer lane, cloned out of the database runtime):
 //!
 //! - [`SqliteSessionStore`] (session logins + middleware) and
-//!   [`SqliteSessionManager`] (the R6 UI backend) over `auth_tokens`;
+//!   [`SqliteSessionManager`] (the session-list UI backend) over `auth_tokens`;
 //! - [`SqliteUserStore`] over `auth_users` plus the `local` rows of
 //!   `auth_providers`;
 //! - [`SqliteFederatedStore`] over `auth_users` plus the federated rows of
@@ -33,9 +33,8 @@
 //!   closed (`Unavailable` / `Internal` / `StoreUnavailable`, lookups read as
 //!   absent). Production opens [`AuthDb::new`] from the live runtime.
 //! - Lock contention surfaces as the port's generic failure, not a retryable
-//!   busy: the slice error types predate the busy mapping, so a busy lane
-//!   reads as a 500 rather than a 503. Widening the slice errors is follow-up
-//!   work owned by the orchestrator, not this close-out.
+//!   busy: the auth error types have no busy variant, so a busy lane reads
+//!   as a 500 rather than a 503.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -377,7 +376,7 @@ pub fn session_expires_at(now_unix: i64) -> i64 {
     expires_at(now_unix)
 }
 
-/// Session management (the R6 UI backend) over `auth_tokens`.
+/// Session management (the session-list UI backend) over `auth_tokens`.
 ///
 /// Shares the table with [`SqliteSessionStore`]: listings expose no token
 /// hashes, and the companion replace revokes the prior same-label token in
@@ -656,8 +655,8 @@ impl SqliteUserStore {
 const USER_COLUMNS: &str = "id, display_name, email, avatar_url, role, created_at, \
     last_login_at, username, username_display";
 
-/// Map one `auth_users` row. Unknown roles degrade to least privilege (the
-/// slice rule); unparseable display times degrade to 0.
+/// Map one `auth_users` row. Unknown roles degrade to least privilege;
+/// unparseable display times degrade to 0.
 fn map_user(row: &sqlx::sqlite::SqliteRow) -> UserRecord {
     let created_raw: String = row.get("created_at");
     let login_raw: Option<String> = row.get("last_login_at");

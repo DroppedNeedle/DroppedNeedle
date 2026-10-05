@@ -1,7 +1,7 @@
 //! Federated auth routes: OIDC, Jellyfin, and the unified Plex journey.
 //!
-//! Thin HTTP over the federated slice services. Shapes are clean-slate v3;
-//! behavior follows the services plus stage0-auth: OIDC keeps the PKCE
+//! Thin HTTP over the federated services. Shapes are clean-slate v3;
+//! behavior follows the services: OIDC keeps the PKCE
 //! authorize/callback/exchange steps, Jellyfin keeps credential login, Plex
 //! keeps one start plus one poll per purpose (login/link/connect). OIDC,
 //! Jellyfin, Plex start, and Plex poll/login are allowlisted public; Plex
@@ -79,8 +79,7 @@ impl<S: Send + Sync> FromRequestParts<S> for AuthenticatedSession {
 }
 
 /// Live OIDC settings. A port (not a value in state) so admin config edits
-/// take effect without a restart; the settings slice owns the production
-/// implementation.
+/// take effect without a restart.
 pub trait OidcConfigSource: Clone + Send + Sync + 'static {
     /// Current OIDC connection settings.
     fn current(&self) -> impl Future<Output = OidcConfig> + Send;
@@ -681,7 +680,7 @@ struct Handoff<'a> {
 }
 
 /// One login-shaped federated response: the user JSON plus the session under
-/// the D1 transport rule, `no-store` always. The session row already exists
+/// the login transport rule (cookie or Bearer), `no-store` always. The session row already exists
 /// (the `SessionIssuer` wrote it); this only hands the token over. In Bearer mode
 /// the sibling renderer adds the `token` field to the object body.
 fn federated_login_response(

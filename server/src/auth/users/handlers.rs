@@ -218,7 +218,7 @@ pub async fn get_avatar(
         .into_response())
 }
 
-/// List the caller's sessions for the R6 UI.
+/// List the caller's sessions for the session-list UI.
 #[utoipa::path(
     get,
     path = "/api/v3/auth/sessions",
@@ -594,8 +594,8 @@ pub async fn admin_revoke_app_password(
         .map(|()| StatusCode::NO_CONTENT)
 }
 
-/// List Jellyfin accounts available for import. Honest 503 until the live
-/// Jellyfin client lands (same posture as the login flows).
+/// List Jellyfin accounts available for import. 503 until a live Jellyfin
+/// client exists (same posture as the login flows).
 #[utoipa::path(
     get,
     path = "/api/v3/admin/import/jellyfin",
@@ -610,8 +610,8 @@ pub async fn admin_import_list_jellyfin(
         .map(Json)
 }
 
-/// List Plex accounts available for import. Honest 503 until the live Plex
-/// client lands (same posture as the login flows).
+/// List Plex accounts available for import. 503 until a live Plex client
+/// exists (same posture as the login flows).
 #[utoipa::path(
     get,
     path = "/api/v3/admin/import/plex",

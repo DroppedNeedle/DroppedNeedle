@@ -1,5 +1,5 @@
 //! In-memory compat password store implementing both protocols. Users
-//! carry an account password (which must NEVER verify) plus app-password
+//! carry an account password (which must never verify) plus app-password
 //! secrets (the only compat credential). Clones share state through
 //! `Arc`, so tests seed one handle and verify through another.
 

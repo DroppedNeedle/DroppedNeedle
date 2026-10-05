@@ -5,7 +5,7 @@
 //! `X-Emby-Authorization`), as `X-Emby-Token` / `X-MediaBrowser-Token`,
 //! or as `?ApiKey=` / `?api_key=`, in that order. Unknown or missing
 //! tokens fail 401 and never raise. `AuthenticateByName` takes the app
-//! password as `Pw` and echoes it VERBATIM as `AccessToken` alongside a
+//! password as `Pw` and echoes it verbatim as `AccessToken` alongside a
 //! fresh `SessionInfo` and the full non-null user object strict clients
 //! (Finamp, Manet) hard-cast on.
 
@@ -138,7 +138,7 @@ pub fn extract_device(request: &JellyfinRequest) -> (Option<String>, Option<Stri
 pub struct JellyfinStoreError;
 
 /// App-password lookups. The production adapter reads
-/// `connect_app_passwords` and `auth_users` ONLY: account passwords and
+/// `connect_app_passwords` and `auth_users` only: account passwords and
 /// native tokens are unreachable here by construction, so presenting one
 /// fails exactly like an unknown credential (401, empty body).
 pub trait JellyfinPasswordStore: Clone + Send + Sync + 'static {
@@ -255,13 +255,13 @@ pub struct SessionFacts {
     pub device_id: Option<String>,
     /// UTC ISO-8601 activity timestamp with microseconds, v2
     /// `datetime.now(timezone.utc).isoformat()` shape
-    /// (`2026-09-28T12:00:00.123456+00:00`). The router (stage 9) formats
+    /// (`2026-09-28T12:00:00.123456+00:00`). The Jellyfin router formats
     /// it; this contract only pins the shape.
     pub last_activity: String,
 }
 
 /// Render the login echo: full non-null user object, the app password
-/// echoed VERBATIM as `AccessToken`, fresh `SessionInfo`. Key order and
+/// echoed verbatim as `AccessToken`, fresh `SessionInfo`. Key order and
 /// `None`-stripping match v2 (`msgspec` struct order, `None` dropped).
 pub fn login_echo_json(user: &JellyfinUser, access_token: &str, session: &SessionFacts) -> String {
     let server_id = server_id();

@@ -7,8 +7,7 @@
 //! [`HibpHttp`] so tests never touch the network.
 //!
 //! SHA-1 is implemented here (~60 lines, NIST-vector tested) because no
-//! SHA-1 crate is currently depended on and this slice adds no new
-//! dependencies. It serves only HIBP lookups, never security decisions.
+//! SHA-1 crate is depended on for this alone. It serves only HIBP lookups, never security decisions.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -92,7 +91,7 @@ pub trait HibpHttp: Send + Sync {
     ) -> BoxFuture<'a, Result<HashSet<String>, HibpHttpError>>;
 }
 
-/// A failed range call. Deliberately detail-free.
+/// A failed range call. Carries no detail on purpose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HibpHttpError;
 

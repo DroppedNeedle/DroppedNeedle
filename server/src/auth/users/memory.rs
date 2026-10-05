@@ -1,9 +1,8 @@
 //! Test doubles: in-memory stores, fake seams, and the test rig.
 //!
-//! These fakes prove every port is implementable and back the briefs. The
-//! memory session store in particular implements the assumed sibling
+//! These fakes back the tests. The memory session store implements the
 //! [`SessionManager`](super::stores::SessionManager) trait, so the sessions
-//! backend is fully exercised before the sibling SQLite store lands.
+//! backend runs in tests without SQLite.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -906,10 +905,10 @@ impl AvatarStore for MemoryAvatarStore {
 // Hashing, time, policies, seams
 // ---------------------------------------------------------------------------
 
-/// TEST-ONLY password hasher over the federated [`PasswordHasher`] trait:
+/// Test-only password hasher over the federated [`PasswordHasher`] trait:
 /// unsalted SHA-256 stored as `argon2id` rows so scheme dispatch runs.
-/// Fast and deterministic for briefs; never valid in production, where the
-/// wiring step installs the real bcrypt/Argon2id hasher.
+/// Fast and deterministic for tests; never valid in production, where the
+/// wiring installs the real bcrypt/Argon2id hasher.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Sha256TestHasher;
 
@@ -942,7 +941,7 @@ impl FalliblePasswordHasher for Sha256TestHasher {
     }
 }
 
-/// Manually advanced clock for expiry briefs.
+/// Manually advanced clock for expiry tests.
 #[derive(Debug)]
 pub struct ManualClock {
     now: AtomicI64,

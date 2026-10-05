@@ -1,7 +1,7 @@
 //! Request and response bodies for the auth HTTP routes.
 //!
 //! Clean-slate `/api/v3` shapes (snake_case). The session-issuing responses
-//! share one rule from spec D1: cookie mode sets the session cookie and the
+//! share one rule: cookie mode sets the session cookie and the
 //! body carries no token; Bearer mode returns the raw token once in the body and
 //! sets no cookie. Every token-mint response carries `no-store`.
 

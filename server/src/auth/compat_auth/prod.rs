@@ -2,7 +2,7 @@
 //! tables.
 //!
 //! Reads `connect_app_passwords` (decrypting `secret_encrypted` for the
-//! Subsonic token scheme) and `auth_users` ONLY. Account passwords and
+//! Subsonic token scheme) and `auth_users` only. Account passwords and
 //! native tokens are unreachable here by construction, so presenting one
 //! fails exactly like an unknown credential. `note_use` throttles
 //! `last_used_at` writes to one per secret per five minutes.

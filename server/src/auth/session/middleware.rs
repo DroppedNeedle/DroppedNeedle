@@ -6,24 +6,24 @@
 //! -> 401 + `WWW-Authenticate: Bearer`) -> origin check on cookie mutations
 //! against the effective host (forwarded host only from trusted proxies)
 //! (-> 403). Success stashes [`CurrentSession`] in the request extensions for
-//! handlers and role extractors; role gating itself is handler-level (sibling
-//! slice), as is the per-resource 403-or-404 choice.
+//! handlers and role extractors; role gating itself is handler-level, as is
+//! the per-resource 403-or-404 choice.
 //!
 //! ## Layer order (wiring)
 //!
-//! In axum the LAST `.layer()` call is outermost. The v3 router must layer,
+//! In axum the last `.layer()` call is outermost. The v3 router must layer,
 //! from first call to last: `require_session` (inner, closest to handlers),
 //! then `rate_limit`, then debug-only CORS (outer). Execution order per
 //! request is then CORS -> rate limit -> session -> handler, matching v2
 //! (Starlette last-added-first). The request-scope middleware wraps the whole
-//! app outside all of these, as today. Compat routers mount OUTSIDE the
+//! app outside all of these. Compat routers mount outside the
 //! session layer with their own app-password auth; no native token is ever
 //! accepted on compat paths and no app password on native paths.
 //!
 //! ## Trusted proxies
 //!
 //! [`TrustedProxies`] names the reverse proxies allowed to set
-//! `X-Forwarded-*` (spec D3, v2 `ProxyHeadersMiddleware` semantics): the
+//! `X-Forwarded-*` (v2 `ProxyHeadersMiddleware` semantics): the
 //! effective host honors `X-Forwarded-Host` only when the TCP peer is
 //! trusted, and the login routes mark `Secure` from `X-Forwarded-Proto`
 //! under the same verdict. Anything else fails closed to the direct `Host`
@@ -52,7 +52,7 @@ use super::{
 pub struct CurrentSession {
     /// Owning user id.
     pub user_id: String,
-    /// Session row id (for the R6 UI `current` marker).
+    /// Session row id (for the session-list `current` marker).
     pub session_id: String,
     /// Standard or companion.
     pub kind: SessionKind,

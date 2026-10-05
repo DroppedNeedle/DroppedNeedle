@@ -1,6 +1,6 @@
-//! Users-slice errors rendered into the shared envelope.
+//! Users errors rendered into the shared envelope.
 //!
-//! Status mapping for this slice lives here in the handler layer. Services
+//! Status mapping for the users routes lives here in the handler layer. Services
 //! return domain failures that handlers convert; anything unexpected becomes
 //! a fixed 5xx body naming an error id, with the cause going to the log only.
 
@@ -39,7 +39,7 @@ pub const FIXED_TOO_LARGE_MESSAGE: &str = "Request body too large";
 /// Challenge sent on every 401.
 pub const WWW_AUTHENTICATE_BEARER: &str = "Bearer";
 
-/// Every failure this slice can return to a caller.
+/// Every failure the users routes can return to a caller.
 #[derive(Debug)]
 pub enum UsersError {
     /// No valid session. Carries the `WWW-Authenticate` challenge.

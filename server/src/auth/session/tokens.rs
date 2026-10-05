@@ -11,7 +11,7 @@ use thiserror::Error;
 
 /// Random bytes per token (v2 `TOKEN_BYTES`).
 pub const TOKEN_BYTES: usize = 32;
-/// Absolute session lifetime in days; no sliding refresh (spec D5).
+/// Absolute session lifetime in days; no sliding refresh.
 pub const SESSION_LIFETIME_DAYS: i64 = 30;
 /// Cookie max-age matching the token lifetime, in seconds.
 pub const SESSION_MAX_AGE_SECS: i64 = SESSION_LIFETIME_DAYS * 24 * 60 * 60;

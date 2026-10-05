@@ -1,7 +1,7 @@
 //! Public allowlist for the v3 native API.
 //!
 //! Every `/api/v3/*` path requires a session except the paths enumerated here,
-//! carried over from the v2 list and re-pathed to `/api/v3` (spec D2). The v2
+//! carried over from the v2 list and re-pathed to `/api/v3`. The v2
 //! prefix lesson applies: allowlist exact paths, never broad prefixes, except
 //! the OIDC sub-journey whose steps share one flow. Nothing outside this list
 //! is public; compat routers mount outside the middleware entirely with their
@@ -31,8 +31,8 @@ pub const PUBLIC_PATHS: &[&str] = &[
 ];
 
 /// Public path prefixes (segment-boundary matched): the OIDC
-/// authorize/callback/exchange steps share one flow. Plex is deliberately
-/// NOT a prefix: poll/link and poll/connect require a session.
+/// authorize/callback/exchange steps share one flow. Plex is not a prefix
+/// on purpose: poll/link and poll/connect require a session.
 pub const PUBLIC_PREFIXES: &[&str] = &["/api/v3/auth/oidc"];
 
 /// True when the request path (no query string) needs no session.

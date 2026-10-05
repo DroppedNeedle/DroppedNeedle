@@ -1,6 +1,6 @@
 //! Users, roles, devices, recovery, app passwords, per-user Last.fm.
 //!
-//! The stage-3 users slice, mounted under `/api/v3`. Clean-slate shapes;
+//! The users routes, mounted under `/api/v3`. Clean-slate shapes;
 //! no v2 wire compatibility is kept. Role semantics are unchanged: `user`
 //! requests await approval while `trusted`/`admin` auto-approve and are
 //! quota-exempt; curator means admin-or-trusted.
@@ -49,12 +49,12 @@ use stores::{
     LastFmSwitch, PasswordScreen, RecoveryStore, SecurityPolicy, SessionManager, UserStore,
 };
 
-/// Every dependency this slice needs, injected by constructor.
+/// Every dependency the users routes need, injected by constructor.
 #[derive(Clone)]
 pub struct UsersDeps {
     /// Account and credential rows.
     pub users: Arc<dyn UserStore>,
-    /// Session management rows (the R6 backend over the sibling table).
+    /// Session management rows (the session-list backend over `auth_tokens`).
     pub sessions: Arc<dyn SessionManager>,
     /// App-password rows.
     pub app_passwords: Arc<dyn AppPasswordStore>,

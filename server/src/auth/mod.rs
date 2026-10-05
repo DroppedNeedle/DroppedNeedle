@@ -5,10 +5,8 @@ pub mod federated;
 pub mod session;
 pub mod users;
 
-// Stage-3 close-out modules (production adapters). These `pub mod` lines are
-// the minimal mechanical requirement for the new files; the slice wiring
-// above is untouched. HTTP (routers, handlers, IdP calls) belongs to the
-// sibling routers slice, not here.
+// Production adapters: password hashing, the SQLite stores, the routers,
+// and the wiring that binds them.
 pub mod passwords;
 pub mod prod;
 pub mod routes;

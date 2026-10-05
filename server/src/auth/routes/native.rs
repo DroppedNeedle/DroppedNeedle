@@ -1,7 +1,7 @@
 //! Native auth routes: login, logout, first-run setup, setup status.
 //!
-//! Thin HTTP over the slice services: [`LoginService`](crate::auth::session::login::LoginService)
-//! owns login, the users slice owns user creation, and these handlers own
+//! Thin HTTP over the auth services: [`LoginService`](crate::auth::session::login::LoginService)
+//! owns login, the users services own user creation, and these handlers own
 //! status mapping, cookies, and envelopes only.
 
 use crate::auth::session::cookies;
@@ -226,7 +226,7 @@ where
 /// First-admin setup. Creates the admin and logs them in (201 + session,
 /// v2 parity) iff no users exist; otherwise 409. Concurrent setups serialize
 /// on the state guard: the loser probes after the winner commits and lands
-/// on 409. (The users slice has no empty-table constraint, so without the
+/// on 409. (The users table has no empty-table constraint, so without the
 /// guard two distinct usernames would both succeed.)
 #[utoipa::path(
     post,

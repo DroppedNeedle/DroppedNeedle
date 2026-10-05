@@ -18,8 +18,8 @@ use super::UsersDeps;
 use super::error::UsersError;
 use super::stores::StoreError;
 
-/// Session kind, re-exported from the sibling session slice so services,
-/// rigs, and briefs share one definition.
+/// Session kind, re-exported from the session module so services and
+/// tests share one definition.
 pub use super::super::session::store::SessionKind;
 
 /// Account role. Meanings are unchanged from v2: `user` requests await
@@ -47,7 +47,7 @@ impl Role {
         }
     }
 
-    /// Storage form. Matches the federated slice's `ROLE_USER`/`ROLE_ADMIN`
+    /// Storage form. Matches the federated module's `ROLE_USER`/`ROLE_ADMIN`
     /// strings and the `auth_users.role` column values.
     pub fn as_str(self) -> &'static str {
         match self {

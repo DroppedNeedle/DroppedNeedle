@@ -85,7 +85,7 @@ pub struct FederatedProfile {
     /// Avatar URL from the provider.
     pub avatar_url: Option<String>,
     /// Plaintext token JSON, e.g. `{"access_token":"..."}`. The production
-    /// store MUST seal this with the deployment key before persisting it
+    /// store must seal this with the deployment key before persisting it
     /// as `provider_data`; fakes keep it in memory only.
     pub token_json: String,
 }
@@ -215,7 +215,7 @@ pub async fn find_or_create_federated_user<S: FederatedUserStore>(
 
 /// Derive a unique `(username, username_display)` pair: email local-part,
 /// else display name, else `user`, de-duped with a numeric suffix
-/// (`jane`, `jane-2`, ...). INTENDED unification: v2 SSO passed
+/// (`jane`, `jane-2`, ...). An intended unification: v2 SSO passed
 /// display-name-only while bulk import passed email-first; v3 runs every
 /// provider through the email-first rule (fresh assignment, no continuity
 /// impact).

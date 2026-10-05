@@ -1,4 +1,4 @@
-//! Origin check on cookie-authenticated mutations (spec D3).
+//! Origin check on cookie-authenticated mutations.
 //!
 //! v2 relied on `SameSite=Lax` alone; this closes the gap without a CSRF-token
 //! round-trip. Rule: a request authenticated via cookie with an unsafe method
@@ -10,7 +10,7 @@
 //! Host comparison ignores case and port: proxies and browsers disagree on
 //! default-port rendering, and the host is the security-relevant part.
 //! Effective host/scheme behind trusted proxies follows
-//! `middleware::TrustedProxies` (spec D3, v2 `ProxyHeadersMiddleware`
+//! `middleware::TrustedProxies` (v2 `ProxyHeadersMiddleware`
 //! semantics): forwarded headers are honored only from trusted peers.
 
 use axum::http::{HeaderMap, Method};

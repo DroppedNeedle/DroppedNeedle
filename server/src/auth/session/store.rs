@@ -1,12 +1,13 @@
 //! Session store port plus an in-memory fake.
 //!
 //! The port is what the middleware and login service program against; the
-//! production adapter (rusqlite/sqlx over the baseline `auth_tokens` table)
-//! lands with the persistence slice. The store only ever sees hashes: callers
+//! production adapter over `auth_tokens` is
+//! [`SqliteSessionStore`](crate::auth::sqlite::SqliteSessionStore). The
+//! store only ever sees hashes: callers
 //! hash the presented token before lookup, so raw tokens never reach storage.
 //!
 //! Throttled `last_seen_at` writes (at most one per ~5 min per token) and the
-//! R6 list/revoke surface belong to the session-management slice, not here.
+//! list/revoke surface belong to the users session management, not here.
 
 #[cfg(any(test, feature = "test-support"))]
 use std::{collections::HashMap, sync::RwLock};

@@ -10,7 +10,7 @@
 //!
 //! The dispatch split: binary endpoints render dispatch-path errors with
 //! codes outside `_AUTH_CODES` as `text/plain` (70 as 404, anything else
-//! as 404); code 50 stays enveloped in the dispatch path, and the ONLY
+//! as 404); code 50 stays enveloped in the dispatch path, and the only
 //! 403-as-text is getAvatar's direct call for a non-self username.
 
 use sha2::{Digest, Sha256};
@@ -80,7 +80,7 @@ pub fn default_message(code: u8) -> &'static str {
     }
 }
 
-/// Normalize an endpoint name: casefold, strip ONE `.view` suffix.
+/// Normalize an endpoint name: casefold, strip one `.view` suffix.
 pub fn normalize_endpoint(raw: &str) -> String {
     let folded = raw.to_lowercase();
     folded.strip_suffix(".view").unwrap_or(&folded).to_owned()
@@ -99,7 +99,7 @@ pub fn is_public_endpoint(normalized: &str) -> bool {
 /// Dispatch rule: binary endpoints render codes outside [`AUTH_CODES`]
 /// as `text/plain`; everything else (and every code on non-binary
 /// endpoints) renders as an envelope. Note code 50 in the dispatch path
-/// stays ENVELOPED; the getAvatar 403-as-text is a direct call.
+/// stays enveloped; the getAvatar 403-as-text is a direct call.
 pub fn dispatch_uses_envelope(code: u8, normalized_endpoint: &str) -> bool {
     !is_binary_endpoint(normalized_endpoint) || AUTH_CODES.contains(&code)
 }
@@ -364,7 +364,7 @@ pub struct SubsonicStoreError;
 
 /// App-password lookups. The production adapter reads
 /// `connect_app_passwords` (decrypting `secret_encrypted`) and
-/// `auth_users` ONLY: account passwords and native tokens are unreachable
+/// `auth_users` only: account passwords and native tokens are unreachable
 /// here by construction, so presenting one fails exactly like an unknown
 /// credential.
 pub trait SubsonicPasswordStore: Clone + Send + Sync + 'static {
@@ -571,7 +571,7 @@ pub fn hex_encode(bytes: &[u8]) -> String {
     out
 }
 
-/// MD5 hex digest (RFC 1321). Used ONLY for the Subsonic token scheme
+/// MD5 hex digest (RFC 1321). Used only for the Subsonic token scheme
 /// (`t=md5(secret+s)`), which mandates MD5 for interop; never for anything
 /// security-sensitive. The RFC vectors below plus the v2 spot value in the
 /// compat goldens pin the bytes across the crate swap.

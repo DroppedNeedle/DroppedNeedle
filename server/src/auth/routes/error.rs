@@ -1,11 +1,11 @@
 //! Shared error shape for the auth HTTP routes.
 //!
 //! Every failure renders the shared `{"error": {code, message, details}}`
-//! envelope. Codes and fixed messages mirror the sibling users slice so one
-//! route never disagrees with the next; the one deliberate difference is the
-//! upstream outage status: federated IdP outages are 503 here (the federated
-//! slice contract and v2 both say 503), while the users slice uses 502 for
-//! its Last.fm calls.
+//! envelope. Codes and fixed messages mirror the users routes so one route
+//! never disagrees with the next; the one intended difference is the
+//! upstream outage status: federated IdP outages are 503 here (the
+//! federated contract and v2 both say 503), while the users routes use 502
+//! for their Last.fm calls.
 
 use crate::auth::users::error::UsersError;
 use crate::error::{ErrorBody, ErrorEnvelope};

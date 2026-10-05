@@ -1,18 +1,18 @@
 //! Production auth wiring: disabled providers, config bridges, one bundle.
 //!
-//! The slices define ports and the adapters implement the SQLite ones. This
-//! module holds what is left for serving traffic: providers with no live
-//! client yet (honest 503s, never fakes), bridges from the config store to
-//! the live-read policy traits, and [`AuthSetup`], the single bundle
-//! `create_app` builds its routers from.
+//! The auth modules define ports and the adapters implement the SQLite
+//! ones. This module holds what is left for serving traffic: providers
+//! with no live client yet (503s, never fakes), bridges from the config
+//! store to the live-read policy traits, and [`AuthSetup`], the single
+//! bundle `create_app` builds its routers from.
 //!
 //! Live IdP clients (OIDC discovery/token/userinfo, Jellyfin auth, Plex
-//! PIN/account/resources, Last.fm web calls) are a recorded follow-up step;
-//! stage 3 pins their contracts against fakes and serves honest outages
-//! until they land: federated `NotConfigured` maps to 503 `UPSTREAM_ERROR`
-//! (the federated contract's "unconfigured-or-provider-down" row, not a
-//! placeholder), while the users slice maps its Last.fm `Transport` faults
-//! to 502. Same fixed body and error-id shape on both.
+//! PIN/account/resources, Last.fm web calls) are not written yet. Their
+//! contracts are tested against fakes, and production reports an outage
+//! until they exist: federated `NotConfigured` maps to 503 `UPSTREAM_ERROR`
+//! (the federated contract's "unconfigured-or-provider-down" row), while
+//! the users routes map Last.fm `Transport` faults to 502. Same fixed body
+//! and error-id shape on both.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -122,8 +122,7 @@ impl PlexPinClient for DisabledPlexPinClient {
     }
 }
 
-/// Last.fm web client with no live client. The slice documents the
-/// production implementation as arriving with the stage-5 provider.
+/// Last.fm web client with no live client: every call reports an outage.
 #[derive(Debug, Clone, Default)]
 pub struct DisabledLastFmAuthClient;
 
@@ -150,7 +149,7 @@ type StoredExchange = (String, String, SystemTime);
 
 /// Process-local single-use OIDC exchange codes. There is no baseline table
 /// for these 60-second bridge codes: a restart drops in-flight logins and
-/// the SPA restarts the flow cleanly, so a mutex map is the honest store.
+/// the SPA restarts the flow cleanly, so a mutex map is enough.
 ///
 /// Inserts past [`EXCHANGE_PURGE_THRESHOLD`] entries sweep expired codes so
 /// abandoned logins cannot grow the map without bound.
@@ -253,8 +252,8 @@ impl LastFmSwitch for StoreLastFmSwitch {
 }
 
 /// Snapshot the OIDC connection into route config. The secret is decrypted
-/// here, once, and never logged; live re-reads arrive with the settings
-/// slice in stage 10.
+/// here, once, and never logged. The snapshot is taken at boot; re-reading
+/// it per request is not wired yet.
 pub fn oidc_route_config(
     store: &ConfigStore,
 ) -> Result<StaticOidcConfig, crate::runtime_config::ConfigError> {
@@ -393,7 +392,7 @@ impl AuthSetup {
         })
     }
 
-    /// Mount every stage-3 router under `/api/v3`. Layers are applied by
+    /// Mount every auth router under `/api/v3`. Layers are applied by
     /// `create_app`, not here.
     pub fn router(&self) -> axum::Router {
         use super::routes::federated::{jellyfin_router, oidc_router, plex_router};
