@@ -5,8 +5,9 @@ pub mod federated;
 pub mod session;
 pub mod users;
 
-// Production adapters: password hashing, the SQLite stores, the routers,
-// and the wiring that binds them.
+// Production adapters: password hashing, the SQLite stores, avatar files,
+// the routers, and the wiring that binds them.
+pub mod avatars;
 pub mod passwords;
 pub mod prod;
 pub mod routes;

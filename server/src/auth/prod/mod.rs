@@ -45,12 +45,6 @@
 //!   constant-time compare + touch); `secret_encrypted` round-trips so
 //!   exports can re-encrypt it under a fresh key.
 //!
-//! ## Boot states
-//!
-//! [`ProdAuth::new`] is the live bundle. Skeleton boot (pre-database) holds
-//! no bundle at all: [`AuthDb::unwired`] plus [`FileAvatarStore::unwired`]
-//! fail closed per adapter, and the wiring keeps them out of serving paths
-//! until the runtime opens.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -62,11 +56,12 @@ use crate::db::WriteLane;
 use crate::ids::IdGenerator;
 use crate::runtime_config::crypto::Crypto;
 
+pub use super::avatars::FileAvatarStore;
 pub use super::passwords::{
     Argon2idHasher, OWASP_M_COST_KIB, OWASP_P_COST, OWASP_T_COST, PendingRehash, RehashQueue,
 };
 pub use super::sqlite::{
-    AuthDb, FileAvatarStore, SqliteAppPasswordStore, SqliteCredentialLookup, SqliteFederatedStore,
+    AuthDb, SqliteAppPasswordStore, SqliteCredentialLookup, SqliteFederatedStore,
     SqliteLastFmStore, SqliteOidcStateStore, SqliteRecoveryStore, SqliteSessionIssuer,
     SqliteSessionManager, SqliteSessionStore, SqliteUserStore, session_expires_at,
 };
