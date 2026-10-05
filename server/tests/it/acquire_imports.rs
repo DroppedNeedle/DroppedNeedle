@@ -62,6 +62,13 @@ fn http_client() -> reqwest::Client {
     reqwest::Client::new()
 }
 
+fn no_redirect_client() -> reqwest::Client {
+    droppedneedle::http_client::HttpClientFactory::new()
+        .expect("http factory builds")
+        .no_redirect()
+        .clone()
+}
+
 /// Fully wired slice bundle over memory stores for briefs.
 #[allow(dead_code)]
 struct Rig {
@@ -92,7 +99,8 @@ fn rig_for(rig: &TestRig, lidarr_base: &str, api_base: &str, accounts_base: &str
     let playlists = Arc::new(MemoryPlaylistIndex::new());
     let tracks = Arc::new(MemoryTrackSink::new());
     let resolver = Arc::new(FixedMbidResolver::new());
-    let spotify_client = SpotifyClient::new(http.clone(), api_base, accounts_base);
+    let spotify_client =
+        SpotifyClient::new(http.clone(), no_redirect_client(), api_base, accounts_base);
     let service = Arc::new(SpotifyImportService::new(
         spotify_client.clone(),
         spotify_settings.clone(),
@@ -1102,7 +1110,12 @@ async fn spotify_tracks_come_from_items_never_legacy_tracks() {
 async fn spotify_cover_fetch_refuses_redirects_and_non_images() {
     let (_, _, _) = seed_rig().await;
     let (_, _, covers, _) = serve_spotify().await.expect("mock serves");
-    let client = SpotifyClient::new(http_client(), "http://127.0.0.1:1", "http://127.0.0.1:1");
+    let client = SpotifyClient::new(
+        http_client(),
+        no_redirect_client(),
+        "http://127.0.0.1:1",
+        "http://127.0.0.1:1",
+    );
 
     let direct = format!("{}/covers/neon.jpg", covers.base_url);
     let fetched = client.fetch_cover(&direct).await.expect("fetch works");

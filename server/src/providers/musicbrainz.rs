@@ -29,7 +29,6 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use super::degradation::{DegradationSink, NoopSink};
-use crate::http_client::{DEFAULT_CONNECT_TIMEOUT, DEFAULT_TIMEOUT, USER_AGENT};
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -131,23 +130,20 @@ pub trait MbTransport: Send + Sync {
     ) -> impl Future<Output = Result<RawResponse, TransportError>> + Send;
 }
 
-/// Production adapter: pinned redirect policy, shared timeouts and UA.
+/// Production adapter over the factory's no-redirect client, which carries
+/// the shared timeouts and User-Agent.
 pub struct ReqwestMbTransport {
     client: reqwest::Client,
 }
 
 impl ReqwestMbTransport {
-    /// Build the adapter. Redirects stay off because both MB clients in v2
-    /// set `follow_redirects=False` and validate each hop by hand.
-    pub fn build() -> Result<Self, String> {
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .user_agent(USER_AGENT)
-            .timeout(DEFAULT_TIMEOUT)
-            .connect_timeout(DEFAULT_CONNECT_TIMEOUT)
-            .build()
-            .map_err(|error| format!("cannot build musicbrainz client: {error}"))?;
-        Ok(Self { client })
+    /// Wrap `HttpClientFactory::no_redirect`. Redirects must stay off
+    /// because both MB clients in v2 set `follow_redirects=False` and
+    /// validate each hop by hand.
+    pub fn new(no_redirect: reqwest::Client) -> Self {
+        Self {
+            client: no_redirect,
+        }
     }
 }
 
@@ -1876,7 +1872,7 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         let request = MbRequest {
             url: url.clone(),
             query: params,
-            headers: vec![("User-Agent".to_owned(), USER_AGENT.to_owned())],
+            headers: Vec::new(),
         };
         let response = match self.transport.get(&request).await {
             Ok(response) => response,

@@ -226,7 +226,7 @@ async fn serve(tooling_routes: bool) -> Result<(), String> {
     };
     let library = droppedneedle::library::wiring::LibrarySetup::build(
         auth.users.clone(),
-        http.shared().clone(),
+        &http,
         ids.clone(),
         providers.clone(),
         &config.library_db_path,
@@ -250,7 +250,7 @@ async fn serve(tooling_routes: bool) -> Result<(), String> {
         &config.library_db_path,
         &config,
         auth.users.clone(),
-        http.shared().clone(),
+        &http,
         ids.clone(),
         config_store.clone(),
         &mut reads.collections,

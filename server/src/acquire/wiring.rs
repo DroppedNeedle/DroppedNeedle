@@ -252,11 +252,12 @@ impl AcquireSetup {
         db_path: &Path,
         config: &AppConfig,
         users: UsersDeps,
-        http: reqwest::Client,
+        http: &crate::http_client::HttpClientFactory,
         ids: Arc<dyn IdGenerator>,
         config_store: Arc<ConfigStore>,
         collections: &mut CollectionsState,
     ) -> Result<Self, String> {
+        let (http, no_redirect) = (http.shared().clone(), http.no_redirect().clone());
         let staging_root = config.root_app_dir.join("staging");
         let journal = Arc::new(Journal::open(db_path)?);
         let dispatch = Arc::new(UnifiedDispatch::new(
@@ -327,8 +328,12 @@ impl AcquireSetup {
         let playlists = Arc::new(MemoryPlaylistIndex::new());
         let tracks = Arc::new(MemoryTrackSink::new());
         let resolver = Arc::new(FixedMbidResolver::new());
-        let spotify_client =
-            SpotifyClient::new(http.clone(), SPOTIFY_API_BASE, SPOTIFY_ACCOUNTS_BASE);
+        let spotify_client = SpotifyClient::new(
+            http.clone(),
+            no_redirect,
+            SPOTIFY_API_BASE,
+            SPOTIFY_ACCOUNTS_BASE,
+        );
         let spotify_service = Arc::new(SpotifyImportService::new(
             spotify_client.clone(),
             spotify_settings.clone(),
@@ -507,9 +512,15 @@ impl AcquireSetup {
         let flows = Arc::new(flows_bundle_memory(search, dispatch.clone()));
         requests.watch_view = Some(Arc::new(FlowsWatchBridge::new(flows.watches.clone()))
             as Arc<dyn super::requests::bridges::WatchView>);
-        let http = reqwest::Client::new();
-        let spotify_client =
-            SpotifyClient::new(http.clone(), SPOTIFY_API_BASE, SPOTIFY_ACCOUNTS_BASE);
+        let factory =
+            crate::http_client::HttpClientFactory::new().map_err(|error| error.to_string())?;
+        let http = factory.shared().clone();
+        let spotify_client = SpotifyClient::new(
+            http.clone(),
+            factory.no_redirect().clone(),
+            SPOTIFY_API_BASE,
+            SPOTIFY_ACCOUNTS_BASE,
+        );
         let spotify_settings = Arc::new(MemorySpotifySettings::new());
         let spotify_links = Arc::new(MemorySpotifyConnections::new());
         let playlists = Arc::new(MemoryPlaylistIndex::new());

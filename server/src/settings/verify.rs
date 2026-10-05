@@ -745,7 +745,6 @@ impl VerifyProbes for LiveProbes {
                 .http
                 .get(&url)
                 .query(&[("query", "test"), ("limit", "1"), ("fmt", "json")])
-                .header(reqwest::header::USER_AGENT, crate::http_client::USER_AGENT)
                 .timeout(PROBE_TIMEOUT)
                 .send()
                 .await;

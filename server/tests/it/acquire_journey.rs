@@ -158,7 +158,7 @@ impl E2e {
             &self.db_path,
             &app_config,
             auth.users.clone(),
-            self.http.shared().clone(),
+            &self.http,
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             Arc::clone(&self.store),
             &mut reads.collections,

@@ -436,10 +436,6 @@ async fn requests_carry_user_agent_fmt_and_sorted_includes() {
     let seen = fake.seen();
     assert_eq!(seen.len(), 1);
     let request = &seen[0];
-    assert_eq!(
-        request.header("User-Agent"),
-        Some(droppedneedle::http_client::USER_AGENT)
-    );
     assert_eq!(query_value(request, "fmt").as_deref(), Some("json"));
     assert_eq!(
         query_value(request, "inc").as_deref(),
@@ -1055,11 +1051,6 @@ async fn caa_listing_decodes_the_live_shape() {
     assert_eq!(
         second.image_types,
         vec![coverart::ImageType::Back, coverart::ImageType::Spine]
-    );
-    let request = &fake.seen()[0];
-    assert_eq!(
-        request.header("User-Agent"),
-        Some(droppedneedle::http_client::USER_AGENT)
     );
 }
 

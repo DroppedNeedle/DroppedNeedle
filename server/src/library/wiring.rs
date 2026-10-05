@@ -319,7 +319,7 @@ impl LibrarySetup {
     /// client answers `Missing` on an empty key, never dialing out).
     pub fn build(
         users: UsersDeps,
-        http: reqwest::Client,
+        http: &crate::http_client::HttpClientFactory,
         ids: Arc<dyn IdGenerator>,
         providers: Arc<crate::providers::Providers>,
         db_path: &Path,
@@ -331,8 +331,10 @@ impl LibrarySetup {
         let pacer = CorePacer::for_source(providers, "acoustid")
             .ok_or_else(|| "acoustid has no verified rate row".to_owned())?;
         let musicbrainz =
-            MusicBrainzClient::official(ReqwestMbTransport::build()?).with_sink(CoreSink);
-        let acoustid = AcoustIdClient::new(http, DEFAULT_BASE_URL, pacer, CoreSink);
+            MusicBrainzClient::official(ReqwestMbTransport::new(http.no_redirect().clone()))
+                .with_sink(CoreSink);
+        let acoustid =
+            AcoustIdClient::new(http.shared().clone(), DEFAULT_BASE_URL, pacer, CoreSink);
         let live =
             super::identify::providers::LiveProviders::new(musicbrainz, acoustid, String::new());
         let scan_store = Arc::new(

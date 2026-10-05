@@ -583,12 +583,14 @@ pub struct SpotifyClient {
 }
 
 impl SpotifyClient {
-    /// Build over a shared client with explicit bases.
-    pub fn new(http: reqwest::Client, api_base: &str, accounts_base: &str) -> Self {
-        let direct = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .unwrap_or_else(|_| http.clone());
+    /// Build over the factory's shared and no-redirect clients with
+    /// explicit bases.
+    pub fn new(
+        http: reqwest::Client,
+        direct: reqwest::Client,
+        api_base: &str,
+        accounts_base: &str,
+    ) -> Self {
         Self {
             http,
             direct,

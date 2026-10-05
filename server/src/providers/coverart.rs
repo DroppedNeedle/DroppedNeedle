@@ -24,7 +24,6 @@
 use std::sync::Mutex;
 use std::time::Duration;
 
-use crate::http_client::{DEFAULT_CONNECT_TIMEOUT, DEFAULT_TIMEOUT, USER_AGENT};
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -106,22 +105,19 @@ pub trait CaaTransport: Send + Sync {
     ) -> impl Future<Output = Result<RawResponse, TransportError>> + Send;
 }
 
-/// Production adapter: pinned redirect policy, shared timeouts and UA.
+/// Production adapter over the factory's no-redirect client, which carries
+/// the shared timeouts and User-Agent.
 pub struct ReqwestCaaTransport {
     client: reqwest::Client,
 }
 
 impl ReqwestCaaTransport {
-    /// Build the adapter.
-    pub fn build() -> Result<Self, String> {
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .user_agent(USER_AGENT)
-            .timeout(DEFAULT_TIMEOUT)
-            .connect_timeout(DEFAULT_CONNECT_TIMEOUT)
-            .build()
-            .map_err(|error| format!("cannot build coverart client: {error}"))?;
-        Ok(Self { client })
+    /// Wrap `HttpClientFactory::no_redirect`: the client walks and checks
+    /// each redirect hop itself.
+    pub fn new(no_redirect: reqwest::Client) -> Self {
+        Self {
+            client: no_redirect,
+        }
     }
 }
 
@@ -723,7 +719,7 @@ impl<T: CaaTransport> CaaClient<T> {
             self.gate.acquire().await;
             let request = CaaRequest {
                 url: url.to_owned(),
-                headers: vec![("User-Agent".to_owned(), USER_AGENT.to_owned())],
+                headers: Vec::new(),
             };
             let response = self
                 .transport
