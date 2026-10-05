@@ -236,13 +236,12 @@ impl NavidromeAdapter {
                 _ => "alphabeticalByName",
             }
         };
-        let years = (list_type == "byYear").then(|| {
-            if browse.descending {
-                (9999, 0)
-            } else {
-                (0, 9999)
-            }
-        });
+        let span = if browse.descending {
+            (9999, 0)
+        } else {
+            (0, 9999)
+        };
+        let years = (list_type == "byYear").then_some(span);
         let genre = (!browse.genre.is_empty()).then_some(browse.genre.as_str());
         let mut raw = self
             .album_list(list_type, browse.limit, browse.offset, genre, years)
