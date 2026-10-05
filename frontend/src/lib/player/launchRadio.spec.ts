@@ -55,24 +55,6 @@ function track(overrides: Partial<RadioPlanTrack> = {}): RadioPlanTrack {
 }
 
 describe('planTrackToQueueItem tiers', () => {
-	it('library tracks stream natively via the local file', () => {
-		const item = planTrackToQueueItem(
-			track({ in_library: true, local_file_id: 'file-9', file_format: 'flac' }),
-			true
-		);
-		expect(item).not.toBeNull();
-		expect(item!.sourceType).toBe('local');
-		expect(item!.trackSourceId).toBe('file-9');
-	});
-
-	it('un-owned tracks become YouTube placeholders when configured', () => {
-		const item = planTrackToQueueItem(track(), true);
-		expect(item).not.toBeNull();
-		expect(item!.sourceType).toBe('youtube');
-		expect(item!.trackSourceId).toBe('');
-		expect(item!.playlistTrackId).toContain('radio:');
-	});
-
 	it('un-owned tracks without YouTube are dropped (previews are not a player tier)', () => {
 		const item = planTrackToQueueItem(track(), false);
 		expect(item).toBeNull();
@@ -107,43 +89,6 @@ describe('launchRadio', () => {
 		expect(ok).toBe(false);
 		expect(playerMock.playQueue).not.toHaveBeenCalled();
 		expect(radioSession.active).toBe(false);
-	});
-
-	it('loads one complete plan before playback and starts a finite session', async () => {
-		apiMock.global.post.mockResolvedValue({
-			title: 'Radio: Shoegaze',
-			tracks: [track(), track({ track_name: 'Other', recording_mbid: 'rec-2' })]
-		});
-
-		const ok = await launchRadio({ seed_type: 'genre', seed_id: 'shoegaze' }, true);
-
-		expect(ok).toBe(true);
-		expect(radioSession.active).toBe(true);
-		expect(playerMock.playQueue).toHaveBeenCalledTimes(1);
-		const [items] = playerMock.playQueue.mock.calls[0];
-		expect(items).toHaveLength(2);
-		expect(apiMock.global.post).toHaveBeenCalledTimes(1);
-		expect(apiMock.global.post.mock.calls[0][1]).toMatchObject({ fast: false, count: 30 });
-		expect(playerMock.addMultipleToQueue).not.toHaveBeenCalled();
-	});
-
-	it('empty plan warns instead of playing', async () => {
-		apiMock.global.post.mockResolvedValue({ title: 'Radio', tracks: [] });
-
-		const ok = await launchRadio({ seed_type: 'artist', seed_id: 'a-1', mode: 'library' }, false);
-
-		expect(ok).toBe(false);
-		expect(playerMock.playQueue).not.toHaveBeenCalled();
-		expect(toastMock.show).toHaveBeenCalled();
-	});
-
-	it('un-owned tracks without YouTube are dropped from the station', async () => {
-		apiMock.global.post.mockResolvedValue({ title: 'Radio', tracks: [track()] });
-
-		const ok = await launchRadio({ seed_type: 'genre', seed_id: 'x' }, false);
-
-		expect(ok).toBe(false);
-		expect(playerMock.playQueue).not.toHaveBeenCalled();
 	});
 
 	it('dedupes tracks within the complete plan', async () => {

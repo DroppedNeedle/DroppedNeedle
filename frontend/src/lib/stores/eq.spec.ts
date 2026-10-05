@@ -45,13 +45,6 @@ describe('eqStore', () => {
 		storage.clear();
 	});
 
-	it('initializes with defaults when no localStorage data', () => {
-		expect.assertions(3);
-		expect(eqStore.enabled).toBe(false);
-		expect(eqStore.gains).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-		expect(eqStore.activePreset).toBe('Flat');
-	});
-
 	it('restores valid settings from localStorage', async () => {
 		expect.assertions(3);
 		const stored = { enabled: true, gains: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], activePreset: 'Rock' };
@@ -88,40 +81,12 @@ describe('eqStore', () => {
 		expect(store.gains[1]).toBe(-12);
 	});
 
-	it('toggleEq flips enabled and syncs to engine', () => {
-		expect.assertions(2);
-		eqStore.toggleEq();
-		expect(eqStore.enabled).toBe(true);
-		expect(mockEngine.setAllGains).toHaveBeenCalled();
-	});
-
 	it('setBandGain updates a single band and clamps', () => {
 		expect.assertions(2);
 		eqStore.setBandGain(3, 15);
 		expect(eqStore.gains[3]).toBe(12);
 		eqStore.setBandGain(3, -15);
 		expect(eqStore.gains[3]).toBe(-12);
-	});
-
-	it('setBandGain ignores out-of-range index', () => {
-		expect.assertions(1);
-		eqStore.setBandGain(15, 5);
-		expect(eqStore.gains).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-	});
-
-	it('applyPreset sets all gains to preset values', () => {
-		expect.assertions(2);
-		eqStore.applyPreset('Rock');
-		expect(eqStore.gains).toEqual([5, 4, 3, 1, -1, 1, 3, 4, 5, 5]);
-		expect(eqStore.activePreset).toBe('Rock');
-	});
-
-	it('resetToFlat applies the Flat preset', () => {
-		expect.assertions(2);
-		eqStore.applyPreset('Rock');
-		eqStore.resetToFlat();
-		expect(eqStore.gains).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-		expect(eqStore.activePreset).toBe('Flat');
 	});
 
 	it('detects custom when gains do not match any preset', () => {

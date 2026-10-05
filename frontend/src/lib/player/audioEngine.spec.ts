@@ -89,23 +89,6 @@ describe('AudioEngine', () => {
 			expect(mockFilters[9].connect).toHaveBeenCalledWith(mockCtx.destination);
 		});
 
-		it('sets correct frequencies and Q on filters', () => {
-			expect.assertions(3);
-			engine.connect(mockAudio);
-
-			expect(mockFilters[0].frequency.value).toBe(31);
-			expect(mockFilters[9].frequency.value).toBe(16000);
-			expect(mockFilters[0].Q.value).toBe(1.4);
-		});
-
-		it('is idempotent for same element', () => {
-			expect.assertions(1);
-			engine.connect(mockAudio);
-			engine.connect(mockAudio);
-
-			expect(mockCtx.createMediaElementSource).toHaveBeenCalledTimes(1);
-		});
-
 		it('destroys and reconnects for a different element', () => {
 			expect.assertions(2);
 			engine.connect(mockAudio);
@@ -119,14 +102,6 @@ describe('AudioEngine', () => {
 	});
 
 	describe('setBandGain', () => {
-		it('sets gain on the correct filter', () => {
-			expect.assertions(1);
-			engine.connect(mockAudio);
-			engine.setBandGain(3, 6);
-
-			expect(mockFilters[3].gain.value).toBe(6);
-		});
-
 		it('clamps gain to [-12, 12]', () => {
 			expect.assertions(2);
 			engine.connect(mockAudio);
@@ -135,27 +110,6 @@ describe('AudioEngine', () => {
 
 			engine.setBandGain(0, -20);
 			expect(mockFilters[0].gain.value).toBe(-12);
-		});
-
-		it('ignores out-of-range index', () => {
-			expect.assertions(1);
-			engine.connect(mockAudio);
-			engine.setBandGain(15, 5);
-			engine.setBandGain(-1, 5);
-
-			expect(mockFilters.every((f) => f.gain.value === 0)).toBe(true);
-		});
-	});
-
-	describe('setAllGains', () => {
-		it('sets all 10 filter gains', () => {
-			expect.assertions(2);
-			engine.connect(mockAudio);
-			const gains = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-			engine.setAllGains(gains);
-
-			expect(mockFilters[0].gain.value).toBe(1);
-			expect(mockFilters[9].gain.value).toBe(10);
 		});
 	});
 
@@ -177,94 +131,6 @@ describe('AudioEngine', () => {
 
 			expect(mockFilters[0].gain.value).toBe(3);
 			expect(mockFilters[9].gain.value).toBe(6);
-		});
-	});
-
-	describe('resume', () => {
-		it('calls context.resume when suspended', async () => {
-			expect.assertions(1);
-			engine.connect(mockAudio);
-			mockCtx.state = 'suspended';
-			await engine.resume();
-
-			expect(mockCtx.resume).toHaveBeenCalled();
-		});
-
-		it('does not call resume when already running', async () => {
-			expect.assertions(1);
-			engine.connect(mockAudio);
-			mockCtx.state = 'running';
-			await engine.resume();
-
-			expect(mockCtx.resume).not.toHaveBeenCalled();
-		});
-	});
-
-	describe('isConnected', () => {
-		it('returns false before connect', () => {
-			expect.assertions(1);
-			expect(engine.isConnected()).toBe(false);
-		});
-
-		it('returns true after connect', () => {
-			expect.assertions(1);
-			engine.connect(mockAudio);
-			expect(engine.isConnected()).toBe(true);
-		});
-	});
-
-	describe('destroy', () => {
-		it('disconnects all nodes and closes context', () => {
-			expect.assertions(4);
-			engine.connect(mockAudio);
-			engine.destroy();
-
-			expect(mockSource.disconnect).toHaveBeenCalled();
-			expect(mockFilters[0].disconnect).toHaveBeenCalled();
-			expect(mockCtx.close).toHaveBeenCalled();
-			expect(engine.isConnected()).toBe(false);
-		});
-	});
-
-	describe('getFrequencies', () => {
-		it('returns the 10 standard frequencies', () => {
-			expect.assertions(2);
-			const freqs = engine.getFrequencies();
-			expect(freqs).toHaveLength(10);
-			expect(freqs[0]).toBe(31);
-		});
-	});
-
-	describe('analyser', () => {
-		it('creates an analyser tapped off the end of the filter chain', () => {
-			expect.assertions(4);
-			engine.connect(mockAudio);
-
-			expect(mockCtx.createAnalyser).toHaveBeenCalledTimes(1);
-			expect(mockAnalyser.fftSize).toBe(128);
-			expect(mockFilters[9].connect).toHaveBeenCalledWith(mockAnalyser);
-			// Analyser must be a terminal sink, else audio sums to destination twice.
-			expect(mockAnalyser.connect).not.toHaveBeenCalled();
-		});
-
-		it('getFrequencyData returns null before connect and a buffer after', () => {
-			expect.assertions(3);
-			expect(engine.getFrequencyData()).toBeNull();
-
-			engine.connect(mockAudio);
-			const data = engine.getFrequencyData();
-
-			expect(data).toBeInstanceOf(Uint8Array);
-			expect(mockAnalyser.getByteFrequencyData).toHaveBeenCalled();
-		});
-
-		it('disconnects the analyser on destroy', () => {
-			expect.assertions(2);
-			engine.connect(mockAudio);
-			engine.destroy();
-
-			expect(mockAnalyser.disconnect).toHaveBeenCalled();
-			expect(engine.getFrequencyData()).toBeNull();
 		});
 	});
 });

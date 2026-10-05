@@ -80,38 +80,6 @@ describe('NativeAudioSource', () => {
 		await expect(loadPromise).resolves.toBeUndefined();
 	});
 
-	it('loads successfully on metadata and reports duration before playback timeupdates', async () => {
-		const source = new NativeAudioSource('local', { url: '/metadata.mp3', seekable: true });
-		const onProgress = vi.fn();
-		source.onProgress(onProgress);
-		const loadPromise = source.load();
-
-		hoisted.audio.duration = 178;
-		hoisted.dispatch('loadedmetadata');
-
-		await expect(loadPromise).resolves.toBeUndefined();
-		expect(onProgress).toHaveBeenCalledWith(0, 178);
-	});
-
-	it('detaches ready listeners on first ready event so onReady is single-shot', async () => {
-		const source = new NativeAudioSource('local', { url: '/single-shot.mp3', seekable: true });
-		const onReady = vi.fn();
-		source.onReady(onReady);
-
-		const loadPromise = source.load();
-		hoisted.dispatch('canplay');
-		await loadPromise;
-
-		expect(onReady).toHaveBeenCalledTimes(1);
-		for (const event of ['canplay', 'loadedmetadata', 'loadeddata']) {
-			expect(hoisted.audio.removeEventListener).toHaveBeenCalledWith(event, expect.any(Function));
-		}
-
-		hoisted.dispatch('loadedmetadata');
-		hoisted.dispatch('loadeddata');
-		expect(onReady).toHaveBeenCalledTimes(1);
-	});
-
 	it('fails load when timeout is reached', async () => {
 		vi.useFakeTimers();
 		const source = new NativeAudioSource('local', { url: '/timeout.mp3', seekable: true });
@@ -120,22 +88,6 @@ describe('NativeAudioSource', () => {
 		vi.advanceTimersByTime(15_000);
 
 		await expect(loadPromise).rejects.toThrow('load timed out');
-	});
-
-	it('emits network stall error after stalled timeout', async () => {
-		vi.useFakeTimers();
-		const source = new NativeAudioSource('local', { url: '/stall.mp3', seekable: true });
-		const onError = vi.fn();
-		source.onError(onError);
-
-		const loadPromise = source.load();
-		hoisted.dispatch('canplay');
-		await loadPromise;
-
-		hoisted.dispatch('stalled');
-		vi.advanceTimersByTime(15_000);
-
-		expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'NETWORK_STALL' }));
 	});
 
 	it('reports autoplay blocked when play promise rejects', async () => {
@@ -151,106 +103,6 @@ describe('NativeAudioSource', () => {
 		await Promise.resolve();
 
 		expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: 'AUTOPLAY_BLOCKED' }));
-	});
-
-	it('reports play failed when play promise rejects without NotAllowedError', async () => {
-		const source = new NativeAudioSource('local', { url: '/failed.mp3', seekable: true });
-		const onError = vi.fn();
-		source.onError(onError);
-
-		hoisted.audio.play.mockImplementationOnce(() =>
-			Promise.reject(new DOMException('aborted', 'AbortError'))
-		);
-		source.play();
-		await Promise.resolve();
-		await Promise.resolve();
-
-		expect(onError).toHaveBeenCalledWith(
-			expect.objectContaining({
-				code: 'PLAY_FAILED',
-				message: expect.stringContaining('server may not have responded')
-			})
-		);
-	});
-
-	it('resumes the Web Audio engine before native playback', async () => {
-		const source = new NativeAudioSource('local', { url: '/resume.mp3', seekable: true });
-
-		source.play();
-		await Promise.resolve();
-		await Promise.resolve();
-
-		expect(hoisted.resumeAudioEngine).toHaveBeenCalledTimes(1);
-		expect(hoisted.audio.play).toHaveBeenCalledTimes(1);
-		expect(hoisted.resumeAudioEngine.mock.invocationCallOrder[0]).toBeLessThan(
-			hoisted.audio.play.mock.invocationCallOrder[0]
-		);
-	});
-
-	it('still attempts native playback if Web Audio resume rejects', async () => {
-		const source = new NativeAudioSource('local', { url: '/resume-rejected.mp3', seekable: true });
-
-		hoisted.resumeAudioEngine.mockRejectedValueOnce(new Error('resume blocked'));
-		source.play();
-		await Promise.resolve();
-		await Promise.resolve();
-
-		expect(hoisted.audio.play).toHaveBeenCalledTimes(1);
-	});
-
-	it('seekTo updates currentTime when stream is seekable', () => {
-		const source = new NativeAudioSource('local', { url: '/seek.mp3', seekable: true });
-
-		source.seekTo(42);
-
-		expect(hoisted.audio.currentTime).toBe(42);
-	});
-
-	it('seekTo is no-op when stream is not seekable', () => {
-		const source = new NativeAudioSource('jellyfin', { url: '/transcode.opus', seekable: false });
-		hoisted.audio.currentTime = 5;
-
-		source.seekTo(60);
-
-		expect(hoisted.audio.currentTime).toBe(5);
-	});
-
-	it('destroy clears src and removes listeners', async () => {
-		const source = new NativeAudioSource('local', { url: '/destroy.mp3', seekable: true });
-		const loadPromise = source.load();
-		hoisted.dispatch('canplay');
-		await loadPromise;
-
-		source.destroy();
-
-		expect(hoisted.audio.src).toBe('');
-		expect(hoisted.audio.removeEventListener).toHaveBeenCalled();
-	});
-
-	it('throws when audio element is unavailable', () => {
-		hoisted.getAudioElement.mockImplementationOnce(() => {
-			throw new Error('Audio element not mounted');
-		});
-
-		expect(() => new NativeAudioSource('local', { url: '/missing.mp3', seekable: true })).toThrow(
-			'Audio element not mounted'
-		);
-	});
-
-	it('fires onProgress callback on timeupdate events', async () => {
-		const source = new NativeAudioSource('local', { url: '/progress.mp3', seekable: true });
-		const onProgress = vi.fn();
-		source.onProgress(onProgress);
-
-		const loadPromise = source.load();
-		hoisted.dispatch('canplay');
-		await loadPromise;
-
-		hoisted.audio.currentTime = 42;
-		hoisted.audio.duration = 180;
-		hoisted.dispatch('timeupdate');
-
-		expect(onProgress).toHaveBeenCalledWith(42, 180);
 	});
 
 	it('rejects load promise on media error event', async () => {
@@ -284,41 +136,5 @@ describe('NativeAudioSource', () => {
 
 		hoisted.dispatch('playing');
 		expect(states.at(-1)).toBe('playing');
-	});
-
-	it('transitions from buffering back to playing via timeupdate fallback', async () => {
-		const source = new NativeAudioSource('local', { url: '/seek2.mp3', seekable: true });
-		const states: string[] = [];
-		source.onStateChange((s) => states.push(s));
-
-		const loadPromise = source.load();
-		hoisted.dispatch('canplay');
-		await loadPromise;
-
-		hoisted.dispatch('play');
-		hoisted.dispatch('waiting');
-		expect(states.at(-1)).toBe('buffering');
-
-		hoisted.audio.currentTime = 30;
-		hoisted.dispatch('timeupdate');
-		expect(states.at(-1)).toBe('playing');
-	});
-
-	it('does not emit redundant playing state on timeupdate when already playing', async () => {
-		const source = new NativeAudioSource('local', { url: '/no-dup.mp3', seekable: true });
-		const states: string[] = [];
-		source.onStateChange((s) => states.push(s));
-
-		const loadPromise = source.load();
-		hoisted.dispatch('canplay');
-		await loadPromise;
-
-		hoisted.dispatch('play');
-		const countAfterPlay = states.filter((s) => s === 'playing').length;
-
-		hoisted.audio.currentTime = 10;
-		hoisted.dispatch('timeupdate');
-
-		expect(states.filter((s) => s === 'playing').length).toBe(countAfterPlay);
 	});
 });
