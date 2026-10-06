@@ -254,6 +254,7 @@ With `BASE_PATH` set, everything moves under it: the web UI, `/api/v3`, the Subs
 | `RUST_LOG` | unset | Full log filter (e.g. `info,droppedneedle::library=debug`); wins over `LOG_LEVEL` |
 | `ROOT_APP_DIR` | `/app` | Base for the paths below and for `/app/plugins` and `/app/imports` |
 | `CACHE_DIR` | `/app/cache` | Database, backups, served web UI, caches |
+| `COVER_CACHE_MAX_SIZE_MB` | `500` | Size cap for downloaded and extracted cover art under `CACHE_DIR/covers`; the least recently shown covers go first |
 | `LIBRARY_DB_PATH` | `/app/cache/library.db` | The database file; backups go in `backups/` next to it |
 | `CONFIG_FILE_PATH` | `/app/config/config.json` | Settings file; the encryption key sits next to it |
 | `DROPPEDNEEDLE_STATIC_DIR` | `/app/static` | The web UI build shipped in the image |
@@ -299,6 +300,8 @@ Where things live in the UI:
 | Home layout, release types, MusicBrainz source | Settings > Preferences |
 | Users, roles, Jellyfin and Plex user import | Settings > Users |
 | Password breach checking, HSTS | Settings > Security |
+
+Album covers come from your own files first: an image in the album folder (`cover.jpg`, `folder.png`, `front.jpg` and the like) or a picture embedded in a track. The library picks these up after each scan. Albums without local art get their cover from the Cover Art Archive, cached on disk. To prefer the Cover Art Archive over your files, turn off "Prefer local cover art" under Settings > Advanced.
 
 Last.fm works like this: the admin registers one Last.fm API application at last.fm/api/account/create, saves its key and shared secret under Settings > Last.fm and switches Last.fm on, once for the whole server. Each user then clicks Connect under Profile > Scrobbling & Discovery, approves DroppedNeedle on last.fm, and clicks Finish. Their scrobbles go to their own Last.fm account. Users can also bring their own API application: if the server has no key saved, Connect asks for the user's own key and secret first, and a user can always store a pair through the API (`PUT /api/v3/me/connections/lastfm`). A user's own pair replaces the server's key for that user only. The Last.fm sections on artist and album pages follow the same rule: they read with the user's own key when one is saved, and with the server's key otherwise. If the admin later changes the server's key, everyone who linked with the old one has to click Connect again: Last.fm sessions belong to the key that created them. Link ListenBrainz with the token from your ListenBrainz profile. Artist images come from AudioDB (on by default, free key rate limits apply) with proxying and TTLs under Settings > Advanced.
 
