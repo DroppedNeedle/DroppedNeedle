@@ -180,6 +180,25 @@ async fn layered_limits_reject_in_each_protocol_shape() {
     }
 }
 
+#[tokio::test]
+async fn api_bodies_compress_when_the_client_accepts() {
+    let uri = "/subsonic/rest/getOpenSubsonicExtensions?f=json";
+    let (_, headers, body) =
+        oneshot(enabled(), "GET", uri, &[("accept-encoding", "gzip")], b"").await;
+    assert_eq!(
+        headers
+            .get("content-encoding")
+            .and_then(|v| v.to_str().ok()),
+        Some("gzip")
+    );
+    let mut plain = String::new();
+    std::io::Read::read_to_string(&mut flate2::read::GzDecoder::new(&body[..]), &mut plain)
+        .expect("gzip body");
+    assert!(plain.contains("songLyrics"), "{plain}");
+    let (_, headers, _) = oneshot(enabled(), "GET", uri, &[], b"").await;
+    assert!(headers.get("content-encoding").is_none());
+}
+
 /// Compat clients put app passwords in the query string, so source code may
 /// only read a request URI's path, query or host, and never log a URI.
 #[test]
