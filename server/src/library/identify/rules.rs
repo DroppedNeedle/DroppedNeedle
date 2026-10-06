@@ -1,12 +1,11 @@
-//! Identity product rules, ported verbatim from v2.
+//! Identity product rules from v2: who may overwrite whom, when an
+//! automatic identity retracts, and the proof gates for merging artists.
+//! Matching files to releases lives in `crate::library::matching`.
 //!
 //! Every function here is pure: the same inputs always give the same
 //! verdict, so the tests pin behavior without any store or provider.
 
-use super::models::{
-    ArtistCredit, CandidateEvidence, DecisionSource, EvidenceClass, IdentificationOutcome,
-    ReleasePin,
-};
+use super::models::{ArtistCredit, DecisionSource, IdentificationOutcome};
 
 /// Verdict for the name-anchored retirement path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,48 +179,6 @@ pub fn retracts_on_contradiction(
         && matches!(current, Some(DecisionSource::Automatic))
 }
 
-/// Release pins are hint-only: they steer edition search and display, and
-/// must never count as identity evidence. The pin crosses into candidate
-/// recall only as a ranking hint, never into evidence scoring.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct EditionHint {
-    pub release_group_mbid: String,
-    pub preferred_release_mbid: String,
-}
-
-impl EditionHint {
-    pub fn from_pin(pin: &ReleasePin) -> Self {
-        Self {
-            release_group_mbid: pin.release_group_mbid.clone(),
-            preferred_release_mbid: pin.release_mbid.clone(),
-        }
-    }
-}
-
-/// Rank candidates with the pin as a tie-break only: the pinned edition
-/// floats to the top of its own release group, but a pin never promotes a
-/// candidate from another group and never changes any score.
-pub fn rank_with_hint(
-    mut candidates: Vec<CandidateEvidence>,
-    hint: Option<&EditionHint>,
-) -> Vec<CandidateEvidence> {
-    let Some(hint) = hint else {
-        return candidates;
-    };
-    candidates.sort_by(|a, b| {
-        let a_pinned = a.release_mbid.as_deref() == Some(hint.preferred_release_mbid.as_str())
-            && a.release_group_mbid
-                .eq_ignore_ascii_case(&hint.release_group_mbid);
-        let b_pinned = b.release_mbid.as_deref() == Some(hint.preferred_release_mbid.as_str())
-            && b.release_group_mbid
-                .eq_ignore_ascii_case(&hint.release_group_mbid);
-        b_pinned
-            .cmp(&a_pinned)
-            .then_with(|| b.score.total_cmp(&a.score))
-    });
-    candidates
-}
-
 /// Exact track contributors create appearances, never owned artists.
 /// A credit whose provider MBID already owns a local artist stays owned;
 /// every other exact credit becomes an appearance on the track.
@@ -246,33 +203,4 @@ pub fn classify_credit(
 /// A casefold MBID comparison: MBIDs are ASCII, so this is exact.
 fn mbid_eq(left: &str, right: &str) -> bool {
     left.eq_ignore_ascii_case(right)
-}
-
-/// Score one candidate against local facts. Provider proof (embedded
-/// recording MBIDs, AcoustID support, release MBIDs) decides; folded
-/// title similarity only breaks ties and can never identify alone.
-pub fn classify_track(
-    local_recording_mbid: Option<&str>,
-    local_release_mbid: Option<&str>,
-    candidate_recording_mbid: Option<&str>,
-    candidate_release_mbid: Option<&str>,
-    fingerprint_support_mbid: Option<&str>,
-) -> EvidenceClass {
-    if let (Some(local), Some(candidate)) = (local_recording_mbid, candidate_recording_mbid) {
-        if mbid_eq(local, candidate) {
-            return EvidenceClass::Supported;
-        }
-        return EvidenceClass::Contradictory;
-    }
-    if let (Some(local), Some(candidate)) = (local_release_mbid, candidate_release_mbid)
-        && !mbid_eq(local, candidate)
-    {
-        return EvidenceClass::Contradictory;
-    }
-    if let (Some(support), Some(candidate)) = (fingerprint_support_mbid, candidate_recording_mbid)
-        && mbid_eq(support, candidate)
-    {
-        return EvidenceClass::Supported;
-    }
-    EvidenceClass::Unknown
 }

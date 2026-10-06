@@ -7,10 +7,12 @@
 //!
 //! Layout: `models` holds the types, `rules` the pure product rules,
 //! `queue` the scheduling policy, `stores` the ports, `sqlite` the
-//! durable stores, `memory` the test fakes, `providers` the MusicBrainz + AcoustID seams over the
-//! provider clients, `review` the curator operations, and `service`
-//! the orchestrator.
+//! durable stores, `memory` the test fakes, `sources` the MusicBrainz and
+//! AcoustID seams, `providers` the recall built on them, `evidence` the
+//! bridge to the matching engine, `review` the curator operations, and
+//! `service` the orchestrator.
 
+pub mod evidence;
 #[cfg(any(test, feature = "test-support"))]
 pub mod memory;
 pub mod models;
@@ -19,5 +21,6 @@ pub mod queue;
 pub mod review;
 pub mod rules;
 pub mod service;
+pub mod sources;
 pub mod sqlite;
 pub mod stores;

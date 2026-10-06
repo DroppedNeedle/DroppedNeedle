@@ -4,6 +4,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::library::matching::{PenaltyShare, Release};
+
 /// Who last set an identity row. Ported verbatim from v2: automatic rows
 /// are revisable, manual and legacy-import rows are curator-protected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -63,9 +65,16 @@ pub struct CandidateEvidence {
     pub album_title: String,
     pub album_artist_name: String,
     pub track_evidence: Vec<TrackEvidence>,
+    /// `1 - distance`, for sorting and display.
     pub score: f64,
     pub margin: f64,
     pub reason_code: String,
+    /// Library distance from the matcher: 0 is a perfect match.
+    #[serde(default)]
+    pub distance: f64,
+    /// What the distance is made of, largest share first.
+    #[serde(default)]
+    pub penalties: Vec<PenaltyShare>,
 }
 
 impl CandidateEvidence {
@@ -157,9 +166,9 @@ pub enum AliasKind {
     MergedTrack,
 }
 
-/// A curator release pin: which edition to display and acquire. Hint-only
-/// by construction (see `rules::EditionHint`): it steers edition search
-/// and display, and is never identity evidence.
+/// A curator release pin: which edition to display and acquire. Hint-only:
+/// it orders editions within one release group when identifying, and is
+/// never identity evidence.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReleasePin {
     pub release_group_mbid: String,
@@ -275,6 +284,7 @@ pub struct LocalAlbumFacts {
     pub local_album_id: String,
     pub title: String,
     pub album_artist_name: String,
+    pub year: Option<i32>,
     pub tracks: Vec<LocalTrackFacts>,
     /// Track ids whose membership is locked to another album.
     pub locked_track_ids: Vec<String>,
@@ -295,16 +305,23 @@ pub struct LocalTrackFacts {
     pub release_track_mbid: Option<String>,
     pub release_mbid: Option<String>,
     pub release_group_mbid: Option<String>,
-    /// Chromaprint fingerprint payload for AcoustID support evidence.
-    pub fingerprint: Option<String>,
+    /// Where the file lives, for fingerprinting.
+    #[serde(default)]
+    pub root_id: String,
+    #[serde(default)]
+    pub relative_path: String,
 }
 
-/// Provider recall result: release candidates plus per-track support.
+/// Provider recall result: candidate releases with their tracklists,
+/// plus what fingerprints and redirects added.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RecallResult {
-    pub candidates: Vec<CandidateEvidence>,
-    /// AcoustID recording MBIDs per local track id (support only).
-    pub fingerprint_support: HashMap<String, String>,
+    pub releases: Vec<Release>,
+    /// AcoustID recording MBIDs per local track id.
+    pub fingerprint_support: HashMap<String, Vec<String>>,
+    /// Retired recording MBIDs mapped to the ones MusicBrainz merged
+    /// them into.
+    pub recording_aliases: HashMap<String, String>,
     pub provider_deferred: bool,
     pub failure_code: Option<String>,
 }

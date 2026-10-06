@@ -1,0 +1,124 @@
+//! Between identify's records and the matcher's inputs and outputs.
+
+use std::collections::HashMap;
+
+use super::models::{CandidateEvidence, EvidenceClass, LocalAlbumFacts, TrackEvidence};
+use crate::library::matching::decide::{ACCEPT_ALBUM, ACCEPT_TRACK, REVIEW_CEILING};
+use crate::library::matching::{LocalAlbum, LocalTrack, Release, ReleaseMatch};
+
+/// The matcher's view of an album: its facts plus the AcoustID
+/// recordings heard per track.
+pub fn local_album(
+    facts: &LocalAlbumFacts,
+    fingerprints: &HashMap<String, Vec<String>>,
+) -> LocalAlbum {
+    LocalAlbum {
+        title: facts.title.clone(),
+        artist: facts.album_artist_name.clone(),
+        year: facts.year,
+        is_compilation: facts.is_compilation,
+        tracks: facts
+            .tracks
+            .iter()
+            .map(|track| LocalTrack {
+                id: track.local_track_id.clone(),
+                title: track.title.clone(),
+                artist: track.artist_name.clone(),
+                track_number: track.track_number,
+                disc_number: track.disc_number.max(1),
+                duration_secs: track.duration_secs.map(|seconds| seconds as f64),
+                recording_mbid: non_blank(track.recording_mbid.as_deref()),
+                release_track_mbid: non_blank(track.release_track_mbid.as_deref()),
+                release_mbid: non_blank(track.release_mbid.as_deref()),
+                fingerprint_recordings: fingerprints
+                    .get(&track.local_track_id)
+                    .cloned()
+                    .unwrap_or_default(),
+            })
+            .collect(),
+    }
+}
+
+fn non_blank(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+/// One candidate as a curator and the sealing code see it. Paired tracks
+/// within the track threshold are supported and carry the release's
+/// recording and release-track ids; a vetoed track is contradictory.
+pub fn candidate_evidence(
+    local: &LocalAlbum,
+    release: &Release,
+    matched: &ReleaseMatch,
+) -> CandidateEvidence {
+    let track_evidence = local
+        .tracks
+        .iter()
+        .enumerate()
+        .map(|(index, track)| {
+            if let Some(conflict) = matched.conflicts.iter().find(|c| c.local == index) {
+                return TrackEvidence {
+                    local_track_id: track.id.clone(),
+                    classification: EvidenceClass::Contradictory,
+                    evidence_kinds: vec![conflict.kind.code().to_owned()],
+                    recording_mbid: None,
+                    release_track_mbid: None,
+                };
+            }
+            match matched.pair_for(index) {
+                Some(pair) => {
+                    let candidate = &release.tracks[pair.track];
+                    let close = pair.distance <= ACCEPT_TRACK;
+                    TrackEvidence {
+                        local_track_id: track.id.clone(),
+                        classification: if close {
+                            EvidenceClass::Supported
+                        } else {
+                            EvidenceClass::Unknown
+                        },
+                        evidence_kinds: vec![if close {
+                            pair.support.code().to_owned()
+                        } else {
+                            "distant_pair".to_owned()
+                        }],
+                        recording_mbid: Some(candidate.recording_id.clone()),
+                        release_track_mbid: Some(candidate.id.clone()),
+                    }
+                }
+                None => TrackEvidence {
+                    local_track_id: track.id.clone(),
+                    classification: EvidenceClass::Unknown,
+                    evidence_kinds: vec!["unmatched".to_owned()],
+                    recording_mbid: None,
+                    release_track_mbid: None,
+                },
+            }
+        })
+        .collect();
+    let distance = matched.library_distance();
+    let reason_code = if !matched.conflicts.is_empty() {
+        "CONFLICTING_TRACK_EVIDENCE"
+    } else if distance <= ACCEPT_ALBUM && matched.worst_track() <= ACCEPT_TRACK {
+        "CLOSE_MATCH"
+    } else if distance <= REVIEW_CEILING {
+        "WEAK_MATCH"
+    } else {
+        "DISTANT_MATCH"
+    };
+    CandidateEvidence {
+        candidate_key: format!("{}:{}", release.release_group_id, release.id),
+        release_group_mbid: release.release_group_id.clone(),
+        release_mbid: Some(release.id.clone()),
+        album_title: release.title.clone(),
+        album_artist_name: release.artist_text(),
+        track_evidence,
+        score: (1.0 - distance).clamp(0.0, 1.0),
+        margin: 0.0,
+        reason_code: reason_code.to_owned(),
+        distance,
+        penalties: matched.distance.shares(),
+    }
+}

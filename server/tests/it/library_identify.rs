@@ -7,40 +7,33 @@
 
 use droppedneedle::library::identify;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use droppedneedle::providers::acoustid::AcoustIdClient;
-use droppedneedle::providers::degradation::NoopSink;
-use droppedneedle::providers::limiter::Pacer;
-use droppedneedle::providers::musicbrainz::{
-    Criticality, MbRequest, MbTransport, MusicBrainzClient, RawResponse, TransportError,
-};
+use droppedneedle::library::matching::{CreditedArtist, Release, ReleaseTrack};
 use identify::memory::{
     MemoryAliasStore, MemoryIdentityStore, MemoryPinStore, MemoryProofStore, MemoryQueueStore,
-    MemoryReviewStore,
+    MemoryReleaseStore, MemoryReviewStore,
 };
 use identify::models::IdentifyJob;
 use identify::models::JobState;
 use identify::models::{
-    AlbumIdentity, AliasKind, ArtistCredit, ArtistIdentity, CandidateEvidence, CreditProof,
-    DecisionSource, EvidenceClass, IdentificationOutcome, IdentifyKind, IdentityBrief,
-    LocalAlbumFacts, LocalTrackFacts, RecallResult, ReleasePin, ReviewState, TrackEvidence,
-    TrackIdentity,
+    AlbumIdentity, AliasKind, ArtistCredit, ArtistIdentity, CreditProof, DecisionSource,
+    IdentificationOutcome, IdentifyKind, IdentityBrief, LocalAlbumFacts, LocalTrackFacts,
+    RecallResult, ReleasePin, ReviewState, TrackIdentity,
 };
-use identify::providers::{FakeProviders, IdentifyProviders, LiveProviders};
+use identify::providers::FakeProviders;
 use identify::queue::{
     LEASE_SECONDS, MAX_BACKOFF_SECONDS, PRIORITY_HISTORICAL_BACKLOG, PRIORITY_NEW_OR_CHANGED,
     PRIORITY_REVIEW_RETRY, PRIORITY_SUPPORTING_MAINTENANCE, backoff_secs, terminally_deferred,
 };
 use identify::rules::{
-    EditionHint, ReconciliationProof, ReconciliationVerdict, SubstitutionCase, SubstitutionRefusal,
-    SubstitutionVerdict, classify_track, evaluate_overwrite, evaluate_reconciliation,
-    evaluate_substitution, rank_with_hint,
+    ReconciliationProof, ReconciliationVerdict, SubstitutionCase, SubstitutionRefusal,
+    SubstitutionVerdict, evaluate_overwrite, evaluate_reconciliation, evaluate_substitution,
 };
 use identify::service::{IdentifyDeps, IdentifyService};
 use identify::stores::{
-    AliasStore, AttemptLanding, IdentityStore, PinStore, ProofStore, QueueStore, ReviewStore,
-    land_job,
+    AliasStore, AttemptLanding, IdentityStore, PinStore, ProofStore, QueueStore, ReleaseStore,
+    ReviewStore, land_job,
 };
 
 const GROUP_A: &str = "fc97b087-221c-4ea4-9dd9-5277a52eb84a";
@@ -55,6 +48,7 @@ const RECORDING_2: &str = "5224cfc7-b3bb-4008-a41b-21b168dc631f";
 
 struct Rig {
     service: IdentifyService,
+    releases: Arc<MemoryReleaseStore>,
     identities: Arc<MemoryIdentityStore>,
     proofs: Arc<MemoryProofStore>,
     aliases: Arc<MemoryAliasStore>,
@@ -72,6 +66,7 @@ fn rig_with_recall(recall: RecallResult) -> Rig {
     let queue = Arc::new(MemoryQueueStore::default());
     let reviews = Arc::new(MemoryReviewStore::linked(identities.clone()));
     let providers = Arc::new(FakeProviders::with_recall(recall));
+    let releases = Arc::new(MemoryReleaseStore::default());
     let service = IdentifyService::new(IdentifyDeps {
         identities: identities.clone(),
         facts: identities.clone(),
@@ -80,10 +75,12 @@ fn rig_with_recall(recall: RecallResult) -> Rig {
         pins: pins.clone(),
         queue: queue.clone(),
         reviews: reviews.clone(),
+        releases: releases.clone(),
         providers: providers.clone(),
     });
     Rig {
         service,
+        releases,
         identities,
         proofs,
         aliases,
@@ -94,22 +91,20 @@ fn rig_with_recall(recall: RecallResult) -> Rig {
     }
 }
 
-fn track_facts(id: &str, recording: Option<&str>) -> LocalTrackFacts {
+fn track_facts(id: &str, position: u32, recording: Option<&str>) -> LocalTrackFacts {
     LocalTrackFacts {
         local_track_id: id.to_owned(),
         title: format!("track {id}"),
         artist_name: "Some Artist".to_owned(),
-        track_number: 1,
+        track_number: position,
         disc_number: 1,
         duration_secs: Some(200),
         recording_mbid: recording.map(str::to_owned),
-        release_track_mbid: None,
-        release_mbid: None,
-        release_group_mbid: None,
-        fingerprint: None,
+        ..LocalTrackFacts::default()
     }
 }
 
+/// Facts for tracks `t1`, `t2`, ... in order, titled "track t1" and so on.
 fn album_facts(album: &str, recordings: &[(&str, Option<&str>)]) -> LocalAlbumFacts {
     LocalAlbumFacts {
         local_album_id: album.to_owned(),
@@ -117,50 +112,60 @@ fn album_facts(album: &str, recordings: &[(&str, Option<&str>)]) -> LocalAlbumFa
         album_artist_name: "Some Artist".to_owned(),
         tracks: recordings
             .iter()
-            .map(|(id, recording)| track_facts(id, *recording))
+            .enumerate()
+            .map(|(index, (id, recording))| track_facts(id, index as u32 + 1, *recording))
             .collect(),
-        locked_track_ids: Vec::new(),
-        is_compilation: false,
+        ..LocalAlbumFacts::default()
     }
 }
 
-fn supported(track: &str, recording: &str) -> TrackEvidence {
-    TrackEvidence {
-        local_track_id: track.to_owned(),
-        classification: EvidenceClass::Supported,
-        evidence_kinds: vec!["embedded_recording_mbid".to_owned()],
-        recording_mbid: Some(recording.to_owned()),
-        release_track_mbid: None,
+/// A release titled, ordered, and timed like `album_facts`, whose tracks
+/// carry the given recordings: only the ids tell candidates apart.
+fn release(group: &str, id: &str, recordings: &[&str]) -> Release {
+    Release {
+        id: id.to_owned(),
+        release_group_id: group.to_owned(),
+        title: "Some Album".to_owned(),
+        artists: vec![CreditedArtist {
+            id: ARTIST_MBID.to_owned(),
+            name: "Some Artist".to_owned(),
+            sort_name: None,
+            join: String::new(),
+        }],
+        status: Some("Official".to_owned()),
+        tracks: recordings
+            .iter()
+            .enumerate()
+            .map(|(index, recording)| ReleaseTrack {
+                id: format!("{id}-{index}"),
+                recording_id: (*recording).to_owned(),
+                title: format!("track t{}", index + 1),
+                artists: Vec::new(),
+                disc: 1,
+                position: index as u32 + 1,
+                absolute_position: index as u32 + 1,
+                length_ms: Some(200_000),
+            })
+            .collect(),
+        ..Release::default()
     }
 }
 
-fn contradictory(track: &str, recording: &str) -> TrackEvidence {
-    TrackEvidence {
-        local_track_id: track.to_owned(),
-        classification: EvidenceClass::Contradictory,
-        evidence_kinds: vec!["embedded_recording_mbid".to_owned()],
-        recording_mbid: Some(recording.to_owned()),
-        release_track_mbid: None,
+/// The same release marked live: identifying it needs confirmation.
+fn live(mut release: Release) -> Release {
+    release.secondary_types = vec!["Live".to_owned()];
+    release
+}
+
+fn recall(releases: Vec<Release>) -> RecallResult {
+    RecallResult {
+        releases,
+        ..RecallResult::default()
     }
 }
 
-fn candidate(
-    key: &str,
-    group: &str,
-    release: Option<&str>,
-    tracks: Vec<TrackEvidence>,
-) -> CandidateEvidence {
-    CandidateEvidence {
-        candidate_key: key.to_owned(),
-        release_group_mbid: group.to_owned(),
-        release_mbid: release.map(str::to_owned),
-        album_title: "Some Album".to_owned(),
-        album_artist_name: "Some Artist".to_owned(),
-        track_evidence: tracks,
-        score: 100.0,
-        margin: 0.0,
-        reason_code: String::new(),
-    }
+fn key(group: &str, release: &str) -> String {
+    format!("{group}:{release}")
 }
 
 fn proof_row(album: &str, track: &str, source: &str, mbid: &str, release: &str) -> CreditProof {
@@ -177,15 +182,7 @@ fn proof_row(album: &str, track: &str, source: &str, mbid: &str, release: &str) 
 
 #[tokio::test]
 async fn automatic_identity_is_revisable() {
-    let first = RecallResult {
-        candidates: vec![candidate(
-            "a",
-            GROUP_A,
-            Some(RELEASE_A1),
-            vec![supported("t1", RECORDING_1)],
-        )],
-        ..RecallResult::default()
-    };
+    let first = recall(vec![release(GROUP_A, RELEASE_A1, &[RECORDING_1])]);
     let rig = rig_with_recall(first);
     rig.identities
         .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
@@ -215,15 +212,11 @@ async fn automatic_identity_is_revisable() {
     );
 
     // A stronger later pass revises the automatic row.
-    *rig.providers.recall.lock().expect("recall") = Some(RecallResult {
-        candidates: vec![candidate(
-            "b",
-            GROUP_B,
-            Some(RELEASE_B1),
-            vec![supported("t1", RECORDING_1), supported("t1", RECORDING_2)],
-        )],
-        ..RecallResult::default()
-    });
+    *rig.providers.recall.lock().expect("recall") = Some(recall(vec![release(
+        GROUP_B,
+        RELEASE_B1,
+        &[RECORDING_1, RECORDING_2],
+    )]));
     rig.service.enqueue_album(
         "job-2",
         "album-1",
@@ -249,15 +242,7 @@ async fn automatic_identity_is_revisable() {
 
 #[tokio::test]
 async fn automatic_retracts_on_contradiction() {
-    let rig = rig_with_recall(RecallResult {
-        candidates: vec![candidate(
-            "a",
-            GROUP_A,
-            Some(RELEASE_A1),
-            vec![contradictory("t1", RECORDING_2)],
-        )],
-        ..RecallResult::default()
-    });
+    let rig = rig_with_recall(recall(vec![release(GROUP_A, RELEASE_A1, &[RECORDING_2])]));
     rig.identities
         .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
     rig.identities.save_album_identity(AlbumIdentity {
@@ -290,15 +275,7 @@ async fn automatic_retracts_on_contradiction() {
 
 #[tokio::test]
 async fn manual_survives_rescan() {
-    let rig = rig_with_recall(RecallResult {
-        candidates: vec![candidate(
-            "b",
-            GROUP_B,
-            Some(RELEASE_B1),
-            vec![supported("t1", RECORDING_1)],
-        )],
-        ..RecallResult::default()
-    });
+    let rig = rig_with_recall(recall(vec![release(GROUP_B, RELEASE_B1, &[RECORDING_1])]));
     rig.identities
         .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
     rig.identities.save_album_identity(AlbumIdentity {
@@ -339,15 +316,7 @@ async fn manual_survives_rescan() {
 
 #[tokio::test]
 async fn legacy_import_survives_rescan() {
-    let rig = rig_with_recall(RecallResult {
-        candidates: vec![candidate(
-            "b",
-            GROUP_B,
-            Some(RELEASE_B1),
-            vec![supported("t1", RECORDING_1)],
-        )],
-        ..RecallResult::default()
-    });
+    let rig = rig_with_recall(recall(vec![release(GROUP_B, RELEASE_B1, &[RECORDING_1])]));
     rig.identities
         .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
     rig.identities.save_album_identity(AlbumIdentity {
@@ -380,15 +349,11 @@ async fn legacy_import_survives_rescan() {
 
 #[tokio::test]
 async fn automatic_pass_skips_protected_track_rows() {
-    let rig = rig_with_recall(RecallResult {
-        candidates: vec![candidate(
-            "a",
-            GROUP_A,
-            Some(RELEASE_A1),
-            vec![supported("t1", RECORDING_1), supported("t2", RECORDING_2)],
-        )],
-        ..RecallResult::default()
-    });
+    let rig = rig_with_recall(recall(vec![release(
+        GROUP_A,
+        RELEASE_A1,
+        &[RECORDING_1, RECORDING_2],
+    )]));
     rig.identities.save_album_facts(album_facts(
         "album-1",
         &[("t1", Some(RECORDING_1)), ("t2", Some(RECORDING_2))],
@@ -429,15 +394,7 @@ async fn automatic_pass_skips_protected_track_rows() {
 
 #[tokio::test]
 async fn quiet_reconfirm_files_no_review() {
-    let rig = rig_with_recall(RecallResult {
-        candidates: vec![candidate(
-            "a",
-            GROUP_A,
-            Some(RELEASE_A1),
-            vec![contradictory("t1", RECORDING_2)],
-        )],
-        ..RecallResult::default()
-    });
+    let rig = rig_with_recall(recall(vec![release(GROUP_A, RELEASE_A1, &[RECORDING_2])]));
     rig.identities
         .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
     rig.identities.save_album_identity(AlbumIdentity {
@@ -471,15 +428,7 @@ async fn quiet_reconfirm_files_no_review() {
 async fn protected_identified_agreement_quietly_reconfirms() {
     // An Identified winner that agrees with a protected row is a
     // settled question, not new information: no review, no write.
-    let rig = rig_with_recall(RecallResult {
-        candidates: vec![candidate(
-            "a",
-            GROUP_A,
-            Some(RELEASE_A1),
-            vec![supported("t1", RECORDING_1)],
-        )],
-        ..RecallResult::default()
-    });
+    let rig = rig_with_recall(recall(vec![release(GROUP_A, RELEASE_A1, &[RECORDING_1])]));
     rig.identities
         .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
     rig.identities.save_album_identity(AlbumIdentity {
@@ -825,42 +774,14 @@ fn retired_ids_keep_resolving() {
     );
 }
 
-#[test]
-fn release_pin_steers_edition_search_only() {
-    let plain = candidate("a1", GROUP_A, Some(RELEASE_A1), Vec::new());
-    let mut deluxe = candidate("a2", GROUP_A, Some(RELEASE_A2), Vec::new());
-    deluxe.score = 10.0;
-    let hint = EditionHint::from_pin(&ReleasePin {
-        release_group_mbid: GROUP_A.to_owned(),
-        release_mbid: RELEASE_A2.to_owned(),
-    });
-    let ranked = rank_with_hint(vec![plain.clone(), deluxe.clone()], Some(&hint));
-    assert_eq!(ranked[0].candidate_key, "a2");
-    // Scores untouched: the pin reorders, it never re-scores.
-    assert_eq!(ranked[0].score, 10.0);
-    assert_eq!(ranked[1].score, 100.0);
-    // A pin never promotes a candidate from another group.
-    let other = candidate("b1", GROUP_B, Some(RELEASE_B1), Vec::new());
-    let ranked = rank_with_hint(vec![other.clone(), plain.clone()], Some(&hint));
-    assert_eq!(ranked[0].candidate_key, "b1");
-    assert_eq!(ranked[1].candidate_key, "a1");
-}
-
+/// A pin picks among editions that match equally well, and never
+/// rescues an edition the files' own ids rule out.
 #[tokio::test]
-async fn pin_never_beats_provider_proof() {
-    let mut pinned = candidate("a2", GROUP_A, Some(RELEASE_A2), Vec::new());
-    pinned.score = 5.0;
-    let mut proven = candidate(
-        "a1",
-        GROUP_A,
-        Some(RELEASE_A1),
-        vec![supported("t1", RECORDING_1)],
-    );
-    proven.score = 1.0;
-    let rig = rig_with_recall(RecallResult {
-        candidates: vec![proven, pinned],
-        ..RecallResult::default()
-    });
+async fn pin_orders_editions_but_never_beats_proof() {
+    let rig = rig_with_recall(recall(vec![
+        release(GROUP_A, RELEASE_A1, &[RECORDING_1]),
+        release(GROUP_A, RELEASE_A2, &[RECORDING_1]),
+    ]));
     rig.identities
         .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
     rig.pins.set_pin(ReleasePin {
@@ -880,6 +801,31 @@ async fn pin_never_beats_provider_proof() {
     let report = rig
         .service
         .run_claimed_job("job-1", 0)
+        .await
+        .expect("report");
+    assert_eq!(report.outcome, IdentificationOutcome::Identified);
+    let identity = rig.identities.album_identity("album-1").expect("identity");
+    assert_eq!(identity.release_mbid.as_deref(), Some(RELEASE_A2));
+    // The sealed release stays on file for tagging.
+    assert!(rig.releases.release(RELEASE_A2, None).is_some());
+
+    // The pinned edition lacks the file's recording: proof wins.
+    rig.providers.set_recall(recall(vec![
+        release(GROUP_A, RELEASE_A1, &[RECORDING_1]),
+        release(GROUP_A, RELEASE_A2, &[RECORDING_2]),
+    ]));
+    rig.service.enqueue_album(
+        "job-2",
+        "album-1",
+        IdentifyKind::Automatic,
+        "rev-2",
+        None,
+        0,
+    );
+    rig.queue.claim(0, 60_000);
+    let report = rig
+        .service
+        .run_claimed_job("job-2", 0)
         .await
         .expect("report");
     assert_eq!(report.outcome, IdentificationOutcome::Identified);
@@ -923,23 +869,10 @@ fn exact_contributors_become_appearances() {
 
 #[tokio::test]
 async fn review_approve_seals_manual_and_holds() {
-    let rig = rig_with_recall(RecallResult {
-        candidates: vec![
-            candidate(
-                "a",
-                GROUP_A,
-                Some(RELEASE_A1),
-                vec![supported("t1", RECORDING_1)],
-            ),
-            candidate(
-                "b",
-                GROUP_B,
-                Some(RELEASE_B1),
-                vec![supported("t1", RECORDING_1)],
-            ),
-        ],
-        ..RecallResult::default()
-    });
+    let rig = rig_with_recall(recall(vec![
+        release(GROUP_A, RELEASE_A1, &[RECORDING_1]),
+        release(GROUP_B, RELEASE_B1, &[RECORDING_1]),
+    ]));
     rig.identities
         .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
     rig.service.enqueue_album(
@@ -964,12 +897,14 @@ async fn review_approve_seals_manual_and_holds() {
         Ok(false)
     );
     assert_eq!(
-        rig.service.approve_candidate(&review, "curator-1", "a"),
+        rig.service
+            .approve_candidate(&review, "curator-1", &key(GROUP_A, RELEASE_A1)),
         Ok(true)
     );
     // Settling twice is a no-op.
     assert_eq!(
-        rig.service.approve_candidate(&review, "curator-1", "b"),
+        rig.service
+            .approve_candidate(&review, "curator-1", &key(GROUP_B, RELEASE_B1)),
         Ok(false)
     );
     let stored = rig.reviews.get(&review).expect("review");
@@ -979,15 +914,8 @@ async fn review_approve_seals_manual_and_holds() {
     assert_eq!(identity.decision_source, DecisionSource::Manual);
 
     // A later automatic pass cannot move the curator's choice.
-    *rig.providers.recall.lock().expect("recall") = Some(RecallResult {
-        candidates: vec![candidate(
-            "b",
-            GROUP_B,
-            Some(RELEASE_B1),
-            vec![supported("t1", RECORDING_1)],
-        )],
-        ..RecallResult::default()
-    });
+    *rig.providers.recall.lock().expect("recall") =
+        Some(recall(vec![release(GROUP_B, RELEASE_B1, &[RECORDING_1])]));
     rig.service.enqueue_album(
         "job-2",
         "album-1",
@@ -1008,23 +936,10 @@ async fn review_approve_seals_manual_and_holds() {
 
 #[tokio::test]
 async fn review_reject_keeps_tagged() {
-    let rig = rig_with_recall(RecallResult {
-        candidates: vec![
-            candidate(
-                "a",
-                GROUP_A,
-                Some(RELEASE_A1),
-                vec![supported("t1", RECORDING_1)],
-            ),
-            candidate(
-                "b",
-                GROUP_B,
-                Some(RELEASE_B1),
-                vec![supported("t1", RECORDING_1)],
-            ),
-        ],
-        ..RecallResult::default()
-    });
+    let rig = rig_with_recall(recall(vec![
+        release(GROUP_A, RELEASE_A1, &[RECORDING_1]),
+        release(GROUP_B, RELEASE_B1, &[RECORDING_1]),
+    ]));
     rig.identities
         .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
     rig.service.enqueue_album(
@@ -1045,7 +960,8 @@ async fn review_reject_keeps_tagged() {
     assert!(rig.service.reject_candidates(&review, "curator-1"));
     assert!(!rig.service.reject_candidates(&review, "curator-1"));
     assert_eq!(
-        rig.service.approve_candidate(&review, "curator-1", "a"),
+        rig.service
+            .approve_candidate(&review, "curator-1", &key(GROUP_A, RELEASE_A1)),
         Ok(false)
     );
     assert_eq!(
@@ -1057,161 +973,14 @@ async fn review_reject_keeps_tagged() {
     assert!(rig.service.pending_reviews("album-1").is_empty());
 }
 
-#[tokio::test]
-async fn provider_recall_runs_identity_critical() {
-    let rig = rig_with_recall(RecallResult::default());
-    let facts = album_facts("album-1", &[("t1", Some(RECORDING_1))]);
-    let outcome = rig.providers.recall_candidates(&facts, 10).await;
-    assert_eq!(
-        outcome.recall_criticality,
-        Some(Criticality::IdentityCritical)
-    );
-    assert_eq!(
-        rig.providers.criticalities(),
-        vec![Criticality::IdentityCritical]
-    );
-}
-
-/// Scripted MusicBrainz transport: one canned release page, every request
-/// recorded. Unscripted hosts fail loudly; no live network.
-struct FakeMb {
-    page: Mutex<Option<RawResponse>>,
-    seen: Mutex<Vec<MbRequest>>,
-    fail: Mutex<bool>,
-}
-
-impl FakeMb {
-    fn with_page(body: Vec<u8>) -> Self {
-        Self {
-            page: Mutex::new(Some(RawResponse::new(200, Vec::new(), body))),
-            seen: Mutex::new(Vec::new()),
-            fail: Mutex::new(false),
-        }
-    }
-
-    fn failing() -> Self {
-        Self {
-            page: Mutex::new(None),
-            seen: Mutex::new(Vec::new()),
-            fail: Mutex::new(true),
-        }
-    }
-}
-
-impl MbTransport for FakeMb {
-    async fn get(&self, request: &MbRequest) -> Result<RawResponse, TransportError> {
-        self.seen.lock().expect("seen").push(request.clone());
-        if *self.fail.lock().expect("fail") {
-            return Err(TransportError("wire is down".to_owned()));
-        }
-        let page = self
-            .page
-            .lock()
-            .expect("page")
-            .clone()
-            .expect("scripted page");
-        Ok(page)
-    }
-}
-
-struct NoopPacer;
-
-impl Pacer for NoopPacer {
-    async fn acquire(&self) {}
-}
-
-fn release_page() -> Vec<u8> {
-    serde_json::json!({
-        "count": 1,
-        "offset": 0,
-        "releases": [{
-            "id": RELEASE_A1,
-            "score": 100,
-            "title": "Some Album",
-            "artist-credit": [{
-                "name": "Some Artist",
-                "joinphrase": "",
-                "artist": {"id": ARTIST_MBID, "name": "Some Artist"}
-            }],
-            "release-group": {"id": GROUP_A, "title": "Some Album"},
-            "date": "2013-01-01",
-            "country": "US",
-            "status": "Official"
-        }]
-    })
-    .to_string()
-    .into_bytes()
-}
-
-#[tokio::test]
-async fn live_recall_maps_hits_and_stays_critical() {
-    let mb = MusicBrainzClient::official(
-        FakeMb::with_page(release_page()),
-        droppedneedle::providers::musicbrainz::MbPacing::new(std::sync::Arc::new(
-            droppedneedle::providers::Providers::unpaced(),
-        )),
-    );
-    let acoustid = AcoustIdClient::new(
-        reqwest::Client::new(),
-        "https://example.invalid",
-        NoopPacer,
-        NoopSink,
-    );
-    // Empty key short-circuits AcoustID without touching the wire.
-    let live = LiveProviders::new(mb, acoustid, String::new());
-    let facts = album_facts("album-1", &[("t1", Some(RECORDING_1))]);
-    let outcome = live.recall_candidates(&facts, 10).await;
-    assert_eq!(
-        outcome.recall_criticality,
-        Some(Criticality::IdentityCritical)
-    );
-    assert!(!outcome.result.provider_deferred);
-    assert_eq!(outcome.result.candidates.len(), 1);
-    let hit = &outcome.result.candidates[0];
-    assert_eq!(hit.release_mbid.as_deref(), Some(RELEASE_A1));
-    assert_eq!(hit.release_group_mbid, GROUP_A);
-    assert_eq!(hit.album_artist_name, "Some Artist");
-}
-
-#[tokio::test]
-async fn edition_search_is_best_effort_and_silent_on_outage() {
-    let mb = MusicBrainzClient::official(
-        FakeMb::failing(),
-        droppedneedle::providers::musicbrainz::MbPacing::new(std::sync::Arc::new(
-            droppedneedle::providers::Providers::unpaced(),
-        )),
-    );
-    let acoustid = AcoustIdClient::new(
-        reqwest::Client::new(),
-        "https://example.invalid",
-        NoopPacer,
-        NoopSink,
-    );
-    let live = LiveProviders::new(mb, acoustid, String::new());
-    // A dead provider only loses the hint; the call resolves to absence.
-    let editions = live
-        .search_editions_best_effort("Some Album", "Some Artist", 5)
-        .await;
-    assert!(editions.is_empty());
-    // Proof recall instead surfaces the outage so the job defers.
-    let facts = album_facts("album-1", &[("t1", Some(RECORDING_1))]);
-    let outcome = live.recall_candidates(&facts, 10).await;
-    assert!(outcome.result.provider_deferred);
-    assert_eq!(
-        outcome.result.failure_code.as_deref(),
-        Some("musicbrainz_unavailable")
-    );
-}
-
+/// A live release needs confirmation: without release-track ids on the
+/// files, only the release group is pinned.
 #[tokio::test]
 async fn edition_uncertain_pins_group_only() {
-    let rig = rig_with_recall(RecallResult {
-        candidates: vec![
-            candidate("a1", GROUP_A, Some(RELEASE_A1), Vec::new()),
-            candidate("a2", GROUP_A, Some(RELEASE_A2), Vec::new()),
-        ],
-        ..RecallResult::default()
-    });
+    let rig = rig_with_recall(recall(vec![
+        live(release(GROUP_A, RELEASE_A1, &[RECORDING_1])),
+        live(release(GROUP_A, RELEASE_A2, &[RECORDING_1])),
+    ]));
     rig.identities
         .save_album_facts(album_facts("album-1", &[("t1", None)]));
     rig.service.enqueue_album(
@@ -1236,13 +1005,10 @@ async fn edition_uncertain_pins_group_only() {
 
 #[tokio::test]
 async fn held_exact_survives_weaker_tier() {
-    let rig = rig_with_recall(RecallResult {
-        candidates: vec![
-            candidate("a1", GROUP_A, Some(RELEASE_A1), Vec::new()),
-            candidate("a2", GROUP_A, Some(RELEASE_A2), Vec::new()),
-        ],
-        ..RecallResult::default()
-    });
+    let rig = rig_with_recall(recall(vec![
+        live(release(GROUP_A, RELEASE_A1, &[RECORDING_1])),
+        live(release(GROUP_A, RELEASE_A2, &[RECORDING_1])),
+    ]));
     rig.identities
         .save_album_facts(album_facts("album-1", &[("t1", None)]));
     rig.identities.save_album_identity(AlbumIdentity {
@@ -1345,30 +1111,6 @@ async fn provider_deferred_job_waits_then_terminals() {
     assert_eq!(job.not_before_ms, 1_000 + 30_000);
     // No identity was written on a deferred attempt.
     assert!(rig.identities.album_identity("album-1").is_none());
-}
-
-#[test]
-fn track_classifier_needs_provider_ids() {
-    assert_eq!(
-        classify_track(Some(RECORDING_1), None, Some(RECORDING_1), None, None),
-        EvidenceClass::Supported
-    );
-    assert_eq!(
-        classify_track(Some(RECORDING_1), None, Some(RECORDING_2), None, None),
-        EvidenceClass::Contradictory
-    );
-    assert_eq!(
-        classify_track(None, None, Some(RECORDING_1), None, Some(RECORDING_1)),
-        EvidenceClass::Supported
-    );
-    assert_eq!(
-        classify_track(None, None, Some(RECORDING_1), None, None),
-        EvidenceClass::Unknown
-    );
-    assert_eq!(
-        classify_track(None, Some(RELEASE_A1), None, Some(RELEASE_A2), None),
-        EvidenceClass::Contradictory
-    );
 }
 
 #[test]

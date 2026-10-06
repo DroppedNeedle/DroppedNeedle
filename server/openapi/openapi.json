@@ -17682,6 +17682,8 @@
           "album_title",
           "album_artist_name",
           "score",
+          "distance",
+          "penalties",
           "reason_code",
           "supported_tracks",
           "contradictory_tracks"
@@ -17704,6 +17706,18 @@
             "description": "Contradictory track count.",
             "minimum": 0
           },
+          "distance": {
+            "type": "number",
+            "format": "double",
+            "description": "Matcher distance, 0 for a perfect match. Albums identify on their\nown at 0.20 or less; reviews show candidates up to 0.35."
+          },
+          "penalties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PenaltyView"
+            },
+            "description": "What the distance is made of (`album`, `artist`, `tracks`,\n`missing_tracks`, `unmatched_tracks`, `album_id`, `year`,\n`media_count`), largest share first."
+          },
           "reason_code": {
             "type": "string",
             "description": "Reason code."
@@ -17722,7 +17736,7 @@
           "score": {
             "type": "number",
             "format": "double",
-            "description": "Match score."
+            "description": "Match score: one minus the distance."
           },
           "supported_tracks": {
             "type": "integer",
@@ -25427,6 +25441,25 @@
             "type": "boolean",
             "description": "Honor the legacy Windows path limit.",
             "default": false
+          }
+        }
+      },
+      "PenaltyView": {
+        "type": "object",
+        "description": "One penalty's share of a candidate's distance.",
+        "required": [
+          "name",
+          "share"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Penalty name."
+          },
+          "share": {
+            "type": "number",
+            "format": "double",
+            "description": "Its share of the distance."
           }
         }
       },

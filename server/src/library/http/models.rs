@@ -181,14 +181,30 @@ pub struct CandidateView {
     pub album_title: String,
     /// Candidate album artist.
     pub album_artist_name: String,
-    /// Match score.
+    /// Match score: one minus the distance.
     pub score: f64,
+    /// Matcher distance, 0 for a perfect match. Albums identify on their
+    /// own at 0.20 or less; reviews show candidates up to 0.35.
+    pub distance: f64,
+    /// What the distance is made of (`album`, `artist`, `tracks`,
+    /// `missing_tracks`, `unmatched_tracks`, `album_id`, `year`,
+    /// `media_count`), largest share first.
+    pub penalties: Vec<PenaltyView>,
     /// Reason code.
     pub reason_code: String,
     /// Supported track count.
     pub supported_tracks: usize,
     /// Contradictory track count.
     pub contradictory_tracks: usize,
+}
+
+/// One penalty's share of a candidate's distance.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct PenaltyView {
+    /// Penalty name.
+    pub name: String,
+    /// Its share of the distance.
+    pub share: f64,
 }
 
 /// One curator review.

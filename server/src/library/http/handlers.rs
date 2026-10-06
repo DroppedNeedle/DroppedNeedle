@@ -16,9 +16,9 @@ use super::models::{
     AddRootBody, ApproveBody, BaselineRestoreBody, BaselineRestoreResponse, CandidateView,
     IdentifyBody, IdentifyResponse, IdentityView, ManageAppliedFile, ManageApplyBody,
     ManageApplyResponse, ManageFileView, ManageItemBody, ManagePreviewBody, ManagePreviewResponse,
-    ManageUndoBody, ManageUndoResponse, ReviewResolveResponse, ReviewView, ReviewsResponse,
-    RootView, RootsResponse, RunDetailResponse, ScanBody, ScanFileView, ScanResponse, ScanRunView,
-    ScanRunsResponse, ScanScopeView, snake,
+    ManageUndoBody, ManageUndoResponse, PenaltyView, ReviewResolveResponse, ReviewView,
+    ReviewsResponse, RootView, RootsResponse, RunDetailResponse, ScanBody, ScanFileView,
+    ScanResponse, ScanRunView, ScanRunsResponse, ScanScopeView, snake,
 };
 use crate::library::identify::models::{CandidateEvidence, IdentifyKind, JobState, ReviewItem};
 use crate::library::manage::PreviewItemInput;
@@ -92,6 +92,15 @@ fn candidate_view(candidate: &CandidateEvidence) -> CandidateView {
         album_title: candidate.album_title.clone(),
         album_artist_name: candidate.album_artist_name.clone(),
         score: candidate.score,
+        distance: candidate.distance,
+        penalties: candidate
+            .penalties
+            .iter()
+            .map(|penalty| PenaltyView {
+                name: penalty.name.clone(),
+                share: penalty.share,
+            })
+            .collect(),
         reason_code: candidate.reason_code.clone(),
         supported_tracks: candidate.supported_count(),
         contradictory_tracks: candidate.contradictory_count(),

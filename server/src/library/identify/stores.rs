@@ -5,6 +5,7 @@ use super::models::{
     AlbumIdentity, Alias, ArtistCredit, ArtistIdentity, CreditProof, IdentifyJob, JobState,
     LocalAlbumFacts, ReleasePin, ReviewItem, ReviewState, TrackIdentity,
 };
+use crate::library::matching::Release;
 
 /// Durable identity rows plus the facts the matcher reads.
 pub trait IdentityStore: Send + Sync {
@@ -30,6 +31,16 @@ pub trait IdentityStore: Send + Sync {
 /// catalog the scan writes; `None` means the album does not exist.
 pub trait FactsSource: Send + Sync {
     fn album_facts(&self, local_album_id: &str) -> Option<LocalAlbumFacts>;
+}
+
+/// Release documents identification fetched or sealed against. Recall
+/// reuses fresh ones instead of asking MusicBrainz again, and the
+/// publisher tags files from the one an album's identity names.
+pub trait ReleaseStore: Send + Sync {
+    /// The stored document for one release, if it was saved no more than
+    /// `max_age_secs` ago (`None` accepts any age).
+    fn release(&self, release_mbid: &str, max_age_secs: Option<u64>) -> Option<Release>;
+    fn save_release(&self, release: &Release);
 }
 
 /// Durable credit proof rows.

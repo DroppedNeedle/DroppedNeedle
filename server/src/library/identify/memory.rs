@@ -10,8 +10,31 @@ use super::models::{
 };
 use super::stores::{
     AliasStore, Approval, FactsSource, IdentityStore, PinStore, ProofStore, QueueStore,
-    ReviewStore, StoreError,
+    ReleaseStore, ReviewStore, StoreError,
 };
+use crate::library::matching::Release;
+
+/// Release documents by MBID; age is not tracked, so every read is fresh.
+#[derive(Debug, Default)]
+pub struct MemoryReleaseStore {
+    releases: Mutex<HashMap<String, Release>>,
+}
+
+impl ReleaseStore for MemoryReleaseStore {
+    fn release(&self, release_mbid: &str, _max_age_secs: Option<u64>) -> Option<Release> {
+        self.releases
+            .lock()
+            .ok()?
+            .get(&release_mbid.to_ascii_lowercase())
+            .cloned()
+    }
+
+    fn save_release(&self, release: &Release) {
+        if let Ok(mut all) = self.releases.lock() {
+            all.insert(release.id.to_ascii_lowercase(), release.clone());
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct MemoryIdentityStore {

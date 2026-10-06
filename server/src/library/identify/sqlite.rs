@@ -6,7 +6,9 @@
 //! reviews, proofs, and provider credits use the 0011 tables; pins and
 //! aliases use their 0001 tables. Album facts come straight from the
 //! catalog the scan writes, so a restart never strands an album without
-//! facts.
+//! facts. Release documents go in `library_management_metadata_snapshots`
+//! (immutable rows, one per distinct payload); expired ones no identity
+//! names are pruned on each save.
 //!
 //! Every call is a short synchronous transaction on one connection behind
 //! a mutex. A store failure logs and reads as absence (or `false`), never
@@ -27,10 +29,17 @@ use super::models::{
 use super::queue::PRIORITY_NEW_OR_CHANGED;
 use super::stores::{
     AliasStore, Approval, FactsSource, IdentityStore, PinStore, ProofStore, QueueStore,
-    ReviewStore, StoreError,
+    ReleaseStore, ReviewStore, StoreError,
 };
+use crate::library::matching::Release;
 
 const PROVIDER: &str = "musicbrainz";
+/// Snapshot kind for stored release documents.
+const RELEASE_KIND: &str = "release";
+/// Shape version of the stored document; a new shape is a new input hash.
+const RELEASE_DOCUMENT_VERSION: &str = "matching-release-v1";
+/// Documents count as fresh for recall this long.
+pub const RELEASE_FRESH_SECS: u64 = 7 * 24 * 3600;
 
 fn now_secs() -> f64 {
     SystemTime::now()
@@ -537,7 +546,7 @@ impl FactsSource for SqliteIdentifyStore {
         self.read("album facts", |conn| {
             let album = conn
                 .query_row(
-                    "SELECT title, COALESCE(album_artist_name, ''), is_compilation \
+                    "SELECT title, COALESCE(album_artist_name, ''), is_compilation, year \
                      FROM local_albums WHERE id = ?1",
                     params![local_album_id],
                     |row| {
@@ -545,17 +554,19 @@ impl FactsSource for SqliteIdentifyStore {
                             row.get::<_, String>(0)?,
                             row.get::<_, String>(1)?,
                             row.get::<_, i64>(2)? != 0,
+                            row.get::<_, Option<i64>>(3)?,
                         ))
                     },
                 )
                 .optional()?;
-            let Some((title, album_artist_name, is_compilation)) = album else {
+            let Some((title, album_artist_name, is_compilation, year)) = album else {
                 return Ok(None);
             };
             let mut stmt = conn.prepare(
                 "SELECT id, title, COALESCE(artist_name, ''), track_number, disc_number, \
                  duration_seconds, embedded_recording_mbid, embedded_release_track_mbid, \
-                 embedded_release_mbid, embedded_release_group_mbid, membership_locked \
+                 embedded_release_mbid, embedded_release_group_mbid, membership_locked, \
+                 root_id, relative_path \
                  FROM local_tracks WHERE local_album_id = ?1 AND availability = 'indexed' \
                  ORDER BY disc_number, track_number, relative_path",
             )?;
@@ -576,7 +587,8 @@ impl FactsSource for SqliteIdentifyStore {
                         release_track_mbid: row.get(7)?,
                         release_mbid: row.get(8)?,
                         release_group_mbid: row.get(9)?,
-                        fingerprint: None,
+                        root_id: row.get(11)?,
+                        relative_path: row.get(12)?,
                     },
                     row.get::<_, i64>(10)? != 0,
                 ))
@@ -592,6 +604,7 @@ impl FactsSource for SqliteIdentifyStore {
                 local_album_id: local_album_id.to_owned(),
                 title,
                 album_artist_name,
+                year: year.and_then(|year| i32::try_from(year).ok()),
                 tracks,
                 locked_track_ids: locked,
                 is_compilation,
@@ -599,6 +612,97 @@ impl FactsSource for SqliteIdentifyStore {
         })
         .flatten()
     }
+}
+
+impl ReleaseStore for SqliteIdentifyStore {
+    fn release(&self, release_mbid: &str, max_age_secs: Option<u64>) -> Option<Release> {
+        let oldest = max_age_secs.map_or(0.0, |age| now_secs() - age as f64);
+        let payload: Option<String> = self
+            .read("release document", |conn| {
+                conn.query_row(
+                    "SELECT canonical_payload_json FROM library_management_metadata_snapshots \
+                     WHERE provider = ?1 AND entity_kind = ?2 AND entity_id = ?3 \
+                     AND input_hash = ?4 AND fetched_at >= ?5 \
+                     ORDER BY fetched_at DESC LIMIT 1",
+                    params![
+                        PROVIDER,
+                        RELEASE_KIND,
+                        release_mbid.trim().to_ascii_lowercase(),
+                        release_input_hash(),
+                        oldest,
+                    ],
+                    |row| row.get(0),
+                )
+                .optional()
+            })
+            .flatten();
+        let payload = payload?;
+        match serde_json::from_str(&payload) {
+            Ok(release) => Some(release),
+            Err(error) => {
+                tracing::warn!(%error, release_mbid, "stored release document did not decode");
+                None
+            }
+        }
+    }
+
+    fn save_release(&self, release: &Release) {
+        let payload = match serde_json::to_string(release) {
+            Ok(payload) => payload,
+            Err(error) => {
+                tracing::error!(%error, release = release.id, "release document did not encode");
+                return;
+            }
+        };
+        let payload_sha = hex_sha256(payload.as_bytes());
+        let entity = release.id.trim().to_ascii_lowercase();
+        let now = now_secs();
+        self.write("save release document", |tx| {
+            // A refetch with the same payload refreshes nothing (rows are
+            // immutable), so drop the old row first and keep one per payload.
+            tx.execute(
+                "DELETE FROM library_management_metadata_snapshots \
+                 WHERE provider = ?1 AND entity_kind = ?2 AND entity_id = ?3",
+                params![PROVIDER, RELEASE_KIND, entity],
+            )?;
+            tx.execute(
+                "INSERT INTO library_management_metadata_snapshots (id, provider, \
+                 entity_kind, entity_id, input_hash, canonical_payload_json, payload_sha256, \
+                 fetched_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    hex_sha256(format!("{entity}\0{payload_sha}").as_bytes()),
+                    PROVIDER,
+                    RELEASE_KIND,
+                    entity,
+                    release_input_hash(),
+                    payload,
+                    payload_sha,
+                    now,
+                    now + RELEASE_FRESH_SECS as f64,
+                ],
+            )?;
+            // Expired documents stay only while an identity names them.
+            tx.execute(
+                "DELETE FROM library_management_metadata_snapshots \
+                 WHERE provider = ?1 AND entity_kind = ?2 AND expires_at < ?3 \
+                 AND entity_id NOT IN (SELECT lower(release_mbid) \
+                 FROM local_album_external_identities WHERE release_mbid IS NOT NULL)",
+                params![PROVIDER, RELEASE_KIND, now],
+            )?;
+            Ok(())
+        });
+    }
+}
+
+fn release_input_hash() -> String {
+    hex_sha256(RELEASE_DOCUMENT_VERSION.as_bytes())
+}
+
+fn hex_sha256(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 impl ProofStore for SqliteIdentifyStore {

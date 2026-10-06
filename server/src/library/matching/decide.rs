@@ -74,7 +74,8 @@ pub enum Verdict {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EditionPrefs<'a> {
     pub tagged: Option<&'a str>,
-    pub pinned: Option<&'a str>,
+    /// Release MBIDs curators pinned (one per release group at most).
+    pub pinned: &'a [String],
 }
 
 pub fn eligible(matched: &ReleaseMatch) -> bool {
@@ -210,7 +211,7 @@ fn edition_order(
     };
     named(right, prefs.tagged)
         .cmp(&named(left, prefs.tagged))
-        .then_with(|| named(right, prefs.pinned).cmp(&named(left, prefs.pinned)))
+        .then_with(|| pinned(right, prefs.pinned).cmp(&pinned(left, prefs.pinned)))
         .then_with(|| {
             rounded(matches[a].album_distance()).cmp(&rounded(matches[b].album_distance()))
         })
@@ -218,6 +219,10 @@ fn edition_order(
         .then_with(|| date_key(left.date.as_deref()).cmp(&date_key(right.date.as_deref())))
         .then_with(|| worldwide(right).cmp(&worldwide(left)))
         .then_with(|| left.id.cmp(&right.id))
+}
+
+fn pinned(release: &Release, pins: &[String]) -> bool {
+    pins.iter().any(|pin| release.answers_to(pin))
 }
 
 /// Distances equal to six places tie, so float noise never picks an

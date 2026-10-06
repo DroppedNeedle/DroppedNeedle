@@ -1,29 +1,32 @@
 //! The identify service: queue jobs in, identities or reviews out.
 //!
-//! One attempt recalls candidates through the provider seam, scores them
-//! against embedded provider ids plus fingerprint support, then applies
-//! the outcome through the overwrite rules. Curator rows always win;
-//! ambiguous cases become reviews; nothing here ever guesses from a name.
+//! One attempt recalls candidate releases (with tracklists) through the
+//! provider seam, scores each with the matching engine, and applies the
+//! verdict through the overwrite rules. Curator rows always win; ambiguous
+//! and weak matches become reviews with their distances; contradicting
+//! ids retract automatic identities.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use super::evidence::{candidate_evidence, local_album};
 use super::models::{
     AlbumIdentity, Alias, AliasKind, Appearance, CandidateEvidence, CreditProof, DecisionSource,
     EvidenceClass, IdentificationOutcome, IdentifyJob, IdentifyKind, IdentityBrief, JobState,
-    LocalAlbumFacts, ReviewState, TrackEvidence, TrackIdentity,
+    LocalAlbumFacts, RecallResult, ReviewState, TrackIdentity,
 };
 use super::providers::{IdentifyProviders, RecallOutcome};
 use super::queue::{PRIORITY_HISTORICAL_BACKLOG, PRIORITY_NEW_OR_CHANGED, PRIORITY_REVIEW_RETRY};
 use super::review::{file_review, reject_review};
 use super::rules::{
-    EditionHint, SubstitutionCase, SubstitutionVerdict, classify_credit, classify_track,
-    evaluate_overwrite, evaluate_substitution, rank_with_hint, retracts_on_contradiction,
+    SubstitutionCase, SubstitutionVerdict, classify_credit, evaluate_overwrite,
+    evaluate_substitution, retracts_on_contradiction,
 };
 use super::stores::{
     AliasStore, Approval, AttemptLanding, FactsSource, IdentityStore, PinStore, ProofStore,
-    QueueStore, ReviewStore, StoreError, land_job,
+    QueueStore, ReleaseStore, ReviewStore, StoreError, land_job,
 };
+use crate::library::matching::{EditionPrefs, Release, Verdict, decide, match_release};
 
 /// Every dependency the identify service needs, injected by constructor.
 pub struct IdentifyDeps {
@@ -34,6 +37,7 @@ pub struct IdentifyDeps {
     pub pins: Arc<dyn PinStore>,
     pub queue: Arc<dyn QueueStore>,
     pub reviews: Arc<dyn ReviewStore>,
+    pub releases: Arc<dyn ReleaseStore>,
     pub providers: Arc<dyn IdentifyProviders>,
 }
 
@@ -109,26 +113,87 @@ impl IdentifyService {
                 review_id: None,
             });
         }
-        let hint = self.hint_for(&recall.candidates);
-        let ranked = rank_with_hint(recall.candidates.clone(), hint.as_ref());
-        let scored = score_candidates(&ranked, &facts, &recall.fingerprint_support);
-        let decision = decide(&scored);
+        let (scored, decision, winner) = self.score(&facts, &recall);
+        if let Some(release) = winner {
+            // The release the identity names stays on file for tagging.
+            self.deps.releases.save_release(release);
+        }
+        if matches!(decision, Decision::Ambiguous(_) | Decision::Contradictory) {
+            // A curator may approve any of these; keep their documents.
+            for release in &recall.releases {
+                self.deps.releases.save_release(release);
+            }
+        }
         let report = self.apply_decision(&mut job, &facts, &scored, decision, now_ms);
         self.deps.queue.update(job);
         Some(report)
     }
 
-    /// The pin steers ranking only. It is read here, at the only place a
-    /// hint may enter, and never reaches evidence scoring.
-    fn hint_for(&self, candidates: &[CandidateEvidence]) -> Option<EditionHint> {
-        let group = candidates.first()?.release_group_mbid.clone();
-        if group.is_empty() {
-            return None;
-        }
-        self.deps
-            .pins
-            .pin(&group)
-            .map(|pin| EditionHint::from_pin(&pin))
+    /// Score every recalled release and decide. Candidates come back
+    /// chosen edition first, then by distance; the pin only orders
+    /// editions within one release group and never counts as evidence.
+    fn score<'a>(
+        &self,
+        facts: &LocalAlbumFacts,
+        recall: &'a RecallResult,
+    ) -> (Vec<CandidateEvidence>, Decision, Option<&'a Release>) {
+        let local = local_album(facts, &recall.fingerprint_support);
+        let matches: Vec<_> = recall
+            .releases
+            .iter()
+            .map(|release| match_release(&local, release, &recall.recording_aliases))
+            .collect();
+        let pinned: Vec<String> = recall
+            .releases
+            .iter()
+            .filter_map(|release| self.deps.pins.pin(&release.release_group_id))
+            .map(|pin| pin.release_mbid)
+            .collect();
+        let tagged = local.tagged_release();
+        let verdict = decide(
+            &local,
+            &recall.releases,
+            &matches,
+            EditionPrefs {
+                tagged: tagged.as_deref(),
+                pinned: &pinned,
+            },
+        );
+        let lead = match verdict {
+            Verdict::Identified(index) | Verdict::EditionUncertain(index) => Some(index),
+            _ => None,
+        };
+        let mut order: Vec<usize> = (0..recall.releases.len()).collect();
+        order.sort_by(|a, b| {
+            (Some(*b) == lead).cmp(&(Some(*a) == lead)).then_with(|| {
+                matches[*a]
+                    .library_distance()
+                    .total_cmp(&matches[*b].library_distance())
+            })
+        });
+        let scored: Vec<CandidateEvidence> = order
+            .iter()
+            .map(|index| candidate_evidence(&local, &recall.releases[*index], &matches[*index]))
+            .collect();
+        let decision = match verdict {
+            Verdict::Identified(_) => Decision::Identified(0),
+            Verdict::EditionUncertain(_) => Decision::EditionUncertain,
+            Verdict::Review(reason) => Decision::Ambiguous(reason.code().to_owned()),
+            Verdict::Contradictory => Decision::Contradictory,
+            Verdict::Insufficient => Decision::Terminal(
+                IdentificationOutcome::InsufficientEvidence,
+                "INSUFFICIENT_EVIDENCE".to_owned(),
+            ),
+            Verdict::NoCandidate => Decision::Terminal(
+                IdentificationOutcome::NoCandidate,
+                "NO_CANDIDATE".to_owned(),
+            ),
+        };
+        let winner = match verdict {
+            Verdict::Identified(index) => recall.releases.get(index),
+            _ => None,
+        };
+        (scored, decision, winner)
     }
 
     fn apply_decision(
@@ -246,8 +311,8 @@ impl IdentifyService {
                     review_id: Some(review.id),
                 }
             }
-            Decision::EditionUncertain(keys) => {
-                self.seal_edition_uncertain(facts, &current, scored, &keys);
+            Decision::EditionUncertain => {
+                self.seal_edition_uncertain(facts, &current, scored);
                 land_job(job, AttemptLanding::Done, 0, None);
                 AttemptReport {
                     job: job.clone(),
@@ -318,7 +383,6 @@ impl IdentifyService {
         facts: &LocalAlbumFacts,
         current: &Option<AlbumIdentity>,
         scored: &[CandidateEvidence],
-        _ranked_keys: &[String],
     ) {
         let Some(group) = scored.first().map(|top| top.release_group_mbid.clone()) else {
             return;
@@ -576,109 +640,14 @@ impl IdentifyService {
 }
 
 /// What one attempt decided, before overwrite protection applies.
+/// Indexes point into the scored candidates.
 #[derive(Debug, Clone, PartialEq)]
 enum Decision {
     Identified(usize),
     Contradictory,
     Ambiguous(String),
-    EditionUncertain(Vec<String>),
+    EditionUncertain,
     Terminal(IdentificationOutcome, String),
-}
-
-/// Score every candidate track by track. Provider ids decide; the pin
-/// never reaches this function, so hint-only holds by construction.
-fn score_candidates(
-    candidates: &[CandidateEvidence],
-    facts: &LocalAlbumFacts,
-    fingerprint_support: &HashMap<String, String>,
-) -> Vec<CandidateEvidence> {
-    candidates
-        .iter()
-        .map(|candidate| {
-            let mut scored = candidate.clone();
-            // Fakes may arrive pre-scored; live recall scores here.
-            if scored.track_evidence.is_empty() && !facts.tracks.is_empty() {
-                scored.track_evidence = facts
-                    .tracks
-                    .iter()
-                    .map(|local| {
-                        let support = fingerprint_support.get(&local.local_track_id);
-                        let classification = classify_track(
-                            local.recording_mbid.as_deref(),
-                            local.release_mbid.as_deref(),
-                            None,
-                            candidate.release_mbid.as_deref(),
-                            support.map(String::as_str),
-                        );
-                        let mut kinds = Vec::new();
-                        if local.recording_mbid.is_some() {
-                            kinds.push("embedded_recording_mbid".to_owned());
-                        }
-                        if support.is_some() {
-                            kinds.push("acoustid_support".to_owned());
-                        }
-                        TrackEvidence {
-                            local_track_id: local.local_track_id.clone(),
-                            classification,
-                            evidence_kinds: kinds,
-                            recording_mbid: local.recording_mbid.clone(),
-                            release_track_mbid: local.release_track_mbid.clone(),
-                        }
-                    })
-                    .collect();
-            }
-            scored
-        })
-        .collect()
-}
-
-/// Pick the outcome from scored candidates. Proof decides: support
-/// identifies, contradiction retracts, ties and gaps become reviews.
-fn decide(scored: &[CandidateEvidence]) -> Decision {
-    if scored.is_empty() {
-        return Decision::Terminal(
-            IdentificationOutcome::NoCandidate,
-            "NO_CANDIDATE".to_owned(),
-        );
-    }
-    let mut ranked: Vec<(usize, usize, usize)> = scored
-        .iter()
-        .enumerate()
-        .map(|(index, candidate)| {
-            (
-                index,
-                candidate.supported_count(),
-                candidate.contradictory_count(),
-            )
-        })
-        .collect();
-    ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.2.cmp(&b.2)));
-    let (best_index, best_supported, best_contra) = ranked[0];
-    if best_contra > 0 {
-        return Decision::Contradictory;
-    }
-    if best_supported == 0 {
-        let groups: Vec<&str> = scored
-            .iter()
-            .map(|candidate| candidate.release_group_mbid.as_str())
-            .collect();
-        let single_group = groups.iter().all(|group| *group == groups[0]) && !groups[0].is_empty();
-        if single_group && scored.len() > 1 {
-            let keys: Vec<String> = scored
-                .iter()
-                .map(|candidate| candidate.candidate_key.clone())
-                .collect();
-            return Decision::EditionUncertain(keys);
-        }
-        return Decision::Terminal(
-            IdentificationOutcome::InsufficientEvidence,
-            "INSUFFICIENT_EVIDENCE".to_owned(),
-        );
-    }
-    if ranked.len() > 1 && ranked[1].1 == best_supported {
-        return Decision::Ambiguous("AMBIGUOUS_CANDIDATES".to_owned());
-    }
-    Decision::Identified(best_index)
 }
 
 /// One attempt's report: where the job landed and why.

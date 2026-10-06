@@ -7820,6 +7820,18 @@ export interface components {
             candidate_key: string;
             /** @description Contradictory track count. */
             contradictory_tracks: number;
+            /**
+             * Format: double
+             * @description Matcher distance, 0 for a perfect match. Albums identify on their
+             *     own at 0.20 or less; reviews show candidates up to 0.35.
+             */
+            distance: number;
+            /**
+             * @description What the distance is made of (`album`, `artist`, `tracks`,
+             *     `missing_tracks`, `unmatched_tracks`, `album_id`, `year`,
+             *     `media_count`), largest share first.
+             */
+            penalties: components["schemas"]["PenaltyView"][];
             /** @description Reason code. */
             reason_code: string;
             /** @description Release-group MBID. */
@@ -7828,7 +7840,7 @@ export interface components {
             release_mbid?: string | null;
             /**
              * Format: double
-             * @description Match score.
+             * @description Match score: one minus the distance.
              */
             score: number;
             /** @description Supported track count. */
@@ -11742,6 +11754,16 @@ export interface components {
              * @default false
              */
             windows_legacy_path_limit: boolean;
+        };
+        /** @description One penalty's share of a candidate's distance. */
+        PenaltyView: {
+            /** @description Penalty name. */
+            name: string;
+            /**
+             * Format: double
+             * @description Its share of the distance.
+             */
+            share: number;
         };
         /** @description One pending personal-mix auto-request approval. */
         PersonalMixApprovalItem: {

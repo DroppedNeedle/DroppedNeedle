@@ -70,6 +70,24 @@ pub type RootSource = Arc<dyn Fn() -> RootRegistry + Send + Sync>;
 /// Shared root-directory lookup for the space probe.
 pub(crate) type RootDirs = Arc<dyn Fn() -> HashMap<String, PathBuf> + Send + Sync>;
 
+/// What the identify providers are built from, once the bundle's
+/// stores, pool, and roots exist.
+struct ProviderParts {
+    store: Arc<SqliteIdentifyStore>,
+    pool: BlockingPool,
+    roots: super::identify::sources::Roots,
+    config: Arc<ConfigStore>,
+}
+
+type ProviderFactory =
+    Box<dyn FnOnce(ProviderParts) -> Arc<dyn super::identify::providers::IdentifyProviders>>;
+
+/// A factory handing out the scripted providers of a test bundle.
+#[cfg(any(test, feature = "test-support"))]
+fn scripted_factory(scripted: Arc<FakeProviders>) -> ProviderFactory {
+    Box::new(move |_| scripted as Arc<dyn super::identify::providers::IdentifyProviders>)
+}
+
 /// Startup recovery report.
 #[derive(Debug, Clone, Default)]
 pub struct LibraryRecovery {
@@ -141,9 +159,9 @@ pub struct LibrarySetup {
 
 impl LibrarySetup {
     /// Build the production bundle over the live provider clients.
-    /// MusicBrainz recall runs identity-critical; AcoustID support
-    /// evidence runs without a key until the key config lands (the
-    /// client answers `Missing` on an empty key, never dialing out).
+    /// Identification reads MusicBrainz identity-critical and keeps the
+    /// release documents it fetches; AcoustID runs only for albums whose
+    /// tags are weak, with the key read from the settings per job.
     pub fn build(
         users: UsersDeps,
         http: &crate::http_client::HttpClientFactory,
@@ -171,16 +189,20 @@ impl LibrarySetup {
             .ok_or_else(|| "acoustid has no verified rate row".to_owned())?;
         let acoustid =
             AcoustIdClient::new(http.shared().clone(), DEFAULT_BASE_URL, pacer, CoreSink);
-        let live =
-            super::identify::providers::LiveProviders::new(musicbrainz, acoustid, String::new());
-        Self::assemble(
-            users,
-            ids,
-            Arc::new(live) as Arc<dyn super::identify::providers::IdentifyProviders>,
-            None,
-            db_path,
-            config,
-        )
+        let make: ProviderFactory = Box::new(move |parts| {
+            let fingerprints = super::identify::sources::AcoustIdFingerprints::new(
+                acoustid,
+                parts.config,
+                parts.roots,
+                parts.pool,
+            );
+            Arc::new(super::identify::providers::LiveProviders::new(
+                musicbrainz,
+                parts.store,
+                fingerprints,
+            ))
+        });
+        Self::assemble(users, ids, make, None, db_path, config)
     }
 
     /// Test bundle over scripted providers on a fresh scratch database
@@ -192,7 +214,7 @@ impl LibrarySetup {
         let mut setup = Self::assemble(
             users,
             ids,
-            scripted.clone() as Arc<dyn super::identify::providers::IdentifyProviders>,
+            scripted_factory(scripted.clone()),
             Some(scripted),
             &dir.path().join("app.db"),
             config,
@@ -217,7 +239,7 @@ impl LibrarySetup {
         Self::assemble(
             users,
             ids,
-            scripted.clone() as Arc<dyn super::identify::providers::IdentifyProviders>,
+            scripted_factory(scripted.clone()),
             Some(scripted),
             db_path,
             config,
@@ -237,7 +259,7 @@ impl LibrarySetup {
         let mut setup = Self::assemble(
             users,
             ids,
-            providers,
+            Box::new(move |_| providers),
             None,
             &dir.path().join("app.db"),
             config,
@@ -249,7 +271,7 @@ impl LibrarySetup {
     fn assemble(
         users: UsersDeps,
         ids: Arc<dyn IdGenerator>,
-        providers: Arc<dyn super::identify::providers::IdentifyProviders>,
+        make_providers: ProviderFactory,
         test_providers: Option<Arc<FakeProviders>>,
         db_path: &Path,
         config: Arc<ConfigStore>,
@@ -291,6 +313,15 @@ impl LibrarySetup {
                 );
             }))),
         );
+        let providers = make_providers(ProviderParts {
+            store: identify_store.clone(),
+            pool: pool.clone(),
+            roots: {
+                let registry = registry.clone();
+                Arc::new(move || registry.resolver().registry().clone())
+            },
+            config: config.clone(),
+        });
         let identify = Arc::new(IdentifyService::new(IdentifyDeps {
             identities: identify_store.clone(),
             facts: identify_store.clone(),
@@ -299,6 +330,7 @@ impl LibrarySetup {
             pins: identify_store.clone(),
             queue: identify_store.clone(),
             reviews: identify_store.clone(),
+            releases: identify_store.clone(),
             providers,
         }));
         let contrib_store: Arc<ContribMemoryStore> = Arc::new(ContribMemoryStore::new());

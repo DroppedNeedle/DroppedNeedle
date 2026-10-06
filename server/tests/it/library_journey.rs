@@ -32,9 +32,8 @@ use droppedneedle::config::DEFAULT_PORT;
 use droppedneedle::db::{DbConfig, DbRuntime, open_runtime};
 use droppedneedle::http_client::HttpClientFactory;
 use droppedneedle::ids::{IdGenerator, UuidGenerator};
-use droppedneedle::library::identify::models::{
-    CandidateEvidence, EvidenceClass, RecallResult, TrackEvidence,
-};
+use droppedneedle::library::identify::models::RecallResult;
+use droppedneedle::library::matching::{CreditedArtist, Release, ReleaseTrack};
 use droppedneedle::library::wiring::LibrarySetup;
 use droppedneedle::runtime_config::sections::SecuritySettings;
 use droppedneedle::runtime_config::{
@@ -388,50 +387,59 @@ async fn drain_scans(library: &LibrarySetup) {
     );
 }
 
-/// Scripted recall with two tied pre-scored candidates: the attempt
-/// must file an ambiguous review, never guess.
-fn ambiguous_recall(track_a: &str, track_b: &str) -> RecallResult {
-    let evidence = |track: &str, recording: &str, release_track: &str| TrackEvidence {
-        local_track_id: track.to_owned(),
-        classification: EvidenceClass::Supported,
-        evidence_kinds: vec!["embedded_recording_mbid".to_owned()],
-        recording_mbid: Some(recording.to_owned()),
-        release_track_mbid: Some(release_track.to_owned()),
+/// Two release groups that fit the album's files equally well, built
+/// from the facts identification reads: the attempt must file an
+/// ambiguous review, never guess. Both answer to the release MBID the
+/// files carry (as if MusicBrainz had folded it into each), so the
+/// album id cannot pick one.
+fn ambiguous_recall(library: &LibrarySetup, album_id: &str) -> RecallResult {
+    use droppedneedle::library::identify::stores::FactsSource as _;
+    let facts = library
+        .identify_store
+        .album_facts(album_id)
+        .expect("album facts");
+    let tagged: Vec<String> = facts
+        .tracks
+        .iter()
+        .filter_map(|track| track.release_mbid.clone())
+        .collect();
+    let release = |group: &str, id: &str| Release {
+        id: id.to_owned(),
+        release_group_id: group.to_owned(),
+        title: facts.title.clone(),
+        artists: vec![CreditedArtist {
+            id: "artist-1".to_owned(),
+            name: facts.album_artist_name.clone(),
+            sort_name: None,
+            join: String::new(),
+        }],
+        tracks: facts
+            .tracks
+            .iter()
+            .enumerate()
+            .map(|(index, track)| ReleaseTrack {
+                id: track
+                    .release_track_mbid
+                    .clone()
+                    .unwrap_or_else(|| format!("{id}-rt-{index}")),
+                recording_id: track
+                    .recording_mbid
+                    .clone()
+                    .unwrap_or_else(|| format!("rec-{index}")),
+                title: track.title.clone(),
+                artists: Vec::new(),
+                disc: track.disc_number.max(1),
+                position: track.track_number,
+                absolute_position: index as u32 + 1,
+                length_ms: track.duration_secs.map(|seconds| seconds * 1000),
+            })
+            .collect(),
+        old_ids: tagged.clone(),
+        ..Release::default()
     };
     RecallResult {
-        candidates: vec![
-            CandidateEvidence {
-                candidate_key: "rg-1:rel-1".to_owned(),
-                release_group_mbid: "rg-1".to_owned(),
-                release_mbid: Some("rel-1".to_owned()),
-                album_title: "Journey Album".to_owned(),
-                album_artist_name: "Journey Artist".to_owned(),
-                track_evidence: vec![
-                    evidence(track_a, "rec-a", "rt-a"),
-                    evidence(track_b, "rec-b", "rt-b"),
-                ],
-                score: 0.9,
-                margin: 0.0,
-                reason_code: "SUPPORTED".to_owned(),
-            },
-            CandidateEvidence {
-                candidate_key: "rg-1:rel-2".to_owned(),
-                release_group_mbid: "rg-1".to_owned(),
-                release_mbid: Some("rel-2".to_owned()),
-                album_title: "Journey Album".to_owned(),
-                album_artist_name: "Journey Artist".to_owned(),
-                track_evidence: vec![
-                    evidence(track_a, "rec-a2", "rt-a2"),
-                    evidence(track_b, "rec-b2", "rt-b2"),
-                ],
-                score: 0.8,
-                margin: 0.0,
-                reason_code: "SUPPORTED".to_owned(),
-            },
-        ],
-        fingerprint_support: std::collections::HashMap::new(),
-        provider_deferred: false,
-        failure_code: None,
+        releases: vec![release("rg-1", "rel-1"), release("rg-2", "rel-2")],
+        ..RecallResult::default()
     }
 }
 
@@ -535,7 +543,7 @@ async fn library_journey_scan_identify_review_organize_undo() {
         .test_providers
         .as_ref()
         .expect("scripted providers")
-        .set_recall(ambiguous_recall(&track_a, &track_b));
+        .set_recall(ambiguous_recall(&lib.library, album_key));
     let attempted = lib.library.identify_tick().await;
     assert_eq!(attempted, 1, "scan-enqueued job runs once");
     // Purity extends past identify: tag reads and probes wrote zero
@@ -754,7 +762,7 @@ async fn library_journey_retag_apply_baseline_restore() {
         .test_providers
         .as_ref()
         .expect("scripted providers")
-        .set_recall(ambiguous_recall(&track_id, &track_id));
+        .set_recall(ambiguous_recall(&lib.library, album_key));
     assert_eq!(lib.library.identify_tick().await, 1);
     let (status, body) = call(
         lib.router(),
@@ -1302,7 +1310,7 @@ async fn failed_approval_leaves_the_review_pending() {
         .test_providers
         .as_ref()
         .expect("scripted providers")
-        .set_recall(ambiguous_recall(&track, &track));
+        .set_recall(ambiguous_recall(&library, &album));
     assert_eq!(library.identify_tick().await, 1);
     let review = library.pending_reviews(&album);
     assert_eq!(review.len(), 1);
@@ -1431,7 +1439,7 @@ async fn identification_survives_restarts() {
         .test_providers
         .as_ref()
         .expect("scripted providers")
-        .set_recall(ambiguous_recall(&track, &track));
+        .set_recall(ambiguous_recall(&second, &album));
     assert_eq!(second.identify_tick().await, 1, "queued job survives");
     let review = second.pending_reviews(&album);
     assert_eq!(review.len(), 1);
