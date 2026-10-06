@@ -844,6 +844,89 @@ async fn unified_search_joins_musicbrainz_with_the_library() {
     assert_eq!(album["in_library"], true);
 }
 
+/// Pin writes recorded for assertions.
+#[derive(Default)]
+struct RecordedPins(Mutex<Vec<String>>);
+
+impl catalog::ports::EditionPins for RecordedPins {
+    fn set<'a>(
+        &'a self,
+        album_id: &'a str,
+        _release_group_mbid: &'a str,
+        release_mbid: &'a str,
+        _user_id: &'a str,
+    ) -> catalog::ports::BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            self.0
+                .lock()
+                .unwrap()
+                .push(format!("set {album_id} {release_mbid}"));
+            Ok(())
+        })
+    }
+
+    fn clear<'a>(&'a self, album_id: &'a str) -> catalog::ports::BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            self.0.lock().unwrap().push(format!("clear {album_id}"));
+            Ok(())
+        })
+    }
+}
+
+#[tokio::test]
+async fn clearing_a_pin_names_the_copy_and_never_calls_musicbrainz() {
+    let pool = migrated_pool().await;
+    seed_library(&pool).await;
+    // A second copy of OK Computer makes the group ambiguous.
+    for statement in [
+        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_name, album_artist_name_folded, album_artist_id, year, \
+         grouping_source, created_at, updated_at) VALUES ('album-okc-2', 'root-1', \
+         'g-okc-2', 'OK Computer', 'ok computer', 'Radiohead', 'radiohead', \
+         'artist-radiohead', 1997, 'manual', 2, 2)"
+            .to_owned(),
+        format!(
+            "INSERT INTO local_album_external_identities \
+             (local_album_id, provider, release_group_mbid, release_mbid, decision_source, \
+             selected_at) VALUES ('album-okc-2', 'musicbrainz', '{OK_COMPUTER}', \
+             '{RELEASE_CD}', 'manual', 0)"
+        ),
+    ] {
+        sqlx::query(&statement).execute(&pool).await.unwrap();
+    }
+    let rig = TestRig::new().unwrap();
+    let curator = rig
+        .seed_user("curator", droppedneedle::auth::users::roles::Role::Trusted)
+        .await;
+    let http = droppedneedle::http_client::HttpClientFactory::new().unwrap();
+    // Nothing listens here: any MusicBrainz call would fail the clear.
+    let upstream = Upstream::new(
+        &http,
+        Arc::new(Providers::unpaced()),
+        Arc::new(TestSettings {
+            mb_url: "http://127.0.0.1:9/ws/2".to_owned(),
+        }),
+        rig.deps.clone(),
+    );
+    let pins = Arc::new(RecordedPins::default());
+    let catalog = Catalog::new(upstream, LocalCatalog::new(pool)).with_edition_pins(pins.clone());
+
+    let error = catalog
+        .clear_group_edition_pin(&curator.id, OK_COMPUTER)
+        .await
+        .expect_err("two copies are ambiguous by group");
+    assert!(
+        matches!(error, catalog::error::CatalogError::Conflict(_)),
+        "{error:?}"
+    );
+    let cleared = catalog
+        .clear_group_edition_pin(&curator.id, "album-okc-2")
+        .await
+        .expect("a named copy clears");
+    assert_eq!(cleared.pinned_release_mbid, None);
+    assert_eq!(*pins.0.lock().unwrap(), ["clear album-okc-2"]);
+}
+
 #[tokio::test]
 async fn lastfm_reads_fall_back_to_the_instance_key() {
     let rig = TestRig::new().unwrap();

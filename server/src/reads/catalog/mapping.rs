@@ -475,7 +475,8 @@ pub fn purchase_link(relation: &Relation, allowed: &[&str]) -> Option<PurchaseLi
         return None;
     }
     let url = relation.url.as_ref()?.resource.trim();
-    if !url.starts_with("http") {
+    let lowered = url.to_ascii_lowercase();
+    if !(lowered.starts_with("https://") || lowered.starts_with("http://")) {
         return None;
     }
     let kind = match relation.rel_type.as_str() {
@@ -548,5 +549,20 @@ mod tests {
         let links = external_links(&relations);
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].label, "Wikipedia");
+    }
+
+    #[test]
+    fn purchase_links_keep_web_urls_only() {
+        let relations: Vec<Relation> = serde_json::from_value(serde_json::json!([
+            {"type": "purchase for download", "type-id": "x", "url": {"resource": "httpx://store.example/a"}},
+            {"type": "purchase for download", "type-id": "x", "url": {"resource": "https://store.example/a"}},
+        ]))
+        .unwrap();
+        let kept: Vec<_> = relations
+            .iter()
+            .filter_map(|relation| purchase_link(relation, &["purchase for download"]))
+            .collect();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].url, "https://store.example/a");
     }
 }

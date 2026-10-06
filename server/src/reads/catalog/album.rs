@@ -341,21 +341,37 @@ impl Catalog {
     /// id resolves to the group it is identified as, as in v2; anything
     /// else that is not an MBID is rejected.
     async fn album_id(&self, raw_id: &str) -> Result<String, CatalogError> {
+        Ok(self.album_ref(raw_id).await?.0)
+    }
+
+    /// [`Self::album_id`] plus the live library album when the id named
+    /// one.
+    async fn album_ref(&self, raw_id: &str) -> Result<(String, Option<String>), CatalogError> {
         if let Ok(id) = checked_mbid(raw_id, "album") {
-            return Ok(id);
+            return Ok((id, None));
         }
         let local = raw_id.trim();
         if !local.is_empty() && local.len() <= 128 {
-            let group = self
+            let found = self
                 .local()
                 .group_for_album(local)
                 .await
                 .map_err(CatalogError::database)?;
-            if let Some(group) = group.filter(|group| is_mbid(group)) {
-                return Ok(group.to_ascii_lowercase());
+            if let Some((group, album)) = found.filter(|(group, _)| is_mbid(group)) {
+                return Ok((group.to_ascii_lowercase(), Some(album)));
             }
         }
-        checked_mbid(raw_id, "album")
+        checked_mbid(raw_id, "album").map(|id| (id, None))
+    }
+
+    /// A release-group detail already in the cache; never dials out.
+    async fn cached_group_detail(&self, mbid: &str) -> Option<GroupDetail> {
+        let bytes = self
+            .upstream()
+            .cache()
+            .get_bytes(&self.group_key(mbid))
+            .await?;
+        serde_json::from_slice::<GroupCore>(&bytes).ok().flatten()
     }
 
     /// `GET /albums/{album_id}/basic`: the header. A dead MusicBrainz falls
@@ -724,7 +740,11 @@ impl Catalog {
     /// MusicBrainz, artwork and store answers, then rebuild the header.
     pub async fn album_refresh(&self, raw_id: &str) -> Result<AlbumBasicInfo, CatalogError> {
         let id = self.album_id(raw_id).await?;
-        let mut keys = vec![self.group_key(&id), audiodb_album_key(&id)];
+        let mut keys = vec![
+            self.group_key(&id),
+            audiodb_album_key(&id),
+            self.purchase_key(&id),
+        ];
         if let Ok(Some(group)) = self.group_detail(&id).await {
             keys.push(self.group_key(&group.mbid));
             keys.push(audiodb_album_key(&group.mbid));
@@ -757,10 +777,14 @@ impl Catalog {
         }
     }
 
-    /// The one library copy of a release group an edition pin applies to.
-    /// v2 pinned per release group; v3 pins per library copy, so a group
-    /// held twice must be pinned from the copy's own library page.
-    async fn pin_target(&self, group: &str) -> Result<String, CatalogError> {
+    /// The library copy of a release group an edition pin applies to. v2
+    /// pinned per release group; v3 pins per library copy, so a copy named
+    /// by its library id is the target, and a group named by MBID must be
+    /// held exactly once.
+    async fn pin_target(&self, group: &str, named: Option<String>) -> Result<String, CatalogError> {
+        if let Some(album) = named {
+            return Ok(album);
+        }
         let mut albums = self
             .local()
             .albums_for_group(group)
@@ -772,21 +796,30 @@ impl Catalog {
             )),
             1 => Ok(albums.remove(0)),
             _ => Err(CatalogError::Conflict(
-                "The library holds this album more than once; pin the edition from the copy's own page"
+                "The library holds this album more than once; pin the edition by the copy's library id"
                     .to_owned(),
             )),
         }
     }
 
-    /// Drop the cached answers an edition change alters.
-    async fn forget_album(&self, group: &GroupDetail) {
-        let mut keys = vec![self.group_key(&group.mbid), self.purchase_key(&group.mbid)];
-        keys.extend(
-            group
-                .releases
-                .iter()
-                .map(|release| self.release_key(&release.id)),
-        );
+    /// Drop the cached answers an edition change alters. Release keys come
+    /// from the group detail when one is at hand or cached.
+    async fn forget_album(&self, mbid: &str, group: Option<&GroupDetail>) {
+        let cached = match group {
+            Some(_) => None,
+            None => self.cached_group_detail(mbid).await,
+        };
+        let mut keys = vec![self.group_key(mbid), self.purchase_key(mbid)];
+        if let Some(group) = group.or(cached.as_ref()) {
+            keys.push(self.group_key(&group.mbid));
+            keys.push(self.purchase_key(&group.mbid));
+            keys.extend(
+                group
+                    .releases
+                    .iter()
+                    .map(|release| self.release_key(&release.id)),
+            );
+        }
         self.forget(&keys).await;
     }
 
@@ -800,7 +833,7 @@ impl Catalog {
         release_mbid: &str,
     ) -> Result<GroupEditionPinResponse, CatalogError> {
         self.require_curator(user_id).await?;
-        let id = self.album_id(raw_id).await?;
+        let (id, named) = self.album_ref(raw_id).await?;
         let group = self
             .group_detail(&id)
             .await?
@@ -813,36 +846,33 @@ impl Catalog {
             .ok_or_else(|| {
                 CatalogError::Missing("That edition does not belong to this album".to_owned())
             })?;
-        let album = self.pin_target(&group.mbid).await?;
+        let album = self.pin_target(&group.mbid, named).await?;
         self.pins
             .set(&album, &group.mbid, &release, user_id)
             .await
             .map_err(CatalogError::Internal)?;
-        self.forget_album(&group).await;
+        self.forget_album(&id, Some(&group)).await;
         Ok(GroupEditionPinResponse {
             pinned_release_mbid: Some(release),
         })
     }
 
     /// `DELETE /albums/{album_id}/edition`: clear the pin and go back to
-    /// automatic edition choice. Curators only.
+    /// automatic edition choice. Curators only. Like v2 it never calls
+    /// MusicBrainz: the id is taken as the release group.
     pub async fn clear_group_edition_pin(
         &self,
         user_id: &str,
         raw_id: &str,
     ) -> Result<GroupEditionPinResponse, CatalogError> {
         self.require_curator(user_id).await?;
-        let id = self.album_id(raw_id).await?;
-        let group = self
-            .group_detail(&id)
-            .await?
-            .ok_or(CatalogError::NotFound)?;
-        let album = self.pin_target(&group.mbid).await?;
+        let (id, named) = self.album_ref(raw_id).await?;
+        let album = self.pin_target(&id, named).await?;
         self.pins
             .clear(&album)
             .await
             .map_err(CatalogError::Internal)?;
-        self.forget_album(&group).await;
+        self.forget_album(&id, None).await;
         Ok(GroupEditionPinResponse {
             pinned_release_mbid: None,
         })
@@ -876,12 +906,15 @@ impl Catalog {
         raw_id: &str,
     ) -> Result<PurchaseOptionsResponse, CatalogError> {
         let id = self.album_id(raw_id).await?;
+        // Keyed by the resolved group, so refresh and pin changes (which
+        // drop the group's key) reach answers asked for by a release id.
+        let group = self.group_detail(&id).await?;
         let region = self.upstream().settings().store_region();
         let catalog = self.clone();
-        let key = self.purchase_key(&id);
+        let key = self.purchase_key(group.as_ref().map_or(id.as_str(), |group| &group.mbid));
         let value = self
             .cached(&self.inner.flights.other, key, move || async move {
-                let (options, complete) = catalog.build_purchase_options(&id, &region).await?;
+                let (options, complete) = catalog.build_purchase_options(group, &region).await?;
                 let value = serde_json::to_value(&options)
                     .map_err(|error| CatalogError::Internal(format!("purchase encode: {error}")))?;
                 Ok((value, complete.then_some(PURCHASE_TTL)))
@@ -894,10 +927,10 @@ impl Catalog {
     /// The options plus whether every source answered (only then cached).
     async fn build_purchase_options(
         &self,
-        id: &str,
+        group: GroupCore,
         region: &str,
     ) -> Result<(PurchaseOptionsResponse, bool), CatalogError> {
-        let Some(group) = self.group_detail(id).await? else {
+        let Some(group) = group else {
             return Ok((
                 PurchaseOptionsResponse {
                     bandcamp_search_url: bandcamp_album_search(""),

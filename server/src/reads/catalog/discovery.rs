@@ -178,7 +178,15 @@ impl Catalog {
                     };
                     let rows =
                         lastfm_rows(&client, &creds, &mbid, count, section, groups.as_ref()).await;
-                    catalog.cacheable(rows, &mbid).await
+                    let (value, ttl) = catalog.cacheable(rows, &mbid).await?;
+                    // Rows matched against a missing or partial discography
+                    // are kept only briefly, so links fill in once it lands.
+                    let partial = matches!(section, Section::TopAlbums)
+                        && !groups.as_ref().is_some_and(|groups| groups.complete);
+                    Ok((
+                        value,
+                        ttl.map(|ttl| if partial { ttl.min(PARTIAL_TTL) } else { ttl }),
+                    ))
                 })
                 .await
             }
@@ -584,7 +592,8 @@ impl Catalog {
         let Some((client, creds)) = self.upstream().lastfm(user_id).await else {
             return Vec::new();
         };
-        let key = format!("lfm_similar_albums:{album}:{count}");
+        let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
+        let key = format!("lfm_similar_albums:{namespace}:{album}:{count}");
         let catalog = self.clone();
         let album = album.to_owned();
         let similar = similar.to_vec();
@@ -595,15 +604,22 @@ impl Catalog {
                 let mut complete = true;
                 let deadline = tokio::time::Instant::now() + LASTFM_RESOLVE_BUDGET;
                 'artists: for (artist_mbid, artist_name) in &similar {
-                    let top = match client
-                        .artist_top_albums(&creds, artist_name, Some(artist_mbid), 3)
-                        .await
+                    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                    let top = match tokio::time::timeout(
+                        remaining,
+                        client.artist_top_albums(&creds, artist_name, Some(artist_mbid), 3),
+                    )
+                    .await
                     {
-                        lastfm::Outcome::Found(top) => top,
-                        lastfm::Outcome::Missing => continue,
-                        lastfm::Outcome::Unavailable { .. } => {
+                        Ok(lastfm::Outcome::Found(top)) => top,
+                        Ok(lastfm::Outcome::Missing) => continue,
+                        Ok(lastfm::Outcome::Unavailable { .. }) => {
                             complete = false;
                             continue;
+                        }
+                        Err(_) => {
+                            complete = false;
+                            break 'artists;
                         }
                     };
                     for item in top {
