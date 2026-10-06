@@ -10,8 +10,9 @@
 //! checkpoint policy with TRUNCATE reclaim, [`writer`] serializes writes with
 //! foreground-burst-8 fairness, [`backup`] copies the live database out with
 //! the online backup API, [`durable`] carries the worker wakeups and job
-//! registry, [`analyze`] keeps the planner statistics fresh, [`fs`] enforces the local-filesystem rule, [`fold`] keeps the
-//! accent-insensitive search function, and [`error`] holds the typed errors.
+//! registry, [`analyze`] keeps the planner statistics fresh, [`fs`]
+//! enforces the local-filesystem rule, [`fold`] keeps the accent-insensitive
+//! search function, and [`error`] holds the typed errors.
 
 pub mod analyze;
 pub mod backup;

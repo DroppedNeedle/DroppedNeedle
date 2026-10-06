@@ -3,9 +3,10 @@
 //! Without `sqlite_stat1` the planner guesses, and it guesses badly on the
 //! low-cardinality indexes the catalog has (`availability`, `kind`): it walks
 //! them for full-table filters, which made text-search counts three times
-//! slower. This follows Navidrome: a full `ANALYZE`, run one table at a time
-//! on the background writer lane so other writes interleave, never
-//! `PRAGMA optimize` (its partial analysis misjudges exactly those indexes).
+//! slower. This follows Navidrome: `ANALYZE` one table at a time on the
+//! background writer lane so other writes interleave (with a bounded
+//! `analysis_limit` sample, skipping the FTS shadow tables), never
+//! `PRAGMA optimize`.
 //!
 //! It runs when statistics are missing (first boot, and after migrations on
 //! an upgraded database), when the streamable track count moved by a tenth
@@ -31,6 +32,8 @@ pub const MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 pub const CHECK_INTERVAL: Duration = Duration::from_secs(10 * 60);
 /// Share of the track count that must change to call the stats stale.
 const CHURN_SHARE: f64 = 0.1;
+/// Rows sampled per index by each ANALYZE step (`PRAGMA analysis_limit`).
+const ANALYSIS_LIMIT: u32 = 1000;
 /// Fewest changed tracks that count as churn (small libraries move a lot
 /// in relative terms without the plans changing).
 const CHURN_MIN_TRACKS: i64 = 100;
@@ -141,12 +144,18 @@ impl AnalyzeService {
         let started = Instant::now();
         let tables: Vec<String> = sqlx::query_scalar(
             "SELECT name FROM sqlite_schema WHERE type = 'table' \
-             AND name NOT LIKE 'sqlite_%' AND sql NOT LIKE 'CREATE VIRTUAL TABLE%' ORDER BY name",
+             AND name NOT LIKE 'sqlite_%' AND sql NOT LIKE 'CREATE VIRTUAL TABLE%' \
+             AND name NOT LIKE '%\\_fts\\_%' ESCAPE '\\' ORDER BY name",
         )
         .fetch_all(&self.pool)
         .await?;
         for table in tables {
-            let statement = format!("ANALYZE \"{}\"", table.replace('"', "\"\""));
+            // A bounded sample per index keeps each step short on a large
+            // catalog; the estimates stay good enough for plan choice.
+            let statement = format!(
+                "PRAGMA analysis_limit={ANALYSIS_LIMIT}; ANALYZE \"{}\"",
+                table.replace('"', "\"\"")
+            );
             self.lane
                 .write(Lane::Background, "db.analyze", move |tx| {
                     tx.execute_batch(&statement).map_err(OpError::from)
