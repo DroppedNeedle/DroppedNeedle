@@ -1788,6 +1788,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/download/access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Whether the caller may download library files (for download buttons
+         *     shown before any album is open).
+         */
+        get: operations["download_access"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/download/local/album/mbid/{mbid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * An album's streamable files as a ZIP, by MusicBrainz release-group (or
+         *     release) id; the oldest local copy answers when several exist.
+         */
+        get: operations["download_album_by_mbid"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/download/local/album/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** An album's streamable files as a ZIP, by local album id. */
+        get: operations["download_album"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/download/local/track/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One track file, unchanged, as an attachment. */
+        get: operations["download_track"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/downloads/tasks/{task_id}/reimport": {
         parameters: {
             query?: never;
@@ -2341,6 +2415,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/albums/{id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What the library holds for one album, by local id or MusicBrainz id,
+         *     with each track's quality tier against the upgrade cutoff.
+         */
+        get: operations["album_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/albums/{id}/tracks": {
         parameters: {
             query?: never;
@@ -2808,6 +2902,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/membership": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Which MusicBrainz album ids the library holds or has requested. */
+        post: operations["membership"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/operations/{job_id}": {
         parameters: {
             query?: never;
@@ -2910,6 +3021,23 @@ export interface paths {
         get: operations["list_recently_added"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/resolve-tracks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve track positions to playable local files. */
+        post: operations["resolve_tracks"];
         delete?: never;
         options?: never;
         head?: never;
@@ -11495,6 +11623,28 @@ export interface components {
             work_items: components["schemas"]["WorkItem"][];
         };
         /**
+         * @description What the library holds for one album, by local id or MusicBrainz id.
+         *     Unknown albums answer with `in_library` false, never 404.
+         */
+        LibraryAlbumStatus: {
+            /** @description The local album id holding the tracks, or the asked id when none. */
+            album_id: string;
+            /** @description True when at least one streamable track is held. */
+            in_library: boolean;
+            /**
+             * Format: int64
+             * @description Held streamable tracks.
+             */
+            track_count: number;
+            /** @description Held tracks by album, disc and track. */
+            tracks: components["schemas"]["LibraryStatusTrack"][];
+        };
+        /** @description Whether the caller may download library files. */
+        LibraryDownloadAccess: {
+            /** @description True when the access setting admits the caller's role. */
+            allowed: boolean;
+        };
+        /**
          * @description Dry-run activation health: stale roots (saved activation no longer
          *     matches) and blocked roots (no dry run could help).
          */
@@ -12126,6 +12276,21 @@ export interface components {
             /** @description Settings content revision. */
             settings_revision: string;
         };
+        /**
+         * @description Which of these MusicBrainz album ids the library holds or has an open
+         *     request for. Ids compare case-insensitively.
+         */
+        LibraryMembershipRequest: {
+            /** @description Release-group (or release) ids, at most 500 after de-duplication. */
+            album_ids?: string[];
+        };
+        /** @description Membership answer. Both lists are lowercase and sorted. */
+        LibraryMembershipResponse: {
+            /** @description Asked ids the library holds with at least one streamable track. */
+            owned_ids: string[];
+            /** @description Asked ids with an open acquisition request. */
+            requested_ids: string[];
+        };
         /** @description One catalog path and the root it maps to under the saved settings. */
         LibraryPathMappingItem: {
             /** @description Absolute file path the catalog holds. */
@@ -12441,6 +12606,19 @@ export interface components {
             expected_policy_revision: string;
             /** @description Full candidate settings (a masked AcoustID key keeps the stored one). */
             settings: components["schemas"]["LibrarySettings"];
+        };
+        /**
+         * @description One held track on the album status view, judged against the upgrade
+         *     settings.
+         */
+        LibraryStatusTrack: components["schemas"]["TrackView"] & {
+            /** @description True when upgrades are on and the file sits below the cutoff tier. */
+            below_cutoff: boolean;
+            /**
+             * @description Quality tier of the file: `lossless`, `mp3_320`, `mp3_256`,
+             *     `mp3_192`, or `low`.
+             */
+            current_tier: string;
         };
         /**
          * @description One monitored Lidarr artist annotated for the requesting user (v2
@@ -15505,6 +15683,68 @@ export interface components {
                 [key: string]: string[];
             };
         };
+        /** @description One track position to look up in the library. */
+        ResolveTrackItem: {
+            /**
+             * Format: int64
+             * @description Disc number; absent reads as disc 1.
+             */
+            disc_number?: number | null;
+            /**
+             * @description MusicBrainz release group (or release, or local album id) the track
+             *     belongs to.
+             */
+            release_group_mbid?: string | null;
+            /**
+             * Format: int64
+             * @description Track number within the disc.
+             */
+            track_number?: number | null;
+        };
+        /**
+         * @description Track positions to resolve to playable local files. At most the first
+         *     200 items are answered.
+         */
+        ResolveTracksRequest: {
+            /** @description Positions in the caller's order. */
+            items?: components["schemas"]["ResolveTrackItem"][];
+        };
+        /** @description Resolved positions, in the asked order. */
+        ResolveTracksResponse: {
+            /** @description One answer per asked position (first 200). */
+            items: components["schemas"]["ResolvedTrack"][];
+        };
+        /**
+         * @description One answered position. The `source` fields are set only when a local
+         *     file holds the position.
+         */
+        ResolvedTrack: {
+            /**
+             * Format: int64
+             * @description Echo of the asked disc.
+             */
+            disc_number?: number | null;
+            /**
+             * Format: double
+             * @description Duration of the file, seconds.
+             */
+            duration?: number | null;
+            /** @description Container or codec label of the file. */
+            format?: string | null;
+            /** @description Echo of the asked album id. */
+            release_group_mbid?: string | null;
+            /** @description `local` when a library file holds the position. */
+            source?: string | null;
+            /** @description Stream path for the local track. */
+            stream_url?: string | null;
+            /**
+             * Format: int64
+             * @description Echo of the asked track number.
+             */
+            track_number?: number | null;
+            /** @description Local track id to stream. */
+            track_source_id?: string | null;
+        };
         /** @description One pre-restore verification check. */
         RestoreCheck: {
             /** @description Plain-language detail. */
@@ -16680,6 +16920,21 @@ export interface components {
                 [key: string]: number;
             };
             /**
+             * Format: double
+             * @description When the last library scan finished successfully, unix seconds.
+             */
+            last_scan_at?: number | null;
+            /**
+             * Format: int64
+             * @description Albums with streamable tracks and no MusicBrainz identity.
+             */
+            local_only_count: number;
+            /**
+             * Format: int64
+             * @description Identification reviews waiting on a person.
+             */
+            review_count: number;
+            /**
              * Format: int64
              * @description Albums in the catalog.
              */
@@ -17087,6 +17342,10 @@ export interface components {
          *     excluded files read as absent (404 on the detail route).
          */
         TrackView: {
+            /** @description Local album-artist id of the owning album. */
+            album_artist_id?: string | null;
+            /** @description Linked MusicBrainz id of the album artist, when identified. */
+            album_artist_mbid?: string | null;
             /** @description Album artist display name. */
             album_artist_name: string;
             /** @description Owning local album id. */
@@ -17095,13 +17354,28 @@ export interface components {
             album_title: string;
             /** @description Local track-artist id, when credited. */
             artist_id?: string | null;
+            /**
+             * @description Linked MusicBrainz id of the track artist (the album artist when
+             *     the track carries no credit), when identified.
+             */
+            artist_mbid?: string | null;
             /** @description Track artist display name. */
             artist_name: string;
             /**
              * Format: int64
-             * @description Bit rate, when probed.
+             * @description Bit depth, when probed (lossless and PCM files).
+             */
+            bit_depth?: number | null;
+            /**
+             * Format: int64
+             * @description Bit rate in kbit/s, when probed.
              */
             bit_rate?: number | null;
+            /**
+             * Format: int64
+             * @description Channel count, when probed.
+             */
+            channels?: number | null;
             /** @description True when the owning album has artwork. */
             cover_available: boolean;
             /**
@@ -17132,6 +17406,10 @@ export interface components {
             genre?: string | null;
             /** @description Local track id. */
             id: string;
+            /** @description Linked MusicBrainz recording, when identified. */
+            recording_mbid?: string | null;
+            /** @description Linked release group of the owning album, when identified. */
+            release_group_mbid?: string | null;
             /**
              * Format: int64
              * @description Sample rate, when probed.
@@ -21471,6 +21749,165 @@ export interface operations {
             };
         };
     };
+    download_access: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Download capability */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryDownloadAccess"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    download_album_by_mbid: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release-group or release mbid */
+                mbid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Album archive */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": unknown;
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Downloads restricted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No local album holds the id, or no files left */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    download_album: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Album archive */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": unknown;
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Downloads restricted */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album, or no files left to archive */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    download_track: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local track id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Track file */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": unknown;
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Downloads restricted, or the file left the library roots */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown track, or the file is gone */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     reimport_task_handler: {
         parameters: {
             query?: never;
@@ -22797,6 +23234,36 @@ export interface operations {
             };
         };
     };
+    album_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id, or a release-group or release mbid */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Album status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryAlbumStatus"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     list_album_tracks: {
         parameters: {
             query?: {
@@ -22853,7 +23320,10 @@ export interface operations {
                 limit?: number;
                 /** @description Page start. Default 0. */
                 offset?: number;
-                /** @description `name`, `album_count`, or `date_added`. Default `name`. */
+                /**
+                 * @description `name`, `album_count`, `appearance_count`, or `date_added`.
+                 *     Default `name`.
+                 */
                 sort?: string;
                 /** @description `asc` or `desc`. Default `asc`. */
                 order?: string;
@@ -24196,6 +24666,44 @@ export interface operations {
             };
         };
     };
+    membership: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryMembershipRequest"];
+            };
+        };
+        responses: {
+            /** @description Owned and requested ids */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryMembershipResponse"];
+                };
+            };
+            /** @description Bad body or more than 500 ids */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     get_operation: {
         parameters: {
             query?: never;
@@ -24510,6 +25018,44 @@ export interface operations {
                 };
             };
             /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    resolve_tracks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResolveTracksRequest"];
+            };
+        };
+        responses: {
+            /** @description Resolved positions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResolveTracksResponse"];
+                };
+            };
+            /** @description Bad body */
             400: {
                 headers: {
                     [name: string]: unknown;

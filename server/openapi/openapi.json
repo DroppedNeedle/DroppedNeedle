@@ -3928,6 +3928,141 @@
         }
       }
     },
+    "/api/v3/download/access": {
+      "get": {
+        "tags": [
+          "crate::stream::download"
+        ],
+        "summary": "Whether the caller may download library files (for download buttons\nshown before any album is open).",
+        "operationId": "download_access",
+        "responses": {
+          "200": {
+            "description": "Download capability",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryDownloadAccess"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/download/local/album/mbid/{mbid}": {
+      "get": {
+        "tags": [
+          "crate::stream::download"
+        ],
+        "summary": "An album's streamable files as a ZIP, by MusicBrainz release-group (or\nrelease) id; the oldest local copy answers when several exist.",
+        "operationId": "download_album_by_mbid",
+        "parameters": [
+          {
+            "name": "mbid",
+            "in": "path",
+            "description": "Release-group or release mbid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Album archive",
+            "content": {
+              "application/zip": {}
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Downloads restricted"
+          },
+          "404": {
+            "description": "No local album holds the id, or no files left"
+          }
+        }
+      }
+    },
+    "/api/v3/download/local/album/{id}": {
+      "get": {
+        "tags": [
+          "crate::stream::download"
+        ],
+        "summary": "An album's streamable files as a ZIP, by local album id.",
+        "operationId": "download_album",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Album archive",
+            "content": {
+              "application/zip": {}
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Downloads restricted"
+          },
+          "404": {
+            "description": "Unknown album, or no files left to archive"
+          }
+        }
+      }
+    },
+    "/api/v3/download/local/track/{id}": {
+      "get": {
+        "tags": [
+          "crate::stream::download"
+        ],
+        "summary": "One track file, unchanged, as an attachment.",
+        "operationId": "download_track",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Local track id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Track file",
+            "content": {
+              "application/octet-stream": {}
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Downloads restricted, or the file left the library roots"
+          },
+          "404": {
+            "description": "Unknown track, or the file is gone"
+          }
+        }
+      }
+    },
     "/api/v3/downloads/tasks/{task_id}/reimport": {
       "post": {
         "tags": [
@@ -5401,6 +5536,41 @@
         }
       }
     },
+    "/api/v3/library/albums/{id}/status": {
+      "get": {
+        "tags": [
+          "crate::reads::library::handlers"
+        ],
+        "summary": "What the library holds for one album, by local id or MusicBrainz id,\nwith each track's quality tier against the upgrade cutoff.",
+        "operationId": "album_status",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Local album id, or a release-group or release mbid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Album status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryAlbumStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
     "/api/v3/library/albums/{id}/tracks": {
       "get": {
         "tags": [
@@ -5493,7 +5663,7 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "`name`, `album_count`, or `date_added`. Default `name`.",
+            "description": "`name`, `album_count`, `appearance_count`, or `date_added`.\nDefault `name`.",
             "required": false,
             "schema": {
               "type": "string"
@@ -6786,6 +6956,43 @@
         }
       }
     },
+    "/api/v3/library/membership": {
+      "post": {
+        "tags": [
+          "crate::reads::library::handlers"
+        ],
+        "summary": "Which MusicBrainz album ids the library holds or has requested.",
+        "operationId": "membership",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryMembershipRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Owned and requested ids",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryMembershipResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad body or more than 500 ids"
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
     "/api/v3/library/operations/{job_id}": {
       "get": {
         "tags": [
@@ -7087,6 +7294,43 @@
           },
           "400": {
             "description": "Bad query string"
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/library/resolve-tracks": {
+      "post": {
+        "tags": [
+          "crate::reads::library::handlers"
+        ],
+        "summary": "Resolve track positions to playable local files.",
+        "operationId": "resolve_tracks",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveTracksRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Resolved positions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveTracksResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad body"
           },
           "401": {
             "description": "Not authenticated"
@@ -26384,6 +26628,52 @@
           }
         }
       },
+      "LibraryAlbumStatus": {
+        "type": "object",
+        "description": "What the library holds for one album, by local id or MusicBrainz id.\nUnknown albums answer with `in_library` false, never 404.",
+        "required": [
+          "in_library",
+          "album_id",
+          "track_count",
+          "tracks"
+        ],
+        "properties": {
+          "album_id": {
+            "type": "string",
+            "description": "The local album id holding the tracks, or the asked id when none."
+          },
+          "in_library": {
+            "type": "boolean",
+            "description": "True when at least one streamable track is held."
+          },
+          "track_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Held streamable tracks.",
+            "minimum": 0
+          },
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryStatusTrack"
+            },
+            "description": "Held tracks by album, disc and track."
+          }
+        }
+      },
+      "LibraryDownloadAccess": {
+        "type": "object",
+        "description": "Whether the caller may download library files.",
+        "required": [
+          "allowed"
+        ],
+        "properties": {
+          "allowed": {
+            "type": "boolean",
+            "description": "True when the access setting admits the caller's role."
+          }
+        }
+      },
       "LibraryManagementActivationHealthResponse": {
         "type": "object",
         "description": "Dry-run activation health: stale roots (saved activation no longer\nmatches) and blocked roots (no dry run could help).",
@@ -27482,6 +27772,43 @@
         ],
         "description": "GET/PUT view of Library Management: the settings plus their content\nrevision (the write CAS token)."
       },
+      "LibraryMembershipRequest": {
+        "type": "object",
+        "description": "Which of these MusicBrainz album ids the library holds or has an open\nrequest for. Ids compare case-insensitively.",
+        "properties": {
+          "album_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Release-group (or release) ids, at most 500 after de-duplication."
+          }
+        }
+      },
+      "LibraryMembershipResponse": {
+        "type": "object",
+        "description": "Membership answer. Both lists are lowercase and sorted.",
+        "required": [
+          "owned_ids",
+          "requested_ids"
+        ],
+        "properties": {
+          "owned_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Asked ids the library holds with at least one streamable track."
+          },
+          "requested_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Asked ids with an open acquisition request."
+          }
+        }
+      },
       "LibraryPathMappingItem": {
         "type": "object",
         "description": "One catalog path and the root it maps to under the saved settings.",
@@ -28141,6 +28468,32 @@
             "description": "Full candidate settings (a masked AcoustID key keeps the stored one)."
           }
         }
+      },
+      "LibraryStatusTrack": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/TrackView",
+            "description": "The track."
+          },
+          {
+            "type": "object",
+            "required": [
+              "current_tier",
+              "below_cutoff"
+            ],
+            "properties": {
+              "below_cutoff": {
+                "type": "boolean",
+                "description": "True when upgrades are on and the file sits below the cutoff tier."
+              },
+              "current_tier": {
+                "type": "string",
+                "description": "Quality tier of the file: `lossless`, `mp3_320`, `mp3_256`,\n`mp3_192`, or `low`."
+              }
+            }
+          }
+        ],
+        "description": "One held track on the album status view, judged against the upgrade\nsettings."
       },
       "LidarrArtistCandidate": {
         "type": "object",
@@ -34620,6 +34973,129 @@
           }
         }
       },
+      "ResolveTrackItem": {
+        "type": "object",
+        "description": "One track position to look up in the library.",
+        "properties": {
+          "disc_number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Disc number; absent reads as disc 1."
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "MusicBrainz release group (or release, or local album id) the track\nbelongs to."
+          },
+          "track_number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Track number within the disc."
+          }
+        }
+      },
+      "ResolveTracksRequest": {
+        "type": "object",
+        "description": "Track positions to resolve to playable local files. At most the first\n200 items are answered.",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResolveTrackItem"
+            },
+            "description": "Positions in the caller's order."
+          }
+        }
+      },
+      "ResolveTracksResponse": {
+        "type": "object",
+        "description": "Resolved positions, in the asked order.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ResolvedTrack"
+            },
+            "description": "One answer per asked position (first 200)."
+          }
+        }
+      },
+      "ResolvedTrack": {
+        "type": "object",
+        "description": "One answered position. The `source` fields are set only when a local\nfile holds the position.",
+        "properties": {
+          "disc_number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Echo of the asked disc."
+          },
+          "duration": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Duration of the file, seconds."
+          },
+          "format": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Container or codec label of the file."
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Echo of the asked album id."
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`local` when a library file holds the position."
+          },
+          "stream_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Stream path for the local track."
+          },
+          "track_number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Echo of the asked track number."
+          },
+          "track_source_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Local track id to stream."
+          }
+        }
+      },
       "RestoreCheck": {
         "type": "object",
         "description": "One pre-restore verification check.",
@@ -37127,7 +37603,9 @@
           "format_breakdown",
           "favorite_albums",
           "favorite_artists",
-          "favorite_tracks"
+          "favorite_tracks",
+          "review_count",
+          "local_only_count"
         ],
         "properties": {
           "favorite_albums": {
@@ -37159,6 +37637,26 @@
             "propertyNames": {
               "type": "string"
             }
+          },
+          "last_scan_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "When the last library scan finished successfully, unix seconds."
+          },
+          "local_only_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Albums with streamable tracks and no MusicBrainz identity.",
+            "minimum": 0
+          },
+          "review_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Identification reviews waiting on a person.",
+            "minimum": 0
           },
           "total_albums": {
             "type": "integer",
@@ -38106,6 +38604,20 @@
           "favorite"
         ],
         "properties": {
+          "album_artist_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Local album-artist id of the owning album."
+          },
+          "album_artist_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Linked MusicBrainz id of the album artist, when identified."
+          },
           "album_artist_name": {
             "type": "string",
             "description": "Album artist display name."
@@ -38125,9 +38637,24 @@
             ],
             "description": "Local track-artist id, when credited."
           },
+          "artist_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Linked MusicBrainz id of the track artist (the album artist when\nthe track carries no credit), when identified."
+          },
           "artist_name": {
             "type": "string",
             "description": "Track artist display name."
+          },
+          "bit_depth": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Bit depth, when probed (lossless and PCM files)."
           },
           "bit_rate": {
             "type": [
@@ -38135,7 +38662,15 @@
               "null"
             ],
             "format": "int64",
-            "description": "Bit rate, when probed."
+            "description": "Bit rate in kbit/s, when probed."
+          },
+          "channels": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Channel count, when probed."
           },
           "cover_available": {
             "type": "boolean",
@@ -38185,6 +38720,20 @@
           "id": {
             "type": "string",
             "description": "Local track id."
+          },
+          "recording_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Linked MusicBrainz recording, when identified."
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Linked release group of the owning album, when identified."
           },
           "sample_rate": {
             "type": [
