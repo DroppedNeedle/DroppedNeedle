@@ -205,23 +205,57 @@ const EDITION_WORDS: [&str; 22] = [
     "radio edit",
 ];
 
-/// An album title without its edition words and brackets ("Night Shift
-/// (Deluxe Edition)" becomes "Night Shift"), as v2's
-/// `strip_edition_suffix` does.
+/// An album title without its edition suffix: bracketed parts that name
+/// an edition ("Night Shift (Deluxe Edition)", "[Remastered]") and
+/// edition words at the end ("Night Shift - Deluxe Edition"). Edition
+/// words inside the title proper stay ("Live at Leeds", "Single Life").
 pub fn strip_edition_words(title: &str) -> String {
-    let mut lowered = format!(" {} ", title.to_lowercase());
-    for bracket in ['(', ')', '[', ']', '{', '}'] {
-        lowered = lowered.replace(bracket, " ");
+    let lowered = title.to_lowercase();
+    let mut kept = String::with_capacity(lowered.len());
+    let mut rest = lowered.as_str();
+    while let Some(start) = rest.find(['(', '[', '{']) {
+        let close = match rest.as_bytes()[start] {
+            b'(' => ')',
+            b'[' => ']',
+            _ => '}',
+        };
+        let Some(length) = rest[start..].find(close) else {
+            break;
+        };
+        let inner = &rest[start + 1..start + length];
+        kept.push_str(&rest[..start]);
+        if !names_edition(inner) {
+            kept.push(' ');
+            kept.push_str(inner);
+            kept.push(' ');
+        }
+        rest = &rest[start + length + 1..];
     }
-    lowered = lowered.replace(" radio edit ", " ");
-    lowered
-        .split_whitespace()
-        .filter(|word| {
-            let bare = word.trim_matches(|c: char| !c.is_alphanumeric());
-            !EDITION_WORDS.contains(&bare)
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    kept.push_str(rest);
+    let mut words: Vec<&str> = kept.split_whitespace().collect();
+    while let Some(last) = words.last() {
+        let bare = last.trim_matches(|c: char| !c.is_alphanumeric());
+        let pair = words.len() >= 2
+            && bare == "edit"
+            && words[words.len() - 2].trim_matches(|c: char| !c.is_alphanumeric()) == "radio";
+        if pair {
+            words.truncate(words.len() - 2);
+        } else if bare.is_empty() || EDITION_WORDS.contains(&bare) {
+            words.pop();
+        } else {
+            break;
+        }
+    }
+    words.join(" ")
+}
+
+/// True when a bracketed part names an edition: it holds an edition word.
+fn names_edition(inner: &str) -> bool {
+    let padded = format!(" {inner} ");
+    padded.contains(" radio edit ")
+        || inner
+            .split_whitespace()
+            .any(|word| EDITION_WORDS.contains(&word.trim_matches(|c: char| !c.is_alphanumeric())))
 }
 
 /// The folded artists in a credit string, split on collaboration
@@ -286,6 +320,15 @@ mod tests {
         assert_eq!(
             strip_edition_words("Night Shift (Deluxe Edition) [Radio Edit]"),
             "night shift"
+        );
+        assert_eq!(
+            strip_edition_words("Night Shift - Remastered"),
+            "night shift"
+        );
+        assert_eq!(strip_edition_words("Live at Leeds"), "live at leeds");
+        assert_eq!(
+            strip_edition_words("Songs (From the Basement)"),
+            "songs from the basement"
         );
         assert!(artist_subset("Bad Omens feat. Poppy", "Bad Omens"));
         assert!(!artist_subset("The Tribute Band", "Michael Jackson"));

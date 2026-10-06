@@ -25,7 +25,7 @@ use super::super::tags::{
     Refusal, TagEdit, TagField, TagsError, format_for_path, read_document, save_tags,
 };
 use super::PublishError;
-use super::tags_seam::TagDocument;
+use super::tags_seam::{TAG_DOCUMENT_VERSION, TagDocument};
 
 /// Map managed updates onto save-wrapper edits. An empty value list
 /// removes the field (undo uses that for fields an edit added). Values
@@ -37,8 +37,11 @@ pub fn check_managed_updates(
 ) -> Result<Vec<TagEdit>, PublishError> {
     let mut edits = Vec::with_capacity(managed_updates.len());
     for (name, values) in managed_updates {
-        match TagField::from_name(name) {
-            Some(field) => edits.push(TagEdit::verbatim(field, values.clone())),
+        match TagField::from_managed_name(name) {
+            Some((field, None)) => edits.push(TagEdit::verbatim(field, values.clone())),
+            Some((field, Some(spelling))) => {
+                edits.push(TagEdit::verbatim_spelling(field, spelling, values.clone()));
+            }
             None => {
                 return Err(PublishError::Capability(format!(
                     "field {name} is outside the staged writer's surface"
@@ -144,12 +147,18 @@ pub fn document_from_file(path: &Path) -> Result<TagDocument, PublishError> {
         }
         other => PublishError::Validation(sanitize_tags_message(&name, other)),
     })?;
+    let mut managed: BTreeMap<String, Vec<String>> = fields
+        .values
+        .into_iter()
+        .map(|(field, values)| (field.name().to_owned(), values))
+        .collect();
+    // Each spelling's own values sort after the field's own entry, so on
+    // replay they override what the field entry wrote to every spelling.
+    for ((field, spelling), values) in fields.spellings {
+        managed.insert(field.spelling_name(spelling), values);
+    }
     Ok(TagDocument {
-        managed: fields
-            .values
-            .into_iter()
-            .map(|(field, values)| (field.name().to_owned(), values))
-            .collect(),
+        managed,
         custom: BTreeMap::new(),
         unknown_frames: BTreeMap::new(),
         opaque: fields
@@ -157,6 +166,7 @@ pub fn document_from_file(path: &Path) -> Result<TagDocument, PublishError> {
             .into_iter()
             .map(|field| field.name().to_owned())
             .collect(),
+        version: TAG_DOCUMENT_VERSION,
     })
 }
 
@@ -187,17 +197,25 @@ pub fn document_for_write(
 
 /// What a baseline restore writes: the baseline's fields, plus a removal
 /// for every other writable field, so fields added by any later write go
-/// away. Fields the baseline held in an unwritable shape are left alone,
-/// and read-only containers get no tag writes at all.
-pub fn restore_updates(baseline: &TagDocument, rel_path: &str) -> BTreeMap<String, Vec<String>> {
+/// away. No removal touches a field the baseline held in an unwritable
+/// shape, or one the file holds in such a shape now (that would block
+/// the restore). Read-only containers get no tag writes at all, and a
+/// baseline from before documents recorded every field gets no removals:
+/// it cannot say what was absent.
+pub fn restore_updates(
+    baseline: &TagDocument,
+    current: &TagDocument,
+    rel_path: &str,
+) -> BTreeMap<String, Vec<String>> {
     let writable_format = format_for_path(Path::new(rel_path)).is_ok_and(writable);
-    if !writable_format {
+    if !writable_format || baseline.version < TAG_DOCUMENT_VERSION {
         return baseline.managed.clone();
     }
     let mut updates = baseline.managed.clone();
     for field in TagField::ALL {
         let name = field.name();
-        if !baseline.opaque.iter().any(|opaque| opaque == name) {
+        let opaque = |document: &TagDocument| document.opaque.iter().any(|kept| kept == name);
+        if !opaque(baseline) && !opaque(current) {
             updates.entry(name.to_owned()).or_default();
         }
     }

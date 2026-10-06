@@ -61,6 +61,10 @@ pub struct TagEdit {
     /// they were, without the checks a new value gets. The post-save
     /// verify still refuses anything that does not land exactly.
     pub verbatim: bool,
+    /// One Vorbis spelling to write (a file holding `TOTALTRACKS` and
+    /// `TRACKTOTAL` with different values gets each back); `None` writes
+    /// every spelling the file uses.
+    pub spelling: Option<&'static str>,
 }
 
 impl TagEdit {
@@ -70,6 +74,7 @@ impl TagEdit {
             field,
             values,
             verbatim: false,
+            spelling: None,
         }
     }
 
@@ -80,6 +85,19 @@ impl TagEdit {
             field,
             values,
             verbatim: true,
+            spelling: None,
+        }
+    }
+
+    /// One Vorbis spelling's values, written back unchanged. Other
+    /// formats have one home per field and ignore this edit.
+    #[must_use]
+    pub fn verbatim_spelling(field: TagField, spelling: &'static str, values: Vec<String>) -> Self {
+        Self {
+            field,
+            values,
+            verbatim: true,
+            spelling: Some(spelling),
         }
     }
 
@@ -225,6 +243,9 @@ pub struct FieldDocument {
     /// number, a non-UTF-8 identifier, a v2.3 date split oddly): they
     /// cannot be written back, so nothing may overwrite or remove them.
     pub opaque: std::collections::BTreeSet<TagField>,
+    /// Each Vorbis spelling's own values, for fields the file spells more
+    /// than one way (`TOTALTRACKS` and `TRACKTOTAL`).
+    pub spellings: BTreeMap<(TagField, &'static str), Vec<String>>,
 }
 
 /// Read a file's [`FieldDocument`]. Read-only containers report nothing:
@@ -253,10 +274,13 @@ pub fn read_document(path: &Path) -> Result<FieldDocument, TagsError> {
         },
         AudioFormat::Flac | AudioFormat::Ogg | AudioFormat::Opus => {
             match parse_vorbis_truth(format, &bytes).map_err(unreadable)? {
-                Some(truth) => TagField::ALL
-                    .into_iter()
-                    .map(|field| (field, vorbis_read(&truth, field)))
-                    .collect(),
+                Some(truth) => {
+                    document.spellings = vorbis_spellings(&truth);
+                    TagField::ALL
+                        .into_iter()
+                        .map(|field| (field, vorbis_read(&truth, field)))
+                        .collect()
+                }
                 None => Vec::new(),
             }
         }
@@ -1298,7 +1322,7 @@ fn resolve_edits(snapshot: &Snapshot, edits: &[TagEdit]) -> Result<Vec<NativeEdi
             let tag = tag.as_ref();
             let v23 = tag.is_some_and(|tag| tag.major == 3);
             let mut pairs: Vec<(&'static str, Option<String>, Option<String>)> = Vec::new();
-            for edit in edits {
+            for edit in edits.iter().filter(|edit| edit.spelling.is_none()) {
                 // lofty writes v2.3 multi-values with '/', so say so up
                 // front and verify what lands.
                 let values = if v23 && edit.values.len() > 1 {
@@ -1374,6 +1398,13 @@ fn resolve_edits(snapshot: &Snapshot, edits: &[TagEdit]) -> Result<Vec<NativeEdi
         }
         Snapshot::Vorbis { truth, .. } => {
             for edit in edits {
+                if let Some(key) = edit.spelling {
+                    push(NativeEdit::Vorbis {
+                        key: key.to_owned(),
+                        values: edit.values.clone(),
+                    });
+                    continue;
+                }
                 for key in vorbis_write_keys(edit.field, truth.as_ref()) {
                     push(NativeEdit::Vorbis {
                         key: key.to_owned(),
@@ -1384,7 +1415,7 @@ fn resolve_edits(snapshot: &Snapshot, edits: &[TagEdit]) -> Result<Vec<NativeEdi
         }
         Snapshot::Mp4 { atoms, .. } => {
             let mut pairs: Vec<([u8; 4], u32, u32)> = Vec::new();
-            for edit in edits {
+            for edit in edits.iter().filter(|edit| edit.spelling.is_none()) {
                 let unencodable = |reason: &str| Refusal::UnencodableItem {
                     field: edit.field,
                     reason: reason.to_owned(),
@@ -1694,6 +1725,33 @@ fn vorbis_read(truth: &VorbisTruth, field: TagField) -> FieldRead {
         }
     }
     FieldRead::Absent
+}
+
+/// Every spelling's values for fields the file spells more than one way.
+fn vorbis_spellings(truth: &VorbisTruth) -> BTreeMap<(TagField, &'static str), Vec<String>> {
+    let mut spellings = BTreeMap::new();
+    for field in TagField::ALL {
+        let present: Vec<(&'static str, Vec<String>)> = field
+            .vorbis_keys()
+            .iter()
+            .map(|key| {
+                let values: Vec<String> = truth
+                    .pairs
+                    .iter()
+                    .filter(|(name, _)| name.eq_ignore_ascii_case(key))
+                    .map(|(_, value)| value.clone())
+                    .collect();
+                (*key, values)
+            })
+            .filter(|(_, values)| !values.is_empty())
+            .collect();
+        if present.len() > 1 {
+            for (key, values) in present {
+                spellings.insert((field, key), values);
+            }
+        }
+    }
+    spellings
 }
 
 /// A field's values as the file's MP4 atoms hold them.

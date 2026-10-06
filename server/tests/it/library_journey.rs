@@ -1603,3 +1603,27 @@ async fn baseline_restore_removes_fields_added_later() {
     assert!(file.is_file(), "the file is back where it started");
     assert_eq!(read_fields(&file).expect("fields read"), before);
 }
+
+/// A release document answers to its merged ids through their own rows,
+/// and a refetch replaces every row rather than adding to them.
+#[test]
+fn release_documents_answer_to_merged_ids() {
+    use droppedneedle::library::identify::stores::ReleaseStore as _;
+    let (_scratch, library, _music) = bare_library("lib-merged-release");
+    let store = &library.identify_store;
+    let mut release = Release {
+        id: "rel-new".to_owned(),
+        title: "Merged".to_owned(),
+        old_ids: vec!["REL-OLD".to_owned()],
+        ..Release::default()
+    };
+    store.save_release(&release);
+    release.title = "Refetched".to_owned();
+    store.save_release(&release);
+    for id in ["rel-new", "rel-old"] {
+        let found = store.release(id, None).expect("document found");
+        assert_eq!(found.id, "rel-new");
+        assert_eq!(found.title, "Refetched");
+    }
+    assert!(store.release("rel-other", None).is_none());
+}

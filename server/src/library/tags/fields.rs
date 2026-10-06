@@ -170,6 +170,30 @@ impl TagField {
         TagField::ALL.into_iter().find(|field| field.name() == name)
     }
 
+    /// The managed name for one Vorbis spelling of a field
+    /// (`total_tracks:TRACKTOTAL`). Only documents read from a file carry
+    /// these; requests cannot.
+    pub fn spelling_name(self, spelling: &str) -> String {
+        format!("{}:{spelling}", self.name())
+    }
+
+    /// Parse a managed name: a field, or a field with one of its Vorbis
+    /// spellings.
+    pub fn from_managed_name(name: &str) -> Option<(Self, Option<&'static str>)> {
+        match name.split_once(':') {
+            None => Self::from_name(name).map(|field| (field, None)),
+            Some((field, spelling)) => {
+                let field = Self::from_name(field)?;
+                let spelling = field
+                    .vorbis_keys()
+                    .iter()
+                    .copied()
+                    .find(|key| *key == spelling)?;
+                Some((field, Some(spelling)))
+            }
+        }
+    }
+
     pub fn kind(self) -> FieldKind {
         match self {
             TagField::TrackNumber

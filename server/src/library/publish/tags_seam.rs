@@ -34,7 +34,15 @@ pub struct TagDocument {
     /// restore never removes them.
     #[serde(default)]
     pub opaque: Vec<String>,
+    /// Document shape. Version 2 records every writable field the file
+    /// held (and its opaque fields); older documents held a subset, so
+    /// a restore never infers from them that a field was absent.
+    #[serde(default)]
+    pub version: u32,
 }
+
+/// The current [`TagDocument`] shape.
+pub const TAG_DOCUMENT_VERSION: u32 = 2;
 
 impl TagDocument {
     /// Empty document.
@@ -44,6 +52,7 @@ impl TagDocument {
             custom: BTreeMap::new(),
             unknown_frames: BTreeMap::new(),
             opaque: Vec::new(),
+            version: TAG_DOCUMENT_VERSION,
         }
     }
 }

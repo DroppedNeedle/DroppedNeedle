@@ -615,6 +615,10 @@ impl FactsSource for SqliteIdentifyStore {
 
 /// Version tag for stored prints: the Chromaprint pipeline in
 /// `tags::fingerprint` (test2 preset, 120 s window).
+///
+/// `audio_fingerprint_outcomes` references `local_tracks` with
+/// `ON DELETE RESTRICT`: a future purge of missing tracks must delete a
+/// track's rows here before the track itself.
 const FINGERPRINTER_VERSION: &str = "chromaprint-test2-120s";
 
 impl FingerprintStore for SqliteIdentifyStore {
@@ -647,6 +651,12 @@ impl FingerprintStore for SqliteIdentifyStore {
     ) {
         let now = now_secs();
         self.write("save fingerprint", |tx| {
+            // One print per track: older file revisions are stale.
+            tx.execute(
+                "DELETE FROM audio_fingerprint_outcomes WHERE local_track_id = ?1 \
+                 AND (stat_revision != ?2 OR fingerprinter_version != ?3)",
+                params![local_track_id, stat_revision, FINGERPRINTER_VERSION],
+            )?;
             tx.execute(
                 "INSERT INTO audio_fingerprint_outcomes (id, local_track_id, stat_revision, \
                  fingerprinter_version, state, fingerprint, duration_seconds, \
@@ -681,11 +691,9 @@ impl ReleaseStore for SqliteIdentifyStore {
             .read("release document", |conn| {
                 conn.query_row(
                     "SELECT canonical_payload_json FROM library_management_metadata_snapshots \
-                     WHERE provider = ?1 AND entity_kind = ?2 AND input_hash = ?4 \
-                     AND fetched_at >= ?5 AND (entity_id = ?3 OR EXISTS (SELECT 1 \
-                     FROM json_each(canonical_payload_json, '$.old_ids') \
-                     WHERE lower(json_each.value) = ?3)) \
-                     ORDER BY entity_id = ?3 DESC, fetched_at DESC LIMIT 1",
+                     WHERE provider = ?1 AND entity_kind = ?2 AND entity_id = ?3 \
+                     AND input_hash = ?4 AND fetched_at >= ?5 \
+                     ORDER BY fetched_at DESC LIMIT 1",
                     params![
                         PROVIDER,
                         RELEASE_KIND,
@@ -717,42 +725,56 @@ impl ReleaseStore for SqliteIdentifyStore {
             }
         };
         let payload_sha = hex_sha256(payload.as_bytes());
-        let entity = release.id.trim().to_ascii_lowercase();
+        // The release's own id plus every merged id that redirects to it:
+        // each gets a row with the same payload, so a lookup by any of them
+        // stays a plain indexed match on entity_id.
+        let mut entities = vec![release.id.trim().to_ascii_lowercase()];
+        for old in &release.old_ids {
+            let old = old.trim().to_ascii_lowercase();
+            if !old.is_empty() && !entities.contains(&old) {
+                entities.push(old);
+            }
+        }
         let now = now_secs();
         self.write("save release document", |tx| {
-            // A refetch with the same payload refreshes nothing (rows are
-            // immutable), so drop the old row first and keep one per payload.
-            tx.execute(
-                "DELETE FROM library_management_metadata_snapshots \
-                 WHERE provider = ?1 AND entity_kind = ?2 AND entity_id = ?3",
-                params![PROVIDER, RELEASE_KIND, entity],
-            )?;
-            tx.execute(
-                "INSERT INTO library_management_metadata_snapshots (id, provider, \
-                 entity_kind, entity_id, input_hash, canonical_payload_json, payload_sha256, \
-                 fetched_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                params![
-                    hex_sha256(format!("{entity}\0{payload_sha}").as_bytes()),
-                    PROVIDER,
-                    RELEASE_KIND,
-                    entity,
-                    release_input_hash(),
-                    payload,
-                    payload_sha,
-                    now,
-                    now + RELEASE_FRESH_SECS as f64,
-                ],
-            )?;
+            for entity in &entities {
+                // Rows are immutable, so a refetch replaces the old row.
+                tx.execute(
+                    "DELETE FROM library_management_metadata_snapshots \
+                     WHERE provider = ?1 AND entity_kind = ?2 AND entity_id = ?3",
+                    params![PROVIDER, RELEASE_KIND, entity],
+                )?;
+                tx.execute(
+                    "INSERT INTO library_management_metadata_snapshots (id, provider, \
+                     entity_kind, entity_id, input_hash, canonical_payload_json, payload_sha256, \
+                     fetched_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    params![
+                        hex_sha256(format!("{entity}\0{payload_sha}").as_bytes()),
+                        PROVIDER,
+                        RELEASE_KIND,
+                        entity,
+                        release_input_hash(),
+                        payload,
+                        payload_sha,
+                        now,
+                        now + RELEASE_FRESH_SECS as f64,
+                    ],
+                )?;
+            }
             // Expired documents stay while an identity names them or a
-            // pending review offers them to a curator.
+            // pending review offers them to a curator. Merged-id rows share
+            // their document's payload hash, so they go and stay with it.
             tx.execute(
                 "DELETE FROM library_management_metadata_snapshots \
                  WHERE provider = ?1 AND entity_kind = ?2 AND expires_at < ?3 \
-                 AND entity_id NOT IN (SELECT lower(release_mbid) \
-                 FROM local_album_external_identities WHERE release_mbid IS NOT NULL) \
-                 AND entity_id NOT IN (SELECT lower(json_extract(candidate.value, '$.release_mbid')) \
+                 AND payload_sha256 NOT IN (SELECT kept.payload_sha256 \
+                 FROM library_management_metadata_snapshots AS kept \
+                 WHERE kept.provider = ?1 AND kept.entity_kind = ?2 AND kept.entity_id IN ( \
+                 SELECT lower(release_mbid) FROM local_album_external_identities \
+                 WHERE release_mbid IS NOT NULL \
+                 UNION SELECT lower(json_extract(candidate.value, '$.release_mbid')) \
                  FROM library_identify_reviews, json_each(candidates_json) AS candidate \
-                 WHERE state = ?4 AND json_extract(candidate.value, '$.release_mbid') IS NOT NULL)",
+                 WHERE state = ?4 AND json_extract(candidate.value, '$.release_mbid') IS NOT NULL))",
                 params![PROVIDER, RELEASE_KIND, now, review_state_str(ReviewState::Pending)],
             )?;
             Ok(())

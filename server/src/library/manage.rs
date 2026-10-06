@@ -407,6 +407,18 @@ impl LibrarySetup {
         })
     }
 
+    /// Current semantic tag document for one sandbox file.
+    fn live_doc(
+        sandbox: &Sandbox,
+        root_id: &str,
+        rel_path: &str,
+    ) -> Result<TagDocument, ServiceError> {
+        let path = sandbox
+            .resolve_no_symlink(root_id, rel_path)
+            .map_err(publish_error)?;
+        super::publish::staging::document_from_file(&path).map_err(publish_error)
+    }
+
     /// The before-state document for a write: the file's fields plus an
     /// empty entry per field the write adds, so undo removes those.
     fn live_doc_for_write(
@@ -1064,7 +1076,9 @@ impl LibrarySetup {
             } else {
                 PlanKind::Move
             };
-            let updates = super::publish::staging::restore_updates(&before.doc, &live_loc.1);
+            let current = Self::live_doc(&sandbox, &live_loc.0, &live_loc.1)?;
+            let updates =
+                super::publish::staging::restore_updates(&before.doc, &current, &live_loc.1);
             let mut capabilities = Vec::new();
             if !updates.is_empty() {
                 capabilities.push(Capability::Metadata);

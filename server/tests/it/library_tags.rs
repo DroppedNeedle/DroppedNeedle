@@ -975,6 +975,51 @@ fn vorbis_totals_update_every_spelling() {
     assert!(vorbis_values(&path, "DISCTOTAL").is_empty());
 }
 
+/// A file whose total spellings disagree records each one, and replaying
+/// that document puts each spelling back to its own value.
+#[test]
+fn vorbis_spellings_restore_their_own_values() {
+    use droppedneedle::library::publish::staging;
+    let (_scratch, path) = temp_copy("management_full.flac", "spellings");
+    flac_inject_pairs(&path, &[("TOTALTRACKS", "12"), ("TRACKTOTAL", "9")]);
+    let baseline = staging::document_from_file(&path).unwrap();
+    assert_eq!(
+        baseline.managed["total_tracks:TRACKTOTAL"],
+        vec!["9".to_owned()]
+    );
+    let totals = vorbis_values(&path, "TOTALTRACKS");
+    tags::save_tags(
+        &path,
+        &[TagEdit::new(TagField::TrackTotal, vec!["15".to_owned()])],
+    )
+    .unwrap();
+    assert_eq!(vorbis_values(&path, "TRACKTOTAL"), vec!["15"]);
+    let edits = staging::check_managed_updates(&baseline.managed).unwrap();
+    tags::save_tags(&path, &edits).unwrap();
+    assert_eq!(vorbis_values(&path, "TOTALTRACKS"), totals);
+    assert_eq!(vorbis_values(&path, "TRACKTOTAL"), vec!["9"]);
+}
+
+/// A restore removes fields the baseline lacked, except ones the file
+/// holds opaquely now; an older-shaped baseline removes nothing.
+#[test]
+fn restore_updates_spare_opaque_and_older_baselines() {
+    use droppedneedle::library::publish::{TagDocument, staging};
+    let mut baseline = TagDocument::empty();
+    baseline
+        .managed
+        .insert("title".to_owned(), vec!["Kept".to_owned()]);
+    let mut current = TagDocument::empty();
+    current.opaque.push("date".to_owned());
+    let updates = staging::restore_updates(&baseline, &current, "a.flac");
+    assert_eq!(updates["title"], vec!["Kept".to_owned()]);
+    assert_eq!(updates["artist"], Vec::<String>::new());
+    assert!(!updates.contains_key("date"));
+    baseline.version = 1;
+    let updates = staging::restore_updates(&baseline, &current, "a.flac");
+    assert_eq!(updates, baseline.managed);
+}
+
 /// Values no new edit could carry (a `3/12` track number, a free-text
 /// date) are written back exactly when replayed verbatim.
 #[test]
