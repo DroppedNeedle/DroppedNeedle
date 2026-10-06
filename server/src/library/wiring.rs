@@ -49,6 +49,23 @@ use super::scan::sqlite_store::SqliteScanStore;
 use super::scan::watcher::{DirtyScopes, WatcherState, WorkWakeups};
 use crate::auth::users::UsersDeps;
 use crate::ids::IdGenerator;
+use crate::runtime_config::ConfigStore;
+
+/// Scratch database (every migration applied) plus config store under
+/// a fresh temp dir, for the test bundles.
+#[cfg(any(test, feature = "test-support"))]
+fn scratch_state() -> Result<(PathBuf, Arc<ConfigStore>), String> {
+    let dir = std::env::temp_dir().join(format!("droppedneedle-library-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).map_err(|error| format!("scratch dir: {error}"))?;
+    let db_path = dir.join("app.db");
+    let connection = crate::db::open_connection(&db_path).map_err(|error| error.to_string())?;
+    crate::schema::apply_migrations_blocking(&connection).map_err(|error| error.to_string())?;
+    let crypto = crate::runtime_config::Crypto::from_key_bytes(&[7u8; 32])
+        .map_err(|error| error.to_string())?;
+    let config =
+        ConfigStore::open(&dir.join("config.json"), crypto).map_err(|error| error.to_string())?;
+    Ok((db_path, Arc::new(config)))
+}
 
 /// Scan coordinator over the wired seams.
 pub type ScanCoordinator = LibraryScanCoordinator<SqliteScanStore, LoftyTagReader, IdentifyEnqueue>;
@@ -79,7 +96,13 @@ pub struct LibrarySetup {
     pub users: UsersDeps,
     /// Id generator for jobs, runs, and preview tokens.
     pub ids: Arc<dyn IdGenerator>,
-    /// Shared root registry (settings saves swap it in place).
+    /// Runtime settings: roots, schedule, and watcher are re-read from
+    /// here every tick.
+    pub config: Arc<ConfigStore>,
+    /// Serializes read-modify-write saves of the library settings.
+    pub settings_write: Arc<std::sync::Mutex<()>>,
+    /// Root registry the scan checkpoints and the stream gateway read;
+    /// refreshed from the settings on every tick.
     pub registry: Arc<SharedResolver>,
     /// Scan store.
     pub scan_store: Arc<SqliteScanStore>,
@@ -133,6 +156,7 @@ impl LibrarySetup {
         providers: Arc<crate::providers::Providers>,
         mb_source: crate::providers::musicbrainz::SourceFn,
         db_path: &Path,
+        config: Arc<ConfigStore>,
     ) -> Result<Self, String> {
         use crate::providers::RequestPriority;
         use crate::providers::acoustid::{AcoustIdClient, DEFAULT_BASE_URL};
@@ -154,57 +178,52 @@ impl LibrarySetup {
             AcoustIdClient::new(http.shared().clone(), DEFAULT_BASE_URL, pacer, CoreSink);
         let live =
             super::identify::providers::LiveProviders::new(musicbrainz, acoustid, String::new());
-        let scan_store = Arc::new(
-            SqliteScanStore::open(db_path).map_err(|error| format!("scan store: {error}"))?,
-        );
         Self::assemble(
             users,
             ids,
             Arc::new(live) as Arc<dyn super::identify::providers::IdentifyProviders>,
             None,
-            scan_store,
+            db_path,
+            config,
         )
     }
 
-    /// Test bundle over scripted providers and memory stores. The
-    /// scan store is an ephemeral SQLite database and the publish
-    /// cell opens under the first added root, so sandbox-only tests
-    /// stay hermetic.
+    /// Test bundle over scripted providers on a fresh scratch database
+    /// and config file under the temp dir.
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(users: UsersDeps, ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
         let scripted = Arc::new(FakeProviders::default());
-        let scan_store = Arc::new(
-            SqliteScanStore::open_ephemeral().map_err(|error| format!("scan store: {error}"))?,
-        );
+        let (db_path, config) = scratch_state()?;
         Self::assemble(
             users,
             ids,
             scripted.clone() as Arc<dyn super::identify::providers::IdentifyProviders>,
             Some(scripted),
-            scan_store,
+            &db_path,
+            config,
         )
     }
 
-    /// Test bundle over scripted providers whose scan state lives in
-    /// the application database at `db_path`, exactly like production.
-    /// Journeys that run requests as real users need this: scan runs
-    /// reference `auth_users`, which only the application database has.
+    /// Test bundle over scripted providers on an existing application
+    /// database and config store, exactly like production. Journeys
+    /// that act as real users need this (scan runs reference
+    /// `auth_users`), and so do restart tests that rebuild the bundle
+    /// over the same state.
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests_at(
         users: UsersDeps,
         ids: Arc<dyn IdGenerator>,
         db_path: &Path,
+        config: Arc<ConfigStore>,
     ) -> Result<Self, String> {
         let scripted = Arc::new(FakeProviders::default());
-        let scan_store = Arc::new(
-            SqliteScanStore::open(db_path).map_err(|error| format!("scan store: {error}"))?,
-        );
         Self::assemble(
             users,
             ids,
             scripted.clone() as Arc<dyn super::identify::providers::IdentifyProviders>,
             Some(scripted),
-            scan_store,
+            db_path,
+            config,
         )
     }
 
@@ -217,10 +236,8 @@ impl LibrarySetup {
         ids: Arc<dyn IdGenerator>,
         providers: Arc<dyn super::identify::providers::IdentifyProviders>,
     ) -> Result<Self, String> {
-        let scan_store = Arc::new(
-            SqliteScanStore::open_ephemeral().map_err(|error| format!("scan store: {error}"))?,
-        );
-        Self::assemble(users, ids, providers, None, scan_store)
+        let (db_path, config) = scratch_state()?;
+        Self::assemble(users, ids, providers, None, &db_path, config)
     }
 
     fn assemble(
@@ -228,9 +245,18 @@ impl LibrarySetup {
         ids: Arc<dyn IdGenerator>,
         providers: Arc<dyn super::identify::providers::IdentifyProviders>,
         test_providers: Option<Arc<FakeProviders>>,
-        scan_store: Arc<SqliteScanStore>,
+        db_path: &Path,
+        config: Arc<ConfigStore>,
     ) -> Result<Self, String> {
-        let registry: Arc<SharedResolver> = Arc::new(SharedResolver::default());
+        let scan_store = Arc::new(
+            SqliteScanStore::open(db_path).map_err(|error| format!("scan store: {error}"))?,
+        );
+        // The roots load before anything can scan or stream: a restart
+        // comes back with exactly the roots the settings hold.
+        let registry: Arc<SharedResolver> = Arc::new(SharedResolver::new(
+            super::settings::registry(&config)
+                .map_err(|error| format!("library roots: {error}"))?,
+        ));
         let root_dirs: RootDirs = {
             let registry = registry.clone();
             Arc::new(move || registry.resolver().registry().root_paths())
@@ -297,6 +323,8 @@ impl LibrarySetup {
         Ok(Self {
             users,
             ids,
+            config,
+            settings_write: Arc::new(std::sync::Mutex::new(())),
             registry,
             scan_store,
             coordinator,
@@ -319,9 +347,39 @@ impl LibrarySetup {
         })
     }
 
-    /// Live root registry (re-read, never cached).
+    /// Live root registry: re-read from the settings, never cached.
     pub fn live_registry(&self) -> RootRegistry {
-        self.registry.resolver().registry().clone()
+        self.refresh_registry()
+    }
+
+    /// Re-read the roots from the settings and swap them in when they
+    /// changed. Roots that are new or changed get a dirty mark, so the
+    /// supervisor scans them; an unreadable settings section keeps the
+    /// current registry.
+    pub fn refresh_registry(&self) -> RootRegistry {
+        let current = self.registry.resolver().registry().clone();
+        let fresh = match super::settings::registry(&self.config) {
+            Ok(fresh) => fresh,
+            Err(error) => {
+                tracing::warn!(%error, "cannot read the library roots; keeping the current set");
+                return current;
+            }
+        };
+        if fresh.policy_revision() == current.policy_revision() {
+            return current;
+        }
+        self.registry.update(fresh.clone());
+        let mut marked = false;
+        for root in fresh.roots() {
+            if current.resolve(&root.id) != Some(root) {
+                self.dirty.mark(&root.id);
+                marked = true;
+            }
+        }
+        if marked {
+            self.wakeups.notify("scan");
+        }
+        fresh
     }
 
     /// Root source the stream gateway resolves local reads against.

@@ -10,6 +10,8 @@
 
 pub mod boot;
 
+#[cfg(any(test, feature = "test-support"))]
+pub use boot::apply_migrations_blocking;
 pub use boot::{SchemaError, apply_migrations, assert_migrated, latest_version};
 
 /// Embedded migrations, applied in version order by [`apply_migrations`].

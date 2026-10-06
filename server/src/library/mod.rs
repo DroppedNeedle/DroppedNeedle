@@ -30,5 +30,6 @@ pub mod manage;
 pub mod publish;
 pub mod scan;
 pub mod service;
+pub mod settings;
 pub mod tags;
 pub mod wiring;

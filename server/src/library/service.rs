@@ -1,7 +1,6 @@
 //! Library service: roots, scans, identification, and reviews.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
 
 use super::clock::now_ms;
 use super::identify::models::{AlbumIdentity, IdentifyJob, IdentifyKind, LocalAlbumFacts};
@@ -10,7 +9,7 @@ use super::scan::models::{
     EffectivePolicy, ScanInventoryItem, ScanKind, ScanRequest, ScanRequestResult, ScanRun,
     ScanScope, ScanTrigger,
 };
-use super::scan::roots::{LibraryRoot, RootRegistry, fingerprint_roots};
+use super::scan::roots::LibraryRoot;
 use super::scan::store::ScanStore;
 use super::wiring::LibrarySetup;
 
@@ -61,12 +60,10 @@ impl LibrarySetup {
         path: String,
         policy: EffectivePolicy,
     ) -> Result<(LibraryRoot, String), ServiceError> {
-        let dir = PathBuf::from(&path);
-        if !dir.is_absolute() {
-            return Err(ServiceError::InvalidInput {
+        let dir =
+            super::settings::clean_absolute(&path).ok_or_else(|| ServiceError::InvalidInput {
                 message: "Root path must be absolute".to_owned(),
-            });
-        }
+            })?;
         let meta = std::fs::symlink_metadata(&dir).map_err(|_| ServiceError::InvalidInput {
             message: "Root path does not exist".to_owned(),
         })?;
@@ -75,26 +72,25 @@ impl LibrarySetup {
                 message: "Root path is not a directory".to_owned(),
             });
         }
-        let registry = self.live_registry();
         let id = id.unwrap_or_else(|| self.ids.new_id());
-        if id.is_empty() || id.contains('/') || id.contains('\0') {
+        if id.is_empty() || id.contains('/') || id.contains('\0') || id.contains("::") {
             return Err(ServiceError::InvalidInput {
                 message: "Root id is not a plain name".to_owned(),
             });
         }
-        if registry.resolve(&id).is_some() {
-            return Err(ServiceError::Conflict {
-                message: "Root id already exists".to_owned(),
-            });
-        }
         let root = LibraryRoot::new(&id, dir, policy);
-        let mut roots = registry.roots().to_vec();
-        roots.push(root.clone());
-        let revision = fingerprint_roots(&roots, true);
-        self.registry
-            .update(RootRegistry::new(roots, true, &revision));
-        self.dirty.mark(&id);
-        self.wakeups.notify("scan");
+        {
+            // One settings writer at a time: the save is read-modify-write.
+            let _write = self
+                .settings_write
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            super::settings::add_root(&self.config, &root)?;
+        }
+        // The refresh swaps the new root in and marks it dirty, so the
+        // supervisor gives it an initial scan.
+        let registry = self.refresh_registry();
+        let revision = registry.policy_revision().to_owned();
         // Open (or reopen) the publish cell under the new root set.
         // A reconcile failure here is a 409: the root is registered
         // but publishing stays closed until recovery passes.
@@ -103,7 +99,6 @@ impl LibrarySetup {
                 .publish
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let registry = self.live_registry();
             let _guards = if cell.needs_refresh(&registry) {
                 self.publish_guards(&registry)
             } else {

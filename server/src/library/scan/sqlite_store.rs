@@ -134,22 +134,20 @@ pub struct SqliteScanStore {
 }
 
 impl SqliteScanStore {
-    /// Open against a migrated database file. Production calls this after
-    /// migrations; the store creates no schema itself.
+    /// Open against a migrated database file through the database
+    /// factory, with the canonical connection pragmas. The store creates
+    /// no schema itself.
     pub fn open(path: &Path) -> Result<Self, String> {
-        let connection = Connection::open(path).map_err(|error| error.to_string())?;
-        apply_pragmas(&connection).map_err(|error| error.to_string())?;
+        let connection = crate::db::open_connection(path).map_err(|error| error.to_string())?;
         Ok(Self::wrap(connection))
     }
 
-    /// Ephemeral store for test bundles: an in-memory database with the
-    /// baseline schema applied. Production never uses this.
+    /// In-memory store with every migration applied, for unit tests.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn open_ephemeral() -> Result<Self, String> {
         let connection = Connection::open_in_memory().map_err(|error| error.to_string())?;
-        apply_pragmas(&connection).map_err(|error| error.to_string())?;
-        connection
-            .execute_batch(include_str!("../../../migrations/0001_baseline.sql"))
-            .map_err(|error| error.to_string())?;
+        crate::db::apply_connection_pragmas(&connection).map_err(|error| error.to_string())?;
+        crate::schema::apply_migrations_blocking(&connection).map_err(|error| error.to_string())?;
         Ok(Self::wrap(connection))
     }
 
@@ -177,27 +175,6 @@ impl SqliteScanStore {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
-}
-
-fn apply_pragmas(conn: &Connection) -> rusqlite::Result<()> {
-    conn.busy_timeout(Duration::from_millis(5000))?;
-    conn.execute_batch(
-        "PRAGMA journal_mode=WAL;
-         PRAGMA synchronous=NORMAL;
-         PRAGMA foreign_keys=ON;
-         PRAGMA mmap_size=16777216;
-         PRAGMA temp_store=MEMORY;
-         PRAGMA cache_size=-16384;
-         /* Bounded inline autocheckpoint: 4000 frames (~16 MB at 4 KiB
-            pages, 4x under the 64 MB backpressure high water). At 1000
-            frames every batch paid a checkpoint fsync (13 ms mean,
-            179 ms p99 on disk); 4000 keeps ~7/8 of that cost off the
-            scan wall while the log wraps instead of growing to
-            gigabytes (autocheckpoint=0 peaked at 2.8 GB mid-scan).
-            The terminal TRUNCATE still reclaims the rest. Durability is
-            unaffected: frames are durable in the WAL before checkpoint. */
-         PRAGMA wal_autocheckpoint=4000;",
-    )
 }
 
 fn internal(error: rusqlite::Error) -> ScanStoreError {

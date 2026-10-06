@@ -46,6 +46,17 @@ pub async fn apply_migrations(pool: &SqlitePool) -> Result<(), SchemaError> {
     assert_migrated(pool).await
 }
 
+/// Apply every embedded migration over one rusqlite connection, for
+/// scratch test databases that never meet the async pool. Production
+/// boots through [`apply_migrations`].
+#[cfg(any(test, feature = "test-support"))]
+pub fn apply_migrations_blocking(connection: &rusqlite::Connection) -> rusqlite::Result<()> {
+    for migration in MIGRATOR.migrations.iter() {
+        connection.execute_batch(&migration.sql)?;
+    }
+    Ok(())
+}
+
 /// Refuse to serve when `user_version` differs from the binary.
 pub async fn assert_migrated(pool: &SqlitePool) -> Result<(), SchemaError> {
     let found: i64 = sqlx::query_scalar("PRAGMA user_version")

@@ -210,6 +210,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
             )
         }),
         &config.library_db_path,
+        config_store.clone(),
     )
     .map_err(stage("library setup"))?;
     let (media, media_workers) = MediaSetup::build(

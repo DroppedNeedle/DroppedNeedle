@@ -123,9 +123,13 @@ impl Lib {
         )
         .expect("prod auth bundle builds")
         .users;
-        let library =
-            LibrarySetup::for_tests_at(users, Arc::clone(&ids) as Arc<dyn IdGenerator>, &db_path)
-                .expect("library bundle builds");
+        let library = LibrarySetup::for_tests_at(
+            users,
+            Arc::clone(&ids) as Arc<dyn IdGenerator>,
+            &db_path,
+            Arc::clone(&store),
+        )
+        .expect("library bundle builds");
         Self {
             runtime,
             bundle,
@@ -791,4 +795,88 @@ async fn library_loops_start_and_stop() {
             .unwrap_or_else(|_| panic!("{name} loop stops promptly"))
             .expect("loop joins");
     }
+}
+
+/// Library roots live in the settings, so a restart comes back with the
+/// same roots under the same ids, and the next scan finds nothing new.
+#[tokio::test]
+async fn library_roots_survive_a_restart() {
+    use droppedneedle::library::scan::{EffectivePolicy, ScanKind, ScanRequest, ScanTrigger};
+
+    let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "droppedneedle-lib-restart-{}-{seq}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let db_path = dir.join("app.db");
+    let connection = droppedneedle::db::open_connection(&db_path).expect("scratch db opens");
+    droppedneedle::schema::apply_migrations_blocking(&connection).expect("migrations apply");
+    drop(connection);
+    let open_config = || {
+        Arc::new(
+            ConfigStore::open(
+                &dir.join("config.json"),
+                Crypto::from_key_bytes(&[7u8; 32]).expect("test key"),
+            )
+            .expect("config opens"),
+        )
+    };
+    let users = || {
+        droppedneedle::auth::wiring::AuthSetup::for_tests()
+            .expect("test auth builds")
+            .users
+    };
+    let ids = || Arc::new(UuidGenerator) as Arc<dyn IdGenerator>;
+    let music = dir.join("music");
+    plant(&music, "album/01.flac", "flac_full_01.flac");
+
+    let first = LibrarySetup::for_tests_at(users(), ids(), &db_path, open_config())
+        .expect("first bundle builds");
+    first
+        .add_root(
+            Some("music".to_owned()),
+            music.to_string_lossy().into_owned(),
+            EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+    drain_scans(&first).await;
+    drop(first);
+
+    let second = LibrarySetup::for_tests_at(users(), ids(), &db_path, open_config())
+        .expect("second bundle builds");
+    let registry = second.live_registry();
+    assert!(registry.enabled());
+    assert_eq!(registry.roots().len(), 1);
+    assert_eq!(registry.roots()[0].id, "music");
+    assert_eq!(registry.roots()[0].path, music);
+    // The same directory, or one inside it, cannot become a second root.
+    for overlapping in [music.clone(), music.join("album")] {
+        let refused = second.add_root(
+            None,
+            overlapping.to_string_lossy().into_owned(),
+            EffectivePolicy::Automatic,
+        );
+        assert!(
+            matches!(
+                refused,
+                Err(droppedneedle::library::service::ServiceError::Conflict { .. })
+            ),
+            "overlapping root refused"
+        );
+    }
+    let result = second
+        .coordinator
+        .request_run(&ScanRequest {
+            kind: ScanKind::Incremental,
+            trigger: ScanTrigger::Manual,
+            scopes: registry.scheduled_root_scopes(),
+            requested_by_user_id: None,
+            policy_revision: registry.policy_revision().to_owned(),
+        })
+        .expect("scan requested");
+    drain_scans(&second).await;
+    let (run, _, _) = second.coordinator.snapshot(&result.run_id).expect("run");
+    assert_eq!(run.counters.get("new_count").copied(), Some(0));
+    assert_eq!(run.counters.get("unchanged_count").copied(), Some(1));
 }

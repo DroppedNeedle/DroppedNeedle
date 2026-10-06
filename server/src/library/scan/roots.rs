@@ -6,9 +6,9 @@
 //! [`StreamRootSeam::resolve_key`] is unused because playback keys carry no
 //! root id.
 //!
-//! The policy surface is minimal on purpose: roots plus an enabled flag
-//! plus a revision string. There are no per-subpath rules yet; every scope
-//! inherits its root's policy.
+//! The policy surface: roots, their per-subpath rules, an enabled flag,
+//! and a revision string. A path takes the policy of the deepest rule
+//! that covers it, else its root's policy.
 
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
@@ -18,12 +18,23 @@ use serde_json;
 
 use super::models::{EffectivePolicy, ScanScope};
 
-/// One library root: a stable id, a filesystem path, and a policy.
+/// One subpath rule inside a root: every path under `relative_path`
+/// takes `policy` unless a deeper rule covers it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PolicyRule {
+    pub id: String,
+    pub relative_path: String,
+    pub policy: EffectivePolicy,
+}
+
+/// One library root: a stable id, a filesystem path, a policy, and the
+/// subpath rules that override it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LibraryRoot {
     pub id: String,
     pub path: PathBuf,
     pub policy: EffectivePolicy,
+    pub rules: Vec<PolicyRule>,
 }
 
 impl LibraryRoot {
@@ -32,7 +43,27 @@ impl LibraryRoot {
             id: id.to_owned(),
             path,
             policy,
+            rules: Vec::new(),
         }
+    }
+
+    pub fn with_rules(mut self, rules: Vec<PolicyRule>) -> Self {
+        self.rules = rules;
+        self
+    }
+
+    /// Policy for a path under this root: the deepest covering rule
+    /// wins, else the root policy.
+    pub fn policy_for(&self, path: &Path) -> EffectivePolicy {
+        let Ok(relative) = path.strip_prefix(&self.path) else {
+            return self.policy;
+        };
+        self.rules
+            .iter()
+            .filter(|rule| relative.starts_with(Path::new(&rule.relative_path)))
+            .max_by_key(|rule| Path::new(&rule.relative_path).components().count())
+            .map(|rule| rule.policy)
+            .unwrap_or(self.policy)
     }
 }
 
@@ -100,9 +131,10 @@ impl RootRegistry {
     }
 }
 
-/// Minimal policy resolver over the registry: longest-prefix root match,
-/// root policy wins. Mirrors the v2 `LibraryPolicyResolver.resolve` contract
-/// (returns `None` for paths under no root) without subpath rules.
+/// Policy resolver over the registry: longest-prefix root match, then the
+/// deepest covering rule inside it. Mirrors the v2
+/// `LibraryPolicyResolver.resolve` contract (returns `None` for paths
+/// under no root).
 #[derive(Debug, Clone)]
 pub struct PolicyResolver {
     registry: RootRegistry,
@@ -131,7 +163,7 @@ impl PolicyResolver {
             .iter()
             .filter(|root| path.starts_with(&root.path))
             .max_by_key(|root| root.path.components().count())
-            .map(|root| root.policy)
+            .map(|root| root.policy_for(path))
     }
 }
 
@@ -214,6 +246,14 @@ impl StreamRootSeam {
     }
 }
 
+fn policy_name(policy: EffectivePolicy) -> &'static str {
+    match policy {
+        EffectivePolicy::LocalMetadata => "local_metadata",
+        EffectivePolicy::Automatic => "automatic",
+        EffectivePolicy::Excluded => "excluded",
+    }
+}
+
 /// Stable policy-revision fingerprint for a root list, so settings saves
 /// that change nothing do not supersede running scans.
 pub fn fingerprint_roots(roots: &[LibraryRoot], enabled: bool) -> String {
@@ -222,11 +262,12 @@ pub fn fingerprint_roots(roots: &[LibraryRoot], enabled: bool) -> String {
         "roots": roots.iter().map(|root| serde_json::json!({
             "id": root.id,
             "path": root.path.to_string_lossy(),
-            "policy": match root.policy {
-                EffectivePolicy::LocalMetadata => "local_metadata",
-                EffectivePolicy::Automatic => "automatic",
-                EffectivePolicy::Excluded => "excluded",
-            },
+            "policy": policy_name(root.policy),
+            "rules": root.rules.iter().map(|rule| serde_json::json!({
+                "id": rule.id,
+                "relative_path": rule.relative_path,
+                "policy": policy_name(rule.policy),
+            })).collect::<Vec<_>>(),
         })).collect::<Vec<_>>(),
     });
     let encoded = serde_json::to_string(&canonical).unwrap_or_default();

@@ -10,7 +10,7 @@ use super::identify::models::{IdentifyJob, LocalAlbumFacts, LocalTrackFacts};
 use super::identify::stores::QueueStore;
 use super::publish::PublishError;
 use super::publish::snapshots::SnapshotStore;
-use super::scan::scheduler::ScheduleSettings;
+use super::scan::coordinator::ResolverSource as _;
 use super::scan::store::ScanStore;
 use super::scan::supervisor::SupervisorInputs;
 use super::scan::supervisor::{startup_recovery, supervise_once, supervise_once_with_shutdown};
@@ -36,31 +36,35 @@ impl LibrarySetup {
     pub(crate) fn supervisor_inputs(&self) -> SupervisorInputs {
         SupervisorInputs {
             root_paths: self.root_dirs.clone(),
-            schedule: Arc::new(ScheduleSettings::manual),
-            inclusion_rules: Arc::new(Vec::new),
+            schedule: {
+                let config = self.config.clone();
+                Arc::new(move || super::settings::schedule(&config))
+            },
+            inclusion_rules: {
+                let registry = self.registry.clone();
+                Arc::new(move || super::settings::inclusion_rules(registry.resolver().registry()))
+            },
             dirty: self.dirty.clone(),
             wakeups: self.wakeups.clone(),
             now_unix: Arc::new(now_unix),
         }
     }
 
-    /// Watcher settings (fixed defaults; no settings section yet).
+    /// Watcher settings, re-read from the config store every tick.
     pub(crate) fn watcher_settings(&self) -> WatcherSettings {
-        WatcherSettings {
-            enabled: true,
-            poll_interval_seconds: 30.0,
-            batch_window_seconds: 60.0,
-        }
+        super::settings::watcher(&self.config)
     }
 
     /// One-shot scan startup reconciliation (Hook A). The loop runs
     /// this in its preamble; tests drive it directly.
     pub async fn scan_startup_recovery(&self) {
+        self.refresh_registry();
         startup_recovery(&self.coordinator, &self.supervisor_inputs()).await;
     }
 
     /// One supervisor iteration. Returns true when a run was driven.
     pub async fn supervisor_tick(&self) -> bool {
+        self.refresh_registry();
         supervise_once(&self.coordinator, &self.supervisor_inputs()).await
     }
 
@@ -72,6 +76,7 @@ impl LibrarySetup {
     /// on their next check and the next start resumes cleanly. A
     /// pre-signalled shutdown claims no new work.
     pub async fn supervisor_tick_with_shutdown(&self, shutdown: &watch::Receiver<bool>) -> bool {
+        self.refresh_registry();
         supervise_once_with_shutdown(&self.coordinator, &self.supervisor_inputs(), shutdown).await
     }
 

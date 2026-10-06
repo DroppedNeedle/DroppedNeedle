@@ -500,6 +500,13 @@ async fn dispatch(
 /// drifts from the factory's settings.
 pub fn open_connection(path: &Path) -> Result<Connection, DbError> {
     let connection = Connection::open(path)?;
+    apply_connection_pragmas(&connection)?;
+    Ok(connection)
+}
+
+/// The canonical pragma set and busy timeout on one rusqlite connection,
+/// for the rare handle not opened from a path (an in-memory test store).
+pub fn apply_connection_pragmas(connection: &Connection) -> Result<(), DbError> {
     connection.busy_timeout(crate::db::BUSY_TIMEOUT)?;
     // Cache 2 MiB, matching the reader pool. A 16 MiB writer cache stayed
     // resident after every 100k scan; 2 MiB keeps scan throughput identical.
@@ -515,7 +522,7 @@ pub fn open_connection(path: &Path) -> Result<Connection, DbError> {
         cache = crate::db::CACHE_SIZE_KIB,
         checkpoint = crate::db::WAL_AUTOCHECKPOINT,
     ))?;
-    Ok(connection)
+    Ok(())
 }
 
 /// Writer thread: open the single write connection, arm the abort clock, and
