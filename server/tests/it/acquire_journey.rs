@@ -106,7 +106,7 @@ impl E2e {
             self.bundle.clone(),
             Arc::clone(&self.store),
             Arc::clone(&self.crypto),
-            self.http.shared().clone(),
+            &self.http,
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             Arc::clone(&self.clock) as Arc<dyn droppedneedle::auth::users::stores::Clock>,
             "",

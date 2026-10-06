@@ -163,7 +163,7 @@ impl Lib {
             bundle,
             Arc::clone(&store),
             Arc::clone(&crypto),
-            http.shared().clone(),
+            &http,
             Arc::clone(&ids) as Arc<dyn IdGenerator>,
             Arc::clone(&clock) as Arc<dyn droppedneedle::auth::users::stores::Clock>,
             "",

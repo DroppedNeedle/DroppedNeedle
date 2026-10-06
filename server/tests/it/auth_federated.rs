@@ -193,6 +193,7 @@ fn oidc_router(mock: Arc<OidcMock>) -> Router {
             "token_endpoint": format!("{base}/token"),
             "userinfo_endpoint": format!("{base}/userinfo"),
             "jwks_uri": format!("{base}/jwks"),
+            "id_token_signing_alg_values_supported": ["RS256"],
         }))
     }
     async fn jwks(State(mock): State<Arc<OidcMock>>) -> Json<Value> {
@@ -237,14 +238,18 @@ fn oidc_router(mock: Arc<OidcMock>) -> Router {
         .with_state(mock)
 }
 
-/// Start a login, act as the browser at the provider, and return the
-/// response of the callback at `callback`.
-async fn oidc_callback(
-    app: &Router,
-    mock: &OidcMock,
-    callback: &str,
-) -> (StatusCode, HeaderMap, String) {
-    let (status, body, _) = call(
+/// One started login as the browser holds it.
+struct StartedLogin {
+    url: String,
+    state: String,
+    /// The `name=value` state cookie the authorize answer set.
+    cookie: String,
+}
+
+/// Start a login and play the browser at the provider: hand the nonce to
+/// the mock the way the redirect would.
+async fn start_oidc(app: &Router, mock: &OidcMock) -> StartedLogin {
+    let (status, body, headers) = call(
         app.clone(),
         "POST",
         "/api/v3/auth/oidc/authorize",
@@ -253,22 +258,49 @@ async fn oidc_callback(
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let url = body["authorize_url"].as_str().expect("authorize url");
+    let url = body["authorize_url"]
+        .as_str()
+        .expect("authorize url")
+        .to_owned();
     assert!(
         url.starts_with(&format!("{}/authorize?", mock.issuer)),
         "{url}"
     );
-    *mock.nonce.lock().expect("nonce") = url_param(url, "nonce").expect("nonce in url");
-    let state = url_param(url, "state").expect("state in url");
-    let (status, _, headers) = call(
+    *mock.nonce.lock().expect("nonce") = url_param(&url, "nonce").expect("nonce in url");
+    let set_cookie = headers["set-cookie"].to_str().expect("ascii");
+    assert!(set_cookie.contains("HttpOnly") && set_cookie.contains("SameSite=Lax"));
+    StartedLogin {
+        state: url_param(&url, "state").expect("state in url"),
+        cookie: set_cookie
+            .split(';')
+            .next()
+            .expect("cookie pair")
+            .to_owned(),
+        url,
+    }
+}
+
+/// Land on the callback at `path`, with or without the state cookie.
+async fn land(
+    app: &Router,
+    path: &str,
+    login: &StartedLogin,
+    with_cookie: bool,
+) -> (StatusCode, HeaderMap) {
+    let cookie = [("cookie", login.cookie.as_str())];
+    let headers: &[(&str, &str)] = if with_cookie { &cookie } else { &[] };
+    let (status, _, response_headers) = call(
         app.clone(),
         "GET",
-        &format!("{callback}?code={OIDC_CODE}&state={}", form_encode(&state)),
-        &[],
+        &format!(
+            "{path}?code={OIDC_CODE}&state={}",
+            form_encode(&login.state)
+        ),
+        headers,
         None,
     )
     .await;
-    (status, headers, url.to_owned())
+    (status, response_headers)
 }
 
 #[tokio::test]
@@ -308,8 +340,13 @@ async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
 
     // One app throughout: the one-time exchange codes live in its memory.
     let app = e2e.router();
-    let (status, headers, url) = oidc_callback(&app, &mock, "/api/v3/auth/oidc/callback").await;
+    let login = start_oidc(&app, &mock).await;
+    // A callback in a browser that did not start the login is refused.
+    let (status, _) = land(&app, "/api/v3/auth/oidc/callback", &login, false).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, headers) = land(&app, "/api/v3/auth/oidc/callback", &login, true).await;
     assert_eq!(status, StatusCode::FOUND);
+    let url = login.url.clone();
     let location = headers["location"].to_str().expect("ascii");
     let exchange_code = location
         .strip_prefix("/auth/callback?code=")
@@ -367,33 +404,19 @@ async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
+    // A consumed state cannot be replayed.
+    let (status, _) = land(&app, "/api/v3/auth/oidc/callback", &login, true).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
     // A token minted for another login's nonce is refused.
-    let (status, body, _) = call(
-        app.clone(),
-        "POST",
-        "/api/v3/auth/oidc/authorize",
-        &[],
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let state = url_param(body["authorize_url"].as_str().expect("url"), "state").expect("state");
+    let other = start_oidc(&app, &mock).await;
     *mock.nonce.lock().expect("nonce") = "nonce-from-another-login".to_owned();
-    let (status, _, _) = call(
-        app.clone(),
-        "GET",
-        &format!(
-            "/api/v3/auth/oidc/callback?code={OIDC_CODE}&state={}",
-            form_encode(&state)
-        ),
-        &[],
-        None,
-    )
-    .await;
+    let (status, _) = land(&app, "/api/v3/auth/oidc/callback", &other, true).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
     // Providers set up for v2 redirect to its callback path; it still works.
-    let (status, headers, _) = oidc_callback(&app, &mock, "/api/v1/auth/oidc/callback").await;
+    let legacy = start_oidc(&app, &mock).await;
+    let (status, headers) = land(&app, "/api/v1/auth/oidc/callback", &legacy, true).await;
     assert_eq!(status, StatusCode::FOUND);
     assert!(
         headers["location"]

@@ -72,6 +72,8 @@ pub struct DiscoveryDoc {
     pub userinfo_endpoint: Option<String>,
     /// Where the provider publishes its signing keys.
     pub jwks_uri: String,
+    /// `id_token` algorithms the provider lists; empty means unlisted.
+    pub id_token_algs: Vec<String>,
 }
 
 /// Tokens from the token endpoint.
@@ -245,12 +247,16 @@ where
     /// Start a login: discover, mint PKCE + state, return the browser URL.
     /// The nonce is derived from the verifier, so the state row holds
     /// everything the callback needs.
-    pub async fn build_authorize_url(&self, config: &OidcConfig) -> Result<String, FederatedError> {
+    /// Returns the URL and the state, which the route binds to the browser.
+    pub async fn build_authorize_url(
+        &self,
+        config: &OidcConfig,
+    ) -> Result<(String, String), FederatedError> {
         let doc = self.idp.discover(&require_config(config)?.issuer).await?;
         let verifier = generate_verifier()?;
         let state = generate_state()?;
         self.states.store_state(&state, &verifier).await?;
-        Ok(authorize_url(
+        let url = authorize_url(
             &doc.authorization_endpoint,
             config,
             &AuthorizeParams {
@@ -258,7 +264,8 @@ where
                 challenge: &pkce_challenge(&verifier),
                 nonce: &nonce_for(&verifier),
             },
-        ))
+        );
+        Ok((url, state))
     }
 
     /// Finish a login: consume state, exchange the code, import the user,
@@ -337,6 +344,7 @@ where
             client_secret: config.client_secret.as_deref(),
             nonce,
             now_unix: unix_now(),
+            allowed_algs: &doc.id_token_algs,
         };
         let keys = self.idp.signing_keys(&doc.jwks_uri, false).await?;
         let verified = match verify_id_token(&tokens.id_token, &keys, &rules) {
@@ -547,16 +555,23 @@ pub fn raw_claims(obj: &Map<String, Value>) -> RawClaims {
 }
 
 /// Lay userinfo over the verified token claims, field by field. Userinfo
-/// for another subject is ignored (OIDC Core 5.3.2).
+/// for another subject is ignored (OIDC Core 5.3.2). The email and its
+/// verified flag always come as a pair from one source, so a verified flag
+/// from one never vouches for an address from the other.
 fn merge_userinfo(verified: RawClaims, userinfo: RawClaims) -> RawClaims {
     if userinfo.sub != verified.sub {
         tracing::warn!("OIDC userinfo subject differs from the id_token; ignoring userinfo");
         return verified;
     }
+    let (email, email_verified) = if userinfo.email.is_some() {
+        (userinfo.email, userinfo.email_verified)
+    } else {
+        (verified.email, verified.email_verified)
+    };
     RawClaims {
         sub: verified.sub,
-        email: userinfo.email.or(verified.email),
-        email_verified: userinfo.email_verified.or(verified.email_verified),
+        email,
+        email_verified,
         name: userinfo.name.or(verified.name),
         preferred_username: userinfo.preferred_username.or(verified.preferred_username),
         nickname: userinfo.nickname.or(verified.nickname),

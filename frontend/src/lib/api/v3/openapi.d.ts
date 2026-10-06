@@ -769,7 +769,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Start an OIDC login: returns the browser URL (PKCE + state baked in). */
+        /**
+         * Start an OIDC login: returns the browser URL (PKCE, state and nonce
+         *     baked in) and sets a short-lived cookie tying the state to this browser.
+         */
         post: operations["oidc_authorize_handler"];
         delete?: never;
         options?: never;
@@ -15554,6 +15557,13 @@ export interface operations {
             };
             /** @description Invalid credentials */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Too many attempts for this client or username */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

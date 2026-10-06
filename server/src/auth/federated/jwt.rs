@@ -45,6 +45,9 @@ pub struct IdTokenRules<'a> {
     pub nonce: &'a str,
     /// Now, unix seconds.
     pub now_unix: i64,
+    /// Algorithms the provider says it signs with; empty accepts any we
+    /// support.
+    pub allowed_algs: &'a [String],
 }
 
 /// Why an `id_token` was refused. Messages carry no token material.
@@ -90,6 +93,9 @@ pub fn verify_id_token(
         .map_err(|_| IdTokenError::Malformed)?;
     let signed = &token.as_bytes()[..header_b64.len() + 1 + payload_b64.len()];
 
+    if !rules.allowed_algs.is_empty() && !rules.allowed_algs.contains(&header.alg) {
+        return Err(IdTokenError::Algorithm(header.alg));
+    }
     verify_signature(&header, signed, &signature, keys, rules.client_secret)?;
     check_claims(&claims, rules)?;
     Ok(claims)
@@ -248,13 +254,21 @@ fn check_claims(claims: &Map<String, Value>, rules: &IdTokenRules<'_>) -> Result
     if text("iss") != Some(rules.issuer) {
         return Err(IdTokenError::Claim("iss"));
     }
-    let audience_ok = match claims.get("aud") {
-        Some(Value::String(aud)) => aud == rules.client_id,
-        Some(Value::Array(auds)) => auds.iter().any(|aud| aud.as_str() == Some(rules.client_id)),
-        _ => false,
+    let (audience_ok, audiences) = match claims.get("aud") {
+        Some(Value::String(aud)) => (aud == rules.client_id, 1),
+        Some(Value::Array(auds)) => (
+            auds.iter().any(|aud| aud.as_str() == Some(rules.client_id)),
+            auds.len(),
+        ),
+        _ => (false, 0),
     };
     if !audience_ok {
         return Err(IdTokenError::Claim("aud"));
+    }
+    // A token for several audiences must name us as the party it was
+    // issued to.
+    if audiences > 1 && claims.get("azp").is_none() {
+        return Err(IdTokenError::Claim("azp"));
     }
     if let Some(azp) = claims.get("azp")
         && azp.as_str() != Some(rules.client_id)
@@ -347,6 +361,7 @@ mod tests {
             client_secret: None,
             nonce: "n-1",
             now_unix: NOW,
+            allowed_algs: &[],
         }
     }
 

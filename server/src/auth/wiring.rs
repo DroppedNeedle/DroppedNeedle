@@ -30,6 +30,7 @@ use super::session::rate_limit::RateLimiter;
 use super::users::lastfm_http::LastFmAuthHttp;
 use super::users::stores::{Clock, HibpPolicy, LastFmKeys, LastFmSwitch, SecurityPolicy};
 use super::users::{UsersDeps, admin_router, public_router, users_router};
+use crate::http_client::HttpClientFactory;
 use crate::ids::IdGenerator;
 use crate::remotes::connections::{
     ConfigServers, ConnectionResolver, ConnectionStore, CredentialCoder, SignInLinks,
@@ -224,6 +225,18 @@ pub struct AuthSetup {
     pub base_path: String,
 }
 
+/// Warn at boot when OIDC is on with a plain-http issuer on a public
+/// address: v2 accepted that, v3 refuses it at login.
+fn warn_on_public_http_oidc(store: &ConfigStore) {
+    let config = super::federated::settings::oidc_config(store);
+    if config.enabled && super::federated::transport::looks_public_http(&config.issuer) {
+        tracing::warn!(
+            issuer = %config.issuer,
+            "OIDC sign-in uses plain http on what looks like a public host; logins will be              refused unless it resolves to this machine or your local network. Switch the              provider to https."
+        );
+    }
+}
+
 /// Saves the media link a Plex or Jellyfin sign-in hands back into the
 /// per-user connections table (the same rows the remotes routes read).
 fn sign_in_links(
@@ -239,15 +252,15 @@ fn sign_in_links(
 }
 
 impl AuthSetup {
-    /// Build the production bundle. `http` is the shared outbound client
-    /// every sign-in client uses; `ids` mints row ids; `clock` drives
-    /// management-side expiry.
+    /// Build the production bundle. `http` is the outbound client factory:
+    /// the sign-in clients use its shared client, OIDC its no-redirect one;
+    /// `ids` mints row ids; `clock` drives management-side expiry.
     #[allow(clippy::too_many_arguments)]
     pub fn build(
         auth: ProdAuth,
         config_store: Arc<ConfigStore>,
         crypto: Arc<Crypto>,
-        http: reqwest::Client,
+        http: &HttpClientFactory,
         ids: Arc<dyn IdGenerator>,
         clock: Arc<dyn Clock>,
         base_path: &str,
@@ -270,7 +283,7 @@ impl AuthSetup {
         auth: ProdAuth,
         config_store: Arc<ConfigStore>,
         crypto: Arc<Crypto>,
-        http: reqwest::Client,
+        http: &HttpClientFactory,
         ids: Arc<dyn IdGenerator>,
         clock: Arc<dyn Clock>,
         base_path: &str,
@@ -279,6 +292,9 @@ impl AuthSetup {
         use super::users::hibp::{HibpScreen, PwnedPasswordsHttp};
 
         InstallIds::new(config_store.clone()).ensure();
+        warn_on_public_http_oidc(&config_store);
+        let no_redirect = http.no_redirect().clone();
+        let http = http.shared().clone();
         let plex_tv = PlexTv::with_base(http.clone(), config_store.clone(), &upstreams.plex_tv);
         let jellyfin_http = JellyfinHttp::new(http.clone(), config_store.clone());
         let users = UsersDeps {
@@ -325,7 +341,7 @@ impl AuthSetup {
         let oidc = OidcRouteState::new(
             OidcLogin::new(
                 auth.federated.clone(),
-                OidcHttp::new(http),
+                OidcHttp::new(no_redirect),
                 auth.oidc_states.clone(),
                 MemoryOidcExchangeStore::default(),
                 auth.issuer.clone(),
@@ -341,7 +357,8 @@ impl AuthSetup {
             auth.issuer.clone(),
             ids.clone(),
             base_path,
-        );
+        )
+        .with_limits(limits.clone());
         let plex = PlexRouteState::new(
             auth.federated.clone(),
             plex_tv,
@@ -380,7 +397,10 @@ impl AuthSetup {
             .with_trusted_proxies(trusted.clone())
             .with_limits(limits.clone());
         self.oidc = self.oidc.with_trusted_proxies(trusted.clone());
-        self.jellyfin = self.jellyfin.with_trusted_proxies(trusted.clone());
+        self.jellyfin = self
+            .jellyfin
+            .with_trusted_proxies(trusted.clone())
+            .with_limits(limits.clone());
         self.plex = self.plex.with_trusted_proxies(trusted);
         self.limits = limits;
         self
@@ -457,7 +477,8 @@ impl AuthSetup {
         let store = ConfigStore::open(&dir.join("config.json"), test_key()?)
             .map_err(|error| format!("test config: {error}"))?;
         let store = Arc::new(store);
-        let http = reqwest::Client::new();
+        let factory = HttpClientFactory::new().map_err(|error| format!("test http: {error}"))?;
+        let http = factory.shared().clone();
         let db = AuthDb::unwired();
         let hasher = Argon2idHasher::new();
         let plex_tv = PlexTv::new(http.clone(), store.clone());
@@ -501,7 +522,7 @@ impl AuthSetup {
         let oidc = OidcRouteState::new(
             OidcLogin::new(
                 federated.clone(),
-                OidcHttp::new(http),
+                OidcHttp::new(factory.no_redirect().clone()),
                 SqliteOidcStateStore::new(&db),
                 MemoryOidcExchangeStore::default(),
                 issuer.clone(),

@@ -92,19 +92,32 @@ pub fn oidc_config(store: &ConfigStore) -> OidcConfig {
     }
 }
 
-/// Install id used when none is stored (matches the remotes fallback).
-const FALLBACK_DEVICE_ID: &str = "droppedneedle";
-
 /// The stable ids this install presents to Plex and Jellyfin.
 #[derive(Clone)]
 pub struct InstallIds {
     store: Arc<ConfigStore>,
+    /// Used only when no id could be stored: random per process, never a
+    /// value shared with other installs.
+    fallback: Arc<str>,
 }
 
 impl InstallIds {
     /// Read ids from the shared store.
     pub fn new(store: Arc<ConfigStore>) -> Self {
-        Self { store }
+        Self {
+            store,
+            fallback: uuid::Uuid::new_v4().to_string().into(),
+        }
+    }
+
+    fn stored_or_fallback(&self, pick: impl FnOnce(InternalState) -> Option<String>) -> String {
+        match self.store.get::<InternalState>().ok().and_then(pick) {
+            Some(id) => id,
+            None => {
+                tracing::warn!("no install id is stored; using a temporary one until restart");
+                self.fallback.to_string()
+            }
+        }
     }
 
     /// Create any missing id. Called once at boot so request paths only
@@ -133,19 +146,11 @@ impl InstallIds {
 
     /// `X-Plex-Client-Identifier` for plex.tv calls.
     pub fn plex_client_id(&self) -> String {
-        self.store
-            .get::<InternalState>()
-            .ok()
-            .and_then(|internal| internal.plex_client_id)
-            .unwrap_or_else(|| FALLBACK_DEVICE_ID.to_owned())
+        self.stored_or_fallback(|internal| internal.plex_client_id)
     }
 
     /// `DeviceId` for Jellyfin calls.
     pub fn jellyfin_device_id(&self) -> String {
-        self.store
-            .get::<InternalState>()
-            .ok()
-            .and_then(|internal| internal.droppedneedle_device_id)
-            .unwrap_or_else(|| FALLBACK_DEVICE_ID.to_owned())
+        self.stored_or_fallback(|internal| internal.droppedneedle_device_id)
     }
 }

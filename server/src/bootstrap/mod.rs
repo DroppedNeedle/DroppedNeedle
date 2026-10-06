@@ -119,7 +119,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         auth_bundle,
         config_store.clone(),
         crypto.clone(),
-        http.shared().clone(),
+        &http,
         ids.clone(),
         clock,
         &config.base_path,

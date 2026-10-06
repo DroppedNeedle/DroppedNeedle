@@ -1150,6 +1150,9 @@
           "401": {
             "description": "Invalid credentials"
           },
+          "429": {
+            "description": "Too many attempts for this client or username"
+          },
           "503": {
             "description": "Jellyfin unavailable"
           }
@@ -1243,7 +1246,7 @@
         "tags": [
           "crate::auth::routes::federated"
         ],
-        "summary": "Start an OIDC login: returns the browser URL (PKCE + state baked in).",
+        "summary": "Start an OIDC login: returns the browser URL (PKCE, state and nonce\nbaked in) and sets a short-lived cookie tying the state to this browser.",
         "operationId": "oidc_authorize_handler",
         "responses": {
           "200": {

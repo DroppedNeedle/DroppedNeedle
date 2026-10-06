@@ -220,6 +220,21 @@ pub async fn find_or_create_federated_user<S: FederatedUserStore>(
                             FederatedError::Authentication("Linked account not found".to_owned())
                         });
                 }
+                // Or an account with this verified email appeared meanwhile:
+                // link to it, as the first lookup would have.
+                if let Some(email) = email
+                    && let Some(user) = store.get_user_by_email(email).await?
+                {
+                    store
+                        .create_provider(
+                            &user.id,
+                            provider,
+                            &profile.provider_uid,
+                            &profile.token_json,
+                        )
+                        .await?;
+                    return Ok(user);
+                }
             }
             Err(other) => return Err(other),
         }

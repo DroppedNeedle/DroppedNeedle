@@ -20,6 +20,9 @@ pub struct DiscoveryWire {
     pub userinfo_endpoint: Option<String>,
     /// The provider's signing keys.
     pub jwks_uri: String,
+    /// Algorithms the provider signs `id_token`s with; empty when unlisted.
+    #[serde(default)]
+    pub id_token_signing_alg_values_supported: Vec<String>,
 }
 
 /// Token endpoint answer.

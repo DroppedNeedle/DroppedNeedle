@@ -769,6 +769,11 @@ impl VerifyProbes for LiveProbes {
             if issuer.is_empty() {
                 return ProbeVerdict::failed("Issuer URL is required.");
             }
+            // Same transport rule the login applies, so Test fails early.
+            if let Err(reason) = crate::auth::federated::transport::check_provider_url(issuer).await
+            {
+                return ProbeVerdict::failed(reason);
+            }
             let url = format!(
                 "{}{}",
                 issuer.trim_end_matches('/'),

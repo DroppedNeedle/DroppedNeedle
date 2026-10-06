@@ -42,6 +42,7 @@ pub mod plex;
 pub mod plex_http;
 pub mod plex_models;
 pub mod settings;
+pub mod transport;
 pub mod users;
 
 use thiserror::Error;

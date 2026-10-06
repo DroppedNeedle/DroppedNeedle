@@ -16,7 +16,7 @@ use crate::auth::federated::FederatedError;
 use crate::auth::federated::SessionIssuer;
 use crate::auth::federated::jellyfin_login::{JellyfinConnectionLink, JellyfinIdp, JellyfinLogin};
 use crate::auth::federated::oidc::{
-    OidcConfig, OidcExchangeStore, OidcIdp, OidcLogin, OidcStateStore,
+    OidcConfig, OidcExchangeStore, OidcIdp, OidcLogin, OidcStateStore, STATE_TTL_SECS,
 };
 use crate::auth::federated::plex::{
     PinClaim, PlexConnectionLink, PlexJourney, PlexPinClient, PlexPoll, PlexPurpose,
@@ -26,6 +26,8 @@ use crate::auth::federated::users::FederatedUserStore;
 use crate::auth::routes::native::PeerAddr;
 use crate::auth::session::cookies;
 use crate::auth::session::middleware::{CurrentSession, TrustedProxies};
+use crate::auth::session::rate_limit::{LOGIN_CLASS, RateLimiter, rate_limited_response};
+use crate::auth::session::tokens::{constant_time_eq, hash_token};
 use crate::auth::users::handlers::ValidJson;
 use crate::ids::IdGenerator;
 use axum::{
@@ -187,7 +189,39 @@ where
         .with_state(state)
 }
 
-/// Start an OIDC login: returns the browser URL (PKCE + state baked in).
+/// Cookie binding a pending OIDC login to the browser that started it. It
+/// holds a hash of the state, so the callback only completes in the
+/// browser that asked for the login (login CSRF).
+pub const OIDC_STATE_COOKIE: &str = "droppedneedle_oidc_state";
+
+/// One `Set-Cookie` value for the state cookie. The path covers both the
+/// v3 callback and the v2 one kept for migrated providers.
+fn oidc_state_cookie(base_path: &str, value: &str, max_age: u64, secure: bool) -> String {
+    let mut cookie = format!(
+        "{OIDC_STATE_COOKIE}={value}; Path={}/api; Max-Age={max_age}; HttpOnly; SameSite=Lax",
+        base_path.trim_end_matches('/'),
+    );
+    if secure {
+        cookie.push_str("; Secure");
+    }
+    cookie
+}
+
+/// One cookie's value from the request.
+fn read_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get_all(axum::http::header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|cookies| cookies.split(';'))
+        .find_map(|pair| {
+            let (key, value) = pair.split_once('=')?;
+            (key.trim() == name).then(|| value.trim().to_owned())
+        })
+}
+
+/// Start an OIDC login: returns the browser URL (PKCE, state and nonce
+/// baked in) and sets a short-lived cookie tying the state to this browser.
 #[utoipa::path(
     post,
     path = "/api/v3/auth/oidc/authorize",
@@ -198,7 +232,10 @@ where
 )]
 pub async fn oidc_authorize_handler<S, I, T, E, N, F>(
     State(state): State<OidcRouteState<S, I, T, E, N, F>>,
-) -> Result<Json<OidcAuthorizeBody>, AuthRouteError>
+    uri: Uri,
+    headers: HeaderMap,
+    peer: PeerAddr,
+) -> Result<Response, AuthRouteError>
 where
     S: FederatedUserStore,
     I: OidcIdp,
@@ -209,7 +246,25 @@ where
 {
     let config = state.config.current().await;
     match state.login.build_authorize_url(&config).await {
-        Ok(url) => Ok(Json(OidcAuthorizeBody { authorize_url: url })),
+        Ok((url, login_state)) => {
+            let secure = cookies::is_secure_trusted(
+                uri.scheme_str().unwrap_or("http"),
+                &headers,
+                state.trusted_proxies.is_trusted(peer.0),
+            );
+            let mut response = Json(OidcAuthorizeBody { authorize_url: url }).into_response();
+            cookies::push_set_cookie(
+                response.headers_mut(),
+                &oidc_state_cookie(
+                    &state.base_path,
+                    &hash_token(&login_state),
+                    STATE_TTL_SECS,
+                    secure,
+                ),
+            );
+            insert_no_store(response.headers_mut());
+            Ok(response)
+        }
         Err(error) => Err(federated_unavailable(&error, state.ids.as_ref())),
     }
 }
@@ -243,6 +298,13 @@ where
     N: SessionIssuer,
     F: OidcConfigSource,
 {
+    // The callback must land in the browser that started this login.
+    let bound = read_cookie(&headers, OIDC_STATE_COOKIE)
+        .is_some_and(|cookie| constant_time_eq(&cookie, &hash_token(&query.state)));
+    if !bound {
+        tracing::debug!("oidc callback without the matching state cookie");
+        return Err(AuthRouteError::auth_failed(OIDC_FAILED));
+    }
     let config = state.config.current().await;
     let user_agent = user_agent_of(&headers);
     match state
@@ -261,6 +323,10 @@ where
             let mut response = StatusCode::FOUND.into_response();
             let response_headers = response.headers_mut();
             response_headers.insert(axum::http::header::LOCATION, value);
+            cookies::push_set_cookie(
+                response_headers,
+                &oidc_state_cookie(&state.base_path, "", 0, false),
+            );
             insert_no_store(response_headers);
             Ok(response)
         }
@@ -337,6 +403,9 @@ pub struct JellyfinRouteState<S, I, L, N> {
     /// Proxies trusted to set `X-Forwarded-Proto` for the cookie `Secure`
     /// flag; loopback by default.
     pub trusted_proxies: TrustedProxies,
+    /// Request limiter; each login also takes a per-username token, like
+    /// local login, so one Jellyfin account cannot be guessed at full rate.
+    pub limits: Arc<RateLimiter>,
 }
 
 impl<S, I, L, N> JellyfinRouteState<S, I, L, N>
@@ -360,12 +429,19 @@ where
             ids,
             base_path: base_path.to_owned(),
             trusted_proxies: TrustedProxies::default(),
+            limits: Arc::new(RateLimiter::new()),
         }
     }
 
     /// Trust the given proxies for the forwarded proto.
     pub fn with_trusted_proxies(mut self, trusted: TrustedProxies) -> Self {
         self.trusted_proxies = trusted;
+        self
+    }
+
+    /// Share the app's request limiter (per-username login budget).
+    pub fn with_limits(mut self, limits: Arc<RateLimiter>) -> Self {
+        self.limits = limits;
         self
     }
 }
@@ -393,6 +469,7 @@ where
     responses(
         (status = 200, description = "Authenticated user; token only in Bearer mode"),
         (status = 401, description = "Invalid credentials"),
+        (status = 429, description = "Too many attempts for this client or username"),
         (status = 503, description = "Jellyfin unavailable")
     )
 )]
@@ -409,6 +486,11 @@ where
     L: JellyfinConnectionLink,
     N: SessionIssuer,
 {
+    let username_key = format!("jellyfin-username:{}", body.username.trim().to_lowercase());
+    let budget = state.limits.check(LOGIN_CLASS, &username_key);
+    if !budget.allowed {
+        return Ok(rate_limited_response(LOGIN_CLASS, budget.retry_after_secs));
+    }
     let user_agent = user_agent_of(&headers);
     match state
         .login
