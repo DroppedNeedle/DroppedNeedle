@@ -397,12 +397,14 @@ pub struct ObservedRelease {
     pub first_release_date: Option<String>,
     /// MusicBrainz primary type (Album, Single, EP, ...).
     pub primary_type: Option<String>,
+    /// MusicBrainz secondary types (Live, Compilation, ...).
+    pub secondary_types: Vec<String>,
 }
 
 /// Follow-poll provider seam: one artist's release-group page.
 /// Async: production reads the provider page over HTTP.
 pub trait ReleasePoll: Send + Sync {
-    /// Fetch the artist's release groups, newest first.
+    /// Fetch every release group of the artist, in any order.
     fn poll_releases<'a>(
         &'a self,
         artist_mbid: &'a str,

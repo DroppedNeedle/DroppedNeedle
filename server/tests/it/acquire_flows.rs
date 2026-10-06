@@ -27,8 +27,8 @@ use droppedneedle::acquire::flows::{
         SystemClock, VerifyVerdict,
     },
     stores::{
-        AdminDirectory, FollowCursor, FollowStore, LibraryPresence, QuarantineStore, UpgradeItem,
-        UpgradePolicy, UpgradeWorklist,
+        AdminDirectory, FollowStore, LibraryPresence, QuarantineStore, UpgradeItem, UpgradePolicy,
+        UpgradeWorklist,
     },
 };
 use droppedneedle::acquire::requests::{
@@ -37,6 +37,7 @@ use droppedneedle::acquire::requests::{
     sqlite::{RequestStore, WantedStore},
 };
 use droppedneedle::db::{DbConfig, DbRuntime, JobState, open_runtime};
+use droppedneedle::runtime_config::sections::UserPreferences;
 
 const NOW: i64 = 1_700_000_000;
 /// Scratch directory, removed when the test ends.
@@ -229,67 +230,91 @@ async fn status_sync_maps_and_stamps() {
     assert_eq!(ticks.of_kind("request_fulfilled").len(), 1);
 }
 
-// The follow poll baselines first, then emits only complete dated
-// releases; held future releases persist across store instances.
+// The follow poll baselines first, then adds new releases to the feed and
+// queues one download for the first approved auto-download follower;
+// future releases are held, owned and filtered ones never appear.
 #[tokio::test]
 async fn follow_poll_baselines_then_emits() {
     let db = AcquireDb::scratch().unwrap();
+    db.write("seed follows", |tx| {
+        tx.execute_batch(
+            "INSERT INTO auth_users (id, display_name, role, created_at) VALUES \
+               ('user-1', 'Admin', 'admin', '2024-01-01'), \
+               ('user-2', 'Pending', 'user', '2024-01-01'); \
+             INSERT INTO user_followed_artists (user_id, artist_mbid, artist_mbid_lower, \
+               artist_name, auto_download, followed_at, updated_at) VALUES \
+               ('user-2', 'Artist-1', 'artist-1', 'The Band', 1, 1, 1), \
+               ('user-1', 'Artist-1', 'artist-1', 'The Band', 1, 1, 1);",
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
     let follows = FollowStore::new(db.clone());
-    follows
-        .upsert(FollowCursor {
-            artist_mbid: "artist-1".to_owned(),
-            baselined: false,
-            cursor_date: None,
-            known: Default::default(),
-            next_poll_at: NOW,
-            followers: vec!["user-1".to_owned(), "user-2".to_owned()],
-            pending: Vec::new(),
-        })
-        .await
-        .unwrap();
-    let release = |rg: &str, date: &str, kind: &str| ObservedRelease {
+    let release = |rg: &str, date: &str, kind: &str, secondary: &[&str]| ObservedRelease {
         rg_mbid: rg.to_owned(),
         title: rg.to_owned(),
         first_release_date: Some(date.to_owned()),
         primary_type: Some(kind.to_owned()),
+        secondary_types: secondary.iter().map(|value| value.to_string()).collect(),
     };
     let poll = Arc::new(ScriptedPoll::new());
     poll.set(
-        "artist-1",
-        Ok(vec![release("rg-old", "2020-01-01", "Album")]),
+        "Artist-1",
+        Ok(vec![release("rg-old", "2020-01-01", "Album", &[])]),
     );
     let downloads = Arc::new(ScriptedDownloads::new());
+    let library = Arc::new(LibraryPresence::new());
+    library.add(&["rg-owned"]);
     let deps = FollowDeps {
         follows: follows.clone(),
         poll: poll.clone(),
         downloads: downloads.clone(),
+        library,
         ticks: Arc::new(MemoryTicks::new()),
-        include_types: vec!["Album".to_owned()],
+        preferences: Arc::new(UserPreferences::default),
         today: Arc::new(|| "2024-06-01".to_owned()),
     };
     let first = follow_tick(NOW, &mut LoopState::new(), &deps).await;
     assert_eq!(first.baselined, 1);
     assert!(downloads.dispatched().is_empty());
+    let again = follow_tick(NOW + 3_600, &mut LoopState::new(), &deps).await;
+    assert_eq!(again.artists_polled, 0, "a polled artist waits a day");
 
     poll.set(
-        "artist-1",
+        "Artist-1",
         Ok(vec![
-            release("rg-old", "2020-01-01", "Album"),
-            release("rg-new", "2024-06-01", "Album"),
-            release("rg-future", "2025-01-01", "Album"),
-            release("rg-sloppy", "2024-06", "Album"),
-            release("rg-single", "2024-06-01", "Single"),
+            release("rg-old", "2020-01-01", "Album", &[]),
+            release("rg-new", "2024-06-01", "Album", &[]),
+            release("rg-future", "2025-01-01", "Single", &[]),
+            release("rg-sloppy", "2024-06", "Album", &[]),
+            release("rg-live", "2024-06-01", "Album", &["Live"]),
+            release("rg-owned", "2024-06-01", "Album", &[]),
         ]),
     );
-    let second = follow_tick(NOW + 60, &mut LoopState::new(), &deps).await;
+    let second = follow_tick(NOW + 86_400, &mut LoopState::new(), &deps).await;
     assert_eq!(
-        second.enqueued, 2,
-        "one release fanned out to both followers"
+        second.new_releases, 2,
+        "rg-new and rg-future reach the feed"
     );
-    let cursor = FollowStore::new(db).get("artist-1").await.unwrap().unwrap();
+    assert_eq!(second.enqueued, 1, "one task per release");
+    let dispatched = downloads.dispatched();
+    assert_eq!(
+        dispatched[0].user_id, "user-1",
+        "only the approved follower"
+    );
+    assert_eq!(dispatched[0].mbid, "rg-new");
+    assert_eq!(dispatched[0].artist, "The Band");
+    let cursor = follows.get("artist-1").await.unwrap().unwrap();
     assert_eq!(cursor.pending.len(), 1);
     assert_eq!(cursor.pending[0].rg_mbid, "rg-future");
-    assert!(cursor.known.contains("rg-new"));
+    let feed: Vec<String> = sqlx::query_scalar(
+        "SELECT release_group_mbid FROM new_release_feed ORDER BY release_group_mbid",
+    )
+    .fetch_all(db.pool())
+    .await
+    .unwrap();
+    assert_eq!(feed, ["rg-future", "rg-new"]);
 }
 
 // The upgrade sweep needs both gates and an admin, and honours its cap.

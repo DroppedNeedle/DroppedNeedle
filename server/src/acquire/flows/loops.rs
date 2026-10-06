@@ -22,29 +22,37 @@ use crate::db::{DurableWorkWakeups, JobKind, JobState, WriteLane};
 
 use super::seams::{
     CandidateSearch, Clock, DispatchKind, DispatchRequest, DownloadDispatch, FlowEvent,
-    ReleasePoll, TickSink,
+    ObservedRelease, ReleasePoll, TickSink,
 };
 use super::stores::{
-    AdminDirectory, FollowCursor, FollowStore, LibraryPresence, PendingRelease, UpgradePolicy,
-    UpgradeWorklist,
+    AdminDirectory, FeedRelease, FollowCursor, FollowStore, LibraryPresence, PendingRelease,
+    UpgradePolicy, UpgradeWorklist,
 };
 use crate::acquire::requests::error::RequestsError;
 use crate::acquire::requests::ledger::{RequestRecord, WATCH_WATCHING, WantedWatch};
 use crate::acquire::requests::models::RequestKind;
 use crate::acquire::requests::sqlite::{RequestStore, WantedStore};
 use crate::events::{AutoDownloadEnqueued, UserNotice, WantedNotice};
+use crate::reads::catalog::mapping::{should_include_release, type_set};
+use crate::runtime_config::sections::UserPreferences;
 
 /// Wanted-watcher sweep cadence in seconds (v2 `_WANTED_WATCHER_INTERVAL`).
 pub const WANTED_INTERVAL: Duration = Duration::from_secs(900);
 /// Wanted-watcher startup delay in seconds (v2 `_WANTED_WATCHER_INITIAL_DELAY`).
 pub const WANTED_INITIAL_DELAY: Duration = Duration::from_secs(240);
-/// Follow new-release poll cadence in seconds (v2 `_FOLLOW_POLL_INTERVAL`).
+/// Follow poll wake-up cadence in seconds (v2 `_FOLLOW_POLL_INTERVAL`);
+/// each wake polls only the artists that are due.
 pub const FOLLOW_INTERVAL: Duration = Duration::from_secs(60);
 /// Follow poll startup delay in seconds (v2 `_FOLLOW_POLL_INITIAL_DELAY`).
 pub const FOLLOW_INITIAL_DELAY: Duration = Duration::from_secs(300);
 /// Follow poll due-driven cap: provider work happens only for due artists,
 /// at most this many per tick (v2 `_run_due_poll`, `attempted < 10`).
 pub const FOLLOW_MAX_ARTISTS_PER_TICK: usize = 10;
+/// How long after a successful poll an artist is due again (v2
+/// `follow_success_*` triggers: a day).
+pub const FOLLOW_ARTIST_REPOLL: Duration = Duration::from_secs(86_400);
+/// How long after a failed poll an artist is tried again.
+pub const FOLLOW_ARTIST_RETRY: Duration = Duration::from_secs(3_600);
 /// Upgrade-scan startup delay in seconds (v2 `scan_for_upgrades_periodically`).
 pub const UPGRADE_INITIAL_DELAY: Duration = Duration::from_secs(900);
 /// Upgrade-scan default cadence in hours (v2 `interval_hours = 12`).
@@ -678,9 +686,9 @@ pub struct FollowSummary {
     pub artists_polled: usize,
     /// Artists baselined (first poll records, never emits).
     pub baselined: usize,
-    /// New releases observed.
+    /// New releases added to the feed.
     pub new_releases: usize,
-    /// Releases enqueued for followers.
+    /// Releases queued for download.
     pub enqueued: usize,
     /// Artists that errored (each isolated).
     pub errors: usize,
@@ -688,26 +696,31 @@ pub struct FollowSummary {
 
 /// Follow-poll dependencies.
 pub struct FollowDeps {
-    /// Cursor store.
+    /// Cursors, auto-download followers and the feed.
     pub follows: FollowStore,
     /// Release-page provider seam.
     pub poll: Arc<dyn ReleasePoll>,
     /// Download dispatch.
     pub downloads: Arc<dyn DownloadDispatch>,
+    /// Library presence: owned albums never enter the feed or download.
+    pub library: Arc<LibraryPresence>,
     /// Durable ticks.
     pub ticks: Arc<dyn TickSink>,
-    /// Accepted primary types (`Album`, `Single`, `EP`, ...); empty takes all.
-    pub include_types: Vec<String>,
-    /// Today provider, so tests pin the cursor date.
+    /// Release-type preferences, read once per tick.
+    pub preferences: Arc<dyn Fn() -> UserPreferences + Send + Sync>,
+    /// Today provider (`YYYY-MM-DD`, UTC), so tests pin the cursor date.
     pub today: Arc<dyn Fn() -> String + Send + Sync>,
 }
 
 /// Run one follow poll when due: poll at most
-/// [`FOLLOW_MAX_ARTISTS_PER_TICK`] due artists. A first poll (or any poll
-/// with no cursor yet) records every observed release group as a
-/// no-feed/no-task baseline; normal polls only emit complete, valid dates
-/// on or after the prior cursor, holding future matches dispatch-pending
-/// until their date (v2 `NewReleaseService` module contract).
+/// [`FOLLOW_MAX_ARTISTS_PER_TICK`] due artists, each at most once a day
+/// ([`FOLLOW_ARTIST_REPOLL`]), an hour after a failure. A first poll
+/// records every release group as a baseline and emits nothing. Later
+/// polls add to the feed the releases that are new to the artist, match
+/// the release-type preferences, are not in the library and carry a
+/// complete date on or after the prior poll. When an auto-download
+/// follower exists, those releases are queued for download once their
+/// date arrives (v2 `NewReleaseService`).
 pub async fn follow_tick(now: i64, state: &mut LoopState, deps: &FollowDeps) -> FollowSummary {
     if !state.due(now, FOLLOW_INTERVAL.as_secs() as i64) {
         return FollowSummary::default();
@@ -715,6 +728,7 @@ pub async fn follow_tick(now: i64, state: &mut LoopState, deps: &FollowDeps) -> 
     state.ran(now);
     let mut summary = FollowSummary::default();
     let today = (deps.today)();
+    let types = ReleaseTypes::from_preferences(&(deps.preferences)());
     let due = match deps
         .follows
         .list_due(now, FOLLOW_MAX_ARTISTS_PER_TICK)
@@ -729,60 +743,32 @@ pub async fn follow_tick(now: i64, state: &mut LoopState, deps: &FollowDeps) -> 
     };
     for mut cursor in due {
         summary.artists_polled += 1;
+        let mut feed = Vec::new();
         match deps.poll.poll_releases(&cursor.artist_mbid).await {
             Ok(releases) => {
-                if !cursor.baselined {
-                    cursor.known = releases
-                        .iter()
-                        .map(|row| row.rg_mbid.to_lowercase())
-                        .collect();
-                    cursor.baselined = true;
-                    cursor.cursor_date = Some(today.clone());
-                    summary.baselined += 1;
+                if cursor.baselined {
+                    let observed =
+                        observe_artist(deps, &mut cursor, &releases, &today, &types, now).await;
+                    summary.new_releases += observed.feed.len();
+                    summary.enqueued += observed.enqueued;
+                    feed = observed.feed;
                 } else {
-                    let seen = follow_new_releases(&cursor, &releases, &today, &deps.include_types);
-                    summary.new_releases += seen.emitted.len() + seen.pending.len();
-                    for release in &seen.emitted {
-                        summary.enqueued += enqueue_for_followers(
-                            deps,
-                            &cursor,
-                            &release.rg_mbid,
-                            &release.title,
-                            now,
-                        )
-                        .await;
-                        cursor.known.insert(release.rg_mbid.to_lowercase());
-                    }
-                    for held in seen.pending {
-                        if !cursor.pending.iter().any(|row| row.rg_mbid == held.rg_mbid) {
-                            cursor.pending.push(held);
-                        }
-                    }
-                    let (ready, waiting): (Vec<PendingRelease>, Vec<PendingRelease>) =
-                        cursor.pending.drain(..).partition(|row| row.date <= today);
-                    cursor.pending = waiting;
-                    for release in ready {
-                        summary.enqueued += enqueue_for_followers(
-                            deps,
-                            &cursor,
-                            &release.rg_mbid,
-                            &release.title,
-                            now,
-                        )
-                        .await;
-                        cursor.known.insert(release.rg_mbid.to_lowercase());
-                        summary.new_releases += 1;
-                    }
-                    cursor.cursor_date = Some(today.clone());
+                    cursor.baselined = true;
+                    summary.baselined += 1;
                 }
+                cursor
+                    .known
+                    .extend(releases.iter().map(|row| row.rg_mbid.to_lowercase()));
+                cursor.cursor_date = Some(today.clone());
+                cursor.next_poll_at = now + FOLLOW_ARTIST_REPOLL.as_secs() as i64;
             }
             Err(cause) => {
                 tracing::warn!(artist = %cursor.artist_mbid, %cause, "follow poll failed");
                 summary.errors += 1;
+                cursor.next_poll_at = now + FOLLOW_ARTIST_RETRY.as_secs() as i64;
             }
         }
-        cursor.next_poll_at = now + FOLLOW_INTERVAL.as_secs() as i64;
-        if let Err(error) = deps.follows.record_poll(&cursor).await {
+        if let Err(error) = deps.follows.record_poll(&cursor, &feed).await {
             tracing::warn!(artist = %cursor.artist_mbid, ?error, "follow cursor write failed");
             summary.errors += 1;
         }
@@ -790,111 +776,221 @@ pub async fn follow_tick(now: i64, state: &mut LoopState, deps: &FollowDeps) -> 
     summary
 }
 
-/// Dispatch one new release for every approved follower; answers how many
-/// dispatched. The key pins one task per (follower, release).
-async fn enqueue_for_followers(
+/// The release-type filter of the user preferences, normalised once.
+struct ReleaseTypes {
+    primary: HashSet<String>,
+    secondary: HashSet<String>,
+}
+
+impl ReleaseTypes {
+    fn from_preferences(preferences: &UserPreferences) -> Self {
+        Self {
+            primary: type_set(&preferences.primary_types),
+            secondary: type_set(&preferences.secondary_types),
+        }
+    }
+
+    fn includes(&self, row: &ObservedRelease) -> bool {
+        should_include_release(
+            row.primary_type.as_deref(),
+            &row.secondary_types,
+            Some(&self.primary),
+            Some(&self.secondary),
+            true,
+        )
+    }
+}
+
+/// What one baselined artist's poll found.
+struct Observed {
+    /// New releases for the feed.
+    feed: Vec<FeedRelease>,
+    /// Downloads queued.
+    enqueued: usize,
+}
+
+/// Find the artist's new releases, hold them for auto-download when
+/// someone wants that, and queue the held ones whose date has come.
+async fn observe_artist(
     deps: &FollowDeps,
-    cursor: &FollowCursor,
-    rg_mbid: &str,
-    title: &str,
+    cursor: &mut FollowCursor,
+    releases: &[ObservedRelease],
+    today: &str,
+    types: &ReleaseTypes,
     now: i64,
-) -> usize {
-    let mut enqueued = 0;
-    for follower in &cursor.followers {
-        let dispatch = DispatchRequest {
-            user_id: follower.clone(),
-            kind: DispatchKind::Album,
-            mbid: rg_mbid.to_owned(),
-            artist: String::new(),
-            title: title.to_owned(),
-            origin: "follow".to_owned(),
-            idempotency_key: Some(format!("follow:{follower}:{}", rg_mbid.to_lowercase())),
-        };
-        match deps.downloads.dispatch(&dispatch).await {
-            Ok(task_id) => {
-                enqueued += 1;
-                deps.ticks.emit(
-                    "follow.enqueued",
-                    &format!("follow {rg_mbid} enqueued for {follower}"),
-                    now,
-                );
-                deps.ticks.announce(FlowEvent::Notify {
-                    user_id: follower.clone(),
-                    notice: UserNotice::AutoDownloadEnqueued(AutoDownloadEnqueued {
-                        artist_mbid: cursor.artist_mbid.clone(),
-                        // The release page carries no artist name.
-                        artist_name: String::new(),
-                        release_group_mbid: rg_mbid.to_owned(),
-                        title: title.to_owned(),
-                        task_id,
-                    }),
+) -> Observed {
+    let mut fresh = Vec::new();
+    for row in fresh_releases(cursor, releases, types) {
+        if deps.library.contains(&row.rg_mbid).await {
+            continue;
+        }
+        fresh.push(row);
+    }
+    let followers = if fresh.is_empty() && cursor.pending.is_empty() {
+        Vec::new()
+    } else {
+        match deps.follows.auto_followers(&cursor.artist_mbid).await {
+            Ok(followers) => followers,
+            Err(error) => {
+                tracing::warn!(artist = %cursor.artist_mbid, ?error,
+                    "auto-download followers unreadable; holding downloads");
+                return Observed {
+                    feed: fresh.iter().map(|row| feed_row(row)).collect(),
+                    enqueued: 0,
+                };
+            }
+        }
+    };
+    // With no auto-download follower a release only reaches the feed; it is
+    // not replayed if someone turns auto-download on later (v2 rule).
+    if !followers.is_empty() {
+        for row in &fresh {
+            if !cursor
+                .pending
+                .iter()
+                .any(|held| held.rg_mbid == row.rg_mbid)
+            {
+                cursor.pending.push(PendingRelease {
+                    rg_mbid: row.rg_mbid.clone(),
+                    title: row.title.clone(),
+                    // fresh_releases only passes complete dates.
+                    date: row.first_release_date.clone().unwrap_or_default(),
                 });
             }
-            Err(cause) => {
-                tracing::warn!(rg_mbid, follower, %cause, "follow dispatch failed");
-            }
         }
     }
-    enqueued
+    let observed: HashSet<String> = releases
+        .iter()
+        .map(|row| row.rg_mbid.to_lowercase())
+        .collect();
+    let mut enqueued = 0;
+    let mut waiting = Vec::new();
+    for held in std::mem::take(&mut cursor.pending) {
+        if held.date.as_str() > today {
+            waiting.push(held);
+            continue;
+        }
+        // A release MusicBrainz no longer lists is dropped, not fetched.
+        if !observed.contains(&held.rg_mbid.to_lowercase()) {
+            continue;
+        }
+        match queue_release(deps, cursor, &followers, &held, now).await {
+            Queued::Enqueued => enqueued += 1,
+            Queued::Settled => {}
+            Queued::Retry => waiting.push(held),
+        }
+    }
+    cursor.pending = waiting;
+    Observed {
+        feed: fresh.iter().map(|row| feed_row(row)).collect(),
+        enqueued,
+    }
 }
 
-/// Releases split into those emitting now and those held pending.
-struct FollowSeen {
-    /// Complete dates on/after the cursor and not before today: emit.
-    emitted: Vec<super::seams::ObservedRelease>,
-    /// Complete future dates: hold dispatch-pending.
-    pending: Vec<PendingRelease>,
-}
-
-/// Observed page rows worth acting on: complete `YYYY-MM-DD` dates on or
-/// after the prior cursor, unknown to the inventory, within the accepted
-/// types. Malformed rows never emit (v2 `_observe_artist` guards).
-fn follow_new_releases(
+/// Page rows worth acting on: unknown to the artist's inventory, within
+/// the release-type preferences, with a complete `YYYY-MM-DD` date on or
+/// after the prior cursor. Malformed rows never emit (v2 `_observe_artist`).
+fn fresh_releases<'a>(
     cursor: &FollowCursor,
-    releases: &[super::seams::ObservedRelease],
-    today: &str,
-    include_types: &[String],
-) -> FollowSeen {
-    let mut seen = FollowSeen {
-        emitted: Vec::new(),
-        pending: Vec::new(),
+    releases: &'a [ObservedRelease],
+    types: &ReleaseTypes,
+) -> Vec<&'a ObservedRelease> {
+    releases
+        .iter()
+        .filter(|row| !cursor.known.contains(&row.rg_mbid.to_lowercase()))
+        .filter(|row| types.includes(row))
+        .filter(|row| {
+            row.first_release_date.as_deref().is_some_and(|date| {
+                is_complete_date(date)
+                    && cursor
+                        .cursor_date
+                        .as_deref()
+                        .is_none_or(|cursor| date >= cursor)
+            })
+        })
+        .collect()
+}
+
+fn feed_row(row: &ObservedRelease) -> FeedRelease {
+    FeedRelease {
+        rg_mbid: row.rg_mbid.clone(),
+        title: row.title.clone(),
+        primary_type: row.primary_type.clone(),
+        secondary_types: (!row.secondary_types.is_empty()).then(|| row.secondary_types.join(",")),
+        first_release_date: row.first_release_date.clone(),
+    }
+}
+
+/// How queueing one held release ended.
+enum Queued {
+    /// A download was queued.
+    Enqueued,
+    /// Nothing to do any more: owned, already downloading, or no follower
+    /// wants it.
+    Settled,
+    /// Dispatch failed; keep it held and try on the next poll.
+    Retry,
+}
+
+/// Queue one release for the first auto-download follower (one task per
+/// release, as in v2), unless the library has it or a download for it is
+/// already running.
+async fn queue_release(
+    deps: &FollowDeps,
+    cursor: &FollowCursor,
+    followers: &[String],
+    release: &PendingRelease,
+    now: i64,
+) -> Queued {
+    let Some(owner) = followers.first() else {
+        return Queued::Settled;
     };
-    for row in releases {
-        if cursor.known.contains(&row.rg_mbid.to_lowercase()) {
-            continue;
-        }
-        if !include_types.is_empty()
-            && row
-                .primary_type
-                .as_deref()
-                .is_none_or(|kind| !include_types.iter().any(|want| want == kind))
-        {
-            continue;
-        }
-        let Some(date) = row.first_release_date.as_deref() else {
-            continue;
-        };
-        if !is_complete_date(date) {
-            continue;
-        }
-        if cursor
-            .cursor_date
-            .as_deref()
-            .is_some_and(|cursor| date < cursor)
-        {
-            continue;
-        }
-        if date > today {
-            seen.pending.push(PendingRelease {
-                rg_mbid: row.rg_mbid.clone(),
-                title: row.title.clone(),
-                date: date.to_owned(),
-            });
-        } else {
-            seen.emitted.push(row.clone());
+    if deps.library.contains(&release.rg_mbid).await {
+        return Queued::Settled;
+    }
+    match deps.downloads.active_task_for_album(&release.rg_mbid).await {
+        Ok(Some(_)) => return Queued::Settled,
+        Ok(None) => {}
+        Err(cause) => {
+            tracing::warn!(rg_mbid = %release.rg_mbid, %cause,
+                "follow poll could not check active downloads; retrying next poll");
+            return Queued::Retry;
         }
     }
-    seen
+    let dispatch = DispatchRequest {
+        user_id: owner.clone(),
+        kind: DispatchKind::Album,
+        mbid: release.rg_mbid.clone(),
+        artist: cursor.artist_name.clone(),
+        title: release.title.clone(),
+        origin: "follow".to_owned(),
+        idempotency_key: Some(format!("follow:{}", release.rg_mbid.to_lowercase())),
+    };
+    match deps.downloads.dispatch(&dispatch).await {
+        Ok(task_id) => {
+            deps.ticks.emit(
+                "follow.enqueued",
+                &format!("follow {} enqueued for {owner}", release.rg_mbid),
+                now,
+            );
+            deps.ticks.announce(FlowEvent::Notify {
+                user_id: owner.clone(),
+                notice: UserNotice::AutoDownloadEnqueued(AutoDownloadEnqueued {
+                    artist_mbid: cursor.artist_mbid.clone(),
+                    artist_name: cursor.artist_name.clone(),
+                    release_group_mbid: release.rg_mbid.clone(),
+                    title: release.title.clone(),
+                    task_id,
+                }),
+            });
+            Queued::Enqueued
+        }
+        Err(cause) => {
+            tracing::warn!(rg_mbid = %release.rg_mbid, owner, %cause,
+                "follow dispatch failed; retrying next poll");
+            Queued::Retry
+        }
+    }
 }
 
 /// True for complete `YYYY-MM-DD` dates (v2 `_COMPLETE_DATE_RE`).

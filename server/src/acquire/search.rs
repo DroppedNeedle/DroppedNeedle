@@ -3,10 +3,10 @@
 //! [`FanoutSearch`] is the single [`CandidateSearch`](super::flows::seams::CandidateSearch)
 //! implementation: slskd plus the active Usenet side (native indexers or
 //! Prowlarr, per the `usenet_search_backend` section), each isolated so one
-//! erroring source never fails the fan-out. [`EmptyPoll`] stands in for the
-//! follow-poll provider page until the provider-backed poll lands.
+//! erroring source never fails the fan-out. [`MusicBrainzReleasePoll`] reads a
+//! followed artist's release groups for the follow poll.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
@@ -15,6 +15,12 @@ use super::flows::seams::{Candidate, CandidateSearch, ObservedRelease, ReleasePo
 use super::slskd::{ReqwestSlskdHttp, SlskdRepository};
 use super::usenet::newznab::NewznabIndexer;
 use super::usenet::prowlarr::ProwlarrIndexer;
+use crate::providers::RequestPriority;
+use crate::providers::adapters::HealthSink;
+use crate::providers::degradation::DegradationSink;
+use crate::providers::musicbrainz::{
+    Criticality, MbPacing, MbTransport, MusicBrainzClient, ReqwestMbTransport,
+};
 use crate::runtime_config::sections::{UsenetBackend, UsenetBackendSetting};
 
 /// Candidates returned per search, at most. The wanted loop only needs to
@@ -123,24 +129,117 @@ impl CandidateSearch for FanoutSearch {
     }
 }
 
-/// Follow-poll provider page that answers empty everywhere. The follow loop
-/// still runs its cadence (baselines record, cursors advance) but never
-/// observes a release until the MusicBrainz-backed poll lands.
-#[derive(Debug, Default)]
-pub struct EmptyPoll;
+/// Release groups read per page (the MusicBrainz browse maximum).
+const RELEASE_PAGE: u32 = 100;
+/// Pages read per artist at most: 1,000 release groups covers all but a
+/// handful of artists, and bounds one poll's provider work.
+const MAX_RELEASE_PAGES: u32 = 10;
 
-impl EmptyPoll {
-    /// Empty poller.
+/// Slot boot puts the live release poll into (it needs the provider
+/// limiter, which exists only after acquisition is built).
+pub type ReleasePollSlot = Arc<OnceLock<Arc<dyn ReleasePoll>>>;
+
+/// The follow poll's provider page, read through [`ReleasePollSlot`].
+/// Until boot attaches the live poll every poll fails, so no artist is
+/// baselined against an empty page.
+#[derive(Default)]
+pub struct SlotPoll {
+    slot: ReleasePollSlot,
+}
+
+impl SlotPoll {
+    /// Poll over an empty slot.
     pub fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    /// The slot boot fills.
+    pub fn slot(&self) -> &ReleasePollSlot {
+        &self.slot
     }
 }
 
-impl ReleasePoll for EmptyPoll {
+impl ReleasePoll for SlotPoll {
     fn poll_releases<'a>(
         &'a self,
-        _artist_mbid: &'a str,
+        artist_mbid: &'a str,
     ) -> BoxFuture<'a, Result<Vec<ObservedRelease>, String>> {
-        Box::pin(async move { Ok(Vec::new()) })
+        match self.slot.get() {
+            Some(poll) => poll.poll_releases(artist_mbid),
+            None => Box::pin(async { Err("MusicBrainz is not attached yet".to_owned()) }),
+        }
     }
+}
+
+/// The artist's release groups from the MusicBrainz browse endpoint,
+/// every page, at background priority on the shared limiter (v2
+/// `get_artist_release_groups_with_context`, `BACKGROUND_SYNC`). The
+/// browse list is complete, so a release cannot hide behind search
+/// ranking. A provider outage is an error, never an empty page.
+pub struct MusicBrainzReleasePoll<T: MbTransport, S: DegradationSink> {
+    client: MusicBrainzClient<T, S>,
+}
+
+impl<T: MbTransport, S: DegradationSink> MusicBrainzReleasePoll<T, S> {
+    /// Poll over one client (callers set background priority on it).
+    pub fn new(client: MusicBrainzClient<T, S>) -> Self {
+        Self { client }
+    }
+}
+
+impl<T: MbTransport, S: DegradationSink> ReleasePoll for MusicBrainzReleasePoll<T, S> {
+    fn poll_releases<'a>(
+        &'a self,
+        artist_mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<ObservedRelease>, String>> {
+        Box::pin(async move {
+            let mut out = Vec::new();
+            for page in 0..MAX_RELEASE_PAGES {
+                let offset = page * RELEASE_PAGE;
+                let found = self
+                    .client
+                    .browse_artist_release_groups(
+                        artist_mbid,
+                        RELEASE_PAGE,
+                        offset,
+                        Criticality::IdentityCritical,
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
+                let read = found.items.len();
+                out.extend(found.items.into_iter().map(|group| ObservedRelease {
+                    rg_mbid: group.id,
+                    title: group.title.unwrap_or_default(),
+                    first_release_date: group.first_release_date,
+                    primary_type: group.primary_type,
+                    secondary_types: group.secondary_types,
+                }));
+                if read == 0 || u64::from(offset) + read as u64 >= found.count {
+                    return Ok(out);
+                }
+            }
+            tracing::debug!(artist_mbid, "follow poll read the page cap for this artist");
+            Ok(out)
+        })
+    }
+}
+
+/// The production poll: background priority on the shared limiter, the
+/// configured MusicBrainz source read per request, failures counted
+/// toward system health.
+pub fn live_release_poll(
+    http: &crate::http_client::HttpClientFactory,
+    providers: Arc<crate::providers::Providers>,
+    source: crate::providers::musicbrainz::SourceFn,
+) -> MusicBrainzReleasePoll<ReqwestMbTransport, HealthSink> {
+    let health = HealthSink::new(&providers);
+    MusicBrainzReleasePoll::new(
+        MusicBrainzClient::official(
+            ReqwestMbTransport::new(http.no_redirect().clone()),
+            MbPacing::new(providers),
+        )
+        .with_source_fn(source)
+        .with_priority(RequestPriority::BackgroundSync)
+        .with_sink(health),
+    )
 }

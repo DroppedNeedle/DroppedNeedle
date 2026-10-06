@@ -56,7 +56,7 @@ use super::probes::{LiveProbes, ProbeCache, ProbeInputs, refresh_probes, seed_fr
 use super::requests::quota::{QuotaLedger, QuotaPolicy};
 use super::requests::sqlite::{RequestStore, WantedStore};
 use super::requests::state::RequestsState;
-use super::search::{EmptyPoll, FanoutSearch};
+use super::search::{FanoutSearch, ReleasePollSlot, SlotPoll};
 use super::settings::{
     ApprovalSeedBridge, CollectionsFollowBridge, ConfigLidarrSettings, ConfigSpotifySettings,
     FollowDecisionBridge, RequestsApprovalBridge, RequestsPendingSource,
@@ -85,7 +85,8 @@ use crate::runtime_config::secret_sections::{
     ProwlarrConnection, SecretSection, SlskdConnection,
 };
 use crate::runtime_config::sections::{
-    DownloadPolicy, FreeMusic, Section, SourcePriority, UsenetBackendSetting, WantedWatcher,
+    DownloadPolicy, FreeMusic, Section, SourcePriority, UsenetBackendSetting, UserPreferences,
+    WantedWatcher,
 };
 
 /// Spotify API bases (v2 `spotify_client.py`).
@@ -97,10 +98,6 @@ const PROBE_INTERVAL: Duration = Duration::from_secs(300);
 
 /// Registry name for the probe refresh loop.
 const PROBE_JOB: &str = "acquire-probe-refresh";
-
-/// Follow-poll accepted primary types (v2 user-preference defaults, in
-/// MusicBrainz capitalization).
-const FOLLOW_INCLUDE_TYPES: &[&str] = &["Album", "Single", "EP"];
 
 /// Clamp a config integer to a non-negative `u32` (0 = unlimited).
 fn clamp_u32(value: i64) -> u32 {
@@ -424,6 +421,8 @@ pub struct FlowsBundle {
     pub wanted_deps: Arc<WantedDeps>,
     /// Follow-poll deps.
     pub follow_deps: Arc<FollowDeps>,
+    /// Where boot attaches the follow poll's MusicBrainz reader.
+    pub release_poll: ReleasePollSlot,
     /// Upgrade-sweep deps.
     pub sweep_deps: Arc<SweepDeps>,
     /// Status-sync deps.
@@ -574,6 +573,7 @@ fn core(
     search: Arc<dyn CandidateSearch>,
     wanted_settings: Arc<dyn Fn() -> WantedSettings + Send + Sync>,
     upgrade_policy: Arc<dyn Fn() -> UpgradePolicy + Send + Sync>,
+    preferences: Arc<dyn Fn() -> UserPreferences + Send + Sync>,
     collections: &mut CollectionsState,
     plugins: PluginSlot,
     events: EventSink,
@@ -605,6 +605,7 @@ fn core(
         dispatch.clone(),
         wanted_settings,
         upgrade_policy,
+        preferences,
         ticks,
     ));
     Core {
@@ -681,6 +682,10 @@ impl AcquireSetup {
             search,
             wanted_settings,
             upgrade_policy,
+            {
+                let preferences_store = config_store.clone();
+                Arc::new(move || plain::<UserPreferences>(&preferences_store))
+            },
             collections,
             clients.plugins().clone(),
             events.clone(),
@@ -861,6 +866,16 @@ impl AcquireSetup {
         self
     }
 
+    /// Let the follow poll read followed artists' releases from
+    /// MusicBrainz. Boot calls this once with the live poll; until then
+    /// the follow poll records each attempt as failed and retries later.
+    pub fn with_release_poll(self, poll: Arc<dyn super::flows::seams::ReleasePoll>) -> Self {
+        if self.flows.release_poll.set(poll).is_err() {
+            tracing::warn!("follow release poll was already attached to acquisition");
+        }
+        self
+    }
+
     /// Let enabled plugins act as download sources and feed usenet. Boot
     /// calls this once with the plugin host.
     pub fn with_plugins(self, host: Arc<crate::plugins::host::PluginHost>) -> Self {
@@ -919,6 +934,7 @@ impl AcquireSetup {
             }),
             Arc::new(WantedSettings::default),
             Arc::new(UpgradePolicy::default),
+            Arc::new(UserPreferences::default),
             collections,
             clients.plugins().clone(),
             events.clone(),
@@ -1297,6 +1313,7 @@ fn flows_bundle(
     dispatch: Arc<UnifiedDispatch>,
     wanted_settings: Arc<dyn Fn() -> WantedSettings + Send + Sync>,
     upgrade_policy: Arc<dyn Fn() -> UpgradePolicy + Send + Sync>,
+    preferences: Arc<dyn Fn() -> UserPreferences + Send + Sync>,
     ticks: Arc<dyn TickSink>,
 ) -> FlowsBundle {
     let watches = requests.wanted.clone();
@@ -1317,15 +1334,15 @@ fn flows_bundle(
         library: library.clone(),
         ticks: ticks.clone(),
     });
+    let poll = SlotPoll::new();
+    let release_poll = poll.slot().clone();
     let follow_deps = Arc::new(FollowDeps {
         follows: follows.clone(),
-        poll: Arc::new(EmptyPoll::new()),
+        poll: Arc::new(poll),
         downloads: dispatch.clone(),
+        library: library.clone(),
         ticks: ticks.clone(),
-        include_types: FOLLOW_INCLUDE_TYPES
-            .iter()
-            .map(|kind| kind.to_string())
-            .collect(),
+        preferences,
         today: Arc::new(|| {
             // Days since epoch to a UTC calendar date.
             let days = SystemTime::now()
@@ -1361,6 +1378,7 @@ fn flows_bundle(
         ops,
         wanted_deps,
         follow_deps,
+        release_poll,
         sweep_deps,
         sync_deps,
     }

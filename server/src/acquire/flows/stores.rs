@@ -1,6 +1,7 @@
 //! State behind the acquisition flows.
 //!
-//! Follow-poll cursors, the upgrade worklist and drop-import quarantine
+//! Follow-poll cursors (keyed on the artists in `user_followed_artists`),
+//! the upgrade worklist and drop-import quarantine
 //! entries live in SQLite (migration 0007 plus `artist_known_releases`),
 //! read through the pool and written through the writer lane. The request
 //! ledger and the wanted watches are the requests module's durable stores,
@@ -37,22 +38,23 @@ fn read_failure(operation: &'static str, error: sqlx::Error) -> StoreFailure {
     lane_failure(operation, map_sqlx_busy(operation, error))
 }
 
-/// One followed artist's poll cursor.
+/// One followed artist's poll cursor. Every artist someone follows has
+/// one; an artist polled for the first time starts with no baseline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FollowCursor {
-    /// Artist MBID (lowercase key).
+    /// Artist MBID as first followed (the store keys on its lowercase).
     pub artist_mbid: String,
+    /// Artist name snapshot from the follow row.
+    pub artist_name: String,
     /// True once the baseline poll has run.
     pub baselined: bool,
     /// Prior successful UTC cursor date (`YYYY-MM-DD`).
     pub cursor_date: Option<String>,
-    /// Known release-group MBIDs (baseline inventory).
+    /// Release groups already seen for this artist, lowercase.
     pub known: HashSet<String>,
     /// Unix seconds when the next poll is due.
     pub next_poll_at: i64,
-    /// Approved followers auto-enqueued on new releases.
-    pub followers: Vec<String>,
-    /// Releases held for a future date (dispatch-pending).
+    /// Releases held for auto-download until their date (dispatch-pending).
     pub pending: Vec<PendingRelease>,
 }
 
@@ -67,14 +69,38 @@ pub struct PendingRelease {
     pub date: String,
 }
 
-/// Durable follow-poll cursors.
+/// One new release for the followers' feed (`new_release_feed`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeedRelease {
+    /// Release-group MBID as MusicBrainz spells it.
+    pub rg_mbid: String,
+    /// Release title.
+    pub title: String,
+    /// Primary type, when known.
+    pub primary_type: Option<String>,
+    /// Secondary types, comma separated (v2 shape), when any.
+    pub secondary_types: Option<String>,
+    /// First release date, when known.
+    pub first_release_date: Option<String>,
+}
+
+/// Durable follow-poll cursors over `user_followed_artists`.
 #[derive(Clone)]
 pub struct FollowStore {
     db: AcquireDb,
 }
 
-/// One cursor row as the pool reads it.
-type CursorRow = (String, i64, Option<String>, i64, String, String);
+/// One cursor as the pool reads it: lowercase key, MBID as followed,
+/// name, then the cursor columns (all null for a never-polled artist).
+type CursorRow = (
+    String,
+    String,
+    String,
+    Option<i64>,
+    Option<String>,
+    Option<i64>,
+    Option<String>,
+);
 
 impl FollowStore {
     /// Cursors over one database.
@@ -82,75 +108,22 @@ impl FollowStore {
         Self { db }
     }
 
-    /// Insert or replace one cursor, its known set included.
-    pub async fn upsert(&self, cursor: FollowCursor) -> Result<(), StoreFailure> {
-        let followers = serde_json::to_string(&cursor.followers).map_err(|error| StoreFailure {
-            operation: "follows.upsert",
-            cause: error.to_string(),
-        })?;
-        let pending = serde_json::to_string(&cursor.pending).map_err(|error| StoreFailure {
-            operation: "follows.upsert",
-            cause: error.to_string(),
-        })?;
-        self.db
-            .write_background("follows.upsert", move |tx| {
-                let artist = cursor.artist_mbid.to_lowercase();
-                tx.execute(
-                    "INSERT OR REPLACE INTO acquire_follow_cursors (artist_mbid_lower, \
-                     baselined, cursor_date, next_poll_at, followers, pending) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    params![
-                        artist,
-                        cursor.baselined,
-                        cursor.cursor_date,
-                        cursor.next_poll_at,
-                        followers,
-                        pending
-                    ],
-                )?;
-                tx.execute(
-                    "DELETE FROM artist_known_releases WHERE artist_mbid_lower = ?1",
-                    params![artist],
-                )?;
-                for rg in &cursor.known {
-                    tx.execute(
-                        "INSERT OR IGNORE INTO artist_known_releases \
-                         (artist_mbid_lower, rg_mbid_lower) VALUES (?1, ?2)",
-                        params![artist, rg.to_lowercase()],
-                    )?;
-                }
-                Ok(())
-            })
-            .await
-            .map_err(|error| lane_failure("follows.upsert", error))
-    }
-
-    /// One cursor, if present.
-    pub async fn get(&self, artist_mbid: &str) -> Result<Option<FollowCursor>, StoreFailure> {
-        let row: Option<CursorRow> = sqlx::query_as(
-            "SELECT artist_mbid_lower, baselined, cursor_date, next_poll_at, followers, pending \
-             FROM acquire_follow_cursors WHERE artist_mbid_lower = ?1",
-        )
-        .bind(artist_mbid.to_lowercase())
-        .fetch_optional(self.db.pool())
-        .await
-        .map_err(|error| read_failure("follows.get", error))?;
-        match row {
-            Some(row) => Ok(Some(self.hydrate(row).await?)),
-            None => Ok(None),
-        }
-    }
-
-    /// Artists due at `now`, oldest first, capped at `limit`.
+    /// Followed artists whose poll is due at `now`, never-polled first,
+    /// then oldest due, capped at `limit`. Artists nobody follows any more
+    /// drop out even when a cursor remains.
     pub async fn list_due(
         &self,
         now: i64,
         limit: usize,
     ) -> Result<Vec<FollowCursor>, StoreFailure> {
         let rows: Vec<CursorRow> = sqlx::query_as(
-            "SELECT artist_mbid_lower, baselined, cursor_date, next_poll_at, followers, pending \
-             FROM acquire_follow_cursors WHERE next_poll_at <= ?1 \
-             ORDER BY next_poll_at, artist_mbid_lower LIMIT ?2",
+            "SELECT f.artist_mbid_lower, MIN(f.artist_mbid), MIN(f.artist_name), \
+             MAX(c.baselined), MAX(c.cursor_date), MAX(c.next_poll_at), MAX(c.pending) \
+             FROM user_followed_artists f \
+             LEFT JOIN acquire_follow_cursors c ON c.artist_mbid_lower = f.artist_mbid_lower \
+             GROUP BY f.artist_mbid_lower \
+             HAVING MAX(c.next_poll_at) IS NULL OR MAX(c.next_poll_at) <= ?1 \
+             ORDER BY COALESCE(MAX(c.next_poll_at), 0), f.artist_mbid_lower LIMIT ?2",
         )
         .bind(now)
         .bind(i64::try_from(limit).unwrap_or(i64::MAX))
@@ -164,33 +137,132 @@ impl FollowStore {
         Ok(out)
     }
 
-    /// Replace one cursor after a poll.
-    pub async fn record_poll(&self, cursor: &FollowCursor) -> Result<(), StoreFailure> {
-        self.upsert(cursor.clone()).await
+    /// Users whose auto-download is live for this artist, ordered by user
+    /// id so the owner pick is stable: intent on, and either a curator
+    /// role (they approve themselves) or an approved grant.
+    pub async fn auto_followers(&self, artist_mbid: &str) -> Result<Vec<String>, StoreFailure> {
+        sqlx::query_scalar(
+            "SELECT f.user_id FROM user_followed_artists f \
+             JOIN auth_users u ON u.id = f.user_id \
+             LEFT JOIN auto_download_approvals a \
+               ON a.user_id = f.user_id AND a.artist_mbid_lower = f.artist_mbid_lower \
+             WHERE f.artist_mbid_lower = ?1 AND f.auto_download = 1 \
+               AND (u.role IN ('admin', 'trusted') OR a.state = 'approved') \
+             ORDER BY f.user_id",
+        )
+        .bind(artist_mbid.to_lowercase())
+        .fetch_all(self.db.pool())
+        .await
+        .map_err(|error| read_failure("follows.auto_followers", error))
+    }
+
+    /// Store one cursor after a poll, with its known set, and add the new
+    /// releases to the followers' feed in the same transaction. A release
+    /// already in the feed keeps its first discovery time.
+    pub async fn record_poll(
+        &self,
+        cursor: &FollowCursor,
+        feed: &[FeedRelease],
+    ) -> Result<(), StoreFailure> {
+        let pending = serde_json::to_string(&cursor.pending).map_err(|error| StoreFailure {
+            operation: "follows.record_poll",
+            cause: error.to_string(),
+        })?;
+        let cursor = cursor.clone();
+        let feed = feed.to_vec();
+        self.db
+            .write_background("follows.record_poll", move |tx| {
+                let artist = cursor.artist_mbid.to_lowercase();
+                tx.execute(
+                    "INSERT OR REPLACE INTO acquire_follow_cursors (artist_mbid_lower, \
+                     baselined, cursor_date, next_poll_at, followers, pending) \
+                     VALUES (?1, ?2, ?3, ?4, '[]', ?5)",
+                    params![
+                        artist,
+                        cursor.baselined,
+                        cursor.cursor_date,
+                        cursor.next_poll_at,
+                        pending
+                    ],
+                )?;
+                for rg in &cursor.known {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO artist_known_releases \
+                         (artist_mbid_lower, rg_mbid_lower) VALUES (?1, ?2)",
+                        params![artist, rg.to_lowercase()],
+                    )?;
+                }
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|span| span.as_secs_f64())
+                    .unwrap_or(0.0);
+                for row in &feed {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO new_release_feed (release_group_mbid_lower, \
+                         release_group_mbid, artist_mbid_lower, artist_name, title, \
+                         primary_type, secondary_types, first_release_date, discovered_at) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                        params![
+                            row.rg_mbid.to_lowercase(),
+                            row.rg_mbid,
+                            artist,
+                            cursor.artist_name,
+                            row.title,
+                            row.primary_type,
+                            row.secondary_types,
+                            row.first_release_date,
+                            now
+                        ],
+                    )?;
+                }
+                Ok(())
+            })
+            .await
+            .map_err(|error| lane_failure("follows.record_poll", error))
+    }
+
+    /// One artist's cursor, if it has been polled.
+    pub async fn get(&self, artist_mbid: &str) -> Result<Option<FollowCursor>, StoreFailure> {
+        let row: Option<CursorRow> = sqlx::query_as(
+            "SELECT c.artist_mbid_lower, c.artist_mbid_lower, '', c.baselined, c.cursor_date, \
+             c.next_poll_at, c.pending FROM acquire_follow_cursors c \
+             WHERE c.artist_mbid_lower = ?1",
+        )
+        .bind(artist_mbid.to_lowercase())
+        .fetch_optional(self.db.pool())
+        .await
+        .map_err(|error| read_failure("follows.get", error))?;
+        match row {
+            Some(row) => Ok(Some(self.hydrate(row).await?)),
+            None => Ok(None),
+        }
     }
 
     /// Decode one row and load its known set.
     async fn hydrate(&self, row: CursorRow) -> Result<FollowCursor, StoreFailure> {
-        let (artist, baselined, cursor_date, next_poll_at, followers, pending) = row;
+        let (lower, mbid, name, baselined, cursor_date, next_poll_at, pending) = row;
         let known: Vec<String> = sqlx::query_scalar(
             "SELECT rg_mbid_lower FROM artist_known_releases WHERE artist_mbid_lower = ?1",
         )
-        .bind(&artist)
+        .bind(&lower)
         .fetch_all(self.db.pool())
         .await
         .map_err(|error| read_failure("follows.known", error))?;
-        let decode = |error: serde_json::Error| StoreFailure {
-            operation: "follows.decode",
-            cause: error.to_string(),
+        let pending = match pending {
+            Some(text) => serde_json::from_str(&text).map_err(|error| StoreFailure {
+                operation: "follows.decode",
+                cause: error.to_string(),
+            })?,
+            None => Vec::new(),
         };
         Ok(FollowCursor {
-            artist_mbid: artist,
-            baselined: baselined != 0,
+            artist_mbid: mbid,
+            artist_name: name,
+            baselined: baselined.unwrap_or(0) != 0,
             cursor_date,
             known: known.into_iter().collect(),
-            next_poll_at,
-            followers: serde_json::from_str(&followers).map_err(decode)?,
-            pending: serde_json::from_str(&pending).map_err(decode)?,
+            next_poll_at: next_poll_at.unwrap_or(0),
+            pending,
         })
     }
 }
