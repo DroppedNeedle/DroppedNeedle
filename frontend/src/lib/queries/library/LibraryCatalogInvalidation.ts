@@ -9,8 +9,8 @@ import { searchStore } from '$lib/stores/search';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 
 // The cross-domain contract for catalog changes, including a landed download:
-// every key nested under these prefixes refreshes, covering both the v1 hooks
-// and the v3 hooks nested under the same parents.
+// every key nested under these prefixes refreshes (the library prefix covers
+// the catalog, membership, review and operation keys).
 export async function invalidateLibraryCatalog(): Promise<void> {
 	searchStore.clear();
 	await Promise.all([

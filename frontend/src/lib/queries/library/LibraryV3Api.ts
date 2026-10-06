@@ -81,7 +81,6 @@ export const LibraryV3Api = {
 	stats: () => v3('/api/v3/library/stats'),
 	editionPin: (albumId: string) =>
 		v3('/api/v3/library/albums/{album_id}/edition-pin', { path: { album_id: albumId } }),
-	identify: () => v3('/api/v3/library/identify'),
 	approveReview: (reviewId: string) =>
 		v3('/api/v3/library/reviews/{id}/approve', { path: { id: reviewId } }),
 	rejectReview: (reviewId: string) =>

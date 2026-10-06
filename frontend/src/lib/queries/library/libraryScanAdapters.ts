@@ -39,7 +39,8 @@ export function toScanRun(view: ScanRunView): ScanRun {
 		row_revision: 0,
 		event_revision: 0,
 		counters: view.counters,
-		phase_timings: {}
+		phase_timings: {},
+		controls_available: false
 	};
 }
 
