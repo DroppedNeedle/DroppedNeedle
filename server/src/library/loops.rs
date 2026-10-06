@@ -216,13 +216,23 @@ impl LibrarySetup {
 /// a shutdown-checked ceiling. The tick itself is shutdown-aware, so a
 /// SIGTERM landing mid-scan stops the run instead of waiting it out.
 pub(crate) async fn scan_loop(setup: LibrarySetup, mut shutdown: watch::Receiver<bool>) {
-    setup.scan_startup_recovery().await;
+    {
+        let setup = setup.clone();
+        drive_blocking(move || async move { setup.scan_startup_recovery().await }).await;
+    }
     loop {
         if *shutdown.borrow() {
             break;
         }
         let revision = setup.wakeups.revision("scan");
-        if setup.supervisor_tick_with_shutdown(&shutdown).await {
+        let tick = {
+            let (setup, shutdown) = (setup.clone(), shutdown.clone());
+            drive_blocking(
+                move || async move { setup.supervisor_tick_with_shutdown(&shutdown).await },
+            )
+            .await
+        };
+        if tick == Some(true) {
             continue;
         }
         tokio::select! {
@@ -240,9 +250,15 @@ pub(crate) async fn watcher_loop(setup: LibrarySetup, mut shutdown: watch::Recei
         }
         // A snapshot of a large tree takes a while; shutdown does not wait
         // for it.
+        let tick = {
+            let setup = setup.clone();
+            drive_blocking(move || async move { setup.watcher_tick().await })
+        };
         let action = tokio::select! {
             _ = shutdown.changed() => break,
-            action = setup.watcher_tick() => action,
+            action = tick => action.unwrap_or(WatcherAction::Idle {
+                sleep_secs: setup.watcher_settings().poll_interval_seconds,
+            }),
         };
         let sleep_secs = match action {
             WatcherAction::Idle { sleep_secs } | WatcherAction::Batching { sleep_secs } => {
@@ -263,10 +279,36 @@ pub(crate) async fn identify_loop(setup: LibrarySetup, mut shutdown: watch::Rece
         if *shutdown.borrow() {
             break;
         }
-        setup.identify_tick_with_shutdown(&shutdown).await;
+        {
+            let (setup, shutdown) = (setup.clone(), shutdown.clone());
+            drive_blocking(
+                move || async move { setup.identify_tick_with_shutdown(&shutdown).await },
+            )
+            .await;
+        }
         tokio::select! {
             _ = shutdown.changed() => break,
             _ = tokio::time::sleep(IDENTIFY_POLL) => {}
+        }
+    }
+}
+
+/// Drive one loop tick to completion on a blocking thread. The scan and
+/// identify stores are synchronous SQLite (their calls can wait out the
+/// busy timeout), so their ticks run here and never stall the async
+/// workers that serve requests. `None` when the tick panicked.
+async fn drive_blocking<F, Fut>(tick: F) -> Option<Fut::Output>
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future,
+    Fut::Output: Send + 'static,
+{
+    let handle = tokio::runtime::Handle::current();
+    match tokio::task::spawn_blocking(move || handle.block_on(tick())).await {
+        Ok(output) => Some(output),
+        Err(error) => {
+            tracing::error!(%error, "library loop tick panicked");
+            None
         }
     }
 }
