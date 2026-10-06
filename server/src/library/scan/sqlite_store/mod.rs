@@ -71,10 +71,13 @@ const TERMINAL_CHECKPOINT_RETRY: Duration = Duration::from_millis(500);
 /// One root's catalog snapshot for in-memory classify. Discovery issues
 /// hundreds of classify calls against an unchanging catalog; one bulk load
 /// replaces hundreds of random-probe `IN (...)` queries. The version ties
-/// the snapshot to the catalog mutation counter; terminal invalidation
-/// drops the snapshot so idle scans hold no catalog memory.
+/// the snapshot to this store's mutation counter, and the shared catalog
+/// revision to writes from elsewhere (a managed move commits through the
+/// publisher's own connection); terminal invalidation drops the snapshot
+/// so idle scans hold no catalog memory.
 struct CachedCatalog {
     version: u64,
+    shared_revision: i64,
     entries: HashMap<String, CatalogEntry>,
 }
 

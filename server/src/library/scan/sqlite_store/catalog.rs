@@ -187,16 +187,27 @@ impl CatalogStore for SqliteScanStore {
         // of batches against an unchanging catalog, and every commit or
         // removal bumps the version, so the snapshot is never stale.
         let version = guard.catalog_version;
-        let fresh = guard
-            .catalog_cache
-            .get(root_id)
-            .is_some_and(|cached| cached.version == version);
+        let shared_revision = match shared_catalog_revision(&guard.conn) {
+            Ok(revision) => revision,
+            Err(error) => {
+                tracing::error!(%error, "scan classify failed");
+                return HashMap::new();
+            }
+        };
+        let fresh = guard.catalog_cache.get(root_id).is_some_and(|cached| {
+            cached.version == version && cached.shared_revision == shared_revision
+        });
         if !fresh {
             match load_catalog_map(&guard.conn, root_id) {
                 Ok(entries) => {
-                    guard
-                        .catalog_cache
-                        .insert(root_id.to_owned(), CachedCatalog { version, entries });
+                    guard.catalog_cache.insert(
+                        root_id.to_owned(),
+                        CachedCatalog {
+                            version,
+                            shared_revision,
+                            entries,
+                        },
+                    );
                 }
                 Err(error) => {
                     tracing::error!(%error, "scan classify failed");
@@ -302,6 +313,15 @@ impl CatalogStore for SqliteScanStore {
         }
         verdicts
     }
+}
+
+/// The catalog revision every catalog writer bumps (0 before the first).
+fn shared_catalog_revision(conn: &Connection) -> rusqlite::Result<i64> {
+    conn.query_row(
+        "SELECT COALESCE((SELECT value FROM library_catalog_revision WHERE singleton = 1), 0)",
+        [],
+        |row| row.get(0),
+    )
 }
 
 /// Bulk catalog load backing in-memory classify: every indexed row of one
