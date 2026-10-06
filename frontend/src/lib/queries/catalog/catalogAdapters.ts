@@ -35,6 +35,24 @@ export function mergeArtistImages(
 	return merged;
 }
 
+type AutoDownloadState = NonNullable<ArtistInfoBasic['auto_download_state']>;
+const AUTO_DOWNLOAD_STATES: readonly string[] = [
+	'none',
+	'pending',
+	'approved',
+	'rejected',
+	'revoked'
+] satisfies readonly AutoDownloadState[];
+
+function isAutoDownloadState(value: string): value is AutoDownloadState {
+	return AUTO_DOWNLOAD_STATES.includes(value);
+}
+
+// The contract types the state as a plain string; an unknown value reads as none.
+function toAutoDownloadState(value: string): AutoDownloadState {
+	return isAutoDownloadState(value) ? value : 'none';
+}
+
 /** The artist header in the page's flat shape. Releases come from their own paged read. */
 export function toArtistInfoBasic(info: V3ArtistInfo): ArtistInfoBasic {
 	return {
@@ -52,7 +70,7 @@ export function toArtistInfoBasic(info: V3ArtistInfo): ArtistInfoBasic {
 		appears_in_library: info.appears_in_library,
 		followed: info.followed,
 		auto_download: info.auto_download,
-		auto_download_state: info.auto_download_state as ArtistInfoBasic['auto_download_state'],
+		auto_download_state: toAutoDownloadState(info.auto_download_state),
 		release_group_count: info.release_group_count,
 		service_status: info.service_status
 	};
