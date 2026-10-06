@@ -80,6 +80,25 @@ impl TrackReason {
         }
     }
 
+    /// The reason a source error's text starts with, if any (the text is
+    /// this reason's `Display` form).
+    pub fn in_text(text: &str) -> Option<Self> {
+        [
+            Self::AlbumLookupUnavailable,
+            Self::RecordingUnknown,
+            Self::NoAlbumForRecording,
+            Self::NoAlbumFolder,
+            Self::NoAlbumRelease,
+            Self::AlbumReleasesExhausted,
+            Self::TrackNotFound,
+        ]
+        .into_iter()
+        .find(|reason| {
+            text.strip_prefix(reason.code())
+                .is_some_and(|rest| rest.starts_with(':'))
+        })
+    }
+
     /// The reason as the manifest records it.
     pub fn record(self) -> RecordedReason {
         RecordedReason {

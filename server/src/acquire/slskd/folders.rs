@@ -18,7 +18,7 @@
 //! length to agree). For a single track, a folder holding little of the
 //! album is a lone-track share: it only ranks after every album folder.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use super::policy::{DownloadPolicy, NOT_IMPORTABLE_EXTENSIONS};
 use super::repository::SearchResult;
@@ -93,6 +93,9 @@ pub fn rank_folders(
             .push(hit);
     }
     let multi_disc = request.tracklist.iter().any(|track| track.disc_number > 1);
+    if multi_disc {
+        join_disc_folders(&mut groups, request.tracklist);
+    }
     let mut picks: Vec<FolderPick> = groups
         .into_iter()
         .filter_map(|((username, folder), files)| {
@@ -112,6 +115,62 @@ pub fn rank_folders(
             .then(a.folder.cmp(&b.folder))
     });
     picks
+}
+
+/// A peer often shares each disc of an album as its own folder
+/// (`Album (Disc 1)`, `Album (Disc 2)`). When a folder pairs tracks on only
+/// some of the release's discs, the same peer's other folders whose paired
+/// tracks sit only on the missing discs join it, so completeness counts
+/// the whole album and every disc is fetched. Folders that pair nothing,
+/// or that overlap discs already held, never join.
+fn join_disc_folders<'a>(
+    groups: &mut HashMap<(String, String), Vec<&'a SearchResult>>,
+    tracklist: &[ExpectedTrack],
+) {
+    let all: BTreeSet<i64> = tracklist.iter().map(|track| track.disc_number).collect();
+    let covered: HashMap<(String, String), BTreeSet<i64>> = groups
+        .iter()
+        .map(|(key, files)| (key.clone(), paired_discs(files, tracklist)))
+        .collect();
+    let mut keys: Vec<(String, String)> = groups.keys().cloned().collect();
+    keys.sort();
+    let mut joined: Vec<((String, String), Vec<&'a SearchResult>)> = Vec::new();
+    for key in &keys {
+        let mut have = covered[key].clone();
+        if have.is_empty() || have == all {
+            continue;
+        }
+        let mut extra: Vec<&'a SearchResult> = Vec::new();
+        for other in keys
+            .iter()
+            .filter(|other| other.0 == key.0 && *other != key)
+        {
+            let theirs = &covered[other];
+            if !theirs.is_empty() && theirs.is_disjoint(&have) {
+                have.extend(theirs.iter().copied());
+                extra.extend(groups[other].iter().copied());
+            }
+        }
+        if !extra.is_empty() {
+            joined.push((key.clone(), extra));
+        }
+    }
+    for (key, extra) in joined {
+        groups.entry(key).or_default().extend(extra);
+    }
+}
+
+/// The release discs a set of files pairs at least one track on.
+fn paired_discs(files: &[&SearchResult], tracklist: &[ExpectedTrack]) -> BTreeSet<i64> {
+    let facts: Vec<FileFacts<'_>> = files
+        .iter()
+        .filter(|hit| is_audio(&hit.extension))
+        .map(|hit| FileFacts::read(hit, true))
+        .collect();
+    assign(&facts, tracklist)
+        .keys()
+        .map(|track| tracklist[*track].disc_number)
+        .collect()
 }
 
 /// Score one folder, or `None` when it cannot serve the request.
@@ -207,27 +266,65 @@ fn is_audio(extension: &str) -> bool {
 pub fn folder_of(path: &str) -> (String, Option<u32>) {
     let parts: Vec<&str> = path.split(['/', '\\']).collect();
     let dirs = &parts[..parts.len().saturating_sub(1)];
-    match dirs.split_last() {
-        Some((last, parents)) if !parents.is_empty() => match disc_of(last) {
-            Some(disc) => (parents.join("\\"), Some(disc)),
-            None => (dirs.join("\\"), None),
-        },
-        _ => (dirs.join("\\"), None),
+    let Some((last, parents)) = dirs.split_last() else {
+        return (String::new(), None);
+    };
+    match disc_of(last) {
+        // `CD2` alone is a disc of its parent album folder.
+        Some((disc, true)) if !parents.is_empty() => (parents.join("\\"), Some(disc)),
+        // `Album (Disc 2)` is its own folder; sibling discs join at ranking.
+        Some((disc, _)) => (dirs.join("\\"), Some(disc)),
+        None => (dirs.join("\\"), None),
     }
 }
 
-/// `CD2`, `Disc 2`, `disk-2` -> 2.
-fn disc_of(name: &str) -> Option<u32> {
-    let lower = name.trim().to_ascii_lowercase();
-    let rest = ["disc", "disk", "cd"]
-        .iter()
-        .find_map(|word| lower.strip_prefix(word))?;
-    let digits: String = rest
-        .trim_start_matches([' ', '-', '_', '.'])
-        .chars()
-        .take_while(char::is_ascii_digit)
-        .collect();
-    digits.parse().ok().filter(|disc| *disc > 0)
+/// Number words a disc folder may spell out.
+const DISC_WORDS: [&str; 10] = [
+    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+];
+
+/// The disc a folder name marks, and whether the name is only that marker:
+/// `CD2`, `Disc 2`, `[CD2]`, `Disc One` are whole markers (true);
+/// `Album (Disc 2)`, `Album CD 2` carry a trailing one (false).
+fn disc_of(name: &str) -> Option<(u32, bool)> {
+    let lower = name.trim().to_lowercase();
+    for word in ["disc", "disk", "cd"] {
+        let mut end = lower.len();
+        while let Some(at) = lower[..end].rfind(word) {
+            end = at;
+            let before = &lower[..at];
+            if before.chars().last().is_some_and(char::is_alphanumeric) {
+                continue;
+            }
+            let after = lower[at + word.len()..].trim_start_matches([' ', '-', '_', '.', '#']);
+            let digits = after.chars().take_while(char::is_ascii_digit).count();
+            let (disc, rest) = if digits > 0 {
+                (
+                    after[..digits].parse::<u32>().unwrap_or(0),
+                    &after[digits..],
+                )
+            } else if let Some((index, spelled)) = DISC_WORDS
+                .iter()
+                .enumerate()
+                .find(|(_, spelled)| after.starts_with(**spelled))
+            {
+                (
+                    u32::try_from(index + 1).unwrap_or(0),
+                    &after[spelled.len()..],
+                )
+            } else {
+                continue;
+            };
+            if disc == 0 || !rest.chars().all(|ch| matches!(ch, ')' | ']' | '}' | ' ')) {
+                continue;
+            }
+            let whole = before
+                .trim_end_matches([' ', '(', '[', '{', '-', '_'])
+                .is_empty();
+            return Some((disc, whole));
+        }
+    }
+    None
 }
 
 /// What a file name says about the track it holds.
@@ -498,5 +595,44 @@ mod tests {
         assert_eq!(leading_number("203 Title", true).0, Some(2));
         assert_eq!(leading_number("10cc - Song", false).1, None);
         assert_eq!(leading_number("1999 Mix", false).1, None);
+        assert_eq!(folder_of("a\\Album\\[CD2]\\01.flac").1, Some(2));
+        assert_eq!(folder_of("a\\Album\\Disc One\\01.flac").0, "a\\Album");
+        assert_eq!(
+            folder_of("a\\Album (Disc 2)\\01.flac"),
+            ("a\\Album (Disc 2)".to_owned(), Some(2))
+        );
+        assert_eq!(folder_of("a\\Album CD 3\\01.flac").1, Some(3));
+        assert_eq!(folder_of("a\\Abcd 2\\01.flac").1, None);
+    }
+
+    #[test]
+    fn a_peers_separate_disc_folders_join_into_one_album() {
+        let mut tracklist = vec![track(1, "Alpha", 200.0), track(2, "Beta", 210.0)];
+        let mut second = vec![track(1, "Gamma", 220.0), track(2, "Delta", 230.0)];
+        for track in &mut second {
+            track.disc_number = 2;
+        }
+        tracklist.extend(second);
+        let hits = vec![
+            hit("p", "m\\Album (Disc 1)\\01 Alpha.flac", 200.0, true),
+            hit("p", "m\\Album (Disc 1)\\02 Beta.flac", 210.0, true),
+            hit("p", "m\\Album (Disc 2)\\01 Gamma.flac", 220.0, true),
+            hit("p", "m\\Album (Disc 2)\\02 Delta.flac", 230.0, true),
+            hit("q", "x\\Album\\01 Alpha.flac", 200.0, true),
+            hit("q", "x\\Album\\02 Beta.flac", 210.0, true),
+            hit("q", "x\\Album\\03 Gamma.flac", 220.0, true),
+        ];
+        let picks = rank_folders(
+            &hits,
+            RankRequest {
+                tracklist: &tracklist,
+                wanted: &[],
+                single_track: false,
+            },
+            &DownloadPolicy::default(),
+        );
+        assert_eq!(picks[0].username, "p");
+        assert_eq!(picks[0].coverage, 4, "both discs count");
+        assert_eq!(picks[0].files.len(), 4, "every disc is fetched");
     }
 }

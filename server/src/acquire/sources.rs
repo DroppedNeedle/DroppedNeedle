@@ -220,9 +220,7 @@ impl DownloadSource for SlskdSource {
             .await
             .map_err(|miss| match miss {
                 SoulseekMiss::Search(error) => slskd_error(error),
-                SoulseekMiss::Nothing(reason) => {
-                    SourceError::Rejected(format!("{reason} (task {task_id})"))
-                }
+                SoulseekMiss::Nothing(reason) => SourceError::Rejected(reason),
             })?;
         if let (Some(reason), Some(targets)) = (choice.lone_reason, self.targets.as_ref()) {
             targets.record_lone_track(&task, reason).await;
@@ -243,9 +241,9 @@ impl DownloadSource for SlskdSource {
             })
             .collect();
         if payload.is_empty() {
-            return Err(SourceError::Rejected(format!(
-                "slskd's best remaining peer has none of the missing tracks for {task_id}"
-            )));
+            return Err(SourceError::Rejected(
+                "slskd's best remaining peer has none of the missing tracks".to_owned(),
+            ));
         }
         let advertised: HashMap<&str, i64> = payload
             .iter()

@@ -46,6 +46,7 @@ use super::downloads::watchdog::{PollSample, RetryPolicy, Watchdog, WatchdogConf
 use super::landing::LandingService;
 use super::plugin_source::PluginDownloadSource;
 use super::sources::{JournalOwnership, SabnzbdSource, SlskdSource};
+use super::target::reasons::TrackReason;
 use crate::db::{DurableWorkWakeups, JobKind, JobState, WriteLane};
 
 mod landings;
@@ -668,7 +669,7 @@ impl DownloadWorker {
         }
         let handled = handled_count(&attempts, None);
         if failover_exhausted(handled, pass.config.max_failover_attempts) {
-            self.fail_unserved(task, &attempts, now).await;
+            self.fail_unserved(task, &attempts, now, None).await;
             return false;
         }
         // The key marks the window between the client add and the attempt
@@ -690,6 +691,9 @@ impl DownloadWorker {
             tracing::info!(task_id = %task.id, attempt = handled, "resuming an interrupted enqueue");
         }
         let mut every_source_refused = true;
+        // A source's reason (code, sentence, action) becomes the task's
+        // message when nothing can serve it.
+        let mut reason: Option<String> = None;
         for source in pass.ordered_sources() {
             // Each source walks its own candidate list: the index is the
             // number of attempts this source already handled.
@@ -709,8 +713,13 @@ impl DownloadWorker {
                     return false;
                 }
                 Err(error) => {
-                    if !matches!(error, SourceError::Rejected(_)) {
-                        every_source_refused = false;
+                    match &error {
+                        SourceError::Rejected(text) => {
+                            if let Some(found) = TrackReason::in_text(text) {
+                                reason = Some(found.to_string());
+                            }
+                        }
+                        _ => every_source_refused = false,
                     }
                     tracing::warn!(
                         task_id = %task.id,
@@ -724,7 +733,8 @@ impl DownloadWorker {
         if every_source_refused && !pass.sources.is_empty() {
             // Every configured source answered that it has nothing for
             // this release: the candidate lists are spent.
-            self.fail_unserved(task, &attempts, now).await;
+            self.fail_unserved(task, &attempts, now, reason.as_deref())
+                .await;
             return false;
         }
         self.backoff(&task.id, now);
@@ -734,8 +744,15 @@ impl DownloadWorker {
     /// Settle a task no source can serve any more, keeping its last
     /// attempt. Earlier landings decide how: tracks imported along the way
     /// make it partial, held files make it a failure held for review
-    /// (v2 `_settle_incomplete`), else no source could serve it.
-    async fn fail_unserved(&self, task: &TaskRow, attempts: &[Attempt], now: f64) {
+    /// (v2 `_settle_incomplete`), else the last source's reason (code,
+    /// sentence, action) or no source could serve it.
+    async fn fail_unserved(
+        &self,
+        task: &TaskRow,
+        attempts: &[Attempt],
+        now: f64,
+        reason: Option<&str>,
+    ) {
         let task_id = task.id.clone();
         let history = self
             .step("downloads.landing_history", move |store| {
@@ -753,7 +770,9 @@ impl DownloadWorker {
         } else {
             (
                 TaskStatus::Failed,
-                "no source could serve this release".to_owned(),
+                reason
+                    .unwrap_or("no source could serve this release")
+                    .to_owned(),
             )
         };
         let task_id = task.id.clone();
