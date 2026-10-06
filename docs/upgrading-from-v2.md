@@ -133,6 +133,10 @@ curl -f http://localhost:8688/health
 
 Run one v3 container per data directory, never two.
 
+If your reverse proxy has a special rule for v2's live update stream at
+`/api/v1/events/stream` (no buffering, long read timeout), move it to
+`/api/v3/events/stream`. That's where v3 serves it.
+
 Then check:
 
 - You can log in with your v2 password.

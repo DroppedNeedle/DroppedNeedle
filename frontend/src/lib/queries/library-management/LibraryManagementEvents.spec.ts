@@ -66,7 +66,7 @@ describe('createLibraryManagementEvents', () => {
 		events.start();
 		const first = FakeEventSource.instances[0];
 		expect(FakeEventSource.instances).toHaveLength(1);
-		expect(first.url).toBe('/api/v1/events/stream');
+		expect(first.url).toBe('/api/v3/events/stream');
 
 		// mount parity: the retired page stream refreshed on open, so start()
 		// refreshes directly.

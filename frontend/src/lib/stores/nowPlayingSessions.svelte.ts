@@ -115,8 +115,9 @@ export function createNowPlayingStore(mux: MuxEventStream = muxEventStream) {
 
 	function onSnapshot(event: MessageEvent): void {
 		try {
-			const data = JSON.parse(event.data) as { sessions?: NowPlayingSession[] };
-			applySnapshot(data.sessions ?? []);
+			// same entry shape as GET /now-playing: optional fields may be absent
+			const data = JSON.parse(event.data) as { sessions?: NowPlayingEntry[] };
+			applySnapshot((data.sessions ?? []).map(nowPlayingEntryToSession));
 		} catch {
 			// ignore a malformed frame; the next snapshot supersedes it
 		}

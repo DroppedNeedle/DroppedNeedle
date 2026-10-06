@@ -71,7 +71,7 @@ describe('createMuxEventStream', () => {
 		mux.connect();
 
 		expect(FakeEventSource.instances).toHaveLength(1);
-		expect(FakeEventSource.instances[0].url).toBe('/api/v1/events/stream');
+		expect(FakeEventSource.instances[0].url).toBe('/api/v3/events/stream');
 		expect(mux.isConnected).toBe(true);
 		mux.disconnect();
 	});

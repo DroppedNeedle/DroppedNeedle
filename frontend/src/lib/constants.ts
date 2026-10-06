@@ -135,9 +135,6 @@ export const YOUTUBE_PLAYER_ELEMENT_ID = 'yt-player-embed';
 // (eslint.config.js): a builder leaves when its route lands and the call
 // moves onto a typed v3 registry template.
 export const API = {
-	events: {
-		stream: () => '/api/v1/events/stream'
-	},
 	library: {
 		membership: () => '/api/v1/library/membership',
 		album: (mbid: string) => `/api/v1/library/albums/${mbid}/status`,

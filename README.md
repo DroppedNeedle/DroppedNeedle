@@ -380,6 +380,7 @@ MusicBrainz sends you back to the address your browser used to reach DroppedNeed
 - Client connection fails or returns 401: wrong URL or API key. Re-enter both under Settings > Download Client and Test.
 - Searches return nothing or the network drops you: slskd needs shared folders and a healthy Soulseek connection. Leechers get banned.
 - Scan finds nothing or files pile into manual review: check the library path is readable. Untagged files with no fingerprint match need a human.
+- Now playing, scan progress and "download started" pop-ups only change when you reload: each open tab keeps one long-lived connection to `/api/v3/events/stream` for live updates, and something in between is holding it back. Behind nginx, add `proxy_buffering off;` and `proxy_read_timeout 1h;` for that path (the app already sends `X-Accel-Buffering: no`). Other proxies have a similar "don't buffer" switch. Don't let the proxy compress `text/event-stream` either.
 
 <details>
 <summary>More fixes</summary>

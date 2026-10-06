@@ -1,5 +1,5 @@
 import { openEventStream } from '$lib/api/channels';
-import { API } from '$lib/constants';
+import { v3 } from '$lib/api/v3/endpoint';
 
 export type MuxEventListener = (event: Event) => void;
 export type MuxConnectListener = () => void;
@@ -14,13 +14,15 @@ export interface MuxEventStream {
 }
 
 /**
- * The tab's single multiplexed SSE connection (`GET /api/v1/events/stream`).
+ * The tab's single multiplexed SSE connection (`GET /api/v3/events/stream`).
  * Consumers register named-event listeners; the connection itself is owned by
  * the app shell (connect on login, disconnect on logout) and hibernates while
  * the tab is hidden. Drops reconnect natively, paced by the server-sent
  * `retry:` frame, so no client retry timers are needed.
  */
-export function createMuxEventStream(streamUrl: string = API.events.stream()): MuxEventStream {
+export function createMuxEventStream(
+	streamUrl: string = v3('/api/v3/events/stream')
+): MuxEventStream {
 	let source: EventSource | null = null;
 	let active = false;
 	const listeners = new Map<string, Set<MuxEventListener>>();
