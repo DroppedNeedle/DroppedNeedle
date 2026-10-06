@@ -361,7 +361,9 @@ Either way the user's own media account is linked for playback, so plays count f
 <details>
 <summary>More fixes</summary>
 
-- Tier-3 fingerprinting stays off until you add an AcoustID API key. Without it, scans use tags and text matching only.
+- How an album gets identified: when most of its files carry a MusicBrainz release ID (Picard and beets write one), DroppedNeedle looks that release up and checks every track against it. Otherwise it searches by album and artist, fetches the tracklists of the best few releases, and pairs each file with a track by title, track number and length. A close match is identified on its own. A plausible but loose match, or two different albums that fit about equally well, goes to the review queue with each candidate's distance (0 is a perfect fit) and what it is made of. Live albums, and compilations your tags don't call compilations, are only matched to their release group until you pick the edition.
+- Fingerprinting stays off until you add an AcoustID API key. With a key, only albums whose tags don't match well get fingerprinted, twenty files per AcoustID request.
+- A retag under Library Management writes the full set of MusicBrainz tags from the release the album was identified as, with the tag names Picard uses, so other players and taggers recognise the files. WAV and AAC files are read-only and keep their tags.
 - MusicBrainz lookups pace at 1 request per second on the official MusicBrainz server. Built-in BrainzMash runs its own local pacing instead. Either way, later scans are incremental, so the first one is the slow one.
 - Moving, renaming or retagging music files yourself is fine. The next scan sees a moved file as the same track and a moved or retagged album as the same album, so favorites, play history, playlists and album matches stay put. Two copies of an album in different folders (say a FLAC and an MP3 copy) stay two albums.
 
