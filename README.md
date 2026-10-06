@@ -309,6 +309,8 @@ Last.fm works like this: the admin registers one Last.fm API application at last
 
 Music apps (Subsonic and Jellyfin) sign in with an app password from Settings > Connect Apps. A track is only transcoded when the app asks for another format or a lower bitrate. If the app names no bitrate, Opus streams at 128 kbps and MP3 at 192 kbps, never above the max bitrate you set. Each user can run two transcodes at once, so gapless players can load the next track early. Finamp's transcoded playback uses HLS, which needs transcoding on and ffmpeg installed. Only sign-in attempts are rate limited per IP address, and a run of wrong passwords locks that address out for a short while.
 
+Spotify playlist import needs an app from the Spotify developer dashboard. Add the redirect URI that Settings > Spotify shows (it ends in `/api/v3/acquire/spotify/auth/callback`) to the app, then save the app's client ID and secret there. If you set up Spotify on v2, add the new URI next to the old one: Spotify only sends people back to addresses the app lists.
+
 ### Users and roles
 
 | Role | Requests | Admin |
