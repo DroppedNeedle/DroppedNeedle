@@ -38,6 +38,7 @@ use sqlx::{
 };
 
 use super::{
+    analyze::AnalyzeService,
     backup::BackupService,
     checkpoint::CheckpointService,
     durable::DurableWorkWakeups,
@@ -132,7 +133,8 @@ pub async fn open_runtime(config: &DbConfig) -> Result<DbRuntime, DbError> {
     reads_frozen.store(true, Ordering::Release);
 
     let lane = WriteLane::open(&path)?;
-    let checkpoint = CheckpointService::new(&path, pool.clone(), lane.idle_state());
+    let checkpoint = CheckpointService::new(&path, pool.clone(), lane.idle_state())
+        .with_analyze(AnalyzeService::new(lane.clone(), pool.clone()));
     let wakeups = DurableWorkWakeups::new(pool.clone());
 
     Ok(DbRuntime {

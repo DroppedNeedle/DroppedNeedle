@@ -41,6 +41,13 @@ impl CheckpointRunner for CheckpointService {
             if outcome.is_err() {
                 tracing::error!("checkpoint pass task failed to join");
             }
+            // Planner statistics ride the same maintenance loop; the check
+            // is throttled inside, so most passes return at once.
+            if let Some(analyze) = self.analyze()
+                && let Err(error) = analyze.run_if_due().await
+            {
+                tracing::warn!(%error, "planner statistics refresh failed; retrying later");
+            }
         })
     }
 }

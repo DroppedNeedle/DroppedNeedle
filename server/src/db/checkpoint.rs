@@ -197,6 +197,7 @@ pub struct CheckpointService {
     latest: Arc<RwLock<Option<CheckpointOutcome>>>,
     last_truncate: Arc<Mutex<Option<Instant>>>,
     resume: Arc<Notify>,
+    analyze: Option<super::analyze::AnalyzeService>,
 }
 
 impl CheckpointService {
@@ -211,7 +212,21 @@ impl CheckpointService {
             latest: Arc::new(RwLock::new(None)),
             last_truncate: Arc::new(Mutex::new(None)),
             resume: Arc::new(Notify::new()),
+            analyze: None,
         }
+    }
+
+    /// Refresh planner statistics from the checkpoint loop (see
+    /// [`super::analyze`]).
+    #[must_use]
+    pub fn with_analyze(mut self, analyze: super::analyze::AnalyzeService) -> Self {
+        self.analyze = Some(analyze);
+        self
+    }
+
+    /// The statistics refresher the checkpoint loop drives, when wired.
+    pub fn analyze(&self) -> Option<&super::analyze::AnalyzeService> {
+        self.analyze.as_ref()
     }
 
     /// True when background producers must yield. Never gates foreground.
