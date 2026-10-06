@@ -134,7 +134,7 @@ pub fn task_reason(
     let message = error_message.unwrap_or_default().trim();
     // The note stays on the row after the next source starts; it only
     // explains the wait before that.
-    if !settled && !(status == TaskStatus::Queued && message.starts_with(NEXT_SOURCE_NOTE)) {
+    if !(settled || (status == TaskStatus::Queued && message.starts_with(NEXT_SOURCE_NOTE))) {
         return None;
     }
     if let Some(reason) = TrackReason::in_text(message) {
