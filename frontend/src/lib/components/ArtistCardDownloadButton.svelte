@@ -5,7 +5,8 @@
 		type DiscographyRelease
 	} from '$lib/stores/discographyDownload.svelte';
 	import { api } from '$lib/api/client';
-	import { API } from '$lib/constants';
+	import { toArtistReleases } from '$lib/queries/catalog/catalogAdapters';
+	import { CATALOG_ENDPOINTS } from '$lib/queries/catalog/endpoints';
 	import { toastStore } from '$lib/stores/toast';
 
 	interface Props {
@@ -24,16 +25,14 @@
 		loading = true;
 
 		try {
-			const data = await api.global.get<{
-				albums: DiscographyRelease[];
-				eps: DiscographyRelease[];
-				singles: DiscographyRelease[];
-			}>(API.artist.releases(artistMbid, 0, 200));
+			const data = toArtistReleases(
+				await api.global.v3.GET(CATALOG_ENDPOINTS.artistReleases(artistMbid, 0, 200))
+			);
 
 			const allReleases: DiscographyRelease[] = [
-				...(data.albums || []).map((r) => ({ ...r, type: r.type ?? 'Album' })),
-				...(data.eps || []).map((r) => ({ ...r, type: r.type ?? 'EP' })),
-				...(data.singles || []).map((r) => ({ ...r, type: r.type ?? 'Single' }))
+				...data.albums.map((r) => ({ ...r, type: r.type ?? 'Album' })),
+				...data.eps.map((r) => ({ ...r, type: r.type ?? 'EP' })),
+				...data.singles.map((r) => ({ ...r, type: r.type ?? 'Single' }))
 			];
 
 			if (allReleases.length === 0) {

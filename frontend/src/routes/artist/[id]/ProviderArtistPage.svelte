@@ -46,6 +46,7 @@
 	import { Download } from 'lucide-svelte';
 	import ArtistReleasePagination from '$lib/components/ArtistReleasePagination.svelte';
 	import { mergeArtistReleasePages } from '$lib/queries/artist/artistReleasePages';
+	import { mergeArtistImages } from '$lib/queries/catalog/catalogAdapters';
 
 	interface Props {
 		data: { artistId: string; primarySource: MusicSource };
@@ -206,6 +207,7 @@
 		if (!artistBasic) return null;
 		return {
 			...artistBasic,
+			...mergeArtistImages(artistBasic, artistExtended?.images),
 			description: artistExtended?.description,
 			image: artistExtended?.image
 		};

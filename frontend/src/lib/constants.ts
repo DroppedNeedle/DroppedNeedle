@@ -1,5 +1,3 @@
-import type { MusicSource } from './stores/musicSource';
-
 /** Album vs track request lane, carried on request query strings. */
 export type RequestKind = 'album' | 'track';
 
@@ -137,26 +135,6 @@ export const YOUTUBE_PLAYER_ELEMENT_ID = 'yt-player-embed';
 // (eslint.config.js): a builder leaves when its route lands and the call
 // moves onto a typed v3 registry template.
 export const API = {
-	artist: {
-		basic: (id: string) => `/api/v1/artists/${id}`,
-		extended: (id: string) => `/api/v1/artists/${id}/extended`,
-		releases: (id: string, offset: number, limit: number) =>
-			`/api/v1/artists/${id}/releases?offset=${offset}&limit=${limit}`,
-		similarArtists: (id: string, source: MusicSource, count: number = 15) =>
-			`/api/v1/artists/${id}/similar?count=${count}&source=${source}`,
-		topSongs: (id: string, source: MusicSource, count: number = 10) =>
-			`/api/v1/artists/${id}/top-songs?count=${count}&source=${source}`,
-		topAlbums: (id: string, source: MusicSource, count: number = 10) =>
-			`/api/v1/artists/${id}/top-albums?count=${count}&source=${source}`,
-		lastFmEnrichment: (id: string, artistName: string) => {
-			const params = new URLSearchParams({ artist_name: artistName });
-			return `/api/v1/artists/${id}/lastfm?${params.toString()}`;
-		},
-		purchaseOptions: (id: string, artistName: string) => {
-			const params = new URLSearchParams({ name: artistName });
-			return `/api/v1/artists/${id}/purchase-options?${params.toString()}`;
-		}
-	},
 	events: {
 		stream: () => '/api/v1/events/stream'
 	},

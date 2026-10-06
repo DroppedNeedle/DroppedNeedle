@@ -1,29 +1,24 @@
-import { API, CACHE_TTL } from '$lib/constants';
+import { CACHE_TTL } from '$lib/constants';
 import { createInfiniteQuery, createQuery, queryOptions } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 import { ArtistQueryKeyFactory } from './ArtistQueryKeyFactory';
 import { api } from '$lib/api/client';
-import type {
-	ArtistInfoBasic,
-	ArtistInfoExtended,
-	ArtistReleases,
-	LastFmArtistEnrichment,
-	ReleaseGroup,
-	SimilarArtistsResponse,
-	TopAlbumsResponse,
-	TopSongsResponse
-} from '$lib/types';
+import type { ReleaseGroup } from '$lib/types';
 import type { MusicSource } from '$lib/stores/musicSource';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { extractServiceStatus } from '$lib/utils/serviceStatus';
 import { setQueryDataWithPersister } from '../QueryClient';
+import { toArtistInfoBasic, toArtistReleases } from '../catalog/catalogAdapters';
+import { CATALOG_ENDPOINTS } from '../catalog/endpoints';
 
 export const getBasicArtistQueryOptions = (artistId: string) =>
 	queryOptions({
 		staleTime: CACHE_TTL.ARTIST_DETAIL_BASIC,
 		queryKey: ArtistQueryKeyFactory.basic(artistId),
 		queryFn: async ({ signal }) => {
-			const data = await api.global.get<ArtistInfoBasic>(API.artist.basic(artistId), { signal });
+			const data = toArtistInfoBasic(
+				await api.global.v3.GET(CATALOG_ENDPOINTS.artist(artistId), { signal })
+			);
 			// mirrors albumPageState: the degraded payload carries
 			// service_status and api.global bypasses the header-recording
 			// fetch wrapper
@@ -42,9 +37,7 @@ export const getExtendedArtistQueryOptions = (artistId: string) =>
 		// A fast extended query can finish before the provider page observes its lazy fields.
 		notifyOnChangeProps: 'all',
 		queryFn: ({ signal }) =>
-			api.global.get<ArtistInfoExtended>(API.artist.extended(artistId), {
-				signal
-			})
+			api.global.v3.GET(CATALOG_ENDPOINTS.artistExtended(artistId), { signal })
 	});
 
 export const getExtendedArtistQuery = (getArtistId: Getter<string>) =>
@@ -60,7 +53,7 @@ export const getSimilarArtistsQuery = (
 			staleTime: CACHE_TTL.ARTIST_DISCOVERY,
 			queryKey: ArtistQueryKeyFactory.similarArtists(authStore.user?.id, artistId, source),
 			queryFn: ({ signal }) =>
-				api.global.get<SimilarArtistsResponse>(API.artist.similarArtists(artistId, source), {
+				api.global.v3.GET(CATALOG_ENDPOINTS.similarArtists(artistId, source), {
 					signal
 				})
 		};
@@ -76,7 +69,7 @@ export const getArtistTopAlbumsQuery = (
 			staleTime: CACHE_TTL.ARTIST_DISCOVERY,
 			queryKey: ArtistQueryKeyFactory.topAlbums(authStore.user?.id, artistId, source),
 			queryFn: ({ signal }) =>
-				api.global.get<TopAlbumsResponse>(API.artist.topAlbums(artistId, source), {
+				api.global.v3.GET(CATALOG_ENDPOINTS.topAlbums(artistId, source), {
 					signal
 				})
 		};
@@ -92,7 +85,7 @@ export const getArtistTopSongsQuery = (
 			staleTime: CACHE_TTL.ARTIST_DISCOVERY,
 			queryKey: ArtistQueryKeyFactory.topSongs(authStore.user?.id, artistId, source),
 			queryFn: ({ signal }) =>
-				api.global.get<TopSongsResponse>(API.artist.topSongs(artistId, source), {
+				api.global.v3.GET(CATALOG_ENDPOINTS.topSongs(artistId, source), {
 					signal
 				})
 		};
@@ -107,7 +100,7 @@ export const getArtistLastFmEnrichmentQuery = (
 			staleTime: CACHE_TTL.ARTIST_DETAIL_LASTFM,
 			queryKey: ArtistQueryKeyFactory.lastFmEnrichment(artistId, artistName),
 			queryFn: ({ signal }) =>
-				api.global.get<LastFmArtistEnrichment>(API.artist.lastFmEnrichment(artistId, artistName!), {
+				api.global.v3.GET(CATALOG_ENDPOINTS.artistLastFm(artistId, artistName!), {
 					signal
 				}),
 			enabled: () => !!artistName
@@ -134,9 +127,11 @@ export const getArtistReleasesInfiniteQuery = (getArtistId: Getter<string>) =>
 			queryKey: ArtistQueryKeyFactory.releases(getArtistId()),
 			initialPageParam: 0,
 			queryFn: async ({ pageParam = 0, signal }) => {
-				const response = await api.global.get<ArtistReleases>(
-					API.artist.releases(getArtistId(), pageParam, BATCH_SIZE),
-					{ signal }
+				const response = toArtistReleases(
+					await api.global.v3.GET(
+						CATALOG_ENDPOINTS.artistReleases(getArtistId(), pageParam, BATCH_SIZE),
+						{ signal }
+					)
 				);
 				// mirrors the basic query: the degraded discography payload
 				// carries service_status and api.global bypasses the

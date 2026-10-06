@@ -2,8 +2,7 @@ import { createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
-import type { ArtistPurchaseOptionsResponse, PurchaseOptionsResponse } from '$lib/types';
+import { CATALOG_ENDPOINTS } from '$lib/queries/catalog/endpoints';
 
 // "Where to buy" (Get it, phase 01). Deliberately lazy: only the inline
 // section fetches this, with its own skeleton - the album page's load path
@@ -21,7 +20,7 @@ export const getPurchaseOptionsQuery = (
 		enabled: enabled() && !!mbid(),
 		staleTime: 24 * 60 * 60 * 1000, // the backend caches for 7 days anyway
 		queryFn: ({ signal }) =>
-			api.global.get<PurchaseOptionsResponse>(API.album.purchaseOptions(mbid()), { signal })
+			api.global.v3.GET(CATALOG_ENDPOINTS.albumPurchaseOptions(mbid()), { signal })
 	}));
 
 export const artistPurchaseOptionsKey = (mbid: string) =>
@@ -34,7 +33,5 @@ export const getArtistPurchaseOptionsQuery = (mbid: Getter<string>, name: Getter
 		enabled: !!mbid(),
 		staleTime: 24 * 60 * 60 * 1000,
 		queryFn: ({ signal }) =>
-			api.global.get<ArtistPurchaseOptionsResponse>(API.artist.purchaseOptions(mbid(), name()), {
-				signal
-			})
+			api.global.v3.GET(CATALOG_ENDPOINTS.artistPurchaseOptions(mbid(), name()), { signal })
 	}));
