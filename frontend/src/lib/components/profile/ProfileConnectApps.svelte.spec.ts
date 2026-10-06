@@ -15,28 +15,20 @@ const h = vi.hoisted(() => ({
 		advertise_server_version: '10.10.6',
 		discover_mode: 'local-only'
 	},
-	passwords: {
-		items: [
-			{
-				id: 'ap-1',
-				name: 'Symfonium (phone)',
-				created_at: '2026-06-01T00:00:00Z',
-				last_used_at: null,
-				last_client: null
-			}
-		],
-		cap: 25,
-		active_count: 1
-	},
-	createMutate: vi.fn().mockResolvedValue({
-		secret: 'super-secret-123',
-		app_password: {
-			id: 'ap-2',
-			name: 'Finamp (tablet)',
-			created_at: '',
+	passwords: [
+		{
+			id: 'ap-1',
+			name: 'Symfonium (phone)',
+			created_at: '2026-06-01T00:00:00Z',
 			last_used_at: null,
 			last_client: null
 		}
+	] as Array<Record<string, unknown>>,
+	createMutate: vi.fn().mockResolvedValue({
+		id: 'ap-2',
+		name: 'Finamp (tablet)',
+		created_at: 0,
+		secret: 'super-secret-123'
 	}),
 	revokeMutate: vi.fn().mockResolvedValue(undefined)
 }));
@@ -87,19 +79,15 @@ beforeEach(() => {
 		advertise_server_version: '10.10.6',
 		discover_mode: 'local-only'
 	};
-	h.passwords = {
-		items: [
-			{
-				id: 'ap-1',
-				name: 'Symfonium (phone)',
-				created_at: '2026-06-01T00:00:00Z',
-				last_used_at: null,
-				last_client: null
-			}
-		],
-		cap: 25,
-		active_count: 1
-	};
+	h.passwords = [
+		{
+			id: 'ap-1',
+			name: 'Symfonium (phone)',
+			created_at: '2026-06-01T00:00:00Z',
+			last_used_at: null,
+			last_client: null
+		}
+	];
 	vi.clearAllMocks();
 });
 
@@ -136,7 +124,13 @@ describe('ProfileConnectApps.svelte', () => {
 	});
 
 	it('disables Create at the cap', async () => {
-		h.passwords = { items: [], cap: 25, active_count: 25 };
+		h.passwords = Array.from({ length: 25 }, (_, i) => ({
+			id: `ap-${i}`,
+			name: `App ${i}`,
+			created_at: '2026-06-01T00:00:00Z',
+			last_used_at: null,
+			last_client: null
+		}));
 		await render(ProfileConnectApps);
 		await expect.element(page.getByRole('button', { name: 'Create' })).toBeDisabled();
 	});

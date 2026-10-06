@@ -24,7 +24,16 @@ const detailQuery = {
 };
 
 vi.mock('$lib/queries/playlists/PlaylistV3Queries.svelte', () => ({
-	getPlaylistDetailV3Query: () => detailQuery
+	getPlaylistDetailV3Query: () => detailQuery,
+	// PlaylistDiscoveryModal (inside the header) reads the playlist list.
+	getPlaylistListV3Query: () => ({
+		data: [],
+		isLoading: false,
+		isError: false,
+		error: null,
+		refetch: vi.fn()
+	}),
+	isRedactedPlaylistV3: () => false
 }));
 
 vi.mock('$lib/queries/playlists/PlaylistV3Mutations.svelte', () => ({
@@ -38,17 +47,6 @@ vi.mock('$lib/queries/playlists/PlaylistV3Mutations.svelte', () => ({
 	removePlaylistTracksV3: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	updatePlaylistTrackV3: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	reorderPlaylistTrackV3: () => ({ mutateAsync: vi.fn(), isPending: false })
-}));
-
-// PlaylistDiscoveryModal (inside the header) still reads the v1 list query.
-vi.mock('$lib/queries/playlists/PlaylistQuery.svelte', () => ({
-	getPlaylistListQuery: () => ({
-		data: [],
-		isLoading: false,
-		isError: false,
-		error: null,
-		refetch: vi.fn()
-	})
 }));
 
 vi.mock('$lib/queries/QueryClient', () => {
