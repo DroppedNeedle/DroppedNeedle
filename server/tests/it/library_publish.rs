@@ -175,6 +175,7 @@ fn plan_item(
         managed_updates,
         sidecars: Vec::new(),
         staged_bytes_estimate: 1024,
+        adopt: false,
     }
 }
 

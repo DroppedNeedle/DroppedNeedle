@@ -40,6 +40,22 @@ pub struct TrackCommit {
     pub fingerprint: String,
     /// Management state after commit.
     pub mgmt_state: String,
+    /// The track is new to the catalog: index the published file instead
+    /// of moving an existing row (see [`ADOPTED_STATE`]).
+    pub adopt: bool,
+}
+
+/// Management-state prefix journals carry for files a commit adds to the
+/// catalog, so a resumed commit after a crash adopts them too.
+pub const ADOPTED_STATE: &str = "imported:";
+
+/// The management state a commit records for one plan item.
+fn mgmt_state_for(adopt: bool, profile_revision: u64) -> String {
+    if adopt {
+        format!("{ADOPTED_STATE}{profile_revision}")
+    } else {
+        format!("managed:{profile_revision}")
+    }
 }
 
 /// The single-transaction catalog bundle commit.
@@ -149,33 +165,11 @@ impl Catalog for SqliteCatalog {
         }
         let now = now_secs();
         for track in &commit.tracks {
-            let moved = conn.execute(
-                "UPDATE local_tracks SET root_id = ?2, relative_path = ?3, file_path = ?4, \
-                 path_hash = ?5, row_revision = row_revision + 1 WHERE id = ?1",
-                rusqlite::params![
-                    track.track_id,
-                    track.root_id,
-                    track.rel_path,
-                    track.file_path,
-                    sha256_hex(track.rel_path.as_bytes())
-                ],
-            )?;
-            if moved != 1 {
-                return Err(PublishError::Catalog(format!(
-                    "track {} is not in the catalog",
-                    track.track_id
-                )));
+            if track.adopt {
+                adopt_track(conn, track)?;
+            } else {
+                move_track(conn, track)?;
             }
-            // An organize that moves a whole album into another root takes
-            // the album row along; its id (and with it the identity) stays.
-            conn.execute(
-                "UPDATE local_albums SET root_id = ?2, row_revision = row_revision + 1 \
-                 WHERE id = (SELECT local_album_id FROM local_tracks WHERE id = ?1) \
-                 AND root_id <> ?2 AND NOT EXISTS (SELECT 1 FROM local_tracks t \
-                 WHERE t.local_album_id = local_albums.id AND t.root_id <> ?2 \
-                 AND t.availability = 'indexed')",
-                rusqlite::params![track.track_id, track.root_id],
-            )?;
             conn.execute(
                 "INSERT INTO library_track_management_state (local_track_id, managed_root_id, \
                  applied_projection_hash, last_outcome, last_managed_at) \
@@ -209,6 +203,73 @@ impl Catalog for SqliteCatalog {
         )?;
         Ok(())
     }
+}
+
+/// Move an existing track row to its published location. An organize
+/// that moves a whole album into another root takes the album row along;
+/// track and album ids (and with them the identity) stay.
+fn move_track(conn: &Connection, track: &TrackCommit) -> Result<(), PublishError> {
+    let moved = conn.execute(
+        "UPDATE local_tracks SET root_id = ?2, relative_path = ?3, file_path = ?4, \
+         path_hash = ?5, row_revision = row_revision + 1 WHERE id = ?1",
+        rusqlite::params![
+            track.track_id,
+            track.root_id,
+            track.rel_path,
+            track.file_path,
+            sha256_hex(track.rel_path.as_bytes())
+        ],
+    )?;
+    if moved != 1 {
+        return Err(PublishError::Catalog(format!(
+            "track {} is not in the catalog",
+            track.track_id
+        )));
+    }
+    conn.execute(
+        "UPDATE local_albums SET root_id = ?2, row_revision = row_revision + 1 \
+         WHERE id = (SELECT local_album_id FROM local_tracks WHERE id = ?1) \
+         AND root_id <> ?2 AND NOT EXISTS (SELECT 1 FROM local_tracks t \
+         WHERE t.local_album_id = local_albums.id AND t.root_id <> ?2 \
+         AND t.availability = 'indexed')",
+        rusqlite::params![track.track_id, track.root_id],
+    )?;
+    Ok(())
+}
+
+/// Add a file the bundle brought into the library: index the published
+/// file from its own tags and header, exactly as a scan would, at the
+/// track id the plan pinned.
+fn adopt_track(conn: &Connection, track: &TrackCommit) -> Result<(), PublishError> {
+    use crate::library::scan::seams::ScannedTags;
+    use crate::library::scan::store::CommitIndexedItem;
+
+    let path = Path::new(&track.file_path);
+    let meta = std::fs::symlink_metadata(path).map_err(PublishError::from)?;
+    let format = crate::library::tags::format_for_path(path)
+        .map_err(|error| PublishError::Catalog(error.to_string()))?;
+    let (tag, header) = crate::library::tags::read::read_scan_metadata(path, format)
+        .map_err(|error| PublishError::Catalog(format!("published file unreadable: {error}")))?;
+    let item = CommitIndexedItem {
+        root_id: track.root_id.clone(),
+        relative_path: track.rel_path.clone(),
+        absolute_path: track.file_path.clone(),
+        size_bytes: meta.len(),
+        mtime_ns: crate::library::scan::revision::mtime_ns_from_metadata(&meta),
+        tags_read_at: now_secs(),
+        tags: ScannedTags { tag, header },
+        effective_policy: crate::library::scan::models::EffectivePolicy::Automatic,
+        policy_revision: String::new(),
+        verdict_counter: "new_count",
+    };
+    let adopted = crate::library::scan::sqlite_store::adopt_file(conn, &item)?;
+    if adopted != track.track_id {
+        return Err(PublishError::Catalog(format!(
+            "imported file took track {adopted}, not the planned {}",
+            track.track_id
+        )));
+    }
+    Ok(())
 }
 
 /// Crash-injection point between durable steps. Each variant names the
@@ -442,7 +503,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 staged_sha256: staged_sha.clone(),
                 track_id: Some(item.track_id.clone()),
                 catalog_revision: Some(bundle.catalog_revision as i64),
-                mgmt_state: Some(format!("managed:{}", bundle.profile_revision)),
+                mgmt_state: Some(mgmt_state_for(item.adopt, bundle.profile_revision)),
                 state: JournalState::Prepared,
                 seq: 0,
             };
@@ -453,6 +514,32 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             }
             write_staged_temp(&temp, &staged_bytes)?;
             journals.transition(&journal_id, JournalState::Prepared, JournalState::Staged)?;
+            if !item.adopt {
+                self.capture_before(bundle, item, before)?;
+            }
+            for (side_ordinal, sidecar) in item.sidecars.iter().enumerate() {
+                self.prepare_sidecar(bundle, &journal_id, side_ordinal, sidecar)?;
+            }
+            staged_files.push(PreparedFile {
+                journal_id,
+                track_id: item.track_id.clone(),
+                kind: item.kind,
+                staged_sha256: staged_sha,
+                source_root: item.source_root.clone(),
+                source_rel: item.source_rel.clone(),
+            });
+        }
+        Ok(staged_files)
+    }
+
+    /// Before-state for undo and the first-management baseline.
+    fn capture_before(
+        &mut self,
+        bundle: &PlanBundle,
+        item: &super::planner::PlanItem,
+        before: TagDocument,
+    ) -> Result<(), PublishError> {
+        {
             let prior_mgmt = self
                 .catalog
                 .locate(&self.conn, &item.track_id)?
@@ -495,19 +582,8 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 self.today_day,
                 self.today_day + self.undo_retention_days,
             )?;
-            for (side_ordinal, sidecar) in item.sidecars.iter().enumerate() {
-                self.prepare_sidecar(bundle, &journal_id, side_ordinal, sidecar)?;
-            }
-            staged_files.push(PreparedFile {
-                journal_id,
-                track_id: item.track_id.clone(),
-                kind: item.kind,
-                staged_sha256: staged_sha,
-                source_root: item.source_root.clone(),
-                source_rel: item.source_rel.clone(),
-            });
         }
-        Ok(staged_files)
+        Ok(())
     }
 
     /// Stage one sidecar as a verified byte copy with its own journal.
@@ -704,7 +780,8 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 rel_path: item.dest_rel.clone(),
                 file_path: dest.to_string_lossy().into_owned(),
                 fingerprint: file.staged_sha256.clone(),
-                mgmt_state: format!("managed:{}", bundle.profile_revision),
+                mgmt_state: mgmt_state_for(item.adopt, bundle.profile_revision),
+                adopt: item.adopt,
             });
         }
         let commit = BundleCommit {

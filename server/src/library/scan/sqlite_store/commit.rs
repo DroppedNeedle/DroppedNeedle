@@ -138,9 +138,10 @@ impl AlbumNames<'_> {
     }
 }
 
-/// Where a track's group lives: its root and grouping directory.
+/// Where a track's group lives: its root and grouping directory. Without
+/// a run (an import adding files), nothing counts as walked this run.
 struct Place<'a> {
-    run_id: &'a str,
+    run_id: Option<&'a str>,
     root_id: &'a str,
     directory: &'a str,
 }
@@ -494,7 +495,7 @@ fn write_album(
 /// the album it left, if it changed albums.
 fn write_item(
     tx: &Connection,
-    run_id: &str,
+    run_id: Option<&str>,
     item: &CommitIndexedItem,
 ) -> rusqlite::Result<(String, String, Option<String>)> {
     let tag = &item.tags.tag;
@@ -608,7 +609,9 @@ fn write_item(
             Ok((row.get(0)?, row.get(1)?))
         })
         .optional()?;
-    if previous.is_none() {
+    if previous.is_none()
+        && let Some(run_id) = run_id
+    {
         let recording = tag
             .musicbrainz_recording_id
             .as_deref()
@@ -887,7 +890,9 @@ fn write_item(
     let moved_from = previous
         .map(|(_, album)| album)
         .filter(|album| *album != stored_album);
-    if let Some(left) = &moved_from {
+    if let Some(left) = &moved_from
+        && let Some(run_id) = run_id
+    {
         // Recorded now, not with the window's marks: a later item in this
         // window may empty the album this one left.
         tx.prepare_cached(
@@ -1110,7 +1115,7 @@ fn write_window(
     for item in &window.items {
         let written = if isolate {
             tx.execute("SAVEPOINT item", [])?;
-            match write_item(tx, &window.run_id, item) {
+            match write_item(tx, Some(&window.run_id), item) {
                 Ok(written) => {
                     tx.execute("RELEASE item", [])?;
                     Ok(written)
@@ -1122,7 +1127,7 @@ fn write_window(
                 }
             }
         } else {
-            write_item(tx, &window.run_id, item)
+            write_item(tx, Some(&window.run_id), item)
         };
         match written {
             Ok((track_id, album_id, moved_from)) => {
@@ -1202,4 +1207,39 @@ pub(super) fn commit_window(
             })
         }
     }
+}
+
+/// The track id a file imported to `(root, relative path)` will get: the
+/// row already at that path (a track whose file went missing), else the
+/// stable id a scan would give a new path. `None` when that stable id is
+/// taken by another path, which only a hash collision can do.
+pub(crate) fn adoptable_track_id(
+    conn: &Connection,
+    root_id: &str,
+    relative_path: &str,
+) -> rusqlite::Result<Option<String>> {
+    let existing: Option<String> = conn
+        .query_row(
+            "SELECT id FROM local_tracks WHERE root_id = ?1 AND relative_path = ?2",
+            params![root_id, relative_path],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if existing.is_some() {
+        return Ok(existing);
+    }
+    let stable = stable_id(&format!("track:{root_id}:{relative_path}"));
+    let taken: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM local_tracks WHERE id = ?1)",
+        params![stable],
+        |row| row.get(0),
+    )?;
+    Ok((!taken).then_some(stable))
+}
+
+/// Index one file an import just published, inside the publisher's
+/// catalog transaction: the same rows a scan writes for a new file, so
+/// the next scan finds nothing to change. Returns the track id.
+pub(crate) fn adopt_file(tx: &Connection, item: &CommitIndexedItem) -> rusqlite::Result<String> {
+    write_item(tx, None, item).map(|(track_id, _, _)| track_id)
 }

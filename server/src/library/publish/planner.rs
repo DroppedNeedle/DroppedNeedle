@@ -140,6 +140,11 @@ pub struct PlanItem {
     pub sidecars: Vec<SidecarPlan>,
     /// Estimated staged bytes for disk preflight.
     pub staged_bytes_estimate: u64,
+    /// The file comes from outside the library (a finished download):
+    /// the catalog commit adds its track instead of moving an existing
+    /// one, and nothing is snapshotted for undo or baseline.
+    #[serde(default)]
+    pub adopt: bool,
 }
 
 /// One sidecar travelling with its album.

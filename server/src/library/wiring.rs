@@ -149,6 +149,10 @@ pub struct LibrarySetup {
     pub identify: Arc<IdentifyService>,
     /// Scripted providers (test bundles only).
     pub test_providers: Option<Arc<FakeProviders>>,
+    /// MusicBrainz releases for importing finished downloads: search and
+    /// release lookups, identity-critical like identification. `None` in
+    /// test bundles unless a test scripts one.
+    pub releases: Option<Arc<dyn super::identify::sources::ReleaseSource>>,
     /// Contribution service.
     pub contrib: Arc<ContributionService>,
     /// Contribution verification worker.
@@ -208,6 +212,10 @@ impl LibrarySetup {
             .with_sink(health.clone())
         };
         let musicbrainz = mb_client(RequestPriority::BackgroundSync);
+        // Downloads being imported look releases up through their own
+        // client on the same limiter and source setting.
+        let imports: Arc<dyn super::identify::sources::ReleaseSource> =
+            Arc::new(mb_client(RequestPriority::BackgroundSync));
         // Contributions read MusicBrainz on both lanes (the curator's page
         // and the verification worker) and Discogs through the shared GET
         // port.
@@ -237,7 +245,9 @@ impl LibrarySetup {
                 fingerprints,
             ))
         });
-        Self::assemble(users, ids, make, None, contrib, db_path, config)
+        let mut setup = Self::assemble(users, ids, make, None, contrib, db_path, config)?;
+        setup.releases = Some(imports);
+        Ok(setup)
     }
 
     /// Test bundle over scripted providers on a fresh scratch database
@@ -406,6 +416,7 @@ impl LibrarySetup {
             identify_store,
             identify,
             test_providers,
+            releases: None,
             contrib,
             contrib_worker,
             #[cfg(any(test, feature = "test-support"))]

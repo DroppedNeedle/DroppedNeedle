@@ -541,3 +541,5 @@ mod catalog;
 mod commit;
 mod inventory;
 mod runs;
+
+pub(crate) use commit::{adopt_file, adoptable_track_id};

@@ -24,6 +24,7 @@ mod clock;
 pub mod contrib;
 pub mod http;
 pub mod identify;
+pub mod import;
 mod loops;
 pub mod manage;
 pub mod matching;

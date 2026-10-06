@@ -36,7 +36,7 @@ const PINNED_OVERRIDE: u64 = 0;
 
 /// Policy revision as the seal's u64: the registry fingerprint is
 /// 16 hex chars by construction.
-fn policy_revision_u64(registry: &RootRegistry) -> u64 {
+pub(super) fn policy_revision_u64(registry: &RootRegistry) -> u64 {
     u64::from_str_radix(registry.policy_revision(), 16).unwrap_or(0)
 }
 
@@ -622,6 +622,7 @@ impl LibrarySetup {
                 managed_updates: managed_updates.clone(),
                 sidecars: Vec::new(),
                 staged_bytes_estimate: size + STAGED_HEADROOM_BYTES,
+                adopt: false,
             });
             docs.insert(
                 track_id.clone(),
@@ -952,6 +953,7 @@ impl LibrarySetup {
                 managed_updates: item.doc.managed.clone(),
                 sidecars: Vec::new(),
                 staged_bytes_estimate: 0,
+                adopt: false,
             });
             let size = sandbox
                 .resolve_no_symlink(&live_loc.0, &live_loc.1)
@@ -1111,6 +1113,7 @@ impl LibrarySetup {
                 managed_updates: updates.clone(),
                 sidecars: Vec::new(),
                 staged_bytes_estimate: size + STAGED_HEADROOM_BYTES,
+                adopt: false,
             });
             docs.insert(
                 track_id.clone(),
