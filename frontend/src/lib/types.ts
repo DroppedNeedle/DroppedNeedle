@@ -464,13 +464,6 @@ export type SimilarArtist = {
 	name: string;
 	listen_count: number;
 	in_library: boolean;
-	image_url?: string | null;
-};
-
-export type SimilarArtistsResponse = {
-	similar_artists: SimilarArtist[];
-	source: string;
-	configured: boolean;
 };
 
 export type TopSong = {
@@ -483,12 +476,6 @@ export type TopSong = {
 	listen_count: number;
 	disc_number?: number | null;
 	track_number?: number | null;
-};
-
-export type TopSongsResponse = {
-	songs: TopSong[];
-	source: string;
-	configured: boolean;
 };
 
 export type ResolvedTrack = {
@@ -511,12 +498,6 @@ export type TopAlbum = {
 	in_library: boolean;
 	requested?: boolean;
 	cover_url?: string | null;
-};
-
-export type TopAlbumsResponse = {
-	albums: TopAlbum[];
-	source: string;
-	configured: boolean;
 };
 
 export type DiscoveryAlbum = {
@@ -1161,8 +1142,6 @@ export type FreeMusicSettings = components['schemas']['FreeMusic'];
 export type GetItSettings = components['schemas']['GetIt'];
 
 export type PurchaseLink = components['schemas']['PurchaseLink'];
-export type PurchaseOptionsResponse = components['schemas']['PurchaseOptionsResponse'];
-export type ArtistPurchaseOptionsResponse = components['schemas']['ArtistPurchaseOptionsResponse'];
 
 // mirrors backend api/v1/schemas/settings.py (EventsSettings)
 export type EventsSettings = components['schemas']['EventsSettings'];
@@ -1222,8 +1201,6 @@ export type ScrobbleResponse = {
 	services: Record<string, ServiceResult>;
 };
 
-export type LastFmTag = components['schemas']['LastFmTag'];
-export type LastFmSimilarArtistDetail = components['schemas']['LastFmSimilarArtist'];
 export type LastFmArtistEnrichment = components['schemas']['LastFmArtistEnrichment'];
 export type LastFmAlbumEnrichment = components['schemas']['LastFmAlbumEnrichment'];
 
