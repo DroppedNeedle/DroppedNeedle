@@ -9,8 +9,9 @@
 	import {
 		buildQueueLanes,
 		formatCount,
-		groupProviderRows,
-		isDiagnosticsPollingEnabled
+		humanizeWireValue,
+		isDiagnosticsPollingEnabled,
+		providerLabel
 	} from './diagnosticsDisplay';
 
 	// The section mounts only while its settings tab is active; document
@@ -27,23 +28,18 @@
 	const queueQuery = getQueueStatsQuery(() => isDiagnosticsPollingEnabled(sectionVisible));
 	const providerQuery = getProviderStatsQuery(() => isDiagnosticsPollingEnabled(sectionVisible));
 
-	const lanes = $derived(queueQuery.data ? buildQueueLanes(queueQuery.data.stats) : []);
-	const providerGroups = $derived(groupProviderRows(providerQuery.data?.providers ?? []));
-	const providerTableRows = $derived(
-		providerGroups.flatMap((group) =>
-			group.rows.map((row, index) => ({
-				...row,
-				providerCell: index === 0 ? group.label : '',
-				laneText: row.laneText,
-				outcomeText: row.outcomeText,
-				countTotal: row.countTotal,
-				ratePerMinText: row.ratePerMinText
-			}))
+	const lanes = $derived(providerQuery.data ? buildQueueLanes(providerQuery.data.slots) : []);
+	const providers = $derived(
+		[...(providerQuery.data?.providers ?? [])].sort((a, b) =>
+			providerLabel(a.source).localeCompare(providerLabel(b.source))
 		)
 	);
-	const providersEmpty = $derived(
-		!providerQuery.isLoading && !providerQuery.error && providerTableRows.length === 0
-	);
+	const jobs = $derived(queueQuery.data?.jobs ?? []);
+
+	function heartbeatText(at: number | null | undefined): string {
+		if (!at) return 'never';
+		return new Date(at * 1000).toLocaleTimeString();
+	}
 </script>
 
 <svelte:window onvisibilitychange={handleVisibilityChange} />
@@ -55,25 +51,24 @@
 			<h2 class="card-title">Diagnostics</h2>
 		</div>
 		<p class="text-sm text-base-content/60">
-			Live gauges from the backend process. Counters are held in memory: they reset whenever the
-			server restarts, and they describe this single worker process only. Both panels refresh every
-			five seconds while you have this page open.
+			Live gauges from the server process. They are held in memory and reset whenever the server
+			restarts. Both panels refresh every five seconds while you have this page open.
 		</p>
 
-		<section class="mt-2 space-y-3" aria-label="Outbound request queues">
+		<section class="mt-2 space-y-3" aria-label="Outbound request slots">
 			<div class="flex items-center gap-2">
 				<Gauge class="h-4 w-4 text-base-content/60" aria-hidden="true" />
-				<h3 class="font-semibold">Outbound request queues</h3>
+				<h3 class="font-semibold">Outbound request slots</h3>
 			</div>
-			{#if queueQuery.isLoading}
-				<div class="grid gap-3 sm:grid-cols-3" aria-busy="true" aria-label="Loading queue gauges">
+			{#if providerQuery.isLoading}
+				<div class="grid gap-3 sm:grid-cols-3" aria-busy="true" aria-label="Loading slot gauges">
 					<div class="skeleton h-24 rounded-2xl"></div>
 					<div class="skeleton h-24 rounded-2xl"></div>
 					<div class="skeleton h-24 rounded-2xl"></div>
 				</div>
-			{:else if queueQuery.error}
+			{:else if providerQuery.error}
 				<div class="alert alert-error" role="alert">
-					<span>Couldn't load queue stats.</span>
+					<span>Couldn't load provider stats.</span>
 				</div>
 			{:else}
 				<div class="grid gap-3 sm:grid-cols-3">
@@ -97,76 +92,72 @@
 						</div>
 					{/each}
 				</div>
-			{/if}
-		</section>
 
-		<section class="space-y-3" aria-label="Outbound provider calls">
-			<div class="flex items-center gap-2">
-				<ArrowUpRight class="h-4 w-4 text-base-content/60" aria-hidden="true" />
-				<h3 class="font-semibold">Outbound provider calls</h3>
-			</div>
-			{#if providerQuery.isLoading}
-				<div
-					class="skeleton h-40 w-full rounded-2xl"
-					aria-busy="true"
-					aria-label="Loading provider stats"
-				></div>
-			{:else if providerQuery.error}
-				<div class="alert alert-error" role="alert">
-					<span>Couldn't load provider stats.</span>
-				</div>
-			{:else if providersEmpty}
-				<p class="text-sm text-base-content/50">
-					No outbound provider calls counted since process start.
-				</p>
-			{:else}
 				<div class="overflow-x-auto">
 					<table class="table table-sm">
 						<thead>
 							<tr>
 								<th scope="col">Provider</th>
-								<th scope="col">Lane</th>
-								<th scope="col">Outcome</th>
-								<th scope="col" class="text-right">Calls</th>
-								<th scope="col" class="text-right">Calls/min</th>
-								<th scope="col">Workload / profile</th>
-								<th scope="col">Source</th>
-								<th scope="col" class="text-right">Downloaded body</th>
-								<th scope="col" class="text-right">Decoded body</th>
+								<th scope="col" class="text-right">Requests/sec</th>
+								<th scope="col" class="text-right">Burst</th>
+								<th scope="col" class="text-right">Tokens left</th>
 							</tr>
 						</thead>
 						<tbody>
-							{#each providerTableRows as row (row.key)}
+							{#each providers as provider (provider.source)}
 								<tr>
-									<td>{row.providerCell}</td>
-									<td>{row.laneText}</td>
-									<td>{row.outcomeText}</td>
-									<td class="text-right tabular-nums">{formatCount(row.countTotal)}</td>
-									<td class="text-right tabular-nums">{row.ratePerMinText}</td>
-									<td
-										>{row.workloadText}<span class="block text-xs text-base-content/60"
-											>{row.profileText}</span
-										></td
-									>
-									<td>{row.sourceText}</td>
-									<td class="text-right tabular-nums">
-										{row.downloadedText}
-										{#if row.unknownBodyAttempts}
-											<span class="block text-xs text-base-content/60"
-												>{formatCount(row.unknownBodyAttempts)} attempts with unknown size</span
-											>
-										{/if}
-									</td>
-									<td class="text-right tabular-nums">{row.decodedText}</td>
+									<td>{providerLabel(provider.source)}</td>
+									<td class="text-right tabular-nums">{provider.per_second}</td>
+									<td class="text-right tabular-nums">{formatCount(provider.burst)}</td>
+									<td class="text-right tabular-nums">{formatCount(provider.remaining)}</td>
 								</tr>
 							{/each}
 						</tbody>
 					</table>
 				</div>
-				<p class="text-xs text-base-content/60">
-					Body bytes exclude headers and TLS. Counters reset on process restart. Detailed series are
-					capped; overflow combines sources.
-				</p>
+			{/if}
+		</section>
+
+		<section class="space-y-3" aria-label="Background jobs">
+			<div class="flex items-center gap-2">
+				<ArrowUpRight class="h-4 w-4 text-base-content/60" aria-hidden="true" />
+				<h3 class="font-semibold">Background jobs</h3>
+			</div>
+			{#if queueQuery.isLoading}
+				<div
+					class="skeleton h-40 w-full rounded-2xl"
+					aria-busy="true"
+					aria-label="Loading background jobs"
+				></div>
+			{:else if queueQuery.error}
+				<div class="alert alert-error" role="alert">
+					<span>Couldn't load queue stats.</span>
+				</div>
+			{:else if jobs.length === 0}
+				<p class="text-sm text-base-content/50">No background jobs registered.</p>
+			{:else}
+				<div class="overflow-x-auto">
+					<table class="table table-sm">
+						<thead>
+							<tr>
+								<th scope="col">Job</th>
+								<th scope="col">Kind</th>
+								<th scope="col">State</th>
+								<th scope="col">Last heartbeat</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each jobs as job (job.name)}
+								<tr>
+									<td>{humanizeWireValue(job.name)}</td>
+									<td>{humanizeWireValue(job.kind)}</td>
+									<td>{humanizeWireValue(job.state)}</td>
+									<td>{heartbeatText(job.last_heartbeat_at)}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
 			{/if}
 		</section>
 	</div>

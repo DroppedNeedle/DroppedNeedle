@@ -153,8 +153,6 @@ export const API = {
 			const params = new URLSearchParams({ artist_name: artistName });
 			return `/api/v1/artists/${id}/lastfm?${params.toString()}`;
 		},
-		follow: (id: string) => `/api/v1/artists/${id}/follow`,
-		autoDownload: (id: string) => `/api/v1/artists/${id}/auto-download`,
 		purchaseOptions: (id: string, artistName: string) => {
 			const params = new URLSearchParams({ name: artistName });
 			return `/api/v1/artists/${id}/purchase-options?${params.toString()}`;
@@ -164,13 +162,6 @@ export const API = {
 		stream: () => '/api/v1/events/stream'
 	},
 	following: {
-		artists: () => '/api/v1/following/artists',
-		newReleases: (limit: number, offset: number) =>
-			`/api/v1/following/new-releases?limit=${limit}&offset=${offset}`,
-		recentReleases: (days: number, limit: number, includeOwned = true) =>
-			`/api/v1/following/new-releases/recent?days=${days}&limit=${limit}&include_owned=${includeOwned}`,
-		newReleasesUnseenCount: () => '/api/v1/following/new-releases/unseen-count',
-		markNewReleasesSeen: () => '/api/v1/following/new-releases/seen',
 		concerts: () => '/api/v1/following/concerts',
 		concertCities: () => '/api/v1/following/concerts/cities',
 		concertCitySearch: (q: string) =>
@@ -588,9 +579,7 @@ export const API = {
 			`/api/v1/search/suggest?q=${encodeURIComponent(query.trim())}&limit=${limit}`
 	},
 	system: {
-		health: () => '/api/v1/system/health',
-		queueStats: () => '/api/v1/system/queue-stats',
-		providerStats: () => '/api/v1/system/provider-stats'
+		health: () => '/api/v1/system/health'
 	},
 	cacheSync: {
 		status: () => '/api/v1/cache/sync/status',

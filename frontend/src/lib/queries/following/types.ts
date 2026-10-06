@@ -1,7 +1,8 @@
 import type { components } from '$lib/api/v3/openapi';
 
-// mirrors backend api/v1/schemas/artist.py (FollowStatusResponse) and the
-// following hub responses
+// Page shapes for the following hub. The v3 wire types are adapted into
+// these in FollowAdapters.ts (state strings narrowed, `artist_mbid` read as
+// `mbid`).
 export type AutoDownloadState = 'none' | 'pending' | 'approved' | 'rejected' | 'revoked';
 
 export interface FollowStatus {
@@ -26,7 +27,8 @@ export interface NewRelease {
 	artist_mbid: string;
 	primary_type?: string | null;
 	first_release_date?: string | null;
-	in_library?: boolean; // meaningful on the recent-releases log view
+	// v3 does not flag owned releases yet; the log view hides the badge then.
+	in_library?: boolean;
 }
 
 export interface NewReleasesResponse {
@@ -34,10 +36,7 @@ export interface NewReleasesResponse {
 	total: number;
 }
 
-// mirrors backend api/v1/schemas/following.py (UnseenCountResponse)
-export interface UnseenCountResponse {
-	count: number;
-}
+export type UnseenCountResponse = components['schemas']['UnseenCountResponse'];
 
 // Approval rows come from the generated v3 contract (the follow rows above
 // stay hand-mirrored for the follows migration). v3 drops the batch `source`
@@ -49,7 +48,7 @@ export type ApprovalBatch = components['schemas']['ApprovalBatchItem'];
 export type ApprovalBatchListResponse = components['schemas']['ApprovalBatchListResponse'];
 export type ApprovalActionResponse = components['schemas']['ActionResponse'];
 
-// mirrors backend api/v1/schemas/following.py (ConcertResponse etc.)
+// Concert shapes (no v3 route yet).
 export type ConcertStatus = 'scheduled' | 'cancelled' | 'rescheduled';
 
 export interface Concert {

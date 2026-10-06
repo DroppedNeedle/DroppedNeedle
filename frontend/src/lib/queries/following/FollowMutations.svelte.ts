@@ -8,7 +8,8 @@ import {
 	setQueryDataWithPersister
 } from '../QueryClient';
 import { FollowQueryKeyFactory } from './FollowQueryKeyFactory';
-import { FOLLOW_ENDPOINTS } from './endpoints';
+import { CONCERT_ENDPOINTS, FOLLOW_ENDPOINTS } from './endpoints';
+import { toFollowStatus } from './FollowAdapters';
 import type {
 	AutoDownloadState,
 	EventCitiesResponse,
@@ -35,8 +36,8 @@ function invalidateFollowedArtists(): Promise<void> {
 
 export const createSetFollowMutation = (getMbid: () => string) =>
 	createMutation(() => ({
-		mutationFn: (followed: boolean) =>
-			api.global.put<FollowStatus>(FOLLOW_ENDPOINTS.setFollow(getMbid()), { followed }),
+		mutationFn: async (followed: boolean) =>
+			toFollowStatus(await api.global.v3.PUT(FOLLOW_ENDPOINTS.setFollow(getMbid()), { followed })),
 		onMutate: async (followed: boolean) => {
 			const key = statusKey(getMbid());
 			await queryClient.cancelQueries({ queryKey: key });
@@ -63,7 +64,7 @@ export const createSetFollowMutation = (getMbid: () => string) =>
 // so the badge clears without waiting for a refetch
 export const createMarkNewReleasesSeenMutation = () =>
 	createMutation(() => ({
-		mutationFn: () => api.global.post<UnseenCountResponse>(FOLLOW_ENDPOINTS.markNewReleasesSeen()),
+		mutationFn: () => api.global.v3.POST(FOLLOW_ENDPOINTS.markNewReleasesSeen()),
 		onSuccess: (data) => {
 			void setQueryDataWithPersister<UnseenCountResponse>(
 				FollowQueryKeyFactory.newReleasesUnseen(authStore.user?.id),
@@ -76,7 +77,7 @@ export const createMarkNewReleasesSeenMutation = () =>
 export const createReplaceEventCitiesMutation = () =>
 	createMutation(() => ({
 		mutationFn: (cities: EventCity[]) =>
-			api.global.put<EventCitiesResponse>(FOLLOW_ENDPOINTS.concertCities(), { items: cities }),
+			api.global.put<EventCitiesResponse>(CONCERT_ENDPOINTS.concertCities(), { items: cities }),
 		onSuccess: (data) => {
 			void setQueryDataWithPersister<EventCitiesResponse>(
 				FollowQueryKeyFactory.concertCities(authStore.user?.id),
@@ -99,7 +100,7 @@ export const createReplaceEventCitiesMutation = () =>
 // cache so the badge clears without waiting for a refetch
 export const createMarkConcertsSeenMutation = () =>
 	createMutation(() => ({
-		mutationFn: () => api.global.post<UnseenCountResponse>(FOLLOW_ENDPOINTS.markConcertsSeen()),
+		mutationFn: () => api.global.post<UnseenCountResponse>(CONCERT_ENDPOINTS.markConcertsSeen()),
 		onSuccess: (data) => {
 			void setQueryDataWithPersister<UnseenCountResponse>(
 				FollowQueryKeyFactory.concertsUnseen(authStore.user?.id),
@@ -111,8 +112,10 @@ export const createMarkConcertsSeenMutation = () =>
 // mbid is the mutation variable so one instance serves every card in the hub
 export const createUnfollowMutation = () =>
 	createMutation(() => ({
-		mutationFn: (mbid: string) =>
-			api.global.put<FollowStatus>(FOLLOW_ENDPOINTS.setFollow(mbid), { followed: false }),
+		mutationFn: async (mbid: string) =>
+			toFollowStatus(
+				await api.global.v3.PUT(FOLLOW_ENDPOINTS.setFollow(mbid), { followed: false })
+			),
 		onSuccess: (data, mbid) => {
 			void setQueryDataWithPersister<FollowStatus>(statusKey(mbid), data);
 		},
@@ -123,8 +126,10 @@ export const createUnfollowMutation = () =>
 
 export const createSetAutoDownloadMutation = (getMbid: () => string) =>
 	createMutation(() => ({
-		mutationFn: (enabled: boolean) =>
-			api.global.put<FollowStatus>(FOLLOW_ENDPOINTS.autoDownload(getMbid()), { enabled }),
+		mutationFn: async (enabled: boolean) =>
+			toFollowStatus(
+				await api.global.v3.PUT(FOLLOW_ENDPOINTS.autoDownload(getMbid()), { enabled })
+			),
 		onMutate: async (enabled: boolean) => {
 			const key = statusKey(getMbid());
 			await queryClient.cancelQueries({ queryKey: key });
