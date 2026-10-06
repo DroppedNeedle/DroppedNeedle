@@ -29,6 +29,8 @@ use super::{Catalog, MISS_TTL, is_mbid, mb_error, mb_retry, record_mb_down, secs
 const EMPTY_TTL: Duration = Duration::from_secs(600);
 /// Partial answers (a deadline hit) are kept a minute.
 const PARTIAL_TTL: Duration = Duration::from_secs(60);
+/// Releases whose tracklists top songs look up, at most.
+const MAX_TOP_SONG_RELEASES: usize = 10;
 /// Release-to-group answers are kept a week: they never change.
 const RELEASE_GROUP_TTL: Duration = Duration::from_secs(7 * 24 * 3600);
 /// How long one request spends resolving Last.fm releases.
@@ -270,6 +272,8 @@ impl Catalog {
                             original_release_mbid: recording.release_mbid,
                             release_name: recording.release_name,
                             listen_count: recording.listen_count,
+                            disc_number: None,
+                            track_number: None,
                         })
                         .collect(),
                     ..SectionRows::default()
@@ -346,11 +350,94 @@ impl Catalog {
         let answer = self
             .artist_section(user_id, mbid, count, source, Section::TopSongs)
             .await?;
+        let mut songs = answer.rows.songs;
+        self.fill_track_numbers(&mut songs).await;
         Ok(TopSongsResponse {
-            songs: answer.rows.songs,
+            songs,
             source: answer.source,
             configured: answer.configured,
         })
+    }
+
+    /// Disc and track numbers for top songs (v2 looked each song up on
+    /// MusicBrainz in the request). Numbers come from the cached tracklist
+    /// of the release the listens point at, so songs sharing a release
+    /// share one lookup and album pages share the cache. The request only
+    /// reads the cache; releases not cached yet are fetched once in the
+    /// background at background priority, so the page answers at once and
+    /// carries the numbers from the next load on.
+    async fn fill_track_numbers(&self, songs: &mut [TopSong]) {
+        let mut releases: Vec<String> = Vec::new();
+        for song in songs.iter() {
+            if let Some(release) = song.original_release_mbid.as_deref()
+                && is_mbid(release)
+                && !releases
+                    .iter()
+                    .any(|known| known.eq_ignore_ascii_case(release))
+            {
+                releases.push(release.to_ascii_lowercase());
+            }
+        }
+        releases.truncate(MAX_TOP_SONG_RELEASES);
+        let mut missing = Vec::new();
+        for release in releases {
+            let Some(detail) = self.cached_release_detail(&release).await else {
+                missing.push(release);
+                continue;
+            };
+            for song in songs.iter_mut().filter(|song| {
+                song.original_release_mbid
+                    .as_deref()
+                    .is_some_and(|id| id.eq_ignore_ascii_case(&release))
+            }) {
+                let Some(recording) = song.recording_mbid.as_deref() else {
+                    continue;
+                };
+                if let Some(track) = detail.tracks.iter().find(|track| {
+                    track
+                        .recording_id
+                        .as_deref()
+                        .is_some_and(|id| id.eq_ignore_ascii_case(recording))
+                }) {
+                    song.disc_number = Some(track.disc_number);
+                    song.track_number = Some(track.position);
+                }
+            }
+        }
+        self.warm_releases(missing);
+    }
+
+    /// Fetch release tracklists into the cache at background priority, one
+    /// task per release not already being fetched.
+    fn warm_releases(&self, releases: Vec<String>) {
+        for release in releases {
+            let key = format!("release:{release}");
+            {
+                let mut warming = self
+                    .inner
+                    .warming
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner());
+                if !warming.insert(key.clone()) {
+                    continue;
+                }
+            }
+            let catalog = self.clone();
+            tokio::spawn(async move {
+                if let Err(error) = catalog
+                    .release_detail_at(&release, RequestPriority::BackgroundSync)
+                    .await
+                {
+                    tracing::warn!(release = %release, %error, "release tracklist warm failed");
+                }
+                catalog
+                    .inner
+                    .warming
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .remove(&key);
+            });
+        }
     }
 
     /// `GET /artists/{artist_mbid}/top-albums`.
@@ -729,6 +816,8 @@ async fn lastfm_rows(
                     original_release_mbid: None,
                     release_name: None,
                     listen_count: track.playcount,
+                    disc_number: None,
+                    track_number: None,
                 })
                 .collect(),
             ..SectionRows::default()

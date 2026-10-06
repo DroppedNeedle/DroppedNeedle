@@ -291,15 +291,23 @@ impl Catalog {
 
     /// The cached release detail.
     async fn release_detail(&self, mbid: &str) -> Result<ReleaseCore, CatalogError> {
+        self.release_detail_at(mbid, RequestPriority::UserInitiated)
+            .await
+    }
+
+    /// The cached release detail, fetching at `priority` on a miss.
+    pub(super) async fn release_detail_at(
+        &self,
+        mbid: &str,
+        priority: RequestPriority,
+    ) -> Result<ReleaseCore, CatalogError> {
         let catalog = self.clone();
         let id = mbid.to_owned();
         self.cached(
             &self.inner.flights.release,
             self.release_key(mbid),
             move || async move {
-                let (client, _) = catalog
-                    .upstream()
-                    .musicbrainz(RequestPriority::UserInitiated);
+                let (client, _) = catalog.upstream().musicbrainz(priority);
                 let found = mb_retry(|| {
                     client.lookup_release(&id, &RELEASE_INCLUDES, Criticality::IdentityCritical)
                 })
@@ -315,6 +323,16 @@ impl Catalog {
             },
         )
         .await
+    }
+
+    /// A release detail already in the cache; never dials out.
+    pub(super) async fn cached_release_detail(&self, mbid: &str) -> Option<ReleaseDetail> {
+        let bytes = self
+            .upstream()
+            .cache()
+            .get_bytes(&self.release_key(mbid))
+            .await?;
+        serde_json::from_slice::<ReleaseCore>(&bytes).ok().flatten()
     }
 
     /// `GET /albums/{album_id}/basic`: the header. A dead MusicBrainz falls

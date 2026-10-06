@@ -14658,6 +14658,11 @@ export interface components {
             /** @description Credited artist. */
             artist_name: string;
             /**
+             * Format: int32
+             * @description Disc of the song on that release, once its tracklist is known.
+             */
+            disc_number?: number | null;
+            /**
              * Format: int64
              * @description Listen or play count.
              */
@@ -14672,6 +14677,11 @@ export interface components {
             release_name?: string | null;
             /** @description Song title. */
             title: string;
+            /**
+             * Format: int32
+             * @description Track number on that disc, once the tracklist is known.
+             */
+            track_number?: number | null;
         };
         /** @description `GET /artists/{artist_mbid}/top-songs`. */
         TopSongsResponse: {

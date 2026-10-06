@@ -252,6 +252,10 @@ pub struct TopSong {
     pub release_name: Option<String>,
     /// Listen or play count.
     pub listen_count: i64,
+    /// Disc of the song on that release, once its tracklist is known.
+    pub disc_number: Option<u32>,
+    /// Track number on that disc, once the tracklist is known.
+    pub track_number: Option<u32>,
 }
 
 /// `GET /artists/{artist_mbid}/top-songs`.
