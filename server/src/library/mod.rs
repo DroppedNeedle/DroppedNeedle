@@ -18,6 +18,7 @@
 //! the publish journal (with its snapshots and baselines) all live in the
 //! application database. Contribution state runs on an in-memory store.
 
+pub mod activity;
 pub mod adapters;
 mod clock;
 pub mod contrib;
@@ -28,6 +29,7 @@ pub mod manage;
 pub mod matching;
 pub mod publish;
 pub mod scan;
+pub mod scans;
 pub mod service;
 pub mod settings;
 pub mod tags;

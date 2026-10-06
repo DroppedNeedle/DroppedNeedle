@@ -142,6 +142,15 @@ impl SqliteScanStore {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+
+    /// Run `work` on this store's application-database connection,
+    /// serialized with the scan's own calls. The library activity read
+    /// model and the identification pause switch live in the same
+    /// database and use it, so the library keeps one writer connection.
+    /// Blocking: call from a blocking thread.
+    pub(crate) fn with_connection<R>(&self, work: impl FnOnce(&mut Connection) -> R) -> R {
+        work(&mut self.lock().conn)
+    }
 }
 
 fn internal(error: rusqlite::Error) -> ScanStoreError {

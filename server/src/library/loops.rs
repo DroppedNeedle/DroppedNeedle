@@ -161,7 +161,9 @@ impl LibrarySetup {
         let mut attempted = 0;
         let mut shutdown = shutdown.clone();
         loop {
-            if *shutdown.borrow() {
+            // An administrator's pause stops new claims; a job already
+            // running finishes.
+            if *shutdown.borrow() || self.identification_paused() {
                 break;
             }
             let claimed = self
@@ -317,6 +319,7 @@ pub(crate) async fn identify_loop(setup: LibrarySetup, mut shutdown: watch::Rece
         if *shutdown.borrow() {
             break;
         }
+        let revision = setup.wakeups.revision("identification");
         {
             let (setup, shutdown) = (setup.clone(), shutdown.clone());
             drive_blocking(
@@ -324,9 +327,10 @@ pub(crate) async fn identify_loop(setup: LibrarySetup, mut shutdown: watch::Rece
             )
             .await;
         }
+        // Resume wakes the loop at once; otherwise it polls.
         tokio::select! {
             _ = shutdown.changed() => break,
-            _ = tokio::time::sleep(IDENTIFY_POLL) => {}
+            _ = setup.wakeups.wait("identification", revision, IDENTIFY_POLL) => {}
         }
     }
 }
