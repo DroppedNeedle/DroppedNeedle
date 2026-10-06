@@ -1892,10 +1892,11 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Requeue one failed or short-landed task for import without
-         *     re-searching. `POST /api/v3/downloads/tasks/{task_id}/reimport`.
-         *     Admin only. Missing tasks and tasks that fail the reimport guard
-         *     (no picked candidate linked) answer 404.
+         * Import a failed or short-landed task's files again, right away, from
+         *     the files its last download left on disk (no new search or download).
+         *     `POST /api/v3/downloads/tasks/{task_id}/reimport`. Admin only. Missing
+         *     tasks and tasks with no files to reimport answer 404; a download client
+         *     that is no longer configured answers 409.
          */
         post: operations["reimport_task_handler"];
         delete?: never;
@@ -15313,16 +15314,13 @@ export interface components {
             /** @description Evaluate only this exact MusicBrainz release. */
             release_mbid?: string | null;
         };
-        /**
-         * @description Reimport outcome. The requeue puts the task back in line; the worker
-         *     reports fresh progress from there.
-         */
+        /** @description Reimport outcome: the task as the import left it. */
         ReimportResponse: {
-            /** @description Failure text, when the requeue itself failed. */
+            /** @description Why the import did not complete, when it did not. */
             error_message?: string | null;
-            /** @description Task status after this call (`queued`). */
+            /** @description Task status after the import (`completed`, `partial`, `failed`). */
             status: string;
-            /** @description Whether the task went back in line. */
+            /** @description Whether the files reached the library (`completed` or `partial`). */
             success: boolean;
         };
         /** @description Relationship-credit handling. */
