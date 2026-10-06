@@ -252,7 +252,9 @@ Run one v3 container per data directory, never two.
 
 If your reverse proxy has a special rule for v2's live update stream at
 `/api/v1/events/stream` (no buffering, long read timeout), move it to
-`/api/v3/events/stream`. That's where v3 serves it.
+`/api/v3/events/stream`. That's where v3 serves it. v2 also opened one
+stream per download (`/api/v1/downloads/<id>/stream`); v3 sends download
+progress over that same single stream, so a rule for those can go.
 
 Then check:
 
