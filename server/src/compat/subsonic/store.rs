@@ -27,6 +27,9 @@ pub enum AlbumSort {
     YearAsc,
     /// Year descending (byYear with fromYear > toYear).
     YearDesc,
+    /// Insertion order: the search3 empty-query sync order, stable while
+    /// a scan adds albums.
+    Natural,
 }
 
 /// One playlist entry: `library_file_id` is None for legacy/outbound
@@ -229,13 +232,14 @@ pub trait Store: Clone + Send + Sync {
         self.clone()
     }
 
-    /// Artists page, optional match query (None = match-all).
+    /// Artists page, optional match query (None = match-all). No caller
+    /// shows a total, so none is counted.
     fn get_artists(
         &self,
         limit: usize,
         offset: usize,
         query: Option<&str>,
-    ) -> impl Future<Output = Result<(Vec<ViewArtist>, usize), Self::Error>> + Send;
+    ) -> impl Future<Output = Result<Vec<ViewArtist>, Self::Error>> + Send;
 
     /// Library revision for getIndexes freshness.
     fn get_library_revision(&self) -> impl Future<Output = Result<i64, Self::Error>> + Send;
@@ -270,13 +274,14 @@ pub trait Store: Clone + Send + Sync {
         file_ids: &[String],
     ) -> impl Future<Output = Result<HashMap<String, ViewTrack>, Self::Error>> + Send;
 
-    /// Tracks page, optional match query (None = match-all).
+    /// Tracks page, optional match query. None matches all, in insertion
+    /// order (the search3 sync order); a query pages in album order.
     fn get_tracks_page(
         &self,
         limit: usize,
         offset: usize,
         query: Option<&str>,
-    ) -> impl Future<Output = Result<(Vec<ViewTrack>, usize), Self::Error>> + Send;
+    ) -> impl Future<Output = Result<Vec<ViewTrack>, Self::Error>> + Send;
 
     /// Albums page with sort, year bounds, genre, and match query.
     #[allow(clippy::too_many_arguments)]
@@ -289,7 +294,7 @@ pub trait Store: Clone + Send + Sync {
         to_year: Option<i64>,
         genre: Option<&str>,
         query: Option<&str>,
-    ) -> impl Future<Output = Result<(Vec<ViewAlbum>, usize), Self::Error>> + Send;
+    ) -> impl Future<Output = Result<Vec<ViewAlbum>, Self::Error>> + Send;
 
     /// Random songs with optional filters.
     fn get_random_songs(

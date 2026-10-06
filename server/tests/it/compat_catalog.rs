@@ -176,6 +176,108 @@ async fn subsonic_and_jellyfin_read_the_scanned_library() {
     assert_eq!((played.len(), total), (0, 0), "history sorts skip unplayed");
 }
 
+/// One more streamable track on the seeded album.
+fn track_row(id: &str, title: &str, number: i64) -> String {
+    let folded = title.to_lowercase();
+    format!(
+        "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+         path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+         artist_name, artist_name_folded, album_title, album_title_folded, album_artist_name, \
+         album_artist_name_folded, track_number, duration_seconds, file_format, ingest_source, \
+         imported_at, membership_source) \
+         VALUES ('{id}', 'alb-1', 'root', '/music/dummy/{id}.flac', 'dummy/{id}.flac', 'h-{id}', \
+         1000, 1, 'r-{id}', '{title}', '{folded}', 'Portishead', 'portishead', 'Dummy', 'dummy', \
+         'Portishead', 'portishead', {number}, 200.0, 'flac', 'scan', 1, 'automatic');"
+    )
+}
+
+/// The search3 empty-query sync (Symfonium, Tempo) pages in insertion
+/// order, so pages already read stay put while a scan adds tracks; words
+/// match across artist and title; random pages share one shuffle.
+#[tokio::test]
+async fn search3_sync_pages_are_stable_and_words_match_across_columns() {
+    let rig = Rig::open().await;
+    let seed = [
+        track_row("trk-2", "Roads", 2),
+        track_row("trk-3", "Glory Box", 3),
+    ]
+    .concat();
+    rig.runtime
+        .lane()
+        .write(Lane::Foreground, "more tracks", move |tx| {
+            tx.execute_batch(&seed)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    async fn page(rig: &Rig, offset: &str) -> String {
+        let body = rig
+            .subsonic(
+                "search3",
+                &[
+                    ("query", "\"\""),
+                    ("songCount", "1"),
+                    ("songOffset", offset),
+                    ("artistCount", "0"),
+                    ("albumCount", "0"),
+                ],
+            )
+            .await;
+        let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+        value["subsonic-response"]["searchResult3"]["song"][0]["id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
+    }
+    let before = [
+        page(&rig, "0").await,
+        page(&rig, "1").await,
+        page(&rig, "2").await,
+    ];
+    assert_eq!(before, ["tr-trk-1", "tr-trk-2", "tr-trk-3"]);
+    let late = track_row("trk-0", "Sour Times", 4);
+    rig.runtime
+        .lane()
+        .write(Lane::Foreground, "scan adds", move |tx| {
+            tx.execute_batch(&late)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let after = [
+        page(&rig, "0").await,
+        page(&rig, "1").await,
+        page(&rig, "2").await,
+    ];
+    assert_eq!(after, before, "a new track lands after the pages read");
+    assert_eq!(page(&rig, "3").await, "tr-trk-0");
+
+    let found = rig
+        .subsonic("search3", &[("query", "portishead roads")])
+        .await;
+    assert!(found.contains("tr-trk-2"), "{found}");
+    assert!(!found.contains("tr-trk-3"), "{found}");
+
+    let jellyfin = rig.compat.jellyfin_state();
+    let mut shuffled = Vec::new();
+    for start in 0..4 {
+        let (tracks, total) = jellyfin
+            .library
+            .track_page(
+                USER_ID,
+                &TrackFilter::default(),
+                ItemSort::By(SortKey::Random, false),
+                start,
+                1,
+            )
+            .await;
+        assert_eq!(total, 4);
+        shuffled.extend(tracks.into_iter().map(|track| track.file_id));
+    }
+    shuffled.sort();
+    assert_eq!(shuffled, ["trk-0", "trk-1", "trk-2", "trk-3"], "no repeats");
+}
+
 #[tokio::test]
 async fn playlists_and_stars_are_shared_with_the_native_routes() {
     let rig = Rig::open().await;

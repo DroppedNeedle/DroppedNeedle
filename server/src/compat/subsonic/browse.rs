@@ -71,6 +71,9 @@ pub fn validate_music_folder(
 pub fn normalize_search_query(raw: Option<&str>) -> Option<String> {
     let raw = raw?;
     let query = raw.trim().trim_matches(['"', '\'']).trim();
+    // DSub-style clients send `*` (or `term*`) for "everything" or a prefix;
+    // matching is substring anyway, so the star adds nothing.
+    let query = query.trim_end_matches('*').trim();
     (!query.is_empty()).then(|| query.to_owned())
 }
 
@@ -89,8 +92,8 @@ pub async fn license<P: Principal, S: Store, B: AudioBackend>(
 }
 
 /// Advertised OpenSubsonic extensions, all v1. Public (no auth).
-/// The set is owned by `compat::shared::extensions` (matrix wins: exactly
-/// 3; `transcoding` is served but not advertised, on purpose).
+/// The set is owned by `compat::shared::extensions`: every served
+/// extension.
 pub async fn extensions<P: Principal, S: Store, B: AudioBackend>(
     _ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Outcome, SubsonicError> {
@@ -134,7 +137,7 @@ pub async fn artists<P: Principal, S: Store, B: AudioBackend>(
     ctx: &'_ Ctx<'_, P, S, B>,
 ) -> Result<Outcome, SubsonicError> {
     validate_music_folder(&ctx.params)?;
-    let (artists, _) = ctx
+    let artists = ctx
         .store
         .get_artists(100_000, 0, None)
         .await
@@ -185,7 +188,7 @@ pub async fn indexes<P: Principal, S: Store, B: AudioBackend>(
             .render(),
         ));
     }
-    let (artists, _) = ctx
+    let artists = ctx
         .store
         .get_artists(100_000, 0, None)
         .await
@@ -356,7 +359,7 @@ pub async fn album_list_query<P: Principal, S: Store, B: AudioBackend>(
     } else if ctx.p("genre")?.is_some() {
         return Err(SubsonicError::new(10, "genre requires type=byGenre"));
     }
-    let (albums, _) = ctx
+    let albums = ctx
         .store
         .get_albums_offset(
             size,
@@ -450,7 +453,7 @@ pub async fn music_directory<P: Principal, S: Store, B: AudioBackend>(
 ) -> Result<Outcome, SubsonicError> {
     let sid = ctx.p("id")?.unwrap_or_default();
     if sid == "1" {
-        let (artists, _) = ctx
+        let artists = ctx
             .store
             .get_artists(100_000, 0, None)
             .await
@@ -575,7 +578,7 @@ pub async fn search_query<P: Principal, S: Store, B: AudioBackend>(
         .max(0) as usize;
     let mut artists = Vec::new();
     if artist_count > 0 {
-        (artists, _) = ctx
+        artists = ctx
             .store
             .get_artists(artist_count, artist_offset, query.as_deref())
             .await
@@ -583,12 +586,18 @@ pub async fn search_query<P: Principal, S: Store, B: AudioBackend>(
     }
     let mut albums = Vec::new();
     if album_count > 0 {
-        (albums, _) = ctx
+        albums = ctx
             .store
             .get_albums_offset(
                 album_count,
                 album_offset,
-                AlbumSort::Recent,
+                // The empty-query sync pages in insertion order, so pages
+                // already read stay put while a scan adds albums.
+                if query.is_some() {
+                    AlbumSort::Recent
+                } else {
+                    AlbumSort::Natural
+                },
                 None,
                 None,
                 None,
@@ -599,7 +608,7 @@ pub async fn search_query<P: Principal, S: Store, B: AudioBackend>(
     }
     let mut songs = Vec::new();
     if song_count > 0 {
-        (songs, _) = ctx
+        songs = ctx
             .store
             .get_tracks_page(song_count, song_offset, query.as_deref())
             .await

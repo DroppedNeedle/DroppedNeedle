@@ -14,8 +14,8 @@ use crate::reads::collections::service::{CollectionsService, LOCAL_SOURCE, Visib
 use crate::reads::collections::store::playlists::NewEntry;
 use crate::reads::collections::{CollectionsState, error::CollectionsError};
 use crate::reads::library::player::{
-    AlbumOrder, AlbumQuery, PlayStat, PlayerAlbum, PlayerCatalog, PlayerTrack, TrackOrder,
-    TrackQuery,
+    AlbumOrder, AlbumQuery, PlayStat, PlayerAlbum, PlayerCatalog, PlayerTrack, ShuffleSeeds,
+    TrackOrder, TrackQuery,
 };
 use crate::reads::library::stores::{
     ArtistRecord, ArtistScope, ArtistSort, GenreRecord, LibraryCatalog, LyricDoc, LyricsPort,
@@ -129,6 +129,8 @@ pub struct CompatLibrary {
     pub lyrics: Arc<dyn LyricsPort>,
     /// Cover art by MBID.
     pub covers: Arc<dyn CoverArt>,
+    /// Per-caller seeds for paged random lists, shared by both protocols.
+    pub shuffles: Arc<ShuffleSeeds>,
 }
 
 /// Unix seconds as a whole number.
@@ -156,6 +158,7 @@ impl CompatLibrary {
             collections: reads.collections.clone(),
             lyrics: reads.library.lyrics.clone(),
             covers: reads.platform.covers.covers.clone(),
+            shuffles: Arc::new(ShuffleSeeds::default()),
         }
     }
 
@@ -237,6 +240,33 @@ impl CompatLibrary {
         Ok(self.player.albums(query, order, limit, offset).await?)
     }
 
+    /// One page of albums without the total.
+    pub async fn album_page(
+        &self,
+        query: &AlbumQuery,
+        order: AlbumOrder,
+        limit: u64,
+        offset: u64,
+    ) -> Result<Vec<PlayerAlbum>, CompatError> {
+        Ok(self.player.album_page(query, order, limit, offset).await?)
+    }
+
+    /// One page of tracks without the total.
+    pub async fn track_page(
+        &self,
+        query: &TrackQuery,
+        order: TrackOrder,
+        limit: u64,
+        offset: u64,
+    ) -> Result<Vec<PlayerTrack>, CompatError> {
+        Ok(self.player.track_page(query, order, limit, offset).await?)
+    }
+
+    /// The caller's shuffle seed for a random page at `offset`.
+    pub fn shuffle_seed(&self, caller: &str, offset: u64) -> u32 {
+        self.shuffles.seed(caller, offset)
+    }
+
     /// One page of tracks.
     pub async fn tracks(
         &self,
@@ -256,9 +286,8 @@ impl CompatLibrary {
         };
         Ok(self
             .player
-            .tracks(&query, TrackOrder::Album, u64::MAX >> 1, 0)
-            .await?
-            .0)
+            .track_page(&query, TrackOrder::Album, u64::MAX >> 1, 0)
+            .await?)
     }
 
     /// Tracks by id, in no particular order.

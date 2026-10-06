@@ -1143,9 +1143,16 @@ async fn migration_0005_backfills_on_upgrade() {
 #[tokio::test]
 async fn hot_plans_avoid_scans_and_sorts() {
     let fixture = seed_small().await;
+    // Without planner statistics (a fresh database). The 100k acceptance
+    // test below re-checks the same plans with statistics: on this tiny
+    // fixture ANALYZE rightly prefers scanning a few rows.
+    assert_hot_plans(&fixture.pool).await;
+}
+
+async fn assert_hot_plans(pool: &SqlitePool) {
     let grouped = ARTIST_CREDIT_COUNTS.replace("{placeholders}", "?, ?");
     let plan = explain(
-        &fixture.pool,
+        pool,
         &grouped,
         &[ExplainBind::Text(Some("a1")), ExplainBind::Text(Some("a2"))],
     )
@@ -1169,7 +1176,7 @@ async fn hot_plans_avoid_scans_and_sorts() {
     let mut binds: Vec<ExplainBind> = nulls.into_iter().collect();
     binds.push(ExplainBind::Int(48));
     binds.push(ExplainBind::Int(0));
-    let plan = explain(&fixture.pool, &list, &binds).await;
+    let plan = explain(pool, &list, &binds).await;
     assert!(
         plan.iter()
             .any(|line| line.contains("idx_local_tracks_availability_title")),
@@ -1183,14 +1190,14 @@ async fn hot_plans_avoid_scans_and_sorts() {
     );
 
     for sql in [STATS_MAIN, STATS_FORMATS] {
-        let plan = explain(&fixture.pool, sql, &[]).await;
+        let plan = explain(pool, sql, &[]).await;
         assert!(
             !plan.iter().any(|line| line.contains("SCAN local_tracks")),
             "stats never scans tracks: {plan:?}"
         );
     }
     let plan = explain(
-        &fixture.pool,
+        pool,
         TRACK_MISS_ORACLE,
         &[ExplainBind::Text(Some("\"zzz-no-such-thing\""))],
     )
@@ -1219,7 +1226,7 @@ async fn hot_plans_avoid_scans_and_sorts() {
         ExplainBind::Int(50),
         ExplainBind::Int(0),
     ];
-    let plan = explain(&fixture.pool, &ids, &binds).await;
+    let plan = explain(pool, &ids, &binds).await;
     assert!(
         plan.iter()
             .all(|line| !line.contains("SCAN ") || line.contains("USING")),
@@ -1230,7 +1237,7 @@ async fn hot_plans_avoid_scans_and_sorts() {
     // the probe must stay on the album index, never an availability scan.
     let agg = format!("SELECT {ALBUM_COLUMNS} {ALBUM_JOINS} WHERE a.id IN (?, ?) GROUP BY a.id");
     let plan = explain(
-        &fixture.pool,
+        pool,
         &agg,
         &[
             ExplainBind::Text(Some("al1")),
@@ -1251,7 +1258,7 @@ async fn hot_plans_avoid_scans_and_sorts() {
          AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\') ORDER BY {order} LIMIT ? OFFSET ?"
     );
     let plan = explain(
-        &fixture.pool,
+        pool,
         &page,
         &[
             ExplainBind::Text(None),
@@ -1523,9 +1530,24 @@ async fn perf_100k_player_pages_hold_p95() {
 
     let fixture = seed_small().await;
     seed_100k(&fixture).await;
+    // Production statistics: the maintenance ANALYZE, then the hot plans
+    // must still walk their indexes.
+    crate::db::AnalyzeService::new(fixture.runtime.lane().clone(), fixture.pool.clone())
+        .run()
+        .await
+        .expect("analyze runs");
+    assert_hot_plans(&fixture.pool).await;
     let player = SqlitePlayerCatalog::new(&LibraryDb::new(&fixture.pool));
     let miss = TrackQuery {
         q: Some("zzz-no-such-thing-zzz".to_owned()),
+        ..TrackQuery::default()
+    };
+    let hit = TrackQuery {
+        q: Some("track 0123".to_owned()),
+        ..TrackQuery::default()
+    };
+    let common = TrackQuery {
+        q: Some("perf artist 01".to_owned()),
         ..TrackQuery::default()
     };
     let mut report = Vec::new();
@@ -1535,6 +1557,13 @@ async fn perf_100k_player_pages_hold_p95() {
         ("player_tracks_search_miss", 1),
         ("player_albums_title", 2),
         ("player_albums_newest", 3),
+        ("search3_sync_page_offset_99500", 4),
+        ("search3_songs_hit_page", 5),
+        ("search3_songs_common_page", 6),
+        ("player_tracks_random_50", 7),
+        ("player_tracks_shuffle_page", 8),
+        ("player_albums_shuffle_page_9000", 9),
+        ("player_tracks_year_page", 10),
     ] {
         let mut samples = Vec::new();
         for round in 0..53 {
@@ -1552,11 +1581,44 @@ async fn perf_100k_player_pages_hold_p95() {
                     .albums(&AlbumQuery::default(), AlbumOrder::Title, 100, 0)
                     .await
                     .map(|page| page.0.len()),
-                _ => player
+                3 => player
                     .albums(
                         &AlbumQuery::default(),
                         AlbumOrder::By(OrderKey::Added, true),
                         10,
+                        0,
+                    )
+                    .await
+                    .map(|page| page.0.len()),
+                4 => player
+                    .track_page(&TrackQuery::default(), TrackOrder::Natural, 500, 99_500)
+                    .await
+                    .map(|page| page.len()),
+                5 => player
+                    .track_page(&hit, TrackOrder::Album, 20, 0)
+                    .await
+                    .map(|page| page.len()),
+                6 => player
+                    .track_page(&common, TrackOrder::Album, 20, 0)
+                    .await
+                    .map(|page| page.len()),
+                7 => player
+                    .track_page(&TrackQuery::default(), TrackOrder::Random, 50, 0)
+                    .await
+                    .map(|page| page.len()),
+                8 => player
+                    .tracks(&TrackQuery::default(), TrackOrder::Shuffle(7), 100, 0)
+                    .await
+                    .map(|page| page.0.len()),
+                9 => player
+                    .album_page(&AlbumQuery::default(), AlbumOrder::Shuffle(7), 50, 9_000)
+                    .await
+                    .map(|page| page.len()),
+                _ => player
+                    .tracks(
+                        &TrackQuery::default(),
+                        TrackOrder::By(OrderKey::Year, false),
+                        100,
                         0,
                     )
                     .await

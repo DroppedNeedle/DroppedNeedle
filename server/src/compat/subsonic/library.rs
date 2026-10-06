@@ -1079,7 +1079,7 @@ pub async fn lyrics<P: Principal, S: Store, B: AudioBackend>(
     if title.is_empty() {
         return Err(SubsonicError::missing("title"));
     }
-    let (tracks, _) = ctx
+    let tracks = ctx
         .store
         .get_tracks_page(100, 0, Some(&title))
         .await
@@ -1260,7 +1260,7 @@ pub async fn top_songs<P: Principal, S: Store, B: AudioBackend>(
         .pint("count", Some(50), Some(1), Some(500))?
         .unwrap_or(50)
         .max(1) as usize;
-    let (artists, _) = ctx
+    let artists = ctx
         .store
         .get_artists(10, 0, Some(&artist))
         .await

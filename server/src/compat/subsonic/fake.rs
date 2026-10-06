@@ -331,13 +331,12 @@ impl Store for FakeStore {
         limit: usize,
         offset: usize,
         query: Option<&str>,
-    ) -> Result<(Vec<ViewArtist>, usize), Infallible> {
+    ) -> Result<Vec<ViewArtist>, Infallible> {
         let all: Vec<_> = Self::artists()
             .into_iter()
             .filter(|a| matches(query, &[&a.name]))
             .collect();
-        let total = all.len();
-        Ok((all.into_iter().skip(offset).take(limit).collect(), total))
+        Ok(all.into_iter().skip(offset).take(limit).collect())
     }
 
     async fn get_library_revision(&self) -> Result<i64, Infallible> {
@@ -395,13 +394,12 @@ impl Store for FakeStore {
         limit: usize,
         offset: usize,
         query: Option<&str>,
-    ) -> Result<(Vec<ViewTrack>, usize), Infallible> {
+    ) -> Result<Vec<ViewTrack>, Infallible> {
         let all: Vec<_> = Self::tracks()
             .into_iter()
             .filter(|t| matches(query, &[&t.title, &t.artist_name]))
             .collect();
-        let total = all.len();
-        Ok((all.into_iter().skip(offset).take(limit).collect(), total))
+        Ok(all.into_iter().skip(offset).take(limit).collect())
     }
 
     async fn get_albums_offset(
@@ -413,7 +411,7 @@ impl Store for FakeStore {
         to_year: Option<i64>,
         genre: Option<&str>,
         query: Option<&str>,
-    ) -> Result<(Vec<ViewAlbum>, usize), Infallible> {
+    ) -> Result<Vec<ViewAlbum>, Infallible> {
         let mut all: Vec<_> = Self::albums()
             .into_iter()
             .filter(|album| {
@@ -434,10 +432,9 @@ impl Store for FakeStore {
             AlbumSort::YearAsc => all.sort_by_key(|a| a.year.unwrap_or(0)),
             AlbumSort::YearDesc => all.sort_by_key(|a| std::cmp::Reverse(a.year.unwrap_or(0))),
             AlbumSort::Recent => all.sort_by_key(|a| std::cmp::Reverse(a.date_added.unwrap_or(0))),
-            AlbumSort::Random => {}
+            AlbumSort::Random | AlbumSort::Natural => {}
         }
-        let total = all.len();
-        Ok((all.into_iter().skip(offset).take(limit).collect(), total))
+        Ok(all.into_iter().skip(offset).take(limit).collect())
     }
 
     async fn get_random_songs(

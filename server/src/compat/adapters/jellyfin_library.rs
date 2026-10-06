@@ -221,22 +221,26 @@ fn order_key(key: SortKey) -> Option<OrderKey> {
     }
 }
 
-fn track_order(sort: ItemSort) -> TrackOrder {
+/// Random sorts page through one shuffle per caller (`seed` is drawn at
+/// start index 0), so `StartIndex` paging never repeats or skips an item.
+fn track_order(sort: ItemSort, seed: impl FnOnce() -> u32) -> TrackOrder {
     match sort {
         ItemSort::Catalog => TrackOrder::Title,
         ItemSort::Disc => TrackOrder::Disc,
-        ItemSort::By(key, descending) => {
-            order_key(key).map_or(TrackOrder::Random, |key| TrackOrder::By(key, descending))
-        }
+        ItemSort::By(key, descending) => match order_key(key) {
+            Some(key) => TrackOrder::By(key, descending),
+            None => TrackOrder::Shuffle(seed()),
+        },
     }
 }
 
-fn album_order(sort: ItemSort) -> AlbumOrder {
+fn album_order(sort: ItemSort, seed: impl FnOnce() -> u32) -> AlbumOrder {
     match sort {
         ItemSort::Catalog | ItemSort::Disc => AlbumOrder::Title,
-        ItemSort::By(key, descending) => {
-            order_key(key).map_or(AlbumOrder::Random, |key| AlbumOrder::By(key, descending))
-        }
+        ItemSort::By(key, descending) => match order_key(key) {
+            Some(key) => AlbumOrder::By(key, descending),
+            None => AlbumOrder::Shuffle(seed()),
+        },
     }
 }
 
@@ -283,7 +287,12 @@ impl LibraryRead for JellyfinLibrary {
             };
             let (tracks, total) = self
                 .library
-                .tracks(&query, track_order(sort), to_u64(limit), to_u64(start))
+                .tracks(
+                    &query,
+                    track_order(sort, || self.library.shuffle_seed(user_id, to_u64(start))),
+                    to_u64(limit),
+                    to_u64(start),
+                )
                 .await?;
             let views = tracks.into_iter().map(track_view).collect();
             Ok((self.overlay_tracks(user_id, views).await?, to_usize(total)))
@@ -330,7 +339,12 @@ impl LibraryRead for JellyfinLibrary {
             };
             let (albums, total) = self
                 .library
-                .albums(&query, album_order(sort), to_u64(limit), to_u64(start))
+                .albums(
+                    &query,
+                    album_order(sort, || self.library.shuffle_seed(user_id, to_u64(start))),
+                    to_u64(limit),
+                    to_u64(start),
+                )
                 .await?;
             let views = albums.into_iter().map(album_view).collect();
             Ok((self.overlay_albums(user_id, views).await?, to_usize(total)))

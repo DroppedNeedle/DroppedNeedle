@@ -519,37 +519,49 @@ impl SearchService {
             .collect())
     }
 
-    /// One page of track hits: indexed rows whose folded title, artist, or
-    /// album contains the query, exact title first.
+    /// One page of track hits, exact title first. Words of 3+ characters
+    /// search the trigram FTS index (every word, in the title, artist or
+    /// album); a query with none keeps the LIKE substring match.
     async fn search_tracks(
         &self,
         folded: &str,
         limit: u32,
         offset: u32,
     ) -> Result<Vec<SearchResultItem>, sqlx::Error> {
-        let rows = sqlx::query(
+        let fts = crate::reads::library::sqlite::fts_match_phrase(folded);
+        let text = if fts.is_some() {
+            crate::reads::library::sqlite::TRACK_TEXT_MATCH
+        } else {
+            "(t.title_folded LIKE ? ESCAPE '\\' \
+             OR COALESCE(t.artist_name_folded, '') LIKE ? ESCAPE '\\' \
+             OR t.album_title_folded LIKE ? ESCAPE '\\')"
+        };
+        let sql = format!(
             "SELECT t.id, t.title, t.title_folded, t.artist_name, t.year, \
              e.recording_mbid AS mbid \
              FROM local_tracks t \
              LEFT JOIN local_track_external_identities e \
              ON e.local_track_id = t.id AND e.provider = 'musicbrainz' \
-             WHERE t.availability = 'indexed' \
-             AND (t.title_folded LIKE ? ESCAPE '\\' \
-             OR COALESCE(t.artist_name_folded, '') LIKE ? ESCAPE '\\' \
-             OR t.album_title_folded LIKE ? ESCAPE '\\') \
+             WHERE t.availability = 'indexed' AND {text} \
              ORDER BY CASE WHEN t.title_folded = ? THEN 0 \
              WHEN t.title_folded LIKE ? ESCAPE '\\' THEN 1 ELSE 2 END, \
-             t.title_folded ASC LIMIT ? OFFSET ?",
-        )
-        .bind(like_contains(folded))
-        .bind(like_contains(folded))
-        .bind(like_contains(folded))
-        .bind(folded)
-        .bind(like_prefix(folded))
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await?;
+             t.title_folded ASC LIMIT ? OFFSET ?"
+        );
+        let mut query = sqlx::query(&sql);
+        query = match fts {
+            Some(expression) => query.bind(expression),
+            None => query
+                .bind(like_contains(folded))
+                .bind(like_contains(folded))
+                .bind(like_contains(folded)),
+        };
+        let rows = query
+            .bind(folded)
+            .bind(like_prefix(folded))
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await?;
         Ok(rows
             .iter()
             .map(|row| {

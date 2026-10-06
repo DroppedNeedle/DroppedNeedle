@@ -252,12 +252,12 @@ impl Store for SubsonicStore {
         limit: usize,
         offset: usize,
         query: Option<&str>,
-    ) -> Result<(Vec<ViewArtist>, usize), CompatError> {
-        let (artists, total) = self
+    ) -> Result<Vec<ViewArtist>, CompatError> {
+        let (artists, _) = self
             .library
             .album_artists(query, limit as u64, offset as u64)
             .await?;
-        Ok((self.artists_for_caller(artists).await?, total as usize))
+        self.artists_for_caller(artists).await
     }
 
     async fn get_library_revision(&self) -> Result<i64, CompatError> {
@@ -275,9 +275,9 @@ impl Store for SubsonicStore {
             artist_id: Some(artist_mbid.to_owned()),
             ..AlbumQuery::default()
         };
-        let (albums, _) = self
+        let albums = self
             .library
-            .albums(&query, AlbumOrder::Title, u64::MAX >> 1, 0)
+            .album_page(&query, AlbumOrder::Title, u64::MAX >> 1, 0)
             .await?;
         let Some(artist) = self.artists_for_caller(vec![artist]).await?.pop() else {
             return Ok(None);
@@ -361,16 +361,21 @@ impl Store for SubsonicStore {
         limit: usize,
         offset: usize,
         query: Option<&str>,
-    ) -> Result<(Vec<ViewTrack>, usize), CompatError> {
+    ) -> Result<Vec<ViewTrack>, CompatError> {
+        let order = if query.is_some() {
+            TrackOrder::Album
+        } else {
+            TrackOrder::Natural
+        };
         let query = TrackQuery {
             q: query.map(str::to_owned),
             ..TrackQuery::default()
         };
-        let (tracks, total) = self
+        let tracks = self
             .library
-            .tracks(&query, TrackOrder::Album, limit as u64, offset as u64)
+            .track_page(&query, order, limit as u64, offset as u64)
             .await?;
-        Ok((self.tracks_for_caller(tracks).await?, total as usize))
+        self.tracks_for_caller(tracks).await
     }
 
     async fn get_albums_offset(
@@ -382,7 +387,7 @@ impl Store for SubsonicStore {
         to_year: Option<i64>,
         genre: Option<&str>,
         query: Option<&str>,
-    ) -> Result<(Vec<ViewAlbum>, usize), CompatError> {
+    ) -> Result<Vec<ViewAlbum>, CompatError> {
         let (low, high) = match (from_year, to_year) {
             (Some(from), Some(to)) => (Some(from.min(to)), Some(from.max(to))),
             other => other,
@@ -391,7 +396,12 @@ impl Store for SubsonicStore {
             AlbumSort::Recent => AlbumOrder::Newest,
             AlbumSort::Title => AlbumOrder::Title,
             AlbumSort::Artist => AlbumOrder::Artist,
-            AlbumSort::Random => AlbumOrder::Random,
+            // Random pages share one shuffle per caller, drawn at offset 0.
+            AlbumSort::Random => AlbumOrder::Shuffle(
+                self.library
+                    .shuffle_seed(self.caller.as_deref().unwrap_or(""), offset as u64),
+            ),
+            AlbumSort::Natural => AlbumOrder::Natural,
             AlbumSort::YearAsc => AlbumOrder::YearAsc,
             AlbumSort::YearDesc => AlbumOrder::YearDesc,
         };
@@ -402,11 +412,11 @@ impl Store for SubsonicStore {
             year_to: high,
             ..AlbumQuery::default()
         };
-        let (albums, total) = self
+        let albums = self
             .library
-            .albums(&query, order, limit as u64, offset as u64)
+            .album_page(&query, order, limit as u64, offset as u64)
             .await?;
-        Ok((self.albums_for_caller(albums).await?, total as usize))
+        self.albums_for_caller(albums).await
     }
 
     async fn get_random_songs(
@@ -422,9 +432,9 @@ impl Store for SubsonicStore {
             year_to: to_year,
             ..TrackQuery::default()
         };
-        let (tracks, _) = self
+        let tracks = self
             .library
-            .tracks(&query, TrackOrder::Random, count as u64, 0)
+            .track_page(&query, TrackOrder::Random, count as u64, 0)
             .await?;
         self.tracks_for_caller(tracks).await
     }
@@ -487,9 +497,9 @@ impl Store for SubsonicStore {
             genre: Some(genre.to_owned()),
             ..TrackQuery::default()
         };
-        let (tracks, _) = self
+        let tracks = self
             .library
-            .tracks(&query, TrackOrder::Album, limit as u64, offset as u64)
+            .track_page(&query, TrackOrder::Album, limit as u64, offset as u64)
             .await?;
         self.tracks_for_caller(tracks).await
     }
@@ -543,9 +553,9 @@ impl Store for SubsonicStore {
             ..TrackQuery::default()
         };
         let pool = (count.max(1) * 4) as u64;
-        let (tracks, _) = self
+        let tracks = self
             .library
-            .tracks(&query, TrackOrder::Newest, pool, 0)
+            .track_page(&query, TrackOrder::Newest, pool, 0)
             .await?;
         let ids = tracks
             .iter()
@@ -571,9 +581,9 @@ impl Store for SubsonicStore {
             artist_ids: vec![artist_mbid.to_owned()],
             ..TrackQuery::default()
         };
-        let (tracks, _) = self
+        let tracks = self
             .library
-            .tracks(&query, TrackOrder::Random, count as u64, 0)
+            .track_page(&query, TrackOrder::Random, count as u64, 0)
             .await?;
         self.tracks_for_caller(tracks).await
     }
