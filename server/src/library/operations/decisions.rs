@@ -928,7 +928,7 @@ pub fn undo_automatic_edition(
             tx.execute(
                 "UPDATE local_album_external_identities SET release_group_mbid = ?2, \
                  release_mbid = ?3, decision_source = ?4, matcher_version = ?5, \
-                 attempt_id = ?6, \
+                 attempt_id = (SELECT id FROM library_identification_attempts WHERE id = ?6), \
                  selected_by_user_id = (SELECT id FROM auth_users WHERE id = ?7), \
                  selected_at = ?8, row_revision = row_revision + 1 \
                  WHERE local_album_id = ?1 AND provider = ?9",
@@ -1017,7 +1017,8 @@ pub fn undo_automatic_edition(
 }
 
 /// Write one snapshot track row back exactly; an existing row takes the
-/// next revision.
+/// next revision. An attempt pruned since the snapshot restores as no
+/// attempt rather than failing the foreign key.
 fn restore_track_row(
     tx: &Transaction<'_>,
     row: &PriorTrackIdentity,
@@ -1027,7 +1028,8 @@ fn restore_track_row(
         "INSERT INTO local_track_external_identities (local_track_id, provider, \
          recording_mbid, release_mbid, release_track_mbid, medium_position, \
          release_track_position, decision_source, attempt_id, selected_at, row_revision) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, \
+         (SELECT id FROM library_identification_attempts WHERE id = ?9), ?10, 1) \
          ON CONFLICT (local_track_id, provider) DO UPDATE SET \
          recording_mbid = excluded.recording_mbid, release_mbid = excluded.release_mbid, \
          release_track_mbid = excluded.release_track_mbid, \
