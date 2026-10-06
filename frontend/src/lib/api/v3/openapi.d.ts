@@ -1882,6 +1882,225 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/downloads/activity-summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Queue counters and the revision that tells the page to refetch.
+         *     `GET /api/v3/downloads/activity-summary`.
+         */
+        get: operations["activity_summary_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/downloads/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove finished (completed and cancelled) downloads from the queue.
+         *     Admins clear every user's. `POST /api/v3/downloads/clear`.
+         */
+        post: operations["clear_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/downloads/quarantine": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The release blocklist, newest first. Admin only.
+         *     `GET /api/v3/downloads/quarantine`.
+         */
+        get: operations["list_quarantine_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/downloads/quarantine/{quarantine_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove one blocklist entry so its release may be tried again. Admin
+         *     only. `DELETE /api/v3/downloads/quarantine/{quarantine_id}`.
+         */
+        delete: operations["delete_quarantine_handler"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/downloads/retry-all-failed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retry every failed download that will not retry by itself, once per
+         *     album or track. `POST /api/v3/downloads/retry-all-failed`.
+         */
+        post: operations["retry_all_failed_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/downloads/stop-all-retries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop every scheduled automatic retry.
+         *     `POST /api/v3/downloads/stop-all-retries`.
+         */
+        post: operations["stop_all_retries_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/downloads/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The viewer's download queue, newest first. Admins see every user's
+         *     tasks. `GET /api/v3/downloads/tasks`.
+         */
+        get: operations["list_tasks_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/downloads/tasks/{task_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One download task. `GET /api/v3/downloads/tasks/{task_id}`. */
+        get: operations["get_task_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/downloads/tasks/{task_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop a download: a live one is cancelled and its transfer aborted; a
+         *     failed one stops retrying. The owner's wanted watch on the album stops
+         *     too. `POST /api/v3/downloads/tasks/{task_id}/cancel`.
+         */
+        post: operations["cancel_task_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/downloads/tasks/{task_id}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The files of a task's current source.
+         *     `GET /api/v3/downloads/tasks/{task_id}/files`.
+         */
+        get: operations["task_files_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/downloads/tasks/{task_id}/next-source": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move a transfer that waits in a Soulseek peer's queue (no bytes yet)
+         *     to the next ranked source.
+         *     `POST /api/v3/downloads/tasks/{task_id}/next-source`.
+         */
+        post: operations["next_source_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/downloads/tasks/{task_id}/reimport": {
         parameters: {
             query?: never;
@@ -1899,6 +2118,27 @@ export interface paths {
          *     that is no longer configured answers 409.
          */
         post: operations["reimport_task_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/downloads/tasks/{task_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retry a failed, cancelled or partial download now. Answers the new
+         *     task. An album retry clears the album's blocklist first.
+         *     `POST /api/v3/downloads/tasks/{task_id}/retry`.
+         */
+        post: operations["retry_task_handler"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9428,6 +9668,14 @@ export interface components {
             /** @description First-level region. */
             region?: string | null;
         };
+        /** @description Clear outcome. */
+        ClearDownloadsResponse: {
+            /**
+             * Format: int64
+             * @description Finished tasks removed.
+             */
+            cleared: number;
+        };
         /** @description Clear-history outcome. */
         ClearHistoryResponse: {
             /** @description Whether a row was cleared. */
@@ -10156,6 +10404,63 @@ export interface components {
          * @enum {string}
          */
         DownloadAccess: "everyone" | "trusted" | "admin";
+        /** @description Plain success. */
+        DownloadActionResponse: {
+            success: boolean;
+        };
+        /** @description Queue counters for the nav badge and live refresh. */
+        DownloadActivitySummaryResponse: {
+            /** Format: int64 */
+            active_count: number;
+            /** Format: int64 */
+            failed_count: number;
+            /** Format: int64 */
+            held_count: number;
+            /** @description The 20 albums that landed most recently, newest first. */
+            landed_release_group_mbids: string[];
+            /**
+             * Format: int64
+             * @description Moves whenever the viewer's queue changes structurally (not on
+             *     byte progress). Refetch the list when it moves.
+             */
+            revision: number;
+        };
+        /** @description One file of a task's current source. */
+        DownloadFileItem: {
+            /**
+             * Format: double
+             * @description Always empty: sources do not advertise durations.
+             */
+            duration?: number | null;
+            filename: string;
+            /**
+             * Format: int64
+             * @description Advertised size in bytes, when the source gave one.
+             */
+            size?: number | null;
+        };
+        /** @description A task's files and counts. */
+        DownloadFilesResponse: {
+            files: components["schemas"]["DownloadFileItem"][];
+            /** Format: int64 */
+            files_completed: number;
+            /** Format: int64 */
+            files_failed: number;
+            /** Format: int64 */
+            files_total: number;
+            /** Format: int64 */
+            progress_percent: number;
+            status: string;
+            task_id: string;
+        };
+        /** @description One page of the queue. */
+        DownloadListResponse: {
+            items: components["schemas"]["DownloadTaskResponse"][];
+            /** Format: int64 */
+            page: number;
+            /** Format: int64 */
+            page_size: number;
+        };
         /**
          * @description Download policy: quality tiers, recipe v2, timeouts, retry, retention,
          *     recycle bin, quotas, and the upgrade scan.
@@ -10397,6 +10702,206 @@ export interface components {
             quality_recipe_error?: string | null;
             /** @description Read-only recipe verdict: `v1`, `v2`, `non_convertible`, `invalid`. */
             quality_recipe_status: string;
+        };
+        /**
+         * @description `download_progress`: the worker polled one of the user's live
+         *     downloads. Replaces v2's per-task `progress` stream; the web UI routes
+         *     it to the task's card by `task_id`.
+         */
+        DownloadProgress: {
+            /**
+             * Format: int64
+             * @description Sources tried so far, this one included.
+             */
+            attempt_number: number;
+            /**
+             * Format: int64
+             * @description Sources the task may try in all.
+             */
+            attempt_total: number;
+            /**
+             * Format: int64
+             * @description Bytes downloaded so far.
+             */
+            bytes_downloaded: number;
+            /**
+             * Format: int64
+             * @description Total bytes, 0 when the client does not know yet.
+             */
+            bytes_total: number;
+            /**
+             * Format: int64
+             * @description Picked candidate position.
+             */
+            candidate_index?: number | null;
+            /**
+             * Format: int64
+             * @description Files finished.
+             */
+            files_completed: number;
+            /**
+             * Format: int64
+             * @description Files in the transfer.
+             */
+            files_total: number;
+            /** @description Whether another source may still be tried. */
+            has_next_source: boolean;
+            /**
+             * Format: int64
+             * @description 0 to 100.
+             */
+            progress_percent: number;
+            /** @description Picked candidate format. */
+            quality_format?: string | null;
+            /**
+             * Format: int64
+             * @description Newest observed queue rank.
+             */
+            queue_position_end?: number | null;
+            /**
+             * Format: int64
+             * @description Rank in the peer's upload queue, when queued.
+             */
+            queue_position_start?: number | null;
+            /** @description True while the transfer waits in the peer's queue with no bytes. */
+            remote_queued: boolean;
+            /** @description `soulseek`, `usenet` or `plugin:<key>`. */
+            source: string;
+            /** @description Its status now. */
+            status: string;
+            /** @description The task that moved. */
+            task_id: string;
+        };
+        /**
+         * @description Why a download sits where it does: one stable code, one plain sentence
+         *     and what to do about it.
+         */
+        DownloadReason: {
+            /** @description What the person can do about it. */
+            action: string;
+            /** @description Stable machine code (`stalled`, `weak_match`, `no_source`, ...). */
+            code: string;
+            /** @description What happened, in one sentence. */
+            text: string;
+        };
+        /**
+         * @description One download task as the queue shows it. Field names match v2's
+         *     `DownloadTaskResponse`, so the web UI reads them unchanged.
+         */
+        DownloadTaskResponse: {
+            /**
+             * @description `not_tracked`, `in_use`, `pending`, `complete`, `preserved` or
+             *     `needs_attention`: how far cleanup of the source files got.
+             */
+            acquisition_cleanup_state: string;
+            /** Format: int64 */
+            advertised_queue_depth?: number | null;
+            album_title: string;
+            artist_mbid?: string | null;
+            artist_name: string;
+            /**
+             * Format: int64
+             * @description Sources tried so far.
+             */
+            attempt_number: number;
+            /**
+             * Format: int64
+             * @description Sources the task may try in all.
+             */
+            attempt_total: number;
+            /** Format: int64 */
+            candidate_index?: number | null;
+            /** Format: double */
+            completed_at?: number | null;
+            /** Format: double */
+            created_at: number;
+            decision?: null | components["schemas"]["ImportDecisionView"];
+            /** @description `album` or `track`. */
+            download_type: string;
+            /** Format: int64 */
+            downloaded_bytes: number;
+            /** @description The worker's last outcome as recorded. Show `reason` instead. */
+            error_message?: string | null;
+            /** Format: int64 */
+            files_completed: number;
+            /** Format: int64 */
+            files_failed: number;
+            /** Format: int64 */
+            files_total: number;
+            final_path?: string | null;
+            /** @description Whether another source may still be tried. */
+            has_next_source: boolean;
+            /** @description Files of this task wait in the held list for a decision. */
+            held_for_review: boolean;
+            id: string;
+            /**
+             * Format: double
+             * @description When the next automatic retry is due, if one will run.
+             */
+            next_retry_at?: number | null;
+            /** @description `user`, `retry` or `upgrade`. */
+            origin: string;
+            /** Format: int64 */
+            progress_percent: number;
+            /** Format: int64 */
+            quality_bit_depth?: number | null;
+            /** Format: int64 */
+            quality_bitrate?: number | null;
+            quality_format?: string | null;
+            /** Format: int64 */
+            quality_sample_rate?: number | null;
+            /** Format: int64 */
+            queue_position_end?: number | null;
+            /** Format: int64 */
+            queue_position_start?: number | null;
+            reason?: null | components["schemas"]["DownloadReason"];
+            recording_mbid?: string | null;
+            release_group_mbid: string;
+            release_mbid?: string | null;
+            release_track_mbid?: string | null;
+            /** @description Waiting in the peer's upload queue with no bytes yet. */
+            remote_queued: boolean;
+            /** Format: int64 */
+            retry_count: number;
+            /** @description The whole retry backoff schedule in minutes. */
+            retry_ladder_minutes: number[];
+            /**
+             * Format: int64
+             * @description Automatic retries allowed in all (0 when auto-retry is off).
+             */
+            retry_max: number;
+            search_job_id?: string | null;
+            /** @description `soulseek`, `usenet` or `plugin:<key>`. */
+            source: string;
+            source_username?: string | null;
+            /**
+             * @description `queued`, `downloading`, `processing`, `completed`, `partial`,
+             *     `failed` or `cancelled`.
+             */
+            status: string;
+            /** Format: int64 */
+            total_size_bytes?: number | null;
+            track_title?: string | null;
+            /** Format: double */
+            updated_at: number;
+            user_id: string;
+            wrong_product_detail?: string | null;
+            /** Format: double */
+            wrong_product_verdict_at?: number | null;
+            /** Format: int64 */
+            year?: number | null;
+        };
+        /**
+         * @description `downloads.changed`: the download queue moved. Sent to everyone with
+         *     no task details; each tab refetches its own (permission-scoped) queue
+         *     summary, and the full list when the summary's revision moved.
+         */
+        DownloadsChanged: {
+            /**
+             * @description Opaque id of this queue state (`downloads:` plus 16 hex digits).
+             *     The stream also sends it as the SSE `id:` line.
+             */
+            id: string;
         };
         /** @description `drop_import_updated`: one of the user's drop-import jobs moved. */
         DropImportUpdated: {
@@ -11525,6 +12030,30 @@ export interface components {
             provider: string;
             /** @description Provider-side id (Jellyfin user id, Plex account uuid). */
             provider_uid: string;
+        };
+        /** @description What the import decided about the task's newest landing. */
+        ImportDecisionView: {
+            /**
+             * Format: double
+             * @description Decision time (unix seconds).
+             */
+            decided_at: number;
+            /** @description Specifics (which file, which marker), never the explanation. */
+            detail?: string | null;
+            /** Format: int64 */
+            files_held: number;
+            /** Format: int64 */
+            files_imported: number;
+            /** Format: int64 */
+            files_total: number;
+            /** @description `imported`, `partial`, `held`, `rejected` or `deferred`. */
+            outcome: string;
+            /** @description What to do about it. */
+            reason_action?: string | null;
+            /** @description Stable reason code, when the landing was not a clean import. */
+            reason_code?: string | null;
+            /** @description The reason as a plain sentence. */
+            reason_text?: string | null;
         };
         /** @description Receipt for a playlist import into the local catalog. */
         ImportResult: {
@@ -13620,6 +14149,21 @@ export interface components {
              */
             url: string;
         };
+        /**
+         * @description Next-source request: the source the page showed, so a stale click
+         *     cannot skip the source that replaced it.
+         */
+        NextSourceRequest: {
+            /** Format: int64 */
+            expected_candidate_index: number;
+        };
+        /** @description Next-source outcome: the task after the switch. */
+        NextSourceResponse: {
+            /** Format: int64 */
+            candidate_index?: number | null;
+            status: string;
+            success: boolean;
+        };
         /** @description Query for clearing presence: which device stopped. */
         NowPlayingDeleteQuery: {
             /** @description Device slug (`web` default, the v2 spelling). */
@@ -14977,6 +15521,34 @@ export interface components {
              */
             target_bitrate_kbps?: number | null;
         };
+        /** @description One blocklisted release. */
+        QuarantineEntry: {
+            /** @description v2's client label: `slskd`, `sabnzbd`, or the source for plugins. */
+            client_id: string;
+            /** @description The blocked file (soulseek) or job (usenet). */
+            filename: string;
+            /** Format: int64 */
+            id: number;
+            /** @description The stored identity, as matched. */
+            identity: string;
+            /** Format: double */
+            quarantined_at: number;
+            /** @description Stable reason code. */
+            reason: string;
+            /** @description The reason as a plain sentence. */
+            reason_text: string;
+            release_group_mbid?: string | null;
+            /** @description `soulseek`, `usenet` or `plugin:<key>`. */
+            source: string;
+            /** @description Soulseek peer, empty for other sources. */
+            username: string;
+        };
+        /** @description One page of the blocklist. */
+        QuarantineListResponse: {
+            items: components["schemas"]["QuarantineEntry"][];
+            /** Format: int64 */
+            page: number;
+        };
         /** @description Enrichment behind one queue card. */
         QueueEnrichment: {
             /** @description Artist biography snippet, when known. */
@@ -16031,6 +16603,19 @@ export interface components {
             ok: boolean;
             /** @description True when an offline restore of this backup should succeed. */
             restorable: boolean;
+        };
+        /** @description Retry-all-failed outcome. */
+        RetryAllResponse: {
+            /**
+             * Format: int64
+             * @description Failed downloads started again.
+             */
+            retried: number;
+        };
+        /** @description Retry outcome: the new task carrying the retry. */
+        RetryDownloadResponse: {
+            success: boolean;
+            task_id: string;
         };
         /** @description Review resolution answer. */
         ReviewResolveResponse: {
@@ -17232,6 +17817,14 @@ export interface components {
             message: string;
             /** @description Always "ok". */
             status: string;
+        };
+        /** @description Stop-all-retries outcome. */
+        StopRetriesResponse: {
+            /**
+             * Format: int64
+             * @description Scheduled retries stopped.
+             */
+            stopped: number;
         };
         /** @description Typeahead response: one merged list across buckets, best first. */
         SuggestResponse: {
@@ -22459,6 +23052,248 @@ export interface operations {
             };
         };
     };
+    activity_summary_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadActivitySummaryResponse"];
+                };
+            };
+        };
+    };
+    clear_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClearDownloadsResponse"];
+                };
+            };
+        };
+    };
+    list_quarantine_handler: {
+        parameters: {
+            query?: {
+                /** @description 1-based page (default 1). */
+                page?: number;
+                /** @description Entries per page, 1 to 200 (default 50). */
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuarantineListResponse"];
+                };
+            };
+        };
+    };
+    delete_quarantine_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Quarantine entry id */
+                quarantine_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadActionResponse"];
+                };
+            };
+        };
+    };
+    retry_all_failed_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetryAllResponse"];
+                };
+            };
+        };
+    };
+    stop_all_retries_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StopRetriesResponse"];
+                };
+            };
+        };
+    };
+    list_tasks_handler: {
+        parameters: {
+            query?: {
+                /** @description Only tasks in this status. */
+                status?: string;
+                /** @description Only tasks for this release group. */
+                release_group_mbid?: string;
+                /** @description 1-based page (default 1). */
+                page?: number;
+                /** @description Tasks per page, 1 to 100 (default 20). */
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadListResponse"];
+                };
+            };
+        };
+    };
+    get_task_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Download task id */
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadTaskResponse"];
+                };
+            };
+        };
+    };
+    cancel_task_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Download task id */
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadActionResponse"];
+                };
+            };
+        };
+    };
+    task_files_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Download task id */
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadFilesResponse"];
+                };
+            };
+        };
+    };
+    next_source_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Download task id */
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NextSourceRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NextSourceResponse"];
+                };
+            };
+        };
+    };
     reimport_task_handler: {
         parameters: {
             query?: never;
@@ -22477,6 +23312,28 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReimportResponse"];
+                };
+            };
+        };
+    };
+    retry_task_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Download task id */
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetryDownloadResponse"];
                 };
             };
         };

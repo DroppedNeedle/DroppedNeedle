@@ -318,3 +318,94 @@ async fn failed_retry_insert_retries_next_pass() {
         "the next pass spawns the successor"
     );
 }
+
+fn get(uri: &str, identity: &str) -> Request<Body> {
+    Request::builder()
+        .method(Method::GET)
+        .uri(uri)
+        .header("x-slice-principal", identity)
+        .body(Body::empty())
+        .unwrap()
+}
+
+// The queue journey: a user sees only their own tasks, each failure
+// carries one plain reason from the import decision, a retry clears the
+// album's blocklist and starts a successor, cancel stops it, clear removes
+// finished rows, and the blocklist stays admin only.
+#[tokio::test]
+async fn queue_journey_scopes_explains_retries_and_clears() {
+    use droppedneedle::acquire::downloads::QUARANTINE_TTL_SECONDS;
+    use droppedneedle::acquire::downloads::landing_rows::ImportDecisionRow;
+
+    let db = AcquireDb::scratch().unwrap();
+    db.add_user("u-ada", "Ada", "user").await.unwrap();
+    db.add_user("u-bob", "Bob", "user").await.unwrap();
+    let journal = Arc::new(Journal::new(db));
+    journal
+        .run("test.seed", |store| {
+            let now = now_f64();
+            store.insert_task(&task("q-failed"), now)?;
+            store.insert_task(&task("q-done"), now - 10.0)?;
+            store.insert_task(
+                &NewTask {
+                    user_id: "u-bob".to_owned(),
+                    ..task("q-bob")
+                },
+                now,
+            )?;
+            store.transition_task("q-failed", TaskStatus::Failed, now, Some("x"))?;
+            store.transition_task("q-done", TaskStatus::Completed, now, None)?;
+            store.record_import_decision(&ImportDecisionRow {
+                task_id: "q-failed".to_owned(),
+                outcome: "rejected".to_owned(),
+                reason_code: Some("wrong_album".to_owned()),
+                checks_json: "[]".to_owned(),
+                missing_positions: "[]".to_owned(),
+                decided_at: now,
+                ..Default::default()
+            })?;
+            store.record_quarantine(
+                "soulseek",
+                "peer/a.flac",
+                "download_failed",
+                Some("rg-1"),
+                now,
+                QUARANTINE_TTL_SECONDS,
+            )
+        })
+        .await
+        .unwrap();
+
+    let (status, body) = send(&journal, get("/downloads/tasks", USER)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let items = body["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2, "own tasks only: {body}");
+    let failed = items.iter().find(|item| item["id"] == "q-failed").unwrap();
+    assert_eq!(failed["reason"]["code"], "wrong_album");
+    assert!(failed["reason"]["action"].as_str().unwrap().len() > 10);
+    assert_eq!(failed["decision"]["outcome"], "rejected");
+    let (status, _) = send(&journal, get("/downloads/tasks/q-bob", USER)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, _) = send(&journal, get("/downloads/quarantine", USER)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (_, body) = send(&journal, get("/downloads/quarantine", ADMIN)).await;
+    assert_eq!(body["items"][0]["username"], "peer");
+
+    let (status, body) = send(&journal, post("/downloads/tasks/q-failed/retry", USER)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let successor = body["task_id"].as_str().unwrap().to_owned();
+    let (_, body) = send(&journal, get("/downloads/quarantine", ADMIN)).await;
+    assert_eq!(body["items"].as_array().map(Vec::len), Some(0));
+
+    let uri = format!("/downloads/tasks/{successor}/cancel");
+    let (status, _) = send(&journal, post(&uri, USER)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body) = send(&journal, post("/downloads/clear", USER)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["cleared"], 2, "the done task and the cancelled retry");
+
+    let (_, body) = send(&journal, get("/downloads/activity-summary", USER)).await;
+    assert_eq!(body["failed_count"], 1);
+    assert_eq!(body["active_count"], 0);
+}

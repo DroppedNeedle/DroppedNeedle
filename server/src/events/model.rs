@@ -36,6 +36,11 @@ pub mod names {
     pub const PERSONAL_MIX_REFRESHED: &str = "personal_mix_refreshed";
     /// New concerts were found for an artist the user follows.
     pub const CONCERTS_NEW: &str = "concerts_new";
+    /// One of the user's downloads moved bytes or changed source.
+    pub const DOWNLOAD_PROGRESS: &str = "download_progress";
+    /// The download queue changed (a task was added, moved status,
+    /// switched source or was removed, or a held file came or went).
+    pub const DOWNLOADS_CHANGED: &str = "downloads.changed";
 }
 
 /// A fresh id the web UI uses to drop an event it has already shown (a
@@ -181,6 +186,55 @@ pub struct ConcertsNew {
     pub new_events: usize,
 }
 
+/// `download_progress`: the worker polled one of the user's live
+/// downloads. Replaces v2's per-task `progress` stream; the web UI routes
+/// it to the task's card by `task_id`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct DownloadProgress {
+    /// The task that moved.
+    pub task_id: String,
+    /// Its status now.
+    pub status: String,
+    /// Bytes downloaded so far.
+    pub bytes_downloaded: i64,
+    /// Total bytes, 0 when the client does not know yet.
+    pub bytes_total: i64,
+    /// Files finished.
+    pub files_completed: i64,
+    /// Files in the transfer.
+    pub files_total: i64,
+    /// 0 to 100.
+    pub progress_percent: i64,
+    /// `soulseek`, `usenet` or `plugin:<key>`.
+    pub source: String,
+    /// Picked candidate position.
+    pub candidate_index: Option<i64>,
+    /// Picked candidate format.
+    pub quality_format: Option<String>,
+    /// Rank in the peer's upload queue, when queued.
+    pub queue_position_start: Option<i64>,
+    /// Newest observed queue rank.
+    pub queue_position_end: Option<i64>,
+    /// True while the transfer waits in the peer's queue with no bytes.
+    pub remote_queued: bool,
+    /// Sources tried so far, this one included.
+    pub attempt_number: i64,
+    /// Sources the task may try in all.
+    pub attempt_total: i64,
+    /// Whether another source may still be tried.
+    pub has_next_source: bool,
+}
+
+/// `downloads.changed`: the download queue moved. Sent to everyone with
+/// no task details; each tab refetches its own (permission-scoped) queue
+/// summary, and the full list when the summary's revision moved.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct DownloadsChanged {
+    /// Opaque id of this queue state (`downloads:` plus 16 hex digits).
+    /// The stream also sends it as the SSE `id:` line.
+    pub id: String,
+}
+
 /// One event for one user.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UserNotice {
@@ -204,6 +258,8 @@ pub enum UserNotice {
     PersonalMixRefreshed(PersonalMixRefreshed),
     /// `concerts_new`.
     ConcertsNew(ConcertsNew),
+    /// `download_progress`.
+    DownloadProgress(DownloadProgress),
 }
 
 impl UserNotice {
@@ -220,6 +276,7 @@ impl UserNotice {
             Self::FreeMusicUpdated(_) => names::FREE_MUSIC_UPDATED,
             Self::PersonalMixRefreshed(_) => names::PERSONAL_MIX_REFRESHED,
             Self::ConcertsNew(_) => names::CONCERTS_NEW,
+            Self::DownloadProgress(_) => names::DOWNLOAD_PROGRESS,
         }
     }
 
@@ -235,6 +292,7 @@ impl UserNotice {
             Self::FreeMusicUpdated(payload) => serde_json::to_string(payload),
             Self::PersonalMixRefreshed(payload) => serde_json::to_string(payload),
             Self::ConcertsNew(payload) => serde_json::to_string(payload),
+            Self::DownloadProgress(payload) => serde_json::to_string(payload),
         }
     }
 }
@@ -247,6 +305,8 @@ pub enum Event {
     /// `snapshot` of live listening sessions, for everyone. Sessions are
     /// already projected through each owner's privacy setting.
     NowPlaying(NowPlayingSnapshot),
+    /// `downloads.changed`, for everyone.
+    DownloadsChanged(DownloadsChanged),
     /// A notice for one user only.
     User {
         /// Who receives it.
@@ -302,6 +362,13 @@ impl Frame {
                 Replay::State,
                 names::NOW_PLAYING,
                 None,
+                serde_json::to_string(&payload)?,
+            ),
+            Event::DownloadsChanged(payload) => (
+                Audience::Everyone,
+                Replay::State,
+                names::DOWNLOADS_CHANGED,
+                Some(payload.id.clone()),
                 serde_json::to_string(&payload)?,
             ),
             Event::User { user_id, notice } => (

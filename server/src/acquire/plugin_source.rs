@@ -337,6 +337,9 @@ impl DownloadSource for PluginDownloadSource {
             succeeded_filenames: status.succeeded_filenames,
             queue_position_start: status.queue_position_start,
             queue_position_end: status.queue_position_end,
+            files_total: u32::try_from(status.files_total.max(0)).unwrap_or(u32::MAX),
+            files_completed: u32::try_from(status.files_completed.max(0)).unwrap_or(u32::MAX),
+            ..Default::default()
         })
     }
 

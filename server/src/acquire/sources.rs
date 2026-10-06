@@ -283,6 +283,10 @@ impl DownloadSource for SlskdSource {
             succeeded_filenames: status.succeeded_filenames,
             queue_position_start: status.queue_position_start,
             queue_position_end: status.queue_position_end,
+            total_bytes: (status.bytes_total > 0).then_some(status.bytes_total as u64),
+            files_total: u32::try_from(status.files_total).unwrap_or(u32::MAX),
+            files_completed: u32::try_from(status.files_completed).unwrap_or(u32::MAX),
+            files_failed: u32::try_from(status.files_failed).unwrap_or(u32::MAX),
         })
     }
 
@@ -675,6 +679,10 @@ impl DownloadSource for SabnzbdSource {
             },
             queue_position_start: None,
             queue_position_end: None,
+            total_bytes: (status.bytes_total > 0).then_some(status.bytes_total),
+            files_total: status.files_total,
+            files_completed: status.files_completed,
+            files_failed: u32::from(status.status == "failed"),
         })
     }
 

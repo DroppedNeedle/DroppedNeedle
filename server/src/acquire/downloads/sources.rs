@@ -40,7 +40,7 @@ pub struct SourceHandle {
 }
 
 /// One poll's view of a transfer batch.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct TransferProgress {
     /// True once every transfer reached a client-terminal state.
     pub all_terminal: bool,
@@ -56,6 +56,14 @@ pub struct TransferProgress {
     pub queue_position_start: Option<i64>,
     /// Newest observed queue rank.
     pub queue_position_end: Option<i64>,
+    /// Total bytes of the batch, when the client knows it.
+    pub total_bytes: Option<u64>,
+    /// Files in the batch (usenet jobs count as one).
+    pub files_total: u32,
+    /// Files finished so far.
+    pub files_completed: u32,
+    /// Files the client gave up on.
+    pub files_failed: u32,
 }
 
 /// What a source reports about already-materialized files.

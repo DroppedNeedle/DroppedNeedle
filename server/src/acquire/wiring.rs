@@ -818,6 +818,7 @@ impl AcquireSetup {
                 }),
             )
             .with_plugin_events(worker_plugins)
+            .with_events(events.clone())
             .with_landing(landing.clone())
             .with_settled(settled_hook(core.flows.clone())),
         );

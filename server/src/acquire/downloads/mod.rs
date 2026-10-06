@@ -14,7 +14,9 @@
 //! - [`orphans`] fail-closed orphan reconcile and recycle-bin prune.
 //! - [`sources`] the per-source fetch seam (slskd/usenet live elsewhere).
 //! - [`landing_rows`] held files and per-landing import decisions.
-//! - [`http`] the served task legs (admin reimport only, for now).
+//! - [`queue`] the queue view and its actions, over [`queue_rows`].
+//! - [`reasons`] why a task sits where it does, in plain words.
+//! - [`http`] the queue routes.
 //!
 //! Quirk citations name the v2 behavior each port preserves, so a reader
 //! can diff against the Python without guessing.
@@ -24,6 +26,9 @@ pub mod landing_rows;
 pub mod manifest;
 pub mod orphans;
 pub mod quarantine;
+pub mod queue;
+pub mod queue_rows;
+pub mod reasons;
 pub mod recovery;
 pub mod sources;
 pub mod state;

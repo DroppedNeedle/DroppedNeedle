@@ -476,6 +476,15 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         tokio::spawn(crate::events::revisions::run(
             events.clone(),
             runtime.pool().clone(),
+            stop.clone(),
+        )),
+    );
+    // `downloads.changed` for every open stream.
+    background.push(
+        "event-downloads",
+        tokio::spawn(crate::events::downloads::run(
+            events.clone(),
+            runtime.pool().clone(),
             stop,
         )),
     );

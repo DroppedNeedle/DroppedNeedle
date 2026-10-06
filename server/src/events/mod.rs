@@ -14,6 +14,10 @@
 //! - `wanted_*`, `auto_download_enqueued`, `request_imported`: the
 //!   acquisition flows, through their tick sink.
 //! - `playlist_imported`: the Spotify playlist import.
+//! - `download_progress`: the download worker, after each poll of a live
+//!   transfer.
+//! - `downloads.changed`: [`downloads::run`], from the durable download
+//!   activity revision.
 //! - `concerts_new`, `personal_mix_refreshed`, `drop_import_updated`,
 //!   `free_music_updated`: their features call [`EventHub::notify`] with
 //!   the matching [`UserNotice`].
@@ -21,6 +25,7 @@
 //! Bundles built before the application state hold an [`EventSink`];
 //! [`crate::AppState::with_events`] attaches the hub to all of them.
 
+pub mod downloads;
 pub mod http;
 pub mod hub;
 pub mod model;
@@ -29,7 +34,7 @@ pub mod revisions;
 pub use http::{SessionCheck, router, session_check};
 pub use hub::{EventHub, EventSink, Subscription};
 pub use model::{
-    ActivityChanged, AutoDownloadEnqueued, ConcertsNew, DropImportUpdated, Event, FreeMusicUpdated,
-    PersonalMixRefreshed, PlaylistImported, RequestImported, UserNotice, WantedNotice,
-    new_event_id,
+    ActivityChanged, AutoDownloadEnqueued, ConcertsNew, DownloadProgress, DownloadsChanged,
+    DropImportUpdated, Event, FreeMusicUpdated, PersonalMixRefreshed, PlaylistImported,
+    RequestImported, UserNotice, WantedNotice, new_event_id,
 };

@@ -1307,6 +1307,40 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/downloads/tasks/{task_id}/reimport",
         Posture::Admin,
     ),
+    // Download queue: own tasks for users, every task for admins; the
+    // blocklist is admin only.
+    ("GET", "/api/v3/downloads/tasks", Posture::User),
+    ("GET", "/api/v3/downloads/tasks/{task_id}", Posture::User),
+    (
+        "GET",
+        "/api/v3/downloads/tasks/{task_id}/files",
+        Posture::User,
+    ),
+    (
+        "POST",
+        "/api/v3/downloads/tasks/{task_id}/cancel",
+        Posture::User,
+    ),
+    (
+        "POST",
+        "/api/v3/downloads/tasks/{task_id}/next-source",
+        Posture::User,
+    ),
+    (
+        "POST",
+        "/api/v3/downloads/tasks/{task_id}/retry",
+        Posture::User,
+    ),
+    ("POST", "/api/v3/downloads/clear", Posture::User),
+    ("POST", "/api/v3/downloads/stop-all-retries", Posture::User),
+    ("POST", "/api/v3/downloads/retry-all-failed", Posture::User),
+    ("GET", "/api/v3/downloads/activity-summary", Posture::User),
+    ("GET", "/api/v3/downloads/quarantine", Posture::Admin),
+    (
+        "DELETE",
+        "/api/v3/downloads/quarantine/{quarantine_id}",
+        Posture::Admin,
+    ),
     // Stage-4 library reads.
     ("GET", "/api/v3/library/albums", Posture::User),
     ("GET", "/api/v3/library/albums/{id}", Posture::User),

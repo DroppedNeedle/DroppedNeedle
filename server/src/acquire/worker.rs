@@ -49,8 +49,10 @@ use super::sources::{JournalOwnership, SabnzbdSource, SlskdSource};
 use super::target::reasons::TrackReason;
 use crate::db::{DurableWorkWakeups, JobKind, JobState, WriteLane};
 
+mod controls;
 mod landings;
 
+pub use controls::{NextSourceError, RetryError};
 pub use landings::ReimportError;
 
 /// Registry name for the worker loop.
@@ -264,8 +266,7 @@ impl Source {
                 has_active_transfer: false,
                 downloaded_bytes: 1,
                 succeeded_filenames: source.names(),
-                queue_position_start: None,
-                queue_position_end: None,
+                ..Default::default()
             }),
         }
     }
@@ -460,6 +461,10 @@ pub struct DownloadWorker {
     in_flight: Arc<Mutex<HashSet<String>>>,
     /// Spawned landings, awaited on shutdown.
     landing_tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// Live progress for the web UI (`download_progress`).
+    events: crate::events::EventSink,
+    /// Wakes the loop early after a queue action (retry, next source).
+    wake: tokio::sync::Notify,
 }
 
 /// Called after a landing settles a task, so its requests and wanted
@@ -486,7 +491,30 @@ impl DownloadWorker {
             settled: None,
             in_flight: Arc::new(Mutex::new(HashSet::new())),
             landing_tasks: Mutex::new(Vec::new()),
+            events: crate::events::EventSink::default(),
+            wake: tokio::sync::Notify::new(),
         }
+    }
+
+    /// Send live progress through this sink.
+    pub fn with_events(mut self, events: crate::events::EventSink) -> Self {
+        self.events = events;
+        self
+    }
+
+    /// The download journal the worker writes.
+    pub fn journal(&self) -> &Arc<Journal> {
+        &self.journal
+    }
+
+    /// The worker tuning as saved right now.
+    pub fn current_config(&self) -> WorkerConfig {
+        (self.config)()
+    }
+
+    /// Run the next pass now instead of at the next interval.
+    pub fn wake(&self) {
+        self.wake.notify_one();
     }
 
     /// Import finished downloads through the landing instead of settling
@@ -1105,11 +1133,7 @@ impl DownloadWorker {
         let now = pass.now;
         let reason = match pass.watchdog.evaluate(&sample) {
             WatchdogOutcome::Continue => {
-                let task_id = task.id.clone();
-                self.step("downloads.touch_poll", move |store| {
-                    store.touch_poll(&task_id, now)
-                })
-                .await;
+                self.record_progress(pass, task, &progress).await;
                 return;
             }
             WatchdogOutcome::Completed if self.landing.is_some() => {
@@ -1287,45 +1311,24 @@ impl DownloadWorker {
             if due.is_none_or(|at| at > now) {
                 continue;
             }
-            let Some(spawn) = plan_retry(&task.id, task.status, &task.origin, task.retry_count)
-            else {
+            let Some(row) = successor_row(&task) else {
                 continue;
             };
-            // Successor ids keep the 32-hex shape the orphan parser
-            // recognises; the retry generation rides in `retry_count`.
-            let successor = hex_task_id(&spawn.task_id);
-            let row = NewTask {
-                id: successor.clone(),
-                user_id: task.user_id.clone(),
-                artist_name: task.artist_name.clone(),
-                album_title: task.album_title.clone(),
-                release_group_mbid: task.release_group_mbid.clone(),
-                origin: spawn.origin.clone(),
-                retry_count: spawn.retry_count,
-            };
-            let source_task = task.id.clone();
-            let is_track = task.download_type == "track";
-            let recording = task.recording_mbid.clone().unwrap_or_default();
+            let successor = row.id.clone();
+            let source = task.clone();
             let spawned = self
                 .step("downloads.retry", move |store| {
                     // Held tracks gate their task: re-downloading a held
                     // track loops.
-                    if store.has_unresolved_held_for_task(&source_task)?
-                        || store.get_task(&row.id)?.is_some()
-                    {
+                    if store.has_unresolved_held_for_task(&source.id)? {
                         return Ok(false);
                     }
-                    // Edition pins and track identity ride onto the
-                    // successor; without them a retried edition loses its
-                    // pinned release.
-                    let details = store.task_details(&source_task)?;
-                    if is_track {
-                        store.insert_track_task(&row, &recording, now)?;
-                    } else {
-                        store.insert_task(&row, now)?;
+                    // The request follows its download onto the retry.
+                    let created = store.spawn_successor(&source, &row, now)?;
+                    if created {
+                        store.relink_request(&source.id, &row.id)?;
                     }
-                    store.set_task_details(&row.id, &details, now)?;
-                    Ok(true)
+                    Ok(created)
                 })
                 .await;
             if spawned == Some(true) {
@@ -1652,6 +1655,23 @@ fn failover_exhausted(handled: i64, max: i64) -> bool {
     handled >= max
 }
 
+/// The retry successor row for a settled task: same ask, one generation
+/// on. `None` for a task that is not settled yet.
+fn successor_row(task: &TaskRow) -> Option<NewTask> {
+    let spawn = plan_retry(&task.id, task.status, &task.origin, task.retry_count)?;
+    // Successor ids keep the 32-hex shape the orphan parser recognises;
+    // the retry generation rides in `retry_count`.
+    Some(NewTask {
+        id: hex_task_id(&spawn.task_id),
+        user_id: task.user_id.clone(),
+        artist_name: task.artist_name.clone(),
+        album_title: task.album_title.clone(),
+        release_group_mbid: task.release_group_mbid.clone(),
+        origin: spawn.origin,
+        retry_count: spawn.retry_count,
+    })
+}
+
 /// Fold a retry successor id into the 32-hex shape: the planned
 /// `{task}-r{n}` suffix breaks the orphan parser, so hash it down while
 /// the generation rides in `retry_count`. FNV-1a, stable across processes
@@ -1702,6 +1722,7 @@ pub async fn spawn_download_worker(
             let interval = (worker.config)().interval;
             tokio::select! {
                 () = tokio::time::sleep(jittered_interval(interval)) => {}
+                () = worker.wake.notified() => {}
                 _ = shutdown.changed() => break,
             }
             if *shutdown.borrow() {

@@ -4082,6 +4082,365 @@
         }
       }
     },
+    "/api/v3/downloads/activity-summary": {
+      "get": {
+        "tags": [
+          "crate::acquire::downloads::http"
+        ],
+        "summary": "Queue counters and the revision that tells the page to refetch.\n`GET /api/v3/downloads/activity-summary`.",
+        "operationId": "activity_summary_handler",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadActivitySummaryResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/clear": {
+      "post": {
+        "tags": [
+          "crate::acquire::downloads::http"
+        ],
+        "summary": "Remove finished (completed and cancelled) downloads from the queue.\nAdmins clear every user's. `POST /api/v3/downloads/clear`.",
+        "operationId": "clear_handler",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClearDownloadsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/quarantine": {
+      "get": {
+        "tags": [
+          "crate::acquire::downloads::http"
+        ],
+        "summary": "The release blocklist, newest first. Admin only.\n`GET /api/v3/downloads/quarantine`.",
+        "operationId": "list_quarantine_handler",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "description": "1-based page (default 1).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "description": "Entries per page, 1 to 200 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuarantineListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/quarantine/{quarantine_id}": {
+      "delete": {
+        "tags": [
+          "crate::acquire::downloads::http"
+        ],
+        "summary": "Remove one blocklist entry so its release may be tried again. Admin\nonly. `DELETE /api/v3/downloads/quarantine/{quarantine_id}`.",
+        "operationId": "delete_quarantine_handler",
+        "parameters": [
+          {
+            "name": "quarantine_id",
+            "in": "path",
+            "description": "Quarantine entry id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadActionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/retry-all-failed": {
+      "post": {
+        "tags": [
+          "crate::acquire::downloads::http"
+        ],
+        "summary": "Retry every failed download that will not retry by itself, once per\nalbum or track. `POST /api/v3/downloads/retry-all-failed`.",
+        "operationId": "retry_all_failed_handler",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetryAllResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/stop-all-retries": {
+      "post": {
+        "tags": [
+          "crate::acquire::downloads::http"
+        ],
+        "summary": "Stop every scheduled automatic retry.\n`POST /api/v3/downloads/stop-all-retries`.",
+        "operationId": "stop_all_retries_handler",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StopRetriesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/tasks": {
+      "get": {
+        "tags": [
+          "crate::acquire::downloads::http"
+        ],
+        "summary": "The viewer's download queue, newest first. Admins see every user's\ntasks. `GET /api/v3/downloads/tasks`.",
+        "operationId": "list_tasks_handler",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Only tasks in this status.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "release_group_mbid",
+            "in": "query",
+            "description": "Only tasks for this release group.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "1-based page (default 1).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "description": "Tasks per page, 1 to 100 (default 20).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/tasks/{task_id}": {
+      "get": {
+        "tags": [
+          "crate::acquire::downloads::http"
+        ],
+        "summary": "One download task. `GET /api/v3/downloads/tasks/{task_id}`.",
+        "operationId": "get_task_handler",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Download task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadTaskResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/tasks/{task_id}/cancel": {
+      "post": {
+        "tags": [
+          "crate::acquire::downloads::http"
+        ],
+        "summary": "Stop a download: a live one is cancelled and its transfer aborted; a\nfailed one stops retrying. The owner's wanted watch on the album stops\ntoo. `POST /api/v3/downloads/tasks/{task_id}/cancel`.",
+        "operationId": "cancel_task_handler",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Download task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadActionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/tasks/{task_id}/files": {
+      "get": {
+        "tags": [
+          "crate::acquire::downloads::http"
+        ],
+        "summary": "The files of a task's current source.\n`GET /api/v3/downloads/tasks/{task_id}/files`.",
+        "operationId": "task_files_handler",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Download task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadFilesResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/tasks/{task_id}/next-source": {
+      "post": {
+        "tags": [
+          "crate::acquire::downloads::http"
+        ],
+        "summary": "Move a transfer that waits in a Soulseek peer's queue (no bytes yet)\nto the next ranked source.\n`POST /api/v3/downloads/tasks/{task_id}/next-source`.",
+        "operationId": "next_source_handler",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Download task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NextSourceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NextSourceResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/downloads/tasks/{task_id}/reimport": {
       "post": {
         "tags": [
@@ -4107,6 +4466,38 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ReimportResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/tasks/{task_id}/retry": {
+      "post": {
+        "tags": [
+          "crate::acquire::downloads::http"
+        ],
+        "summary": "Retry a failed, cancelled or partial download now. Answers the new\ntask. An album retry clears the album's blocklist first.\n`POST /api/v3/downloads/tasks/{task_id}/retry`.",
+        "operationId": "retry_task_handler",
+        "parameters": [
+          {
+            "name": "task_id",
+            "in": "path",
+            "description": "Download task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetryDownloadResponse"
                 }
               }
             }
@@ -21859,6 +22250,20 @@
           }
         }
       },
+      "ClearDownloadsResponse": {
+        "type": "object",
+        "description": "Clear outcome.",
+        "required": [
+          "cleared"
+        ],
+        "properties": {
+          "cleared": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Finished tasks removed."
+          }
+        }
+      },
       "ClearHistoryResponse": {
         "type": "object",
         "description": "Clear-history outcome.",
@@ -23874,6 +24279,151 @@
           "admin"
         ]
       },
+      "DownloadActionResponse": {
+        "type": "object",
+        "description": "Plain success.",
+        "required": [
+          "success"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DownloadActivitySummaryResponse": {
+        "type": "object",
+        "description": "Queue counters for the nav badge and live refresh.",
+        "required": [
+          "revision",
+          "active_count",
+          "held_count",
+          "failed_count",
+          "landed_release_group_mbids"
+        ],
+        "properties": {
+          "active_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "failed_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "held_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "landed_release_group_mbids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The 20 albums that landed most recently, newest first."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Moves whenever the viewer's queue changes structurally (not on\nbyte progress). Refetch the list when it moves."
+          }
+        }
+      },
+      "DownloadFileItem": {
+        "type": "object",
+        "description": "One file of a task's current source.",
+        "required": [
+          "filename"
+        ],
+        "properties": {
+          "duration": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Always empty: sources do not advertise durations."
+          },
+          "filename": {
+            "type": "string"
+          },
+          "size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Advertised size in bytes, when the source gave one."
+          }
+        }
+      },
+      "DownloadFilesResponse": {
+        "type": "object",
+        "description": "A task's files and counts.",
+        "required": [
+          "task_id",
+          "status",
+          "files_total",
+          "files_completed",
+          "files_failed",
+          "progress_percent",
+          "files"
+        ],
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DownloadFileItem"
+            }
+          },
+          "files_completed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "files_failed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "files_total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "progress_percent": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          }
+        }
+      },
+      "DownloadListResponse": {
+        "type": "object",
+        "description": "One page of the queue.",
+        "required": [
+          "items",
+          "page",
+          "page_size"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DownloadTaskResponse"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "page_size": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "DownloadPolicy": {
         "type": "object",
         "description": "Download policy: quality tiers, recipe v2, timeouts, retry, retention,\nrecycle bin, quotas, and the upgrade scan.",
@@ -24158,6 +24708,457 @@
           }
         ],
         "description": "GET view of the acquisition policy: the stored policy plus the\nread-only recipe verdict, recomputed on every read and never saved."
+      },
+      "DownloadProgress": {
+        "type": "object",
+        "description": "`download_progress`: the worker polled one of the user's live\ndownloads. Replaces v2's per-task `progress` stream; the web UI routes\nit to the task's card by `task_id`.",
+        "required": [
+          "task_id",
+          "status",
+          "bytes_downloaded",
+          "bytes_total",
+          "files_completed",
+          "files_total",
+          "progress_percent",
+          "source",
+          "remote_queued",
+          "attempt_number",
+          "attempt_total",
+          "has_next_source"
+        ],
+        "properties": {
+          "attempt_number": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sources tried so far, this one included."
+          },
+          "attempt_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sources the task may try in all."
+          },
+          "bytes_downloaded": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes downloaded so far."
+          },
+          "bytes_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total bytes, 0 when the client does not know yet."
+          },
+          "candidate_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Picked candidate position."
+          },
+          "files_completed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Files finished."
+          },
+          "files_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Files in the transfer."
+          },
+          "has_next_source": {
+            "type": "boolean",
+            "description": "Whether another source may still be tried."
+          },
+          "progress_percent": {
+            "type": "integer",
+            "format": "int64",
+            "description": "0 to 100."
+          },
+          "quality_format": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Picked candidate format."
+          },
+          "queue_position_end": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Newest observed queue rank."
+          },
+          "queue_position_start": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Rank in the peer's upload queue, when queued."
+          },
+          "remote_queued": {
+            "type": "boolean",
+            "description": "True while the transfer waits in the peer's queue with no bytes."
+          },
+          "source": {
+            "type": "string",
+            "description": "`soulseek`, `usenet` or `plugin:<key>`."
+          },
+          "status": {
+            "type": "string",
+            "description": "Its status now."
+          },
+          "task_id": {
+            "type": "string",
+            "description": "The task that moved."
+          }
+        }
+      },
+      "DownloadReason": {
+        "type": "object",
+        "description": "Why a download sits where it does: one stable code, one plain sentence\nand what to do about it.",
+        "required": [
+          "code",
+          "text",
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "What the person can do about it."
+          },
+          "code": {
+            "type": "string",
+            "description": "Stable machine code (`stalled`, `weak_match`, `no_source`, ...)."
+          },
+          "text": {
+            "type": "string",
+            "description": "What happened, in one sentence."
+          }
+        }
+      },
+      "DownloadTaskResponse": {
+        "type": "object",
+        "description": "One download task as the queue shows it. Field names match v2's\n`DownloadTaskResponse`, so the web UI reads them unchanged.",
+        "required": [
+          "id",
+          "user_id",
+          "download_type",
+          "source",
+          "origin",
+          "release_group_mbid",
+          "artist_name",
+          "album_title",
+          "status",
+          "progress_percent",
+          "downloaded_bytes",
+          "files_total",
+          "files_completed",
+          "files_failed",
+          "retry_count",
+          "created_at",
+          "updated_at",
+          "retry_max",
+          "retry_ladder_minutes",
+          "acquisition_cleanup_state",
+          "remote_queued",
+          "attempt_number",
+          "attempt_total",
+          "has_next_source",
+          "held_for_review"
+        ],
+        "properties": {
+          "acquisition_cleanup_state": {
+            "type": "string",
+            "description": "`not_tracked`, `in_use`, `pending`, `complete`, `preserved` or\n`needs_attention`: how far cleanup of the source files got."
+          },
+          "advertised_queue_depth": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "album_title": {
+            "type": "string"
+          },
+          "artist_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "artist_name": {
+            "type": "string"
+          },
+          "attempt_number": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sources tried so far."
+          },
+          "attempt_total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sources the task may try in all."
+          },
+          "candidate_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "completed_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "created_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "decision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportDecisionView",
+                "description": "The import's decision on the newest landing."
+              }
+            ]
+          },
+          "download_type": {
+            "type": "string",
+            "description": "`album` or `track`."
+          },
+          "downloaded_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "error_message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The worker's last outcome as recorded. Show `reason` instead."
+          },
+          "files_completed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "files_failed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "files_total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "final_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "has_next_source": {
+            "type": "boolean",
+            "description": "Whether another source may still be tried."
+          },
+          "held_for_review": {
+            "type": "boolean",
+            "description": "Files of this task wait in the held list for a decision."
+          },
+          "id": {
+            "type": "string"
+          },
+          "next_retry_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "When the next automatic retry is due, if one will run."
+          },
+          "origin": {
+            "type": "string",
+            "description": "`user`, `retry` or `upgrade`."
+          },
+          "progress_percent": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "quality_bit_depth": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "quality_bitrate": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "quality_format": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "quality_sample_rate": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "queue_position_end": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "queue_position_start": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DownloadReason",
+                "description": "Why the task sits where it does, when that needs saying."
+              }
+            ]
+          },
+          "recording_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "release_group_mbid": {
+            "type": "string"
+          },
+          "release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "release_track_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "remote_queued": {
+            "type": "boolean",
+            "description": "Waiting in the peer's upload queue with no bytes yet."
+          },
+          "retry_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "retry_ladder_minutes": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "The whole retry backoff schedule in minutes."
+          },
+          "retry_max": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Automatic retries allowed in all (0 when auto-retry is off)."
+          },
+          "search_job_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "description": "`soulseek`, `usenet` or `plugin:<key>`."
+          },
+          "source_username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "description": "`queued`, `downloading`, `processing`, `completed`, `partial`,\n`failed` or `cancelled`."
+          },
+          "total_size_bytes": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "track_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "updated_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "wrong_product_detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "wrong_product_verdict_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "DownloadsChanged": {
+        "type": "object",
+        "description": "`downloads.changed`: the download queue moved. Sent to everyone with\nno task details; each tab refetches its own (permission-scoped) queue\nsummary, and the full list when the summary's revision moved.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Opaque id of this queue state (`downloads:` plus 16 hex digits).\nThe stream also sends it as the SSE `id:` line."
+          }
+        }
       },
       "DropImportUpdated": {
         "type": "object",
@@ -26581,6 +27582,68 @@
           "provider_uid": {
             "type": "string",
             "description": "Provider-side id (Jellyfin user id, Plex account uuid)."
+          }
+        }
+      },
+      "ImportDecisionView": {
+        "type": "object",
+        "description": "What the import decided about the task's newest landing.",
+        "required": [
+          "outcome",
+          "files_total",
+          "files_imported",
+          "files_held",
+          "decided_at"
+        ],
+        "properties": {
+          "decided_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Decision time (unix seconds)."
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Specifics (which file, which marker), never the explanation."
+          },
+          "files_held": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "files_imported": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "files_total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "outcome": {
+            "type": "string",
+            "description": "`imported`, `partial`, `held`, `rejected` or `deferred`."
+          },
+          "reason_action": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What to do about it."
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Stable reason code, when the landing was not a clean import."
+          },
+          "reason_text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The reason as a plain sentence."
           }
         }
       },
@@ -30602,6 +31665,42 @@
           }
         }
       },
+      "NextSourceRequest": {
+        "type": "object",
+        "description": "Next-source request: the source the page showed, so a stale click\ncannot skip the source that replaced it.",
+        "required": [
+          "expected_candidate_index"
+        ],
+        "properties": {
+          "expected_candidate_index": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "NextSourceResponse": {
+        "type": "object",
+        "description": "Next-source outcome: the task after the switch.",
+        "required": [
+          "success",
+          "status"
+        ],
+        "properties": {
+          "candidate_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "status": {
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          }
+        }
+      },
       "NowPlayingDeleteQuery": {
         "type": "object",
         "description": "Query for clearing presence: which device stopped.",
@@ -33452,6 +34551,85 @@
         },
         "additionalProperties": false
       },
+      "QuarantineEntry": {
+        "type": "object",
+        "description": "One blocklisted release.",
+        "required": [
+          "id",
+          "source",
+          "client_id",
+          "username",
+          "filename",
+          "identity",
+          "reason",
+          "reason_text",
+          "quarantined_at"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "description": "v2's client label: `slskd`, `sabnzbd`, or the source for plugins."
+          },
+          "filename": {
+            "type": "string",
+            "description": "The blocked file (soulseek) or job (usenet)."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "identity": {
+            "type": "string",
+            "description": "The stored identity, as matched."
+          },
+          "quarantined_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Stable reason code."
+          },
+          "reason_text": {
+            "type": "string",
+            "description": "The reason as a plain sentence."
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "description": "`soulseek`, `usenet` or `plugin:<key>`."
+          },
+          "username": {
+            "type": "string",
+            "description": "Soulseek peer, empty for other sources."
+          }
+        }
+      },
+      "QuarantineListResponse": {
+        "type": "object",
+        "description": "One page of the blocklist.",
+        "required": [
+          "items",
+          "page"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QuarantineEntry"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "QueueEnrichment": {
         "type": "object",
         "description": "Enrichment behind one queue card.",
@@ -35889,6 +37067,36 @@
           "restorable": {
             "type": "boolean",
             "description": "True when an offline restore of this backup should succeed."
+          }
+        }
+      },
+      "RetryAllResponse": {
+        "type": "object",
+        "description": "Retry-all-failed outcome.",
+        "required": [
+          "retried"
+        ],
+        "properties": {
+          "retried": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Failed downloads started again."
+          }
+        }
+      },
+      "RetryDownloadResponse": {
+        "type": "object",
+        "description": "Retry outcome: the new task carrying the retry.",
+        "required": [
+          "success",
+          "task_id"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "task_id": {
+            "type": "string"
           }
         }
       },
@@ -38458,6 +39666,20 @@
           "status": {
             "type": "string",
             "description": "Always \"ok\"."
+          }
+        }
+      },
+      "StopRetriesResponse": {
+        "type": "object",
+        "description": "Stop-all-retries outcome.",
+        "required": [
+          "stopped"
+        ],
+        "properties": {
+          "stopped": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Scheduled retries stopped."
           }
         }
       },
