@@ -541,6 +541,74 @@ async fn acoustid_lookup_posts_form_and_finds_match() {
     );
 }
 
+/// Twenty-five prints go out as two batch requests (20 + 5); answers map
+/// back by index, and every recording above 0.5 is kept.
+#[tokio::test]
+async fn acoustid_batch_posts_twenty_per_request() {
+    let respond: Responder = Arc::new(|request| {
+        let form = pairs(&request.text_body());
+        let count = form
+            .iter()
+            .filter(|(key, _)| key.starts_with("fingerprint."))
+            .count();
+        let fingerprints: Vec<serde_json::Value> = (0..count)
+            .map(|index| {
+                serde_json::json!({
+                    "index": index,
+                    "results": [
+                        {"score": 0.9, "id": "a", "recordings": [
+                            {"id": format!("REC-{index}"), "releases": [{"id": "REL-1"}]},
+                            {"id": format!("rec-{index}-single")}
+                        ]},
+                        {"score": 0.4, "id": "b", "recordings": [{"id": "rec-weak"}]}
+                    ]
+                })
+            })
+            .collect();
+        ScriptedResponse::json(
+            200,
+            &serde_json::json!({"status": "ok", "fingerprints": fingerprints}),
+        )
+    });
+    let fake = Fake::start(respond).await;
+    let pacer = CountingPacer::new();
+    let client = acoustid_client(&fake.base_url, pacer.clone(), RecSink::new());
+    let prints: Vec<String> = (0..25).map(|index| format!("print-{index}")).collect();
+    let queries: Vec<acoustid::BatchQuery<'_>> = prints
+        .iter()
+        .map(|print| acoustid::BatchQuery {
+            fingerprint: print,
+            duration_secs: 200,
+        })
+        .collect();
+
+    let found = client.lookup_batch("api-key", &queries).await;
+
+    let hits = fake.hits();
+    assert_eq!(hits.len(), 2);
+    assert_eq!(pacer.count(), 2);
+    let first = pairs(&hits[0].text_body());
+    assert_eq!(query_value(&first, "batch").as_deref(), Some("1"));
+    assert_eq!(
+        query_value(&first, "fingerprint.19").as_deref(),
+        Some("print-19")
+    );
+    assert_eq!(query_value(&first, "fingerprint.20"), None);
+    let second = pairs(&hits[1].text_body());
+    assert_eq!(
+        query_value(&second, "fingerprint.4").as_deref(),
+        Some("print-24")
+    );
+    assert_eq!(query_value(&second, "duration.4").as_deref(), Some("200"));
+    assert_eq!(found.len(), 25);
+    let last = &found[&24];
+    assert_eq!(last.recording_ids, vec!["rec-4", "rec-4-single"]);
+    assert_eq!(last.release_ids, vec!["rel-1"]);
+    // An empty key never dials out.
+    assert!(client.lookup_batch("", &queries).await.is_empty());
+    assert_eq!(fake.hit_count(), 2);
+}
+
 #[tokio::test]
 async fn acoustid_empty_and_low_score_results_are_missing() {
     for body in [
