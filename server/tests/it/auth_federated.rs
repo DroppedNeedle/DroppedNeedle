@@ -26,11 +26,12 @@ use droppedneedle::auth::federated::users::{
     FederatedProfile, derive_username, find_or_create_federated_user, username_base,
 };
 use droppedneedle::auth::wiring::Upstreams;
+use droppedneedle::playback::forwarding::{ScrobbleCredentials as _, StoredScrobbleCredentials};
+use droppedneedle::plugins::scrobble::MemoryListenBrainzLinkStore;
 use droppedneedle::runtime_config::Secret;
 use droppedneedle::runtime_config::secret_sections::{
-    JellyfinConnection, OidcConnection, PlexConnection,
+    JellyfinConnection, LastFmSettings, OidcConnection, PlexConnection,
 };
-use droppedneedle::runtime_config::sections::LastFmSettings;
 use ring::rand::SystemRandom;
 use ring::signature::{RSA_PKCS1_SHA256, RsaKeyPair, RsaPublicKeyComponents};
 use serde_json::{Value, json};
@@ -779,17 +780,24 @@ fn lastfm_router(_base: String) -> Router {
 }
 
 #[tokio::test]
-async fn lastfm_link_signs_both_calls_and_seals_the_session_key() {
+async fn lastfm_links_with_the_instance_key_and_binds_tokens_to_the_user() {
     let mock = serve(lastfm_router).await;
     let e2e = E2e::open("lastfm").await.with_upstreams(Upstreams {
         lastfm: format!("{mock}/2.0/"),
         ..Upstreams::default()
     });
+    // v2 model: the admin saves one app key pair for the whole instance.
     e2e.store
-        .save(LastFmSettings { enabled: true })
-        .expect("lastfm switch saves");
+        .save_secret(LastFmSettings {
+            enabled: true,
+            api_key: Secret::new(LASTFM_KEY),
+            shared_secret: Secret::new(LASTFM_SECRET),
+        })
+        .expect("lastfm settings save");
+    // One app throughout: pending sign-in tokens live in its memory.
+    let app = e2e.router();
     let (status, body, _) = call(
-        e2e.router(),
+        app.clone(),
         "POST",
         "/api/v3/auth/setup",
         &[],
@@ -800,23 +808,34 @@ async fn lastfm_link_signs_both_calls_and_seals_the_session_key() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
-    let auth = bearer(body["token"].as_str().expect("bearer token"));
-    let headers = [("authorization", auth.as_str())];
-
+    let jane_id = body["user"]["id"].as_str().expect("user id").to_owned();
+    let jane = bearer(body["token"].as_str().expect("bearer token"));
     let (status, body, _) = call(
-        e2e.router(),
-        "PUT",
-        "/api/v3/me/connections/lastfm",
-        &headers,
-        Some(json!({"api_key": LASTFM_KEY, "shared_secret": LASTFM_SECRET})),
+        app.clone(),
+        "POST",
+        "/api/v3/admin/users",
+        &[("authorization", &jane)],
+        Some(json!({"username": "bob", "password": "another long passphrase"})),
+    )
+    .await;
+    assert!(status.is_success(), "{status}: {body}");
+    let (status, body, _) = call(
+        app.clone(),
+        "POST",
+        "/api/v3/auth/login",
+        &[],
+        Some(json!({"username": "bob", "password": "another long passphrase", "transport": "bearer"})),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
+    let bob = bearer(body["token"].as_str().expect("bearer token"));
+
+    // Jane links without any key of her own, as in v2.
     let (status, body, _) = call(
-        e2e.router(),
+        app.clone(),
         "POST",
         "/api/v3/me/connections/lastfm/token",
-        &headers,
+        &[("authorization", &jane)],
         None,
     )
     .await;
@@ -825,24 +844,23 @@ async fn lastfm_link_signs_both_calls_and_seals_the_session_key() {
         body["auth_url"],
         "https://www.last.fm/api/auth/?api_key=lfm-key&token=lfm-token"
     );
-    // An unapproved token reads as "approve it first", not as an outage.
-    let (status, _, _) = call(
-        e2e.router(),
-        "POST",
-        "/api/v3/me/connections/lastfm/session",
-        &headers,
-        Some(json!({"token": "not-approved"})),
-    )
-    .await;
+    let session = |who: &str, token: &str| {
+        let (app, who, token) = (app.clone(), who.to_owned(), token.to_owned());
+        async move {
+            call(
+                app,
+                "POST",
+                "/api/v3/me/connections/lastfm/session",
+                &[("authorization", &who)],
+                Some(json!({ "token": token })),
+            )
+            .await
+        }
+    };
+    // Bob cannot claim the token Jane asked for.
+    let (status, _, _) = session(&bob, "lfm-token").await;
     assert_eq!(status, StatusCode::CONFLICT);
-    let (status, body, _) = call(
-        e2e.router(),
-        "POST",
-        "/api/v3/me/connections/lastfm/session",
-        &headers,
-        Some(json!({"token": "lfm-token"})),
-    )
-    .await;
+    let (status, body, _) = session(&jane, "lfm-token").await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["username"], "jane_lfm");
 
@@ -853,8 +871,29 @@ async fn lastfm_link_signs_both_calls_and_seals_the_session_key() {
             .expect("rows read");
     assert_eq!(stored.len(), 1);
     assert!(
-        !stored[0].contains(LASTFM_SESSION_KEY) && !stored[0].contains(LASTFM_SECRET),
-        "session key and secret are sealed at rest"
+        !stored[0].contains(LASTFM_SESSION_KEY),
+        "the session key is sealed at rest"
+    );
+
+    // Scrobbling signs with the instance pair, since Jane has none.
+    let users = e2e.users();
+    let credentials = StoredScrobbleCredentials::new(
+        Arc::new(MemoryListenBrainzLinkStore::new(users.crypto.clone())),
+        users.lastfm.clone(),
+        users.lastfm_switch.clone(),
+        users.crypto.clone(),
+    );
+    let signing = credentials
+        .lastfm_session(&jane_id)
+        .await
+        .expect("jane scrobbles");
+    assert_eq!(
+        (
+            signing.api_key.as_str(),
+            signing.shared_secret.as_str(),
+            signing.session_key.as_str()
+        ),
+        (LASTFM_KEY, LASTFM_SECRET, LASTFM_SESSION_KEY)
     );
 }
 

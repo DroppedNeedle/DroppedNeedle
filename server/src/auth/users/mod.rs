@@ -28,6 +28,7 @@ pub mod hibp;
 pub mod import;
 pub mod lastfm_http;
 pub mod lastfm_models;
+pub mod lastfm_pending;
 #[cfg(any(test, feature = "test-support"))]
 pub mod memory;
 pub mod models;
@@ -80,8 +81,10 @@ pub struct UsersDeps {
     pub crypto: Arc<Crypto>,
     /// Last.fm auth web calls.
     pub lastfm_client: Arc<dyn LastFmAuthClient>,
-    /// Last.fm master switch (live read).
+    /// Last.fm switch and instance key pair (live read).
     pub lastfm_switch: Arc<dyn LastFmSwitch>,
+    /// Last.fm sign-in tokens waiting for approval, per requesting user.
+    pub lastfm_pending: Arc<lastfm_pending::LastFmPending>,
     /// HIBP knobs (live read).
     pub security: Arc<dyn SecurityPolicy>,
     /// Jellyfin accounts for the admin user import.

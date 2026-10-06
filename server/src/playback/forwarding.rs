@@ -223,9 +223,9 @@ impl ScrobbleSinks for ScrobbleForwarder {
 
 /// A user's Last.fm signing material. Never logged.
 pub struct LastFmSession {
-    /// Per-user API key.
+    /// API key: the user's own, else the instance key.
     pub api_key: String,
-    /// Per-user shared secret.
+    /// Shared secret matching the API key.
     pub shared_secret: String,
     /// Session key from the link flow.
     pub session_key: String,
@@ -299,12 +299,24 @@ impl ScrobbleCredentials for StoredScrobbleCredentials {
                 let plaintext = self.crypto.decrypt(sealed.as_deref()?).ok()?;
                 (!plaintext.is_empty()).then_some(plaintext)
             };
-            let session = LastFmSession {
-                api_key: open(link.api_key_encrypted)?,
-                shared_secret: open(link.shared_secret_encrypted)?,
-                session_key: open(link.session_key_encrypted)?,
+            let session_key = open(link.session_key_encrypted)?;
+            // The user's own key pair wins; without one, the session was
+            // granted to the instance pair the admin saved (v2 parity).
+            let (api_key, shared_secret) = match (
+                open(link.api_key_encrypted),
+                open(link.shared_secret_encrypted),
+            ) {
+                (Some(api_key), Some(shared_secret)) => (api_key, shared_secret),
+                _ => {
+                    let keys = self.lastfm_switch.instance_keys()?;
+                    (keys.api_key, keys.shared_secret)
+                }
             };
-            Some(session)
+            Some(LastFmSession {
+                api_key,
+                shared_secret,
+                session_key,
+            })
         })
     }
 }

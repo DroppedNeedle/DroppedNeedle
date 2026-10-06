@@ -175,9 +175,22 @@ async fn imported_counts_match_the_fixture() {
     assert_eq!(count("follow").imported, 3);
     assert_eq!(count("approval").imported, 3);
     assert_eq!(count("approval").nulled_field, 1);
-    // Six settings seals (slskd, sabnzbd, two indexers, AudioDB, one plugin
-    // token) plus three app passwords; the dropped lastfm seals count none.
-    assert_eq!(report.secrets_reencrypted, 9);
+    // Eight settings seals (slskd, sabnzbd, two indexers, AudioDB, one
+    // plugin token, the Last.fm key pair) plus three app passwords; v2's
+    // global Last.fm session key is dropped and counts none.
+    assert_eq!(report.secrets_reencrypted, 11);
+    // The v2 instance Last.fm key pair opens under the v3 key, so linking
+    // and scrobbling keep working after the move.
+    let config_dir = v3_root.join("config");
+    let store = droppedneedle::runtime_config::ConfigStore::open(
+        &config_dir.join("config.json"),
+        Crypto::load(&config_dir).expect("v3 key loads"),
+    )
+    .expect("v3 config opens");
+    let lastfm: droppedneedle::runtime_config::secret_sections::LastFmSettings =
+        store.get_raw().expect("lastfm settings read");
+    assert_eq!(lastfm.api_key.expose(), "lastfm-public-key");
+    assert_eq!(lastfm.shared_secret.expose(), "lastfm-shared-plaintext");
 
     let revoked: Vec<(String, i64)> =
         sqlx::query_as("SELECT name, revoked FROM connect_app_passwords WHERE revoked = 1")

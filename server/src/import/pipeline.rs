@@ -508,14 +508,17 @@ fn stage_settings(
 }
 
 /// Drop fields the export spec excludes, before re-encryption:
-/// lastfm keeps only the master switch (secrets decrypted, then dropped), the
-/// MusicBrainz transient trio goes, plugins keep `enabled` + `settings`.
+/// lastfm keeps the switch and the instance app key pair (v2's legacy
+/// global session key and username go), the MusicBrainz transient trio
+/// goes, plugins keep `enabled` + `settings`.
 fn filter_section(name: &str, value: &Value) -> Value {
     match name {
         "lastfm_settings" => {
             let mut kept = serde_json::Map::new();
-            if let Some(enabled) = value.get("enabled") {
-                kept.insert("enabled".to_owned(), enabled.clone());
+            for field in ["enabled", "api_key", "shared_secret"] {
+                if let Some(kept_value) = value.get(field) {
+                    kept.insert(field.to_owned(), kept_value.clone());
+                }
             }
             Value::Object(kept)
         }

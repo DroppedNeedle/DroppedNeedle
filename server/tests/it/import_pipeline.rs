@@ -612,7 +612,13 @@ async fn settings_replace_filters_and_preserves() {
         serde_json::from_str(&std::fs::read_to_string(&config_path).unwrap()).unwrap();
     assert_eq!(stored["wanted"], json!({"enabled": true}));
     assert_eq!(stored["lyrics_settings"], json!({"enabled": true}));
-    assert_eq!(stored["lastfm_settings"], json!({"enabled": true}));
+    // The instance Last.fm key carries over, re-sealed under the v3 key.
+    assert_eq!(stored["lastfm_settings"]["enabled"], json!(true));
+    assert!(
+        stored["lastfm_settings"]["api_key"]
+            .as_str()
+            .is_some_and(|cipher| cipher.starts_with("v3:"))
+    );
     assert!(
         stored["musicbrainz_settings"]
             .get("pending_brainzmash")

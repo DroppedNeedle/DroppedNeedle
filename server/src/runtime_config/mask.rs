@@ -39,8 +39,8 @@ pub const PLEX_TOKEN_MASK: &str = "plex****";
 pub const LISTENBRAINZ_TOKEN_MASK: &str = "listenbrainz****";
 /// YouTube key. New in v3: v2 had no mask and GET returned plaintext.
 pub const YOUTUBE_API_KEY_MASK: &str = "youtube****";
-/// Per-user Last.fm credentials (v3 has no admin-global pair, so this mask
-/// serves the per-user store). Normalized from the v2 `••••••••` +
+/// Last.fm app key pair: the instance pair in `lastfm_settings` and a
+/// user's own pair in the per-user store. Normalized from the v2 `••••••••` +
 /// last-4 prefix match, which leaked key material into responses.
 pub const LASTFM_SECRET_MASK: &str = "lastfm****";
 /// Spotify client secret (v2 literal kept).

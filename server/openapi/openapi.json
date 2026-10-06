@@ -11296,11 +11296,11 @@
         "tags": [
           "crate::settings::handlers"
         ],
-        "summary": "Read the Last.fm master switch.",
+        "summary": "Read the Last.fm switch and the instance app key pair (masked unless\nunset).",
         "operationId": "get_lastfm",
         "responses": {
           "200": {
-            "description": "Last.fm master switch",
+            "description": "Last.fm settings",
             "content": {
               "application/json": {
                 "schema": {
@@ -11315,7 +11315,7 @@
         "tags": [
           "crate::settings::handlers"
         ],
-        "summary": "Save the Last.fm master switch.",
+        "summary": "Save the Last.fm switch and the instance app key pair (a masked value\nkeeps the stored one).",
         "operationId": "put_lastfm",
         "requestBody": {
           "content": {
@@ -11329,7 +11329,7 @@
         },
         "responses": {
           "200": {
-            "description": "Saved switch",
+            "description": "Saved settings",
             "content": {
               "application/json": {
                 "schema": {
@@ -20238,12 +20238,22 @@
       },
       "LastFmSettings": {
         "type": "object",
-        "description": "Last.fm settings: master switch only (per-user credentials live in\nthe per-user store, not here).",
+        "description": "Last.fm: the master switch plus the instance's app key pair (v2\nparity). Users link their own Last.fm account with this pair; a user\nmay store their own pair instead, which wins for that user.",
         "properties": {
+          "api_key": {
+            "type": "string",
+            "description": "The instance's Last.fm API key (encrypted at rest).",
+            "default": ""
+          },
           "enabled": {
             "type": "boolean",
-            "description": "Master switch for Last.fm fan-out.",
+            "description": "Master switch for Last.fm linking and scrobbling.",
             "default": false
+          },
+          "shared_secret": {
+            "type": "string",
+            "description": "The instance's Last.fm shared secret (encrypted at rest).",
+            "default": ""
           }
         }
       },

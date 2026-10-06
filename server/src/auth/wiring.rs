@@ -28,14 +28,15 @@ use super::session::middleware::SessionAuth;
 use super::session::middleware::TrustedProxies;
 use super::session::rate_limit::RateLimiter;
 use super::users::lastfm_http::LastFmAuthHttp;
-use super::users::stores::{Clock, HibpPolicy, LastFmSwitch, SecurityPolicy};
+use super::users::stores::{Clock, HibpPolicy, LastFmKeys, LastFmSwitch, SecurityPolicy};
 use super::users::{UsersDeps, admin_router, public_router, users_router};
 use crate::ids::IdGenerator;
 use crate::remotes::connections::{
     ConfigServers, ConnectionResolver, ConnectionStore, CredentialCoder, SignInLinks,
     SqliteConnectionStore,
 };
-use crate::runtime_config::sections::{LastFmSettings, SecuritySettings};
+use crate::runtime_config::secret_sections::LastFmSettings;
+use crate::runtime_config::sections::SecuritySettings;
 use crate::runtime_config::{ConfigStore, Crypto};
 
 /// One stored exchange code: owning user, sealed token, expiry.
@@ -142,6 +143,21 @@ impl LastFmSwitch for StoreLastFmSwitch {
             .get::<LastFmSettings>()
             .map(|section| section.enabled)
             .unwrap_or(false)
+    }
+
+    fn instance_keys(&self) -> Option<LastFmKeys> {
+        let section = match self.store.get_raw::<LastFmSettings>() {
+            Ok(section) => section,
+            Err(error) => {
+                tracing::warn!(%error, "cannot read the Last.fm app key pair");
+                return None;
+            }
+        };
+        let (api_key, shared_secret) = (section.api_key.expose(), section.shared_secret.expose());
+        (!api_key.is_empty() && !shared_secret.is_empty()).then(|| LastFmKeys {
+            api_key: api_key.to_owned(),
+            shared_secret: shared_secret.to_owned(),
+        })
     }
 }
 
@@ -281,6 +297,7 @@ impl AuthSetup {
             crypto: crypto.clone(),
             lastfm_client: Arc::new(LastFmAuthHttp::with_base(http.clone(), &upstreams.lastfm)),
             lastfm_switch: Arc::new(StoreLastFmSwitch::new(config_store.clone())),
+            lastfm_pending: Arc::default(),
             security: Arc::new(StoreSecurityPolicy::new(config_store.clone())),
             jellyfin_directory: Arc::new(jellyfin_http.clone()),
             plex_directory: Arc::new(plex_tv.clone()),
@@ -461,6 +478,7 @@ impl AuthSetup {
             crypto: crypto.clone(),
             lastfm_client: Arc::new(LastFmAuthHttp::new(http.clone())),
             lastfm_switch: Arc::new(StoreLastFmSwitch::new(store.clone())),
+            lastfm_pending: Arc::default(),
             security: Arc::new(StoreSecurityPolicy::new(store.clone())),
             jellyfin_directory: Arc::new(jellyfin_http.clone()),
             plex_directory: Arc::new(plex_tv.clone()),

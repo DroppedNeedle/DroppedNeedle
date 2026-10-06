@@ -4797,9 +4797,15 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Read the Last.fm master switch. */
+        /**
+         * Read the Last.fm switch and the instance app key pair (masked unless
+         *     unset).
+         */
         get: operations["get_lastfm"];
-        /** Save the Last.fm master switch. */
+        /**
+         * Save the Last.fm switch and the instance app key pair (a masked value
+         *     keeps the stored one).
+         */
         put: operations["put_lastfm"];
         post?: never;
         delete?: never;
@@ -9215,15 +9221,26 @@ export interface components {
             username: string;
         };
         /**
-         * @description Last.fm settings: master switch only (per-user credentials live in
-         *     the per-user store, not here).
+         * @description Last.fm: the master switch plus the instance's app key pair (v2
+         *     parity). Users link their own Last.fm account with this pair; a user
+         *     may store their own pair instead, which wins for that user.
          */
         LastFmSettings: {
             /**
-             * @description Master switch for Last.fm fan-out.
+             * @description The instance's Last.fm API key (encrypted at rest).
+             * @default
+             */
+            api_key: string;
+            /**
+             * @description Master switch for Last.fm linking and scrobbling.
              * @default false
              */
             enabled: boolean;
+            /**
+             * @description The instance's Last.fm shared secret (encrypted at rest).
+             * @default
+             */
+            shared_secret: string;
         };
         /** @description Per-user Last.fm link status. Never carries secrets. */
         LastFmStatusResponse: {
@@ -24091,7 +24108,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Last.fm master switch */
+            /** @description Last.fm settings */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -24115,7 +24132,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Saved switch */
+            /** @description Saved settings */
             200: {
                 headers: {
                     [name: string]: unknown;

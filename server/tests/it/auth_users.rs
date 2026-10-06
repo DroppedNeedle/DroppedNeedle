@@ -278,6 +278,8 @@ async fn lastfm_link_flow_keeps_secrets_sealed() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert!(!body.to_string().contains("user-api-key"), "{body}");
+    let (status, _) = call(app(), "POST", "/api/v3/me/connections/lastfm/token", None).await;
+    assert_eq!(status, StatusCode::OK);
     // An unapproved token is a 409 naming the next step, not an outage.
     let (status, _) = call(
         app(),

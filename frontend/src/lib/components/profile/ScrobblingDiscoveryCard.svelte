@@ -115,7 +115,8 @@
 			lfmPendingToken = data.token;
 			window.open(data.auth_url, '_blank', 'popup=yes,noopener,noreferrer');
 		} catch (e) {
-			// 409 means this user has no Last.fm app credentials saved yet.
+			// 409 means there is no Last.fm app key to link with: the admin has not
+			// saved the server's key pair and this user has not saved their own.
 			if (e instanceof ApiError && e.status === 409) {
 				lfmCredentialsOpen = true;
 				return;

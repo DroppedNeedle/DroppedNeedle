@@ -17,7 +17,7 @@ use super::models::{
     RecoveryCode, RecoveryCodeResponse, SessionListResponse, SessionView, UserRecord, UserResponse,
 };
 use super::roles::{AuthContext, Role, SessionKind};
-use super::stores::{LastFmError, RoleChange, StoreError, UserDeletion};
+use super::stores::{LastFmError, LastFmKeys, RoleChange, StoreError, UserDeletion};
 use super::{UsersDeps, clock_now};
 
 // ---------------------------------------------------------------------------
@@ -1032,7 +1032,8 @@ pub async fn lastfm_status(
     }
 }
 
-/// PUT /me/connections/lastfm: store the user's own API credentials.
+/// PUT /me/connections/lastfm: store the user's own API credentials, which
+/// override the instance pair for this user.
 /// The `lastfm****` mask sentinel keeps the stored value per field; storing
 /// a new key unlinks the old session.
 pub async fn lastfm_set_credentials(
@@ -1115,29 +1116,47 @@ pub async fn lastfm_set_credentials(
     Ok(link)
 }
 
-/// Decrypt one user's stored key pair. Decrypt failure is a 500: the row is
+/// Decrypt one user's own key pair. Decrypt failure is a 500: the row is
 /// corrupt or the install was re-keyed.
-fn lastfm_keypair(
-    deps: &UsersDeps,
-    link: &LastFmConnection,
-) -> Result<(String, String), UsersError> {
+fn own_lastfm_keys(deps: &UsersDeps, link: &LastFmConnection) -> Result<LastFmKeys, UsersError> {
     let (Some(key_cipher), Some(secret_cipher)) = (
         link.api_key_encrypted.as_deref(),
         link.shared_secret_encrypted.as_deref(),
     ) else {
-        return Err(UsersError::Conflict {
-            message: "Set your Last.fm API credentials first".to_owned(),
-        });
+        return Err(lastfm_not_set_up());
     };
-    let key = deps
-        .crypto
-        .decrypt(key_cipher)
-        .map_err(|cause| UsersError::internal(&cause, deps.ids.as_ref()))?;
-    let secret = deps
-        .crypto
-        .decrypt(secret_cipher)
-        .map_err(|cause| UsersError::internal(&cause, deps.ids.as_ref()))?;
-    Ok((key, secret))
+    let decrypt = |cipher: &str| {
+        deps.crypto
+            .decrypt(cipher)
+            .map_err(|cause| UsersError::internal(&cause, deps.ids.as_ref()))
+    };
+    Ok(LastFmKeys {
+        api_key: decrypt(key_cipher)?,
+        shared_secret: decrypt(secret_cipher)?,
+    })
+}
+
+/// The key pair one user signs with: their own pair when they stored one,
+/// else the instance pair the admin saved (v2 parity).
+fn lastfm_keys_for(
+    deps: &UsersDeps,
+    link: Option<&LastFmConnection>,
+) -> Result<LastFmKeys, UsersError> {
+    match link.filter(|link| link.configured) {
+        Some(link) => own_lastfm_keys(deps, link),
+        None => deps
+            .lastfm_switch
+            .instance_keys()
+            .ok_or_else(lastfm_not_set_up),
+    }
+}
+
+fn lastfm_not_set_up() -> UsersError {
+    UsersError::Conflict {
+        message: "Last.fm is not set up yet. Ask your admin to add the Last.fm app key, \
+                  or add your own key and secret."
+            .to_owned(),
+    }
 }
 
 /// POST /me/connections/lastfm/token: fetch a sign-in token + approval URL.
@@ -1151,58 +1170,66 @@ pub async fn lastfm_request_token(
         .get(user_id)
         .await
         .map_err(|error| store_internal(deps, error))?;
-    let Some(link) = link.filter(|link| link.configured) else {
-        return Err(UsersError::Conflict {
-            message: "Set your Last.fm API credentials first".to_owned(),
-        });
-    };
-    let (api_key, shared_secret) = lastfm_keypair(deps, &link)?;
+    let keys = lastfm_keys_for(deps, link.as_ref())?;
     let (token, auth_url) = deps
         .lastfm_client
-        .request_token(&api_key, &shared_secret)
+        .request_token(&keys.api_key, &keys.shared_secret)
         .await
         .map_err(|error| lastfm_error(deps, error))?;
+    deps.lastfm_pending.remember(user_id, &token);
     Ok(LastFmTokenResponse { token, auth_url })
 }
 
-/// POST /me/connections/lastfm/session: exchange an approved token.
+/// POST /me/connections/lastfm/session: exchange an approved token. The
+/// session key is stored sealed; a user without their own pair keeps none
+/// and signs with the instance pair.
 pub async fn lastfm_exchange_session(
     deps: &UsersDeps,
     user_id: &str,
     token: &str,
 ) -> Result<LastFmSessionResponse, UsersError> {
     require_lastfm_enabled(deps)?;
+    // Only the user who asked for this token may exchange it.
+    if !deps.lastfm_pending.is_pending_for(user_id, token) {
+        return Err(UsersError::Conflict {
+            message: "This Last.fm sign-in has expired or was not started here. Start again."
+                .to_owned(),
+        });
+    }
     let link = deps
         .lastfm
         .get(user_id)
         .await
         .map_err(|error| store_internal(deps, error))?;
-    let Some(link) = link.filter(|link| link.configured) else {
-        return Err(UsersError::Conflict {
-            message: "Set your Last.fm API credentials first".to_owned(),
-        });
-    };
-    let (api_key, shared_secret) = lastfm_keypair(deps, &link)?;
+    let keys = lastfm_keys_for(deps, link.as_ref())?;
     let (username, session_key) = deps
         .lastfm_client
-        .exchange_session(&api_key, &shared_secret, token)
+        .exchange_session(&keys.api_key, &keys.shared_secret, token)
         .await
         .map_err(|error| lastfm_error(deps, error))?;
     let session_cipher = deps
         .crypto
         .encrypt(&session_key)
         .map_err(|cause| UsersError::internal(&cause, deps.ids.as_ref()))?;
+    let base = link.unwrap_or(LastFmConnection {
+        configured: false,
+        api_key_encrypted: None,
+        shared_secret_encrypted: None,
+        username: None,
+        session_key_encrypted: None,
+    });
     deps.lastfm
         .upsert(
             user_id,
             LastFmConnection {
                 username: Some(username.clone()),
                 session_key_encrypted: Some(session_cipher),
-                ..link
+                ..base
             },
         )
         .await
         .map_err(|error| store_internal(deps, error))?;
+    deps.lastfm_pending.forget(token);
     Ok(LastFmSessionResponse {
         username,
         linked: true,

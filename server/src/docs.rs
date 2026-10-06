@@ -973,7 +973,7 @@ use crate::{
         crate::runtime_config::sections::ScrobbleSettings,
         crate::runtime_config::sections::PrimaryMusicSource,
         crate::runtime_config::sections::MusicSource,
-        crate::runtime_config::sections::LastFmSettings,
+        crate::runtime_config::secret_sections::LastFmSettings,
         crate::runtime_config::sections::LibraryScanSchedule,
         crate::runtime_config::sections::ScanFrequency,
         crate::runtime_config::sections::FilesystemWatcher,

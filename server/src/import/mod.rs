@@ -7,9 +7,9 @@
 //! Crypto and envelope shapes are owned by the export module
 //! (`crate::export::seal`, `crate::export::envelope`) and reused here, so
 //! the two sides cannot drift: one KDF, one sealed-blob layout. Import
-//! decisions on top: `lastfm_settings` keeps only `enabled` (the secrets
-//! are decrypted, then dropped); v3-only config keys outside the export
-//! section set are preserved, never defaulted. The CLI verbs
+//! decisions on top: `lastfm_settings` keeps the switch and the instance
+//! app key pair and drops v2's legacy global session; v3-only config keys
+//! outside the export section set are preserved, never defaulted. The CLI verbs
 //! (validate/import/dry-run/restore) in `droppedneedle-tool` are thin
 //! wrappers around this API.
 //!

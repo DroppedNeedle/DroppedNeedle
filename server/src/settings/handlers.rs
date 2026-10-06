@@ -33,12 +33,12 @@ use super::wiring::{AdminUser, SettingsSetup};
 use crate::auth::session::middleware::CurrentSession;
 use crate::runtime_config::Masked;
 use crate::runtime_config::secret_sections::{
-    EventsSettings, JellyfinConnection, ListenBrainzConnection, NavidromeConnection,
-    NewznabIndexer, OidcConnection, PlexConnection, ProwlarrConnection, SabnzbdConnection,
-    SlskdConnection, WrappedSettings, YouTubeConnection,
+    EventsSettings, JellyfinConnection, LastFmSettings, ListenBrainzConnection,
+    NavidromeConnection, NewznabIndexer, OidcConnection, PlexConnection, ProwlarrConnection,
+    SabnzbdConnection, SlskdConnection, WrappedSettings, YouTubeConnection,
 };
 use crate::runtime_config::sections::{
-    ConnectApps, DownloadPolicy, FilesystemWatcher, FreeMusic, GetIt, HomeSettings, LastFmSettings,
+    ConnectApps, DownloadPolicy, FilesystemWatcher, FreeMusic, GetIt, HomeSettings,
     LibraryManagementProfile, LibraryScanSchedule, PrimaryMusicSource, ScrobbleSettings,
     SecuritySettings, UserPreferences, WantedWatcher,
 };
@@ -171,28 +171,32 @@ pub async fn put_primary_source(
     settings.service().save(body).await.map(Json)
 }
 
-/// Read the Last.fm master switch.
+/// Read the Last.fm switch and the instance app key pair (masked unless
+/// unset).
 #[utoipa::path(
     get,
     path = "/api/v3/settings/lastfm",
-    responses((status = 200, description = "Last.fm master switch", body = LastFmSettings))
+    responses((status = 200, description = "Last.fm settings", body = LastFmSettings))
 )]
-pub async fn get_lastfm(State(settings): State<SettingsSetup>) -> JsonResult<LastFmSettings> {
-    settings.service().get().map(Json)
+pub async fn get_lastfm(
+    State(settings): State<SettingsSetup>,
+) -> JsonResult<Masked<LastFmSettings>> {
+    settings.service().get_masked().map(Json)
 }
 
-/// Save the Last.fm master switch.
+/// Save the Last.fm switch and the instance app key pair (a masked value
+/// keeps the stored one).
 #[utoipa::path(
     put,
     path = "/api/v3/settings/lastfm",
     request_body = LastFmSettings,
-    responses((status = 200, description = "Saved switch", body = LastFmSettings))
+    responses((status = 200, description = "Saved settings", body = LastFmSettings))
 )]
 pub async fn put_lastfm(
     State(settings): State<SettingsSetup>,
-    ValidJson(body): ValidJson<LastFmSettings>,
-) -> JsonResult<LastFmSettings> {
-    settings.service().save(body).await.map(Json)
+    ValidJson(body): ValidJson<Masked<LastFmSettings>>,
+) -> JsonResult<Masked<LastFmSettings>> {
+    settings.service().save_masked(body).await.map(Json)
 }
 
 /// Read the free-music settings.
@@ -1573,7 +1577,11 @@ pub async fn get_section_prefs(
     let prefs = settings.prefs().ok_or_else(|| SettingsError::Unavailable {
         message: "Section prefs need the database.".to_owned(),
     })?;
-    let lastfm_master = settings.service().get::<LastFmSettings>()?.enabled;
+    let lastfm_master = settings
+        .service()
+        .get_masked::<LastFmSettings>()?
+        .into_inner()
+        .enabled;
     super::section_prefs::full_response(
         prefs.store.as_ref(),
         prefs.links.as_ref(),
@@ -1604,7 +1612,11 @@ pub async fn put_section_prefs(
     let prefs = settings.prefs().ok_or_else(|| SettingsError::Unavailable {
         message: "Section prefs need the database.".to_owned(),
     })?;
-    let lastfm_master = settings.service().get::<LastFmSettings>()?.enabled;
+    let lastfm_master = settings
+        .service()
+        .get_masked::<LastFmSettings>()?
+        .into_inner()
+        .enabled;
     let items = super::section_prefs::save_page(
         prefs.store.as_ref(),
         prefs.links.as_ref(),

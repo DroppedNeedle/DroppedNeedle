@@ -125,25 +125,6 @@ impl Section for PrimaryMusicSource {
     const KEY: &'static str = "primary_music_source";
 }
 
-// --- lastfm_settings (per-user credentials only) --------------------------
-// The admin-global credential pair is deleted; the section keeps only the
-// master switch. The v2 importer decrypts sealed lastfm secrets, then
-// drops them, and the per-user store behind LASTFM_SECRET_MASK holds the
-// credentials.
-
-/// Last.fm settings: master switch only (per-user credentials live in
-/// the per-user store, not here).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, ToSchema)]
-#[serde(default)]
-pub struct LastFmSettings {
-    /// Master switch for Last.fm fan-out.
-    pub enabled: bool,
-}
-
-impl Section for LastFmSettings {
-    const KEY: &'static str = "lastfm_settings";
-}
-
 // --- lyrics_settings (read-path lyrics provider) ---------------------------
 // The master switch for live LRCLIB lyrics on the library read path. This is
 // the read-path provider toggle, not the library-management write block

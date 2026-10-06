@@ -1,5 +1,5 @@
 //! Third-party accounts and keys: ListenBrainz, YouTube, Spotify, the
-//! events sources, Wrapped, and OIDC.
+//! events sources, Wrapped, OIDC, and the Last.fm app key pair.
 
 use super::*;
 
@@ -316,5 +316,44 @@ impl SecretSection for OidcConnection {
             mask: OIDC_SECRET_MASK,
             strip: false,
         }]
+    }
+}
+
+// --- lastfm_settings ----------------------------------------------------------
+
+/// Last.fm: the master switch plus the instance's app key pair (v2
+/// parity). Users link their own Last.fm account with this pair; a user
+/// may store their own pair instead, which wins for that user.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, ToSchema)]
+#[serde(default)]
+pub struct LastFmSettings {
+    /// Master switch for Last.fm linking and scrobbling.
+    pub enabled: bool,
+    /// The instance's Last.fm API key (encrypted at rest).
+    #[schema(value_type = String)]
+    pub api_key: Secret,
+    /// The instance's Last.fm shared secret (encrypted at rest).
+    #[schema(value_type = String)]
+    pub shared_secret: Secret,
+}
+
+impl Section for LastFmSettings {
+    const KEY: &'static str = "lastfm_settings";
+}
+
+impl SecretSection for LastFmSettings {
+    fn secret_fields(&mut self) -> Vec<SecretField<'_>> {
+        vec![
+            SecretField {
+                value: &mut self.api_key,
+                mask: LASTFM_SECRET_MASK,
+                strip: true,
+            },
+            SecretField {
+                value: &mut self.shared_secret,
+                mask: LASTFM_SECRET_MASK,
+                strip: true,
+            },
+        ]
     }
 }

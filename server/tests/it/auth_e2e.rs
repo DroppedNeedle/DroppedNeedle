@@ -275,7 +275,7 @@ impl E2e {
         create_app(state)
     }
 
-    fn users(&self) -> UsersDeps {
+    pub(crate) fn users(&self) -> UsersDeps {
         // Rebuild is cheap, but the stores are what matter: clone the deps
         // through one throwaway bundle so the compat adapter reads live rows.
         self.auth_setup().users

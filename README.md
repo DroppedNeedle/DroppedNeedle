@@ -300,7 +300,7 @@ Where things live in the UI:
 | Users, roles, Jellyfin and Plex user import | Settings > Users |
 | Password breach checking, HSTS | Settings > Security |
 
-Link Last.fm from Profile > Scrobbling & Discovery after the admin saves the instance app key; link ListenBrainz with the token from your ListenBrainz profile. Artist images come from AudioDB (on by default, free key rate limits apply) with proxying and TTLs under Settings > Advanced.
+Last.fm works like this: the admin registers one Last.fm API application at last.fm/api/account/create, saves its key and shared secret under Settings > Last.fm and switches Last.fm on, once for the whole server. Each user then clicks Connect under Profile > Scrobbling & Discovery, approves DroppedNeedle on last.fm, and clicks Finish. Their scrobbles go to their own Last.fm account. Users can also bring their own API application: if the server has no key saved, Connect asks for the user's own key and secret first, and a user can always store a pair through the API (`PUT /api/v3/me/connections/lastfm`). A user's own pair replaces the server's key for that user only. Link ListenBrainz with the token from your ListenBrainz profile. Artist images come from AudioDB (on by default, free key rate limits apply) with proxying and TTLs under Settings > Advanced.
 
 ### Users and roles
 

@@ -412,11 +412,29 @@ pub trait SecurityPolicy: Send + Sync {
     fn hibp(&self) -> HibpPolicy;
 }
 
-/// The Last.fm master switch. A trait so admin toggles take effect without
-/// a restart. Wiring bridges to `lastfm_settings.enabled`.
+/// One Last.fm API key pair, plaintext in memory only.
+#[derive(Clone, PartialEq, Eq)]
+pub struct LastFmKeys {
+    /// API key.
+    pub api_key: String,
+    /// Shared secret for signed calls.
+    pub shared_secret: String,
+}
+
+impl std::fmt::Debug for LastFmKeys {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LastFmKeys(..)")
+    }
+}
+
+/// The admin's Last.fm settings, read live so changes apply without a
+/// restart. Wiring bridges to `lastfm_settings`.
 pub trait LastFmSwitch: Send + Sync {
-    /// Whether Last.fm fan-out is enabled.
+    /// Whether Last.fm linking and fan-out are enabled.
     fn enabled(&self) -> bool;
+    /// The instance key pair, when the admin saved both halves. Users
+    /// without their own pair link and scrobble with it (v2 parity).
+    fn instance_keys(&self) -> Option<LastFmKeys>;
 }
 
 /// The two Last.fm auth web calls. The live client is

@@ -75,7 +75,6 @@ impl PlainSection for SecuritySettings {}
 impl PlainSection for ConnectApps {}
 impl PlainSection for DownloadPolicy {}
 impl PlainSection for MusicBrainzSettings {}
-impl PlainSection for LastFmSettings {}
 impl PlainSection for LyricsSettings {}
 impl PlainSection for InternalState {}
 impl PlainSection for LibraryManagement {}

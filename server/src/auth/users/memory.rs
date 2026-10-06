@@ -1027,13 +1027,17 @@ impl SecurityPolicy for StaticSecurityPolicy {
     }
 }
 
-/// Fixed Last.fm master switch for tests.
+/// Fixed Last.fm master switch for tests; no instance key pair.
 #[derive(Debug, Clone, Copy)]
 pub struct StaticLastFmSwitch(pub bool);
 
 impl LastFmSwitch for StaticLastFmSwitch {
     fn enabled(&self) -> bool {
         self.0
+    }
+
+    fn instance_keys(&self) -> Option<super::stores::LastFmKeys> {
+        None
     }
 }
 
@@ -1275,6 +1279,7 @@ impl TestRig {
             crypto,
             lastfm_client: Arc::clone(&lastfm_client) as Arc<dyn LastFmAuthClient>,
             lastfm_switch: Arc::new(StaticLastFmSwitch(true)),
+            lastfm_pending: Arc::default(),
             security: Arc::new(StaticSecurityPolicy {
                 policy: HibpPolicy {
                     check: false,

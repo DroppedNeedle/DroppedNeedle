@@ -677,7 +677,7 @@ fn validate_lastfm(section: &Value, path: &str, report: &mut ValidationReport) {
             report.errors.push(ValidationIssue::new(
                 "SECRET_NOT_SEALED",
                 format!("{path}.{field}"),
-                "lastfm secrets must arrive sealed (they are dropped after unlock)".to_owned(),
+                "lastfm secrets must arrive sealed".to_owned(),
             ));
         }
     }
