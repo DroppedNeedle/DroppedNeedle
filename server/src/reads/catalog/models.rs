@@ -604,7 +604,7 @@ pub struct SimilarAlbumsResponse {
 /// `GET /albums/{album_id}/more-by-artist`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct MoreByArtistResponse {
-    /// Other release groups by the artist, newest first.
+    /// Other release groups by the artist, in MusicBrainz browse order.
     pub albums: Vec<DiscoveryAlbum>,
     /// The artist's name, empty when MusicBrainz had nothing.
     pub artist_name: String,

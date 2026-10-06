@@ -79,10 +79,15 @@ impl<T: Send + Sync + 'static, E: Send + Sync + 'static> Singleflight<T, E> {
                 }
             }
         };
-        let outcome = flight.await;
-        // Leaders clean up after landing; a `try_lock` miss just leaves the
-        // entry for the peek check above to sweep on the next call.
-        if let Ok(mut pending) = self.pending.try_lock() {
+        let outcome = flight.clone().await;
+        // Whoever lands first cleans up, but only its own flight: after a
+        // clear() the key may already hold a newer one. A `try_lock` miss
+        // just leaves the entry for the peek check above to sweep.
+        if let Ok(mut pending) = self.pending.try_lock()
+            && pending
+                .get(key)
+                .is_some_and(|current| current.ptr_eq(&flight))
+        {
             pending.remove(key);
         }
         outcome
