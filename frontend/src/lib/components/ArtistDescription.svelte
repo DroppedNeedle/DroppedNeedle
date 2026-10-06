@@ -1,9 +1,6 @@
 <script lang="ts">
-	import { run } from 'svelte/legacy';
-
 	import { ChevronUp, ChevronDown } from 'lucide-svelte';
 	import { colors } from '$lib/colors';
-	import { onMount } from 'svelte';
 
 	interface Props {
 		description: string | null | undefined;
@@ -25,14 +22,11 @@
 		}
 	}
 
-	onMount(() => {
-		setTimeout(() => checkDescriptionHeight(), 50);
-	});
-
-	run(() => {
-		if (description && !loading) {
-			setTimeout(() => checkDescriptionHeight(), 50);
-		}
+	// Measure once the text has rendered; a new description measures again.
+	$effect(() => {
+		if (!description || loading) return;
+		const timer = setTimeout(() => checkDescriptionHeight(), 50);
+		return () => clearTimeout(timer);
 	});
 </script>
 

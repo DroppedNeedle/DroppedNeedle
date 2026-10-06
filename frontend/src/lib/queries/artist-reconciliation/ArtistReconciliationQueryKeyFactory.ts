@@ -1,6 +1,5 @@
+import { userIdSegment } from '$lib/queries/userKeySegment';
 import type { ArtistDuplicateGroupParams } from './ArtistReconciliationTypes';
-
-const userSegment = (userId: string | null | undefined) => userId ?? 'anonymous';
 
 const normalizedParams = (params: ArtistDuplicateGroupParams) => ({
 	state: params.state ?? null,
@@ -10,7 +9,7 @@ const normalizedParams = (params: ArtistDuplicateGroupParams) => ({
 export const ArtistReconciliationQueryKeyFactory = {
 	prefix: ['library', 'artist-reconciliation'] as const,
 	user: (userId: string | null | undefined) =>
-		[...ArtistReconciliationQueryKeyFactory.prefix, userSegment(userId)] as const,
+		[...ArtistReconciliationQueryKeyFactory.prefix, userIdSegment(userId)] as const,
 	progress: (userId: string | null | undefined) =>
 		[...ArtistReconciliationQueryKeyFactory.user(userId), 'progress'] as const,
 	groupsPrefix: (userId: string | null | undefined) =>

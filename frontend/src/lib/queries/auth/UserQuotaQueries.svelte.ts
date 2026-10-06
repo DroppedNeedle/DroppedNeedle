@@ -14,12 +14,9 @@ export type UserQuotaOverride = components['schemas']['QuotaOverrideBody'];
 
 export type UserQuotaResponse = components['schemas']['QuotaResponse'];
 
-export const userQuotaKey = (userId: string) =>
-	[...AuthQueryKeyFactory.prefix, 'user-quota', userId] as const;
-
 export const getUserQuotaQuery = (userId: () => string, enabled: () => boolean) =>
 	createQuery(() => ({
-		queryKey: userQuotaKey(userId()),
+		queryKey: AuthQueryKeyFactory.userQuota(userId()),
 		enabled: enabled(),
 		// usage numbers must be live: without this the 1-min default staleTime +
 		// the IndexedDB persister serve yesterday's counts on a soft refresh
@@ -33,6 +30,6 @@ export function saveUserQuota() {
 		mutationFn: ({ userId, override }: { userId: string; override: UserQuotaOverride }) =>
 			api.v3.PUT(AUTH_ENDPOINTS.userQuota(userId), override),
 		onSuccess: (_data, { userId }) =>
-			invalidateQueriesWithPersister({ queryKey: userQuotaKey(userId) })
+			invalidateQueriesWithPersister({ queryKey: AuthQueryKeyFactory.userQuota(userId) })
 	}));
 }

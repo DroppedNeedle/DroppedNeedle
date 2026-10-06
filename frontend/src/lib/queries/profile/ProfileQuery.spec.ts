@@ -29,7 +29,7 @@ beforeEach(() => {
 describe('getProfileQuery', () => {
 	it('reads the caller identity behind a per-user key', async () => {
 		mockGet.mockResolvedValue({ id: 'user-1' });
-		const query = getProfileQuery('user-1') as QueryResult;
+		const query = getProfileQuery(() => 'user-1') as QueryResult;
 		const controller = new AbortController();
 
 		await query.queryFn?.({ signal: controller.signal });
@@ -41,8 +41,8 @@ describe('getProfileQuery', () => {
 	});
 
 	it('keys each user separately so shared browsers never leak identity', () => {
-		const first = getProfileQuery('user-1') as QueryResult;
-		const second = getProfileQuery('user-2') as QueryResult;
+		const first = getProfileQuery(() => 'user-1') as QueryResult;
+		const second = getProfileQuery(() => 'user-2') as QueryResult;
 
 		expect(first.queryKey).not.toEqual(second.queryKey);
 	});

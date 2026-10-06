@@ -63,7 +63,7 @@
 	import { ConnectionsQueryKeyFactory } from '$lib/queries/connections/ConnectionsQueryKeyFactory';
 
 	const userId = authStore.user?.id ?? '';
-	const profileQuery = getProfileQuery(userId);
+	const profileQuery = getProfileQuery(() => authStore.user?.id ?? '');
 	const navidromeConnection = getRemoteConnectionQuery(() => 'navidrome');
 	const jellyfinConnection = getRemoteConnectionQuery(() => 'jellyfin');
 	const plexConnection = getRemoteConnectionQuery(() => 'plex');

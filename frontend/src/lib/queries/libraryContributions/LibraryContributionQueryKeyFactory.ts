@@ -1,5 +1,8 @@
+import { userIdSegment } from '$lib/queries/userKeySegment';
+
 export const LibraryContributionQueryKeyFactory = {
-	root: (userId: string | undefined) => ['library-contributions', userId ?? 'anonymous'] as const,
-	detail: (userId: string | undefined, contributionId: string) =>
+	root: (userId: string | null | undefined) =>
+		['library-contributions', userIdSegment(userId)] as const,
+	detail: (userId: string | null | undefined, contributionId: string) =>
 		[...LibraryContributionQueryKeyFactory.root(userId), 'detail', contributionId] as const
 };

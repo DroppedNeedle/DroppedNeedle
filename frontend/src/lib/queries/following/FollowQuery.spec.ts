@@ -140,12 +140,7 @@ describe('FollowQueryKeyFactory (AMU-5)', () => {
 			MBID,
 			'userA'
 		]);
-		expect(FollowQueryKeyFactory.status(MBID, undefined)).toEqual([
-			'follow',
-			'status',
-			MBID,
-			'anon'
-		]);
+		expect(FollowQueryKeyFactory.status(MBID, undefined)).toEqual(['follow', 'status', MBID, null]);
 		expect(FollowQueryKeyFactory.artists('userA')).toEqual(['following', 'artists', 'userA']);
 		expect(FollowQueryKeyFactory.recentReleases('userA', 30, 48, true)).toEqual([
 			'following',
@@ -163,7 +158,7 @@ describe('FollowQueryKeyFactory (AMU-5)', () => {
 		expect(FollowQueryKeyFactory.newReleasesUnseen(undefined)).toEqual([
 			'following',
 			'new-releases-unseen',
-			'anon'
+			null
 		]);
 		expect(FollowQueryKeyFactory.status(MBID, 'userB')).not.toEqual(
 			FollowQueryKeyFactory.status(MBID, 'userA')

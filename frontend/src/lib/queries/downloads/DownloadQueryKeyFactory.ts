@@ -7,6 +7,9 @@ export const DownloadQueryKeyFactory = {
 	clientStatus: () => [...DownloadQueryKeyFactory.all, 'client-status'] as const,
 	searchJob: (userId: string | null | undefined, jobId: string) =>
 		[...DownloadQueryKeyFactory.all, 'search', userIdSegment(userId), jobId] as const,
+	// Every scope (role and generation) of one user's task keys.
+	tasksPrefix: (userId: string | null | undefined) =>
+		[...DownloadQueryKeyFactory.all, 'tasks', userIdSegment(userId)] as const,
 	tasks: (userId?: string) =>
 		[
 			...DownloadQueryKeyFactory.all,
@@ -28,6 +31,7 @@ export const DownloadQueryKeyFactory = {
 	searchBackend: () => [...DownloadQueryKeyFactory.indexers(), 'search-backend'] as const,
 	prowlarr: () => [...DownloadQueryKeyFactory.all, 'prowlarr'] as const,
 	sabnzbd: () => [...DownloadQueryKeyFactory.all, 'sabnzbd'] as const,
+	sourcePriority: () => [...DownloadQueryKeyFactory.all, 'source-priority'] as const,
 	sabnzbdStatus: () => [...DownloadQueryKeyFactory.all, 'sabnzbd-status'] as const,
 	policy: () => [...DownloadQueryKeyFactory.all, 'policy'] as const,
 	policySummary: () => [...DownloadQueryKeyFactory.all, 'policy-summary'] as const,

@@ -14,11 +14,11 @@ describe('LidarrImportQueryKeyFactory', () => {
 		);
 	});
 
-	it('falls back to anon when no userId is present', () => {
+	it('uses a null segment when no userId is present', () => {
 		expect(LidarrImportQueryKeyFactory.candidates(undefined)).toEqual([
 			'lidarr-import',
 			'candidates',
-			'anon'
+			null
 		]);
 	});
 

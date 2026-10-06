@@ -21,6 +21,7 @@ import {
 	type MusicBrainzSourceKey
 } from './musicbrainz/sourceScope.svelte';
 import { getDownloadScope, subscribeDownloadRoleChange } from './downloads/downloadScope.svelte';
+import { DownloadQueryKeyFactory } from './downloads/DownloadQueryKeyFactory';
 
 const queryPersister = createPersistedQueryPersister(createIDBStorage(isCurrentQueryScope));
 
@@ -219,7 +220,7 @@ export const queryClient = new QueryClient({
 });
 
 subscribeDownloadRoleChange((userId) => {
-	const filters = { queryKey: ['downloads', 'tasks', userId] };
+	const filters = { queryKey: DownloadQueryKeyFactory.tasksPrefix(userId) };
 	// Cancellation fences transport and persister completion before old scope removal.
 	void queryClient.cancelQueries(filters);
 	queryClient.removeQueries(filters);

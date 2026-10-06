@@ -16,7 +16,8 @@ vi.mock('$lib/queries/QueryClient', () => ({
 import { api } from '$lib/api/client';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { AUTH_ENDPOINTS } from './endpoints';
-import { getUserQuotaQuery, saveUserQuota, userQuotaKey } from './UserQuotaQueries.svelte';
+import { AuthQueryKeyFactory } from './AuthQueryKeyFactory';
+import { getUserQuotaQuery, saveUserQuota } from './UserQuotaQueries.svelte';
 
 const mockGet = vi.mocked(api.v3.GET) as unknown as Mock<(...args: unknown[]) => Promise<unknown>>;
 const mockPut = vi.mocked(api.v3.PUT) as unknown as Mock<(...args: unknown[]) => Promise<unknown>>;
@@ -52,7 +53,7 @@ describe('getUserQuotaQuery', () => {
 		expect(mockGet).toHaveBeenCalledWith(AUTH_ENDPOINTS.userQuota('user-9'), {
 			signal: controller.signal
 		});
-		expect(query.queryKey).toEqual(userQuotaKey('user-9'));
+		expect(query.queryKey).toEqual(AuthQueryKeyFactory.userQuota('user-9'));
 	});
 
 	it('stays disabled until the admin picker opens it', () => {
@@ -84,6 +85,8 @@ describe('saveUserQuota', () => {
 
 		expect(mockPut).toHaveBeenCalledWith(AUTH_ENDPOINTS.userQuota('user-9'), override);
 		await mutation.onSuccess?.({}, { userId: 'user-9' });
-		expect(mockInvalidate).toHaveBeenCalledWith({ queryKey: userQuotaKey('user-9') });
+		expect(mockInvalidate).toHaveBeenCalledWith({
+			queryKey: AuthQueryKeyFactory.userQuota('user-9')
+		});
 	});
 });

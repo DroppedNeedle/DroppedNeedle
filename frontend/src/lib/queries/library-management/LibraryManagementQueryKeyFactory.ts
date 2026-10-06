@@ -1,6 +1,5 @@
+import { userIdSegment } from '$lib/queries/userKeySegment';
 import type { LibraryManagementHistoryParams, LibraryManagementPlanItemParams } from './types';
-
-const userSegment = (userId: string | null | undefined) => userId ?? 'anonymous';
 
 const normalizedHistory = (params: LibraryManagementHistoryParams) => ({
 	limit: params.limit ?? 50,
@@ -30,7 +29,7 @@ const normalizedItems = (params: LibraryManagementPlanItemParams) => ({
 export const LibraryManagementQueryKeyFactory = {
 	prefix: ['library-management'] as const,
 	user: (userId: string | null | undefined) =>
-		[...LibraryManagementQueryKeyFactory.prefix, userSegment(userId)] as const,
+		[...LibraryManagementQueryKeyFactory.prefix, userIdSegment(userId)] as const,
 	settings: (userId: string | null | undefined) =>
 		[...LibraryManagementQueryKeyFactory.user(userId), 'settings'] as const,
 	profile: (userId: string | null | undefined, profileId: string) =>

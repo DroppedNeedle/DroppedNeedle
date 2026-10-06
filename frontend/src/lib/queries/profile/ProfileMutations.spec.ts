@@ -161,7 +161,7 @@ describe('ProfileQueryKeyFactory', () => {
 
 describe('getProfileQuery', () => {
 	it('builds a userId-scoped key and fetches GET /api/v3/me', async () => {
-		const opts = getProfileQuery('userA') as unknown as Opts;
+		const opts = getProfileQuery(() => 'userA') as unknown as Opts;
 		expect(opts.queryKey).toEqual(['profile', 'userA']);
 		await opts.queryFn!({ signal: new AbortController().signal });
 		expect(mockV3Get.mock.calls[0][0]).toBe(PROFILE_ENDPOINTS.get());

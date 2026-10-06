@@ -19,7 +19,7 @@ export type WantedWatcherSettings = components['schemas']['WantedWatcher'];
 const sourcePriorityOptions = () =>
 	queryOptions({
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
-		queryKey: [...DownloadQueryKeyFactory.all, 'source-priority'] as const,
+		queryKey: DownloadQueryKeyFactory.sourcePriority(),
 		queryFn: ({ signal }) =>
 			api.global.v3.GET(DOWNLOAD_SETTINGS_ENDPOINTS.sourcePriority(), { signal })
 	});
@@ -31,9 +31,7 @@ export function saveSourcePriority() {
 		mutationFn: (order: string[]) =>
 			api.global.v3.PUT(DOWNLOAD_SETTINGS_ENDPOINTS.sourcePriority(), { order }),
 		onSuccess: () =>
-			invalidateQueriesWithPersister({
-				queryKey: [...DownloadQueryKeyFactory.all, 'source-priority']
-			})
+			invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.sourcePriority() })
 	}));
 }
 
