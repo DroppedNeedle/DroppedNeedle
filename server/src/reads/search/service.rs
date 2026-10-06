@@ -288,7 +288,7 @@ impl SearchService {
                 status: SearchRemoteStatus::Ok,
             });
         }
-        let remote_limit = limit.div_ceil(5) * 3;
+        let remote_limit = (limit * 3).div_ceil(5);
         let local = async {
             Ok::<_, sqlx::Error>((
                 self.search_artists(&folded, limit).await?,

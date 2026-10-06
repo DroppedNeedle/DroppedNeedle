@@ -147,7 +147,8 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
     }
 
     /// One page of an artist's release groups (browse, not search: the
-    /// list is complete and stable). Missing artists browse as empty.
+    /// list is complete and stable), with artist credits so "more by"
+    /// rows can name the artist. Missing artists browse as empty.
     pub async fn browse_artist_release_groups(
         &self,
         artist_mbid: &str,
@@ -158,6 +159,7 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         let operation = "browse_release_groups";
         let params = vec![
             ("artist".to_owned(), normalize_mb_id(artist_mbid)),
+            ("inc".to_owned(), "artist-credits".to_owned()),
             ("limit".to_owned(), limit.min(MAX_PAGE_LIMIT).to_string()),
             ("offset".to_owned(), offset.to_string()),
         ];
