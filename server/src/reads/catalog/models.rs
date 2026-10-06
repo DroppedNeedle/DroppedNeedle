@@ -555,6 +555,20 @@ pub struct AlbumEditionsResponse {
     pub selected_basis: Option<String>,
 }
 
+/// Body for `PUT /albums/{album_id}/edition`.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct GroupEditionPinBody {
+    /// Release MBID to pin; must be one of the album's editions.
+    pub release_mbid: String,
+}
+
+/// Answer for the edition pin routes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct GroupEditionPinResponse {
+    /// The pinned edition, or absent after a clear.
+    pub pinned_release_mbid: Option<String>,
+}
+
 /// An album in a discovery row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct DiscoveryAlbum {

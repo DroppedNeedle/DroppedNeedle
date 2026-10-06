@@ -1314,6 +1314,12 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("GET", "/api/v3/albums/{album_id}/tracks", Posture::User),
     ("GET", "/api/v3/albums/{album_id}/editions", Posture::User),
     ("POST", "/api/v3/albums/{album_id}/refresh", Posture::User),
+    ("PUT", "/api/v3/albums/{album_id}/edition", Posture::Curator),
+    (
+        "DELETE",
+        "/api/v3/albums/{album_id}/edition",
+        Posture::Curator,
+    ),
     ("GET", "/api/v3/albums/{album_id}/similar", Posture::User),
     (
         "GET",
@@ -1970,7 +1976,11 @@ async fn auth_on_every_endpoint() {
         // Pin writes gate the role inside the service, after the body
         // parses: a shaped body reaches the curator check (403 for plain
         // users) instead of failing body validation first.
-        if *template == "/api/v3/library/albums/{album_id}/edition-pin" && *method == "PUT" {
+        if matches!(
+            (*method, *template),
+            ("PUT", "/api/v3/library/albums/{album_id}/edition-pin")
+                | ("PUT", "/api/v3/albums/{album_id}/edition")
+        ) {
             body = Some(json!({"release_mbid": "e2e-dummy-id"}));
         }
         // Covers answer SVG/PNG bytes, so the user pass reads them raw;
@@ -2049,8 +2059,13 @@ async fn auth_on_every_endpoint() {
             _ => None,
         };
         // Shaped pin body, as in the user pass: the admin reaches the
-        // service (404 on the empty catalog) instead of failing validation.
-        if *template == "/api/v3/library/albums/{album_id}/edition-pin" && *method == "PUT" {
+        // service (404 on the empty catalog, 400 for the dummy album id)
+        // instead of failing validation.
+        if matches!(
+            (*method, *template),
+            ("PUT", "/api/v3/library/albums/{album_id}/edition-pin")
+                | ("PUT", "/api/v3/albums/{album_id}/edition")
+        ) {
             body = Some(json!({"release_mbid": "e2e-dummy-id"}));
         }
         // Shaped binding body: a BrainzMash binding on a non-Brainzmash

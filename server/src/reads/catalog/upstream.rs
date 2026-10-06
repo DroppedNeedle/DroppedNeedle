@@ -281,6 +281,11 @@ impl Upstream {
         ReqwestGet::new(self.http.clone())
     }
 
+    /// The users store (roles, Last.fm links).
+    pub fn users(&self) -> &UsersDeps {
+        &self.users
+    }
+
     /// The configured endpoints.
     pub fn endpoints(&self) -> &Endpoints {
         &self.endpoints

@@ -36,7 +36,7 @@ use std::time::Duration;
 
 use axum::{
     Router,
-    routing::{get, post},
+    routing::{get, post, put},
 };
 use serde::{Serialize, de::DeserializeOwned};
 
@@ -58,6 +58,7 @@ pub struct Catalog {
     inner: Arc<Inner>,
     follows: Arc<dyn ports::FollowLookup>,
     purchase_links: Arc<dyn ports::PurchaseLinkSource>,
+    pins: Arc<dyn ports::EditionPins>,
 }
 
 struct Inner {
@@ -92,7 +93,15 @@ impl Catalog {
             }),
             follows: Arc::new(ports::NoFollows),
             purchase_links: Arc::new(ports::NoPurchaseLinks),
+            pins: Arc::new(ports::NoEditionPins),
         }
+    }
+
+    /// Write edition pins through this store.
+    #[must_use]
+    pub fn with_edition_pins(mut self, pins: Arc<dyn ports::EditionPins>) -> Self {
+        self.pins = pins;
+        self
     }
 
     /// Add extra purchase links (the plugins' `purchase_links`) from this
@@ -305,6 +314,10 @@ pub fn router(deps: CatalogDeps) -> Router {
         .route("/albums/{album_id}/tracks", get(handlers::album_tracks))
         .route("/albums/{album_id}/editions", get(handlers::album_editions))
         .route("/albums/{album_id}/refresh", post(handlers::album_refresh))
+        .route(
+            "/albums/{album_id}/edition",
+            put(handlers::set_album_edition).delete(handlers::clear_album_edition),
+        )
         .route("/albums/{album_id}/similar", get(handlers::similar_albums))
         .route(
             "/albums/{album_id}/more-by-artist",

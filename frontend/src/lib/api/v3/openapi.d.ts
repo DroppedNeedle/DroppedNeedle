@@ -627,6 +627,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/albums/{album_id}/edition": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Pin an edition by release group (v2's route). Curators only. */
+        put: operations["set_album_edition"];
+        post?: never;
+        /** Clear the edition pin (v2's route). Curators only. */
+        delete: operations["clear_album_edition"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/albums/{album_id}/edition/acquire": {
         parameters: {
             query?: never;
@@ -9397,6 +9415,16 @@ export interface components {
             /** @description Release tag. */
             tag_name: string;
         };
+        /** @description Body for `PUT /albums/{album_id}/edition`. */
+        GroupEditionPinBody: {
+            /** @description Release MBID to pin; must be one of the album's editions. */
+            release_mbid: string;
+        };
+        /** @description Answer for the edition pin routes. */
+        GroupEditionPinResponse: {
+            /** @description The pinned edition, or absent after a clear. */
+            pinned_release_mbid?: string | null;
+        };
         /**
          * @description Health payload. `status` plus the running message keep the v2 shape;
          *     `checkpoint` adds the latest checkpoint pass (`None` until the
@@ -16353,6 +16381,126 @@ export interface operations {
             };
             /** @description MusicBrainz down and the album is not in the library */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    set_album_edition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release-group MBID */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GroupEditionPinBody"];
+            };
+        };
+        responses: {
+            /** @description Pinned */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupEditionPinResponse"];
+                };
+            };
+            /** @description Not a MusicBrainz id or bad body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not a curator */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album, edition not of this album, or album not in the library */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The library holds the album more than once */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    clear_album_edition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release-group MBID */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cleared */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupEditionPinResponse"];
+                };
+            };
+            /** @description Not a MusicBrainz id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not a curator */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album or album not in the library */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The library holds the album more than once */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

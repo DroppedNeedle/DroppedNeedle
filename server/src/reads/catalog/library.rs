@@ -297,6 +297,22 @@ impl LocalCatalog {
         }))
     }
 
+    /// The live library albums identified as one release group.
+    pub async fn albums_for_group(
+        &self,
+        release_group_mbid: &str,
+    ) -> Result<Vec<String>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT b.id FROM local_album_external_identities e \
+             JOIN local_albums b ON b.id = e.local_album_id \
+             WHERE b.retired_into_album_id IS NULL AND lower(e.release_group_mbid) = ? \
+             ORDER BY b.created_at",
+        )
+        .bind(release_group_mbid.to_ascii_lowercase())
+        .fetch_all(&self.pool)
+        .await
+    }
+
     /// Owned and pinned editions plus the file count for one release
     /// group. Several local copies of one group read as the first one.
     pub async fn edition_evidence(

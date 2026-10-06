@@ -151,7 +151,9 @@ impl ReadsSetup {
     /// search, through this catalog.
     #[must_use]
     pub fn with_catalog(mut self, catalog: catalog::Catalog) -> Self {
-        let catalog = catalog.with_follows(Arc::new(CollectionsFollows(self.collections.clone())));
+        let catalog = catalog
+            .with_follows(Arc::new(CollectionsFollows(self.collections.clone())))
+            .with_edition_pins(Arc::new(CollectionsPins(self.collections.clone())));
         self.search.service = self.search.service.clone().with_remote(catalog.clone());
         self.catalog = Some(catalog::CatalogDeps {
             catalog,
@@ -262,6 +264,39 @@ impl catalog::ports::FollowLookup for CollectionsFollows {
                     None
                 }
             }
+        })
+    }
+}
+
+/// Edition pins written through the collections pin store.
+struct CollectionsPins(collections::CollectionsState);
+
+impl catalog::ports::EditionPins for CollectionsPins {
+    fn set<'a>(
+        &'a self,
+        album_id: &'a str,
+        release_group_mbid: &'a str,
+        release_mbid: &'a str,
+        user_id: &'a str,
+    ) -> catalog::ports::BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            self.0
+                .stores
+                .pins
+                .set(album_id, release_group_mbid, release_mbid, user_id)
+                .await
+                .map_err(|error| format!("{error:?}"))
+        })
+    }
+
+    fn clear<'a>(&'a self, album_id: &'a str) -> catalog::ports::BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            self.0
+                .stores
+                .pins
+                .clear(album_id)
+                .await
+                .map_err(|error| format!("{error:?}"))
         })
     }
 }

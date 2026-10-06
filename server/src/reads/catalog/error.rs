@@ -23,6 +23,16 @@ pub enum CatalogError {
     /// MusicBrainz has no such entity and the library has no copy.
     #[error("not found")]
     NotFound,
+    /// Something named in the request does not exist; the message says
+    /// what.
+    #[error("missing: {0}")]
+    Missing(String),
+    /// The caller's role does not allow this.
+    #[error("forbidden")]
+    Forbidden,
+    /// The request conflicts with the library's state.
+    #[error("conflict: {0}")]
+    Conflict(String),
     /// MusicBrainz could not answer and the library has no copy to show.
     #[error("musicbrainz unavailable: {0}")]
     Unavailable(String),
@@ -67,6 +77,21 @@ impl IntoResponse for CatalogHttpError {
                 envelope_response(StatusCode::BAD_REQUEST, INVALID_INPUT, message, None)
             }
             CatalogError::NotFound => crate::error::ApiError::NotFound.into_response(),
+            CatalogError::Missing(message) => envelope_response(
+                StatusCode::NOT_FOUND,
+                crate::error::NOT_FOUND,
+                message,
+                None,
+            ),
+            CatalogError::Forbidden => envelope_response(
+                StatusCode::FORBIDDEN,
+                crate::error::FORBIDDEN,
+                "Curator access required",
+                None,
+            ),
+            CatalogError::Conflict(message) => {
+                envelope_response(StatusCode::CONFLICT, crate::error::CONFLICT, message, None)
+            }
             CatalogError::Unavailable(cause) => {
                 tracing::warn!(error_id = %self.error_id, %cause, "catalog upstream unavailable");
                 fault_response(

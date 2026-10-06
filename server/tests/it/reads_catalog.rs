@@ -861,6 +861,14 @@ async fn auth_matrix_rejects_anonymous_callers_and_bad_ids() {
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let edition = format!("/api/v3/albums/{OK_COMPUTER}/edition");
+    for method in [Method::PUT, Method::DELETE] {
+        let (status, _) = call(&app, method, &edition, None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+    let (status, body) = call(&app, Method::DELETE, &edition, Some(TOKEN)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "pins are for curators");
+    assert_eq!(body["error"]["code"], "FORBIDDEN");
 
     let (status, body) = call(&app, Method::GET, "/api/v3/artists/radiohead", Some(TOKEN)).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);

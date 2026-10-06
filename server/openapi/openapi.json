@@ -1014,6 +1014,108 @@
         }
       }
     },
+    "/api/v3/albums/{album_id}/edition": {
+      "put": {
+        "tags": [
+          "crate::reads::catalog::handlers"
+        ],
+        "summary": "Pin an edition by release group (v2's route). Curators only.",
+        "operationId": "set_album_edition",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupEditionPinBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Pinned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupEditionPinResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id or bad body"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Not a curator"
+          },
+          "404": {
+            "description": "Unknown album, edition not of this album, or album not in the library"
+          },
+          "409": {
+            "description": "The library holds the album more than once"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "crate::reads::catalog::handlers"
+        ],
+        "summary": "Clear the edition pin (v2's route). Curators only.",
+        "operationId": "clear_album_edition",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cleared",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupEditionPinResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Not a curator"
+          },
+          "404": {
+            "description": "Unknown album or album not in the library"
+          },
+          "409": {
+            "description": "The library holds the album more than once"
+          }
+        }
+      }
+    },
     "/api/v3/albums/{album_id}/edition/acquire": {
       "post": {
         "tags": [
@@ -20808,6 +20910,32 @@
           "tag_name": {
             "type": "string",
             "description": "Release tag."
+          }
+        }
+      },
+      "GroupEditionPinBody": {
+        "type": "object",
+        "description": "Body for `PUT /albums/{album_id}/edition`.",
+        "required": [
+          "release_mbid"
+        ],
+        "properties": {
+          "release_mbid": {
+            "type": "string",
+            "description": "Release MBID to pin; must be one of the album's editions."
+          }
+        }
+      },
+      "GroupEditionPinResponse": {
+        "type": "object",
+        "description": "Answer for the edition pin routes.",
+        "properties": {
+          "pinned_release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The pinned edition, or absent after a clear."
           }
         }
       },

@@ -14,6 +14,7 @@ use crate::providers::{IntegrationStatus, RequestPriority, record_current};
 use super::artist::{LASTFM_TTL, checked_mbid};
 use super::error::CatalogError;
 use super::mapping;
+use super::models::GroupEditionPinResponse;
 use super::models::{
     AlbumBasicInfo, AlbumEditionItem, AlbumEditionsResponse, AlbumImages, AlbumInfo, AlbumTrack,
     AlbumTracksInfo, CatalogSource, LastFmAlbumEnrichment, LastFmTag, PurchaseKind, PurchaseLink,
@@ -716,6 +717,114 @@ impl Catalog {
         }
         self.forget(&keys).await;
         self.album_basic(&id).await
+    }
+
+    /// Whether the user may pin editions: admins and trusted users (v2
+    /// curators). A user who is gone reads as not allowed.
+    async fn require_curator(&self, user_id: &str) -> Result<(), CatalogError> {
+        use crate::auth::users::roles::Role;
+        let user = self
+            .upstream()
+            .users()
+            .users
+            .get_by_id(user_id)
+            .await
+            .map_err(|error| CatalogError::Internal(format!("user read: {error:?}")))?;
+        match user.map(|user| user.role) {
+            Some(Role::Admin | Role::Trusted) => Ok(()),
+            _ => Err(CatalogError::Forbidden),
+        }
+    }
+
+    /// The one library copy of a release group an edition pin applies to.
+    /// v2 pinned per release group; v3 pins per library copy, so a group
+    /// held twice must be pinned from the copy's own library page.
+    async fn pin_target(&self, group: &str) -> Result<String, CatalogError> {
+        let mut albums = self
+            .local()
+            .albums_for_group(group)
+            .await
+            .map_err(CatalogError::database)?;
+        match albums.len() {
+            0 => Err(CatalogError::Missing(
+                "This album is not in the library, so there is no copy to pin".to_owned(),
+            )),
+            1 => Ok(albums.remove(0)),
+            _ => Err(CatalogError::Conflict(
+                "The library holds this album more than once; pin the edition from the copy's own page"
+                    .to_owned(),
+            )),
+        }
+    }
+
+    /// Drop the cached answers an edition change alters.
+    async fn forget_album(&self, group: &GroupDetail) {
+        let mut keys = vec![self.group_key(&group.mbid), self.purchase_key(&group.mbid)];
+        keys.extend(
+            group
+                .releases
+                .iter()
+                .map(|release| self.release_key(&release.id)),
+        );
+        self.forget(&keys).await;
+    }
+
+    /// `PUT /albums/{album_id}/edition`: pin an edition by release group,
+    /// as v2 did, for the library's one copy of the album. Curators only;
+    /// the release must be one of the album's editions.
+    pub async fn set_group_edition_pin(
+        &self,
+        user_id: &str,
+        raw_id: &str,
+        release_mbid: &str,
+    ) -> Result<GroupEditionPinResponse, CatalogError> {
+        self.require_curator(user_id).await?;
+        let id = checked_mbid(raw_id, "album")?;
+        let group = self
+            .group_detail(&id)
+            .await?
+            .ok_or(CatalogError::NotFound)?;
+        let release = group
+            .releases
+            .iter()
+            .find(|release| release.id.eq_ignore_ascii_case(release_mbid.trim()))
+            .map(|release| release.id.clone())
+            .ok_or_else(|| {
+                CatalogError::Missing("That edition does not belong to this album".to_owned())
+            })?;
+        let album = self.pin_target(&group.mbid).await?;
+        self.pins
+            .set(&album, &group.mbid, &release, user_id)
+            .await
+            .map_err(CatalogError::Internal)?;
+        self.forget_album(&group).await;
+        Ok(GroupEditionPinResponse {
+            pinned_release_mbid: Some(release),
+        })
+    }
+
+    /// `DELETE /albums/{album_id}/edition`: clear the pin and go back to
+    /// automatic edition choice. Curators only.
+    pub async fn clear_group_edition_pin(
+        &self,
+        user_id: &str,
+        raw_id: &str,
+    ) -> Result<GroupEditionPinResponse, CatalogError> {
+        self.require_curator(user_id).await?;
+        let id = checked_mbid(raw_id, "album")?;
+        let group = self
+            .group_detail(&id)
+            .await?
+            .ok_or(CatalogError::NotFound)?;
+        let album = self.pin_target(&group.mbid).await?;
+        self.pins
+            .clear(&album)
+            .await
+            .map_err(CatalogError::Internal)?;
+        self.forget_album(&group).await;
+        Ok(GroupEditionPinResponse {
+            pinned_release_mbid: None,
+        })
     }
 
     /// The purchase cache key: per MusicBrainz source, store region and set
