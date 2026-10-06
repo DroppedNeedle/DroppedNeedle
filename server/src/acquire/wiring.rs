@@ -41,8 +41,14 @@ use super::imports::handlers::{
 use super::imports::jobs::{JobRegistry, QueuedSpotifyImport, TaskExecutor};
 use super::imports::lidarr::LidarrClient;
 use super::imports::spotify::{
-    FixedMbidResolver, MemoryPlaylistIndex, MemorySpotifyConnections, MemorySpotifyStates,
-    MemoryTrackSink, SpotifyClient, SpotifyImportService,
+    FixedMbidResolver, PlaylistIndex, PlaylistTrackSink, SpotifyClient, SpotifyImportService,
+};
+#[cfg(any(test, feature = "test-support"))]
+use super::imports::spotify::{
+    MemoryPlaylistIndex, MemorySpotifyConnections, MemorySpotifyStates, MemoryTrackSink,
+};
+use super::imports::spotify_store::{
+    CollectionsPlaylistBridge, SqliteSpotifyLinks, SqliteSpotifyStates,
 };
 use super::probes::{LiveProbes, ProbeCache, ProbeInputs, refresh_probes, seed_from_config};
 use super::requests::quota::{QuotaLedger, QuotaPolicy};
@@ -641,10 +647,14 @@ impl AcquireSetup {
         // Imports deps.
         let lidarr_settings = Arc::new(ConfigLidarrSettings::new(config_store.clone()));
         let spotify_settings = Arc::new(ConfigSpotifySettings::new(config_store.clone()));
-        let spotify_states = Arc::new(MemorySpotifyStates::new());
-        let spotify_links = Arc::new(MemorySpotifyConnections::new());
-        let playlists = Arc::new(MemoryPlaylistIndex::new());
-        let tracks = Arc::new(MemoryTrackSink::new());
+        let spotify_states = Arc::new(SqliteSpotifyStates::new(db.clone()));
+        let spotify_links = Arc::new(SqliteSpotifyLinks::new(db.clone(), users.crypto.clone()));
+        let spotify_playlists = Arc::new(CollectionsPlaylistBridge::new(
+            collections.stores.playlists.clone(),
+            db.clone(),
+        ));
+        let playlists: Arc<dyn PlaylistIndex> = spotify_playlists.clone();
+        let tracks: Arc<dyn PlaylistTrackSink> = spotify_playlists;
         let resolver = Arc::new(FixedMbidResolver::new());
         let spotify_client = SpotifyClient::new(
             http.clone(),
@@ -670,13 +680,11 @@ impl AcquireSetup {
                     let result = service
                         .populate_playlist(&job.user_id, &job.spotify_playlist_id, &job.playlist_id)
                         .await
-                        .map_err(|error| match error {
-                            super::imports::spotify::SpotifyError::NotLinked => {
-                                "Spotify account not linked".to_owned()
+                        .map_err(|error| {
+                            if let super::imports::spotify::SpotifyError::Store(cause) = &error {
+                                tracing::error!(%cause, "spotify import write failed");
                             }
-                            super::imports::spotify::SpotifyError::Unavailable(_) => {
-                                "Failed to fetch playlist from Spotify".to_owned()
-                            }
+                            error.user_message()
                         });
                     (job.playlist_id.clone(), result)
                 })

@@ -98,6 +98,10 @@ pub struct SpotifySettings {
     pub enabled: bool,
     /// Redirect origin for OAuth.
     pub spotify_redirect_origin: String,
+    /// Set by the v2 import when it carried a configured app: that app's
+    /// Spotify dashboard lists the v2 callback path, so authorize keeps
+    /// sending it. Saving a different client id clears it.
+    pub legacy_callback: bool,
 }
 
 /// Whether the redirect origin is a bare http(s) origin: absolute URL

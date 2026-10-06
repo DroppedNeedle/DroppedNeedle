@@ -8,7 +8,8 @@
 //! callback outside it; every gated handler also takes a user extractor, so
 //! those routes 401 anonymously (the callback is identified by its state
 //! token, exactly like v2). The callback also answers on its v2 path for
-//! Spotify apps registered against v2.
+//! Spotify apps registered against v2; either way it exchanges the code
+//! with the redirect URI stored next to the state at authorize time.
 
 use std::sync::Arc;
 
@@ -45,10 +46,10 @@ use super::models::{
     SpotifyJobStatus, SpotifyPlaylistListResponse, SpotifyRedirectUri, SpotifySettings,
 };
 use super::spotify::{
-    AlbumMbidResolver, PlaylistIndex, PlaylistTrackSink, SPOTIFY_CALLBACK_PATH,
+    AlbumMbidResolver, PendingAuth, PlaylistIndex, PlaylistTrackSink, SPOTIFY_CALLBACK_PATH,
     SPOTIFY_LEGACY_CALLBACK_PATH, SpotifyClient, SpotifyConnection, SpotifyConnectionStore,
     SpotifyError, SpotifyImportService, SpotifySettingsStore, SpotifyStateStore, now_unix_secs,
-    redirect_uri, redirect_uri_at,
+    redirect_uri,
 };
 
 /// Every dependency the imports routes need, injected by constructor.
@@ -409,10 +410,22 @@ pub async fn get_spotify_redirect_uri(
     ImportsAdmin(_): ImportsAdmin,
     headers: HeaderMap,
 ) -> Json<SpotifyRedirectUri> {
-    let origin = deps.spotify_settings.get_raw().spotify_redirect_origin;
     Json(SpotifyRedirectUri {
-        redirect_uri: redirect_uri(&origin, &request_base(&headers), &deps.base_path),
+        redirect_uri: callback_uri(&deps, &headers),
     })
+}
+
+/// The redirect URI this server sends Spotify: the v2 callback path for an
+/// app the v2 import carried (its dashboard lists that path), else the v3
+/// one.
+fn callback_uri(deps: &ImportsDeps, headers: &HeaderMap) -> String {
+    let path = if deps.spotify_settings.legacy_callback() {
+        SPOTIFY_LEGACY_CALLBACK_PATH
+    } else {
+        SPOTIFY_CALLBACK_PATH
+    };
+    let origin = deps.spotify_settings.get_raw().spotify_redirect_origin;
+    redirect_uri(path, &origin, &request_base(headers), &deps.base_path)
 }
 
 /// Authorize URL for the caller's Spotify link flow. Requires the admin
@@ -424,14 +437,20 @@ pub async fn get_spotify_auth_url(
     ImportsUser(ctx): ImportsUser,
     headers: HeaderMap,
 ) -> Result<Json<SpotifyAuthUrlResponse>, ImportsError> {
-    let origin = deps.spotify_settings.get_raw().spotify_redirect_origin;
-    let uri = redirect_uri(&origin, &request_base(&headers), &deps.base_path);
+    let uri = callback_uri(&deps, &headers);
     let state = fresh_state(&deps);
     let response = deps
         .spotify_service()
         .auth_url(&uri, &state)
         .map_err(|message| ImportsError::InvalidInput { message })?;
-    deps.spotify_states.store_state(&state, &ctx.user_id);
+    let pending = PendingAuth {
+        user_id: ctx.user_id,
+        redirect_uri: uri,
+    };
+    deps.spotify_states
+        .store_state(&state, &pending)
+        .await
+        .map_err(|cause| ImportsError::internal(&cause, deps.ids.as_ref()))?;
     Ok(Json(response))
 }
 
@@ -456,56 +475,51 @@ pub struct SpotifyCallbackQuery {
     responses((status = 307, description = "Redirect to the profile page")))]
 pub async fn spotify_callback(
     State(deps): State<ImportsDeps>,
-    headers: HeaderMap,
     ValidQuery(query): ValidQuery<SpotifyCallbackQuery>,
 ) -> Response {
-    finish_spotify_link(&deps, &headers, query, SPOTIFY_CALLBACK_PATH).await
+    finish_spotify_link(&deps, query).await
 }
 
-/// The same callback on the v2 path. Spotify sends the user back to the
-/// URI the authorize step named, and an app registered against v2 names
-/// this one.
+/// The same callback on the v2 path, where Spotify returns users of an app
+/// registered against v2.
 pub async fn spotify_legacy_callback(
     State(deps): State<ImportsDeps>,
-    headers: HeaderMap,
     ValidQuery(query): ValidQuery<SpotifyCallbackQuery>,
 ) -> Response {
-    finish_spotify_link(&deps, &headers, query, SPOTIFY_LEGACY_CALLBACK_PATH).await
+    finish_spotify_link(&deps, query).await
 }
 
-/// Consume the state, exchange the code with the redirect URI built for
-/// `callback_path`, read the Spotify profile and store the link.
-async fn finish_spotify_link(
-    deps: &ImportsDeps,
-    headers: &HeaderMap,
-    query: SpotifyCallbackQuery,
-    callback_path: &str,
-) -> Response {
+/// Consume the state, exchange the code with the redirect URI stored at
+/// authorize time (Spotify rejects any other), read the Spotify profile
+/// and store the link.
+async fn finish_spotify_link(deps: &ImportsDeps, query: SpotifyCallbackQuery) -> Response {
     let profile = |suffix: &str| format!("{}{suffix}", deps.base_path);
     if query.error.is_some() || query.code.is_none() || query.state.is_none() {
         return Redirect::temporary(&profile("/profile?spotify=error")).into_response();
     }
-    let Some(user_id) = deps
+    let pending = match deps
         .spotify_states
         .consume_state(query.state.as_deref().unwrap_or_default())
-    else {
-        return Redirect::temporary(&profile("/profile?spotify=error&reason=state"))
-            .into_response();
+        .await
+    {
+        Ok(Some(pending)) => pending,
+        Ok(None) => {
+            return Redirect::temporary(&profile("/profile?spotify=error&reason=state"))
+                .into_response();
+        }
+        Err(cause) => {
+            tracing::error!(%cause, "spotify state lookup failed");
+            return Redirect::temporary(&profile("/profile?spotify=error")).into_response();
+        }
     };
     let raw = deps.spotify_settings.get_raw();
-    let uri = redirect_uri_at(
-        callback_path,
-        &raw.spotify_redirect_origin,
-        &request_base(headers),
-        &deps.base_path,
-    );
     let grant = match deps
         .spotify
         .exchange_code(
             &raw.client_id,
             &raw.client_secret,
             query.code.as_deref().unwrap_or_default(),
-            &uri,
+            &pending.redirect_uri,
         )
         .await
     {
@@ -545,16 +559,17 @@ async fn finish_spotify_link(
         .and_then(|id| id.as_str())
         .unwrap_or("")
         .to_owned();
-    deps.spotify_links.upsert(
-        &user_id,
-        &SpotifyConnection {
-            access_token: grant.access_token,
-            refresh_token: grant.refresh_token.unwrap_or_default(),
-            expires_at_unix: now_unix_secs() + grant.expires_in_secs,
-            username,
-            spotify_user_id,
-        },
-    );
+    let link = SpotifyConnection {
+        access_token: grant.access_token,
+        refresh_token: grant.refresh_token.unwrap_or_default(),
+        expires_at_unix: now_unix_secs() + grant.expires_in_secs,
+        username,
+        spotify_user_id,
+    };
+    if let Err(cause) = deps.spotify_links.upsert(&pending.user_id, &link).await {
+        tracing::error!(%cause, "spotify link write failed");
+        return Redirect::temporary(&profile("/profile?spotify=error")).into_response();
+    }
     Redirect::temporary(&profile("/profile?spotify=connected")).into_response()
 }
 
@@ -568,11 +583,16 @@ async fn finish_spotify_link(
 pub async fn disconnect_spotify(
     State(deps): State<ImportsDeps>,
     ImportsUser(ctx): ImportsUser,
-) -> StatusCode {
-    if deps.spotify_links.remove(&ctx.user_id) {
+) -> Result<StatusCode, ImportsError> {
+    let removed = deps
+        .spotify_links
+        .remove(&ctx.user_id)
+        .await
+        .map_err(|cause| ImportsError::internal(&cause, deps.ids.as_ref()))?;
+    if removed {
         tracing::info!(user_id = %ctx.user_id, "spotify link removed");
     }
-    StatusCode::NO_CONTENT
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// The caller's owned Spotify playlists. Unlinked reads as the v2 400;
@@ -587,17 +607,24 @@ pub async fn list_spotify_playlists(
         .list_playlists(&ctx.user_id)
         .await
         .map(Json)
-        .map_err(|error| match error {
-            SpotifyError::NotLinked => ImportsError::NotConfigured {
-                message: "Spotify account not linked".to_owned(),
-            },
-            SpotifyError::Unavailable(detail) => {
-                tracing::warn!(%detail, "spotify playlist list failed");
-                ImportsError::Unavailable {
-                    message: "Failed to fetch playlists from Spotify".to_owned(),
-                }
+        .map_err(|error| spotify_failed(error, deps.ids.as_ref()))
+}
+
+/// Map a Spotify service failure to the wire (v2 400 not-linked, 502
+/// upstream); store failures are server faults.
+fn spotify_failed(error: SpotifyError, ids: &dyn IdGenerator) -> ImportsError {
+    match error {
+        SpotifyError::NotLinked => ImportsError::NotConfigured {
+            message: "Spotify account not linked".to_owned(),
+        },
+        SpotifyError::Unavailable(detail) => {
+            tracing::warn!(%detail, "spotify playlist list failed");
+            ImportsError::Unavailable {
+                message: "Failed to fetch playlists from Spotify".to_owned(),
             }
-        })
+        }
+        SpotifyError::Store(cause) => ImportsError::internal(&cause, ids),
+    }
 }
 
 /// Start a Spotify playlist import: ensure the internal record, queue the
@@ -620,7 +647,9 @@ pub async fn import_spotify_playlist(
     }
     let playlist_id = deps
         .spotify_service()
-        .ensure_playlist_record(&ctx.user_id, &id, &body.name);
+        .ensure_playlist_record(&ctx.user_id, &id, &body.name)
+        .await
+        .map_err(|error| spotify_failed(error, deps.ids.as_ref()))?;
     let key = import_job_key(&ctx.user_id, &id);
     if !deps.jobs.is_running(&key) {
         deps.executor.execute(QueuedSpotifyImport {

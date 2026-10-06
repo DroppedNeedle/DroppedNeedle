@@ -584,6 +584,8 @@ async fn settings_replace_filters_and_preserves() {
     export["settings"]["indexers"] =
         json!([{"name": "first", "api_key": fixture.seal("idx-1")}, {"name": "second"}]);
     export["settings"]["advanced_settings"] = json!({"audiodb_api_key": fixture.seal("audio-key")});
+    export["settings"]["spotify_settings"] =
+        json!({"client_id": "v2-app", "client_secret": fixture.seal("sp-secret"), "enabled": true});
 
     let pool = migrated_pool().await;
     let (_dir, config_path, crypto) = scratch_config("settings");
@@ -633,6 +635,8 @@ async fn settings_replace_filters_and_preserves() {
         stored["plugins"]["demo"],
         json!({"enabled": true, "settings": {"k": "v"}})
     );
+    // A Spotify app configured on v2 keeps its registered v2 callback.
+    assert_eq!(stored["spotify_settings"]["legacy_callback"], json!(true));
     assert_eq!(stored["indexers"][0]["name"], json!("first"));
     assert_eq!(stored["indexers"][1]["name"], json!("second"));
     let cipher = stored["indexers"][0]["api_key"].as_str().unwrap();

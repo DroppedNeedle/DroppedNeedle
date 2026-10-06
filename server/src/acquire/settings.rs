@@ -107,9 +107,23 @@ impl ConfigSpotifySettings {
     pub fn new(store: Arc<ConfigStore>) -> Self {
         Self { store }
     }
+
+    /// The stored section, or defaults (logged) when it does not read.
+    fn stored(&self) -> SpotifySettings {
+        self.store
+            .get_raw::<SpotifySettings>()
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "spotify settings read failed; treating as unconfigured");
+                SpotifySettings::default()
+            })
+    }
 }
 
 impl SpotifySettingsStore for ConfigSpotifySettings {
+    fn legacy_callback(&self) -> bool {
+        self.stored().legacy_callback
+    }
+
     fn get(&self) -> ImportsSpotifySettings {
         match self
             .store
@@ -145,11 +159,16 @@ impl SpotifySettingsStore for ConfigSpotifySettings {
     }
 
     fn save(&self, settings: &ImportsSpotifySettings) -> Result<(), String> {
+        // The v2 marker belongs to the app it was stamped for: a different
+        // client id is a new app, registered with the v3 path.
+        let stored = self.stored();
+        let same_app = stored.client_id.trim() == settings.client_id.trim();
         let incoming = SpotifySettings {
             client_id: settings.client_id.clone(),
             client_secret: Secret::new(settings.client_secret.clone()),
             enabled: settings.enabled,
             spotify_redirect_origin: settings.spotify_redirect_origin.clone(),
+            legacy_callback: stored.legacy_callback && same_app,
         };
         self.store
             .save_secret(incoming)

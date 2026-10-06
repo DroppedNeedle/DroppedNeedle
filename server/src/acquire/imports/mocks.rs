@@ -73,13 +73,38 @@ pub struct RecordedCalls {
     pub spotify_paths: Vec<String>,
 }
 
+/// The redirect URI the mock Spotify app lists by default: the v3 callback
+/// as the test routers derive it (host `app.test`, no origin, no base
+/// path).
+pub const SPOTIFY_REGISTERED_REDIRECT: &str =
+    "http://app.test/api/v3/acquire/spotify/auth/callback";
+
 /// Cloneable recorder handle shared by a mock app and its test.
 #[derive(Debug, Clone, Default)]
 pub struct MockRecorder {
     inner: Arc<Mutex<RecordedCalls>>,
+    registered_redirect: Arc<Mutex<Option<String>>>,
 }
 
 impl MockRecorder {
+    /// Set the one redirect URI the mock Spotify app lists, as its
+    /// dashboard would. Code exchanges naming any other URI fail, like
+    /// Spotify's `invalid_grant`.
+    pub fn register_redirect_uri(&self, uri: &str) {
+        if let Ok(mut guard) = self.registered_redirect.lock() {
+            *guard = Some(uri.to_owned());
+        }
+    }
+
+    /// The redirect URI the mock app lists.
+    pub fn registered_redirect_uri(&self) -> String {
+        self.registered_redirect
+            .lock()
+            .ok()
+            .and_then(|guard| guard.clone())
+            .unwrap_or_else(|| SPOTIFY_REGISTERED_REDIRECT.to_owned())
+    }
+
     /// Snapshot the calls recorded so far.
     pub fn snapshot(&self) -> RecordedCalls {
         self.inner
@@ -429,7 +454,12 @@ async fn spotify_token(
         return StatusCode::UNAUTHORIZED.into_response();
     }
     match grant.as_str() {
-        "authorization_code" if params.get("code").is_some_and(|code| code == "good-code") => {
+        "authorization_code"
+            if params.get("code").is_some_and(|code| code == "good-code")
+                && params
+                    .get("redirect_uri")
+                    .is_some_and(|uri| *uri == state.recorder.registered_redirect_uri()) =>
+        {
             Json(json!({
                 "access_token": SPOTIFY_TOKEN,
                 "refresh_token": SPOTIFY_REFRESH,

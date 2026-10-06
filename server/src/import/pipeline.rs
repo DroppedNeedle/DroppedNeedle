@@ -510,7 +510,8 @@ fn stage_settings(
 /// Drop fields the export spec excludes, before re-encryption:
 /// lastfm keeps the switch and the instance app key pair (v2's legacy
 /// global session key and username go), the MusicBrainz transient trio
-/// goes, plugins keep `enabled` + `settings`.
+/// goes, plugins keep `enabled` + `settings`. A configured Spotify app
+/// gains the `legacy_callback` marker.
 fn filter_section(name: &str, value: &Value) -> Value {
     match name {
         "lastfm_settings" => {
@@ -521,6 +522,20 @@ fn filter_section(name: &str, value: &Value) -> Value {
                 }
             }
             Value::Object(kept)
+        }
+        // A Spotify app configured on v2 is registered with v2's callback
+        // path. Mark it so v3 keeps sending that path and the app keeps
+        // working with no dashboard change.
+        "spotify_settings" => {
+            let mut stamped = value.clone();
+            let configured = value
+                .get("client_id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| !id.trim().is_empty());
+            if configured && let Some(object) = stamped.as_object_mut() {
+                object.insert("legacy_callback".to_owned(), Value::Bool(true));
+            }
+            stamped
         }
         "musicbrainz_settings" => {
             let mut cleaned = value.clone();

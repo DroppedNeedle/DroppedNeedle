@@ -8,6 +8,8 @@
 //!
 //! Layout: `lidarr` holds the two-endpoint client plus the import service,
 //! `spotify` holds OAuth, playlist listing, and the populate worker,
+//! `spotify_store` holds the SQLite stores behind it (links, authorize
+//! states, imported playlists),
 //! `jobs` holds the `spotify:import` durable-job key plus the minimal local
 //! [`jobs::SpotifyImportExecutor`] seam onto the downloads state machine
 //! (the in-memory implementation spawns a task), `health`
@@ -26,3 +28,4 @@ pub mod lidarr;
 pub mod mocks;
 pub mod models;
 pub mod spotify;
+pub mod spotify_store;

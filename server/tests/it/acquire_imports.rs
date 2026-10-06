@@ -29,16 +29,19 @@ use imports::lidarr::{
     LidarrClient, LidarrImportService, MemoryApprovalSink, MemoryFollowStore, MemoryLidarrSettings,
 };
 use imports::mocks::{
-    LIDARR_KEY, LIDARR_MBID_ALL, LIDARR_MBID_NONE, SPOTIFY_TOKEN, serve_lidarr, serve_spotify,
+    LIDARR_KEY, LIDARR_MBID_ALL, LIDARR_MBID_NONE, MockRecorder, SPOTIFY_TOKEN, serve_lidarr,
+    serve_spotify,
 };
 use imports::models::{LidarrConnectionSettings, SpotifySettings};
 use imports::spotify::{
-    FixedMbidResolver, MemoryPlaylistIndex, MemorySpotifyConnections, MemorySpotifySettings,
-    MemorySpotifyStates, MemoryTrackSink, PlaylistTrackSink as _, SPOTIFY_CALLBACK_PATH,
-    SPOTIFY_LEGACY_CALLBACK_PATH, SpotifyClient, SpotifyConnectionStore as _, SpotifyImportService,
-    is_allowed_cover_url, redirect_uri,
+    FixedMbidResolver, ImportedTrack, MemoryPlaylistIndex, MemorySpotifyConnections,
+    MemorySpotifySettings, MemorySpotifyStates, MemoryTrackSink, PendingAuth, PlaylistIndex as _,
+    PlaylistTrackSink as _, SPOTIFY_CALLBACK_PATH, SPOTIFY_LEGACY_CALLBACK_PATH, SpotifyClient,
+    SpotifyConnectionStore, SpotifyImportService, SpotifyStateStore as _, is_allowed_cover_url,
+    redirect_uri,
 };
 use imports::spotify::{SpotifyConnection, TokenGrant};
+use imports::spotify_store::{CollectionsPlaylistBridge, SqliteSpotifyLinks, SqliteSpotifyStates};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
@@ -116,14 +119,7 @@ fn rig_for(rig: &TestRig, lidarr_base: &str, api_base: &str, accounts_base: &str
                 let result = service
                     .populate_playlist(&job.user_id, &job.spotify_playlist_id, &job.playlist_id)
                     .await
-                    .map_err(|error| match error {
-                        imports::spotify::SpotifyError::NotLinked => {
-                            "Spotify account not linked".to_owned()
-                        }
-                        imports::spotify::SpotifyError::Unavailable(_) => {
-                            "Failed to fetch playlist from Spotify".to_owned()
-                        }
-                    });
+                    .map_err(|error| error.user_message());
                 (job.playlist_id.clone(), result)
             })
         },
@@ -267,19 +263,25 @@ fn open_client(version: &str, message: &str) -> ClientProbe {
 #[test]
 fn redirect_uri_prefers_origin_and_mounts_base_path_once() {
     assert_eq!(
-        redirect_uri("https://music.example.com", "http://app.test", ""),
+        redirect_uri(
+            SPOTIFY_CALLBACK_PATH,
+            "https://music.example.com",
+            "http://app.test",
+            ""
+        ),
         "https://music.example.com/api/v3/acquire/spotify/auth/callback"
     );
     assert_eq!(
-        redirect_uri("", "http://app.test/", ""),
+        redirect_uri(SPOTIFY_CALLBACK_PATH, "", "http://app.test/", ""),
         "http://app.test/api/v3/acquire/spotify/auth/callback"
     );
     assert_eq!(
-        redirect_uri("", "http://app.test", "/needle"),
+        redirect_uri(SPOTIFY_CALLBACK_PATH, "", "http://app.test", "/needle"),
         "http://app.test/needle/api/v3/acquire/spotify/auth/callback"
     );
     assert_eq!(
         redirect_uri(
+            SPOTIFY_CALLBACK_PATH,
             "https://music.example.com/needle",
             "http://app.test",
             "/needle"
@@ -528,23 +530,50 @@ fn state_from_auth_url(auth_url: &str) -> String {
         .expect("state param present")
 }
 
-/// Link `user_id` through the real authorize + callback flow.
-async fn link_spotify(bundle_deps: ImportsDeps, user_id: &str) {
-    link_spotify_via(bundle_deps, user_id, "/acquire/spotify/auth/callback").await;
-}
-
-/// [`link_spotify`] with the callback answered at `callback`.
-async fn link_spotify_via(bundle_deps: ImportsDeps, user_id: &str, callback: &str) {
+/// Start the authorize step for `user_id`; answers the authorize URL and
+/// its state token.
+async fn authorize(bundle_deps: ImportsDeps, user_id: &str) -> (String, String) {
     let (status, body) = get_json(
-        authed_app(bundle_deps.clone(), user_id),
+        authed_app(bundle_deps, user_id),
         "/acquire/spotify/auth/url",
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let auth_url = body["auth_url"].as_str().expect("auth url");
+    let auth_url = body["auth_url"].as_str().expect("auth url").to_owned();
     assert!(auth_url.starts_with("https://accounts.spotify.com/authorize?"));
     assert!(auth_url.contains("test-client"));
-    let state = state_from_auth_url(auth_url);
+    let state = state_from_auth_url(&auth_url);
+    (auth_url, state)
+}
+
+/// Link `user_id` through the real authorize + callback flow.
+async fn link_spotify(bundle_deps: ImportsDeps, recorder: &MockRecorder, user_id: &str) {
+    link_spotify_via(
+        bundle_deps,
+        recorder,
+        user_id,
+        "/acquire/spotify/auth/callback",
+    )
+    .await;
+}
+
+/// [`link_spotify`] with the callback answered at `callback`. Authorize
+/// must name the URI the mock app lists, as Spotify requires.
+async fn link_spotify_via(
+    bundle_deps: ImportsDeps,
+    recorder: &MockRecorder,
+    user_id: &str,
+    callback: &str,
+) {
+    let (auth_url, state) = authorize(bundle_deps.clone(), user_id).await;
+    let listed = recorder
+        .registered_redirect_uri()
+        .replace(':', "%3A")
+        .replace('/', "%2F");
+    assert!(
+        auth_url.contains(&format!("redirect_uri={listed}&")),
+        "authorize names an unlisted URI: {auth_url}"
+    );
     let callback = format!("{callback}?code=good-code&state={state}");
     let response = anon_app(bundle_deps)
         .oneshot(
@@ -734,10 +763,10 @@ async fn spotify_callback_rejects_error_and_replayed_state() {
 async fn spotify_import_answers_fast_then_populates_two_tracks() {
     let (rig, admin_id, user_id) = seed_rig().await;
     let (lidarr, _) = serve_lidarr().await.expect("mock serves");
-    let (api, accounts, _, _) = serve_spotify().await.expect("mock serves");
+    let (api, accounts, _, recorder) = serve_spotify().await.expect("mock serves");
     let bundle = rig_for(&rig, &lidarr.base_url, &api.base_url, &accounts.base_url);
     seed_spotify_app(bundle.deps.clone(), &admin_id).await;
-    link_spotify(bundle.deps.clone(), &user_id).await;
+    link_spotify(bundle.deps.clone(), &recorder, &user_id).await;
     bundle
         .resolver
         .seed("Aurora Current", "Neon Meridian", "rg-mbid-1");
@@ -803,7 +832,7 @@ async fn spotify_tracks_come_from_items_never_legacy_tracks() {
     let (api, accounts, _, recorder) = serve_spotify().await.expect("mock serves");
     let bundle = rig_for(&rig, &lidarr.base_url, &api.base_url, &accounts.base_url);
     seed_spotify_app(bundle.deps.clone(), &admin_id).await;
-    link_spotify(bundle.deps.clone(), &user_id).await;
+    link_spotify(bundle.deps.clone(), &recorder, &user_id).await;
 
     let (status, _) = post_json(
         authed_app(bundle.deps.clone(), &user_id),
@@ -872,13 +901,17 @@ async fn spotify_expired_tokens_refresh_transparently() {
     let (api, accounts, _, recorder) = serve_spotify().await.expect("mock serves");
     let bundle = rig_for(&rig, &lidarr.base_url, &api.base_url, &accounts.base_url);
     seed_spotify_app(bundle.deps.clone(), &admin_id).await;
-    link_spotify(bundle.deps.clone(), &user_id).await;
+    link_spotify(bundle.deps.clone(), &recorder, &user_id).await;
 
     // Age the link row into expiry; the next list must refresh, not 401.
-    let mut link = bundle.spotify_links.get(&user_id).expect("link row");
+    let mut link = linked(&bundle.spotify_links, &user_id).await;
     link.expires_at_unix = 1;
     link.access_token = "stale-token".to_owned();
-    bundle.spotify_links.upsert(&user_id, &link);
+    bundle
+        .spotify_links
+        .upsert(&user_id, &link)
+        .await
+        .expect("store writes");
 
     let (status, body) = get_json(
         authed_app(bundle.deps, &user_id),
@@ -887,7 +920,7 @@ async fn spotify_expired_tokens_refresh_transparently() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["playlists"].as_array().map(Vec::len), Some(2));
-    let refreshed = bundle.spotify_links.get(&user_id).expect("link row");
+    let refreshed = linked(&bundle.spotify_links, &user_id).await;
     assert_eq!(refreshed.access_token, SPOTIFY_TOKEN);
     let calls = recorder.snapshot();
     assert!(
@@ -917,15 +950,60 @@ async fn spotify_callback_paths_are_mounted_in_the_app() {
     }
 }
 
+/// One user's stored link, which must exist.
+async fn linked(links: &MemorySpotifyConnections, user_id: &str) -> SpotifyConnection {
+    links
+        .get(user_id)
+        .await
+        .expect("store reads")
+        .expect("link row")
+}
+
+/// An app the v2 import carried lists only the v2 callback. Without the
+/// import's marker the exchange fails the way Spotify fails it; with the
+/// marker, authorize and exchange both name the v2 URI and the link lands.
+/// Disconnect then removes it.
 #[tokio::test]
-async fn spotify_links_through_v2_callback_and_disconnects() {
+async fn spotify_v2_registered_app_links_and_disconnects() {
     let (rig, admin_id, user_id) = seed_rig().await;
     let (lidarr, _) = serve_lidarr().await.expect("mock serves");
-    let (api, accounts, _, _) = serve_spotify().await.expect("mock serves");
+    let (api, accounts, _, recorder) = serve_spotify().await.expect("mock serves");
     let bundle = rig_for(&rig, &lidarr.base_url, &api.base_url, &accounts.base_url);
     seed_spotify_app(bundle.deps.clone(), &admin_id).await;
-    link_spotify_via(bundle.deps.clone(), &user_id, SPOTIFY_LEGACY_CALLBACK_PATH).await;
-    assert!(bundle.spotify_links.get(&user_id).is_some());
+    recorder.register_redirect_uri(&format!("http://app.test{SPOTIFY_LEGACY_CALLBACK_PATH}"));
+
+    let (_, state) = authorize(bundle.deps.clone(), &user_id).await;
+    let response = anon_app(bundle.deps.clone())
+        .oneshot(
+            Request::get(format!(
+                "/acquire/spotify/auth/callback?code=good-code&state={state}"
+            ))
+            .header("host", "app.test")
+            .body(Body::empty())
+            .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    let location = response
+        .headers()
+        .get("location")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    assert!(
+        location.ends_with("/profile?spotify=error&reason=token"),
+        "saw {location}"
+    );
+
+    bundle.spotify_settings.set_legacy_callback(true);
+    link_spotify_via(
+        bundle.deps.clone(),
+        &recorder,
+        &user_id,
+        SPOTIFY_LEGACY_CALLBACK_PATH,
+    )
+    .await;
+    linked(&bundle.spotify_links, &user_id).await;
 
     let response = authed_app(bundle.deps, &user_id)
         .oneshot(
@@ -936,7 +1014,130 @@ async fn spotify_links_through_v2_callback_and_disconnects() {
         .await
         .expect("router answers");
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
-    assert!(bundle.spotify_links.get(&user_id).is_none());
+    let gone = bundle
+        .spotify_links
+        .get(&user_id)
+        .await
+        .expect("store reads");
+    assert!(gone.is_none());
+}
+
+/// The SQLite stores keep what the memory doubles only pretend to:
+/// single-use, expiring states with their redirect URI; sealed links that
+/// a late token refresh cannot bring back; imported playlists as real
+/// playlist rows, replaced wholesale on re-import.
+#[tokio::test]
+async fn spotify_sqlite_stores_persist_and_expire() {
+    let db = droppedneedle::acquire::db::AcquireDb::scratch().expect("scratch db");
+    db.add_user("u1", "Una", "user").await.expect("user row");
+
+    let states = SqliteSpotifyStates::new(db.clone());
+    let pending = PendingAuth {
+        user_id: "u1".to_owned(),
+        redirect_uri: "http://app.test/cb".to_owned(),
+    };
+    states
+        .store_state("s1", &pending)
+        .await
+        .expect("store writes");
+    assert_eq!(
+        states.consume_state("s1").await.expect("store reads"),
+        Some(pending.clone())
+    );
+    assert_eq!(states.consume_state("s1").await.expect("store reads"), None);
+    db.write("test.expired_state", |tx| {
+        tx.execute(
+            "INSERT INTO spotify_auth_requests VALUES ('old', 'u1', 'http://app.test/cb', 1)",
+            [],
+        )?;
+        Ok(())
+    })
+    .await
+    .expect("seed writes");
+    assert_eq!(
+        states.consume_state("old").await.expect("store reads"),
+        None
+    );
+
+    let crypto = Arc::new(
+        droppedneedle::runtime_config::crypto::Crypto::from_key_bytes(&[7; 32]).expect("key"),
+    );
+    let links = SqliteSpotifyLinks::new(db.clone(), crypto);
+    let link = SpotifyConnection {
+        access_token: "ACCESS-SECRET".to_owned(),
+        refresh_token: "REFRESH-SECRET".to_owned(),
+        expires_at_unix: 1_900_000_000,
+        username: "Una".to_owned(),
+        spotify_user_id: "una-sp".to_owned(),
+    };
+    links.upsert("u1", &link).await.expect("store writes");
+    assert_eq!(
+        links.get("u1").await.expect("store reads"),
+        Some(link.clone())
+    );
+    let stored: String = sqlx::query_scalar(
+        "SELECT connection_data FROM user_connections WHERE user_id = 'u1' AND service = 'spotify'",
+    )
+    .fetch_one(db.pool())
+    .await
+    .expect("row reads");
+    assert!(!stored.contains("SECRET"), "link is sealed at rest");
+    assert!(links.remove("u1").await.expect("store writes"));
+    assert!(
+        !links
+            .update_tokens_if_present("u1", &link)
+            .await
+            .expect("store writes")
+    );
+    assert_eq!(links.get("u1").await.expect("store reads"), None);
+
+    let collections = droppedneedle::reads::collections::db::CollectionsDb::new(
+        db.pool().clone(),
+        db.lane().clone(),
+    );
+    let bridge = CollectionsPlaylistBridge::new(
+        droppedneedle::reads::collections::store::PlaylistStore::new(collections),
+        db.clone(),
+    );
+    let id = bridge
+        .create("u1", "Neon", "spotify:p1")
+        .await
+        .expect("creates");
+    assert_eq!(
+        bridge
+            .create("u1", "Neon", "spotify:p1")
+            .await
+            .expect("creates"),
+        id
+    );
+    let track = ImportedTrack {
+        track_name: "Midnight Drive".to_owned(),
+        artist_name: "Aurora Current".to_owned(),
+        album_name: "Neon Meridian".to_owned(),
+        album_id: String::new(),
+        source_type: String::new(),
+        track_number: Some(1),
+        disc_number: Some(1),
+        duration: Some(183),
+        cover_url: None,
+    };
+    for _ in 0..2 {
+        bridge
+            .replace_tracks(&id, &[track.clone(), track.clone()])
+            .await
+            .expect("replaces");
+    }
+    let rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM playlist_tracks WHERE playlist_id = ?1")
+            .bind(&id)
+            .fetch_one(db.pool())
+            .await
+            .expect("count reads");
+    assert_eq!(rows, 2);
+    assert_eq!(
+        bridge.source_refs_for("u1").await.expect("reads"),
+        vec![("spotify:p1".to_owned(), id)]
+    );
 }
 
 // --- Health smoke + per-source gate tests ---

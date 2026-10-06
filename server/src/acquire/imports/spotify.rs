@@ -9,11 +9,15 @@
 //! old `/tracks` 403s for dev-mode apps after the March 2026 migration),
 //! the `track`/`item` alias with `is_local` skips, and the bounded
 //! no-redirect cover fetch that never fails an import.
+//!
+//! Links, OAuth states and imported playlists persist in SQLite (see
+//! [`super::spotify_store`]); the memory stores here are test doubles.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 
 #[cfg(any(test, feature = "test-support"))]
@@ -35,8 +39,9 @@ pub const MAX_COVER_FETCH_BYTES: usize = 5 * 1024 * 1024;
 ///
 /// [`imports_callback_router`]: super::handlers::imports_callback_router
 pub const SPOTIFY_CALLBACK_PATH: &str = "/api/v3/acquire/spotify/auth/callback";
-/// The v2 callback path. Spotify apps registered against v2 still list it,
-/// so the server keeps answering there.
+/// The v2 callback path. Spotify apps registered against v2 list it, so the
+/// server keeps answering there and sends it while the settings carry the
+/// import's legacy marker.
 pub const SPOTIFY_LEGACY_CALLBACK_PATH: &str = "/api/v1/me/connections/spotify/auth/callback";
 
 /// Seconds since the Unix epoch, saturating on clock failure.
@@ -53,19 +58,9 @@ pub fn now_unix_secs() -> i64 {
 /// here so the value matches the dashboard byte-for-byte. An
 /// admin-configured origin wins; empty keeps the request-derived base. The
 /// deployment base path lands between origin and callback exactly once.
-pub fn redirect_uri(configured_origin: &str, request_base_url: &str, base_path: &str) -> String {
-    redirect_uri_at(
-        SPOTIFY_CALLBACK_PATH,
-        configured_origin,
-        request_base_url,
-        base_path,
-    )
-}
-
-/// [`redirect_uri`] for an explicit callback path. The token exchange must
-/// send the exact URI the authorize step used, so a callback that arrives
-/// on the v2 path exchanges with the v2 URI.
-pub fn redirect_uri_at(
+/// `callback_path` is [`SPOTIFY_CALLBACK_PATH`], or
+/// [`SPOTIFY_LEGACY_CALLBACK_PATH`] for an app registered against v2.
+pub fn redirect_uri(
     callback_path: &str,
     configured_origin: &str,
     request_base_url: &str,
@@ -121,60 +116,110 @@ pub trait SpotifySettingsStore: Send + Sync {
     /// Save; a masked secret preserves the stored one. Rejects a
     /// non-absolute redirect origin (v2 `ConfigurationError` text kept).
     fn save(&self, settings: &SpotifySettings) -> Result<(), String>;
+    /// True when the app was registered against v2, so its dashboard lists
+    /// the v2 callback path. The v2 import sets it; saving a different
+    /// client id clears it.
+    fn legacy_callback(&self) -> bool;
 }
 
-/// Single-use OAuth state tokens (v2 `AuthStore` spotify-state half).
+/// One pending authorization: who asked, and the exact redirect URI the
+/// authorize step sent, which the token exchange must repeat.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingAuth {
+    /// The user linking their account.
+    pub user_id: String,
+    /// Redirect URI sent to Spotify's authorize page.
+    pub redirect_uri: String,
+}
+
+/// How long an authorize state stays valid (v2 `store_spotify_state`).
+pub const STATE_TTL_SECS: i64 = 600;
+
+/// Single-use OAuth states (v2 `AuthStore` spotify-state half). Errors
+/// carry a log-only cause.
 pub trait SpotifyStateStore: Send + Sync {
-    /// Remember `state` for one user.
-    fn store_state(&self, state: &str, user_id: &str);
-    /// Consume `state` once; unknown or replayed states answer none.
-    fn consume_state(&self, state: &str) -> Option<String>;
+    /// Remember `state` for [`STATE_TTL_SECS`], pruning expired states.
+    fn store_state<'a>(
+        &'a self,
+        state: &'a str,
+        pending: &'a PendingAuth,
+    ) -> BoxFuture<'a, Result<(), String>>;
+    /// Consume `state` once. Unknown, expired or replayed states read as
+    /// none.
+    fn consume_state<'a>(
+        &'a self,
+        state: &'a str,
+    ) -> BoxFuture<'a, Result<Option<PendingAuth>, String>>;
 }
 
 /// Per-user Spotify links (v2 `UserConnectionsStore` spotify rows).
+/// Errors carry a log-only cause.
 pub trait SpotifyConnectionStore: Send + Sync {
-    /// Upsert one user's link.
-    fn upsert(&self, user_id: &str, connection: &SpotifyConnection);
+    /// Insert or replace one user's link (the OAuth callback).
+    fn upsert<'a>(
+        &'a self,
+        user_id: &'a str,
+        connection: &'a SpotifyConnection,
+    ) -> BoxFuture<'a, Result<(), String>>;
+    /// Write refreshed tokens only when the link still exists, so a token
+    /// refresh racing a disconnect never brings the link back. Answers
+    /// whether a row was updated.
+    fn update_tokens_if_present<'a>(
+        &'a self,
+        user_id: &'a str,
+        connection: &'a SpotifyConnection,
+    ) -> BoxFuture<'a, Result<bool, String>>;
     /// Read one user's link, if any.
-    fn get(&self, user_id: &str) -> Option<SpotifyConnection>;
+    fn get<'a>(
+        &'a self,
+        user_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<SpotifyConnection>, String>>;
     /// Drop one user's link. Answers whether a link was there.
-    fn remove(&self, user_id: &str) -> bool;
+    fn remove<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Result<bool, String>>;
 }
 
-/// Internal playlist index the import keys on `spotify:{id}` source refs
-/// (v2 `PlaylistService` source-ref half). The in-memory implementation
-/// below serves until the playlists store backs it.
+/// The playlists an import keys on `spotify:{id}` source refs (v2
+/// `PlaylistService` source-ref half). Errors carry a log-only cause.
 pub trait PlaylistIndex: Send + Sync {
     /// Internal id for a source ref, if imported before.
-    fn get_by_source_ref(&self, source_ref: &str, user_id: &str) -> Option<String>;
-    /// Create a playlist record; returns its internal id.
-    fn create(&self, user_id: &str, name: &str, source_ref: &str) -> String;
-    /// List one user's source refs, for the imported mapping.
-    fn source_refs_for(&self, user_id: &str) -> Vec<(String, String)>;
+    fn get_by_source_ref<'a>(
+        &'a self,
+        source_ref: &'a str,
+        user_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, String>>;
+    /// Create a playlist record, or answer the one a racing import made
+    /// for the same source ref; returns its internal id.
+    fn create<'a>(
+        &'a self,
+        user_id: &'a str,
+        name: &'a str,
+        source_ref: &'a str,
+    ) -> BoxFuture<'a, Result<String, String>>;
+    /// One user's `(source_ref, playlist_id)` pairs, for the imported
+    /// mapping.
+    fn source_refs_for<'a>(
+        &'a self,
+        user_id: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<(String, String)>, String>>;
 }
 
 /// Track rows the populate replaces wholesale (v2 async-playlist half).
-/// Same backing as [`PlaylistIndex`].
+/// Same backing as [`PlaylistIndex`]. Errors carry a log-only cause.
 pub trait PlaylistTrackSink: Send + Sync {
-    /// Ids of the rows currently on a playlist.
-    fn track_ids(&self, playlist_id: &str) -> Vec<String>;
-    /// Remove rows by id.
-    fn remove_tracks(&self, playlist_id: &str, track_ids: &[String]);
-    /// Append track rows.
-    fn add_tracks(&self, playlist_id: &str, tracks: &[ImportedTrack]);
-    /// Stored cover bytes for a playlist, if any.
-    fn cover(&self, playlist_id: &str) -> Option<(Vec<u8>, String)>;
-    /// Store the picked provider image as the local cover. Returns false
+    /// Replace every row on a playlist with `tracks`, in order.
+    fn replace_tracks<'a>(
+        &'a self,
+        playlist_id: &'a str,
+        tracks: &'a [ImportedTrack],
+    ) -> BoxFuture<'a, Result<(), String>>;
+    /// Store the picked provider image as the local cover. Answers false
     /// when a cover already exists (v2 `kept_existing`).
-    fn set_imported_cover(
-        &self,
-        playlist_id: &str,
-        user_id: &str,
-        data: &[u8],
-        content_type: &str,
-    ) -> bool;
-    /// Rows currently on a playlist, for test assertions.
-    fn tracks(&self, playlist_id: &str) -> Vec<ImportedTrack>;
+    fn set_imported_cover<'a>(
+        &'a self,
+        playlist_id: &'a str,
+        data: &'a [u8],
+        content_type: &'a str,
+    ) -> BoxFuture<'a, Result<bool, String>>;
 }
 
 /// One imported track row (v2 `populate_playlist` dict shape).
@@ -244,6 +289,7 @@ impl AlbumMbidResolver for FixedMbidResolver {
 #[derive(Debug, Default)]
 pub struct MemorySpotifySettings {
     inner: Mutex<SpotifySettings>,
+    legacy_callback: std::sync::atomic::AtomicBool,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -251,6 +297,12 @@ impl MemorySpotifySettings {
     /// Empty rows.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Mark the app as registered against v2, as the import does.
+    pub fn set_legacy_callback(&self, legacy: bool) {
+        self.legacy_callback
+            .store(legacy, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -289,6 +341,9 @@ impl SpotifySettingsStore for MemorySpotifySettings {
             .inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if inner.client_id != settings.client_id {
+            self.set_legacy_callback(false);
+        }
         inner.client_id = settings.client_id.clone();
         if settings.client_secret != SPOTIFY_SECRET_MASK {
             inner.client_secret = settings.client_secret.clone();
@@ -297,14 +352,21 @@ impl SpotifySettingsStore for MemorySpotifySettings {
         inner.spotify_redirect_origin = origin.trim_end_matches('/').to_owned();
         Ok(())
     }
+
+    fn legacy_callback(&self) -> bool {
+        self.legacy_callback
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
-/// In-memory single-use OAuth states.
+/// In-memory single-use OAuth states, for tests.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct MemorySpotifyStates {
-    inner: Mutex<HashMap<String, String>>,
+    inner: Mutex<HashMap<String, PendingAuth>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemorySpotifyStates {
     /// Empty states.
     pub fn new() -> Self {
@@ -312,210 +374,246 @@ impl MemorySpotifyStates {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl SpotifyStateStore for MemorySpotifyStates {
-    fn store_state(&self, state: &str, user_id: &str) {
+    fn store_state<'a>(
+        &'a self,
+        state: &'a str,
+        pending: &'a PendingAuth,
+    ) -> BoxFuture<'a, Result<(), String>> {
         self.inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(state.to_owned(), user_id.to_owned());
+            .insert(state.to_owned(), pending.clone());
+        Box::pin(async { Ok(()) })
     }
 
-    fn consume_state(&self, state: &str) -> Option<String> {
-        self.inner
+    fn consume_state<'a>(
+        &'a self,
+        state: &'a str,
+    ) -> BoxFuture<'a, Result<Option<PendingAuth>, String>> {
+        let pending = self
+            .inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(state)
+            .remove(state);
+        Box::pin(async move { Ok(pending) })
     }
 }
 
-/// In-memory per-user Spotify links.
+/// In-memory per-user Spotify links, for tests.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct MemorySpotifyConnections {
     inner: Mutex<HashMap<String, SpotifyConnection>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemorySpotifyConnections {
     /// Empty links.
     pub fn new() -> Self {
         Self::default()
     }
+
+    fn rows(&self) -> std::sync::MutexGuard<'_, HashMap<String, SpotifyConnection>> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl SpotifyConnectionStore for MemorySpotifyConnections {
-    fn upsert(&self, user_id: &str, connection: &SpotifyConnection) {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert(user_id.to_owned(), connection.clone());
+    fn upsert<'a>(
+        &'a self,
+        user_id: &'a str,
+        connection: &'a SpotifyConnection,
+    ) -> BoxFuture<'a, Result<(), String>> {
+        self.rows().insert(user_id.to_owned(), connection.clone());
+        Box::pin(async { Ok(()) })
     }
 
-    fn get(&self, user_id: &str) -> Option<SpotifyConnection> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(user_id)
-            .cloned()
+    fn update_tokens_if_present<'a>(
+        &'a self,
+        user_id: &'a str,
+        connection: &'a SpotifyConnection,
+    ) -> BoxFuture<'a, Result<bool, String>> {
+        let updated = match self.rows().get_mut(user_id) {
+            Some(row) => {
+                row.clone_from(connection);
+                true
+            }
+            None => false,
+        };
+        Box::pin(async move { Ok(updated) })
     }
 
-    fn remove(&self, user_id: &str) -> bool {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(user_id)
-            .is_some()
+    fn get<'a>(
+        &'a self,
+        user_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<SpotifyConnection>, String>> {
+        let row = self.rows().get(user_id).cloned();
+        Box::pin(async move { Ok(row) })
+    }
+
+    fn remove<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Result<bool, String>> {
+        let removed = self.rows().remove(user_id).is_some();
+        Box::pin(async move { Ok(removed) })
     }
 }
 
-/// In-memory playlist index.
+/// In-memory playlist index, for tests.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct MemoryPlaylistIndex {
     inner: Mutex<MemoryPlaylists>,
 }
 
 /// In-memory playlist rows.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 struct MemoryPlaylists {
     next: u64,
     by_ref: HashMap<(String, String), String>,
-    names: HashMap<String, String>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemoryPlaylistIndex {
     /// Empty index.
     pub fn new() -> Self {
         Self::default()
     }
+
+    fn rows(&self) -> std::sync::MutexGuard<'_, MemoryPlaylists> {
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl PlaylistIndex for MemoryPlaylistIndex {
-    fn get_by_source_ref(&self, source_ref: &str, user_id: &str) -> Option<String> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    fn get_by_source_ref<'a>(
+        &'a self,
+        source_ref: &'a str,
+        user_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<String>, String>> {
+        let id = self
+            .rows()
             .by_ref
             .get(&(user_id.to_owned(), source_ref.to_owned()))
-            .cloned()
+            .cloned();
+        Box::pin(async move { Ok(id) })
     }
 
-    fn create(&self, user_id: &str, name: &str, source_ref: &str) -> String {
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        inner.next += 1;
-        let id = format!("pl-{}", inner.next);
-        inner
-            .by_ref
-            .insert((user_id.to_owned(), source_ref.to_owned()), id.clone());
-        inner.names.insert(id.clone(), name.to_owned());
-        id
+    fn create<'a>(
+        &'a self,
+        user_id: &'a str,
+        _name: &'a str,
+        source_ref: &'a str,
+    ) -> BoxFuture<'a, Result<String, String>> {
+        let mut rows = self.rows();
+        let key = (user_id.to_owned(), source_ref.to_owned());
+        let id = match rows.by_ref.get(&key) {
+            Some(existing) => existing.clone(),
+            None => {
+                rows.next += 1;
+                let id = format!("pl-{}", rows.next);
+                rows.by_ref.insert(key, id.clone());
+                id
+            }
+        };
+        Box::pin(async move { Ok(id) })
     }
 
-    fn source_refs_for(&self, user_id: &str) -> Vec<(String, String)> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    fn source_refs_for<'a>(
+        &'a self,
+        user_id: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<(String, String)>, String>> {
+        let refs = self
+            .rows()
             .by_ref
             .iter()
             .filter(|((owner, _), _)| owner == user_id)
             .map(|((_, source_ref), id)| (source_ref.clone(), id.clone()))
-            .collect()
+            .collect();
+        Box::pin(async move { Ok(refs) })
     }
 }
 
-/// In-memory track rows plus covers.
+/// In-memory track rows plus covers, for tests.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct MemoryTrackSink {
     inner: Mutex<MemoryTracks>,
 }
 
 /// In-memory track rows.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 struct MemoryTracks {
-    next: u64,
-    rows: HashMap<String, Vec<(String, ImportedTrack)>>,
+    rows: HashMap<String, Vec<ImportedTrack>>,
     covers: HashMap<String, (Vec<u8>, String)>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MemoryTrackSink {
     /// Empty sink.
     pub fn new() -> Self {
         Self::default()
     }
-}
 
-impl PlaylistTrackSink for MemoryTrackSink {
-    fn track_ids(&self, playlist_id: &str) -> Vec<String> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    /// Rows currently on a playlist.
+    pub fn tracks(&self, playlist_id: &str) -> Vec<ImportedTrack> {
+        self.lock()
             .rows
-            .get(playlist_id)
-            .map(|rows| rows.iter().map(|(id, _)| id.clone()).collect())
-            .unwrap_or_default()
-    }
-
-    fn remove_tracks(&self, playlist_id: &str, track_ids: &[String]) {
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(rows) = inner.rows.get_mut(playlist_id) {
-            rows.retain(|(id, _)| !track_ids.contains(id));
-        }
-    }
-
-    fn add_tracks(&self, playlist_id: &str, tracks: &[ImportedTrack]) {
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut rows = inner.rows.remove(playlist_id).unwrap_or_default();
-        for track in tracks {
-            inner.next += 1;
-            rows.push((format!("t-{}", inner.next), track.clone()));
-        }
-        inner.rows.insert(playlist_id.to_owned(), rows);
-    }
-
-    fn cover(&self, playlist_id: &str) -> Option<(Vec<u8>, String)> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .covers
             .get(playlist_id)
             .cloned()
+            .unwrap_or_default()
     }
 
-    fn set_imported_cover(
-        &self,
-        playlist_id: &str,
-        _user_id: &str,
-        data: &[u8],
-        content_type: &str,
-    ) -> bool {
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if inner.covers.contains_key(playlist_id) {
-            return false;
-        }
-        inner.covers.insert(
-            playlist_id.to_owned(),
-            (data.to_vec(), content_type.to_owned()),
-        );
-        true
+    /// Stored cover bytes and type for a playlist, if any.
+    pub fn cover(&self, playlist_id: &str) -> Option<(Vec<u8>, String)> {
+        self.lock().covers.get(playlist_id).cloned()
     }
 
-    fn tracks(&self, playlist_id: &str) -> Vec<ImportedTrack> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, MemoryTracks> {
         self.inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl PlaylistTrackSink for MemoryTrackSink {
+    fn replace_tracks<'a>(
+        &'a self,
+        playlist_id: &'a str,
+        tracks: &'a [ImportedTrack],
+    ) -> BoxFuture<'a, Result<(), String>> {
+        self.lock()
             .rows
-            .get(playlist_id)
-            .map(|rows| rows.iter().map(|(_, track)| track.clone()).collect())
-            .unwrap_or_default()
+            .insert(playlist_id.to_owned(), tracks.to_vec());
+        Box::pin(async { Ok(()) })
+    }
+
+    fn set_imported_cover<'a>(
+        &'a self,
+        playlist_id: &'a str,
+        data: &'a [u8],
+        content_type: &'a str,
+    ) -> BoxFuture<'a, Result<bool, String>> {
+        let mut inner = self.lock();
+        let stored = if inner.covers.contains_key(playlist_id) {
+            false
+        } else {
+            inner.covers.insert(
+                playlist_id.to_owned(),
+                (data.to_vec(), content_type.to_owned()),
+            );
+            true
+        };
+        Box::pin(async move { Ok(stored) })
     }
 }
 
@@ -599,6 +697,19 @@ pub enum SpotifyError {
     NotLinked,
     /// Upstream or network failure. The detail reaches the log only.
     Unavailable(String),
+    /// A local store read or write failed. The detail reaches the log only.
+    Store(String),
+}
+
+impl SpotifyError {
+    /// The user-facing line a background import records (v2 texts).
+    pub fn user_message(&self) -> String {
+        match self {
+            Self::NotLinked => "Spotify account not linked".to_owned(),
+            Self::Unavailable(_) => "Failed to fetch playlist from Spotify".to_owned(),
+            Self::Store(_) => "Failed to save the imported playlist".to_owned(),
+        }
+    }
 }
 
 /// Per-user Spotify Web API client (v2 `SpotifyClient`). Base URLs inject
@@ -1004,7 +1115,8 @@ impl TokenGrant {
 }
 
 /// Refreshing token holder behind the authed GETs. Refresh writes the new
-/// tokens back to the connection row (v2 `_refresh` upsert).
+/// tokens back to the connection row, but only while the row exists: a
+/// refresh that lands after a disconnect must not relink the account.
 pub struct TokenRefresher<'a> {
     client: &'a SpotifyClient,
     connections: &'a dyn SpotifyConnectionStore,
@@ -1078,7 +1190,14 @@ impl<'a> TokenRefresher<'a> {
             username: connection.username,
             spotify_user_id: connection.spotify_user_id,
         };
-        self.connections.upsert(&self.user_id, &updated);
+        let kept = self
+            .connections
+            .update_tokens_if_present(&self.user_id, &updated)
+            .await
+            .map_err(SpotifyError::Store)?;
+        if !kept {
+            return Err(SpotifyError::NotLinked);
+        }
         self.cached
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -1158,21 +1277,26 @@ impl SpotifyImportService {
         })
     }
 
-    /// Resolve one user's refreshing API access (v2 `_get_client`).
-    pub fn refresher_for(&self, user_id: &str) -> Result<TokenRefresher<'_>, SpotifyError> {
-        let raw = self.settings.get_raw();
-        let connection = self
-            .connections
+    /// One user's stored link, or `NotLinked`.
+    async fn link(&self, user_id: &str) -> Result<SpotifyConnection, SpotifyError> {
+        self.connections
             .get(user_id)
-            .ok_or(SpotifyError::NotLinked)?;
-        Ok(TokenRefresher::new(
+            .await
+            .map_err(SpotifyError::Store)?
+            .ok_or(SpotifyError::NotLinked)
+    }
+
+    /// Refreshing API access over one user's link (v2 `_get_client`).
+    fn refresher(&self, user_id: &str, connection: SpotifyConnection) -> TokenRefresher<'_> {
+        let raw = self.settings.get_raw();
+        TokenRefresher::new(
             &self.client,
             self.connections.as_ref(),
             user_id,
             &raw.client_id,
             &raw.client_secret,
             connection,
-        ))
+        )
     }
 
     /// Owned playlists annotated with the imported mapping (v2
@@ -1183,12 +1307,9 @@ impl SpotifyImportService {
         &self,
         user_id: &str,
     ) -> Result<SpotifyPlaylistListResponse, SpotifyError> {
-        let refresher = self.refresher_for(user_id)?;
-        let stored = self
-            .connections
-            .get(user_id)
-            .ok_or(SpotifyError::NotLinked)?;
-        let mut spotify_user_id = stored.spotify_user_id;
+        let stored = self.link(user_id).await?;
+        let mut spotify_user_id = stored.spotify_user_id.clone();
+        let refresher = self.refresher(user_id, stored);
         if spotify_user_id.is_empty() {
             let me = self.client.current_user(&refresher).await?;
             spotify_user_id = me
@@ -1200,7 +1321,12 @@ impl SpotifyImportService {
         let raw = self.client.user_playlists(&refresher).await?;
 
         let mut imported: HashMap<String, String> = HashMap::new();
-        for (source_ref, id) in self.playlists.source_refs_for(user_id) {
+        let refs = self
+            .playlists
+            .source_refs_for(user_id)
+            .await
+            .map_err(SpotifyError::Store)?;
+        for (source_ref, id) in refs {
             if let Some(pid) = source_ref.strip_prefix("spotify:") {
                 imported.insert(pid.to_owned(), id);
             }
@@ -1252,22 +1378,30 @@ impl SpotifyImportService {
     /// Ensure the internal record for one Spotify playlist (v2
     /// `ensure_playlist_record`): the existing id wins, else a record named
     /// `name` or `Spotify Playlist` under `spotify:{id}`.
-    pub fn ensure_playlist_record(
+    pub async fn ensure_playlist_record(
         &self,
         user_id: &str,
         spotify_playlist_id: &str,
         name: &str,
-    ) -> String {
+    ) -> Result<String, SpotifyError> {
         let source_ref = format!("spotify:{spotify_playlist_id}");
-        if let Some(existing) = self.playlists.get_by_source_ref(&source_ref, user_id) {
-            return existing;
+        if let Some(existing) = self
+            .playlists
+            .get_by_source_ref(&source_ref, user_id)
+            .await
+            .map_err(SpotifyError::Store)?
+        {
+            return Ok(existing);
         }
         let name = if name.is_empty() {
             "Spotify Playlist".to_owned()
         } else {
             name.to_owned()
         };
-        self.playlists.create(user_id, &name, &source_ref)
+        self.playlists
+            .create(user_id, &name, &source_ref)
+            .await
+            .map_err(SpotifyError::Store)
     }
 
     /// Populate one playlist: fetch metadata + tracks, resolve MBIDs,
@@ -1279,7 +1413,7 @@ impl SpotifyImportService {
         spotify_playlist_id: &str,
         playlist_id: &str,
     ) -> Result<usize, SpotifyError> {
-        let refresher = self.refresher_for(user_id)?;
+        let refresher = self.refresher(user_id, self.link(user_id).await?);
         let (info, raw_tracks) = tokio::join!(
             self.client.playlist(&refresher, spotify_playlist_id),
             self.client.playlist_tracks(&refresher, spotify_playlist_id)
@@ -1310,11 +1444,6 @@ impl SpotifyImportService {
                 album_id.to_owned(),
                 self.resolver.resolve(isrc, &artist, album_name),
             );
-        }
-
-        let existing = self.tracks.track_ids(playlist_id);
-        if !existing.is_empty() {
-            self.tracks.remove_tracks(playlist_id, &existing);
         }
 
         let mut rows = Vec::with_capacity(raw_tracks.len());
@@ -1357,10 +1486,16 @@ impl SpotifyImportService {
             });
         }
         let written = rows.len();
-        self.tracks.add_tracks(playlist_id, &rows);
-        let _ = self
-            .persist_cover(user_id, spotify_playlist_id, playlist_id, &info)
-            .await;
+        self.tracks
+            .replace_tracks(playlist_id, &rows)
+            .await
+            .map_err(SpotifyError::Store)?;
+        if let CoverOutcome::Skipped(reason) = self
+            .persist_cover(spotify_playlist_id, playlist_id, &info)
+            .await
+        {
+            tracing::debug!(%reason, "spotify playlist imported without a cover");
+        }
         Ok(written)
     }
 
@@ -1369,7 +1504,6 @@ impl SpotifyImportService {
     /// playlist import, and no cover is normal (v2 `_persist_playlist_cover`).
     pub async fn persist_cover(
         &self,
-        user_id: &str,
         spotify_playlist_id: &str,
         playlist_id: &str,
         info: &serde_json::Value,
@@ -1394,13 +1528,14 @@ impl SpotifyImportService {
                 "cover rejected for {spotify_playlist_id} ({cover_url})"
             ));
         };
-        if self
+        match self
             .tracks
-            .set_imported_cover(playlist_id, user_id, &data, &content_type)
+            .set_imported_cover(playlist_id, &data, &content_type)
+            .await
         {
-            CoverOutcome::Stored
-        } else {
-            CoverOutcome::KeptExisting
+            Ok(true) => CoverOutcome::Stored,
+            Ok(false) => CoverOutcome::KeptExisting,
+            Err(cause) => CoverOutcome::Skipped(format!("cover write failed: {cause}")),
         }
     }
 }
