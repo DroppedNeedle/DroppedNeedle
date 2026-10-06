@@ -2,8 +2,7 @@
 //! aggregator traits, live where credentials and persistence allow and
 //! unconfigured stubs that report the gap elsewhere.
 //!
-//! These lived in `providers` and made it depend on the reads ports; here
-//! the dependency runs one way, reads on providers. The `From` impls map
+//! The `From` impls map
 //! core provider failures and statuses onto the enrichment leg types; the
 //! aggregator keeps its own leg error and converts at the boundary.
 

@@ -14,7 +14,9 @@
 
 use serde::Deserialize;
 
-use super::{Body, ListenBrainzClient, ListenBrainzCredentials, Outcome, RequestFailure};
+use super::{
+    Body, ListenBrainzClient, ListenBrainzCredentials, Outcome, RequestFailure, path_segment,
+};
 use crate::providers::{DegradationSink, Pacer};
 
 /// Ranges the stats endpoints accept (v2 `ALLOWED_STATS_RANGE`, the
@@ -118,7 +120,7 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
         if username.is_empty() {
             return Outcome::Found(Vec::new());
         }
-        let endpoint = format!("/1/stats/user/{username}/artists");
+        let endpoint = format!("/1/stats/user/{}/artists", path_segment(username));
         self.stats_rows(&endpoint, range, count, offset, "artists")
             .await
     }
@@ -134,7 +136,7 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
         if username.is_empty() {
             return Outcome::Found(Vec::new());
         }
-        let endpoint = format!("/1/stats/user/{username}/release-groups");
+        let endpoint = format!("/1/stats/user/{}/release-groups", path_segment(username));
         self.stats_rows(&endpoint, range, count, offset, "release_groups")
             .await
     }
@@ -150,7 +152,7 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
         if username.is_empty() {
             return Outcome::Found(Vec::new());
         }
-        let endpoint = format!("/1/stats/user/{username}/recordings");
+        let endpoint = format!("/1/stats/user/{}/recordings", path_segment(username));
         self.stats_rows(&endpoint, range, count, offset, "recordings")
             .await
     }
@@ -162,7 +164,7 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
         if username.is_empty() {
             return Outcome::Found(Vec::new());
         }
-        let endpoint = format!("/1/stats/user/{username}/genre-activity");
+        let endpoint = format!("/1/stats/user/{}/genre-activity", path_segment(username));
         let payload = match self.public_get(&endpoint, &[]).await {
             Ok(Some(payload)) => payload,
             Ok(None) => return Outcome::Found(Vec::new()),
@@ -206,7 +208,7 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
         if username.is_empty() {
             return Outcome::Found(0);
         }
-        let endpoint = format!("/1/feedback/user/{username}/get-feedback");
+        let endpoint = format!("/1/feedback/user/{}/get-feedback", path_segment(username));
         let count_text = count.min(MAX_STATS_COUNT).to_string();
         let payload = match self
             .public_get(&endpoint, &[("score", "1"), ("count", &count_text)])

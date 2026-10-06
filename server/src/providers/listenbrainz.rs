@@ -270,7 +270,7 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
                 detail: "No username provided".to_owned(),
             });
         }
-        let endpoint = format!("/1/user/{username}/listen-count");
+        let endpoint = format!("/1/user/{}/listen-count", path_segment(username));
         let payload = match self.get(&endpoint, &[], creds, false, &[404]).await {
             Ok(payload) => payload,
             Err(RequestFailure::Accepted(404)) => {
@@ -372,7 +372,7 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
             return Outcome::Found(Vec::new());
         }
         let count_text = count.min(100).to_string();
-        let endpoint = format!("/1/user/{username}/listens");
+        let endpoint = format!("/1/user/{}/listens", path_segment(username));
         let payload = match self
             .get(
                 &endpoint,
@@ -1010,6 +1010,21 @@ enum RequestFailure<T> {
     Accepted(u16),
     /// A finished outcome, already recorded when recording applies.
     Outcome(Outcome<T>),
+}
+
+/// Percent-encode one URL path segment (a username can hold `/`, `?`, `#`
+/// or spaces).
+pub(crate) fn path_segment(value: &str) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(byte as char);
+        } else {
+            let _ = write!(out, "%{byte:02X}");
+        }
+    }
+    out
 }
 
 /// Whether a token may ride in a header: non-empty, at most 1024 chars, all

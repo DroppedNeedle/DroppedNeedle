@@ -81,6 +81,7 @@ pub struct CoverBytes {
     pub version: Option<i64>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl CoverBytes {
     /// Build one result, hashing the bytes.
     pub fn new(bytes: Vec<u8>, content_type: &str, source: &str) -> Self {
