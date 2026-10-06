@@ -147,7 +147,7 @@ pub fn read_scan_metadata(
         AudioFormat::Flac | AudioFormat::Wav | AudioFormat::M4a
     );
     let header = HeaderInfo {
-        duration_seconds: (!duration.is_zero()).then(|| duration.as_secs_f64()),
+        duration_seconds: (!duration.is_zero()).then_some(duration.as_secs_f64()),
         bitrate_kbps: properties
             .audio_bitrate()
             .or_else(|| properties.overall_bitrate())

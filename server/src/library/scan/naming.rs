@@ -170,10 +170,7 @@ fn leading_track(title: &str) -> Option<(u32, usize)> {
     let number: u32 = rest[..digits].parse().ok()?;
     let after = &rest[digits..];
     let spaced = after.trim_start();
-    let separators = spaced.len()
-        - spaced
-            .trim_start_matches(|ch| matches!(ch, '.' | '-' | '_' | ')'))
-            .len();
+    let separators = spaced.len() - spaced.trim_start_matches(['.', '-', '_', ')']).len();
     if separators == 0 {
         return None;
     }
