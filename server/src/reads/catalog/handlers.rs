@@ -387,6 +387,7 @@ pub async fn album_refresh(
 )]
 pub async fn similar_albums(
     State(deps): State<CatalogDeps>,
+    SessionUser(user): SessionUser,
     Path(id): Path<String>,
     ValidQuery(query): ValidQuery<AlbumArtistQuery>,
 ) -> Answer<SimilarAlbumsResponse> {
@@ -394,7 +395,7 @@ pub async fn similar_albums(
     answer(
         &deps,
         deps.catalog
-            .similar_albums(&id, &query.artist_id, count)
+            .similar_albums(&user, &id, &query.artist_id, count)
             .await,
     )
 }

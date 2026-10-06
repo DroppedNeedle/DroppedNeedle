@@ -19,8 +19,16 @@
         "type": "item",
         "id": "Q44190",
         "sitelinks": {
-          "enwiki": {"site": "enwiki", "title": "Radiohead", "badges": []},
-          "dewiki": {"site": "dewiki", "title": "Radiohead", "badges": []}
+          "enwiki": {
+            "site": "enwiki",
+            "title": "Radiohead",
+            "badges": []
+          },
+          "dewiki": {
+            "site": "dewiki",
+            "title": "Radiohead",
+            "badges": []
+          }
         }
       }
     }
@@ -45,7 +53,10 @@
           "mainsnak": {
             "snaktype": "value",
             "property": "P18",
-            "datavalue": {"value": "Radiohead 2016.jpg", "type": "string"},
+            "datavalue": {
+              "value": "Radiohead 2016.jpg",
+              "type": "string"
+            },
             "datatype": "commonsMedia"
           },
           "type": "statement",
@@ -65,7 +76,10 @@
           "known": "",
           "imagerepository": "shared",
           "imageinfo": [
-            {"url": "https://upload.wikimedia.org/wikipedia/commons/a/a1/Radiohead_2016.jpg", "descriptionurl": "https://commons.wikimedia.org/wiki/File:Radiohead_2016.jpg"}
+            {
+              "url": "https://upload.wikimedia.org/wikipedia/commons/a/a1/Radiohead_2016.jpg",
+              "descriptionurl": "https://commons.wikimedia.org/wiki/File:Radiohead_2016.jpg"
+            }
           ]
         }
       }
@@ -73,41 +87,108 @@
   },
   "lb_radio_artist": {
     "a74b1b7f-71a5-4011-9441-d0b5e4122711": [
-      {"recording_mbid": "8d3e9f0c-7b2a-4ef5-8a0b-2e3f5c9d1b87", "similar_artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711", "similar_artist_name": "Radiohead", "total_listen_count": 90000}
+      {
+        "recording_mbid": "8d3e9f0c-7b2a-4ef5-8a0b-2e3f5c9d1b87",
+        "similar_artist_mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+        "similar_artist_name": "Radiohead",
+        "total_listen_count": 90000
+      }
     ],
     "8f6bd1e4-fbe1-4f50-aa9b-94c450ec0f11": [
-      {"recording_mbid": "0a1b2c3d-1111-4e5f-8a9b-0c1d2e3f4a5b", "similar_artist_mbid": "8f6bd1e4-fbe1-4f50-aa9b-94c450ec0f11", "similar_artist_name": "Portishead", "total_listen_count": 4000},
-      {"recording_mbid": "0a1b2c3d-2222-4e5f-8a9b-0c1d2e3f4a5b", "similar_artist_mbid": "8f6bd1e4-fbe1-4f50-aa9b-94c450ec0f11", "similar_artist_name": "Portishead", "total_listen_count": 3500}
+      {
+        "recording_mbid": "0a1b2c3d-1111-4e5f-8a9b-0c1d2e3f4a5b",
+        "similar_artist_mbid": "8f6bd1e4-fbe1-4f50-aa9b-94c450ec0f11",
+        "similar_artist_name": "Portishead",
+        "total_listen_count": 4000
+      },
+      {
+        "recording_mbid": "0a1b2c3d-2222-4e5f-8a9b-0c1d2e3f4a5b",
+        "similar_artist_mbid": "8f6bd1e4-fbe1-4f50-aa9b-94c450ec0f11",
+        "similar_artist_name": "Portishead",
+        "total_listen_count": 3500
+      }
     ],
     "b7539c32-53e7-4908-bda3-81449c367da6": [
-      {"recording_mbid": "0a1b2c3d-3333-4e5f-8a9b-0c1d2e3f4a5b", "similar_artist_mbid": "b7539c32-53e7-4908-bda3-81449c367da6", "similar_artist_name": "Lana Del Rey", "total_listen_count": 9000}
+      {
+        "recording_mbid": "0a1b2c3d-3333-4e5f-8a9b-0c1d2e3f4a5b",
+        "similar_artist_mbid": "b7539c32-53e7-4908-bda3-81449c367da6",
+        "similar_artist_name": "Lana Del Rey",
+        "total_listen_count": 9000
+      }
     ]
   },
   "lb_top_release_groups": [
     {
-      "artist_mbids": ["a74b1b7f-71a5-4011-9441-d0b5e4122711"],
+      "artist_mbids": [
+        "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+      ],
       "artist_name": "Radiohead",
-      "artist": {"name": "Radiohead"},
+      "artist": {
+        "name": "Radiohead"
+      },
       "release_group_mbid": "b1392450-e666-3926-a536-22c65f834433",
-      "release_group": {"name": "OK Computer", "caa_id": 829521842, "caa_release_mbid": "6b1c7d8a-5f0e-4cd3-8e8f-0c1d3a7b9f65"},
+      "release_group": {
+        "name": "OK Computer",
+        "caa_id": 829521842,
+        "caa_release_mbid": "6b1c7d8a-5f0e-4cd3-8e8f-0c1d3a7b9f65"
+      },
       "total_listen_count": 1200000
     },
     {
-      "artist_mbids": ["a74b1b7f-71a5-4011-9441-d0b5e4122711"],
+      "artist_mbids": [
+        "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+      ],
       "artist_name": "Radiohead",
-      "artist": {"name": "Radiohead"},
+      "artist": {
+        "name": "Radiohead"
+      },
       "release_group_mbid": "1c6d2e3b-0a5f-4d8e-9f3a-5d6e8b2c4a10",
-      "release_group": {"name": "Kid A"},
+      "release_group": {
+        "name": "Kid A"
+      },
       "total_listen_count": 800000
     }
   ],
   "lastfm_artist_top_tracks": {
     "toptracks": {
       "track": [
-        {"name": "Creep", "playcount": "9182736", "listeners": "1500000", "mbid": "", "url": "https://www.last.fm/music/Radiohead/_/Creep", "artist": {"name": "Radiohead", "mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711", "url": "https://www.last.fm/music/Radiohead"}, "@attr": {"rank": "1"}},
-        {"name": "No Surprises", "playcount": "7000000", "listeners": "1200000", "mbid": "", "url": "https://www.last.fm/music/Radiohead/_/No+Surprises", "artist": {"name": "Radiohead", "mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"}, "@attr": {"rank": "2"}}
+        {
+          "name": "Creep",
+          "playcount": "9182736",
+          "listeners": "1500000",
+          "mbid": "",
+          "url": "https://www.last.fm/music/Radiohead/_/Creep",
+          "artist": {
+            "name": "Radiohead",
+            "mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+            "url": "https://www.last.fm/music/Radiohead"
+          },
+          "@attr": {
+            "rank": "1"
+          }
+        },
+        {
+          "name": "No Surprises",
+          "playcount": "7000000",
+          "listeners": "1200000",
+          "mbid": "",
+          "url": "https://www.last.fm/music/Radiohead/_/No+Surprises",
+          "artist": {
+            "name": "Radiohead",
+            "mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+          },
+          "@attr": {
+            "rank": "2"
+          }
+        }
       ],
-      "@attr": {"artist": "Radiohead", "page": "1", "perPage": "10", "totalPages": "100", "total": "1000"}
+      "@attr": {
+        "artist": "Radiohead",
+        "page": "1",
+        "perPage": "10",
+        "totalPages": "100",
+        "total": "1000"
+      }
     }
   },
   "lastfm_artist_info": {
@@ -115,9 +196,27 @@
       "name": "Radiohead",
       "mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
       "url": "https://www.last.fm/music/Radiohead",
-      "stats": {"listeners": "6000000", "playcount": "700000000"},
-      "similar": {"artist": [{"name": "Thom Yorke", "url": "https://www.last.fm/music/Thom+Yorke", "image": []}]},
-      "tags": {"tag": [{"name": "alternative", "url": "https://www.last.fm/tag/alternative"}]},
+      "stats": {
+        "listeners": "6000000",
+        "playcount": "700000000"
+      },
+      "similar": {
+        "artist": [
+          {
+            "name": "Thom Yorke",
+            "url": "https://www.last.fm/music/Thom+Yorke",
+            "image": []
+          }
+        ]
+      },
+      "tags": {
+        "tag": [
+          {
+            "name": "alternative",
+            "url": "https://www.last.fm/tag/alternative"
+          }
+        ]
+      },
       "bio": {
         "published": "10 Feb 2006, 16:49",
         "summary": "Radiohead are an English rock band. <a href=\"https://www.last.fm/music/Radiohead\">Read more on Last.fm</a>",
@@ -141,5 +240,74 @@
         "primaryGenreName": "Alternative"
       }
     ]
+  },
+  "lastfm_artist_top_albums": {
+    "topalbums": {
+      "album": [
+        {
+          "name": "OK Computer",
+          "playcount": "50000000",
+          "mbid": "6b1c7d8a-5f0e-4cd3-8e8f-0c1d3a7b9f65",
+          "url": "https://www.last.fm/music/Radiohead/OK+Computer",
+          "artist": {
+            "name": "Radiohead",
+            "mbid": "a74b1b7f-71a5-4011-9441-d0b5e4122711"
+          },
+          "image": []
+        },
+        {
+          "name": "Kid A (Deluxe Edition)",
+          "playcount": "30000000",
+          "mbid": "",
+          "url": "https://www.last.fm/music/Radiohead/Kid+A",
+          "artist": {
+            "name": "Radiohead"
+          },
+          "image": []
+        },
+        {
+          "name": "OK Computer OKNOTOK 1997 2017",
+          "playcount": "9000000",
+          "mbid": "",
+          "url": "https://www.last.fm/music/Radiohead/OKNOTOK",
+          "artist": {
+            "name": "Radiohead"
+          },
+          "image": []
+        }
+      ],
+      "@attr": {
+        "artist": "Radiohead",
+        "page": "1",
+        "perPage": "10"
+      }
+    }
+  },
+  "lastfm_similar_artist_top_albums": {
+    "topalbums": {
+      "album": [
+        {
+          "name": "Dummy",
+          "playcount": "20000000",
+          "mbid": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+          "url": "https://www.last.fm/music/Portishead/Dummy",
+          "artist": {
+            "name": "Portishead"
+          },
+          "image": []
+        }
+      ]
+    }
+  },
+  "mb_release_dummy": {
+    "id": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f",
+    "title": "Dummy",
+    "status": "Official",
+    "release-group": {
+      "id": "4d5e6f70-8b9c-4dae-9f10-2b3c4d5e6f70",
+      "title": "Dummy",
+      "primary-type": "Album",
+      "secondary-types": []
+    }
   }
 }

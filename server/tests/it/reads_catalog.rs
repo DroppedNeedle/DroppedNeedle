@@ -44,6 +44,8 @@ const OK_COMPUTER: &str = "b1392450-e666-3926-a536-22c65f834433";
 const KID_A: &str = "1c6d2e3b-0a5f-4d8e-9f3a-5d6e8b2c4a10";
 const RELEASE_CD: &str = "6b1c7d8a-5f0e-4cd3-8e8f-0c1d3a7b9f65";
 const UNKNOWN_ALBUM: &str = "00000000-1111-4222-8333-444444444444";
+const DUMMY_RELEASE: &str = "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f";
+const DUMMY_GROUP: &str = "4d5e6f70-8b9c-4dae-9f10-2b3c4d5e6f70";
 
 fn fixture(name: &str) -> String {
     let path = format!(
@@ -226,6 +228,21 @@ fn routes() -> Vec<Route> {
             "/lastfm/2.0/".to_owned(),
             Some(("method", "artist.getInfo")),
             upstream_fixture("lastfm_artist_info"),
+        ),
+        route(
+            "/lastfm/2.0/".to_owned(),
+            Some(("mbid", ARTIST)),
+            upstream_fixture("lastfm_artist_top_albums"),
+        ),
+        route(
+            "/lastfm/2.0/".to_owned(),
+            Some(("method", "artist.getTopAlbums")),
+            upstream_fixture("lastfm_similar_artist_top_albums"),
+        ),
+        route(
+            format!("/mb/ws/2/release/{DUMMY_RELEASE}"),
+            None,
+            upstream_fixture("mb_release_dummy"),
         ),
         route(
             "/itunes/search".to_owned(),
@@ -614,6 +631,46 @@ async fn artist_sections_use_listenbrainz_then_lastfm() {
     );
     assert_eq!(titles(&songs["songs"]), ["Creep", "No Surprises"]);
     assert_eq!(songs["songs"][0]["listen_count"], 9_182_736);
+
+    let lastfm_albums = get(
+        &app,
+        &format!("/api/v3/artists/{ARTIST}/top-albums?source=lastfm"),
+    )
+    .await;
+    assert_eq!(lastfm_albums["source"], "lastfm");
+    let groups: Vec<&Value> = lastfm_albums["albums"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|album| &album["release_group_mbid"])
+        .collect();
+    assert_eq!(
+        groups,
+        [&json!(OK_COMPUTER), &json!(KID_A), &Value::Null],
+        "release ids and deluxe titles match the discography; unknown titles stay unlinked"
+    );
+    assert_eq!(lastfm_albums["albums"][0]["in_library"], true);
+    assert_eq!(lastfm_albums["albums"][1]["requested"], true);
+
+    let similar_albums = get(
+        &app,
+        &format!("/api/v3/albums/{OK_COMPUTER}/similar?artist_id={ARTIST}&count=2"),
+    )
+    .await;
+    assert_eq!(
+        similar_albums["albums"],
+        json!([{
+            "musicbrainz_id": DUMMY_GROUP,
+            "title": "Dummy",
+            "artist_name": "Portishead",
+            "artist_id": "b7539c32-53e7-4908-bda3-81449c367da6",
+            "year": null,
+            "in_library": false,
+            "requested": false,
+            "cover_url": format!("/api/v3/covers/release-group/{DUMMY_GROUP}?size=500")
+        }]),
+        "no ListenBrainz albums for the similar artists, so Last.fm fills in"
+    );
 
     let lastfm = get(
         &app,
