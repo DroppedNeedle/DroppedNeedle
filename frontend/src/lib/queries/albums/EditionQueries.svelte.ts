@@ -2,23 +2,19 @@ import { createMutation, createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
-import { v3 } from '$lib/api/v3/endpoint';
-import { API, CACHE_TTL } from '$lib/constants';
+import { CACHE_TTL } from '$lib/constants';
+import { purchaseOptionsKey } from '$lib/queries/albums/GetItQueries.svelte';
+import { CATALOG_ENDPOINTS } from '$lib/queries/catalog/endpoints';
 import { DownloadQueryKeyFactory } from '$lib/queries/downloads/DownloadQueryKeyFactory';
 import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { musicBrainzSourceKey } from '$lib/queries/musicbrainz/sourceScope.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { LibraryV3Api } from '$lib/queries/library/LibraryV3Api';
-import type { AlbumEditionsResponse } from '$lib/types';
+import { albumBasicCache, albumTracksCache } from '$lib/utils/albumDetailCache';
 
 // CollectionManagement Feature E: the picker is an admin/trusted surface,
-// viewing the list is open to any authenticated user. The release-group
-// edition list and pin have no v3 route yet (their builders wait in
-// lib/constants.ts); acquire and the per-copy pin are on v3.
-
-const editionsUrl = API.album.editions;
-const pinUrl = API.album.editionPin;
+// viewing the list is open to any authenticated user.
 
 type EditionUserId = string | null | undefined;
 
@@ -42,8 +38,38 @@ export const getAlbumEditionsQuery = (
 		queryKey: editionsKey(getUserId(), mbid()),
 		enabled: enabled() && !!getUserId() && !!mbid(),
 		staleTime: CACHE_TTL.ALBUM_DETAIL_EDITIONS,
-		queryFn: ({ signal }) => api.global.get<AlbumEditionsResponse>(editionsUrl(mbid()), { signal })
+		queryFn: ({ signal }) => api.global.v3.GET(CATALOG_ENDPOINTS.editions(mbid()), { signal })
 	}));
+
+/**
+ * A pin changes which release the group serves: its edition list, the album
+ * page's tracklist and header, the library status and the purchase links.
+ * Both pin routes (by group and by library copy) refresh all of them.
+ */
+function invalidatePinScope(variables: {
+	userId: EditionUserId;
+	rgMbid: string;
+	localId?: string;
+}) {
+	const { userId, rgMbid, localId } = variables;
+	const keys: (readonly unknown[])[] = [];
+	if (rgMbid) {
+		albumBasicCache.remove(rgMbid);
+		albumTracksCache.remove(rgMbid);
+		keys.push(
+			editionsKey(userId, rgMbid),
+			LibraryQueryKeyFactory.album(rgMbid),
+			purchaseOptionsKey(rgMbid)
+		);
+	}
+	if (localId) {
+		keys.push(
+			LibraryQueryKeyFactory.catalog.editionPin(userId, localId),
+			LibraryQueryKeyFactory.catalog.albumDetail(userId, localId)
+		);
+	}
+	return Promise.all(keys.map((queryKey) => invalidateQueriesWithPersister({ queryKey })));
+}
 
 type EditionPinVariables = {
 	userId: EditionUserId;
@@ -59,26 +85,23 @@ type EditionClearVariables = {
 export function setEditionPin() {
 	return createMutation(() => ({
 		mutationFn: ({ mbid, releaseMbid }: EditionPinVariables) =>
-			api.global.put(pinUrl(mbid), { release_mbid: releaseMbid }),
-		onSuccess: (_d, { userId, mbid }) =>
-			invalidateQueriesWithPersister({ queryKey: editionsKey(userId, mbid) })
+			api.global.v3.PUT(CATALOG_ENDPOINTS.editionPin(mbid), { release_mbid: releaseMbid }),
+		onSuccess: (_d, { userId, mbid }) => invalidatePinScope({ userId, rgMbid: mbid })
 	}));
 }
 
 export function clearEditionPin() {
 	return createMutation(() => ({
-		mutationFn: ({ mbid }: EditionClearVariables) => api.global.delete(pinUrl(mbid)),
-		onSuccess: (_d, { userId, mbid }) =>
-			invalidateQueriesWithPersister({ queryKey: editionsKey(userId, mbid) })
+		mutationFn: ({ mbid }: EditionClearVariables) =>
+			api.global.v3.DELETE(CATALOG_ENDPOINTS.editionPin(mbid)),
+		onSuccess: (_d, { userId, mbid }) => invalidatePinScope({ userId, rgMbid: mbid })
 	}));
 }
 
 export function acquireEdition() {
 	return createMutation(() => ({
 		mutationFn: ({ mbid }: { mbid: string }) =>
-			api.global.v3.POST(
-				v3('/api/v3/albums/{album_id}/edition/acquire', { path: { album_id: mbid } })
-			),
+			api.global.v3.POST(CATALOG_ENDPOINTS.acquireEdition(mbid)),
 		// the acquire fans out into download tasks - surface them in the queue now,
 		// not on the next poll
 		onSuccess: () =>
@@ -122,25 +145,6 @@ type LocalEditionClearVariables = {
 	rgMbid: string;
 };
 
-function invalidateLocalPinScope(variables: {
-	userId: EditionUserId;
-	localId: string;
-	rgMbid: string;
-}) {
-	const invalidations = [
-		invalidateQueriesWithPersister({
-			queryKey: localAlbumEditionPinKey(variables.userId, variables.localId)
-		}),
-		invalidateQueriesWithPersister({
-			queryKey: editionsKey(variables.userId, variables.rgMbid)
-		}),
-		invalidateQueriesWithPersister({
-			queryKey: LibraryQueryKeyFactory.catalog.albumDetail(variables.userId, variables.localId)
-		})
-	];
-	return Promise.all(invalidations);
-}
-
 // Guards the per-album boundary: the local id must be known, and it must not
 // be the RG MBID itself (an RG id here addresses nothing when unowned and
 // resolves ambiguously when owned - both are RG-route work).
@@ -156,7 +160,7 @@ export function setLocalAlbumEditionPin() {
 			assertLocalAlbumId(localId, rgMbid);
 			return api.global.v3.PUT(LibraryV3Api.editionPin(localId), { release_mbid: releaseMbid });
 		},
-		onSuccess: (_d, variables) => invalidateLocalPinScope(variables)
+		onSuccess: (_d, { userId, localId, rgMbid }) => invalidatePinScope({ userId, rgMbid, localId })
 	}));
 }
 
@@ -166,6 +170,6 @@ export function clearLocalAlbumEditionPin() {
 			assertLocalAlbumId(localId, rgMbid);
 			return api.global.v3.DELETE(LibraryV3Api.editionPin(localId));
 		},
-		onSuccess: (_d, variables) => invalidateLocalPinScope(variables)
+		onSuccess: (_d, { userId, localId, rgMbid }) => invalidatePinScope({ userId, rgMbid, localId })
 	}));
 }

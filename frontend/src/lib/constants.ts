@@ -146,21 +146,6 @@ export const API = {
 		concertsUnseenCount: () => '/api/v1/following/concerts/unseen-count',
 		markConcertsSeen: () => '/api/v1/following/concerts/seen'
 	},
-	album: {
-		purchaseOptions: (id: string) => `/api/v1/albums/${id}/purchase-options`,
-		basic: (id: string) => `/api/v1/albums/${id}/basic`,
-		tracks: (id: string) => `/api/v1/albums/${id}/tracks`,
-		moreByArtist: (id: string, artistId: string) =>
-			`/api/v1/albums/${id}/more-by-artist?artist_id=${artistId}`,
-		similar: (id: string, artistId: string) => `/api/v1/albums/${id}/similar?artist_id=${artistId}`,
-		lastFm: (id: string, artistName: string, albumName: string) => {
-			const params = new URLSearchParams({ artist_name: artistName, album_name: albumName });
-			return `/api/v1/albums/${id}/lastfm?${params.toString()}`;
-		},
-		refresh: (id: string) => `/api/v1/albums/${id}/refresh`,
-		editions: (mbid: string) => `/api/v1/albums/${encodeURIComponent(mbid)}/editions`,
-		editionPin: (mbid: string) => `/api/v1/albums/${encodeURIComponent(mbid)}/edition`
-	},
 	library: {
 		membership: () => '/api/v1/library/membership',
 		album: (mbid: string) => `/api/v1/library/albums/${mbid}/status`,

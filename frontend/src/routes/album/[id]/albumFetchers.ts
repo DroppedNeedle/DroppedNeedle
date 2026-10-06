@@ -12,6 +12,7 @@ import type {
 } from '$lib/types';
 import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
+import { CATALOG_ENDPOINTS } from '$lib/queries/catalog/endpoints';
 import { compareDiscTrack } from '$lib/player/queueHelpers';
 import {
 	fetchJellyfinAlbumMatch,
@@ -20,13 +21,13 @@ import {
 	fetchPlexAlbumMatch
 } from '$lib/queries/albumMatch';
 
-export { fetchAlbumTracks } from '$lib/api/albums';
+export { fetchAlbumTracks } from '$lib/queries/catalog/albumTracks';
 
 export async function fetchAlbumBasic(
 	albumId: string,
 	signal?: AbortSignal
 ): Promise<AlbumBasicInfo> {
-	return api.get<AlbumBasicInfo>(API.album.basic(albumId), { signal });
+	return api.v3.GET(CATALOG_ENDPOINTS.albumBasic(albumId), { signal });
 }
 
 export async function fetchDiscovery(
@@ -38,12 +39,8 @@ export async function fetchDiscovery(
 	similarAlbums: SimilarAlbumsResponse | null;
 }> {
 	const [moreByArtist, similarAlbums] = await Promise.all([
-		api
-			.get<MoreByArtistResponse>(API.album.moreByArtist(albumId, artistId), { signal })
-			.catch(() => null),
-		api
-			.get<SimilarAlbumsResponse>(API.album.similar(albumId, artistId), { signal })
-			.catch(() => null)
+		api.v3.GET(CATALOG_ENDPOINTS.moreByArtist(albumId, artistId), { signal }).catch(() => null),
+		api.v3.GET(CATALOG_ENDPOINTS.similarAlbums(albumId, artistId), { signal }).catch(() => null)
 	]);
 	return { moreByArtist, similarAlbums };
 }
@@ -101,17 +98,16 @@ export async function fetchLastFm(
 	opts: { artistName: string; albumName: string },
 	signal?: AbortSignal
 ): Promise<LastFmAlbumEnrichment | null> {
-	return api.get<LastFmAlbumEnrichment>(
-		API.album.lastFm(albumId, opts.artistName, opts.albumName),
-		{ signal }
-	);
+	return api.v3.GET(CATALOG_ENDPOINTS.albumLastFm(albumId, opts.artistName, opts.albumName), {
+		signal
+	});
 }
 
 export async function refreshAlbum(
 	albumId: string,
 	signal?: AbortSignal
 ): Promise<AlbumBasicInfo | null> {
-	return api
-		.post<AlbumBasicInfo>(API.album.refresh(albumId), undefined, { signal })
+	return api.v3
+		.POST(CATALOG_ENDPOINTS.albumRefresh(albumId), undefined, { signal })
 		.catch(() => null);
 }

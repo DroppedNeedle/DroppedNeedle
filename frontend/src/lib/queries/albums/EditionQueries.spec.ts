@@ -1,17 +1,15 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
-	get: vi.fn().mockResolvedValue({ items: [] }),
-	put: vi.fn().mockResolvedValue(undefined),
-	delete: vi.fn().mockResolvedValue(undefined),
-	post: vi.fn().mockResolvedValue({ requested: 0, upgrades: 0 }),
 	v3: {
 		GET: vi.fn().mockResolvedValue({}),
 		PUT: vi.fn().mockResolvedValue({}),
 		POST: vi.fn().mockResolvedValue({ status: 'started', message: 'ok' }),
 		DELETE: vi.fn().mockResolvedValue({})
 	},
-	invalidate: vi.fn().mockResolvedValue(undefined)
+	invalidate: vi.fn().mockResolvedValue(undefined),
+	removeBasic: vi.fn(),
+	removeTracks: vi.fn()
 }));
 
 vi.mock('@tanstack/svelte-query', () => ({
@@ -20,29 +18,20 @@ vi.mock('@tanstack/svelte-query', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: {
-		global: {
-			get: h.get,
-			put: h.put,
-			delete: h.delete,
-			post: h.post,
-			v3: h.v3
-		}
-	}
+	api: { global: { v3: h.v3 } }
 }));
 
 vi.mock('$lib/constants', () => ({
-	API: {
-		album: {
-			editions: (mbid: string) => `/api/v1/albums/${encodeURIComponent(mbid)}/editions`,
-			editionPin: (mbid: string) => `/api/v1/albums/${encodeURIComponent(mbid)}/edition`
-		}
-	},
 	CACHE_TTL: { ALBUM_DETAIL_EDITIONS: 60_000 }
 }));
 
 vi.mock('$lib/queries/QueryClient', () => ({
 	invalidateQueriesWithPersister: h.invalidate
+}));
+
+vi.mock('$lib/utils/albumDetailCache', () => ({
+	albumBasicCache: { remove: h.removeBasic },
+	albumTracksCache: { remove: h.removeTracks }
 }));
 
 vi.mock('$lib/queries/downloads/DownloadQueryKeyFactory', () => ({
@@ -77,10 +66,6 @@ type EditionMutationOptions = {
 
 beforeEach(() => {
 	vi.clearAllMocks();
-	h.get.mockResolvedValue({ items: [] });
-	h.put.mockResolvedValue(undefined);
-	h.delete.mockResolvedValue(undefined);
-	h.post.mockResolvedValue({ requested: 0, upgrades: 0 });
 	h.invalidate.mockResolvedValue(undefined);
 });
 
@@ -113,7 +98,7 @@ it('includes the authenticated user in every editions query key', () => {
 	expect(queryA.enabled).toBe(true);
 });
 
-it('invalidates the initiating user edition key after pin and clear mutations', async () => {
+it('pins by group on v3 and refreshes the group and album for the initiating user', async () => {
 	const pin = setEditionPin() as unknown as EditionMutationOptions;
 	const clear = clearEditionPin() as unknown as EditionMutationOptions;
 	const pinVariables = { userId: 'user-a', mbid: 'release-group', releaseMbid: 'release' };
@@ -124,16 +109,16 @@ it('invalidates the initiating user edition key after pin and clear mutations', 
 	await clear.mutationFn(clearVariables);
 	await clear.onSuccess(undefined, clearVariables);
 
-	expect(h.put).toHaveBeenCalledWith('/api/v1/albums/release-group/edition', {
+	expect(h.v3.PUT).toHaveBeenCalledWith('/api/v3/albums/release-group/edition', {
 		release_mbid: 'release'
 	});
-	expect(h.delete).toHaveBeenCalledWith('/api/v1/albums/release-group/edition');
-	expect(h.invalidate).toHaveBeenNthCalledWith(1, {
-		queryKey: editionsKey('user-a', 'release-group')
-	});
-	expect(h.invalidate).toHaveBeenNthCalledWith(2, {
-		queryKey: editionsKey('user-b', 'release-group')
-	});
+	expect(h.v3.DELETE).toHaveBeenCalledWith('/api/v3/albums/release-group/edition');
+	const invalidated = h.invalidate.mock.calls.map(([arg]) => arg.queryKey);
+	expect(invalidated).toContainEqual(editionsKey('user-a', 'release-group'));
+	expect(invalidated).toContainEqual(editionsKey('user-b', 'release-group'));
+	expect(invalidated).toContainEqual(['library', 'album', 'release-group']);
+	expect(h.removeTracks).toHaveBeenCalledWith('release-group');
+	expect(h.removeBasic).toHaveBeenCalledWith('release-group');
 });
 
 it('keeps acquire invalidation scoped to the authenticated download queue', async () => {

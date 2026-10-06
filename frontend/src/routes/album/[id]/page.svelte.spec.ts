@@ -469,7 +469,7 @@ describe('album detail page track rendering', () => {
 		mockPageFetch.mockImplementation((input: string | URL) => {
 			const url = typeof input === 'string' ? input : input.toString();
 
-			if (url.endsWith(`/api/v1/albums/${albumId}/basic`)) {
+			if (url.endsWith(`/api/v3/albums/${albumId}/basic`)) {
 				return Promise.resolve(
 					jsonResponse({
 						title: 'Visions',
@@ -483,7 +483,7 @@ describe('album detail page track rendering', () => {
 				);
 			}
 
-			if (url.endsWith(`/api/v1/albums/${albumId}/tracks`)) {
+			if (url.endsWith(`/api/v3/albums/${albumId}/tracks`)) {
 				return Promise.resolve(
 					jsonResponse({
 						tracks: [
@@ -506,11 +506,11 @@ describe('album detail page track rendering', () => {
 				);
 			}
 
-			if (url.includes(`/api/v1/albums/${albumId}/more-by-artist`)) {
+			if (url.includes(`/api/v3/albums/${albumId}/more-by-artist`)) {
 				return Promise.resolve(jsonResponse({ artist_name: 'Grimes', albums: [] }));
 			}
 
-			if (url.includes(`/api/v1/albums/${albumId}/similar`)) {
+			if (url.includes(`/api/v3/albums/${albumId}/similar`)) {
 				return Promise.resolve(jsonResponse({ albums: [] }));
 			}
 
