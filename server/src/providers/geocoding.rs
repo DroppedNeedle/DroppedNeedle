@@ -11,13 +11,21 @@
 //! coordinates, `country_code`, and `admin1` region. Open-Meteo omits the
 //! `results` key entirely for unknown places.
 //!
-//! Shared infrastructure note: this client sends one request per call. Retry (3
-//! attempts over transport and rate-limit failures only), the 2 req/s pacing,
-//! and the circuit breaker live in the shared resilience layer, which matches
-//! on [GeocodingError].
+//! Pacing: every request waits on the limiter given through
+//! [GeocodingClient::with_limiter] (the concerts routes pass v2's 2 req/s).
+//! Retry and the circuit breaker sit with the caller, which maps failures
+//! onto [ProviderError].
+
+use std::sync::Arc;
 
 use serde::Deserialize;
 use thiserror::Error;
+
+use super::error::{ProviderError, classify_status};
+use super::limiter::RateLimiter;
+
+/// Provider key used in [ProviderError] and logs.
+pub const SOURCE: &str = "geocoding";
 
 /// Production endpoint. Tests point elsewhere via [GeocodingClient::with_base_url].
 pub const GEOCODING_API_URL: &str = "https://geocoding-api.open-meteo.com/v1/search";
@@ -84,6 +92,7 @@ pub enum GeocodingError {
 pub struct GeocodingClient {
     http: reqwest::Client,
     base_url: String,
+    limiter: Option<Arc<RateLimiter>>,
 }
 
 impl GeocodingClient {
@@ -97,7 +106,15 @@ impl GeocodingClient {
         Self {
             http,
             base_url: base_url.into(),
+            limiter: None,
         }
+    }
+
+    /// Pace every request through `limiter`.
+    #[must_use]
+    pub fn with_limiter(mut self, limiter: Arc<RateLimiter>) -> Self {
+        self.limiter = Some(limiter);
+        self
     }
 
     /// Cities matching `query`, up to `count` of them. `[]` means the
@@ -107,6 +124,10 @@ impl GeocodingClient {
         query: &str,
         count: u32,
     ) -> Result<Vec<GeoCity>, GeocodingError> {
+        if let Some(limiter) = &self.limiter {
+            // One token never exceeds a bucket's burst, so this cannot fail.
+            let _ = limiter.acquire().await;
+        }
         let params = [
             ("name", query.to_owned()),
             ("count", count.to_string()),
@@ -135,6 +156,31 @@ impl GeocodingClient {
         let decoded: GeocodingResponse = serde_json::from_slice(&body)
             .map_err(|error| GeocodingError::Decode(error.to_string()))?;
         Ok(decoded.results)
+    }
+}
+
+impl From<GeocodingError> for ProviderError {
+    fn from(error: GeocodingError) -> Self {
+        match error {
+            GeocodingError::Transport(message) => Self::Transport {
+                provider: SOURCE,
+                message,
+            },
+            GeocodingError::RateLimited => Self::RateLimited {
+                provider: SOURCE,
+                retry_after: None,
+            },
+            GeocodingError::Api { status } => {
+                classify_status(SOURCE, status, None).unwrap_or(Self::Server {
+                    provider: SOURCE,
+                    status,
+                })
+            }
+            GeocodingError::Decode(message) => Self::Payload {
+                provider: SOURCE,
+                message,
+            },
+        }
     }
 }
 

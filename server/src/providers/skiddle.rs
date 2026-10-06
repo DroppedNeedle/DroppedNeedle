@@ -18,14 +18,22 @@
 //! - `totalcount` is an int on the artists endpoint but a string on events
 //!   (`"392"`), so both shapes decode.
 //!
-//! Shared infrastructure note: this client sends one request per call. Retry (3
-//! attempts over transport and rate-limit failures only), the conservative
-//! 1 req/s pacing (Skiddle documents only that unspecified daily + hourly
-//! caps exist), and the circuit breaker live in the shared resilience
-//! layer, which matches on [SkiddleError].
+//! Pacing: every request waits on the limiter given through
+//! [SkiddleClient::with_limiter]. The concerts sweep passes a conservative
+//! 1 req/s bucket (Skiddle documents only that unspecified daily and hourly
+//! caps exist). Retry and the circuit breaker sit with the caller, which
+//! maps failures onto [ProviderError].
+
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use super::error::{ProviderError, classify_status};
+use super::limiter::RateLimiter;
+
+/// Provider key used in [ProviderError] and logs.
+pub const SOURCE: &str = "skiddle";
 
 /// Production endpoint. Tests point elsewhere via [SkiddleClient::with_base_url].
 pub const SKIDDLE_API_URL: &str = "https://www.skiddle.com/api/v1";
@@ -201,6 +209,7 @@ pub struct SkiddleClient {
     http: reqwest::Client,
     api_key: String,
     base_url: String,
+    limiter: Option<Arc<RateLimiter>>,
 }
 
 impl SkiddleClient {
@@ -219,7 +228,15 @@ impl SkiddleClient {
             http,
             api_key: api_key.into(),
             base_url: base_url.into(),
+            limiter: None,
         }
+    }
+
+    /// Pace every request through `limiter`.
+    #[must_use]
+    pub fn with_limiter(mut self, limiter: Arc<RateLimiter>) -> Self {
+        self.limiter = Some(limiter);
+        self
     }
 
     /// Acts matching `name`; `[]` means Skiddle knows no such act.
@@ -276,6 +293,10 @@ impl SkiddleClient {
     /// One GET with the key merged into the params. Skiddle answers strict
     /// 200 on success; anything else (besides 429) is an API error.
     async fn fetch(&self, path: &str, params: &[(&str, String)]) -> Result<Vec<u8>, SkiddleError> {
+        if let Some(limiter) = &self.limiter {
+            // One token never exceeds a bucket's burst, so this cannot fail.
+            let _ = limiter.acquire().await;
+        }
         let mut query: Vec<(&str, String)> = params.to_vec();
         query.push(("api_key", self.api_key.clone()));
         let url = join(&self.base_url, path);
@@ -299,6 +320,32 @@ impl SkiddleClient {
             .await
             .map(|body| body.to_vec())
             .map_err(|error| SkiddleError::Transport(transport_kind(&error).to_owned()))
+    }
+}
+
+impl From<SkiddleError> for ProviderError {
+    fn from(error: SkiddleError) -> Self {
+        match error {
+            SkiddleError::Transport(message) => Self::Transport {
+                provider: SOURCE,
+                message,
+            },
+            SkiddleError::RateLimited => Self::RateLimited {
+                provider: SOURCE,
+                retry_after: None,
+            },
+            SkiddleError::Api { status } => {
+                classify_status(SOURCE, status, None).unwrap_or(Self::Server {
+                    provider: SOURCE,
+                    status,
+                })
+            }
+            // Both are deterministic for the payload: a retry gets the same answer.
+            SkiddleError::Decode(message) | SkiddleError::Envelope(message) => Self::Payload {
+                provider: SOURCE,
+                message,
+            },
+        }
     }
 }
 

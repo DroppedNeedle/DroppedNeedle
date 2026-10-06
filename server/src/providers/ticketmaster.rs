@@ -22,18 +22,25 @@
 //!   consumes is `musicbrainz`, whose ids arrive padded or cased and are
 //!   trimmed and lowercased on read, blanks skipped.
 //!
-//! Shared infrastructure note: this client sends one request per call (plus pagination
-//! follow-ups). Retry (3 attempts over transport and rate-limit failures
-//! only), the 2 req/s pacing (Ticketmaster's docs state 5 req/s in one place
-//! and 2 req/s in another; v2 encodes the documented floor), and the circuit
-//! breaker live in the shared resilience layer, which matches on
-//! [TicketmasterError]. The 5,000/day quota stays enforced by sweep sizing,
-//! not by this client.
+//! Pacing: every request, pagination follow-ups included, waits on the
+//! limiter given through [TicketmasterClient::with_limiter]. The concerts
+//! sweep passes a 2 req/s bucket (Ticketmaster's docs state 5 req/s in one
+//! place and 2 req/s in another; v2 encodes the documented floor). Retry and
+//! the circuit breaker sit with the caller, which maps failures onto
+//! [ProviderError]. The 5,000/day quota stays enforced by sweep sizing, not
+//! by this client.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use serde::Deserialize;
 use thiserror::Error;
+
+use super::error::{MAX_RETRY_AFTER, ProviderError, classify_status};
+use super::limiter::RateLimiter;
+
+/// Provider key used in [ProviderError] and logs.
+pub const SOURCE: &str = "ticketmaster";
 
 /// Production endpoint. Tests point elsewhere via [TicketmasterClient::with_base_url].
 pub const TICKETMASTER_API_URL: &str = "https://app.ticketmaster.com/discovery/v2";
@@ -293,6 +300,7 @@ pub struct TicketmasterClient {
     http: reqwest::Client,
     api_key: String,
     base_url: String,
+    limiter: Option<Arc<RateLimiter>>,
 }
 
 impl TicketmasterClient {
@@ -311,7 +319,15 @@ impl TicketmasterClient {
             http,
             api_key: api_key.into(),
             base_url: base_url.into(),
+            limiter: None,
         }
+    }
+
+    /// Pace every request through `limiter`.
+    #[must_use]
+    pub fn with_limiter(mut self, limiter: Arc<RateLimiter>) -> Self {
+        self.limiter = Some(limiter);
+        self
     }
 
     /// Music attractions matching `keyword`; `[]` means Ticketmaster knows
@@ -400,6 +416,10 @@ impl TicketmasterClient {
         path: &str,
         params: &[(&str, String)],
     ) -> Result<Vec<u8>, TicketmasterError> {
+        if let Some(limiter) = &self.limiter {
+            // One token never exceeds a bucket's burst, so this cannot fail.
+            let _ = limiter.acquire().await;
+        }
         let mut query: Vec<(&str, String)> = params.to_vec();
         query.push(("apikey", self.api_key.clone()));
         let url = join(&self.base_url, path);
@@ -430,6 +450,33 @@ impl TicketmasterClient {
             .await
             .map(|body| body.to_vec())
             .map_err(|error| TicketmasterError::Transport(transport_kind(&error).to_owned()))
+    }
+}
+
+impl From<TicketmasterError> for ProviderError {
+    fn from(error: TicketmasterError) -> Self {
+        match error {
+            TicketmasterError::Transport(message) => Self::Transport {
+                provider: SOURCE,
+                message,
+            },
+            TicketmasterError::RateLimited { retry_after_secs } => Self::RateLimited {
+                provider: SOURCE,
+                retry_after: retry_after_secs
+                    .and_then(|secs| std::time::Duration::try_from_secs_f64(secs).ok())
+                    .map(|delay| delay.min(MAX_RETRY_AFTER)),
+            },
+            TicketmasterError::Api { status } => {
+                classify_status(SOURCE, status, None).unwrap_or(Self::Server {
+                    provider: SOURCE,
+                    status,
+                })
+            }
+            TicketmasterError::Decode(message) => Self::Payload {
+                provider: SOURCE,
+                message,
+            },
+        }
     }
 }
 
