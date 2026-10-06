@@ -1875,6 +1875,41 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("POST", "/api/v3/library/scan", Posture::Admin),
     ("GET", "/api/v3/library/scan/runs", Posture::User),
     ("GET", "/api/v3/library/scan/runs/{id}", Posture::User),
+    ("POST", "/api/v3/library/scan/runs", Posture::Admin),
+    ("GET", "/api/v3/library/scan/runs/current", Posture::Admin),
+    ("GET", "/api/v3/library/scan/runs/history", Posture::Admin),
+    ("GET", "/api/v3/library/scan/runs/estimate", Posture::Admin),
+    (
+        "GET",
+        "/api/v3/library/scan/runs/{id}/failures",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/scan/runs/{id}/pause",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/scan/runs/{id}/resume",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/scan/runs/{id}/stop",
+        Posture::Admin,
+    ),
+    ("GET", "/api/v3/library/activity", Posture::User),
+    (
+        "POST",
+        "/api/v3/library/identification/pause",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/identification/resume",
+        Posture::Admin,
+    ),
     ("POST", "/api/v3/library/identify", Posture::Curator),
     ("GET", "/api/v3/library/reviews", Posture::User),
     (

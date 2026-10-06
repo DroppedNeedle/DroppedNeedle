@@ -2154,6 +2154,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What the library is doing now: scans, identification, and the work
+         *     stack.
+         */
+        get: operations["library_activity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/albums": {
         parameters: {
             query?: never;
@@ -2611,6 +2631,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/identification/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pause identification. A job already running finishes first. */
+        post: operations["pause_identification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/identification/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume identification. */
+        post: operations["resume_identification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/identify": {
         parameters: {
             query?: never;
@@ -2809,6 +2863,58 @@ export interface paths {
         /** List current plus recent scan runs. */
         get: operations["list_runs"];
         put?: never;
+        /** Request a scan by kind over chosen roots and path rules. */
+        post: operations["request_scan_run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/scan/runs/current": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The run holding the scan worker and the next queued one. */
+        get: operations["current_scan_runs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/scan/runs/estimate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Roughly how many files a scan over the chosen scopes would read. */
+        get: operations["estimate_scan_run"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/scan/runs/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Finished runs, newest first, a page at a time. */
+        get: operations["scan_run_history"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -2827,6 +2933,74 @@ export interface paths {
         get: operations["get_run"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/scan/runs/{id}/failures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Paths one run could not read or index, oldest first. */
+        get: operations["scan_run_failures"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/scan/runs/{id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pause a running scan at its next checkpoint. */
+        post: operations["pause_scan_run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/scan/runs/{id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume a paused scan where it stopped. */
+        post: operations["resume_scan_run"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/scan/runs/{id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop a scan. What it already indexed stays. */
+        post: operations["stop_scan_run"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6679,6 +6853,65 @@ export interface components {
                 [key: string]: number;
             };
         };
+        /** @description One activity strip card. */
+        ActivityItem: {
+            /** Format: int64 */
+            attention_count: number;
+            /**
+             * Format: int64
+             * @description Pause switch revision to send back with pause or resume.
+             */
+            control_revision: number | null;
+            /** Format: int64 */
+            deferred_count: number;
+            deferred_jobs: components["schemas"]["DeferredJobView"][];
+            deferred_reason_counts: {
+                [key: string]: number;
+            };
+            /** Format: int64 */
+            failed_count: number;
+            /** Format: double */
+            failure_at: number | null;
+            failure_event_id: string | null;
+            /** Format: int64 */
+            foreground_operation_count: number;
+            /** Format: int64 */
+            identified_count: number;
+            /** @description True when the total is not known yet. */
+            indeterminate: boolean;
+            /** Format: int64 */
+            kept_local_count: number;
+            kind: components["schemas"]["ActivityKind"];
+            label: string;
+            /** Format: int64 */
+            needs_review_count: number;
+            /** Format: double */
+            oldest_backlog_at: number | null;
+            /** @description The queue band the next job comes from. */
+            priority_band: string | null;
+            /** Format: int64 */
+            processed: number;
+            /** @description True while MusicBrainz is unreachable. */
+            provider_unavailable: boolean;
+            /** Format: double */
+            started_at: number | null;
+            /**
+             * @description A scan run state, or `running`, `pausing`, `paused`, `idle` or
+             *     `failed` for identification.
+             */
+            state: string;
+            /** Format: int64 */
+            total: number | null;
+            /** Format: double */
+            updated_at: number;
+            /** Format: int64 */
+            waiting_count: number;
+        };
+        /**
+         * @description What one activity card describes.
+         * @enum {string}
+         */
+        ActivityKind: "scan" | "identification";
         /**
          * @description Add a library root. The path must exist and be absolute; the id
          *     defaults to a fresh uuid.
@@ -8901,6 +9134,24 @@ export interface components {
             /** @description Shelves, oldest decade first. */
             items: components["schemas"]["DecadeShelf"][];
         };
+        /** @description One deferred identification job, named. */
+        DeferredJobView: {
+            album_title: string | null;
+            artist_name: string | null;
+            /** Format: int64 */
+            attempt_count: number;
+            job_id: string;
+            /** @description Why the last attempt did not finish. */
+            last_failure_code: string;
+            local_album_id: string | null;
+            /**
+             * Format: double
+             * @description Unix seconds before which the job will not run again.
+             */
+            not_before: number | null;
+            /** Format: double */
+            updated_at: number;
+        };
         /**
          * @description One degraded source inside an otherwise successful batch. The recording
          *     is the error signal: optional enrichment degrades, never fails.
@@ -10609,11 +10860,31 @@ export interface components {
          * @enum {string}
          */
         Id3Version: "2.4" | "2.3";
+        /** @description A pause or resume of identification. */
+        IdentificationControlBody: {
+            /**
+             * Format: int64
+             * @description The switch revision from the activity feed's
+             *     `control_revision`.
+             */
+            expected_revision: number;
+        };
+        /** @description Answer to a pause or resume of identification. */
+        IdentificationControlResponse: {
+            /** Format: int64 */
+            row_revision: number;
+            state: components["schemas"]["IdentificationState"];
+        };
         /**
          * @description Per-path identification policy.
          * @enum {string}
          */
         IdentificationPolicy: "local_metadata" | "automatic" | "excluded";
+        /**
+         * @description Identification queue state after a pause or resume.
+         * @enum {string}
+         */
+        IdentificationState: "running" | "pausing" | "paused";
         /** @description Enqueue one album for identification. */
         IdentifyBody: {
             /** @description Catalog album id, as `GET /library/albums` lists it. */
@@ -11025,6 +11296,18 @@ export interface components {
             auth_url: string;
             /** @description Single-use token for the session exchange. */
             token: string;
+        };
+        /** @description The whole feed. */
+        LibraryActivity: {
+            items: components["schemas"]["ActivityItem"][];
+            /**
+             * @description Change revisions per stream (`scan`, `identification`,
+             *     `operation`, `catalog`), as the `activity.changed` event sends.
+             */
+            revisions: {
+                [key: string]: number;
+            };
+            work_items: components["schemas"]["WorkItem"][];
         };
         /**
          * @description Dry-run activation health: stale roots (saved activation no longer
@@ -15017,6 +15300,42 @@ export interface components {
             /** @description Root id to scan (default: every scheduled root). */
             root_id?: string | null;
         };
+        /** @description A pause, resume or stop request. */
+        ScanControlBody: {
+            /**
+             * Format: int64
+             * @description The run's row revision as the caller last saw it.
+             */
+            expected_revision: number;
+        };
+        /** @description A run after pause, resume or stop. */
+        ScanControlResponse: {
+            /** Format: int64 */
+            event_revision: number;
+            /** Format: int64 */
+            row_revision: number;
+            run_id: string;
+            state: string;
+            /** Format: int64 */
+            stream_revision: number;
+        };
+        /**
+         * @description How the request was taken.
+         * @enum {string}
+         */
+        ScanDisposition: "started" | "queued" | "coalesced" | "expanded" | "conflict";
+        /** @description Approximate size of a scan. */
+        ScanEstimateResponse: {
+            /** @description Always true: the count is catalog rows, not a fresh walk. */
+            approximate: boolean;
+            /**
+             * Format: double
+             * @description When the count was taken (unix seconds).
+             */
+            estimated_at: number | null;
+            /** Format: int64 */
+            estimated_file_count: number | null;
+        };
         /** @description One discovered file inside a run, with its scan-assigned track id. */
         ScanFileView: {
             /** @description Path relative to the root. */
@@ -15033,6 +15352,11 @@ export interface components {
          * @enum {string}
          */
         ScanFrequency: "manual" | "5min" | "10min" | "30min" | "1hr" | "6hr" | "12hr" | "24hr" | "3d" | "7d" | "daily";
+        /**
+         * @description Scan kind a caller can ask for.
+         * @enum {string}
+         */
+        ScanKindBody: "incremental" | "rescan_files" | "policy_reconcile";
         /** @description Scan request answer. */
         ScanResponse: {
             /**
@@ -15045,25 +15369,114 @@ export interface components {
             /** @description Run state after the request. */
             state: string;
         };
+        /** @description The run holding the worker and the next queued one. */
+        ScanRunCurrentResponse: {
+            active: null | components["schemas"]["ScanRunView"];
+            queued: null | components["schemas"]["ScanRunView"];
+        };
+        /** @description One path a scan could not read or index. */
+        ScanRunFailureItem: {
+            /** @description Machine code, for example `TAG_READ_FAILED`. */
+            failure_code: string;
+            failure_detail: string;
+            /** @description `discovering`, `indexing` or `reconciling`. */
+            phase: string;
+            /**
+             * Format: double
+             * @description Unix seconds.
+             */
+            recorded_at: number;
+            relative_path: string;
+            root_id: string;
+        };
+        /** @description One page of a run's failed paths, oldest first. */
+        ScanRunFailuresResponse: {
+            items: components["schemas"]["ScanRunFailureItem"][];
+            /**
+             * Format: int64
+             * @description Pass back as `cursor` for the next page; null on the last.
+             */
+            next_cursor: number | null;
+        };
+        /** @description One page of finished runs, newest first. */
+        ScanRunHistoryResponse: {
+            items: components["schemas"]["ScanRunView"][];
+            /** @description Pass back as `cursor` for the next page; null on the last. */
+            next_cursor: string | null;
+        };
+        /** @description A scan request. */
+        ScanRunRequestBody: {
+            /**
+             * @description Policy revision from the library settings the caller last read.
+             *     A request against older settings is refused with 409.
+             */
+            expected_policy_revision?: string;
+            /** @description What kind of scan to run. */
+            kind?: components["schemas"]["ScanKindBody"];
+            /** @description Root and path-rule ids to scan; empty means every root. */
+            scope_ids?: string[];
+        };
+        /** @description Answer to a scan request. */
+        ScanRunRequestedResponse: {
+            /** @description Kind of the run in the way, on a conflict. */
+            conflicting_kind: string | null;
+            disposition: components["schemas"]["ScanDisposition"];
+            /** @description Why the request waits, when it does. */
+            queued_reason: string | null;
+            /**
+             * Format: int64
+             * @description That run's row revision.
+             */
+            row_revision: number;
+            /** @description The run that will do the work. */
+            run_id: string;
+            /** @description That run's state. */
+            state: string;
+        };
         /** @description One scan run. */
         ScanRunView: {
             /** @description Scope label: `all` or `selected`. */
             aggregate_scope: string;
+            /**
+             * Format: int64
+             * @description Requests folded into this run.
+             */
+            coalesced_request_count: number;
             /** @description Progress counters. */
             counters: {
                 [key: string]: number;
             };
+            /**
+             * Format: int64
+             * @description Event revision.
+             */
+            event_revision: number;
             /** @description Run id. */
             id: string;
             /** @description Run kind. */
             kind: string;
             /** @description Current phase. */
             phase: string;
+            /** @description Seconds spent per phase. */
+            phase_timings: {
+                [key: string]: number;
+            };
             /**
              * Format: double
              * @description Queue time (unix seconds).
              */
             queued_at: number;
+            /** @description Who asked for the run, when someone did. */
+            requested_by_user_id?: string | null;
+            /** @description Pending control: `none`, `pause` or `stop`. */
+            requested_control: string;
+            /** @description Phase a paused run picks up from. */
+            resume_phase?: string | null;
+            /**
+             * Format: int64
+             * @description Row revision; pause, resume and stop send it back.
+             */
+            row_revision: number;
             /**
              * Format: double
              * @description Start time, when started.
@@ -16738,6 +17151,82 @@ export interface components {
             /** @description Track title. */
             title: string;
         };
+        /**
+         * @description What the work does to the library.
+         * @enum {string}
+         */
+        WorkEffect: "catalog_only" | "file_writing" | "attention";
+        /** @description One work stack entry. */
+        WorkItem: {
+            /** Format: int64 */
+            blocked_count: number;
+            /** @description False while a settled scan still has albums waiting to identify. */
+            catalog_settled?: boolean | null;
+            /** Format: int64 */
+            changed_count: number;
+            effect: components["schemas"]["WorkEffect"];
+            /** Format: int64 */
+            failed_count: number;
+            /** Format: double */
+            failure_at: number | null;
+            failure_event_id: string | null;
+            /** @description Run id, or a fixed id for queue-wide entries. */
+            id: string;
+            indeterminate: boolean;
+            kind: components["schemas"]["WorkKind"];
+            /** Format: int64 */
+            missing_count: number;
+            mode: string | null;
+            /** Format: int64 */
+            new_count: number;
+            origin: string | null;
+            /**
+             * Format: int64
+             * @description Albums still waiting to identify, on the drain card.
+             */
+            pending_identification?: number | null;
+            phase: string | null;
+            /**
+             * Format: int64
+             * @description Lower sorts first: 0 needs attention, 20 is the running scan.
+             */
+            priority: number;
+            /** Format: int64 */
+            processed: number;
+            profile_name: string | null;
+            /** Format: int64 */
+            remaining_count: number | null;
+            /** @description Administrators see which part of the library a scan covers. */
+            scope_label: string | null;
+            /** Format: int64 */
+            skipped_count: number;
+            /** Format: double */
+            started_at: number | null;
+            state: string;
+            /** Format: int64 */
+            subject_count: number | null;
+            /** Format: int64 */
+            succeeded_count: number;
+            /** @description True for the drain card, which names no real run. */
+            synthetic: boolean;
+            /** Format: int64 */
+            total: number | null;
+            unit: components["schemas"]["WorkUnit"];
+            /** Format: double */
+            updated_at: number;
+            /** Format: int64 */
+            warning_count: number;
+        };
+        /**
+         * @description What kind of work one stack entry is.
+         * @enum {string}
+         */
+        WorkKind: "scan" | "identification" | "identity_preparation" | "reidentification" | "identity_review" | "maintenance" | "library_management" | "recovery";
+        /**
+         * @description What a work entry counts.
+         * @enum {string}
+         */
+        WorkUnit: "files" | "albums" | "releases" | "items";
         /** @description Top album row. */
         WrappedAlbum: {
             /** @description Artist name. */
@@ -21307,6 +21796,33 @@ export interface operations {
             };
         };
     };
+    library_activity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Activity feed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryActivity"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     list_albums: {
         parameters: {
             query?: {
@@ -22711,6 +23227,96 @@ export interface operations {
             };
         };
     };
+    pause_identification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdentificationControlBody"];
+            };
+        };
+        responses: {
+            /** @description Queue state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentificationControlResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The switch changed since it was read */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    resume_identification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdentificationControlBody"];
+            };
+        };
+        responses: {
+            /** @description Queue state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentificationControlResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The switch changed since it was read */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     enqueue_identify: {
         parameters: {
             query?: never;
@@ -23337,6 +23943,182 @@ export interface operations {
             };
         };
     };
+    request_scan_run: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScanRunRequestBody"];
+            };
+        };
+        responses: {
+            /** @description Scan taken */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanRunRequestedResponse"];
+                };
+            };
+            /** @description Bad body or unknown scope id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Library disabled or library policy changed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    current_scan_runs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current runs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanRunCurrentResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    estimate_scan_run: {
+        parameters: {
+            query?: {
+                /** @description Root and path-rule ids; none means every root */
+                scope_ids?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Estimate */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanEstimateResponse"];
+                };
+            };
+            /** @description Unknown scope id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    scan_run_history: {
+        parameters: {
+            query?: {
+                /** @description Runs per page, 1 to 50 */
+                limit?: number;
+                /** @description Cursor from the previous page */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description History page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanRunHistoryResponse"];
+                };
+            };
+            /** @description Bad cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     get_run: {
         parameters: {
             query?: never;
@@ -23367,6 +24149,220 @@ export interface operations {
             };
             /** @description Unknown run id */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    scan_run_failures: {
+        parameters: {
+            query?: {
+                /** @description Rows per page, 1 to 200 */
+                limit?: number;
+                /** @description Cursor from the previous page */
+                cursor?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Scan run id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Failed paths */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanRunFailuresResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown run id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    pause_scan_run: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Scan run id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScanControlBody"];
+            };
+        };
+        responses: {
+            /** @description Run after the request */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanControlResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown run id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Run changed, or cannot pause in its state */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    resume_scan_run: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Scan run id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScanControlBody"];
+            };
+        };
+        responses: {
+            /** @description Run after the request */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanControlResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown run id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Run changed, or is not paused */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    stop_scan_run: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Scan run id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScanControlBody"];
+            };
+        };
+        responses: {
+            /** @description Run after the request */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanControlResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown run id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Run changed, or already finished */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

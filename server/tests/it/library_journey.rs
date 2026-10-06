@@ -953,6 +953,160 @@ async fn library_roots_survive_a_restart() {
     assert_eq!(run.counters.get("unchanged_count").copied(), Some(1));
 }
 
+/// Scan controls and the activity feed through the HTTP API: the policy
+/// guard, scan kinds, current runs, stop, history, estimates, failed
+/// paths, and pausing identification.
+#[tokio::test]
+async fn library_journey_scan_controls_and_activity() {
+    let lib = Lib::open("controls").await;
+    let admin = setup_admin(lib.router(), "owner", "owner-password-1").await;
+    let auth = bearer(&admin);
+    let headers = [("authorization", auth.as_str())];
+    let music = lib.dir.join("music");
+    plant(&music, "album-a/01.flac", "management_full.flac");
+    plant(&music, "album-a/02.flac", "management_full.flac");
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/roots",
+        &headers,
+        Some(json!({"id": "music", "path": music.to_string_lossy()})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    // The revision the settings page shows is the one requests carry.
+    let settings = lib
+        .store
+        .get_masked::<droppedneedle::runtime_config::secret_sections::TypedLibrary>()
+        .expect("library settings read")
+        .into_inner();
+    let revision = droppedneedle::settings::library_policy::resolve(&settings)
+        .expect("settings resolve")
+        .policy_revision;
+    let post = |uri: String, body: Value| {
+        let app = lib.router();
+        let headers = headers;
+        async move { call(app, "POST", &uri, &headers, Some(body)).await }
+    };
+    let get = |uri: String| {
+        let app = lib.router();
+        let headers = headers;
+        async move { call(app, "GET", &uri, &headers, None).await }
+    };
+
+    // Stale settings and unknown scopes are refused before anything queues.
+    let (status, _) = post(
+        "/api/v3/library/scan/runs".into(),
+        json!({"kind": "rescan_files", "expected_policy_revision": "stale"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let (status, _) = post(
+        "/api/v3/library/scan/runs".into(),
+        json!({"scope_ids": ["gone"], "expected_policy_revision": revision}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // A queued run shows as current and stops at once.
+    let (status, body) = post(
+        "/api/v3/library/scan/runs".into(),
+        json!({"kind": "incremental", "expected_policy_revision": revision}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let queued_id = body["run_id"].as_str().expect("run id").to_owned();
+    let (status, body) = get("/api/v3/library/scan/runs/current".into()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["queued"]["id"], json!(queued_id));
+    let row_revision = body["queued"]["row_revision"].as_u64().expect("revision");
+    let (status, _) = post(
+        format!("/api/v3/library/scan/runs/{queued_id}/pause"),
+        json!({"expected_revision": row_revision + 7}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "a stale revision is refused");
+    let (status, body) = post(
+        format!("/api/v3/library/scan/runs/{queued_id}/stop"),
+        json!({"expected_revision": row_revision}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["state"], json!("cancelled"));
+
+    // A full rescan runs to the end and lands in history.
+    let (status, body) = get("/api/v3/library/scan/runs/estimate".into()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["estimated_file_count"], json!(0));
+    let (status, body) = post(
+        "/api/v3/library/scan/runs".into(),
+        json!({"kind": "rescan_files", "scope_ids": ["music"], "expected_policy_revision": revision}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let run_id = body["run_id"].as_str().expect("run id").to_owned();
+    drain_scans(&lib.library).await;
+    let (status, body) = get("/api/v3/library/scan/runs/history?limit=1".into()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["items"][0]["id"], json!(run_id));
+    assert_eq!(body["items"][0]["kind"], json!("rescan_files"));
+    assert_eq!(body["items"][0]["state"], json!("completed"));
+    let cursor = body["next_cursor"].as_str().expect("older page").to_owned();
+    let (status, body) = get(format!(
+        "/api/v3/library/scan/runs/history?limit=1&cursor={cursor}"
+    ))
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["items"][0]["id"], json!(queued_id));
+    let (status, body) = get(format!("/api/v3/library/scan/runs/{run_id}/failures")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["items"], json!([]));
+    let (status, _) = get("/api/v3/library/scan/runs/nope/failures".into()).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, body) = get("/api/v3/library/scan/runs/estimate?scope_ids=music".into()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["estimated_file_count"], json!(2));
+
+    // The scan queued the album for identification; pausing holds it.
+    let (status, body) = get("/api/v3/library/activity".into()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    for stream in ["scan", "identification", "operation", "catalog"] {
+        assert!(body["revisions"][stream].is_u64(), "{stream} revision");
+    }
+    let card = body["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|item| item["kind"] == json!("identification"))
+        .expect("identification card")
+        .clone();
+    assert_eq!(card["waiting_count"], json!(1));
+    let control = card["control_revision"].as_u64().expect("control revision");
+    let (status, body) = post(
+        "/api/v3/library/identification/pause".into(),
+        json!({"expected_revision": control}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["state"], json!("paused"));
+    let paused_at = body["row_revision"].as_u64().expect("revision");
+    assert_eq!(lib.library.identify_tick().await, 0, "paused queue claims nothing");
+    let (status, _) = post(
+        "/api/v3/library/identification/resume".into(),
+        json!({"expected_revision": control}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "a stale switch is refused");
+    let (status, body) = post(
+        "/api/v3/library/identification/resume".into(),
+        json!({"expected_revision": paused_at}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["state"], json!("running"));
+    assert_eq!(lib.library.identify_tick().await, 1, "resumed queue runs");
+}
+
 /// A bare library bundle over a migrated scratch database, with its
 /// music folder (not yet a root).
 fn bare_library(tag: &str) -> (ScratchDir, LibrarySetup, PathBuf) {

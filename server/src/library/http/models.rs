@@ -102,6 +102,20 @@ pub struct ScanRunView {
     pub terminal_at: Option<f64>,
     /// Terminal code, when terminal.
     pub terminal_code: Option<String>,
+    /// Who asked for the run, when someone did.
+    pub requested_by_user_id: Option<String>,
+    /// Phase a paused run picks up from.
+    pub resume_phase: Option<String>,
+    /// Pending control: `none`, `pause` or `stop`.
+    pub requested_control: String,
+    /// Requests folded into this run.
+    pub coalesced_request_count: i64,
+    /// Row revision; pause, resume and stop send it back.
+    pub row_revision: u64,
+    /// Event revision.
+    pub event_revision: u64,
+    /// Seconds spent per phase.
+    pub phase_timings: HashMap<String, f64>,
 }
 
 /// Current plus recent scan runs.

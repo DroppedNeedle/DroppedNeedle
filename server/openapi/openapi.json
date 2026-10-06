@@ -4749,6 +4749,30 @@
         }
       }
     },
+    "/api/v3/library/activity": {
+      "get": {
+        "tags": [
+          "crate::library::http::scan"
+        ],
+        "summary": "What the library is doing now: scans, identification, and the work\nstack.",
+        "operationId": "library_activity",
+        "responses": {
+          "200": {
+            "description": "Activity feed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryActivity"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
     "/api/v3/library/albums": {
       "get": {
         "tags": [
@@ -6242,6 +6266,86 @@
         }
       }
     },
+    "/api/v3/library/identification/pause": {
+      "post": {
+        "tags": [
+          "crate::library::http::scan"
+        ],
+        "summary": "Pause identification. A job already running finishes first.",
+        "operationId": "pause_identification",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentificationControlBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Queue state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentificationControlResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "409": {
+            "description": "The switch changed since it was read"
+          }
+        }
+      }
+    },
+    "/api/v3/library/identification/resume": {
+      "post": {
+        "tags": [
+          "crate::library::http::scan"
+        ],
+        "summary": "Resume identification.",
+        "operationId": "resume_identification",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentificationControlBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Queue state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentificationControlResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "409": {
+            "description": "The switch changed since it was read"
+          }
+        }
+      }
+    },
     "/api/v3/library/identify": {
       "post": {
         "tags": [
@@ -6774,6 +6878,170 @@
             "description": "Not authenticated"
           }
         }
+      },
+      "post": {
+        "tags": [
+          "crate::library::http::scan"
+        ],
+        "summary": "Request a scan by kind over chosen roots and path rules.",
+        "operationId": "request_scan_run",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanRunRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Scan taken",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanRunRequestedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad body or unknown scope id"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "409": {
+            "description": "Library disabled or library policy changed"
+          }
+        }
+      }
+    },
+    "/api/v3/library/scan/runs/current": {
+      "get": {
+        "tags": [
+          "crate::library::http::scan"
+        ],
+        "summary": "The run holding the scan worker and the next queued one.",
+        "operationId": "current_scan_runs",
+        "responses": {
+          "200": {
+            "description": "Current runs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanRunCurrentResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        }
+      }
+    },
+    "/api/v3/library/scan/runs/estimate": {
+      "get": {
+        "tags": [
+          "crate::library::http::scan"
+        ],
+        "summary": "Roughly how many files a scan over the chosen scopes would read.",
+        "operationId": "estimate_scan_run",
+        "parameters": [
+          {
+            "name": "scope_ids",
+            "in": "query",
+            "description": "Root and path-rule ids; none means every root",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "explode": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Estimate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanEstimateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown scope id"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        }
+      }
+    },
+    "/api/v3/library/scan/runs/history": {
+      "get": {
+        "tags": [
+          "crate::library::http::scan"
+        ],
+        "summary": "Finished runs, newest first, a page at a time.",
+        "operationId": "scan_run_history",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Runs per page, 1 to 50",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor from the previous page",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "History page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanRunHistoryResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad cursor"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        }
       }
     },
     "/api/v3/library/scan/runs/{id}": {
@@ -6810,6 +7078,229 @@
           },
           "404": {
             "description": "Unknown run id"
+          }
+        }
+      }
+    },
+    "/api/v3/library/scan/runs/{id}/failures": {
+      "get": {
+        "tags": [
+          "crate::library::http::scan"
+        ],
+        "summary": "Paths one run could not read or index, oldest first.",
+        "operationId": "scan_run_failures",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Scan run id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Rows per page, 1 to 200",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor from the previous page",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Failed paths",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanRunFailuresResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown run id"
+          }
+        }
+      }
+    },
+    "/api/v3/library/scan/runs/{id}/pause": {
+      "post": {
+        "tags": [
+          "crate::library::http::scan"
+        ],
+        "summary": "Pause a running scan at its next checkpoint.",
+        "operationId": "pause_scan_run",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Scan run id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanControlBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Run after the request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanControlResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown run id"
+          },
+          "409": {
+            "description": "Run changed, or cannot pause in its state"
+          }
+        }
+      }
+    },
+    "/api/v3/library/scan/runs/{id}/resume": {
+      "post": {
+        "tags": [
+          "crate::library::http::scan"
+        ],
+        "summary": "Resume a paused scan where it stopped.",
+        "operationId": "resume_scan_run",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Scan run id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanControlBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Run after the request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanControlResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown run id"
+          },
+          "409": {
+            "description": "Run changed, or is not paused"
+          }
+        }
+      }
+    },
+    "/api/v3/library/scan/runs/{id}/stop": {
+      "post": {
+        "tags": [
+          "crate::library::http::scan"
+        ],
+        "summary": "Stop a scan. What it already indexed stays.",
+        "operationId": "stop_scan_run",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Scan run id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanControlBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Run after the request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanControlResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown run id"
+          },
+          "409": {
+            "description": "Run changed, or already finished"
           }
         }
       }
@@ -15916,6 +16407,181 @@
           }
         }
       },
+      "ActivityItem": {
+        "type": "object",
+        "description": "One activity strip card.",
+        "required": [
+          "kind",
+          "state",
+          "label",
+          "processed",
+          "total",
+          "indeterminate",
+          "updated_at",
+          "started_at",
+          "waiting_count",
+          "identified_count",
+          "kept_local_count",
+          "needs_review_count",
+          "failed_count",
+          "deferred_count",
+          "deferred_reason_counts",
+          "deferred_jobs",
+          "attention_count",
+          "priority_band",
+          "oldest_backlog_at",
+          "provider_unavailable",
+          "control_revision",
+          "failure_event_id",
+          "failure_at",
+          "foreground_operation_count"
+        ],
+        "properties": {
+          "attention_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "control_revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Pause switch revision to send back with pause or resume.",
+            "minimum": 0
+          },
+          "deferred_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "deferred_jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DeferredJobView"
+            }
+          },
+          "deferred_reason_counts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "failed_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "failure_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "failure_event_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "foreground_operation_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "identified_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "indeterminate": {
+            "type": "boolean",
+            "description": "True when the total is not known yet."
+          },
+          "kept_local_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ActivityKind"
+          },
+          "label": {
+            "type": "string"
+          },
+          "needs_review_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "oldest_backlog_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "priority_band": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The queue band the next job comes from."
+          },
+          "processed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "provider_unavailable": {
+            "type": "boolean",
+            "description": "True while MusicBrainz is unreachable."
+          },
+          "started_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "state": {
+            "type": "string",
+            "description": "A scan run state, or `running`, `pausing`, `paused`, `idle` or\n`failed` for identification."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "updated_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "waiting_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "ActivityKind": {
+        "type": "string",
+        "description": "What one activity card describes.",
+        "enum": [
+          "scan",
+          "identification"
+        ]
+      },
       "AddRootBody": {
         "type": "object",
         "description": "Add a library root. The path must exist and be absolute; the id\ndefaults to a fresh uuid.",
@@ -20340,6 +21006,64 @@
           }
         }
       },
+      "DeferredJobView": {
+        "type": "object",
+        "description": "One deferred identification job, named.",
+        "required": [
+          "job_id",
+          "local_album_id",
+          "album_title",
+          "artist_name",
+          "last_failure_code",
+          "attempt_count",
+          "not_before",
+          "updated_at"
+        ],
+        "properties": {
+          "album_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "artist_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "attempt_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "job_id": {
+            "type": "string"
+          },
+          "last_failure_code": {
+            "type": "string",
+            "description": "Why the last attempt did not finish."
+          },
+          "local_album_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "not_before": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Unix seconds before which the job will not run again."
+          },
+          "updated_at": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
       "Degradation": {
         "type": "object",
         "description": "One degraded source inside an otherwise successful batch. The recording\nis the error signal: optional enrichment degrades, never fails.",
@@ -24099,6 +24823,39 @@
           "2.3"
         ]
       },
+      "IdentificationControlBody": {
+        "type": "object",
+        "description": "A pause or resume of identification.",
+        "required": [
+          "expected_revision"
+        ],
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The switch revision from the activity feed's\n`control_revision`.",
+            "minimum": 0
+          }
+        }
+      },
+      "IdentificationControlResponse": {
+        "type": "object",
+        "description": "Answer to a pause or resume of identification.",
+        "required": [
+          "state",
+          "row_revision"
+        ],
+        "properties": {
+          "row_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "state": {
+            "$ref": "#/components/schemas/IdentificationState"
+          }
+        }
+      },
       "IdentificationPolicy": {
         "type": "string",
         "description": "Per-path identification policy.",
@@ -24106,6 +24863,15 @@
           "local_metadata",
           "automatic",
           "excluded"
+        ]
+      },
+      "IdentificationState": {
+        "type": "string",
+        "description": "Identification queue state after a pause or resume.",
+        "enum": [
+          "running",
+          "pausing",
+          "paused"
         ]
       },
       "IdentifyBody": {
@@ -25016,6 +25782,41 @@
           "token": {
             "type": "string",
             "description": "Single-use token for the session exchange."
+          }
+        }
+      },
+      "LibraryActivity": {
+        "type": "object",
+        "description": "The whole feed.",
+        "required": [
+          "items",
+          "work_items",
+          "revisions"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActivityItem"
+            }
+          },
+          "revisions": {
+            "type": "object",
+            "description": "Change revisions per stream (`scan`, `identification`,\n`operation`, `catalog`), as the `activity.changed` event sends.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "work_items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkItem"
+            }
           }
         }
       },
@@ -33065,6 +33866,97 @@
           }
         }
       },
+      "ScanControlBody": {
+        "type": "object",
+        "description": "A pause, resume or stop request.",
+        "required": [
+          "expected_revision"
+        ],
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The run's row revision as the caller last saw it.",
+            "minimum": 0
+          }
+        }
+      },
+      "ScanControlResponse": {
+        "type": "object",
+        "description": "A run after pause, resume or stop.",
+        "required": [
+          "run_id",
+          "state",
+          "row_revision",
+          "event_revision",
+          "stream_revision"
+        ],
+        "properties": {
+          "event_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "row_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "stream_revision": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "ScanDisposition": {
+        "type": "string",
+        "description": "How the request was taken.",
+        "enum": [
+          "started",
+          "queued",
+          "coalesced",
+          "expanded",
+          "conflict"
+        ]
+      },
+      "ScanEstimateResponse": {
+        "type": "object",
+        "description": "Approximate size of a scan.",
+        "required": [
+          "approximate",
+          "estimated_file_count",
+          "estimated_at"
+        ],
+        "properties": {
+          "approximate": {
+            "type": "boolean",
+            "description": "Always true: the count is catalog rows, not a fresh walk."
+          },
+          "estimated_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "When the count was taken (unix seconds)."
+          },
+          "estimated_file_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "ScanFileView": {
         "type": "object",
         "description": "One discovered file inside a run, with its scan-assigned track id.",
@@ -33112,6 +34004,15 @@
           "daily"
         ]
       },
+      "ScanKindBody": {
+        "type": "string",
+        "description": "Scan kind a caller can ask for.",
+        "enum": [
+          "incremental",
+          "rescan_files",
+          "policy_reconcile"
+        ]
+      },
       "ScanResponse": {
         "type": "object",
         "description": "Scan request answer.",
@@ -33135,6 +34036,185 @@
           }
         }
       },
+      "ScanRunCurrentResponse": {
+        "type": "object",
+        "description": "The run holding the worker and the next queued one.",
+        "required": [
+          "active",
+          "queued"
+        ],
+        "properties": {
+          "active": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ScanRunView"
+              }
+            ]
+          },
+          "queued": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ScanRunView"
+              }
+            ]
+          }
+        }
+      },
+      "ScanRunFailureItem": {
+        "type": "object",
+        "description": "One path a scan could not read or index.",
+        "required": [
+          "root_id",
+          "relative_path",
+          "failure_code",
+          "failure_detail",
+          "phase",
+          "recorded_at"
+        ],
+        "properties": {
+          "failure_code": {
+            "type": "string",
+            "description": "Machine code, for example `TAG_READ_FAILED`."
+          },
+          "failure_detail": {
+            "type": "string"
+          },
+          "phase": {
+            "type": "string",
+            "description": "`discovering`, `indexing` or `reconciling`."
+          },
+          "recorded_at": {
+            "type": "number",
+            "format": "double",
+            "description": "Unix seconds."
+          },
+          "relative_path": {
+            "type": "string"
+          },
+          "root_id": {
+            "type": "string"
+          }
+        }
+      },
+      "ScanRunFailuresResponse": {
+        "type": "object",
+        "description": "One page of a run's failed paths, oldest first.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScanRunFailureItem"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Pass back as `cursor` for the next page; null on the last."
+          }
+        }
+      },
+      "ScanRunHistoryResponse": {
+        "type": "object",
+        "description": "One page of finished runs, newest first.",
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScanRunView"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass back as `cursor` for the next page; null on the last."
+          }
+        }
+      },
+      "ScanRunRequestBody": {
+        "type": "object",
+        "description": "A scan request.",
+        "properties": {
+          "expected_policy_revision": {
+            "type": "string",
+            "description": "Policy revision from the library settings the caller last read.\nA request against older settings is refused with 409."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ScanKindBody",
+            "description": "What kind of scan to run."
+          },
+          "scope_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Root and path-rule ids to scan; empty means every root."
+          }
+        }
+      },
+      "ScanRunRequestedResponse": {
+        "type": "object",
+        "description": "Answer to a scan request.",
+        "required": [
+          "run_id",
+          "disposition",
+          "state",
+          "row_revision",
+          "queued_reason",
+          "conflicting_kind"
+        ],
+        "properties": {
+          "conflicting_kind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Kind of the run in the way, on a conflict."
+          },
+          "disposition": {
+            "$ref": "#/components/schemas/ScanDisposition"
+          },
+          "queued_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the request waits, when it does."
+          },
+          "row_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "That run's row revision.",
+            "minimum": 0
+          },
+          "run_id": {
+            "type": "string",
+            "description": "The run that will do the work."
+          },
+          "state": {
+            "type": "string",
+            "description": "That run's state."
+          }
+        }
+      },
       "ScanRunView": {
         "type": "object",
         "description": "One scan run.",
@@ -33147,12 +34227,22 @@
           "aggregate_scope",
           "counters",
           "queued_at",
-          "updated_at"
+          "updated_at",
+          "requested_control",
+          "coalesced_request_count",
+          "row_revision",
+          "event_revision",
+          "phase_timings"
         ],
         "properties": {
           "aggregate_scope": {
             "type": "string",
             "description": "Scope label: `all` or `selected`."
+          },
+          "coalesced_request_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Requests folded into this run."
           },
           "counters": {
             "type": "object",
@@ -33164,6 +34254,12 @@
             "propertyNames": {
               "type": "string"
             }
+          },
+          "event_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Event revision.",
+            "minimum": 0
           },
           "id": {
             "type": "string",
@@ -33177,10 +34273,45 @@
             "type": "string",
             "description": "Current phase."
           },
+          "phase_timings": {
+            "type": "object",
+            "description": "Seconds spent per phase.",
+            "additionalProperties": {
+              "type": "number",
+              "format": "double"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
           "queued_at": {
             "type": "number",
             "format": "double",
             "description": "Queue time (unix seconds)."
+          },
+          "requested_by_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who asked for the run, when someone did."
+          },
+          "requested_control": {
+            "type": "string",
+            "description": "Pending control: `none`, `pause` or `stop`."
+          },
+          "resume_phase": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Phase a paused run picks up from."
+          },
+          "row_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Row revision; pause, resume and stop send it back.",
+            "minimum": 0
           },
           "started_at": {
             "type": [
@@ -36733,6 +37864,244 @@
             "description": "Track title."
           }
         }
+      },
+      "WorkEffect": {
+        "type": "string",
+        "description": "What the work does to the library.",
+        "enum": [
+          "catalog_only",
+          "file_writing",
+          "attention"
+        ]
+      },
+      "WorkItem": {
+        "type": "object",
+        "description": "One work stack entry.",
+        "required": [
+          "id",
+          "kind",
+          "state",
+          "phase",
+          "mode",
+          "effect",
+          "processed",
+          "total",
+          "unit",
+          "indeterminate",
+          "remaining_count",
+          "subject_count",
+          "started_at",
+          "updated_at",
+          "origin",
+          "profile_name",
+          "scope_label",
+          "new_count",
+          "changed_count",
+          "missing_count",
+          "warning_count",
+          "blocked_count",
+          "succeeded_count",
+          "failed_count",
+          "skipped_count",
+          "priority",
+          "failure_event_id",
+          "failure_at",
+          "synthetic"
+        ],
+        "properties": {
+          "blocked_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "catalog_settled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "False while a settled scan still has albums waiting to identify."
+          },
+          "changed_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "effect": {
+            "$ref": "#/components/schemas/WorkEffect"
+          },
+          "failed_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "failure_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "failure_event_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "description": "Run id, or a fixed id for queue-wide entries."
+          },
+          "indeterminate": {
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/WorkKind"
+          },
+          "missing_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "mode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "new_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "origin": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pending_identification": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Albums still waiting to identify, on the drain card.",
+            "minimum": 0
+          },
+          "phase": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Lower sorts first: 0 needs attention, 20 is the running scan."
+          },
+          "processed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "profile_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "remaining_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "scope_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Administrators see which part of the library a scan covers."
+          },
+          "skipped_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "started_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "state": {
+            "type": "string"
+          },
+          "subject_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "succeeded_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "synthetic": {
+            "type": "boolean",
+            "description": "True for the drain card, which names no real run."
+          },
+          "total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "unit": {
+            "$ref": "#/components/schemas/WorkUnit"
+          },
+          "updated_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "warning_count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "WorkKind": {
+        "type": "string",
+        "description": "What kind of work one stack entry is.",
+        "enum": [
+          "scan",
+          "identification",
+          "identity_preparation",
+          "reidentification",
+          "identity_review",
+          "maintenance",
+          "library_management",
+          "recovery"
+        ]
+      },
+      "WorkUnit": {
+        "type": "string",
+        "description": "What a work entry counts.",
+        "enum": [
+          "files",
+          "albums",
+          "releases",
+          "items"
+        ]
       },
       "WrappedAlbum": {
         "type": "object",

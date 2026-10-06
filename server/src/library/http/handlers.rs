@@ -59,7 +59,7 @@ fn parse_policy(raw: Option<&str>) -> Result<EffectivePolicy, LibraryError> {
     }
 }
 
-fn run_view(run: &ScanRun) -> ScanRunView {
+pub(super) fn run_view(run: &ScanRun) -> ScanRunView {
     ScanRunView {
         id: run.id.clone(),
         kind: snake(&run.kind),
@@ -73,6 +73,13 @@ fn run_view(run: &ScanRun) -> ScanRunView {
         updated_at: run.updated_at,
         terminal_at: run.terminal_at,
         terminal_code: run.terminal_code.clone(),
+        requested_by_user_id: run.requested_by_user_id.clone(),
+        resume_phase: run.resume_phase.as_ref().map(snake),
+        requested_control: snake(&run.requested_control),
+        coalesced_request_count: run.coalesced_request_count,
+        row_revision: run.row_revision,
+        event_revision: run.event_revision,
+        phase_timings: run.phase_timings.clone(),
     }
 }
 
