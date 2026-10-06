@@ -534,3 +534,14 @@ pub fn quote_plus(text: &str) -> String {
     }
     encoded
 }
+
+/// The covers route for a release group (v2 `release_group_cover_url`),
+/// or `None` when the id is not an MBID.
+pub fn release_group_cover_url(release_group_mbid: &str) -> Option<String> {
+    crate::providers::musicbrainz::is_valid_mbid(release_group_mbid).then(|| {
+        format!(
+            "/api/v3/covers/release-group/{}?size=500",
+            release_group_mbid.trim().to_ascii_lowercase()
+        )
+    })
+}

@@ -113,6 +113,21 @@ pub struct ArtistInfo {
     pub images: ArtistImages,
     /// True when the library holds this artist.
     pub in_library: bool,
+    /// Albums, newest first, filtered by the release-type preferences.
+    pub albums: Vec<ReleaseItem>,
+    /// Singles, newest first.
+    pub singles: Vec<ReleaseItem>,
+    /// EPs, newest first.
+    pub eps: Vec<ReleaseItem>,
+    /// Release groups MusicBrainz lists for the artist, before filtering.
+    pub release_group_count: u64,
+    /// Whether the caller follows the artist.
+    pub followed: bool,
+    /// Whether the caller asked for new releases to download on their own.
+    pub auto_download: bool,
+    /// Approval state of that ask: none, pending, approved, rejected or
+    /// revoked.
+    pub auto_download_state: String,
     /// Where the page came from.
     pub source: CatalogSource,
     /// Sources that degraded while building the page.
@@ -261,6 +276,8 @@ pub struct TopAlbum {
     pub in_library: bool,
     /// True when an acquisition request is open for it.
     pub requested: bool,
+    /// The album's cover, when the release group is known.
+    pub cover_url: Option<String>,
 }
 
 /// `GET /artists/{artist_mbid}/top-albums`.
@@ -405,6 +422,8 @@ pub struct AlbumBasicInfo {
     pub in_library: bool,
     /// True when an acquisition request is open for it.
     pub requested: bool,
+    /// The album's cover, served by the covers route.
+    pub cover_url: Option<String>,
     /// Album thumbnail already cached from TheAudioDB.
     pub album_thumb_url: Option<String>,
     /// Where the page came from.
@@ -545,6 +564,8 @@ pub struct DiscoveryAlbum {
     pub in_library: bool,
     /// True when an acquisition request is open for it.
     pub requested: bool,
+    /// The album's cover.
+    pub cover_url: Option<String>,
 }
 
 /// `GET /albums/{album_id}/similar`.

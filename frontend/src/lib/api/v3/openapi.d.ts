@@ -6617,6 +6617,8 @@ export interface components {
             artist_id: string;
             /** @description Credited artist. */
             artist_name: string;
+            /** @description The album's cover, served by the covers route. */
+            cover_url?: string | null;
             /** @description Disambiguation comment. */
             disambiguation?: string | null;
             /** @description True when the library holds this album. */
@@ -7148,14 +7150,27 @@ export interface components {
         };
         /** @description `GET /artists/{artist_mbid}`: the artist header. */
         ArtistInfo: {
+            /** @description Albums, newest first, filtered by the release-type preferences. */
+            albums: components["schemas"]["ReleaseItem"][];
             /** @description Up to ten aliases. */
             aliases: string[];
+            /** @description Whether the caller asked for new releases to download on their own. */
+            auto_download: boolean;
+            /**
+             * @description Approval state of that ask: none, pending, approved, rejected or
+             *     revoked.
+             */
+            auto_download_state: string;
             /** @description ISO country code. */
             country?: string | null;
             /** @description Disambiguation comment. */
             disambiguation?: string | null;
+            /** @description EPs, newest first. */
+            eps: components["schemas"]["ReleaseItem"][];
             /** @description Known streaming, store, social and reference links. */
             external_links: components["schemas"]["ExternalLink"][];
+            /** @description Whether the caller follows the artist. */
+            followed: boolean;
             /**
              * @description Artist images already cached from TheAudioDB. The extended route
              *     fetches them, so a first visit may show none.
@@ -7168,8 +7183,15 @@ export interface components {
             musicbrainz_id: string;
             /** @description Artist name. */
             name: string;
+            /**
+             * Format: int64
+             * @description Release groups MusicBrainz lists for the artist, before filtering.
+             */
+            release_group_count: number;
             /** @description Sources that degraded while building the page. */
             service_status: components["schemas"]["Option"];
+            /** @description Singles, newest first. */
+            singles: components["schemas"]["ReleaseItem"][];
             /** @description Where the page came from. */
             source: components["schemas"]["CatalogSource"];
             /** @description Up to ten tags, most voted first. */
@@ -8239,6 +8261,8 @@ export interface components {
             artist_id?: string | null;
             /** @description Credited artist. */
             artist_name: string;
+            /** @description The album's cover. */
+            cover_url?: string | null;
             /** @description True when the library holds this album. */
             in_library: boolean;
             /** @description Release-group MBID. */
@@ -14568,6 +14592,8 @@ export interface components {
         TopAlbum: {
             /** @description Credited artist. */
             artist_name: string;
+            /** @description The album's cover, when the release group is known. */
+            cover_url?: string | null;
             /** @description True when the library holds this album. */
             in_library: boolean;
             /**

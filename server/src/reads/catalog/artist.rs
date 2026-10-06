@@ -162,6 +162,22 @@ pub struct ReleaseGroupList {
     pub items: Vec<ReleaseGroupItem>,
     /// Whether every page has been fetched.
     pub complete: bool,
+    /// Release groups MusicBrainz lists for the artist, before filtering.
+    #[serde(default)]
+    pub total: u64,
+}
+
+/// A discography split into the three sections the pages show, each
+/// newest first, filtered by the release-type preferences and flagged
+/// against the library.
+#[derive(Debug, Clone, Default)]
+pub struct Discography {
+    /// Albums.
+    pub albums: Vec<ReleaseItem>,
+    /// EPs.
+    pub eps: Vec<ReleaseItem>,
+    /// Singles.
+    pub singles: Vec<ReleaseItem>,
 }
 
 /// The cached biography and portrait.
@@ -235,19 +251,25 @@ impl Catalog {
         .await
     }
 
-    /// `GET /artists/{artist_mbid}`: the header. A dead MusicBrainz falls
-    /// back to the library's own row for the artist.
-    pub async fn artist(&self, raw_mbid: &str) -> Result<ArtistInfo, CatalogError> {
+    /// `GET /artists/{artist_mbid}`: the header, the discography in three
+    /// sections (as v2's full artist read), and the caller's follow state.
+    /// A dead MusicBrainz falls back to the library's own rows.
+    pub async fn artist(&self, user_id: &str, raw_mbid: &str) -> Result<ArtistInfo, CatalogError> {
         let mbid = checked_mbid(raw_mbid, "artist")?;
         let (result, context) = scoped(self.build_artist(&mbid)).await;
-        result.map(|mut info| {
-            info.service_status = mapping::service_status(&context);
-            info
-        })
+        let mut info = result?;
+        info.service_status = mapping::service_status(&context);
+        if let Some(follow) = self.follows().status(user_id, &info.musicbrainz_id).await {
+            info.followed = follow.followed;
+            info.auto_download = follow.auto_download;
+            info.auto_download_state = follow.auto_download_state;
+        }
+        Ok(info)
     }
 
     async fn build_artist(&self, mbid: &str) -> Result<ArtistInfo, CatalogError> {
-        let detail = match self.artist_detail(mbid).await {
+        let (detail, list) = tokio::join!(self.artist_detail(mbid), self.release_groups(mbid));
+        let detail = match detail {
             Ok(Some(detail)) => detail,
             Ok(None) => return Err(CatalogError::NotFound),
             Err(error) => {
@@ -260,6 +282,7 @@ impl Catalog {
                         .map_err(CatalogError::database)?
                 {
                     tracing::warn!(artist = %mbid, "musicbrainz unavailable; artist page from the library");
+                    let discography = self.local_discography(mbid).await?.unwrap_or_default();
                     return Ok(ArtistInfo {
                         name: local.name,
                         musicbrainz_id: mbid.to_owned(),
@@ -272,6 +295,13 @@ impl Catalog {
                         external_links: Vec::new(),
                         images: self.cached_artist_images(mbid).await.unwrap_or_default(),
                         in_library: true,
+                        release_group_count: discography.albums.len() as u64,
+                        albums: discography.albums,
+                        singles: discography.singles,
+                        eps: discography.eps,
+                        followed: false,
+                        auto_download: false,
+                        auto_download_state: "none".to_owned(),
                         source: CatalogSource::Library,
                         service_status: None,
                     });
@@ -287,6 +317,16 @@ impl Catalog {
             .cached_artist_images(&detail.mbid)
             .await
             .unwrap_or_default();
+        // The discography decorates the header; a failed browse leaves the
+        // sections empty with the outage noted, never fails the header.
+        let (discography, release_group_count) = match list {
+            Ok(list) => (self.discography(&list).await, list.total),
+            Err(error) => {
+                record_mb_down(&error);
+                tracing::warn!(artist = %mbid, %error, "artist discography unavailable");
+                (Discography::default(), 0)
+            }
+        };
         Ok(ArtistInfo {
             name: detail.name,
             musicbrainz_id: detail.mbid,
@@ -299,6 +339,13 @@ impl Catalog {
             external_links: detail.external_links,
             images,
             in_library,
+            albums: discography.albums,
+            singles: discography.singles,
+            eps: discography.eps,
+            release_group_count,
+            followed: false,
+            auto_download: false,
+            auto_download_state: "none".to_owned(),
             source: CatalogSource::Musicbrainz,
             service_status: None,
         })
@@ -475,6 +522,7 @@ impl Catalog {
                         ReleaseGroupList {
                             items,
                             complete: true,
+                            total,
                         },
                         Some(ttl),
                     ));
@@ -484,6 +532,7 @@ impl Catalog {
                     ReleaseGroupList {
                         items,
                         complete: false,
+                        total,
                     },
                     Some(PARTIAL_DISCOGRAPHY_TTL),
                 ))
@@ -568,6 +617,7 @@ impl Catalog {
         let list = ReleaseGroupList {
             items,
             complete: true,
+            total,
         };
         let bytes = serde_json::to_vec(&list)
             .map_err(|error| CatalogError::Internal(format!("discography encode: {error}")))?;
@@ -600,53 +650,39 @@ impl Catalog {
         offset: u32,
         limit: u32,
     ) -> Result<ArtistReleases, CatalogError> {
-        let preferences = self.upstream().settings().preferences();
-        let primary = mapping::type_set(&preferences.primary_types);
-        let secondary = mapping::type_set(&preferences.secondary_types);
-        if primary.is_empty() {
-            return Ok(paged(
-                Vec::new(),
-                offset,
-                limit,
-                true,
-                CatalogSource::Musicbrainz,
-            ));
-        }
         let list = match self.release_groups(mbid).await {
             Ok(list) => list,
             Err(error) => {
                 record_mb_down(&error);
-                if matches!(error, CatalogError::Unavailable(_)) {
-                    let local = self
-                        .local()
-                        .artist_albums(mbid)
-                        .await
-                        .map_err(CatalogError::database)?;
-                    if !local.is_empty() {
-                        tracing::warn!(artist = %mbid, "musicbrainz unavailable; discography from the library");
-                        let tagged = local
-                            .into_iter()
-                            .map(|album| {
-                                (
-                                    Section::Album,
-                                    ReleaseItem {
-                                        id: album.release_group_mbid,
-                                        title: Some(album.title),
-                                        release_type: None,
-                                        first_release_date: None,
-                                        year: album.year,
-                                        in_library: true,
-                                        requested: false,
-                                    },
-                                )
-                            })
-                            .collect();
-                        return Ok(paged(tagged, offset, limit, true, CatalogSource::Library));
-                    }
+                if matches!(error, CatalogError::Unavailable(_))
+                    && let Some(local) = self.local_discography(mbid).await?
+                {
+                    tracing::warn!(artist = %mbid, "musicbrainz unavailable; discography from the library");
+                    return Ok(paged(local, offset, limit, true, CatalogSource::Library));
                 }
                 return Err(error);
             }
         };
+        let discography = self.discography(&list).await;
+        Ok(paged(
+            discography,
+            offset,
+            limit,
+            list.complete,
+            CatalogSource::Musicbrainz,
+        ))
+    }
+
+    /// Split a release-group list into sections, filtered by the
+    /// release-type preferences (v2 `categorize_release_groups`) and
+    /// flagged against the library and the request list.
+    pub(super) async fn discography(&self, list: &ReleaseGroupList) -> Discography {
+        let preferences = self.upstream().settings().preferences();
+        let primary = mapping::type_set(&preferences.primary_types);
+        let secondary = mapping::type_set(&preferences.secondary_types);
+        if primary.is_empty() {
+            return Discography::default();
+        }
         let kept: Vec<&ReleaseGroupItem> = list
             .items
             .iter()
@@ -662,9 +698,7 @@ impl Catalog {
             .collect();
         let ids: Vec<String> = kept.iter().map(|item| item.id.clone()).collect();
         let (owned, requested) = self.album_flags(&ids).await;
-        let mut albums = Vec::new();
-        let mut eps = Vec::new();
-        let mut singles = Vec::new();
+        let mut sections = Discography::default();
         for item in kept {
             let id = item.id.to_ascii_lowercase();
             let in_library = owned.contains(&id);
@@ -683,28 +717,48 @@ impl Catalog {
                 .map(str::to_lowercase)
                 .as_deref()
             {
-                Some("album") => albums.push(release),
-                Some("ep") => eps.push(release),
-                Some("single") => singles.push(release),
+                Some("album") => sections.albums.push(release),
+                Some("ep") => sections.eps.push(release),
+                Some("single") => sections.singles.push(release),
                 _ => {}
             }
         }
-        for section in [&mut albums, &mut eps, &mut singles] {
+        for section in [
+            &mut sections.albums,
+            &mut sections.eps,
+            &mut sections.singles,
+        ] {
             section.sort_by_key(|item| (item.year.is_none(), std::cmp::Reverse(item.year)));
         }
-        let tagged: Vec<(Section, ReleaseItem)> = albums
-            .into_iter()
-            .map(|item| (Section::Album, item))
-            .chain(eps.into_iter().map(|item| (Section::Ep, item)))
-            .chain(singles.into_iter().map(|item| (Section::Single, item)))
-            .collect();
-        Ok(paged(
-            tagged,
-            offset,
-            limit,
-            list.complete,
-            CatalogSource::Musicbrainz,
-        ))
+        sections
+    }
+
+    /// The library's identified albums by an artist, as a discography,
+    /// for when MusicBrainz is down. `None` when the library has none.
+    async fn local_discography(&self, mbid: &str) -> Result<Option<Discography>, CatalogError> {
+        let local = self
+            .local()
+            .artist_albums(mbid)
+            .await
+            .map_err(CatalogError::database)?;
+        if local.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(Discography {
+            albums: local
+                .into_iter()
+                .map(|album| ReleaseItem {
+                    id: album.release_group_mbid,
+                    title: Some(album.title),
+                    release_type: None,
+                    first_release_date: None,
+                    year: album.year,
+                    in_library: true,
+                    requested: false,
+                })
+                .collect(),
+            ..Discography::default()
+        }))
     }
 
     /// `GET /artists/{artist_mbid}/lastfm`: Last.fm biography, tags and
@@ -817,14 +871,27 @@ enum Section {
     Single,
 }
 
-/// Slice one page out of the section-ordered list.
+/// Slice one page out of the discography, running albums, then EPs, then
+/// singles.
 fn paged(
-    tagged: Vec<(Section, ReleaseItem)>,
+    discography: Discography,
     offset: u32,
     limit: u32,
     complete: bool,
     source: CatalogSource,
 ) -> ArtistReleases {
+    let tagged: Vec<(Section, ReleaseItem)> = discography
+        .albums
+        .into_iter()
+        .map(|item| (Section::Album, item))
+        .chain(discography.eps.into_iter().map(|item| (Section::Ep, item)))
+        .chain(
+            discography
+                .singles
+                .into_iter()
+                .map(|item| (Section::Single, item)),
+        )
+        .collect();
     let total = u32::try_from(tagged.len()).unwrap_or(u32::MAX);
     let mut albums = Vec::new();
     let mut eps = Vec::new();

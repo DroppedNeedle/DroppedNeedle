@@ -15076,6 +15076,13 @@
             "type": "string",
             "description": "Credited artist."
           },
+          "cover_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The album's cover, served by the covers route."
+          },
           "disambiguation": {
             "type": [
               "string",
@@ -16340,16 +16347,38 @@
           "external_links",
           "images",
           "in_library",
+          "albums",
+          "singles",
+          "eps",
+          "release_group_count",
+          "followed",
+          "auto_download",
+          "auto_download_state",
           "source",
           "service_status"
         ],
         "properties": {
+          "albums": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseItem"
+            },
+            "description": "Albums, newest first, filtered by the release-type preferences."
+          },
           "aliases": {
             "type": "array",
             "items": {
               "type": "string"
             },
             "description": "Up to ten aliases."
+          },
+          "auto_download": {
+            "type": "boolean",
+            "description": "Whether the caller asked for new releases to download on their own."
+          },
+          "auto_download_state": {
+            "type": "string",
+            "description": "Approval state of that ask: none, pending, approved, rejected or\nrevoked."
           },
           "country": {
             "type": [
@@ -16365,12 +16394,23 @@
             ],
             "description": "Disambiguation comment."
           },
+          "eps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseItem"
+            },
+            "description": "EPs, newest first."
+          },
           "external_links": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ExternalLink"
             },
             "description": "Known streaming, store, social and reference links."
+          },
+          "followed": {
+            "type": "boolean",
+            "description": "Whether the caller follows the artist."
           },
           "images": {
             "$ref": "#/components/schemas/ArtistImages",
@@ -16399,9 +16439,22 @@
             "type": "string",
             "description": "Artist name."
           },
+          "release_group_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Release groups MusicBrainz lists for the artist, before filtering.",
+            "minimum": 0
+          },
           "service_status": {
             "$ref": "#/components/schemas/Option",
             "description": "Sources that degraded while building the page."
+          },
+          "singles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseItem"
+            },
+            "description": "Singles, newest first."
           },
           "source": {
             "$ref": "#/components/schemas/CatalogSource",
@@ -18745,6 +18798,13 @@
           "artist_name": {
             "type": "string",
             "description": "Credited artist."
+          },
+          "cover_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The album's cover."
           },
           "in_library": {
             "type": "boolean",
@@ -31389,6 +31449,13 @@
           "artist_name": {
             "type": "string",
             "description": "Credited artist."
+          },
+          "cover_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The album's cover, when the release group is known."
           },
           "in_library": {
             "type": "boolean",

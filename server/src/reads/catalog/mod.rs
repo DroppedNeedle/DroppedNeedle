@@ -25,6 +25,7 @@ pub mod handlers;
 pub mod library;
 pub mod mapping;
 pub mod models;
+pub mod ports;
 pub mod search;
 pub mod upstream;
 
@@ -55,6 +56,7 @@ pub const MISS_TTL: Duration = Duration::from_secs(600);
 #[derive(Clone)]
 pub struct Catalog {
     inner: Arc<Inner>,
+    follows: Arc<dyn ports::FollowLookup>,
 }
 
 struct Inner {
@@ -87,7 +89,19 @@ impl Catalog {
                 flights: Flights::default(),
                 warming: Mutex::new(HashSet::new()),
             }),
+            follows: Arc::new(ports::NoFollows),
         }
+    }
+
+    /// Read follow state for the artist header from this store.
+    #[must_use]
+    pub fn with_follows(mut self, follows: Arc<dyn ports::FollowLookup>) -> Self {
+        self.follows = follows;
+        self
+    }
+
+    fn follows(&self) -> &dyn ports::FollowLookup {
+        self.follows.as_ref()
     }
 
     fn upstream(&self) -> &Upstream {

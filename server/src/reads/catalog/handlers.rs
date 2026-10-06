@@ -100,9 +100,10 @@ fn count(
 )]
 pub async fn artist(
     State(deps): State<CatalogDeps>,
+    SessionUser(user): SessionUser,
     Path(mbid): Path<String>,
 ) -> Answer<ArtistInfo> {
-    answer(&deps, deps.catalog.artist(&mbid).await)
+    answer(&deps, deps.catalog.artist(&user, &mbid).await)
 }
 
 /// Biography, portrait and artist images.

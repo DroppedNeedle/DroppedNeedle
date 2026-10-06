@@ -472,6 +472,13 @@ async fn artist_header_reads_musicbrainz_once_and_flags_the_library() {
     assert_eq!(body["in_library"], true);
     assert_eq!(body["source"], "musicbrainz");
     assert!(body["service_status"].is_null());
+    assert_eq!(titles(&body["albums"]), ["Kid A", "OK Computer"]);
+    assert_eq!(titles(&body["eps"]), ["My Iron Lung"]);
+    assert_eq!(titles(&body["singles"]), ["Creep"]);
+    assert_eq!(body["albums"][1]["in_library"], true);
+    assert_eq!(body["release_group_count"], 6);
+    assert_eq!(body["followed"], false);
+    assert_eq!(body["auto_download_state"], "none");
 
     get(&app, &uri).await;
     assert_eq!(
@@ -628,6 +635,10 @@ async fn album_page_shows_the_owned_edition_and_where_to_buy() {
     assert_eq!(album["artist_id"], ARTIST);
     assert_eq!(album["year"], 1997);
     assert_eq!(album["in_library"], true);
+    assert_eq!(
+        album["cover_url"],
+        format!("/api/v3/covers/release-group/{OK_COMPUTER}?size=500")
+    );
     assert_eq!(album["selected_release_mbid"], RELEASE_CD);
     assert_eq!(album["pick_basis"], "owned");
     assert_eq!(titles(&album["tracks"]), ["Airbag", "Paranoid Android"]);
@@ -680,6 +691,7 @@ async fn musicbrainz_outage_falls_back_to_the_library() {
     assert_eq!(artist["source"], "library");
     assert_eq!(artist["name"], "Radiohead");
     assert_eq!(artist["service_status"], json!({"musicbrainz": "error"}));
+    assert_eq!(titles(&artist["albums"]), ["OK Computer"]);
 
     let releases = get(&app, &format!("/api/v3/artists/{ARTIST}/releases")).await;
     assert_eq!(releases["source"], "library");

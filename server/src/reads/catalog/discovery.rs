@@ -274,6 +274,7 @@ impl Catalog {
                             listen_count: group.listen_count,
                             in_library: false,
                             requested: false,
+                            cover_url: None,
                         })
                         .collect(),
                     ..SectionRows::default()
@@ -354,6 +355,7 @@ impl Catalog {
                 .to_ascii_lowercase();
             album.in_library = owned.contains(&id);
             album.requested = !album.in_library && requested.contains(&id);
+            album.cover_url = mapping::release_group_cover_url(&id);
         }
         Ok(TopAlbumsResponse {
             albums,
@@ -419,6 +421,7 @@ impl Catalog {
                             year: None,
                             in_library: false,
                             requested: false,
+                            cover_url: None,
                         });
                     }
                     if albums.len() >= count as usize {
@@ -484,6 +487,7 @@ impl Catalog {
                 year: mapping::year_of(item.first_release_date.as_deref()),
                 in_library: false,
                 requested: false,
+                cover_url: None,
             })
             .collect();
         self.flag_discovery_albums(&mut albums).await;
@@ -503,6 +507,7 @@ impl Catalog {
             let id = album.musicbrainz_id.to_ascii_lowercase();
             album.in_library = owned.contains(&id);
             album.requested = !album.in_library && requested.contains(&id);
+            album.cover_url = mapping::release_group_cover_url(&id);
         }
     }
 }
@@ -568,6 +573,7 @@ async fn lastfm_rows(
                     listen_count: album.playcount,
                     in_library: false,
                     requested: false,
+                    cover_url: None,
                 })
                 .collect(),
             ..SectionRows::default()

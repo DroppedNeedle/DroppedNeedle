@@ -151,6 +151,7 @@ impl ReadsSetup {
     /// search, through this catalog.
     #[must_use]
     pub fn with_catalog(mut self, catalog: catalog::Catalog) -> Self {
+        let catalog = catalog.with_follows(Arc::new(CollectionsFollows(self.collections.clone())));
         self.search.service = self.search.service.clone().with_remote(catalog.clone());
         self.catalog = Some(catalog::CatalogDeps {
             catalog,
@@ -234,6 +235,35 @@ fn platform_state(
         VersionState::new(Arc::new(FakeReleases::tagged(env!("CARGO_PKG_VERSION")))),
         WrappedState::new(wrapped_key, Arc::new(FakeWrappedData::empty(year))),
     )
+}
+
+/// The artist header's follow state, read from the collections follow
+/// store. A store failure logs and reads as "not followed".
+struct CollectionsFollows(collections::CollectionsState);
+
+impl catalog::ports::FollowLookup for CollectionsFollows {
+    fn status<'a>(
+        &'a self,
+        user_id: &'a str,
+        artist_mbid: &'a str,
+    ) -> catalog::ports::BoxFuture<'a, Option<catalog::ports::FollowState>> {
+        Box::pin(async move {
+            match collections::service::CollectionsService::new(&self.0)
+                .follow_status(user_id, artist_mbid)
+                .await
+            {
+                Ok(status) => Some(catalog::ports::FollowState {
+                    followed: status.followed,
+                    auto_download: status.auto_download,
+                    auto_download_state: status.auto_download_state,
+                }),
+                Err(error) => {
+                    tracing::warn!(?error, "follow state unavailable for the artist header");
+                    None
+                }
+            }
+        })
+    }
 }
 
 /// Resolve the collections principal from the stashed session, mirroring

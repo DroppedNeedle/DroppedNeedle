@@ -359,6 +359,7 @@ impl Catalog {
             disambiguation: group.disambiguation.clone(),
             in_library,
             requested: !in_library && requested.contains(&key),
+            cover_url: mapping::release_group_cover_url(&group.mbid),
             album_thumb_url: self
                 .cached_album_images(&group.mbid)
                 .await
@@ -389,6 +390,7 @@ impl Catalog {
             disambiguation: None,
             in_library: true,
             requested: false,
+            cover_url: mapping::release_group_cover_url(id),
             album_thumb_url: self
                 .cached_album_images(id)
                 .await
