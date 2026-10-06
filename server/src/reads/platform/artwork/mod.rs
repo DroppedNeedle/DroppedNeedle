@@ -55,6 +55,9 @@ pub const MISS_TTL_SECS: u64 = 4 * 3600;
 /// The archive could not be reached: ask again after 15 minutes (v2
 /// `COVER_TRANSIENT_NEGATIVE_TTL_SECONDS`).
 pub const OUTAGE_TTL_SECS: u64 = 900;
+/// Local art resizes decoding at once; each can hold a large picture in
+/// memory.
+pub const RESIZE_PERMITS: usize = 3;
 /// Largest archive image accepted (v2 `MAX_DELIVERY_IMAGE_BYTES`).
 pub const MAX_REMOTE_BYTES: usize = 20 * 1024 * 1024;
 
@@ -70,6 +73,16 @@ pub struct ArtworkService {
     remote: Option<Arc<dyn RemoteCovers>>,
     prefer_local: PreferLocal,
     flights: Singleflight<Option<CoverBytes>>,
+    resizes: Singleflight<Option<Rendition>>,
+    resize_permits: Arc<tokio::sync::Semaphore>,
+}
+
+/// A scaled-down copy of local art.
+#[derive(Debug, Clone)]
+struct Rendition {
+    bytes: Vec<u8>,
+    content_type: String,
+    hash: String,
 }
 
 impl ArtworkService {
@@ -87,6 +100,8 @@ impl ArtworkService {
             remote,
             prefer_local,
             flights: Singleflight::new(),
+            resizes: Singleflight::new(),
+            resize_permits: Arc::new(tokio::sync::Semaphore::new(RESIZE_PERMITS)),
         }
     }
 
@@ -155,34 +170,35 @@ impl ArtworkService {
                 ..original
             });
         }
+        // One resize per rendition at a time, and at most a few overall.
+        let cache = self.cache.clone();
+        let permits = self.resize_permits.clone();
         let source = original.bytes.clone();
-        let shrunk = tokio::task::spawn_blocking(move || resize::shrink_to_fit(&source, max))
-            .await
-            .unwrap_or_else(|error| {
-                tracing::error!(%error, "local art resize task failed");
-                None
-            });
-        match shrunk {
-            Some((bytes, content_type)) => {
-                let hash = self
-                    .cache
-                    .put(Some(&key), bytes.clone(), content_type)
-                    .await;
-                Some(CoverBytes {
-                    bytes,
-                    content_type: content_type.to_owned(),
-                    hash,
-                    ..original
-                })
-            }
-            None => {
-                // Already small enough: remember that, so it is not decoded
-                // again.
-                self.cache
-                    .put(Some(&key), original.bytes.clone(), &original.content_type)
-                    .await;
-                Some(original)
-            }
+        let (original_hash, original_type) = (original.hash.clone(), original.content_type.clone());
+        let flight_key = key.clone();
+        let rendition = self
+            .resizes
+            .run(&flight_key, move || async move {
+                Ok(resize_and_store(
+                    cache,
+                    permits,
+                    key,
+                    source,
+                    max,
+                    original_hash,
+                    original_type,
+                )
+                .await)
+            })
+            .await;
+        match rendition.as_deref() {
+            Ok(Some(rendition)) => Some(CoverBytes {
+                bytes: rendition.bytes.clone(),
+                content_type: rendition.content_type.clone(),
+                hash: rendition.hash.clone(),
+                ..original
+            }),
+            Ok(None) | Err(_) => Some(original),
         }
     }
 
@@ -267,6 +283,46 @@ impl ArtworkService {
                 CoverLookup::Missing
             }
             Err(_) => CoverLookup::Warming,
+        }
+    }
+}
+
+/// Scale local art down to `max` under a resize permit and cache the
+/// rendition under `key`. Art already small enough is recorded as its own
+/// rendition (by its existing hash) so it is not decoded again. A failed
+/// resize task caches nothing.
+async fn resize_and_store(
+    cache: ArtworkCache,
+    permits: Arc<tokio::sync::Semaphore>,
+    key: String,
+    source: Vec<u8>,
+    max: u32,
+    original_hash: String,
+    original_type: String,
+) -> Option<Rendition> {
+    let _permit = match permits.acquire_owned().await {
+        Ok(permit) => permit,
+        Err(error) => {
+            tracing::error!(%error, "resize permits closed; serving the original");
+            return None;
+        }
+    };
+    match tokio::task::spawn_blocking(move || resize::shrink_to_fit(&source, max)).await {
+        Ok(Some((bytes, content_type))) => {
+            let hash = cache.put(Some(&key), bytes.clone(), content_type).await;
+            Some(Rendition {
+                bytes,
+                content_type: content_type.to_owned(),
+                hash,
+            })
+        }
+        Ok(None) => {
+            cache.put_key(&key, &original_hash, &original_type).await;
+            None
+        }
+        Err(error) => {
+            tracing::error!(%error, "local art resize task failed; serving the original");
+            None
         }
     }
 }

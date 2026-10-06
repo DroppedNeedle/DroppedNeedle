@@ -28,7 +28,8 @@
 //!
 //! A sweep is a background chore and gives way to scans: it stops between
 //! albums when `stop` says so (shutdown, or a scan was requested) and after
-//! [`SWEEP_SLICE`], and reports itself incomplete. Finished albums are
+//! [`SWEEP_SLICE`] of reading (at least 50 albums), and reports itself
+//! incomplete. Finished albums are
 //! already saved, so the next sweep carries on from there.
 
 use std::collections::HashMap;
@@ -51,6 +52,8 @@ const COVER_EXTENSIONS: [&str; 4] = ["jpg", "jpeg", "png", "webp"];
 const COVER_MAX_BYTES: u64 = 25 * 1024 * 1024;
 /// Longest stretch one sweep runs before handing back to the scan loop.
 pub const SWEEP_SLICE: std::time::Duration = std::time::Duration::from_secs(30);
+/// Albums read per sweep at least before the slice may end it.
+const MIN_PER_SLICE: usize = 50;
 /// Albums written per transaction, so the store lock is held briefly.
 const WRITE_BATCH: usize = 200;
 
@@ -110,7 +113,9 @@ impl SqliteScanStore {
     /// small transactions. `stop` is polled between albums so neither
     /// shutdown nor a requested scan waits for a large first sweep.
     pub fn refresh_album_artwork(&self, stop: &dyn Fn() -> bool) -> ArtworkSweep {
-        let started = std::time::Instant::now();
+        // The slice clock starts at the first album that needs reading, so
+        // the signature pass over unchanged albums never uses it up.
+        let mut started: Option<std::time::Instant> = None;
         let snapshot = match self.artwork_snapshot() {
             Ok(snapshot) => snapshot,
             Err(error) => {
@@ -127,7 +132,9 @@ impl SqliteScanStore {
         };
         let mut pending = Vec::new();
         for (album_id, tracks) in &snapshot.albums {
-            if stop() || started.elapsed() >= SWEEP_SLICE {
+            let slice_spent = started.is_some_and(|at| at.elapsed() >= SWEEP_SLICE)
+                && sweep.checked >= MIN_PER_SLICE;
+            if stop() || slice_spent {
                 sweep.complete = false;
                 break;
             }
@@ -144,6 +151,7 @@ impl SqliteScanStore {
             if snapshot.checks.get(album_id) == Some(&signature) {
                 continue;
             }
+            started.get_or_insert_with(std::time::Instant::now);
             sweep.checked += 1;
             let found = find_art(tracks, &dirs);
             // Sign with the image actually found, so the next sweep (which

@@ -11,9 +11,10 @@
 //!
 //! When the blobs pass `COVER_CACHE_MAX_SIZE_MB` the least recently used
 //! ones are deleted. A key whose blob was evicted reads as a miss, so the
-//! art is fetched again. Key records pointing at evicted blobs, and miss
-//! markers past their time, are removed when the cache first loads and
-//! after each eviction. Every file operation runs on a blocking thread,
+//! art is fetched again. Eviction also deletes the key records that point
+//! at the evicted blobs (a reverse map tracks them). A full pass over the
+//! key records, dropping orphans and miss markers past their time, runs
+//! when the cache loads and at most hourly after that. Every file operation runs on a blocking thread,
 //! and writes go through a temporary file and a rename so a crash never
 //! leaves a half-written image behind.
 
@@ -21,7 +22,10 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+/// Least time between two full passes over the key records.
+const FULL_CLEAN_EVERY: Duration = Duration::from_secs(3600);
 
 use sha2::{Digest as _, Sha256};
 
@@ -55,6 +59,10 @@ struct Index {
     blobs: HashMap<String, BlobUse>,
     total: u64,
     clock: u64,
+    /// Key record paths per blob hash, so eviction can drop them.
+    keys_by_hash: HashMap<String, HashSet<PathBuf>>,
+    /// When the last full pass over the key records ran.
+    last_full_clean: Option<Instant>,
 }
 
 impl Index {
@@ -131,8 +139,10 @@ impl ArtworkCache {
         let hash = sha256_hex(&bytes);
         let size = bytes.len() as u64;
         let blob = self.blob_path(&hash);
-        let key_file =
-            key.map(|key| (self.key_path(key), format!("hit\n{hash}\n{content_type}\n")));
+        let key_path = key.map(|key| self.key_path(key));
+        let key_file = key_path
+            .clone()
+            .map(|path| (path, format!("hit\n{hash}\n{content_type}\n")));
         let written = blocking(move || -> std::io::Result<bool> {
             let fresh = !blob.exists();
             if fresh {
@@ -164,6 +174,13 @@ impl ArtworkCache {
                             last_used: clock,
                         },
                     );
+                    if let Some(path) = key_path {
+                        index
+                            .keys_by_hash
+                            .entry(hash.clone())
+                            .or_default()
+                            .insert(path);
+                    }
                     index.total > self.max_bytes
                 };
                 if over {
@@ -178,12 +195,45 @@ impl ArtworkCache {
         hash
     }
 
+    /// Point `key` at a blob already stored under `hash`, without reading
+    /// or hashing the bytes again.
+    pub async fn put_key(&self, key: &str, hash: &str, content_type: &str) {
+        if !is_hash(hash) {
+            return;
+        }
+        let path = self.key_path(key);
+        let text = format!("hit\n{hash}\n{content_type}\n");
+        let target = path.clone();
+        match blocking(move || write_atomic(&target, text.as_bytes())).await {
+            Some(Ok(())) => {
+                if let Some(index) = self.lock().as_mut() {
+                    index.touch(hash);
+                    index
+                        .keys_by_hash
+                        .entry(hash.to_owned())
+                        .or_default()
+                        .insert(path);
+                }
+            }
+            Some(Err(error)) => tracing::warn!(%error, "cover cache key not written"),
+            None => {}
+        }
+    }
+
     /// Record that the source had no art for `key` for `ttl_secs`.
     pub async fn put_miss(&self, key: &str, ttl_secs: u64) {
         let path = self.key_path(key);
         let text = format!("miss\n{}\n", unix_now() + ttl_secs);
         if let Some(Err(error)) = blocking(move || write_atomic(&path, text.as_bytes())).await {
             tracing::warn!(%error, "cover cache miss marker not written");
+        }
+        let due = self.lock().as_ref().is_some_and(|index| {
+            index
+                .last_full_clean
+                .is_none_or(|last| last.elapsed() >= FULL_CLEAN_EVERY)
+        });
+        if due {
+            self.full_clean().await;
         }
     }
 
@@ -196,31 +246,47 @@ impl ArtworkCache {
         let scanned = blocking(move || scan_blobs(&blobs_dir))
             .await
             .unwrap_or_default();
-        let live = {
+        {
             let mut guard = self.lock();
             if guard.is_some() {
                 return;
             }
             let total = scanned.values().map(|entry| entry.size).sum();
             let clock = scanned.len() as u64;
-            let live: HashSet<String> = scanned.keys().cloned().collect();
             *guard = Some(Index {
                 blobs: scanned,
                 total,
                 clock,
+                keys_by_hash: HashMap::new(),
+                last_full_clean: None,
             });
-            live
-        };
-        self.clean_keys(live).await;
+        }
+        self.full_clean().await;
     }
 
-    /// Remove key records whose blob is gone and miss markers past their
-    /// time.
-    async fn clean_keys(&self, live: HashSet<String>) {
+    /// One pass over every key record: drop those whose blob is gone, miss
+    /// markers past their time, and unreadable records, and rebuild the
+    /// reverse map from the rest.
+    async fn full_clean(&self) {
+        let live: HashSet<String> = {
+            let mut guard = self.lock();
+            let Some(index) = guard.as_mut() else {
+                return;
+            };
+            index.last_full_clean = Some(Instant::now());
+            index.blobs.keys().cloned().collect()
+        };
         let keys_dir = self.root.join("keys");
-        let removed = blocking(move || clean_key_files(&keys_dir, &live, unix_now()))
-            .await
-            .unwrap_or(0);
+        let Some((removed, kept)) =
+            blocking(move || clean_key_files(&keys_dir, &live, unix_now())).await
+        else {
+            return;
+        };
+        if let Some(index) = self.lock().as_mut() {
+            for (hash, path) in kept {
+                index.keys_by_hash.entry(hash).or_default().insert(path);
+            }
+        }
         if removed > 0 {
             tracing::debug!(removed, "cover cache dropped stale key records");
         }
@@ -248,7 +314,8 @@ impl ArtworkCache {
                 }
                 index.blobs.remove(&hash);
                 index.total = index.total.saturating_sub(size);
-                victims.push(self.blob_path(&hash));
+                let keys = index.keys_by_hash.remove(&hash).unwrap_or_default();
+                victims.push((self.blob_path(&hash), hash, keys));
             }
             victims
         };
@@ -256,23 +323,30 @@ impl ArtworkCache {
             return;
         }
         let count = victims.len();
-        let live: HashSet<String> = self
-            .lock()
-            .as_ref()
-            .map(|index| index.blobs.keys().cloned().collect())
-            .unwrap_or_default();
         blocking(move || {
-            for path in victims {
-                if let Err(error) = std::fs::remove_file(&path)
+            for (blob, hash, keys) in victims {
+                if let Err(error) = std::fs::remove_file(&blob)
                     && error.kind() != std::io::ErrorKind::NotFound
                 {
-                    tracing::warn!(%error, path = %path.display(), "cover cache eviction failed");
+                    tracing::warn!(%error, path = %blob.display(), "cover cache eviction failed");
+                }
+                // Only records still pointing at this blob go; a key may
+                // have moved on to newer art since.
+                for key in keys {
+                    let points_here = std::fs::read_to_string(&key)
+                        .ok()
+                        .and_then(|text| parse_key(&text))
+                        .is_some_and(|entry| {
+                            matches!(entry, KeyEntry::Hit { hash: pointed, .. } if pointed == hash)
+                        });
+                    if points_here {
+                        let _ = std::fs::remove_file(&key);
+                    }
                 }
             }
         })
         .await;
         tracing::debug!(count, "cover cache evicted old images");
-        self.clean_keys(live).await;
     }
 
     fn blob_path(&self, hash: &str) -> PathBuf {
@@ -345,11 +419,17 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 }
 
 /// Delete key records that point at a blob not in `live`, expired miss
-/// markers, and records that do not parse. Returns how many went.
-fn clean_key_files(dir: &Path, live: &HashSet<String>, now: u64) -> usize {
+/// markers, and records that do not parse. Returns how many went, and the
+/// (hash, path) of every record kept that points at a blob.
+fn clean_key_files(
+    dir: &Path,
+    live: &HashSet<String>,
+    now: u64,
+) -> (usize, Vec<(String, PathBuf)>) {
     let mut removed = 0;
+    let mut kept = Vec::new();
     let Ok(shards) = std::fs::read_dir(dir) else {
-        return 0;
+        return (0, kept);
     };
     for shard in shards.flatten() {
         let Ok(files) = std::fs::read_dir(shard.path()) else {
@@ -365,7 +445,14 @@ fn clean_key_files(dir: &Path, live: &HashSet<String>, now: u64) -> usize {
                 .as_deref()
                 .map(parse_key)
             {
-                Some(Some(KeyEntry::Hit { hash, .. })) => !live.contains(&hash),
+                Some(Some(KeyEntry::Hit { hash, .. })) => {
+                    if live.contains(&hash) {
+                        kept.push((hash, path.clone()));
+                        false
+                    } else {
+                        true
+                    }
+                }
                 Some(Some(KeyEntry::Miss { until })) => until <= now,
                 Some(None) => true,
                 None => false,
@@ -375,7 +462,7 @@ fn clean_key_files(dir: &Path, live: &HashSet<String>, now: u64) -> usize {
             }
         }
     }
-    removed
+    (removed, kept)
 }
 
 /// Every blob on disk with its size; older files count as less recently

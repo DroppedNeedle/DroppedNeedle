@@ -215,6 +215,15 @@ async fn embedded_art_from_the_scan_beats_the_archive_when_preferred() {
     );
 }
 
+/// Stamp a folder's modification time, so the sweep sees a change however
+/// coarse the filesystem's clock is.
+fn touch_dir(dir: &Path, secs: u64) {
+    std::fs::File::open(dir)
+        .unwrap()
+        .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+        .unwrap();
+}
+
 async fn art_version(rig: &Rig) -> Option<i64> {
     sqlx::query_scalar("SELECT version FROM local_album_artwork WHERE local_album_id = 'al1'")
         .fetch_optional(rig.runtime.pool())
@@ -229,16 +238,19 @@ async fn art_that_comes_back_gets_a_new_version() {
     let store = SqliteScanStore::open(&rig.db_path).unwrap();
 
     std::fs::write(files.join("cover.png"), PNG_BYTES).unwrap();
+    touch_dir(&files, 1_000);
     assert!(store.refresh_album_artwork(&|| false).complete);
     assert_eq!(art_version(&rig).await, Some(1));
 
     std::fs::remove_file(files.join("cover.png")).unwrap();
+    touch_dir(&files, 2_000);
     store.refresh_album_artwork(&|| false);
     assert_eq!(art_version(&rig).await, None, "removed art is cleared");
 
     let mut other = PNG_BYTES.to_vec();
     other.push(0);
     std::fs::write(files.join("Folder.PNG"), &other).unwrap();
+    touch_dir(&files, 3_000);
     store.refresh_album_artwork(&|| false);
     assert_eq!(
         art_version(&rig).await,
