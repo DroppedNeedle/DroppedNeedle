@@ -442,6 +442,65 @@ async fn album_keys_backfill_on_upgrade() {
     );
 }
 
+/// The album art migration rebuilds `local_album_artwork`: a row written
+/// before it survives with its version, and the three genre artwork
+/// triggers come back.
+#[tokio::test]
+async fn album_art_rebuild_keeps_rows_and_triggers() {
+    let pool = scratch_pool().await;
+    let before = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 15)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    before.run(&pool).await.unwrap();
+    sqlx::raw_sql(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('a1', 'A', 'a', 'group', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) \
+         VALUES ('al1', 'r1', 'g1', 'T', 't', 'a1', 'automatic', 1, 1); \
+         INSERT INTO local_album_artwork (local_album_id, source, source_locator, version, \
+         updated_at) VALUES ('al1', 'provider', 'rg-1', 4, 1);",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    apply_migrations(&pool).await.unwrap();
+    let kept: (String, Option<String>, i64) = sqlx::query_as(
+        "SELECT source, source_locator, version FROM local_album_artwork \
+         WHERE local_album_id = 'al1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(kept, ("provider".to_owned(), Some("rg-1".to_owned()), 4));
+    let triggers: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM sqlite_master WHERE type = 'trigger' \
+         AND tbl_name = 'local_album_artwork' ORDER BY name",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        triggers,
+        vec![
+            "trg_genre_artwork_artwork_delete",
+            "trg_genre_artwork_artwork_insert",
+            "trg_genre_artwork_artwork_update",
+        ]
+    );
+}
+
 /// Each migration stamps its own number, so applying them in order on an
 /// empty database ends at the latest version. A file renumbered without
 /// its `user_version` stamp (or the reverse) fails here, before boot would

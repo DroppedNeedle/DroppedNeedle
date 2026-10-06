@@ -214,3 +214,38 @@ async fn embedded_art_from_the_scan_beats_the_archive_when_preferred() {
         Some("cover-art-archive")
     );
 }
+
+async fn art_version(rig: &Rig) -> Option<i64> {
+    sqlx::query_scalar("SELECT version FROM local_album_artwork WHERE local_album_id = 'al1'")
+        .fetch_optional(rig.runtime.pool())
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn art_that_comes_back_gets_a_new_version() {
+    let files = ScratchDir::new("reads-artwork-version");
+    let rig = rig(Some(&files.join("01.flac"))).await;
+    let store = SqliteScanStore::open(&rig.db_path).unwrap();
+
+    std::fs::write(files.join("cover.png"), PNG_BYTES).unwrap();
+    assert!(store.refresh_album_artwork(&|| false).complete);
+    assert_eq!(art_version(&rig).await, Some(1));
+
+    std::fs::remove_file(files.join("cover.png")).unwrap();
+    store.refresh_album_artwork(&|| false);
+    assert_eq!(art_version(&rig).await, None, "removed art is cleared");
+
+    let mut other = PNG_BYTES.to_vec();
+    other.push(0);
+    std::fs::write(files.join("Folder.PNG"), &other).unwrap();
+    store.refresh_album_artwork(&|| false);
+    assert_eq!(
+        art_version(&rig).await,
+        Some(2),
+        "a cleared version is never reused"
+    );
+
+    let stopped = store.refresh_album_artwork(&|| true);
+    assert!(!stopped.complete, "a stop request ends the sweep early");
+}
