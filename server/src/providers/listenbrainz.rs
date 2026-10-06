@@ -712,7 +712,9 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
         };
         let mut similar: Vec<SimilarArtist> = entries
             .iter()
-            .filter(|(mbid, _)| !mbid.eq_ignore_ascii_case(artist_mbid))
+            .filter(|(mbid, _)| {
+                super::musicbrainz::is_valid_mbid(mbid) && !mbid.eq_ignore_ascii_case(artist_mbid)
+            })
             .filter_map(|(mbid, recordings)| {
                 let recordings = recordings.as_array()?;
                 let artist_name = recordings

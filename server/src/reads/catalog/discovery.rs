@@ -233,6 +233,7 @@ impl Catalog {
                 Some(SectionRows {
                     similar: similar
                         .into_iter()
+                        .filter(|artist| is_mbid(&artist.artist_mbid))
                         .take(count)
                         .map(|artist| SimilarArtist {
                             name: artist.artist_name,
@@ -509,6 +510,7 @@ impl Catalog {
                 };
                 let similar: Vec<(String, String)> = similar
                     .into_iter()
+                    .filter(|artist| is_mbid(&artist.artist_mbid))
                     .take(SIMILAR_ALBUM_ARTISTS)
                     .map(|artist| (artist.artist_mbid, artist.artist_name))
                     .collect();
@@ -795,7 +797,7 @@ async fn lastfm_rows(
                     .into_iter()
                     .filter_map(|artist| {
                         Some(SimilarArtist {
-                            musicbrainz_id: artist.mbid?,
+                            musicbrainz_id: artist.mbid.filter(|id| is_mbid(id))?,
                             name: artist.name,
                             listen_count: 0,
                             in_library: false,

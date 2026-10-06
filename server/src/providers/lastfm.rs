@@ -834,6 +834,14 @@ fn pick_image(images: Option<&serde_json::Value>) -> String {
         .to_owned()
 }
 
+/// A MusicBrainz id from Last.fm, lowercase. Blank, missing or malformed
+/// ids read as absent: callers put them into request paths.
+fn mbid_or_none(value: Option<&serde_json::Value>) -> Option<String> {
+    blank_to_none(value)
+        .filter(|id| super::musicbrainz::is_valid_mbid(id))
+        .map(|id| id.to_ascii_lowercase())
+}
+
 /// A blank-or-missing MusicBrainz id reads as absent (v2 `or None`).
 fn blank_to_none(value: Option<&serde_json::Value>) -> Option<String> {
     value
@@ -898,7 +906,7 @@ fn parse_artist_info(payload: &serde_json::Value) -> Option<ArtistInfo> {
         .unwrap_or_default();
     Some(ArtistInfo {
         name: name.to_owned(),
-        mbid: blank_to_none(artist.get("mbid")),
+        mbid: mbid_or_none(artist.get("mbid")),
         listeners: lenient_int(stats.and_then(|stats| stats.get("listeners"))),
         playcount: lenient_int(stats.and_then(|stats| stats.get("playcount"))),
         url: artist
@@ -951,7 +959,7 @@ fn parse_album_info(payload: &serde_json::Value) -> Option<AlbumInfo> {
             .and_then(serde_json::Value::as_str)
             .unwrap_or("")
             .to_owned(),
-        mbid: blank_to_none(album.get("mbid")),
+        mbid: mbid_or_none(album.get("mbid")),
         listeners: lenient_int(album.get("listeners")),
         playcount: lenient_int(album.get("playcount")),
         url: album
@@ -991,7 +999,7 @@ fn parse_top_item(item: &serde_json::Value) -> Option<TopItem> {
     Some(TopItem {
         name: name.to_owned(),
         artist_name: artist_name.to_owned(),
-        mbid: blank_to_none(item.get("mbid")),
+        mbid: mbid_or_none(item.get("mbid")),
         playcount: lenient_int(item.get("playcount")),
     })
 }
@@ -1004,12 +1012,40 @@ fn parse_similar_artist(item: &serde_json::Value) -> SimilarArtist {
             .and_then(serde_json::Value::as_str)
             .unwrap_or("")
             .to_owned(),
-        mbid: item.and_then(|artist| blank_to_none(artist.get("mbid"))),
+        mbid: item.and_then(|artist| mbid_or_none(artist.get("mbid"))),
         score: lenient_float(item.and_then(|artist| artist.get("match"))),
         url: item
             .and_then(|artist| artist.get("url"))
             .and_then(serde_json::Value::as_str)
             .unwrap_or("")
             .to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn malformed_mbids_read_as_absent() {
+        let items = serde_json::json!([
+            {"name": "A", "mbid": "A74B1B7F-71A5-4011-9441-D0B5E4122711"},
+            {"name": "B", "mbid": "../../release/x"},
+            {"name": "C", "mbid": " "},
+        ]);
+        let ids: Vec<Option<String>> = items
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| parse_similar_artist(item).mbid)
+            .collect();
+        assert_eq!(
+            ids,
+            vec![
+                Some("a74b1b7f-71a5-4011-9441-d0b5e4122711".to_owned()),
+                None,
+                None
+            ]
+        );
     }
 }
