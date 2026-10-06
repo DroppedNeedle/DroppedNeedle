@@ -17,7 +17,11 @@
 		type EnrichmentResponseV3
 	} from '$lib/queries/search/SearchV3Queries.svelte';
 	import { SearchEnrichCollector } from '$lib/queries/search/SearchV3Enrichment.svelte';
-	import { toSearchRemoteStatus, toV1Album } from '$lib/queries/search/SearchV3Adapters';
+	import {
+		dedupeAlbums,
+		toSearchRemoteStatus,
+		toV1Album
+	} from '$lib/queries/search/SearchV3Adapters';
 	import { Check, RefreshCw } from 'lucide-svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 
@@ -52,8 +56,11 @@
 	const enrichCollector = new SearchEnrichCollector();
 	const enrichQuery = getSearchEnrichBatchV3Query(() => enrichCollector.body);
 
+	// pages can repeat a release group, and the grid is keyed on its id
 	let baseAlbums = $derived(
-		[...pages.entries()].sort(([left], [right]) => left - right).flatMap(([, page]) => page.items)
+		dedupeAlbums(
+			[...pages.entries()].sort(([left], [right]) => left - right).flatMap(([, page]) => page.items)
+		)
 	);
 	let albums = $derived(enrichment ? applyAlbumEnrichment(baseAlbums, enrichment) : baseAlbums);
 	let topAlbum = $derived(pages.get(0)?.top ?? null);
