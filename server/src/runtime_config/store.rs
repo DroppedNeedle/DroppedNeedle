@@ -373,9 +373,24 @@ impl ConfigStore {
             if secret_keys.contains(key) {
                 let plaintext = self.crypto.decrypt(value)?;
                 *value = display_mask(&plaintext, PLUGIN_SECRET_MASK).to_owned();
+            } else {
+                *value = self.open_plain_setting(value);
             }
         }
         Ok(config)
+    }
+
+    /// A plugin value the manifest does not flag secret. The v2 import
+    /// seals every setting whose v2 manifest was missing, so such a value
+    /// can arrive as ciphertext under this install's key; it opens here.
+    /// Anything else (whatever a user typed) reads as stored.
+    fn open_plain_setting(&self, value: &str) -> String {
+        if value.starts_with(crate::runtime_config::crypto::CIPHER_PREFIX)
+            && let Ok(plaintext) = self.crypto.decrypt(value)
+        {
+            return plaintext;
+        }
+        value.to_owned()
     }
 
     /// One plugin's state with secret-flagged values decrypted
@@ -389,6 +404,8 @@ impl ConfigStore {
         for (key, value) in config.settings.iter_mut() {
             if secret_keys.contains(key) {
                 *value = self.crypto.decrypt(value)?;
+            } else {
+                *value = self.open_plain_setting(value);
             }
         }
         Ok(config)
