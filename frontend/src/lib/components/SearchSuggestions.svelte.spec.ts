@@ -12,6 +12,8 @@ const mockRows: SuggestResultV3[] = [
 		id: 'artist-1',
 		title: 'Muse',
 		musicbrainz_id: 'mbid-artist-1',
+		in_library: true,
+		requested: false,
 		score: 95
 	},
 	{
@@ -20,6 +22,8 @@ const mockRows: SuggestResultV3[] = [
 		title: 'Origin of Symmetry',
 		artist: 'Muse',
 		musicbrainz_id: 'mbid-album-1',
+		in_library: true,
+		requested: false,
 		score: 90
 	}
 ];
@@ -174,6 +178,8 @@ describe('SearchSuggestions.svelte', () => {
 				title: 'Hysteria',
 				artist: 'Muse',
 				musicbrainz_id: null,
+				in_library: true,
+				requested: false,
 				score: 99
 			},
 			mockRows[0]

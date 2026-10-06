@@ -1,30 +1,28 @@
 //! Unified search DTOs: the native `/api/v3/search` shapes.
 //!
-//! Clean-slate v3 shapes (v2 wire is not preserved). Everything is
-//! snake_case. Search reads the local `local_*` catalog tables only;
-//! provider-backed results would join behind the same handlers, which
-//! is why items already carry `in_library`/`requested` (local rows are
-//! always in-library and never requested).
+//! Everything is snake_case. Artist and album hits come from MusicBrainz
+//! joined with the library (`id` set when the library holds a copy); track
+//! hits come from the library alone. `in_library` and `requested` are read
+//! fresh from the library and the request list on every search.
 
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
-/// Which catalog bucket a result came from.
+/// Which bucket a result came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SearchKind {
-    /// A local artist row.
+    /// An artist.
     Artist,
-    /// A local album row.
+    /// An album (release group).
     Album,
-    /// A local track row.
+    /// A library track.
     Track,
 }
 
-/// Per-bucket provider health for one search call. The values mirror v2's
-/// `SearchRemoteStatus` exactly so the same notice and stale-time logic
-/// applies. Local-only search always emits `Ok`; a provider fan-out would
-/// fill in the real values.
+/// Per-bucket MusicBrainz health for one search call. The values mirror
+/// v2's `SearchRemoteStatus` exactly so the same notice and stale-time
+/// logic applies. Library hits show whatever the status says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum SearchRemoteStatus {
@@ -36,7 +34,8 @@ pub enum SearchRemoteStatus {
     Timeout,
     /// The provider failed; local matches are still shown.
     Error,
-    /// The provider is unavailable; cached results are shown.
+    /// The provider is unavailable; a cached copy (up to six hours old)
+    /// is shown.
     Stale,
 }
 
@@ -46,24 +45,30 @@ pub enum SearchRemoteStatus {
 pub struct SearchResultItem {
     /// Result bucket.
     pub kind: SearchKind,
-    /// Local catalog id.
-    pub id: String,
+    /// Library id, when the library holds this artist, album or track.
+    /// Absent for MusicBrainz hits the library lacks.
+    pub id: Option<String>,
     /// Display title (artist name, album title, or track title).
     pub title: String,
     /// Owning artist name, when the row has one.
     pub artist: Option<String>,
     /// Release year, when known.
     pub year: Option<i32>,
-    /// Provider id from the external-identity tables, when the row has an
-    /// accepted identity. Absent means unidentified, never failure.
+    /// MusicBrainz id: the hit's own for MusicBrainz hits, the accepted
+    /// identity for library rows. Absent means unidentified, never failure.
     pub musicbrainz_id: Option<String>,
-    /// True for every local hit; provider hits would vary.
+    /// True when the library holds this artist or album.
     pub in_library: bool,
-    /// Always false here; the requests module owns this flag.
+    /// True when an acquisition request is open for this album.
     pub requested: bool,
-    /// Match score, 0-100. Exact folded match is 100, folded prefix is 90,
-    /// folded substring is 70. Ranks hits, never filters them.
+    /// Match score, 0-100. MusicBrainz hits carry MusicBrainz's relevance;
+    /// library rows score 100 exact, 90 prefix, 70 substring. Ranks hits,
+    /// never filters them.
     pub score: i32,
+    /// MusicBrainz disambiguation comment.
+    pub disambiguation: Option<String>,
+    /// Artist type, or an `Album + Live` style type label.
+    pub type_info: Option<String>,
 }
 
 /// Unified search response: one ranked list per bucket plus the standout
@@ -117,10 +122,18 @@ pub struct SuggestResult {
     pub title: String,
     /// Owning artist name, when the row has one.
     pub artist: Option<String>,
-    /// Local catalog id.
-    pub id: String,
-    /// Provider id, when the row has an accepted identity.
+    /// Release year, when known.
+    pub year: Option<i32>,
+    /// Library id, when the library holds it.
+    pub id: Option<String>,
+    /// MusicBrainz id, when known.
     pub musicbrainz_id: Option<String>,
+    /// True when the library holds it.
+    pub in_library: bool,
+    /// True when an acquisition request is open for this album.
+    pub requested: bool,
+    /// MusicBrainz disambiguation comment.
+    pub disambiguation: Option<String>,
     /// Match score, 0-100, same scale as full search.
     pub score: i32,
 }

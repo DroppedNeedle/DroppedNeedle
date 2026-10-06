@@ -926,6 +926,94 @@
         }
       }
     },
+    "/api/v3/albums/{album_id}": {
+      "get": {
+        "tags": [
+          "crate::reads::catalog::handlers"
+        ],
+        "summary": "Header, tracklist and artwork in one call.",
+        "operationId": "album",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Album page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlbumInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "Unknown album"
+          },
+          "503": {
+            "description": "MusicBrainz down and the album is not in the library"
+          }
+        }
+      }
+    },
+    "/api/v3/albums/{album_id}/basic": {
+      "get": {
+        "tags": [
+          "crate::reads::catalog::handlers"
+        ],
+        "summary": "The album header.",
+        "operationId": "album_basic",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Album header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlbumBasicInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "Unknown album"
+          },
+          "503": {
+            "description": "MusicBrainz down and the album is not in the library"
+          }
+        }
+      }
+    },
     "/api/v3/albums/{album_id}/edition/acquire": {
       "post": {
         "tags": [
@@ -954,6 +1042,401 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v3/albums/{album_id}/editions": {
+      "get": {
+        "tags": [
+          "crate::reads::catalog::handlers"
+        ],
+        "summary": "Every edition of the album.",
+        "operationId": "album_editions",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Editions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlbumEditionsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "Unknown album"
+          },
+          "503": {
+            "description": "MusicBrainz down"
+          }
+        }
+      }
+    },
+    "/api/v3/albums/{album_id}/lastfm": {
+      "get": {
+        "tags": [
+          "crate::reads::catalog::handlers"
+        ],
+        "summary": "Last.fm summary and tags for the album.",
+        "operationId": "album_lastfm",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "artist_name",
+            "in": "path",
+            "description": "Artist name for the Last.fm lookup.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "album_name",
+            "in": "path",
+            "description": "Album title for the Last.fm lookup.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Last.fm data; empty when Last.fm is not set up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LastFmAlbumEnrichment"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id"
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/albums/{album_id}/more-by-artist": {
+      "get": {
+        "tags": [
+          "crate::reads::catalog::handlers"
+        ],
+        "summary": "The artist's other albums.",
+        "operationId": "more_by_artist",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "artist_id",
+            "in": "path",
+            "description": "The album's artist MBID.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "count",
+            "in": "path",
+            "description": "How many to return, 1 to 30 (default 10).",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Other albums by the artist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MoreByArtistResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id or bad count"
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/albums/{album_id}/purchase-options": {
+      "get": {
+        "tags": [
+          "crate::reads::catalog::handlers"
+        ],
+        "summary": "Where to buy the album.",
+        "operationId": "album_purchase_options",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Store links plus a Bandcamp search",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurchaseOptionsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "503": {
+            "description": "MusicBrainz down"
+          }
+        }
+      }
+    },
+    "/api/v3/albums/{album_id}/refresh": {
+      "post": {
+        "tags": [
+          "crate::reads::catalog::handlers"
+        ],
+        "summary": "Drop the album's cached upstream answers and rebuild the header.",
+        "operationId": "album_refresh",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fresh album header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlbumBasicInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "Unknown album"
+          },
+          "503": {
+            "description": "MusicBrainz down and the album is not in the library"
+          }
+        }
+      }
+    },
+    "/api/v3/albums/{album_id}/similar": {
+      "get": {
+        "tags": [
+          "crate::reads::catalog::handlers"
+        ],
+        "summary": "Albums by similar artists.",
+        "operationId": "similar_albums",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "artist_id",
+            "in": "path",
+            "description": "The album's artist MBID.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "count",
+            "in": "path",
+            "description": "How many to return, 1 to 30 (default 10).",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Similar albums",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SimilarAlbumsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id or bad count"
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/albums/{album_id}/tracks": {
+      "get": {
+        "tags": [
+          "crate::reads::catalog::handlers"
+        ],
+        "summary": "The tracklist of the edition the page shows.",
+        "operationId": "album_tracks",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tracklist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlbumTracksInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "Unknown album"
+          },
+          "503": {
+            "description": "MusicBrainz down and the album is not in the library"
+          }
+        }
+      }
+    },
+    "/api/v3/artists/{artist_mbid}": {
+      "get": {
+        "tags": [
+          "crate::reads::catalog::handlers"
+        ],
+        "summary": "The artist header.",
+        "operationId": "artist",
+        "parameters": [
+          {
+            "name": "artist_mbid",
+            "in": "path",
+            "description": "Artist MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Artist header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtistInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "Unknown artist"
+          },
+          "503": {
+            "description": "MusicBrainz down and the artist is not in the library"
           }
         }
       }
@@ -1008,6 +1491,44 @@
           },
           "409": {
             "description": "Follow before enabling auto-download"
+          }
+        }
+      }
+    },
+    "/api/v3/artists/{artist_mbid}/extended": {
+      "get": {
+        "tags": [
+          "crate::reads::catalog::handlers"
+        ],
+        "summary": "Biography, portrait and artist images.",
+        "operationId": "artist_extended",
+        "parameters": [
+          {
+            "name": "artist_mbid",
+            "in": "path",
+            "description": "Artist MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Biography and images; fields absent when unknown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtistExtendedInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id"
+          },
+          "401": {
+            "description": "Not authenticated"
           }
         }
       }
@@ -1088,6 +1609,373 @@
                 }
               }
             }
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/artists/{artist_mbid}/lastfm": {
+      "get": {
+        "tags": [
+          "crate::reads::catalog::handlers"
+        ],
+        "summary": "Last.fm biography, tags and similar artists.",
+        "operationId": "artist_lastfm",
+        "parameters": [
+          {
+            "name": "artist_mbid",
+            "in": "path",
+            "description": "Artist MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "artist_name",
+            "in": "path",
+            "description": "Artist name, the Last.fm fallback key.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Last.fm data; empty when Last.fm is not set up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LastFmArtistEnrichment"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id"
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/artists/{artist_mbid}/purchase-options": {
+      "get": {
+        "tags": [
+          "crate::reads::catalog::handlers"
+        ],
+        "summary": "The artist's own store pages.",
+        "operationId": "artist_purchase_options",
+        "parameters": [
+          {
+            "name": "artist_mbid",
+            "in": "path",
+            "description": "Artist MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "description": "Artist name for the Bandcamp search fallback.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Store pages plus a Bandcamp search",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtistPurchaseOptionsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id"
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/artists/{artist_mbid}/releases": {
+      "get": {
+        "tags": [
+          "crate::reads::catalog::handlers"
+        ],
+        "summary": "One page of the discography.",
+        "operationId": "artist_releases",
+        "parameters": [
+          {
+            "name": "artist_mbid",
+            "in": "path",
+            "description": "Artist MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "path",
+            "description": "Items to skip (default 0).",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "path",
+            "description": "Page size, 1 to 200 (default 50).",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Discography page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtistReleases"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id or bad paging"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "503": {
+            "description": "MusicBrainz down and the library has no albums by the artist"
+          }
+        }
+      }
+    },
+    "/api/v3/artists/{artist_mbid}/similar": {
+      "get": {
+        "tags": [
+          "crate::reads::catalog::handlers"
+        ],
+        "summary": "Similar artists.",
+        "operationId": "similar_artists",
+        "parameters": [
+          {
+            "name": "artist_mbid",
+            "in": "path",
+            "description": "Artist MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "count",
+            "in": "path",
+            "description": "How many to return, 1 to 50.",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Provider to ask; default is the primary music source setting.",
+            "required": true,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/DiscoverySource"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Similar artists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SimilarArtistsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id or bad count"
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/artists/{artist_mbid}/top-albums": {
+      "get": {
+        "tags": [
+          "crate::reads::catalog::handlers"
+        ],
+        "summary": "The artist's most played albums.",
+        "operationId": "top_albums",
+        "parameters": [
+          {
+            "name": "artist_mbid",
+            "in": "path",
+            "description": "Artist MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "count",
+            "in": "path",
+            "description": "How many to return, 1 to 50.",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Provider to ask; default is the primary music source setting.",
+            "required": true,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/DiscoverySource"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Top albums",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopAlbumsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id or bad count"
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/artists/{artist_mbid}/top-songs": {
+      "get": {
+        "tags": [
+          "crate::reads::catalog::handlers"
+        ],
+        "summary": "The artist's most played songs.",
+        "operationId": "top_songs",
+        "parameters": [
+          {
+            "name": "artist_mbid",
+            "in": "path",
+            "description": "Artist MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "count",
+            "in": "path",
+            "description": "How many to return, 1 to 50.",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "source",
+            "in": "path",
+            "description": "Provider to ask; default is the primary music source setting.",
+            "required": true,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/DiscoverySource"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Top songs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopSongsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id or bad count"
           },
           "401": {
             "description": "Not authenticated"
@@ -14159,6 +15047,90 @@
         },
         "additionalProperties": false
       },
+      "AlbumBasicInfo": {
+        "type": "object",
+        "description": "`GET /albums/{album_id}/basic`: the album header.",
+        "required": [
+          "title",
+          "musicbrainz_id",
+          "artist_name",
+          "artist_id",
+          "in_library",
+          "requested",
+          "source",
+          "service_status"
+        ],
+        "properties": {
+          "album_thumb_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Album thumbnail already cached from TheAudioDB."
+          },
+          "artist_id": {
+            "type": "string",
+            "description": "Artist MBID, empty when the credit has none."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Credited artist."
+          },
+          "disambiguation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Disambiguation comment."
+          },
+          "in_library": {
+            "type": "boolean",
+            "description": "True when the library holds this album."
+          },
+          "musicbrainz_id": {
+            "type": "string",
+            "description": "Canonical release-group MBID."
+          },
+          "release_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "First release date."
+          },
+          "requested": {
+            "type": "boolean",
+            "description": "True when an acquisition request is open for it."
+          },
+          "service_status": {
+            "$ref": "#/components/schemas/Option",
+            "description": "Sources that degraded while building the page."
+          },
+          "source": {
+            "$ref": "#/components/schemas/CatalogSource",
+            "description": "Where the page came from."
+          },
+          "title": {
+            "type": "string",
+            "description": "Album title."
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Primary type (`Album`, `EP`, ...)."
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "First release year."
+          }
+        }
+      },
       "AlbumCard": {
         "type": "object",
         "description": "Compact album card for browse surfaces.",
@@ -14274,6 +15246,122 @@
           }
         }
       },
+      "AlbumEditionItem": {
+        "type": "object",
+        "description": "One edition (MusicBrainz release) of an album.",
+        "required": [
+          "release_mbid",
+          "track_count",
+          "is_owned",
+          "is_pinned"
+        ],
+        "properties": {
+          "country": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Release country."
+          },
+          "date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Release date."
+          },
+          "disambiguation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Disambiguation (`deluxe edition`, `remaster`)."
+          },
+          "is_owned": {
+            "type": "boolean",
+            "description": "True when the library's copy is identified as this edition."
+          },
+          "is_pinned": {
+            "type": "boolean",
+            "description": "True when a curator pinned this edition."
+          },
+          "packaging": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Packaging."
+          },
+          "release_mbid": {
+            "type": "string",
+            "description": "Release MBID."
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Status (`Official`, `Promotion`, ...)."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Release title."
+          },
+          "track_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Tracks across all media.",
+            "minimum": 0
+          }
+        }
+      },
+      "AlbumEditionsResponse": {
+        "type": "object",
+        "description": "`GET /albums/{album_id}/editions`.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AlbumEditionItem"
+            },
+            "description": "Every edition MusicBrainz lists."
+          },
+          "owned_release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Owned edition, if identified."
+          },
+          "pinned_release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pinned edition, if any."
+          },
+          "selected_basis": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why that edition: `pin`, `owned`, `file_count` or `ranked`."
+          },
+          "selected_release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The edition the album page shows."
+          }
+        }
+      },
       "AlbumEnrichment": {
         "type": "object",
         "description": "Enriched album counts. Absent counts mean unknown, never zero.",
@@ -14323,6 +15411,93 @@
             "description": "Provider release-group id."
           }
         }
+      },
+      "AlbumImages": {
+        "type": "object",
+        "description": "TheAudioDB album images. Every field is optional.",
+        "properties": {
+          "album_3d_case_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "3D case."
+          },
+          "album_3d_face_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "3D face."
+          },
+          "album_3d_flat_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "3D flat."
+          },
+          "album_3d_thumb_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "3D thumbnail."
+          },
+          "album_back_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Back cover."
+          },
+          "album_cdart_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "CD art."
+          },
+          "album_spine_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Spine."
+          },
+          "album_thumb_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Front thumbnail."
+          }
+        }
+      },
+      "AlbumInfo": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/AlbumBasicInfo",
+            "description": "The header."
+          },
+          {
+            "$ref": "#/components/schemas/AlbumTracksInfo",
+            "description": "The tracklist."
+          },
+          {
+            "type": "object",
+            "required": [
+              "images"
+            ],
+            "properties": {
+              "images": {
+                "$ref": "#/components/schemas/AlbumImages",
+                "description": "TheAudioDB artwork, fetched and cached by this call."
+              }
+            }
+          }
+        ],
+        "description": "`GET /albums/{album_id}`: header, tracklist and artwork in one call."
       },
       "AlbumIntake": {
         "type": "object",
@@ -14428,6 +15603,130 @@
               "$ref": "#/components/schemas/PreviewTrackItem"
             },
             "description": "Sampled tracks in album order."
+          }
+        }
+      },
+      "AlbumTrack": {
+        "type": "object",
+        "description": "One track on an album page.",
+        "required": [
+          "position",
+          "title",
+          "disc_number"
+        ],
+        "properties": {
+          "disc_number": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Disc number, starting at 1.",
+            "minimum": 0
+          },
+          "length": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Length in milliseconds.",
+            "minimum": 0
+          },
+          "media_format": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Medium format (`CD`, `Digital Media`, `DVD`, ...)."
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Position within its disc.",
+            "minimum": 0
+          },
+          "recording_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Recording MBID."
+          },
+          "release_track_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Release-track MBID."
+          },
+          "title": {
+            "type": "string",
+            "description": "Track title."
+          }
+        }
+      },
+      "AlbumTracksInfo": {
+        "type": "object",
+        "description": "`GET /albums/{album_id}/tracks`: the tracklist of the edition the page\nshows (pinned, owned, or MusicBrainz's best).",
+        "required": [
+          "tracks",
+          "total_tracks"
+        ],
+        "properties": {
+          "barcode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Barcode."
+          },
+          "country": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Release country."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "First label."
+          },
+          "pick_basis": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why that edition: `pin`, `owned`, `file_count` or `ranked`."
+          },
+          "selected_release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The edition shown."
+          },
+          "total_length": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Total length in milliseconds, when any track has one.",
+            "minimum": 0
+          },
+          "total_tracks": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Track count.",
+            "minimum": 0
+          },
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AlbumTrack"
+            },
+            "description": "Tracks in disc and position order."
           }
         }
       },
@@ -14890,6 +16189,109 @@
           }
         }
       },
+      "ArtistExtendedInfo": {
+        "type": "object",
+        "description": "`GET /artists/{artist_mbid}/extended`: biography and portrait.",
+        "required": [
+          "images"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Wikipedia introduction."
+          },
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Portrait from Wikidata/Commons."
+          },
+          "images": {
+            "$ref": "#/components/schemas/ArtistImages",
+            "description": "Artist images from TheAudioDB, fetched and cached by this call."
+          }
+        }
+      },
+      "ArtistImages": {
+        "type": "object",
+        "description": "Artist images from TheAudioDB. Every field is optional.",
+        "properties": {
+          "banner_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Banner."
+          },
+          "clearart_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Clear art."
+          },
+          "cutout_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cutout."
+          },
+          "fanart_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Fanart."
+          },
+          "fanart_url_2": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Second fanart."
+          },
+          "fanart_url_3": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Third fanart."
+          },
+          "fanart_url_4": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Fourth fanart."
+          },
+          "logo_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Logo."
+          },
+          "thumb_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Thumbnail."
+          },
+          "wide_thumb_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Wide thumbnail."
+          }
+        }
+      },
       "ArtistIndex": {
         "type": "object",
         "description": "Full artist index.",
@@ -14924,6 +16326,100 @@
           "name": {
             "type": "string",
             "description": "Bucket label, e.g. \"A\"."
+          }
+        }
+      },
+      "ArtistInfo": {
+        "type": "object",
+        "description": "`GET /artists/{artist_mbid}`: the artist header.",
+        "required": [
+          "name",
+          "musicbrainz_id",
+          "tags",
+          "aliases",
+          "external_links",
+          "images",
+          "in_library",
+          "source",
+          "service_status"
+        ],
+        "properties": {
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Up to ten aliases."
+          },
+          "country": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ISO country code."
+          },
+          "disambiguation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Disambiguation comment."
+          },
+          "external_links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExternalLink"
+            },
+            "description": "Known streaming, store, social and reference links."
+          },
+          "images": {
+            "$ref": "#/components/schemas/ArtistImages",
+            "description": "Artist images already cached from TheAudioDB. The extended route\nfetches them, so a first visit may show none."
+          },
+          "in_library": {
+            "type": "boolean",
+            "description": "True when the library holds this artist."
+          },
+          "life_span": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LifeSpan",
+                "description": "Life span."
+              }
+            ]
+          },
+          "musicbrainz_id": {
+            "type": "string",
+            "description": "Canonical artist MBID (after any MusicBrainz merge redirect)."
+          },
+          "name": {
+            "type": "string",
+            "description": "Artist name."
+          },
+          "service_status": {
+            "$ref": "#/components/schemas/Option",
+            "description": "Sources that degraded while building the page."
+          },
+          "source": {
+            "$ref": "#/components/schemas/CatalogSource",
+            "description": "Where the page came from."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Up to ten tags, most voted first."
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Artist type (`Person`, `Group`, ...)."
           }
         }
       },
@@ -14975,6 +16471,118 @@
             "format": "int64",
             "description": "Artists matching the scope and filter, all pages.",
             "minimum": 0
+          }
+        }
+      },
+      "ArtistPurchaseOptionsResponse": {
+        "type": "object",
+        "description": "`GET /artists/{artist_mbid}/purchase-options`: the artist's own store\npages (Bandcamp, merch shop).",
+        "required": [
+          "links",
+          "bandcamp_search_url"
+        ],
+        "properties": {
+          "bandcamp_search_url": {
+            "type": "string",
+            "description": "Bandcamp search for the artist, empty when the name is unknown."
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PurchaseLink"
+            },
+            "description": "Store pages."
+          }
+        }
+      },
+      "ArtistReleases": {
+        "type": "object",
+        "description": "`GET /artists/{artist_mbid}/releases`: one page of the discography,\nfiltered by the release-type preferences. Pages run across albums, then\nEPs, then singles, each newest first.",
+        "required": [
+          "albums",
+          "singles",
+          "eps",
+          "offset",
+          "limit",
+          "returned_count",
+          "has_more",
+          "warming",
+          "source",
+          "service_status"
+        ],
+        "properties": {
+          "albums": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseItem"
+            },
+            "description": "Albums on this page."
+          },
+          "eps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseItem"
+            },
+            "description": "EPs on this page."
+          },
+          "has_more": {
+            "type": "boolean",
+            "description": "Whether another page exists."
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Echoed page size.",
+            "minimum": 0
+          },
+          "next_offset": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Offset of the next page, when there is one.",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Echoed offset.",
+            "minimum": 0
+          },
+          "returned_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Items on this page.",
+            "minimum": 0
+          },
+          "service_status": {
+            "$ref": "#/components/schemas/Option",
+            "description": "Sources that degraded while building the page."
+          },
+          "singles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseItem"
+            },
+            "description": "Singles on this page."
+          },
+          "source": {
+            "$ref": "#/components/schemas/CatalogSource",
+            "description": "Where the list came from."
+          },
+          "source_total_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Total items after filtering. Absent while `warming`.",
+            "minimum": 0
+          },
+          "warming": {
+            "type": "boolean",
+            "description": "True while the rest of a large discography is still being fetched\nin the background; ask again shortly for the full list."
           }
         }
       },
@@ -15959,6 +17567,14 @@
             "minimum": 0
           }
         }
+      },
+      "CatalogSource": {
+        "type": "string",
+        "description": "Where a page's core data came from.",
+        "enum": [
+          "musicbrainz",
+          "library"
+        ]
       },
       "ChartAlbum": {
         "type": "object",
@@ -17108,6 +18724,54 @@
           }
         }
       },
+      "DiscoveryAlbum": {
+        "type": "object",
+        "description": "An album in a discovery row.",
+        "required": [
+          "musicbrainz_id",
+          "title",
+          "artist_name",
+          "in_library",
+          "requested"
+        ],
+        "properties": {
+          "artist_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Artist MBID, when known."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Credited artist."
+          },
+          "in_library": {
+            "type": "boolean",
+            "description": "True when the library holds this album."
+          },
+          "musicbrainz_id": {
+            "type": "string",
+            "description": "Release-group MBID."
+          },
+          "requested": {
+            "type": "boolean",
+            "description": "True when an acquisition request is open for it."
+          },
+          "title": {
+            "type": "string",
+            "description": "Title."
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "First release year."
+          }
+        }
+      },
       "DiscoveryBatchCreate": {
         "type": "object",
         "description": "Body creating a discovery batch (one request per album).",
@@ -17355,6 +19019,14 @@
             "description": "Hub title, e.g. \"Recommended for you\"."
           }
         }
+      },
+      "DiscoverySource": {
+        "type": "string",
+        "description": "Which listening-data provider answered a discovery section.",
+        "enum": [
+          "listenbrainz",
+          "lastfm"
+        ]
       },
       "DiscoveryView": {
         "type": "object",
@@ -17964,6 +19636,34 @@
           "lower",
           "upper"
         ]
+      },
+      "ExternalLink": {
+        "type": "object",
+        "description": "One external link on an artist page.",
+        "required": [
+          "type",
+          "url",
+          "label",
+          "category"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "`music`, `social`, `info` or `other`."
+          },
+          "label": {
+            "type": "string",
+            "description": "Display label (`Bandcamp`, `Wikipedia`, ...)."
+          },
+          "type": {
+            "type": "string",
+            "description": "MusicBrainz relationship type (`official homepage`, `bandcamp`, ...)."
+          },
+          "url": {
+            "type": "string",
+            "description": "The URL."
+          }
+        }
       },
       "ExternalRefreshSettings": {
         "type": "object",
@@ -20218,6 +21918,105 @@
           }
         }
       },
+      "LastFmAlbumEnrichment": {
+        "type": "object",
+        "description": "`GET /albums/{album_id}/lastfm`.",
+        "required": [
+          "tags",
+          "listeners",
+          "playcount"
+        ],
+        "properties": {
+          "listeners": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Listener count."
+          },
+          "playcount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Play count."
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Wiki summary, HTML stripped."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LastFmTag"
+            },
+            "description": "Tags."
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Last.fm page."
+          }
+        }
+      },
+      "LastFmArtistEnrichment": {
+        "type": "object",
+        "description": "`GET /artists/{artist_mbid}/lastfm`. Empty when Last.fm is off or the\nuser has no Last.fm key.",
+        "required": [
+          "tags",
+          "listeners",
+          "playcount",
+          "similar_artists"
+        ],
+        "properties": {
+          "bio": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Biography, HTML stripped."
+          },
+          "listeners": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Listener count."
+          },
+          "playcount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Play count."
+          },
+          "similar_artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LastFmSimilarArtist"
+            },
+            "description": "Similar artists."
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Short summary, HTML stripped."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LastFmTag"
+            },
+            "description": "Tags."
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Last.fm page."
+          }
+        }
+      },
       "LastFmConfiguredResponse": {
         "type": "object",
         "description": "Confirmation that credentials were stored.",
@@ -20306,6 +22105,39 @@
           }
         }
       },
+      "LastFmSimilarArtist": {
+        "type": "object",
+        "description": "A similar artist according to Last.fm.",
+        "required": [
+          "name",
+          "match"
+        ],
+        "properties": {
+          "match": {
+            "type": "number",
+            "format": "double",
+            "description": "Similarity, 0 to 1."
+          },
+          "mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Artist MBID, when Last.fm knows it."
+          },
+          "name": {
+            "type": "string",
+            "description": "Artist name."
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Last.fm page."
+          }
+        }
+      },
       "LastFmStatusResponse": {
         "type": "object",
         "description": "Per-user Last.fm link status. Never carries secrets.",
@@ -20328,6 +22160,26 @@
               "null"
             ],
             "description": "Linked Last.fm username, when linked."
+          }
+        }
+      },
+      "LastFmTag": {
+        "type": "object",
+        "description": "A Last.fm tag.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Tag name."
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Tag page."
           }
         }
       },
@@ -21845,6 +23697,33 @@
           }
         }
       },
+      "LifeSpan": {
+        "type": "object",
+        "description": "An artist's life span.",
+        "properties": {
+          "begin": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Begin date, partial shapes allowed (`1991`, `1991-06`)."
+          },
+          "end": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "End date, partial shapes allowed."
+          },
+          "ended": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the artist has ended, when MusicBrainz says."
+          }
+        }
+      },
       "LinkedAccount": {
         "type": "object",
         "description": "One account the caller linked, on any service. Never carries the\nstored secret.",
@@ -22427,6 +24306,27 @@
             },
             "description": "Tagging script ids.",
             "default": []
+          }
+        }
+      },
+      "MoreByArtistResponse": {
+        "type": "object",
+        "description": "`GET /albums/{album_id}/more-by-artist`.",
+        "required": [
+          "albums",
+          "artist_name"
+        ],
+        "properties": {
+          "albums": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscoveryAlbum"
+            },
+            "description": "Other release groups by the artist, newest first."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "The artist's name, empty when MusicBrainz had nothing."
           }
         }
       },
@@ -23121,6 +25021,27 @@
             "description": "Whether the operation succeeded."
           }
         }
+      },
+      "Option": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "description": "How one optional source fared while a page was built. Sources that\nanswered normally are left out of the map.",
+              "enum": [
+                "degraded",
+                "error"
+              ]
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        ]
       },
       "OrganizationManagementSettings": {
         "type": "object",
@@ -25093,6 +27014,80 @@
           }
         }
       },
+      "PurchaseKind": {
+        "type": "string",
+        "description": "What kind of purchase a link offers.",
+        "enum": [
+          "digital",
+          "physical",
+          "free"
+        ]
+      },
+      "PurchaseLink": {
+        "type": "object",
+        "description": "One \"where to buy\" link.",
+        "required": [
+          "store",
+          "label",
+          "url",
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/PurchaseKind",
+            "description": "Digital, physical or free."
+          },
+          "label": {
+            "type": "string",
+            "description": "Display name, or the bare domain for unknown stores."
+          },
+          "store": {
+            "type": "string",
+            "description": "Store key (`bandcamp`, `qobuz`, `itunes`, `amazon`, ..., `other`)."
+          },
+          "url": {
+            "type": "string",
+            "description": "Store page."
+          }
+        }
+      },
+      "PurchaseOptionsResponse": {
+        "type": "object",
+        "description": "`GET /albums/{album_id}/purchase-options`. Bandcamp sorts first, then\nspecialist stores, then the large storefronts.",
+        "required": [
+          "digital",
+          "physical",
+          "free",
+          "bandcamp_search_url"
+        ],
+        "properties": {
+          "bandcamp_search_url": {
+            "type": "string",
+            "description": "Bandcamp search for the album, always present as the fallback."
+          },
+          "digital": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PurchaseLink"
+            },
+            "description": "Download stores."
+          },
+          "free": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PurchaseLink"
+            },
+            "description": "Free downloads."
+          },
+          "physical": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PurchaseLink"
+            },
+            "description": "Mail-order stores."
+          }
+        }
+      },
       "QualityRecipeEntry": {
         "type": "object",
         "description": "One ordered, closed format-quality recipe entry. Unknown keys are\nrejected at decode so a future setting cannot silently become a\ndifferent recipe.",
@@ -25939,6 +27934,58 @@
           "producer",
           "other"
         ]
+      },
+      "ReleaseItem": {
+        "type": "object",
+        "description": "One release group on an artist page.",
+        "required": [
+          "id",
+          "in_library",
+          "requested"
+        ],
+        "properties": {
+          "first_release_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "First release date."
+          },
+          "id": {
+            "type": "string",
+            "description": "Release-group MBID."
+          },
+          "in_library": {
+            "type": "boolean",
+            "description": "True when the library holds this album."
+          },
+          "requested": {
+            "type": "boolean",
+            "description": "True when an acquisition request is open for it."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Title."
+          },
+          "type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Primary type (`Album`, `EP`, `Single`)."
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "First release year."
+          }
+        }
       },
       "RemotesAlbumPage": {
         "type": "object",
@@ -27819,7 +29866,7 @@
       },
       "SearchKind": {
         "type": "string",
-        "description": "Which catalog bucket a result came from.",
+        "description": "Which bucket a result came from.",
         "enum": [
           "artist",
           "album",
@@ -27828,7 +29875,7 @@
       },
       "SearchRemoteStatus": {
         "type": "string",
-        "description": "Per-bucket provider health for one search call. The values mirror v2's\n`SearchRemoteStatus` exactly so the same notice and stale-time logic\napplies. Local-only search always emits `Ok`; a provider fan-out would\nfill in the real values.",
+        "description": "Per-bucket MusicBrainz health for one search call. The values mirror\nv2's `SearchRemoteStatus` exactly so the same notice and stale-time\nlogic applies. Library hits show whatever the status says.",
         "enum": [
           "ok",
           "partial",
@@ -27922,7 +29969,6 @@
         "description": "One search hit. Cover art is absent on purpose: the covers endpoints\nserve art by id, so search never duplicates those URLs.",
         "required": [
           "kind",
-          "id",
           "title",
           "in_library",
           "requested",
@@ -27936,13 +29982,23 @@
             ],
             "description": "Owning artist name, when the row has one."
           },
+          "disambiguation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "MusicBrainz disambiguation comment."
+          },
           "id": {
-            "type": "string",
-            "description": "Local catalog id."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Library id, when the library holds this artist, album or track.\nAbsent for MusicBrainz hits the library lacks."
           },
           "in_library": {
             "type": "boolean",
-            "description": "True for every local hit; provider hits would vary."
+            "description": "True when the library holds this artist or album."
           },
           "kind": {
             "$ref": "#/components/schemas/SearchKind",
@@ -27953,20 +30009,27 @@
               "string",
               "null"
             ],
-            "description": "Provider id from the external-identity tables, when the row has an\naccepted identity. Absent means unidentified, never failure."
+            "description": "MusicBrainz id: the hit's own for MusicBrainz hits, the accepted\nidentity for library rows. Absent means unidentified, never failure."
           },
           "requested": {
             "type": "boolean",
-            "description": "Always false here; the requests module owns this flag."
+            "description": "True when an acquisition request is open for this album."
           },
           "score": {
             "type": "integer",
             "format": "int32",
-            "description": "Match score, 0-100. Exact folded match is 100, folded prefix is 90,\nfolded substring is 70. Ranks hits, never filters them."
+            "description": "Match score, 0-100. MusicBrainz hits carry MusicBrainz's relevance;\nlibrary rows score 100 exact, 90 prefix, 70 substring. Ranks hits,\nnever filters them."
           },
           "title": {
             "type": "string",
             "description": "Display title (artist name, album title, or track title)."
+          },
+          "type_info": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Artist type, or an `Album + Live` style type label."
           },
           "year": {
             "type": [
@@ -28436,6 +30499,87 @@
           }
         }
       },
+      "SimilarAlbumsResponse": {
+        "type": "object",
+        "description": "`GET /albums/{album_id}/similar`.",
+        "required": [
+          "albums",
+          "source",
+          "configured"
+        ],
+        "properties": {
+          "albums": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscoveryAlbum"
+            },
+            "description": "Albums by similar artists."
+          },
+          "configured": {
+            "type": "boolean",
+            "description": "False when ListenBrainz is not set up."
+          },
+          "source": {
+            "$ref": "#/components/schemas/DiscoverySource",
+            "description": "Provider that answered."
+          }
+        }
+      },
+      "SimilarArtist": {
+        "type": "object",
+        "description": "One similar artist.",
+        "required": [
+          "musicbrainz_id",
+          "name",
+          "listen_count",
+          "in_library"
+        ],
+        "properties": {
+          "in_library": {
+            "type": "boolean",
+            "description": "True when the library holds this artist."
+          },
+          "listen_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Listen count from the provider (zero when it reports none)."
+          },
+          "musicbrainz_id": {
+            "type": "string",
+            "description": "Artist MBID."
+          },
+          "name": {
+            "type": "string",
+            "description": "Artist name."
+          }
+        }
+      },
+      "SimilarArtistsResponse": {
+        "type": "object",
+        "description": "`GET /artists/{artist_mbid}/similar`.",
+        "required": [
+          "similar_artists",
+          "source",
+          "configured"
+        ],
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "description": "False when the provider is not set up; the list is then empty."
+          },
+          "similar_artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SimilarArtist"
+            },
+            "description": "Similar artists, most similar first."
+          },
+          "source": {
+            "$ref": "#/components/schemas/DiscoverySource",
+            "description": "Provider that answered."
+          }
+        }
+      },
       "SlotView": {
         "type": "object",
         "description": "Slot-lane posture.",
@@ -28686,6 +30830,14 @@
             "default": []
           }
         }
+      },
+      "SourceStatus": {
+        "type": "string",
+        "description": "How one optional source fared while a page was built. Sources that\nanswered normally are left out of the map.",
+        "enum": [
+          "degraded",
+          "error"
+        ]
       },
       "SpotifyAuthUrlResponse": {
         "type": "object",
@@ -28996,7 +31148,8 @@
         "required": [
           "kind",
           "title",
-          "id",
+          "in_library",
+          "requested",
           "score"
         ],
         "properties": {
@@ -29007,9 +31160,23 @@
             ],
             "description": "Owning artist name, when the row has one."
           },
+          "disambiguation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "MusicBrainz disambiguation comment."
+          },
           "id": {
-            "type": "string",
-            "description": "Local catalog id."
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Library id, when the library holds it."
+          },
+          "in_library": {
+            "type": "boolean",
+            "description": "True when the library holds it."
           },
           "kind": {
             "$ref": "#/components/schemas/SearchKind",
@@ -29020,7 +31187,11 @@
               "string",
               "null"
             ],
-            "description": "Provider id, when the row has an accepted identity."
+            "description": "MusicBrainz id, when known."
+          },
+          "requested": {
+            "type": "boolean",
+            "description": "True when an acquisition request is open for this album."
           },
           "score": {
             "type": "integer",
@@ -29030,6 +31201,14 @@
           "title": {
             "type": "string",
             "description": "Display title."
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Release year, when known."
           }
         }
       },
@@ -29196,6 +31375,73 @@
           }
         }
       },
+      "TopAlbum": {
+        "type": "object",
+        "description": "One of an artist's most played albums.",
+        "required": [
+          "title",
+          "artist_name",
+          "listen_count",
+          "in_library",
+          "requested"
+        ],
+        "properties": {
+          "artist_name": {
+            "type": "string",
+            "description": "Credited artist."
+          },
+          "in_library": {
+            "type": "boolean",
+            "description": "True when the library holds this album."
+          },
+          "listen_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Listen or play count."
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Release-group MBID, when known."
+          },
+          "requested": {
+            "type": "boolean",
+            "description": "True when an acquisition request is open for it."
+          },
+          "title": {
+            "type": "string",
+            "description": "Album title."
+          }
+        }
+      },
+      "TopAlbumsResponse": {
+        "type": "object",
+        "description": "`GET /artists/{artist_mbid}/top-albums`.",
+        "required": [
+          "albums",
+          "source",
+          "configured"
+        ],
+        "properties": {
+          "albums": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TopAlbum"
+            },
+            "description": "Albums, most played first."
+          },
+          "configured": {
+            "type": "boolean",
+            "description": "False when the provider is not set up."
+          },
+          "source": {
+            "$ref": "#/components/schemas/DiscoverySource",
+            "description": "Provider that answered."
+          }
+        }
+      },
       "TopPickItem": {
         "type": "object",
         "description": "One personalized top pick.",
@@ -29257,6 +31503,84 @@
           "title": {
             "type": "string",
             "description": "Shelf title."
+          }
+        }
+      },
+      "TopSong": {
+        "type": "object",
+        "description": "One of an artist's most played songs.",
+        "required": [
+          "title",
+          "artist_name",
+          "listen_count"
+        ],
+        "properties": {
+          "artist_name": {
+            "type": "string",
+            "description": "Credited artist."
+          },
+          "listen_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Listen or play count."
+          },
+          "original_release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Release the listens point at, when known."
+          },
+          "recording_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Recording MBID, when known."
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Release group the listens point at, when known."
+          },
+          "release_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "That release's title, when known."
+          },
+          "title": {
+            "type": "string",
+            "description": "Song title."
+          }
+        }
+      },
+      "TopSongsResponse": {
+        "type": "object",
+        "description": "`GET /artists/{artist_mbid}/top-songs`.",
+        "required": [
+          "songs",
+          "source",
+          "configured"
+        ],
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "description": "False when the provider is not set up."
+          },
+          "songs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TopSong"
+            },
+            "description": "Songs, most played first."
+          },
+          "source": {
+            "$ref": "#/components/schemas/DiscoverySource",
+            "description": "Provider that answered."
           }
         }
       },

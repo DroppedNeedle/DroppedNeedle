@@ -32,7 +32,12 @@ use crate::{
     media::MediaSetup,
     plugins::wiring::PluginsSetup,
     providers::{InMemoryProviderCache, Providers, adapters::production_enrichment},
-    reads::{ReadsSetup, collections::db::CollectionsDb, platform::wrapped::ConfigWrappedKey},
+    reads::{
+        ReadsSetup,
+        catalog::{Catalog, library::LocalCatalog, upstream::Upstream},
+        collections::db::CollectionsDb,
+        platform::wrapped::ConfigWrappedKey,
+    },
     remotes::adapter::PlaylistImportSink,
     runtime_config::{
         ConfigStore, Crypto,
@@ -161,6 +166,15 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
     .with_collections(CollectionsDb::new(
         runtime.pool().clone(),
         runtime.lane().clone(),
+    ))
+    .with_catalog(Catalog::new(
+        Upstream::new(
+            &http,
+            providers.clone(),
+            config_store.clone(),
+            auth.users.clone(),
+        ),
+        LocalCatalog::new(runtime.pool().clone()),
     ));
     let connect_apps = match config_store.get::<ConnectApps>() {
         Ok(settings) => settings,

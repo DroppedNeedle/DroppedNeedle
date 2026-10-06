@@ -593,6 +593,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/albums/{album_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Header, tracklist and artwork in one call. */
+        get: operations["album"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/albums/{album_id}/basic": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The album header. */
+        get: operations["album_basic"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/albums/{album_id}/edition/acquire": {
         parameters: {
             query?: never;
@@ -614,6 +648,142 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/albums/{album_id}/editions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every edition of the album. */
+        get: operations["album_editions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/albums/{album_id}/lastfm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Last.fm summary and tags for the album. */
+        get: operations["album_lastfm"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/albums/{album_id}/more-by-artist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The artist's other albums. */
+        get: operations["more_by_artist"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/albums/{album_id}/purchase-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Where to buy the album. */
+        get: operations["album_purchase_options"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/albums/{album_id}/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Drop the album's cached upstream answers and rebuild the header. */
+        post: operations["album_refresh"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/albums/{album_id}/similar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Albums by similar artists. */
+        get: operations["similar_albums"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/albums/{album_id}/tracks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The tracklist of the edition the page shows. */
+        get: operations["album_tracks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/artists/{artist_mbid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The artist header. */
+        get: operations["artist"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/artists/{artist_mbid}/auto-download": {
         parameters: {
             query?: never;
@@ -624,6 +794,23 @@ export interface paths {
         get?: never;
         /** Turn auto-download on or off for one artist. */
         put: operations["set_auto_download_handler"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/artists/{artist_mbid}/extended": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Biography, portrait and artist images. */
+        get: operations["artist_extended"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -657,6 +844,108 @@ export interface paths {
         };
         /** Read one artist's follow status. */
         get: operations["get_follow_status_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/artists/{artist_mbid}/lastfm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Last.fm biography, tags and similar artists. */
+        get: operations["artist_lastfm"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/artists/{artist_mbid}/purchase-options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The artist's own store pages. */
+        get: operations["artist_purchase_options"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/artists/{artist_mbid}/releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One page of the discography. */
+        get: operations["artist_releases"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/artists/{artist_mbid}/similar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Similar artists. */
+        get: operations["similar_artists"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/artists/{artist_mbid}/top-albums": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The artist's most played albums. */
+        get: operations["top_albums"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/artists/{artist_mbid}/top-songs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The artist's most played songs. */
+        get: operations["top_songs"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6320,6 +6609,38 @@ export interface components {
              */
             sync_stall_timeout_minutes: number;
         };
+        /** @description `GET /albums/{album_id}/basic`: the album header. */
+        AlbumBasicInfo: {
+            /** @description Album thumbnail already cached from TheAudioDB. */
+            album_thumb_url?: string | null;
+            /** @description Artist MBID, empty when the credit has none. */
+            artist_id: string;
+            /** @description Credited artist. */
+            artist_name: string;
+            /** @description Disambiguation comment. */
+            disambiguation?: string | null;
+            /** @description True when the library holds this album. */
+            in_library: boolean;
+            /** @description Canonical release-group MBID. */
+            musicbrainz_id: string;
+            /** @description First release date. */
+            release_date?: string | null;
+            /** @description True when an acquisition request is open for it. */
+            requested: boolean;
+            /** @description Sources that degraded while building the page. */
+            service_status: components["schemas"]["Option"];
+            /** @description Where the page came from. */
+            source: components["schemas"]["CatalogSource"];
+            /** @description Album title. */
+            title: string;
+            /** @description Primary type (`Album`, `EP`, ...). */
+            type?: string | null;
+            /**
+             * Format: int32
+             * @description First release year.
+             */
+            year?: number | null;
+        };
         /** @description Compact album card for browse surfaces. */
         AlbumCard: {
             /** @description Linked MusicBrainz artist id, when the artist is identified. */
@@ -6377,6 +6698,45 @@ export interface components {
              */
             total: number;
         };
+        /** @description One edition (MusicBrainz release) of an album. */
+        AlbumEditionItem: {
+            /** @description Release country. */
+            country?: string | null;
+            /** @description Release date. */
+            date?: string | null;
+            /** @description Disambiguation (`deluxe edition`, `remaster`). */
+            disambiguation?: string | null;
+            /** @description True when the library's copy is identified as this edition. */
+            is_owned: boolean;
+            /** @description True when a curator pinned this edition. */
+            is_pinned: boolean;
+            /** @description Packaging. */
+            packaging?: string | null;
+            /** @description Release MBID. */
+            release_mbid: string;
+            /** @description Status (`Official`, `Promotion`, ...). */
+            status?: string | null;
+            /** @description Release title. */
+            title?: string | null;
+            /**
+             * Format: int32
+             * @description Tracks across all media.
+             */
+            track_count: number;
+        };
+        /** @description `GET /albums/{album_id}/editions`. */
+        AlbumEditionsResponse: {
+            /** @description Every edition MusicBrainz lists. */
+            items: components["schemas"]["AlbumEditionItem"][];
+            /** @description Owned edition, if identified. */
+            owned_release_mbid?: string | null;
+            /** @description Pinned edition, if any. */
+            pinned_release_mbid?: string | null;
+            /** @description Why that edition: `pin`, `owned`, `file_count` or `ranked`. */
+            selected_basis?: string | null;
+            /** @description The edition the album page shows. */
+            selected_release_mbid?: string | null;
+        };
         /** @description Enriched album counts. Absent counts mean unknown, never zero. */
         AlbumEnrichment: {
             /**
@@ -6400,6 +6760,30 @@ export interface components {
             artist_name?: string;
             /** @description Provider release-group id. */
             musicbrainz_id: string;
+        };
+        /** @description TheAudioDB album images. Every field is optional. */
+        AlbumImages: {
+            /** @description 3D case. */
+            album_3d_case_url?: string | null;
+            /** @description 3D face. */
+            album_3d_face_url?: string | null;
+            /** @description 3D flat. */
+            album_3d_flat_url?: string | null;
+            /** @description 3D thumbnail. */
+            album_3d_thumb_url?: string | null;
+            /** @description Back cover. */
+            album_back_url?: string | null;
+            /** @description CD art. */
+            album_cdart_url?: string | null;
+            /** @description Spine. */
+            album_spine_url?: string | null;
+            /** @description Front thumbnail. */
+            album_thumb_url?: string | null;
+        };
+        /** @description `GET /albums/{album_id}`: header, tracklist and artwork in one call. */
+        AlbumInfo: components["schemas"]["AlbumBasicInfo"] & components["schemas"]["AlbumTracksInfo"] & {
+            /** @description TheAudioDB artwork, fetched and cached by this call. */
+            images: components["schemas"]["AlbumImages"];
         };
         /**
          * @description Album intake body. Names may be omitted only when they resolve; intake
@@ -6451,6 +6835,60 @@ export interface components {
             provider?: string | null;
             /** @description Sampled tracks in album order. */
             tracks?: components["schemas"]["PreviewTrackItem"][];
+        };
+        /** @description One track on an album page. */
+        AlbumTrack: {
+            /**
+             * Format: int32
+             * @description Disc number, starting at 1.
+             */
+            disc_number: number;
+            /**
+             * Format: int64
+             * @description Length in milliseconds.
+             */
+            length?: number | null;
+            /** @description Medium format (`CD`, `Digital Media`, `DVD`, ...). */
+            media_format?: string | null;
+            /**
+             * Format: int32
+             * @description Position within its disc.
+             */
+            position: number;
+            /** @description Recording MBID. */
+            recording_id?: string | null;
+            /** @description Release-track MBID. */
+            release_track_id?: string | null;
+            /** @description Track title. */
+            title: string;
+        };
+        /**
+         * @description `GET /albums/{album_id}/tracks`: the tracklist of the edition the page
+         *     shows (pinned, owned, or MusicBrainz's best).
+         */
+        AlbumTracksInfo: {
+            /** @description Barcode. */
+            barcode?: string | null;
+            /** @description Release country. */
+            country?: string | null;
+            /** @description First label. */
+            label?: string | null;
+            /** @description Why that edition: `pin`, `owned`, `file_count` or `ranked`. */
+            pick_basis?: string | null;
+            /** @description The edition shown. */
+            selected_release_mbid?: string | null;
+            /**
+             * Format: int64
+             * @description Total length in milliseconds, when any track has one.
+             */
+            total_length?: number | null;
+            /**
+             * Format: int32
+             * @description Track count.
+             */
+            total_tracks: number;
+            /** @description Tracks in disc and position order. */
+            tracks: components["schemas"]["AlbumTrack"][];
         };
         /** @description One catalog album. */
         AlbumView: {
@@ -6664,6 +7102,38 @@ export interface components {
             /** @description Artist name, a fallback key for providers without the id. */
             name?: string;
         };
+        /** @description `GET /artists/{artist_mbid}/extended`: biography and portrait. */
+        ArtistExtendedInfo: {
+            /** @description Wikipedia introduction. */
+            description?: string | null;
+            /** @description Portrait from Wikidata/Commons. */
+            image?: string | null;
+            /** @description Artist images from TheAudioDB, fetched and cached by this call. */
+            images: components["schemas"]["ArtistImages"];
+        };
+        /** @description Artist images from TheAudioDB. Every field is optional. */
+        ArtistImages: {
+            /** @description Banner. */
+            banner_url?: string | null;
+            /** @description Clear art. */
+            clearart_url?: string | null;
+            /** @description Cutout. */
+            cutout_url?: string | null;
+            /** @description Fanart. */
+            fanart_url?: string | null;
+            /** @description Second fanart. */
+            fanart_url_2?: string | null;
+            /** @description Third fanart. */
+            fanart_url_3?: string | null;
+            /** @description Fourth fanart. */
+            fanart_url_4?: string | null;
+            /** @description Logo. */
+            logo_url?: string | null;
+            /** @description Thumbnail. */
+            thumb_url?: string | null;
+            /** @description Wide thumbnail. */
+            wide_thumb_url?: string | null;
+        };
         /** @description Full artist index. */
         ArtistIndex: {
             /** @description Alphabetic buckets. */
@@ -6675,6 +7145,37 @@ export interface components {
             artists: components["schemas"]["RemotesArtistView"][];
             /** @description Bucket label, e.g. "A". */
             name: string;
+        };
+        /** @description `GET /artists/{artist_mbid}`: the artist header. */
+        ArtistInfo: {
+            /** @description Up to ten aliases. */
+            aliases: string[];
+            /** @description ISO country code. */
+            country?: string | null;
+            /** @description Disambiguation comment. */
+            disambiguation?: string | null;
+            /** @description Known streaming, store, social and reference links. */
+            external_links: components["schemas"]["ExternalLink"][];
+            /**
+             * @description Artist images already cached from TheAudioDB. The extended route
+             *     fetches them, so a first visit may show none.
+             */
+            images: components["schemas"]["ArtistImages"];
+            /** @description True when the library holds this artist. */
+            in_library: boolean;
+            life_span?: null | components["schemas"]["LifeSpan"];
+            /** @description Canonical artist MBID (after any MusicBrainz merge redirect). */
+            musicbrainz_id: string;
+            /** @description Artist name. */
+            name: string;
+            /** @description Sources that degraded while building the page. */
+            service_status: components["schemas"]["Option"];
+            /** @description Where the page came from. */
+            source: components["schemas"]["CatalogSource"];
+            /** @description Up to ten tags, most voted first. */
+            tags: string[];
+            /** @description Artist type (`Person`, `Group`, ...). */
+            type?: string | null;
         };
         /** @description One page of catalog artists, with scope totals. */
         ArtistPage: {
@@ -6705,6 +7206,65 @@ export interface components {
              * @description Artists matching the scope and filter, all pages.
              */
             total: number;
+        };
+        /**
+         * @description `GET /artists/{artist_mbid}/purchase-options`: the artist's own store
+         *     pages (Bandcamp, merch shop).
+         */
+        ArtistPurchaseOptionsResponse: {
+            /** @description Bandcamp search for the artist, empty when the name is unknown. */
+            bandcamp_search_url: string;
+            /** @description Store pages. */
+            links: components["schemas"]["PurchaseLink"][];
+        };
+        /**
+         * @description `GET /artists/{artist_mbid}/releases`: one page of the discography,
+         *     filtered by the release-type preferences. Pages run across albums, then
+         *     EPs, then singles, each newest first.
+         */
+        ArtistReleases: {
+            /** @description Albums on this page. */
+            albums: components["schemas"]["ReleaseItem"][];
+            /** @description EPs on this page. */
+            eps: components["schemas"]["ReleaseItem"][];
+            /** @description Whether another page exists. */
+            has_more: boolean;
+            /**
+             * Format: int32
+             * @description Echoed page size.
+             */
+            limit: number;
+            /**
+             * Format: int32
+             * @description Offset of the next page, when there is one.
+             */
+            next_offset?: number | null;
+            /**
+             * Format: int32
+             * @description Echoed offset.
+             */
+            offset: number;
+            /**
+             * Format: int32
+             * @description Items on this page.
+             */
+            returned_count: number;
+            /** @description Sources that degraded while building the page. */
+            service_status: components["schemas"]["Option"];
+            /** @description Singles on this page. */
+            singles: components["schemas"]["ReleaseItem"][];
+            /** @description Where the list came from. */
+            source: components["schemas"]["CatalogSource"];
+            /**
+             * Format: int32
+             * @description Total items after filtering. Absent while `warming`.
+             */
+            source_total_count?: number | null;
+            /**
+             * @description True while the rest of a large discography is still being fetched
+             *     in the background; ask again shortly for the full list.
+             */
+            warming: boolean;
         };
         /**
          * @description Artist credit standardization.
@@ -7226,6 +7786,11 @@ export interface components {
             /** @description Supported track count. */
             supported_tracks: number;
         };
+        /**
+         * @description Where a page's core data came from.
+         * @enum {string}
+         */
+        CatalogSource: "musicbrainz" | "library";
         /** @description One album inside a section or chart page. */
         ChartAlbum: {
             /** @description MusicBrainz artist id, when known. */
@@ -7668,6 +8233,26 @@ export interface components {
             unexplored_genres?: null | components["schemas"]["ChartSection"];
             weekly_exploration?: null | components["schemas"]["WeeklyExploration"];
         };
+        /** @description An album in a discovery row. */
+        DiscoveryAlbum: {
+            /** @description Artist MBID, when known. */
+            artist_id?: string | null;
+            /** @description Credited artist. */
+            artist_name: string;
+            /** @description True when the library holds this album. */
+            in_library: boolean;
+            /** @description Release-group MBID. */
+            musicbrainz_id: string;
+            /** @description True when an acquisition request is open for it. */
+            requested: boolean;
+            /** @description Title. */
+            title: string;
+            /**
+             * Format: int32
+             * @description First release year.
+             */
+            year?: number | null;
+        };
         /** @description Body creating a discovery batch (one request per album). */
         DiscoveryBatchCreate: {
             /** @description Albums to request. */
@@ -7795,6 +8380,11 @@ export interface components {
             /** @description Hub title, e.g. "Recommended for you". */
             title: string;
         };
+        /**
+         * @description Which listening-data provider answered a discovery section.
+         * @enum {string}
+         */
+        DiscoverySource: "listenbrainz" | "lastfm";
         /** @description Plex discovery shelves for the hub page. */
         DiscoveryView: {
             /** @description Album shelves, in upstream order. */
@@ -8193,6 +8783,17 @@ export interface components {
          * @enum {string}
          */
         ExtensionCase: "preserve" | "lower" | "upper";
+        /** @description One external link on an artist page. */
+        ExternalLink: {
+            /** @description `music`, `social`, `info` or `other`. */
+            category: string;
+            /** @description Display label (`Bandcamp`, `Wikipedia`, ...). */
+            label: string;
+            /** @description MusicBrainz relationship type (`official homepage`, `bandcamp`, ...). */
+            type: string;
+            /** @description The URL. */
+            url: string;
+        };
         /** @description External-server refresh after publishing. */
         ExternalRefreshSettings: {
             /**
@@ -9237,6 +9838,51 @@ export interface components {
             /** @description `album` (default) or `track`. */
             kind?: string | null;
         };
+        /** @description `GET /albums/{album_id}/lastfm`. */
+        LastFmAlbumEnrichment: {
+            /**
+             * Format: int64
+             * @description Listener count.
+             */
+            listeners: number;
+            /**
+             * Format: int64
+             * @description Play count.
+             */
+            playcount: number;
+            /** @description Wiki summary, HTML stripped. */
+            summary?: string | null;
+            /** @description Tags. */
+            tags: components["schemas"]["LastFmTag"][];
+            /** @description Last.fm page. */
+            url?: string | null;
+        };
+        /**
+         * @description `GET /artists/{artist_mbid}/lastfm`. Empty when Last.fm is off or the
+         *     user has no Last.fm key.
+         */
+        LastFmArtistEnrichment: {
+            /** @description Biography, HTML stripped. */
+            bio?: string | null;
+            /**
+             * Format: int64
+             * @description Listener count.
+             */
+            listeners: number;
+            /**
+             * Format: int64
+             * @description Play count.
+             */
+            playcount: number;
+            /** @description Similar artists. */
+            similar_artists: components["schemas"]["LastFmSimilarArtist"][];
+            /** @description Short summary, HTML stripped. */
+            summary?: string | null;
+            /** @description Tags. */
+            tags: components["schemas"]["LastFmTag"][];
+            /** @description Last.fm page. */
+            url?: string | null;
+        };
         /** @description Confirmation that credentials were stored. */
         LastFmConfiguredResponse: {
             /** @description Always true when this response is returned. */
@@ -9288,6 +9934,20 @@ export interface components {
              */
             shared_secret: string;
         };
+        /** @description A similar artist according to Last.fm. */
+        LastFmSimilarArtist: {
+            /**
+             * Format: double
+             * @description Similarity, 0 to 1.
+             */
+            match: number;
+            /** @description Artist MBID, when Last.fm knows it. */
+            mbid?: string | null;
+            /** @description Artist name. */
+            name: string;
+            /** @description Last.fm page. */
+            url?: string | null;
+        };
         /** @description Per-user Last.fm link status. Never carries secrets. */
         LastFmStatusResponse: {
             /** @description Whether API credentials are stored. */
@@ -9296,6 +9956,13 @@ export interface components {
             linked: boolean;
             /** @description Linked Last.fm username, when linked. */
             username?: string | null;
+        };
+        /** @description A Last.fm tag. */
+        LastFmTag: {
+            /** @description Tag name. */
+            name: string;
+            /** @description Tag page. */
+            url?: string | null;
         };
         /** @description A Last.fm sign-in token plus the URL to approve it at. */
         LastFmTokenResponse: {
@@ -10146,6 +10813,15 @@ export interface components {
             /** @description Lidarr version from `system/status`, when the probe reached it. */
             version?: string | null;
         };
+        /** @description An artist's life span. */
+        LifeSpan: {
+            /** @description Begin date, partial shapes allowed (`1991`, `1991-06`). */
+            begin?: string | null;
+            /** @description End date, partial shapes allowed. */
+            end?: string | null;
+            /** @description Whether the artist has ended, when MusicBrainz says. */
+            ended?: boolean | null;
+        };
         /**
          * @description One account the caller linked, on any service. Never carries the
          *     stored secret.
@@ -10454,6 +11130,13 @@ export interface components {
              * @default []
              */
             tagging_script_ids: string[];
+        };
+        /** @description `GET /albums/{album_id}/more-by-artist`. */
+        MoreByArtistResponse: {
+            /** @description Other release groups by the artist, newest first. */
+            albums: components["schemas"]["DiscoveryAlbum"][];
+            /** @description The artist's name, empty when MusicBrainz had nothing. */
+            artist_name: string;
         };
         /**
          * @description APEv2 policy for MP3 writes.
@@ -10858,6 +11541,9 @@ export interface components {
         OperationResult: {
             /** @description Whether the operation succeeded. */
             success: boolean;
+        };
+        Option: null | {
+            [key: string]: "degraded" | "error";
         };
         /** @description Organization management block. */
         OrganizationManagementSettings: {
@@ -11837,6 +12523,36 @@ export interface components {
             version?: string | null;
         };
         /**
+         * @description What kind of purchase a link offers.
+         * @enum {string}
+         */
+        PurchaseKind: "digital" | "physical" | "free";
+        /** @description One "where to buy" link. */
+        PurchaseLink: {
+            /** @description Digital, physical or free. */
+            kind: components["schemas"]["PurchaseKind"];
+            /** @description Display name, or the bare domain for unknown stores. */
+            label: string;
+            /** @description Store key (`bandcamp`, `qobuz`, `itunes`, `amazon`, ..., `other`). */
+            store: string;
+            /** @description Store page. */
+            url: string;
+        };
+        /**
+         * @description `GET /albums/{album_id}/purchase-options`. Bandcamp sorts first, then
+         *     specialist stores, then the large storefronts.
+         */
+        PurchaseOptionsResponse: {
+            /** @description Bandcamp search for the album, always present as the fallback. */
+            bandcamp_search_url: string;
+            /** @description Download stores. */
+            digital: components["schemas"]["PurchaseLink"][];
+            /** @description Free downloads. */
+            free: components["schemas"]["PurchaseLink"][];
+            /** @description Mail-order stores. */
+            physical: components["schemas"]["PurchaseLink"][];
+        };
+        /**
          * @description One ordered, closed format-quality recipe entry. Unknown keys are
          *     rejected at decode so a future setting cannot silently become a
          *     different recipe.
@@ -12220,6 +12936,26 @@ export interface components {
          * @enum {string}
          */
         RelationshipType: "composer" | "lyricist" | "conductor" | "performer" | "arranger" | "remixer" | "producer" | "other";
+        /** @description One release group on an artist page. */
+        ReleaseItem: {
+            /** @description First release date. */
+            first_release_date?: string | null;
+            /** @description Release-group MBID. */
+            id: string;
+            /** @description True when the library holds this album. */
+            in_library: boolean;
+            /** @description True when an acquisition request is open for it. */
+            requested: boolean;
+            /** @description Title. */
+            title?: string | null;
+            /** @description Primary type (`Album`, `EP`, `Single`). */
+            type?: string | null;
+            /**
+             * Format: int32
+             * @description First release year.
+             */
+            year?: number | null;
+        };
         /** @description One page of albums. */
         RemotesAlbumPage: {
             /** @description Page items. */
@@ -13086,15 +13822,14 @@ export interface components {
             top_result?: null | components["schemas"]["SearchResultItem"];
         };
         /**
-         * @description Which catalog bucket a result came from.
+         * @description Which bucket a result came from.
          * @enum {string}
          */
         SearchKind: "artist" | "album" | "track";
         /**
-         * @description Per-bucket provider health for one search call. The values mirror v2's
-         *     `SearchRemoteStatus` exactly so the same notice and stale-time logic
-         *     applies. Local-only search always emits `Ok`; a provider fan-out would
-         *     fill in the real values.
+         * @description Per-bucket MusicBrainz health for one search call. The values mirror
+         *     v2's `SearchRemoteStatus` exactly so the same notice and stale-time
+         *     logic applies. Library hits show whatever the status says.
          * @enum {string}
          */
         SearchRemoteStatus: "ok" | "partial" | "timeout" | "error" | "stale";
@@ -13126,27 +13861,35 @@ export interface components {
         SearchResultItem: {
             /** @description Owning artist name, when the row has one. */
             artist?: string | null;
-            /** @description Local catalog id. */
-            id: string;
-            /** @description True for every local hit; provider hits would vary. */
+            /** @description MusicBrainz disambiguation comment. */
+            disambiguation?: string | null;
+            /**
+             * @description Library id, when the library holds this artist, album or track.
+             *     Absent for MusicBrainz hits the library lacks.
+             */
+            id?: string | null;
+            /** @description True when the library holds this artist or album. */
             in_library: boolean;
             /** @description Result bucket. */
             kind: components["schemas"]["SearchKind"];
             /**
-             * @description Provider id from the external-identity tables, when the row has an
-             *     accepted identity. Absent means unidentified, never failure.
+             * @description MusicBrainz id: the hit's own for MusicBrainz hits, the accepted
+             *     identity for library rows. Absent means unidentified, never failure.
              */
             musicbrainz_id?: string | null;
-            /** @description Always false here; the requests module owns this flag. */
+            /** @description True when an acquisition request is open for this album. */
             requested: boolean;
             /**
              * Format: int32
-             * @description Match score, 0-100. Exact folded match is 100, folded prefix is 90,
-             *     folded substring is 70. Ranks hits, never filters them.
+             * @description Match score, 0-100. MusicBrainz hits carry MusicBrainz's relevance;
+             *     library rows score 100 exact, 90 prefix, 70 substring. Ranks hits,
+             *     never filters them.
              */
             score: number;
             /** @description Display title (artist name, album title, or track title). */
             title: string;
+            /** @description Artist type, or an `Album + Live` style type label. */
+            type_info?: string | null;
             /**
              * Format: int32
              * @description Release year, when known.
@@ -13351,6 +14094,38 @@ export interface components {
             /** @description True when no users exist yet and setup must run. */
             setup_required: boolean;
         };
+        /** @description `GET /albums/{album_id}/similar`. */
+        SimilarAlbumsResponse: {
+            /** @description Albums by similar artists. */
+            albums: components["schemas"]["DiscoveryAlbum"][];
+            /** @description False when ListenBrainz is not set up. */
+            configured: boolean;
+            /** @description Provider that answered. */
+            source: components["schemas"]["DiscoverySource"];
+        };
+        /** @description One similar artist. */
+        SimilarArtist: {
+            /** @description True when the library holds this artist. */
+            in_library: boolean;
+            /**
+             * Format: int64
+             * @description Listen count from the provider (zero when it reports none).
+             */
+            listen_count: number;
+            /** @description Artist MBID. */
+            musicbrainz_id: string;
+            /** @description Artist name. */
+            name: string;
+        };
+        /** @description `GET /artists/{artist_mbid}/similar`. */
+        SimilarArtistsResponse: {
+            /** @description False when the provider is not set up; the list is then empty. */
+            configured: boolean;
+            /** @description Similar artists, most similar first. */
+            similar_artists: components["schemas"]["SimilarArtist"][];
+            /** @description Provider that answered. */
+            source: components["schemas"]["DiscoverySource"];
+        };
         /** @description Slot-lane posture. */
         SlotView: {
             /** @description Free background-lane permits. */
@@ -13531,6 +14306,12 @@ export interface components {
             order: string[];
         };
         /**
+         * @description How one optional source fared while a page was built. Sources that
+         *     answered normally are left out of the map.
+         * @enum {string}
+         */
+        SourceStatus: "degraded" | "error";
+        /**
          * @description Authorize URL for the caller's Spotify link flow (v2
          *     `SpotifyAuthUrlResponse`).
          */
@@ -13673,12 +14454,18 @@ export interface components {
         SuggestResult: {
             /** @description Owning artist name, when the row has one. */
             artist?: string | null;
-            /** @description Local catalog id. */
-            id: string;
+            /** @description MusicBrainz disambiguation comment. */
+            disambiguation?: string | null;
+            /** @description Library id, when the library holds it. */
+            id?: string | null;
+            /** @description True when the library holds it. */
+            in_library: boolean;
             /** @description Suggestion bucket. */
             kind: components["schemas"]["SearchKind"];
-            /** @description Provider id, when the row has an accepted identity. */
+            /** @description MusicBrainz id, when known. */
             musicbrainz_id?: string | null;
+            /** @description True when an acquisition request is open for this album. */
+            requested: boolean;
             /**
              * Format: int32
              * @description Match score, 0-100, same scale as full search.
@@ -13686,6 +14473,11 @@ export interface components {
             score: number;
             /** @description Display title. */
             title: string;
+            /**
+             * Format: int32
+             * @description Release year, when known.
+             */
+            year?: number | null;
         };
         /** @description One suggested track, tagged with why it was picked. */
         SuggestionTrack: {
@@ -13772,6 +14564,33 @@ export interface components {
             /** @description Server version, when known. */
             version?: string | null;
         };
+        /** @description One of an artist's most played albums. */
+        TopAlbum: {
+            /** @description Credited artist. */
+            artist_name: string;
+            /** @description True when the library holds this album. */
+            in_library: boolean;
+            /**
+             * Format: int64
+             * @description Listen or play count.
+             */
+            listen_count: number;
+            /** @description Release-group MBID, when known. */
+            release_group_mbid?: string | null;
+            /** @description True when an acquisition request is open for it. */
+            requested: boolean;
+            /** @description Album title. */
+            title: string;
+        };
+        /** @description `GET /artists/{artist_mbid}/top-albums`. */
+        TopAlbumsResponse: {
+            /** @description Albums, most played first. */
+            albums: components["schemas"]["TopAlbum"][];
+            /** @description False when the provider is not set up. */
+            configured: boolean;
+            /** @description Provider that answered. */
+            source: components["schemas"]["DiscoverySource"];
+        };
         /** @description One personalized top pick. */
         TopPickItem: {
             /** @description Picked album. */
@@ -13799,6 +14618,35 @@ export interface components {
             source?: string | null;
             /** @description Shelf title. */
             title: string;
+        };
+        /** @description One of an artist's most played songs. */
+        TopSong: {
+            /** @description Credited artist. */
+            artist_name: string;
+            /**
+             * Format: int64
+             * @description Listen or play count.
+             */
+            listen_count: number;
+            /** @description Release the listens point at, when known. */
+            original_release_mbid?: string | null;
+            /** @description Recording MBID, when known. */
+            recording_mbid?: string | null;
+            /** @description Release group the listens point at, when known. */
+            release_group_mbid?: string | null;
+            /** @description That release's title, when known. */
+            release_name?: string | null;
+            /** @description Song title. */
+            title: string;
+        };
+        /** @description `GET /artists/{artist_mbid}/top-songs`. */
+        TopSongsResponse: {
+            /** @description False when the provider is not set up. */
+            configured: boolean;
+            /** @description Songs, most played first. */
+            songs: components["schemas"]["TopSong"][];
+            /** @description Provider that answered. */
+            source: components["schemas"]["DiscoverySource"];
         };
         /** @description One artist/track pair to check against the YouTube cache. */
         TrackCacheCheckItem: {
@@ -15366,6 +16214,108 @@ export interface operations {
             };
         };
     };
+    album: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release-group MBID */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Album page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumInfo"];
+                };
+            };
+            /** @description Not a MusicBrainz id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description MusicBrainz down and the album is not in the library */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    album_basic: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release-group MBID */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Album header */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumBasicInfo"];
+                };
+            };
+            /** @description Not a MusicBrainz id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description MusicBrainz down and the album is not in the library */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     acquire_edition_handler: {
         parameters: {
             query?: never;
@@ -15385,6 +16335,377 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["EditionAcquireResponse"];
                 };
+            };
+        };
+    };
+    album_editions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release-group MBID */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Editions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumEditionsResponse"];
+                };
+            };
+            /** @description Not a MusicBrainz id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description MusicBrainz down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    album_lastfm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release-group MBID */
+                album_id: string;
+                /** @description Artist name for the Last.fm lookup. */
+                artist_name: string;
+                /** @description Album title for the Last.fm lookup. */
+                album_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Last.fm data; empty when Last.fm is not set up */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LastFmAlbumEnrichment"];
+                };
+            };
+            /** @description Not a MusicBrainz id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    more_by_artist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release-group MBID */
+                album_id: string;
+                /** @description The album's artist MBID. */
+                artist_id: string;
+                /** @description How many to return, 1 to 30 (default 10). */
+                count: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Other albums by the artist */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MoreByArtistResponse"];
+                };
+            };
+            /** @description Not a MusicBrainz id or bad count */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    album_purchase_options: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release-group MBID */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Store links plus a Bandcamp search */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PurchaseOptionsResponse"];
+                };
+            };
+            /** @description Not a MusicBrainz id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description MusicBrainz down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    album_refresh: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release-group MBID */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Fresh album header */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumBasicInfo"];
+                };
+            };
+            /** @description Not a MusicBrainz id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description MusicBrainz down and the album is not in the library */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    similar_albums: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release-group MBID */
+                album_id: string;
+                /** @description The album's artist MBID. */
+                artist_id: string;
+                /** @description How many to return, 1 to 30 (default 10). */
+                count: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Similar albums */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimilarAlbumsResponse"];
+                };
+            };
+            /** @description Not a MusicBrainz id or bad count */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    album_tracks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release-group MBID */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tracklist */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumTracksInfo"];
+                };
+            };
+            /** @description Not a MusicBrainz id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description MusicBrainz down and the album is not in the library */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    artist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Artist MBID */
+                artist_mbid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Artist header */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtistInfo"];
+                };
+            };
+            /** @description Not a MusicBrainz id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown artist */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description MusicBrainz down and the artist is not in the library */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -15436,6 +16757,43 @@ export interface operations {
             };
             /** @description Follow before enabling auto-download */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    artist_extended: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Artist MBID */
+                artist_mbid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Biography and images; fields absent when unknown */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtistExtendedInfo"];
+                };
+            };
+            /** @description Not a MusicBrainz id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -15504,6 +16862,255 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["FollowStatusResponse"];
                 };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    artist_lastfm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Artist MBID */
+                artist_mbid: string;
+                /** @description Artist name, the Last.fm fallback key. */
+                artist_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Last.fm data; empty when Last.fm is not set up */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LastFmArtistEnrichment"];
+                };
+            };
+            /** @description Not a MusicBrainz id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    artist_purchase_options: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Artist MBID */
+                artist_mbid: string;
+                /** @description Artist name for the Bandcamp search fallback. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Store pages plus a Bandcamp search */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtistPurchaseOptionsResponse"];
+                };
+            };
+            /** @description Not a MusicBrainz id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    artist_releases: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Artist MBID */
+                artist_mbid: string;
+                /** @description Items to skip (default 0). */
+                offset: number | null;
+                /** @description Page size, 1 to 200 (default 50). */
+                limit: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Discography page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtistReleases"];
+                };
+            };
+            /** @description Not a MusicBrainz id or bad paging */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description MusicBrainz down and the library has no albums by the artist */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    similar_artists: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Artist MBID */
+                artist_mbid: string;
+                /** @description How many to return, 1 to 50. */
+                count: number | null;
+                /** @description Provider to ask; default is the primary music source setting. */
+                source: null | components["schemas"]["DiscoverySource"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Similar artists */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SimilarArtistsResponse"];
+                };
+            };
+            /** @description Not a MusicBrainz id or bad count */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    top_albums: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Artist MBID */
+                artist_mbid: string;
+                /** @description How many to return, 1 to 50. */
+                count: number | null;
+                /** @description Provider to ask; default is the primary music source setting. */
+                source: null | components["schemas"]["DiscoverySource"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Top albums */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TopAlbumsResponse"];
+                };
+            };
+            /** @description Not a MusicBrainz id or bad count */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    top_songs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Artist MBID */
+                artist_mbid: string;
+                /** @description How many to return, 1 to 50. */
+                count: number | null;
+                /** @description Provider to ask; default is the primary music source setting. */
+                source: null | components["schemas"]["DiscoverySource"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Top songs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TopSongsResponse"];
+                };
+            };
+            /** @description Not a MusicBrainz id or bad count */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Not authenticated */
             401: {

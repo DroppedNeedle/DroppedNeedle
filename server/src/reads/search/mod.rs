@@ -1,9 +1,10 @@
 //! Unified search: native `/api/v3/search` read surface.
 //!
-//! Search over the 0001 `local_*` catalog tables: unified search,
-//! typeahead suggest, per-bucket drill-down, and one single-method
-//! enrich-batch. Provider-backed enrichment runs behind these same
-//! handlers through the [`ports::EnrichmentPort`] seam.
+//! MusicBrainz artists and albums joined with the library's own artists,
+//! albums and tracks: unified search, typeahead suggest, per-bucket
+//! drill-down, and one single-method enrich-batch. MusicBrainz runs
+//! through the [`catalog`](crate::reads::catalog) service; enrichment runs
+//! behind the [`ports::EnrichmentPort`] seam.
 //!
 //! Wiring: [`router`] is mounted under `/api/v3` inside the session gate
 //! via `ReadsSetup::search_router`, with the handler paths and model

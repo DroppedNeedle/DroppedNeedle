@@ -33,6 +33,12 @@ use droppedneedle::db::{DbConfig, DbRuntime, open_runtime};
 use droppedneedle::docs::ApiDoc;
 use droppedneedle::http_client::HttpClientFactory;
 use droppedneedle::ids::{IdGenerator, UuidGenerator};
+use droppedneedle::providers::{InMemoryProviderCache, Providers};
+use droppedneedle::reads::catalog::{
+    Catalog,
+    library::LocalCatalog,
+    upstream::{CatalogSettings, Upstream},
+};
 use droppedneedle::runtime_config::sections::SecuritySettings;
 use droppedneedle::runtime_config::{
     ConfigStore, Crypto, Secret, secret_sections::WrappedSettings,
@@ -169,6 +175,15 @@ impl E2e {
         .with_collections(droppedneedle::reads::collections::db::CollectionsDb::new(
             self.runtime.pool().clone(),
             self.runtime.lane().clone(),
+        ))
+        .with_catalog(Catalog::new(
+            Upstream::new(
+                &self.http,
+                Arc::new(Providers::new(Arc::new(InMemoryProviderCache::new()))),
+                Arc::clone(&self.store) as Arc<dyn CatalogSettings>,
+                auth.users.clone(),
+            ),
+            LocalCatalog::new(self.runtime.pool().clone()),
         ));
         let connect_apps: droppedneedle::runtime_config::sections::ConnectApps =
             self.store.get().unwrap_or_default();
@@ -1260,6 +1275,57 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("GET", "/api/v3/search/{bucket}", Posture::User),
     ("GET", "/api/v3/search/suggest", Posture::User),
     ("POST", "/api/v3/search/enrich/batch", Posture::User),
+    // Catalog: MusicBrainz artist and album pages. The dummy id is not an
+    // MBID or a library album, so every row answers 400 without dialing out.
+    ("GET", "/api/v3/artists/{artist_mbid}", Posture::User),
+    (
+        "GET",
+        "/api/v3/artists/{artist_mbid}/extended",
+        Posture::User,
+    ),
+    (
+        "GET",
+        "/api/v3/artists/{artist_mbid}/releases",
+        Posture::User,
+    ),
+    (
+        "GET",
+        "/api/v3/artists/{artist_mbid}/similar",
+        Posture::User,
+    ),
+    (
+        "GET",
+        "/api/v3/artists/{artist_mbid}/top-songs",
+        Posture::User,
+    ),
+    (
+        "GET",
+        "/api/v3/artists/{artist_mbid}/top-albums",
+        Posture::User,
+    ),
+    ("GET", "/api/v3/artists/{artist_mbid}/lastfm", Posture::User),
+    (
+        "GET",
+        "/api/v3/artists/{artist_mbid}/purchase-options",
+        Posture::User,
+    ),
+    ("GET", "/api/v3/albums/{album_id}", Posture::User),
+    ("GET", "/api/v3/albums/{album_id}/basic", Posture::User),
+    ("GET", "/api/v3/albums/{album_id}/tracks", Posture::User),
+    ("GET", "/api/v3/albums/{album_id}/editions", Posture::User),
+    ("POST", "/api/v3/albums/{album_id}/refresh", Posture::User),
+    ("GET", "/api/v3/albums/{album_id}/similar", Posture::User),
+    (
+        "GET",
+        "/api/v3/albums/{album_id}/more-by-artist",
+        Posture::User,
+    ),
+    ("GET", "/api/v3/albums/{album_id}/lastfm", Posture::User),
+    (
+        "GET",
+        "/api/v3/albums/{album_id}/purchase-options",
+        Posture::User,
+    ),
     // Stage-4 discover + queue + radio + batches.
     ("GET", "/api/v3/discover", Posture::User),
     ("POST", "/api/v3/discover/refresh", Posture::User),

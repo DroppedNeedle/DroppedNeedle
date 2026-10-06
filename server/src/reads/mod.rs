@@ -1,4 +1,5 @@
-//! Native reads: library, search, discover, collections, platform.
+//! Native reads: library, search, artist and album pages, discover,
+//! collections, platform.
 //!
 //! Each area owns its handlers, services, and state; this module only
 //! composes them. [`ReadsSetup`] is the single bundle `create_app` mounts:
@@ -13,6 +14,7 @@
 //! builds it from the real session by resolving the role fresh from the
 //! user store, mirroring the users role extractors.
 
+pub mod catalog;
 pub mod collections;
 pub mod discover;
 pub mod library;
@@ -46,6 +48,9 @@ pub struct ReadsSetup {
     /// Collections state. Unwired until [`ReadsSetup::with_collections`]
     /// hands it the database.
     pub collections: collections::CollectionsState,
+    /// Artist and album pages. Unmounted until [`ReadsSetup::with_catalog`]
+    /// hands them their upstreams.
+    pub catalog: Option<catalog::CatalogDeps>,
     /// Covers/version/wrapped states (still the fakes; no providers wired).
     pub platform: platform::PlatformState,
 }
@@ -103,6 +108,7 @@ impl ReadsSetup {
             search,
             discover: discover_deps(ids.clone()),
             collections: collections::CollectionsState::unwired(),
+            catalog: None,
             platform: platform_state(wrapped_key),
         }
     }
@@ -129,6 +135,7 @@ impl ReadsSetup {
             ),
             discover: discover_deps(ids.clone()),
             collections: collections::CollectionsState::unwired(),
+            catalog: None,
             platform: platform_state(String::new()),
         })
     }
@@ -140,6 +147,18 @@ impl ReadsSetup {
         self
     }
 
+    /// Serve the artist and album pages, and join MusicBrainz into unified
+    /// search, through this catalog.
+    #[must_use]
+    pub fn with_catalog(mut self, catalog: catalog::Catalog) -> Self {
+        self.search.service = self.search.service.clone().with_remote(catalog.clone());
+        self.catalog = Some(catalog::CatalogDeps {
+            catalog,
+            ids: self.search.ids.clone(),
+        });
+        self
+    }
+
     /// Relative-path routers for nesting under `/api/v3` inside the session
     /// gate. The collections leg carries the principal-translation layer so
     /// its handlers keep their `Principal` extractor against the real gate.
@@ -147,11 +166,15 @@ impl ReadsSetup {
         let collections = collections::collections_routes(self.collections.clone()).layer(
             axum::middleware::from_fn_with_state(self.library.auth.clone(), translate_principal),
         );
-        Router::new()
+        let router = Router::new()
             .merge(library::library_router(self.library.clone()))
             .merge(discover::reads_router(self.discover.clone()))
             .merge(collections)
-            .merge(platform::session_router(&self.platform))
+            .merge(platform::session_router(&self.platform));
+        match &self.catalog {
+            Some(deps) => router.merge(catalog::router(deps.clone())),
+            None => router,
+        }
     }
 
     /// Full-path search router. It already carries the `/api/v3` prefix, so

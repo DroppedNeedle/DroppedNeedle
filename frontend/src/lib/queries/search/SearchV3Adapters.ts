@@ -9,14 +9,20 @@ export type SuggestResultV3 = components['schemas']['SuggestResult'];
 // shared cards below still take v1 Artist/Album props. Rows without a
 // provider id fall back to the local id, the same pattern as the v1 merge
 // functions; both cards already treat local_id === musicbrainz_id as
-// local-only (no download button, no enrichment request).
+// local-only (no download button, no enrichment request). MusicBrainz rows
+// the library does not hold have no local id; every row has one id or the
+// other.
+function rowKey(row: { id?: string | null; musicbrainz_id?: string | null }): string {
+	return row.musicbrainz_id ?? row.id ?? '';
+}
+
 export function toV1Artist(row: SearchResultItemV3): Artist {
 	return {
 		title: row.title,
-		musicbrainz_id: row.musicbrainz_id ?? row.id,
+		musicbrainz_id: rowKey(row),
 		in_library: row.in_library,
 		score: row.score,
-		local_id: row.id
+		local_id: row.id ?? null
 	};
 }
 
@@ -25,11 +31,11 @@ export function toV1Album(row: SearchResultItemV3): Album {
 		title: row.title,
 		artist: row.artist ?? null,
 		year: row.year ?? null,
-		musicbrainz_id: row.musicbrainz_id ?? row.id,
+		musicbrainz_id: rowKey(row),
 		in_library: row.in_library,
 		requested: row.requested,
 		score: row.score,
-		local_id: row.id
+		local_id: row.id ?? null
 	};
 }
 
@@ -41,10 +47,10 @@ export function toSearchRemoteStatus(status: SearchRemoteStatusV3): SearchRemote
 }
 
 // Typeahead rows keep the v1 shape the shell handlers route on, while the
-// data comes from the v3 suggest endpoint (local catalog, merged across
-// buckets, best first). Every suggest row is a library hit, so in_library
-// is always true. Track rows have no dropdown route, so they drop here;
-// the caller over-fetches to keep the list full.
+// data comes from the v3 suggest endpoint (the local catalog and
+// MusicBrainz, merged across buckets, best first, with library and request
+// flags). Track rows have no dropdown route, so they drop here; the caller
+// over-fetches to keep the list full.
 export function toSuggestResultsV1(rows: SuggestResultV3[]): SuggestResult[] {
 	const out: SuggestResult[] = [];
 	for (const row of rows) {
@@ -53,11 +59,11 @@ export function toSuggestResultsV1(rows: SuggestResultV3[]): SuggestResult[] {
 			type: row.kind,
 			title: row.title,
 			artist: row.artist ?? null,
-			musicbrainz_id: row.musicbrainz_id ?? row.id,
-			in_library: true,
-			requested: false,
+			musicbrainz_id: rowKey(row),
+			in_library: row.in_library,
+			requested: row.requested,
 			score: row.score,
-			local_id: row.id
+			local_id: row.id ?? null
 		});
 	}
 	return out;
