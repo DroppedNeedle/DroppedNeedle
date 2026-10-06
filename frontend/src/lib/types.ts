@@ -533,12 +533,7 @@ export type DiscoverQueueEnrichment = {
 
 export type DiscoverActivity = components['schemas']['DiscoverActivityRequest'];
 
-export type YouTubeQuotaStatus = {
-	used: number;
-	limit: number;
-	remaining: number;
-	date: string;
-};
+export type YouTubeQuotaStatus = components['schemas']['YouTubeQuotaStatus'];
 
 export type TrackCacheCheckItem = {
 	artist: string;
@@ -557,50 +552,15 @@ export type MoreByArtistResponse = {
 	artist_name: string;
 };
 
-export type YouTubeLink = {
-	album_id: string;
-	video_id: string | null;
-	album_name: string;
-	artist_name: string;
-	embed_url: string | null;
-	cover_url: string | null;
-	created_at: string;
-	is_manual: boolean;
-	track_count: number;
-};
+export type YouTubeLink = components['schemas']['YouTubeLink'];
 
-export type YouTubeLinkResponse = {
-	link: YouTubeLink;
-	quota: YouTubeQuotaStatus;
-};
+export type YouTubeLinkResponse = components['schemas']['YouTubeLinkResponse'];
 
-export type YouTubeTrackLink = {
-	album_id: string;
-	track_number: number;
-	disc_number?: number | null;
-	track_name: string;
-	video_id: string;
-	artist_name: string;
-	embed_url: string;
-	created_at: string;
-	album_name?: string;
-};
+export type YouTubeTrackLink = components['schemas']['YouTubeTrackLink'];
 
-export type YouTubeTrackLinkResponse = {
-	track_link: YouTubeTrackLink;
-	quota: YouTubeQuotaStatus;
-};
+export type YouTubeTrackLinkResponse = components['schemas']['YouTubeTrackLinkResponse'];
 
-export type YouTubeTrackLinkBatchResponse = {
-	track_links: YouTubeTrackLink[];
-	failed: {
-		track_number: number;
-		disc_number?: number | null;
-		track_name: string;
-		reason: string;
-	}[];
-	quota: YouTubeQuotaStatus;
-};
+export type YouTubeTrackLinkBatchResponse = components['schemas']['YouTubeTrackLinkBatchResponse'];
 
 export type StatusMessage = {
 	title?: string | null;

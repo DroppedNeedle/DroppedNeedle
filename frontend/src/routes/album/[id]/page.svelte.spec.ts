@@ -514,11 +514,11 @@ describe('album detail page track rendering', () => {
 				return Promise.resolve(jsonResponse({ albums: [] }));
 			}
 
-			if (url.endsWith(`/api/v1/youtube/link/${albumId}`)) {
-				return Promise.resolve(jsonResponse({ detail: 'not found' }, 404));
+			if (url.endsWith(`/api/v3/youtube/link/${albumId}`)) {
+				return Promise.resolve(new Response(null, { status: 204 }));
 			}
 
-			if (url.endsWith(`/api/v1/youtube/track-links/${albumId}`)) {
+			if (url.endsWith(`/api/v3/youtube/track-links/${albumId}`)) {
 				return Promise.resolve(jsonResponse([]));
 			}
 

@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { API, TOAST_DURATION } from '$lib/constants';
+	import { TOAST_DURATION } from '$lib/constants';
+	import { YOUTUBE_ENDPOINTS } from '$lib/queries/youtube/endpoints';
 	import { toastStore } from '$lib/stores/toast';
 	import { launchTrackPlayback } from '$lib/player/launchTrackPlayback';
 	import { launchYouTubePlayback } from '$lib/player/launchYouTubePlayback';
@@ -8,14 +9,7 @@
 	import { getCoverUrl } from '$lib/utils/errorHandling';
 	import { api } from '$lib/api/client';
 	import { Link, Download, Search, Play } from 'lucide-svelte';
-	import type {
-		Track,
-		YouTubeLink,
-		YouTubeLinkResponse,
-		YouTubeTrackLink,
-		YouTubeTrackLinkBatchResponse,
-		YouTubeQuotaStatus
-	} from '$lib/types';
+	import type { Track, YouTubeLink, YouTubeTrackLink, YouTubeQuotaStatus } from '$lib/types';
 
 	interface Props {
 		albumId: string;
@@ -73,7 +67,7 @@
 		if (albumLink?.video_id) return;
 		generatingAlbumLink = true;
 		try {
-			const data = await api.global.post<YouTubeLinkResponse>(API.youtube.generate(), {
+			const data = await api.global.v3.POST(YOUTUBE_ENDPOINTS.generate(), {
 				artist_name: artistName,
 				album_name: albumName,
 				album_id: albumId,
@@ -109,20 +103,17 @@
 
 		batchGenerating = true;
 		try {
-			const data = await api.global.post<YouTubeTrackLinkBatchResponse>(
-				API.youtube.generateTracks(),
-				{
-					album_id: albumId,
-					album_name: albumName,
-					artist_name: artistName,
-					cover_url: getCoverUrl(coverUrl, albumId),
-					tracks: ungeneratedTracks.map((t) => ({
-						track_name: t.title,
-						track_number: t.position,
-						disc_number: normalizeDiscNumber(t.disc_number)
-					}))
-				}
-			);
+			const data = await api.global.v3.POST(YOUTUBE_ENDPOINTS.generateTracks(), {
+				album_id: albumId,
+				album_name: albumName,
+				artist_name: artistName,
+				cover_url: getCoverUrl(coverUrl, albumId),
+				tracks: ungeneratedTracks.map((t) => ({
+					track_name: t.title,
+					track_number: t.position,
+					disc_number: normalizeDiscNumber(t.disc_number)
+				}))
+			});
 			const existing = trackLinks.filter(
 				(tl) => !data.track_links.some((nl) => getDiscTrackKey(nl) === getDiscTrackKey(tl))
 			);

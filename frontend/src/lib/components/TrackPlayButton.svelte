@@ -1,13 +1,14 @@
 <script lang="ts">
 	import { Download, Play } from 'lucide-svelte';
-	import { API, TOAST_DURATION } from '$lib/constants';
+	import { TOAST_DURATION } from '$lib/constants';
+	import { YOUTUBE_ENDPOINTS } from '$lib/queries/youtube/endpoints';
 	import { toastStore } from '$lib/stores/toast';
 	import { launchTrackPlayback } from '$lib/player/launchTrackPlayback';
 	import { compareDiscTrack, getDiscTrackKey, normalizeDiscNumber } from '$lib/player/queueHelpers';
 	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
 	import { api } from '$lib/api/client';
-	import type { YouTubeTrackLink, YouTubeTrackLinkResponse, YouTubeQuotaStatus } from '$lib/types';
+	import type { YouTubeTrackLink, YouTubeQuotaStatus } from '$lib/types';
 
 	interface Props {
 		trackNumber: number;
@@ -64,7 +65,7 @@
 	async function generateLink(): Promise<void> {
 		generating = true;
 		try {
-			const data = await api.global.post<YouTubeTrackLinkResponse>(API.youtube.generateTrack(), {
+			const data = await api.global.v3.POST(YOUTUBE_ENDPOINTS.generateTrack(), {
 				album_id: albumId,
 				album_name: albumName,
 				artist_name: artistName,

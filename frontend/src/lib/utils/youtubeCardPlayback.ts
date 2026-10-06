@@ -1,4 +1,4 @@
-import { API } from '$lib/constants';
+import { YOUTUBE_ENDPOINTS } from '$lib/queries/youtube/endpoints';
 import { api } from '$lib/api/client';
 import { playerStore } from '$lib/stores/player.svelte';
 import { playbackToast } from '$lib/stores/playbackToast.svelte';
@@ -6,7 +6,7 @@ import { buildQueueItemsFromYouTube, type TrackMeta } from '$lib/player/queueHel
 import { openGlobalPlaylistModal } from '$lib/stores/playlistModal.svelte';
 import { getCoverUrl } from '$lib/utils/errorHandling';
 import type { QueueItem } from '$lib/player/types';
-import type { YouTubeLink, YouTubeTrackLink } from '$lib/types';
+import type { YouTubeLink } from '$lib/types';
 
 type FetchResult = { items: QueueItem[]; error: boolean };
 
@@ -21,7 +21,7 @@ function buildMeta(link: YouTubeLink): TrackMeta {
 
 async function fetchTrackItems(link: YouTubeLink): Promise<FetchResult> {
 	try {
-		const tracks = await api.global.get<YouTubeTrackLink[]>(API.youtube.trackLinks(link.album_id));
+		const tracks = await api.global.v3.GET(YOUTUBE_ENDPOINTS.trackLinks(link.album_id));
 		if (tracks.length === 0) return { items: [], error: false };
 		return { items: buildQueueItemsFromYouTube(tracks, buildMeta(link)), error: false };
 	} catch {

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { API } from '$lib/constants';
+	import { YOUTUBE_ENDPOINTS } from '$lib/queries/youtube/endpoints';
 	import { integrationStore } from '$lib/stores/integration';
 	import { api } from '$lib/api/client';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -47,7 +47,7 @@
 	async function fetchLinks(): Promise<void> {
 		loading = true;
 		try {
-			links = await api.get<YouTubeLink[]>(API.youtube.links());
+			links = await api.v3.GET(YOUTUBE_ENDPOINTS.links());
 		} catch (e) {
 			if (isAbortError(e)) return;
 		} finally {

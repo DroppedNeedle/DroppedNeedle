@@ -86,10 +86,10 @@ const transportRules = [
 // no route for yet. Their URL builders all live in lib/constants.ts (the API
 // registry), grouped by feature: edition conversions, scan diagnostics,
 // reviews, bulk review and management operations, repairs and identity
-// preparations, Library Management previews and recovery, cache sync, YouTube,
-// Free Music, drop import, the download queue, held imports and upgrades.
-// When a route lands, its call moves onto a v3() template and its builder
-// leaves that file.
+// preparations, Library Management previews and recovery, cache sync, Free
+// Music, drop import, the download queue, held imports and upgrades. When a
+// route lands, its call moves onto a v3() template and its builder leaves
+// that file.
 const WAITING_ON_BACKEND = ['src/lib/constants.ts'];
 
 // The transport itself: the api client and the page-scoped fetch it wraps.

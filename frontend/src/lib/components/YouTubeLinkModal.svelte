@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { API, TOAST_DURATION } from '$lib/constants';
+	import { TOAST_DURATION } from '$lib/constants';
+	import { YOUTUBE_ENDPOINTS } from '$lib/queries/youtube/endpoints';
 	import { toastStore } from '$lib/stores/toast';
 	import YouTubeIcon from '$lib/components/YouTubeIcon.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
@@ -102,7 +103,7 @@
 
 		try {
 			if (isEditing && selectedAlbumId) {
-				const updated = await api.global.put<YouTubeLink>(API.youtube.updateLink(selectedAlbumId), {
+				const updated = await api.global.v3.PUT(YOUTUBE_ENDPOINTS.link(selectedAlbumId), {
 					youtube_url: youtubeUrl.trim(),
 					album_name: albumName.trim(),
 					artist_name: artistName.trim(),
@@ -111,7 +112,7 @@
 				onsave(updated);
 				toastStore.show({ message: 'Link updated', type: 'success', duration: TOAST_DURATION });
 			} else {
-				const link = await api.global.post<YouTubeLink>(API.youtube.manual(), {
+				const link = await api.global.v3.POST(YOUTUBE_ENDPOINTS.manual(), {
 					album_name: albumName.trim(),
 					artist_name: artistName.trim(),
 					youtube_url: youtubeUrl.trim(),

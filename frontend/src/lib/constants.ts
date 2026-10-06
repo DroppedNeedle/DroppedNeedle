@@ -388,17 +388,6 @@ export const API = {
 		status: () => '/api/v1/cache/sync/status',
 		cancel: () => '/api/v1/cache/sync/cancel'
 	},
-	youtube: {
-		generate: () => '/api/v1/youtube/generate',
-		link: (albumId: string) => `/api/v1/youtube/link/${albumId}`,
-		links: () => '/api/v1/youtube/links',
-		deleteLink: (albumId: string) => `/api/v1/youtube/link/${albumId}`,
-		updateLink: (albumId: string) => `/api/v1/youtube/link/${albumId}`,
-		manual: () => '/api/v1/youtube/manual',
-		generateTrack: () => '/api/v1/youtube/generate-track',
-		generateTracks: () => '/api/v1/youtube/generate-tracks',
-		trackLinks: (albumId: string) => `/api/v1/youtube/track-links/${albumId}`
-	},
 	// profile + connections + spotify builders lived here until the profile
 	// seam migration moved them onto the v3 registry (their endpoints.ts
 	// files); only stragglers with out-of-scope consumers remain.

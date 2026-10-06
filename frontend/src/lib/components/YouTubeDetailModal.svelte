@@ -12,7 +12,8 @@
 		Search
 	} from 'lucide-svelte';
 	import { goto } from '$app/navigation';
-	import { API, TOAST_DURATION } from '$lib/constants';
+	import { TOAST_DURATION } from '$lib/constants';
+	import { YOUTUBE_ENDPOINTS } from '$lib/queries/youtube/endpoints';
 	import { colors } from '$lib/colors';
 	import { toastStore } from '$lib/stores/toast';
 	import { playerStore } from '$lib/stores/player.svelte';
@@ -105,7 +106,7 @@
 		loadingTracks = true;
 		trackError = false;
 		try {
-			const data = await api.global.get<YouTubeTrackLink[]>(API.youtube.trackLinks(albumId));
+			const data = await api.global.v3.GET(YOUTUBE_ENDPOINTS.trackLinks(albumId));
 			if (id !== fetchId) return;
 			tracks = data.sort(compareDiscTrack);
 		} catch (_e) {
@@ -275,7 +276,7 @@
 		}
 		deleting = true;
 		try {
-			await api.global.delete(API.youtube.deleteLink(link.album_id));
+			await api.global.v3.DELETE(YOUTUBE_ENDPOINTS.link(link.album_id));
 			toastStore.show({ message: 'Link removed', type: 'success', duration: TOAST_DURATION });
 			open = false;
 			ondelete(link.album_id);

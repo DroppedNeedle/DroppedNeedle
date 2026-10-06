@@ -11,7 +11,7 @@ import type {
 	LastFmAlbumEnrichment
 } from '$lib/types';
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
+import { YOUTUBE_ENDPOINTS } from '$lib/queries/youtube/endpoints';
 import { CATALOG_ENDPOINTS } from '$lib/queries/catalog/endpoints';
 import { compareDiscTrack } from '$lib/player/queueHelpers';
 import {
@@ -49,15 +49,19 @@ export async function fetchYouTubeAlbumLink(
 	albumId: string,
 	signal?: AbortSignal
 ): Promise<YouTubeLink | null> {
-	return api.get<YouTubeLink>(API.youtube.link(albumId), { signal }).catch(() => null);
+	// 204 (no link saved) arrives as undefined.
+	return api.v3
+		.GET(YOUTUBE_ENDPOINTS.link(albumId), { signal })
+		.then((link) => link ?? null)
+		.catch(() => null);
 }
 
 export async function fetchYouTubeTrackLinks(
 	albumId: string,
 	signal?: AbortSignal
 ): Promise<YouTubeTrackLink[]> {
-	const data = await api
-		.get<YouTubeTrackLink[]>(API.youtube.trackLinks(albumId), { signal })
+	const data = await api.v3
+		.GET(YOUTUBE_ENDPOINTS.trackLinks(albumId), { signal })
 		.catch(() => null);
 	return data ? data.sort(compareDiscTrack) : [];
 }
