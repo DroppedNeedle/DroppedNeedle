@@ -1,0 +1,54 @@
+{
+  "id": "c0ffee00-0000-4000-8000-00000000c002",
+  "title": "Night Shift",
+  "status": "Official",
+  "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+  "quality": "normal",
+  "packaging": "None",
+  "packaging-id": "119eba76-b343-3e02-a292-f0f00644bb9b",
+  "date": "2024-05-10",
+  "country": "XW",
+  "barcode": "",
+  "asin": null,
+  "disambiguation": "5th anniversary remaster",
+  "text-representation": {"language": "eng", "script": "Latn"},
+  "release-events": [
+    {"date": "2024-05-10", "area": {"id": "525d4e18-3d00-31b9-a58b-a146a916de8f", "name": "[Worldwide]", "sort-name": "[Worldwide]", "iso-3166-1-codes": ["XW"], "disambiguation": "", "type": null, "type-id": null}}
+  ],
+  "artist-credit": [
+    {"name": "The Lanterns", "joinphrase": "", "artist": {"id": "c0ffee00-0000-4000-8000-00000000a001", "name": "The Lanterns", "sort-name": "Lanterns, The", "disambiguation": "", "type": "Group", "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b"}}
+  ],
+  "label-info": [
+    {"catalog-number": null, "label": {"id": "c0ffee00-0000-4000-8000-00000000f001", "name": "Harbour Lights Records", "sort-name": "Harbour Lights Records", "disambiguation": "", "label-code": null, "type": "Original Production", "type-id": "7aaa37fe-2def-3476-b359-80245850062d"}}
+  ],
+  "release-group": {
+    "id": "c0ffee00-0000-4000-8000-00000000b001",
+    "title": "Night Shift",
+    "primary-type": "Album",
+    "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+    "secondary-types": [],
+    "secondary-type-ids": [],
+    "first-release-date": "2019-03-08",
+    "disambiguation": ""
+  },
+  "media": [
+    {
+      "position": 1,
+      "title": "",
+      "format": "Digital Media",
+      "format-id": "907a28d9-b3b2-3ef6-89a8-7b18d91d4794",
+      "track-offset": 0,
+      "track-count": 4,
+      "tracks": [
+        {"id": "c0ffee00-0000-4000-8000-00000000e101", "position": 1, "number": "1", "title": "Lamplight", "length": 214500,
+         "recording": {"id": "c0ffee00-0000-4000-8000-00000000d001", "title": "Lamplight", "length": 214000, "video": false, "disambiguation": ""}},
+        {"id": "c0ffee00-0000-4000-8000-00000000e102", "position": 2, "number": "2", "title": "Blue Hour", "length": 296000,
+         "recording": {"id": "c0ffee00-0000-4000-8000-00000000d005", "title": "Blue Hour", "length": 296000, "video": false, "disambiguation": "extended"}},
+        {"id": "c0ffee00-0000-4000-8000-00000000e103", "position": 3, "number": "3", "title": "Night Shift", "length": 198400,
+         "recording": {"id": "c0ffee00-0000-4000-8000-00000000d003", "title": "Night Shift", "length": 198000, "video": false, "disambiguation": ""}},
+        {"id": "c0ffee00-0000-4000-8000-00000000e104", "position": 4, "number": "4", "title": "Last Train Home", "length": 305200,
+         "recording": {"id": "c0ffee00-0000-4000-8000-00000000d004", "title": "Last Train Home", "length": 305000, "video": false, "disambiguation": ""}}
+      ]
+    }
+  ]
+}

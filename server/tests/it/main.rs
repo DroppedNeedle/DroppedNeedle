@@ -48,6 +48,7 @@ mod library_contrib;
 mod library_identify;
 mod library_identify_shutdown;
 mod library_journey;
+mod library_matching;
 mod library_publish;
 mod library_scan;
 mod library_tags;

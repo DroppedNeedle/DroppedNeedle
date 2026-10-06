@@ -1,0 +1,53 @@
+{
+  "created": "2026-10-06T09:12:44.271Z",
+  "count": 3,
+  "offset": 0,
+  "releases": [
+    {
+      "id": "c0ffee00-0000-4000-8000-00000000c001",
+      "score": 100,
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "count": 1,
+      "title": "Night Shift",
+      "status": "Official",
+      "text-representation": {"language": "eng", "script": "Latn"},
+      "artist-credit": [{"name": "The Lanterns", "artist": {"id": "c0ffee00-0000-4000-8000-00000000a001", "name": "The Lanterns", "sort-name": "Lanterns, The"}}],
+      "release-group": {"id": "c0ffee00-0000-4000-8000-00000000b001", "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc", "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc", "title": "Night Shift", "primary-type": "Album"},
+      "date": "2019-03-08",
+      "country": "GB",
+      "barcode": "5051083139822",
+      "label-info": [{"catalog-number": "LNT001CD", "label": {"id": "c0ffee00-0000-4000-8000-00000000f001", "name": "Harbour Lights Records"}}],
+      "track-count": 4,
+      "media": [{"format": "CD", "disc-count": 0, "track-count": 4}]
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-00000000c002",
+      "score": 98,
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "count": 1,
+      "title": "Night Shift",
+      "status": "Official",
+      "disambiguation": "5th anniversary remaster",
+      "artist-credit": [{"name": "The Lanterns", "artist": {"id": "c0ffee00-0000-4000-8000-00000000a001", "name": "The Lanterns", "sort-name": "Lanterns, The"}}],
+      "release-group": {"id": "c0ffee00-0000-4000-8000-00000000b001", "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc", "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc", "title": "Night Shift", "primary-type": "Album"},
+      "date": "2024-05-10",
+      "country": "XW",
+      "track-count": 4,
+      "media": [{"format": "Digital Media", "disc-count": 0, "track-count": 4}]
+    },
+    {
+      "id": "c0ffee00-0000-4000-8000-00000000c009",
+      "score": 61,
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "count": 1,
+      "title": "Night Shift Sessions",
+      "status": "Official",
+      "artist-credit": [{"name": "Lantern Choir", "artist": {"id": "c0ffee00-0000-4000-8000-00000000a009", "name": "Lantern Choir", "sort-name": "Lantern Choir"}}],
+      "release-group": {"id": "c0ffee00-0000-4000-8000-00000000b009", "title": "Night Shift Sessions", "primary-type": "Single"},
+      "date": "2011",
+      "country": "US",
+      "track-count": 1,
+      "media": [{"format": "12\" Vinyl", "disc-count": 0, "track-count": 1}]
+    }
+  ]
+}

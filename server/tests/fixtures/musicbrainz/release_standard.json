@@ -1,0 +1,65 @@
+{
+  "id": "c0ffee00-0000-4000-8000-00000000c001",
+  "title": "Night Shift",
+  "status": "Official",
+  "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+  "quality": "normal",
+  "packaging": "Jewel Case",
+  "packaging-id": "ec27701a-4a22-37f4-bfac-6616e0f9750a",
+  "date": "2019-03-08",
+  "country": "GB",
+  "barcode": "5051083139822",
+  "asin": null,
+  "disambiguation": "",
+  "text-representation": {"language": "eng", "script": "Latn"},
+  "release-events": [
+    {"date": "2019-03-08", "area": {"id": "8a754a16-0027-3a29-b6d7-2b40ea0481ed", "name": "United Kingdom", "sort-name": "United Kingdom", "iso-3166-1-codes": ["GB"], "disambiguation": "", "type": null, "type-id": null}}
+  ],
+  "artist-credit": [
+    {"name": "The Lanterns", "joinphrase": "", "artist": {"id": "c0ffee00-0000-4000-8000-00000000a001", "name": "The Lanterns", "sort-name": "Lanterns, The", "disambiguation": "", "type": "Group", "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b"}}
+  ],
+  "label-info": [
+    {"catalog-number": "LNT001CD", "label": {"id": "c0ffee00-0000-4000-8000-00000000f001", "name": "Harbour Lights Records", "sort-name": "Harbour Lights Records", "disambiguation": "", "label-code": null, "type": "Original Production", "type-id": "7aaa37fe-2def-3476-b359-80245850062d"}}
+  ],
+  "release-group": {
+    "id": "c0ffee00-0000-4000-8000-00000000b001",
+    "title": "Night Shift",
+    "primary-type": "Album",
+    "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+    "secondary-types": [],
+    "secondary-type-ids": [],
+    "first-release-date": "2019-03-08",
+    "disambiguation": "",
+    "artist-credit": [
+      {"name": "The Lanterns", "joinphrase": "", "artist": {"id": "c0ffee00-0000-4000-8000-00000000a001", "name": "The Lanterns", "sort-name": "Lanterns, The", "disambiguation": ""}}
+    ]
+  },
+  "media": [
+    {
+      "position": 1,
+      "title": "",
+      "format": "CD",
+      "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+      "track-offset": 0,
+      "track-count": 4,
+      "tracks": [
+        {"id": "c0ffee00-0000-4000-8000-00000000e001", "position": 1, "number": "1", "title": "Lamplight", "length": 214000,
+         "recording": {"id": "c0ffee00-0000-4000-8000-00000000d001", "title": "Lamplight", "length": 214000, "video": false, "disambiguation": "",
+           "artist-credit": [{"name": "The Lanterns", "joinphrase": "", "artist": {"id": "c0ffee00-0000-4000-8000-00000000a001", "name": "The Lanterns", "sort-name": "Lanterns, The"}}]},
+         "artist-credit": [{"name": "The Lanterns", "joinphrase": "", "artist": {"id": "c0ffee00-0000-4000-8000-00000000a001", "name": "The Lanterns", "sort-name": "Lanterns, The"}}]},
+        {"id": "c0ffee00-0000-4000-8000-00000000e002", "position": 2, "number": "2", "title": "Blue Hour", "length": 251000,
+         "recording": {"id": "c0ffee00-0000-4000-8000-00000000d002", "title": "Blue Hour", "length": 251000, "video": false, "disambiguation": "",
+           "artist-credit": [{"name": "The Lanterns", "joinphrase": "", "artist": {"id": "c0ffee00-0000-4000-8000-00000000a001", "name": "The Lanterns", "sort-name": "Lanterns, The"}}]},
+         "artist-credit": [{"name": "The Lanterns", "joinphrase": "", "artist": {"id": "c0ffee00-0000-4000-8000-00000000a001", "name": "The Lanterns", "sort-name": "Lanterns, The"}}]},
+        {"id": "c0ffee00-0000-4000-8000-00000000e003", "position": 3, "number": "3", "title": "Night Shift", "length": 198000,
+         "recording": {"id": "c0ffee00-0000-4000-8000-00000000d003", "title": "Night Shift", "length": 198000, "video": false, "disambiguation": "",
+           "artist-credit": [{"name": "The Lanterns", "joinphrase": "", "artist": {"id": "c0ffee00-0000-4000-8000-00000000a001", "name": "The Lanterns", "sort-name": "Lanterns, The"}}]},
+         "artist-credit": [{"name": "The Lanterns", "joinphrase": "", "artist": {"id": "c0ffee00-0000-4000-8000-00000000a001", "name": "The Lanterns", "sort-name": "Lanterns, The"}}]},
+        {"id": "c0ffee00-0000-4000-8000-00000000e004", "position": 4, "number": "4", "title": "Last Train Home", "length": 305000,
+         "recording": {"id": "c0ffee00-0000-4000-8000-00000000d004", "title": "Last Train Home", "length": 305000, "video": false, "disambiguation": "",
+           "artist-credit": [{"name": "The Lanterns", "joinphrase": "", "artist": {"id": "c0ffee00-0000-4000-8000-00000000a001", "name": "The Lanterns", "sort-name": "Lanterns, The"}}]},
+         "artist-credit": [{"name": "The Lanterns", "joinphrase": "", "artist": {"id": "c0ffee00-0000-4000-8000-00000000a001", "name": "The Lanterns", "sort-name": "Lanterns, The"}}]}
+      ]
+    }
+  ]
+}
