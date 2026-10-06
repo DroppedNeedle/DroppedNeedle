@@ -117,16 +117,46 @@ impl LocalCatalog {
         Ok(found)
     }
 
-    /// The artist MBIDs (lowercase) the library holds.
+    /// The artist MBIDs (lowercase) the library holds: credited on a live
+    /// album with at least one indexed track (v2
+    /// `target_provider_artist_relationship`, owned half).
     pub async fn owned_artists(&self, mbids: &[String]) -> Result<HashSet<String>, sqlx::Error> {
         self.collect_ids(
-            "SELECT lower(e.provider_artist_id) FROM local_artist_external_identities e \
+            "SELECT DISTINCT lower(e.provider_artist_id) FROM local_artist_external_identities e \
              JOIN local_artists a ON a.id = e.local_artist_id \
+             JOIN local_album_artists credit ON credit.local_artist_id = e.local_artist_id \
+             JOIN local_albums b ON b.id = credit.local_album_id \
              WHERE e.provider = 'musicbrainz' AND a.retired_into_artist_id IS NULL \
-             AND lower(e.provider_artist_id) IN ({ids})",
+             AND b.retired_into_album_id IS NULL \
+             AND lower(e.provider_artist_id) IN ({ids}) \
+             AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = b.id \
+             AND t.availability = 'indexed')",
             mbids,
         )
         .await
+    }
+
+    /// Whether the artist only appears on the library's tracks (a featured
+    /// or guest credit on someone else's album) without an album of their
+    /// own (v2 `target_provider_artist_relationship`, appears half).
+    pub async fn artist_appears(&self, mbid: &str) -> Result<bool, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT 1 FROM local_artist_external_identities e \
+             JOIN local_artists a ON a.id = e.local_artist_id \
+             JOIN local_track_artists credit ON credit.local_artist_id = e.local_artist_id \
+             JOIN local_tracks t ON t.id = credit.local_track_id \
+             JOIN local_albums b ON b.id = t.local_album_id \
+             WHERE e.provider = 'musicbrainz' AND lower(e.provider_artist_id) = ? \
+             AND a.retired_into_artist_id IS NULL AND b.retired_into_album_id IS NULL \
+             AND t.availability = 'indexed' AND NOT EXISTS ( \
+             SELECT 1 FROM local_album_artists album_credit \
+             WHERE album_credit.local_album_id = t.local_album_id \
+             AND album_credit.local_artist_id = credit.local_artist_id) LIMIT 1",
+        )
+        .bind(mbid.to_ascii_lowercase())
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.is_some())
     }
 
     /// The release-group MBIDs (lowercase) the library holds with at least

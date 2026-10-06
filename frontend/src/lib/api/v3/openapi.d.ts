@@ -7154,6 +7154,11 @@ export interface components {
             albums: components["schemas"]["ReleaseItem"][];
             /** @description Up to ten aliases. */
             aliases: string[];
+            /**
+             * @description True when the artist only appears on the library's tracks (a guest
+             *     or featured credit) without an album of their own.
+             */
+            appears_in_library: boolean;
             /** @description Whether the caller asked for new releases to download on their own. */
             auto_download: boolean;
             /**
@@ -7176,7 +7181,10 @@ export interface components {
              *     fetches them, so a first visit may show none.
              */
             images: components["schemas"]["ArtistImages"];
-            /** @description True when the library holds this artist. */
+            /**
+             * @description True when the library holds an album credited to this artist with
+             *     at least one playable track.
+             */
             in_library: boolean;
             life_span?: null | components["schemas"]["LifeSpan"];
             /** @description Canonical artist MBID (after any MusicBrainz merge redirect). */

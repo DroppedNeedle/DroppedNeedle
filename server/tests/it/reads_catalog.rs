@@ -306,6 +306,10 @@ async fn seed_library(pool: &SqlitePool) {
          'ok computer live bootleg', 'Radiohead', 'radiohead', 'artist-radiohead', 1998, \
          'manual', 1, 1)"
             .to_owned(),
+        "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role) \
+         VALUES ('album-okc', 0, 'artist-radiohead', 'primary'), \
+         ('album-bootleg', 0, 'artist-radiohead', 'primary')"
+            .to_owned(),
         format!(
             "INSERT INTO local_album_external_identities \
              (local_album_id, provider, release_group_mbid, release_mbid, decision_source, \
@@ -477,6 +481,7 @@ async fn artist_header_reads_musicbrainz_once_and_flags_the_library() {
     assert_eq!(titles(&body["singles"]), ["Creep"]);
     assert_eq!(body["albums"][1]["in_library"], true);
     assert_eq!(body["release_group_count"], 6);
+    assert_eq!(body["appears_in_library"], false);
     assert_eq!(body["followed"], false);
     assert_eq!(body["auto_download_state"], "none");
 

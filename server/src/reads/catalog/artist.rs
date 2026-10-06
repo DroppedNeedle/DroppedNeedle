@@ -283,6 +283,7 @@ impl Catalog {
                 {
                     tracing::warn!(artist = %mbid, "musicbrainz unavailable; artist page from the library");
                     let discography = self.local_discography(mbid).await?.unwrap_or_default();
+                    let (in_library, appears_in_library) = self.artist_relationship(mbid).await;
                     return Ok(ArtistInfo {
                         name: local.name,
                         musicbrainz_id: mbid.to_owned(),
@@ -294,7 +295,8 @@ impl Catalog {
                         aliases: Vec::new(),
                         external_links: Vec::new(),
                         images: self.cached_artist_images(mbid).await.unwrap_or_default(),
-                        in_library: true,
+                        in_library,
+                        appears_in_library,
                         release_group_count: discography.albums.len() as u64,
                         albums: discography.albums,
                         singles: discography.singles,
@@ -309,10 +311,7 @@ impl Catalog {
                 return Err(error);
             }
         };
-        let in_library = !self
-            .artist_flags(std::slice::from_ref(&detail.mbid))
-            .await
-            .is_empty();
+        let (in_library, appears_in_library) = self.artist_relationship(&detail.mbid).await;
         let images = self
             .cached_artist_images(&detail.mbid)
             .await
@@ -339,6 +338,7 @@ impl Catalog {
             external_links: detail.external_links,
             images,
             in_library,
+            appears_in_library,
             albums: discography.albums,
             singles: discography.singles,
             eps: discography.eps,
@@ -349,6 +349,24 @@ impl Catalog {
             source: CatalogSource::Musicbrainz,
             service_status: None,
         })
+    }
+
+    /// The artist's library relationship: (owned, appears only on tracks).
+    /// A failed read logs and reads as neither.
+    async fn artist_relationship(&self, mbid: &str) -> (bool, bool) {
+        let owned = !self.artist_flags(&[mbid.to_owned()]).await.is_empty();
+        if owned {
+            return (true, false);
+        }
+        let appears = self
+            .local()
+            .artist_appears(mbid)
+            .await
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "library appearance read failed; showing none");
+                false
+            });
+        (false, appears)
     }
 
     /// TheAudioDB images already in the cache; never dials out, so the

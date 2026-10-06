@@ -16347,6 +16347,7 @@
           "external_links",
           "images",
           "in_library",
+          "appears_in_library",
           "albums",
           "singles",
           "eps",
@@ -16371,6 +16372,10 @@
               "type": "string"
             },
             "description": "Up to ten aliases."
+          },
+          "appears_in_library": {
+            "type": "boolean",
+            "description": "True when the artist only appears on the library's tracks (a guest\nor featured credit) without an album of their own."
           },
           "auto_download": {
             "type": "boolean",
@@ -16418,7 +16423,7 @@
           },
           "in_library": {
             "type": "boolean",
-            "description": "True when the library holds this artist."
+            "description": "True when the library holds an album credited to this artist with\nat least one playable track."
           },
           "life_span": {
             "oneOf": [

@@ -111,8 +111,12 @@ pub struct ArtistInfo {
     /// Artist images already cached from TheAudioDB. The extended route
     /// fetches them, so a first visit may show none.
     pub images: ArtistImages,
-    /// True when the library holds this artist.
+    /// True when the library holds an album credited to this artist with
+    /// at least one playable track.
     pub in_library: bool,
+    /// True when the artist only appears on the library's tracks (a guest
+    /// or featured credit) without an album of their own.
+    pub appears_in_library: bool,
     /// Albums, newest first, filtered by the release-type preferences.
     pub albums: Vec<ReleaseItem>,
     /// Singles, newest first.
