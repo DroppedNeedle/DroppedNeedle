@@ -125,17 +125,8 @@ export type ExternalLink = {
 	category?: string;
 };
 
-export type ArtistInfoBasic = {
-	name: string;
-	musicbrainz_id: string;
-	disambiguation?: string | null;
-	type?: string | null;
-	country?: string | null;
-	life_span?: {
-		begin?: string | null;
-		end?: string | null;
-		ended?: boolean;
-	} | null;
+/** TheAudioDB artist images, flat as the artist page reads them. */
+export type ArtistImageFields = {
 	fanart_url?: string | null;
 	banner_url?: string | null;
 	thumb_url?: string | null;
@@ -146,6 +137,19 @@ export type ArtistInfoBasic = {
 	logo_url?: string | null;
 	clearart_url?: string | null;
 	cutout_url?: string | null;
+};
+
+export type ArtistInfoBasic = ArtistImageFields & {
+	name: string;
+	musicbrainz_id: string;
+	disambiguation?: string | null;
+	type?: string | null;
+	country?: string | null;
+	life_span?: {
+		begin?: string | null;
+		end?: string | null;
+		ended?: boolean | null;
+	} | null;
 	tags: string[];
 	aliases: string[];
 	external_links: ExternalLink[];
@@ -1156,25 +1160,9 @@ export type FreeMusicSettings = components['schemas']['FreeMusic'];
 // mirrors backend api/v1/schemas/settings.py (GetItSettings)
 export type GetItSettings = components['schemas']['GetIt'];
 
-// mirrors backend api/v1/schemas/get_it.py
-export type PurchaseLink = {
-	store: string;
-	label: string;
-	url: string;
-	kind: 'digital' | 'physical' | 'free';
-};
-
-export type PurchaseOptionsResponse = {
-	digital: PurchaseLink[];
-	physical: PurchaseLink[];
-	free: PurchaseLink[];
-	bandcamp_search_url: string;
-};
-
-export type ArtistPurchaseOptionsResponse = {
-	links: PurchaseLink[];
-	bandcamp_search_url: string;
-};
+export type PurchaseLink = components['schemas']['PurchaseLink'];
+export type PurchaseOptionsResponse = components['schemas']['PurchaseOptionsResponse'];
+export type ArtistPurchaseOptionsResponse = components['schemas']['ArtistPurchaseOptionsResponse'];
 
 // mirrors backend api/v1/schemas/settings.py (EventsSettings)
 export type EventsSettings = components['schemas']['EventsSettings'];
@@ -1234,35 +1222,10 @@ export type ScrobbleResponse = {
 	services: Record<string, ServiceResult>;
 };
 
-export type LastFmTag = {
-	name: string;
-	url?: string | null;
-};
-
-export type LastFmSimilarArtistDetail = {
-	name: string;
-	mbid?: string | null;
-	match: number;
-	url?: string | null;
-};
-
-export type LastFmArtistEnrichment = {
-	bio?: string | null;
-	summary?: string | null;
-	tags: LastFmTag[];
-	listeners: number;
-	playcount: number;
-	similar_artists: LastFmSimilarArtistDetail[];
-	url?: string | null;
-};
-
-export type LastFmAlbumEnrichment = {
-	summary?: string | null;
-	tags: LastFmTag[];
-	listeners: number;
-	playcount: number;
-	url?: string | null;
-};
+export type LastFmTag = components['schemas']['LastFmTag'];
+export type LastFmSimilarArtistDetail = components['schemas']['LastFmSimilarArtist'];
+export type LastFmArtistEnrichment = components['schemas']['LastFmArtistEnrichment'];
+export type LastFmAlbumEnrichment = components['schemas']['LastFmAlbumEnrichment'];
 
 export type SourcePlaylistSummary = {
 	id: string;
@@ -1920,25 +1883,8 @@ export interface TargetCatalogRemovalResponse {
 	removed_track_ids: string[];
 }
 
-export interface AlbumEditionItem {
-	release_mbid: string;
-	track_count: number;
-	title: string | null;
-	disambiguation: string | null;
-	date: string | null;
-	country: string | null;
-	packaging: string | null;
-	status: string | null;
-	is_owned: boolean;
-	is_pinned: boolean;
-}
-
-export interface AlbumEditionsResponse {
-	items: AlbumEditionItem[];
-	pinned_release_mbid: string | null;
-	owned_release_mbid: string | null;
-	selected_release_mbid: string | null;
-}
+export type AlbumEditionItem = components['schemas']['AlbumEditionItem'];
+export type AlbumEditionsResponse = components['schemas']['AlbumEditionsResponse'];
 
 export interface CutoffUnmetItem {
 	release_group_mbid: string;
