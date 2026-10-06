@@ -25,6 +25,7 @@ pub mod http;
 pub mod identify;
 mod loops;
 pub mod manage;
+pub mod matching;
 pub mod publish;
 pub mod scan;
 pub mod service;
