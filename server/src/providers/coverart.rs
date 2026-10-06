@@ -105,6 +105,39 @@ pub trait CaaTransport: Send + Sync {
     ) -> impl Future<Output = Result<RawResponse, TransportError>> + Send;
 }
 
+/// Largest body the transport reads: the biggest cap any caller applies
+/// (artwork bytes, v2 `MAX_DELIVERY_IMAGE_BYTES`). Larger bodies are never
+/// buffered whole.
+pub const TRANSPORT_MAX_BODY_BYTES: usize = 20 * 1024 * 1024;
+
+/// Read a body up to `cap + 1` bytes, so the caller's own size check sees
+/// an oversized body without the transport buffering all of it. A declared
+/// `Content-Length` above the cap is refused before reading.
+async fn read_capped(
+    mut response: reqwest::Response,
+    cap: usize,
+) -> Result<Vec<u8>, TransportError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > cap as u64)
+    {
+        return Err(TransportError(format!("body larger than {cap} bytes")));
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| TransportError(error.to_string()))?
+    {
+        let room = (cap + 1).saturating_sub(body.len());
+        body.extend_from_slice(&chunk[..chunk.len().min(room)]);
+        if body.len() > cap {
+            break;
+        }
+    }
+    Ok(body)
+}
+
 /// Production adapter over the factory's no-redirect client, which carries
 /// the shared timeouts and User-Agent.
 pub struct ReqwestCaaTransport {
@@ -140,11 +173,7 @@ impl CaaTransport for ReqwestCaaTransport {
                 headers.push((name.to_owned(), text.to_owned()));
             }
         }
-        let body = response
-            .bytes()
-            .await
-            .map_err(|error| TransportError(error.to_string()))?
-            .to_vec();
+        let body = read_capped(response, TRANSPORT_MAX_BODY_BYTES).await?;
         Ok(RawResponse {
             status,
             headers,
@@ -495,38 +524,41 @@ pub fn upgrade_artwork_url(url: &str) -> Result<String, CaaError> {
 pub const MAX_REDIRECT_HOPS: usize = 5;
 
 /// Validate one artwork redirect and return the https URL to fetch next.
-/// Only the archive itself and the Internet Archive (`archive.org` and its
-/// subdomains) may serve covers; no credentials, default ports only.
-/// Relative locations resolve against the current URL's origin.
+///
+/// The location is parsed as a real URL (relative locations join onto the
+/// current one), never matched as text, so fragments, queries, backslashes
+/// or userinfo cannot smuggle another host past the check. It must be http
+/// or https, carry no credentials, use a default port, and name the archive
+/// (`coverartarchive.org`) or the Internet Archive (`archive.org` and its
+/// subdomains) by domain; IP hosts are refused. The answer is re-serialized
+/// from the parsed URL as https, without the fragment.
 pub fn check_redirect_hop(current: &str, location: &str) -> Result<String, CaaError> {
-    let absolute = if location.starts_with('/') {
-        let (scheme, authority, _) = split_artwork_url(current).ok_or(CaaError::RejectedUrl)?;
-        format!("{scheme}://{authority}{location}")
-    } else {
-        location.to_owned()
-    };
-    let (scheme, authority, path) = split_artwork_url(&absolute).ok_or(CaaError::RejectedUrl)?;
-    if scheme != "http" && scheme != "https" {
+    let base = reqwest::Url::parse(current).map_err(|_| CaaError::RejectedUrl)?;
+    let mut next = base.join(location).map_err(|_| CaaError::RejectedUrl)?;
+    if !matches!(next.scheme(), "http" | "https") {
         return Err(CaaError::RejectedUrl);
     }
-    if authority.contains('@') || !path.starts_with('/') {
+    if !next.username().is_empty() || next.password().is_some() {
         return Err(CaaError::RejectedUrl);
     }
-    let (host, port) = match authority.rsplit_once(':') {
-        Some((host, port_text)) => {
-            let port: u16 = port_text.parse().map_err(|_| CaaError::RejectedUrl)?;
-            (host, Some(port))
-        }
-        None => (authority, None),
+    if !matches!(next.port(), None | Some(80) | Some(443)) {
+        return Err(CaaError::RejectedUrl);
+    }
+    // `domain` is None for IP hosts.
+    let Some(host) = next.domain() else {
+        return Err(CaaError::RejectedUrl);
     };
     let host = host.to_ascii_lowercase();
     let allowed =
         host == "coverartarchive.org" || host == "archive.org" || host.ends_with(".archive.org");
-    if !allowed || !matches!(port, None | Some(80) | Some(443)) {
+    if !allowed {
         return Err(CaaError::RejectedUrl);
     }
-    let path = path.split('#').next().unwrap_or("/");
-    Ok(format!("https://{host}{path}"))
+    next.set_fragment(None);
+    next.set_scheme("https")
+        .map_err(|_| CaaError::RejectedUrl)?;
+    next.set_port(None).map_err(|_| CaaError::RejectedUrl)?;
+    Ok(next.to_string())
 }
 
 /// Split a URL into (scheme, authority, path+query+fragment). A bare
@@ -865,5 +897,43 @@ impl<T: CaaTransport> CaaClient<T> {
         Err(CaaError::Unavailable(
             "coverartarchive request failed".to_owned(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redirect_hops_stay_on_the_archive_hosts() {
+        let current = "https://coverartarchive.org/release/x/front-500";
+        let hop = |location: &str| check_redirect_hop(current, location);
+        assert_eq!(
+            hop("http://archive.org/download/a/b.jpg#frag").unwrap(),
+            "https://archive.org/download/a/b.jpg"
+        );
+        assert_eq!(
+            hop("https://ia800.us.archive.org:443/x.png?y=1").unwrap(),
+            "https://ia800.us.archive.org/x.png?y=1"
+        );
+        assert_eq!(
+            hop("/release/x/1-500.jpg").unwrap(),
+            "https://coverartarchive.org/release/x/1-500.jpg"
+        );
+        for bad in [
+            "https://evil.com#.archive.org/x",
+            "https://evil.com?.archive.org/x",
+            "https://evil.com\\.archive.org/x",
+            "https://archive.org@evil.com/x",
+            "https://user:pw@archive.org/x",
+            "https://archive.org.evil.com/x",
+            "https://archive.org:8443/x",
+            "ftp://archive.org/x",
+            "https://127.0.0.1/x",
+            "https://[::1]/x",
+            "//evil.com/x",
+        ] {
+            assert!(hop(bad).is_err(), "{bad} must be refused");
+        }
     }
 }
