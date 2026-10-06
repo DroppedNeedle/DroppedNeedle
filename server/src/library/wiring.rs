@@ -539,6 +539,7 @@ impl LibrarySetup {
                     shutdown.clone(),
                 ),
             ),
+            super::operations::spawn_loop(self, shutdown.clone()),
             (
                 "library-publish",
                 tokio::spawn(publish_loop(self.clone(), shutdown)),

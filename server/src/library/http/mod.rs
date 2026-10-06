@@ -5,5 +5,6 @@ pub mod contrib;
 pub mod error;
 pub mod handlers;
 pub mod models;
+pub mod operations;
 pub mod routes;
 pub mod scan;

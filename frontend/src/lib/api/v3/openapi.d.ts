@@ -2210,6 +2210,64 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/albums/{album_id}/reidentification/releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search MusicBrainz releases for an album's edition finder. */
+        get: operations["search_reidentification_releases"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{album_id}/reidentify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start an explicit re-identification of one album. The job scores every
+         *     candidate and waits for an administrator's choice; nothing seals on
+         *     its own.
+         */
+        post: operations["reidentify_album"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{album_id}/undo-automatic-edition": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Undo the album's last automatic edition: the identity it replaced comes
+         *     back, or the album goes to review when there was none. Pins stay.
+         */
+        post: operations["undo_automatic_edition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/albums/{id}": {
         parameters: {
             query?: never;
@@ -2744,6 +2802,97 @@ export interface paths {
         put?: never;
         /** Undo one published bundle as a new operation. */
         post: operations["manage_undo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/operations/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one operation job with its results and candidates. */
+        get: operations["get_operation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/operations/{job_id}/candidate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Settle a re-identification: seal a candidate's exact release, seal a
+         *     custom edition, or leave the album unmanaged.
+         */
+        post: operations["select_reidentification_candidate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/operations/{job_id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pause a job. A running job pauses at its next checkpoint. */
+        post: operations["pause_operation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/operations/{job_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume a paused or stopped job, or one that failed while MusicBrainz
+         *     was down.
+         */
+        post: operations["resume_operation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/operations/{job_id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop a job. A running job stops at its next checkpoint. */
+        post: operations["stop_operation"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8355,6 +8504,21 @@ export interface components {
             /** @description Release title. */
             title: string;
         };
+        /** @description Undo the album's last automatic edition. */
+        AutomaticEditionUndoBody: {
+            /** Format: int64 */
+            expected_album_revision: number;
+            /** Format: int64 */
+            expected_identity_revision: number;
+        };
+        /** @description What the undo did. */
+        AutomaticEditionUndoResponse: {
+            local_album_id: string;
+            /** @description `restored` (the earlier identity is back) or `cleared_to_review`. */
+            outcome: string;
+            /** @description The review the album went to, when there was no earlier identity. */
+            review_id?: string | null;
+        };
         /**
          * @description Avatar upload. JSON with base64 bytes: the server has no multipart
          *     support, and one JSON shape keeps every client on the same parser.
@@ -8639,6 +8803,22 @@ export interface components {
             entries: number;
             /** @description Registered invalidation roots by source. */
             sources: string[];
+        };
+        /** @description Choose a re-identification candidate. */
+        CandidateChoiceBody: {
+            /** @description The chosen candidate; empty only to leave the album unmanaged. */
+            candidate_key?: string;
+            /**
+             * @description Required for a candidate that is not automatic-safe, a release the
+             *     administrator named, or a custom edition.
+             */
+            confirmation?: boolean;
+            decision_mode?: components["schemas"]["DecisionModeBody"];
+            /**
+             * Format: int64
+             * @description The job's `row_revision` as last read.
+             */
+            expected_row_revision: number;
         };
         /** @description One scored candidate inside a review. */
         CandidateView: {
@@ -9134,6 +9314,11 @@ export interface components {
             /** @description Shelves, oldest decade first. */
             items: components["schemas"]["DecadeShelf"][];
         };
+        /**
+         * @description How to settle a re-identification.
+         * @enum {string}
+         */
+        DecisionModeBody: "exact_release" | "custom_edition" | "leave_unmanaged";
         /** @description One deferred identification job, named. */
         DeferredJobView: {
             album_title: string | null;
@@ -13115,10 +13300,136 @@ export interface components {
             /** @description Credential handoff; defaults to cookie. */
             transport?: components["schemas"]["TransportDto"];
         };
+        /** @description The evidence behind one candidate release. */
+        OperationCandidateEvidenceView: {
+            /** @description `supported`, `unknown`, or `contradictory`. */
+            album_artist_classification: string;
+            album_artist_name: string;
+            album_title: string;
+            /** @description `supported`, `unknown`, or `contradictory`. */
+            album_title_classification: string;
+            artist_mbid?: string | null;
+            /**
+             * Format: double
+             * @description Matcher distance, 0 for a perfect match.
+             */
+            distance: number;
+            local_album_artist_name: string;
+            local_album_title: string;
+            /**
+             * Format: double
+             * @description Distance gap to the next candidate in the list.
+             */
+            margin: number;
+            matcher_version: string;
+            /** @description What the distance is made of, largest share first. */
+            penalties: components["schemas"]["PenaltyView"][];
+            reason_code: string;
+            release_date?: string | null;
+            release_group_mbid: string;
+            release_mbid?: string | null;
+            release_type?: string | null;
+            /**
+             * Format: double
+             * @description One minus the distance.
+             */
+            score: number;
+            track_evidence: components["schemas"]["OperationTrackEvidenceView"][];
+            /** @description Release track titles no local file took. */
+            unmatched_expected_tracks: string[];
+        };
+        /** @description Pause, resume, or stop a job. */
+        OperationControlBody: {
+            /**
+             * Format: int64
+             * @description The job's `row_revision` as last read.
+             */
+            expected_row_revision: number;
+            /** @description Makes a retried control a no-op. */
+            idempotency_key?: string | null;
+        };
         /** @description Bare success acknowledgement. */
         OperationResult: {
             /** @description Whether the operation succeeded. */
             success: boolean;
+        };
+        /** @description One local file against one candidate release. */
+        OperationTrackEvidenceView: {
+            /** Format: int32 */
+            candidate_disc_number?: number | null;
+            /** Format: int32 */
+            candidate_track_position?: number | null;
+            candidate_track_title?: string | null;
+            /** @description `supported`, `unknown`, or `contradictory`. */
+            classification: string;
+            /**
+             * @description What ties the file to the release track (`embedded_id`, `acoustid`,
+             *     `title_position_length`), or why it does not.
+             */
+            evidence_kinds: string[];
+            local_track_id: string;
+            recording_mbid?: string | null;
+            release_track_mbid?: string | null;
+        };
+        /** @description One operation job. */
+        OperationView: {
+            /** Format: int64 */
+            completed_count: number;
+            /** @description A control the worker has not acted on yet: `none`, `pause`, `stop`. */
+            control_request: string;
+            /** Format: double */
+            created_at: number;
+            /** Format: int64 */
+            event_revision: number;
+            /** Format: int64 */
+            expected_work_count: number;
+            /** Format: int64 */
+            failed_count: number;
+            id: string;
+            /**
+             * @description `explicit_reidentification`, `bulk_review_apply`, `repair`, or
+             *     `library_management`.
+             */
+            kind: string;
+            /** @description Candidates a re-identification waits on, best first. */
+            reidentification_candidates: components["schemas"]["ReidentificationCandidateView"][];
+            /** @description The first 100 work results. */
+            results: components["schemas"]["OperationWorkResultView"][];
+            results_truncated: boolean;
+            /**
+             * Format: int64
+             * @description Echo this on every control and choice.
+             */
+            row_revision: number;
+            selected_reidentification_candidate_key?: string | null;
+            /** Format: int64 */
+            skipped_count: number;
+            /**
+             * @description `queued`, `running`, `paused`, `ready`, `succeeded`, `failed`,
+             *     `cancelled`, or `stopped`.
+             */
+            state: string;
+            /** Format: int64 */
+            succeeded_count: number;
+            terminal_code?: string | null;
+            /** Format: double */
+            updated_at: number;
+        };
+        /** @description One work item's outcome. */
+        OperationWorkResultView: {
+            action: string;
+            failure_code?: string | null;
+            local_album_id?: string | null;
+            local_track_id?: string | null;
+            /** Format: int64 */
+            ordinal: number;
+            /**
+             * @description What the work item recorded (for a re-identification: `outcome`,
+             *     `reason_code`, `candidate_keys`).
+             */
+            result: Record<string, never>;
+            /** @description `pending`, `running`, `succeeded`, `failed`, or `skipped`. */
+            state: string;
         };
         Option: null | {
             [key: string]: "degraded" | "error";
@@ -14529,6 +14840,35 @@ export interface components {
             /** @description Always `ok` when the trigger lands. */
             status: string;
         };
+        /** @description One candidate a re-identification offers. */
+        ReidentificationCandidateView: {
+            /**
+             * @description The matcher would have accepted it on its own: no confirmation
+             *     needed to choose it.
+             */
+            automatic_safe: boolean;
+            /** @description Choose the candidate by this key. */
+            candidate_key: string;
+            evidence: components["schemas"]["OperationCandidateEvidenceView"];
+            /** @description Changes whenever the job re-evaluates. */
+            evidence_revision: string;
+        };
+        /** @description Start an explicit re-identification. */
+        ReidentifyBody: {
+            /**
+             * Format: int64
+             * @description The album's revision as last read; refused when it moved.
+             */
+            expected_album_revision?: number | null;
+            /** @description The album's input revision as last read; refused when it moved. */
+            expected_input_revision?: string | null;
+            /** @description Makes a retried request return the same job. */
+            idempotency_key?: string | null;
+            /** @description Confirms a one-off lookup for files under a Local metadata policy. */
+            one_off_local_metadata?: boolean;
+            /** @description Evaluate only this exact MusicBrainz release. */
+            release_mbid?: string | null;
+        };
         /**
          * @description Reimport outcome. The requeue puts the task back in line; the worker
          *     reports fresh progress from there.
@@ -14579,6 +14919,46 @@ export interface components {
             /** Format: int32 */
             schema_version?: number;
             title?: components["schemas"]["ReleaseTextField"];
+        };
+        /** @description One page of the edition finder. */
+        ReleaseEditionSearchResponse: {
+            artist_query: string;
+            items: components["schemas"]["ReleaseEditionView"][];
+            /** Format: int32 */
+            limit: number;
+            /** Format: int64 */
+            offset: number;
+            title_query: string;
+            /** Format: int64 */
+            total: number;
+        };
+        /** @description One MusicBrainz release in the edition finder. */
+        ReleaseEditionView: {
+            artist_name: string;
+            barcode?: string | null;
+            belongs_to_current_release_group: boolean;
+            catalogue_number?: string | null;
+            country?: string | null;
+            date?: string | null;
+            disambiguation?: string | null;
+            /** Format: int32 */
+            disc_count: number;
+            is_current_release: boolean;
+            label?: string | null;
+            media_formats: string[];
+            musicbrainz_url: string;
+            packaging?: string | null;
+            release_group_mbid: string;
+            release_mbid: string;
+            /**
+             * Format: int64
+             * @description MusicBrainz search score, 0 to 100.
+             */
+            score: number;
+            status?: string | null;
+            title: string;
+            /** Format: int32 */
+            track_count: number;
         };
         /** @description One release group on an artist page. */
         ReleaseItem: {
@@ -22022,6 +22402,196 @@ export interface operations {
             };
         };
     };
+    search_reidentification_releases: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+                /** @description Release title (required). */
+                title: string;
+                /** @description Artist name; blank searches every artist. */
+                artist: string;
+                /** @description Page size, 1 to 12 (default 12). */
+                limit: number | null;
+                /** @description Page offset (default 0). */
+                offset: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of releases */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseEditionSearchResponse"];
+                };
+            };
+            /** @description Missing title or bad paging */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description MusicBrainz is unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    reidentify_album: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReidentifyBody"];
+            };
+        };
+        responses: {
+            /** @description Re-identification job (new or the one this key started) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationView"];
+                };
+            };
+            /** @description Bad body or release MBID */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album, or no indexed files */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The album moved, is excluded, or needs the Local metadata confirmation */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    undo_automatic_edition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AutomaticEditionUndoBody"];
+            };
+        };
+        responses: {
+            /** @description What the undo did */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutomaticEditionUndoResponse"];
+                };
+            };
+            /** @description Bad body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No reversible automatic edition */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The identity changed since the automatic acceptance */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     get_album: {
         parameters: {
             query?: never;
@@ -23592,6 +24162,298 @@ export interface operations {
                 content?: never;
             };
             /** @description Undo blocked for a file */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_operation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Operation job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Operation job */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    select_reidentification_candidate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Re-identification job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CandidateChoiceBody"];
+            };
+        };
+        responses: {
+            /** @description Settled job */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationView"];
+                };
+            };
+            /** @description Confirmation missing, the release does not map every file, or the custom edition cannot be sealed */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The job or the album changed since it was read */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    pause_operation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Operation job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationControlBody"];
+            };
+        };
+        responses: {
+            /** @description Operation job */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationView"];
+                };
+            };
+            /** @description Bad body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Stale revision or reused idempotency key */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    resume_operation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Operation job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationControlBody"];
+            };
+        };
+        responses: {
+            /** @description Operation job */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationView"];
+                };
+            };
+            /** @description Bad body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Stale revision or reused idempotency key */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    stop_operation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Operation job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationControlBody"];
+            };
+        };
+        responses: {
+            /** @description Operation job */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationView"];
+                };
+            };
+            /** @description Bad body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Stale revision or reused idempotency key */
             409: {
                 headers: {
                     [name: string]: unknown;

@@ -16,6 +16,9 @@
 //!   preview → Apply → baseline restore.
 //! - `library_loops_start_and_stop`: every background loop starts
 //!   over the real bundle and shuts down cleanly.
+//! - `library_journey_undo_edition_then_reidentify`: an automatic
+//!   edition undone to review, then an explicit re-identification with
+//!   controls, candidate review, the choice, and the edition finder.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -850,7 +853,7 @@ async fn library_loops_start_and_stop() {
     lib.library.run_recovery().await;
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let loops = lib.library.spawn_loops(shutdown_rx);
-    assert_eq!(loops.len(), 5);
+    assert_eq!(loops.len(), 6);
     let names: Vec<&str> = loops.iter().map(|(name, _)| *name).collect();
     assert_eq!(
         names,
@@ -859,6 +862,7 @@ async fn library_loops_start_and_stop() {
             "library-watcher",
             "library-identify",
             "library-contrib",
+            "library-operations",
             "library-publish",
         ]
     );
@@ -2108,4 +2112,254 @@ async fn library_contribution_seed_callback_verify_links_album() {
             ),
         ]
     );
+}
+
+/// The single release the planted file names, built from its own tags so
+/// every id agrees.
+fn tagged_release(library: &LibrarySetup, album_id: &str) -> Release {
+    use droppedneedle::library::identify::stores::FactsSource as _;
+    let facts = library
+        .identify_store
+        .album_facts(album_id)
+        .expect("album facts");
+    let track = &facts.tracks[0];
+    Release {
+        id: track.release_mbid.clone().expect("tagged release"),
+        release_group_id: track.release_group_mbid.clone().expect("tagged group"),
+        title: facts.title.clone(),
+        artists: vec![CreditedArtist {
+            id: "10000000-0000-4000-8000-000000000005".to_owned(),
+            name: facts.album_artist_name.clone(),
+            sort_name: None,
+            join: String::new(),
+        }],
+        tracks: vec![ReleaseTrack {
+            id: track
+                .release_track_mbid
+                .clone()
+                .expect("tagged release track"),
+            recording_id: track.recording_mbid.clone().expect("tagged recording"),
+            title: track.title.clone(),
+            artists: Vec::new(),
+            disc: track.disc_number.max(1),
+            position: track.track_number,
+            absolute_position: track.track_number,
+            length_ms: track.duration_secs.map(|seconds| seconds * 1000),
+        }],
+        ..Release::default()
+    }
+}
+
+/// Automatic edition undone to review, then an explicit re-identification:
+/// controls, candidate review, the administrator's choice, and the
+/// edition finder, all through the HTTP routes.
+#[tokio::test]
+async fn library_journey_undo_edition_then_reidentify() {
+    use droppedneedle::library::identify::sources::{Edition, EditionPage};
+    use droppedneedle::library::identify::stores::IdentityStore as _;
+    use droppedneedle::library::operations::{service, tick};
+
+    let lib = Lib::open("operations").await;
+    let admin = setup_admin(lib.router(), "owner", "owner-password-1").await;
+    let auth = bearer(&admin);
+    let headers = [("authorization", auth.as_str())];
+    let music = lib.dir.join("music");
+    plant(&music, "album-r/01.flac", "management_full.flac");
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/roots",
+        &headers,
+        Some(json!({"id": "music", "path": music.to_string_lossy()})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/scan",
+        &headers,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let run_id = body["run_id"].as_str().expect("run id").to_owned();
+    drain_scans(&lib.library).await;
+    let (_, body) = call(
+        lib.router(),
+        "GET",
+        &format!("/api/v3/library/scan/runs/{run_id}"),
+        &headers,
+        None,
+    )
+    .await;
+    let track_id = body["files"][0]["track_id"]
+        .as_str()
+        .expect("track id")
+        .to_owned();
+    let (_, body) = call(
+        lib.router(),
+        "GET",
+        &format!("/api/v3/library/tracks/{track_id}"),
+        &headers,
+        None,
+    )
+    .await;
+    let album = body["album_id"].as_str().expect("album id").to_owned();
+    let release = tagged_release(&lib.library, &album);
+    let scripted = lib.library.test_providers.as_ref().expect("scripted");
+    scripted.set_recall(RecallResult {
+        releases: vec![release.clone()],
+        ..RecallResult::default()
+    });
+
+    // The scan-queued attempt seals the exact edition automatically.
+    assert_eq!(lib.library.identify_tick().await, 1);
+    let sealed = lib
+        .library
+        .identify_store
+        .album_identity(&album)
+        .expect("sealed");
+    assert_eq!(sealed.release_mbid.as_deref(), Some(release.id.as_str()));
+
+    // Undo needs the revisions the acceptance left; stale ones are refused.
+    let (album_revision, identity_revision) = service::automatic_edition_undo(&lib.library, &album)
+        .expect("undo reads")
+        .expect("undo is live");
+    let undo = format!("/api/v3/library/albums/{album}/undo-automatic-edition");
+    let stale = json!({
+        "expected_album_revision": album_revision,
+        "expected_identity_revision": identity_revision + 1,
+    });
+    let fresh = json!({
+        "expected_album_revision": album_revision,
+        "expected_identity_revision": identity_revision,
+    });
+    let (status, body) = call(lib.router(), "POST", &undo, &headers, Some(stale)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], json!("STALE_REVISION"));
+    let (status, body) = call(lib.router(), "POST", &undo, &headers, Some(fresh.clone())).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["outcome"], json!("cleared_to_review"));
+    assert!(lib.library.identify_store.album_identity(&album).is_none());
+    let reviews = format!("/api/v3/library/reviews?album_id={album}");
+    let (_, body) = call(lib.router(), "GET", &reviews, &headers, None).await;
+    assert_eq!(
+        body["reviews"][0]["reason_code"],
+        json!("AUTOMATIC_EDITION_CLEARED_TO_REVIEW")
+    );
+    let (status, _) = call(lib.router(), "POST", &undo, &headers, Some(fresh)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "an undo is used once");
+
+    // Start a re-identification; the same key returns the same job.
+    let start = format!("/api/v3/library/albums/{album}/reidentify");
+    let key = json!({"idempotency_key": "again-1"});
+    let (status, job) = call(lib.router(), "POST", &start, &headers, Some(key.clone())).await;
+    assert_eq!(status, StatusCode::OK, "{job}");
+    assert_eq!(job["state"], json!("queued"));
+    assert_eq!(job["kind"], json!("explicit_reidentification"));
+    let job_id = job["id"].as_str().expect("job id").to_owned();
+    let (_, again) = call(lib.router(), "POST", &start, &headers, Some(key)).await;
+    assert_eq!(again["id"], json!(job_id));
+
+    // Stop it while queued, then resume: it starts over.
+    let operation = format!("/api/v3/library/operations/{job_id}");
+    let (status, stopped) = call(
+        lib.router(),
+        "POST",
+        &format!("{operation}/stop"),
+        &headers,
+        Some(json!({"expected_row_revision": job["row_revision"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{stopped}");
+    assert_eq!(stopped["state"], json!("stopped"));
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        &format!("{operation}/resume"),
+        &headers,
+        Some(json!({"expected_row_revision": job["row_revision"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "stale revision: {body}");
+    let (_, resumed) = call(
+        lib.router(),
+        "POST",
+        &format!("{operation}/resume"),
+        &headers,
+        Some(json!({"expected_row_revision": stopped["row_revision"]})),
+    )
+    .await;
+    assert_eq!(resumed["state"], json!("queued"));
+
+    // The worker scores the candidates and waits for a choice.
+    let ops = service::Operations::new(&lib.library);
+    assert!(tick(&lib.library, &ops, "journey-worker").await);
+    let (status, ready) = call(lib.router(), "GET", &operation, &headers, None).await;
+    assert_eq!(status, StatusCode::OK, "{ready}");
+    assert_eq!(ready["state"], json!("ready"), "{ready}");
+    let candidates = ready["reidentification_candidates"]
+        .as_array()
+        .expect("candidates");
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0]["automatic_safe"], json!(true));
+    assert_eq!(
+        candidates[0]["evidence"]["track_evidence"][0]["classification"],
+        json!("supported")
+    );
+    assert!(
+        lib.library.identify_store.album_identity(&album).is_none(),
+        "nothing seals before the choice"
+    );
+
+    // The edition finder marks nothing current yet.
+    scripted.set_editions(EditionPage {
+        items: vec![Edition {
+            release_mbid: release.id.clone(),
+            release_group_mbid: release.release_group_id.clone(),
+            title: release.title.clone(),
+            score: 100,
+            ..Edition::default()
+        }],
+        total: 1,
+        offset: 0,
+    });
+    let finder = format!(
+        "/api/v3/library/albums/{album}/reidentification/releases?title=Management%20Album"
+    );
+    let (status, found) = call(lib.router(), "GET", &finder, &headers, None).await;
+    assert_eq!(status, StatusCode::OK, "{found}");
+    assert_eq!(found["items"][0]["is_current_release"], json!(false));
+
+    // The choice seals a manual identity and settles the review.
+    let (status, done) = call(
+        lib.router(),
+        "POST",
+        &format!("{operation}/candidate"),
+        &headers,
+        Some(json!({
+            "expected_row_revision": ready["row_revision"],
+            "candidate_key": candidates[0]["candidate_key"],
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{done}");
+    assert_eq!(done["state"], json!("succeeded"));
+    assert_eq!(done["terminal_code"], json!("IDENTIFIED"));
+    assert_eq!(
+        done["selected_reidentification_candidate_key"],
+        candidates[0]["candidate_key"]
+    );
+    let manual = lib
+        .library
+        .identify_store
+        .album_identity(&album)
+        .expect("sealed");
+    assert_eq!(manual.release_mbid.as_deref(), Some(release.id.as_str()));
+    assert_eq!(manual.decision_source.as_str(), "manual");
+    let (_, body) = call(lib.router(), "GET", &reviews, &headers, None).await;
+    assert_eq!(body["reviews"], json!([]), "the review is settled");
+    let (_, found) = call(lib.router(), "GET", &finder, &headers, None).await;
+    assert_eq!(found["items"][0]["is_current_release"], json!(true));
 }

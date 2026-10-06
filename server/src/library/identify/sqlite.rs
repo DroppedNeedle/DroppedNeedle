@@ -302,10 +302,11 @@ impl SqliteIdentifyStore {
         })
     }
 
-    /// Run `op` on the store's connection. Library operations keep their
-    /// jobs in the same database and share this connection, so their
-    /// transactions never contend with identification for a write lock.
-    /// `op` must not block on anything but SQLite.
+    /// Run `op` on the store's connection. Library operation jobs live in
+    /// the same database and change the same identity rows, so they take
+    /// turns with identification on this connection. `op` must not call
+    /// back into this store (the lock is not reentrant) or block on
+    /// anything but SQLite.
     pub(crate) fn with_connection<T>(&self, op: impl FnOnce(&mut Connection) -> T) -> T {
         op(&mut self.lock())
     }

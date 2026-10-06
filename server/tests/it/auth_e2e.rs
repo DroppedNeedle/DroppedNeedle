@@ -1996,6 +1996,43 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/library/contributions/musicbrainz/callback",
         Posture::Public,
     ),
+    // Library operations: admin-only, as in v2.
+    ("GET", "/api/v3/library/operations/{job_id}", Posture::Admin),
+    (
+        "POST",
+        "/api/v3/library/operations/{job_id}/pause",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/operations/{job_id}/resume",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/operations/{job_id}/stop",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/operations/{job_id}/candidate",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/albums/{album_id}/reidentify",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/library/albums/{album_id}/reidentification/releases",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/albums/{album_id}/undo-automatic-edition",
+        Posture::Admin,
+    ),
 ];
 
 /// Fill `{param}` segments with a dummy id.
