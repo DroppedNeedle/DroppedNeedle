@@ -27,6 +27,7 @@ mod compat_journeys;
 mod compat_shared;
 mod compat_subsonic;
 mod compat_wiring;
+mod concerts;
 mod config_secrets;
 mod contract;
 mod envelope;

@@ -4079,6 +4079,178 @@
         }
       }
     },
+    "/api/v3/following/concerts": {
+      "get": {
+        "tags": [
+          "concerts"
+        ],
+        "summary": "Upcoming gigs for the caller's followed artists in their saved cities,\ndate ascending. `configured` is false when no events source is on.",
+        "operationId": "list_concerts",
+        "responses": {
+          "200": {
+            "description": "The caller's concerts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConcertsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/following/concerts/cities": {
+      "get": {
+        "tags": [
+          "concerts"
+        ],
+        "summary": "The caller's saved cities in picker order.",
+        "operationId": "list_event_cities",
+        "responses": {
+          "200": {
+            "description": "Saved cities",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventCitiesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "concerts"
+        ],
+        "summary": "Replace the caller's cities with the submitted list, in order.",
+        "operationId": "replace_event_cities",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventCitiesUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved cities",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventCitiesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Coordinates out of range or malformed body"
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/following/concerts/city-search": {
+      "get": {
+        "tags": [
+          "concerts"
+        ],
+        "summary": "City suggestions for the picker. An empty list means no such place; a\ngeocoder failure answers 503.",
+        "operationId": "search_cities",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Search text, 2-100 characters.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Suggestions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CitySearchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Query missing or not 2-100 characters"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "503": {
+            "description": "Geocoder unavailable"
+          }
+        }
+      }
+    },
+    "/api/v3/following/concerts/seen": {
+      "post": {
+        "tags": [
+          "concerts"
+        ],
+        "summary": "Mark the caller's concerts seen. The count is zero afterwards.",
+        "operationId": "mark_concerts_seen",
+        "responses": {
+          "200": {
+            "description": "Zeroed count",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnseenCountResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/following/concerts/unseen-count": {
+      "get": {
+        "tags": [
+          "concerts"
+        ],
+        "summary": "Gigs in the caller's cities first seen since they last opened the page.",
+        "operationId": "unseen_concerts",
+        "responses": {
+          "200": {
+            "description": "Unseen count",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnseenCountResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
     "/api/v3/following/new-releases": {
       "get": {
         "tags": [
@@ -18580,6 +18752,68 @@
           }
         }
       },
+      "CitySearchResponse": {
+        "type": "object",
+        "description": "City suggestions. Empty means the geocoder knows no such place.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CitySearchResult"
+            },
+            "description": "Suggestions, best first."
+          }
+        }
+      },
+      "CitySearchResult": {
+        "type": "object",
+        "description": "One geocoder suggestion.",
+        "required": [
+          "name",
+          "latitude",
+          "longitude"
+        ],
+        "properties": {
+          "country": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Country name."
+          },
+          "country_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Country code."
+          },
+          "latitude": {
+            "type": "number",
+            "format": "double",
+            "description": "Latitude in degrees."
+          },
+          "longitude": {
+            "type": "number",
+            "format": "double",
+            "description": "Longitude in degrees."
+          },
+          "name": {
+            "type": "string",
+            "description": "City name."
+          },
+          "region": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "First-level region."
+          }
+        }
+      },
       "ClearHistoryResponse": {
         "type": "object",
         "description": "Clear-history outcome.",
@@ -18590,6 +18824,140 @@
           "success": {
             "type": "boolean",
             "description": "Whether a row was cleared."
+          }
+        }
+      },
+      "Concert": {
+        "type": "object",
+        "description": "One upcoming gig in one of the caller's cities.",
+        "required": [
+          "artist_mbid",
+          "artist_name",
+          "event_name",
+          "local_date",
+          "status",
+          "source",
+          "source_event_id",
+          "matched_city"
+        ],
+        "properties": {
+          "artist_mbid": {
+            "type": "string",
+            "description": "Followed artist's MBID (lowercase in library sweep scope)."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Artist name as followed."
+          },
+          "city": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Venue town or city."
+          },
+          "country_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Venue country code."
+          },
+          "distance_km": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Distance from the matched city in km, one decimal; null when the\nvenue had no coordinates and matched by city name."
+          },
+          "event_name": {
+            "type": "string",
+            "description": "Event title from the source."
+          },
+          "local_date": {
+            "type": "string",
+            "description": "Venue-local date, `YYYY-MM-DD`."
+          },
+          "matched_city": {
+            "type": "string",
+            "description": "The saved city this gig matched."
+          },
+          "region": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Venue region."
+          },
+          "source": {
+            "$ref": "#/components/schemas/EventSource",
+            "description": "Source of the listing."
+          },
+          "source_event_id": {
+            "type": "string",
+            "description": "Listing id, unique per source."
+          },
+          "starts_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Start time, ISO, when the source gives one."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ConcertStatus",
+            "description": "Whether the gig is still on."
+          },
+          "ticket_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Ticket or listing link."
+          },
+          "venue_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Venue name."
+          }
+        }
+      },
+      "ConcertStatus": {
+        "type": "string",
+        "description": "Whether the gig is still on. Ticketmaster's `postponed` reads as\nrescheduled: the gig is not happening on its listed date.",
+        "enum": [
+          "scheduled",
+          "cancelled",
+          "rescheduled"
+        ]
+      },
+      "ConcertsResponse": {
+        "type": "object",
+        "description": "The caller's concerts list.",
+        "required": [
+          "configured",
+          "items",
+          "total"
+        ],
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "description": "False when the admin has no events source switched on with a key."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Concert"
+            },
+            "description": "Gigs, date ascending."
+          },
+          "total": {
+            "type": "integer",
+            "description": "Item count.",
+            "minimum": 0
           }
         }
       },
@@ -20189,6 +20557,122 @@
             "description": "The single error payload."
           }
         }
+      },
+      "EventCitiesResponse": {
+        "type": "object",
+        "description": "The caller's saved cities, in picker order.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EventCity"
+            },
+            "description": "Cities in order."
+          }
+        }
+      },
+      "EventCitiesUpdate": {
+        "type": "object",
+        "description": "Replace-all body: the picker sends its whole list in order.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EventCityInput"
+            },
+            "description": "Cities in order. At most 50 are kept."
+          }
+        }
+      },
+      "EventCity": {
+        "type": "object",
+        "description": "One saved city.",
+        "required": [
+          "city_name",
+          "latitude",
+          "longitude",
+          "radius_km"
+        ],
+        "properties": {
+          "city_name": {
+            "type": "string",
+            "description": "Display name."
+          },
+          "country_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Country code, when known."
+          },
+          "latitude": {
+            "type": "number",
+            "format": "double",
+            "description": "Latitude in degrees."
+          },
+          "longitude": {
+            "type": "number",
+            "format": "double",
+            "description": "Longitude in degrees."
+          },
+          "radius_km": {
+            "type": "number",
+            "format": "double",
+            "description": "Match radius in km."
+          }
+        }
+      },
+      "EventCityInput": {
+        "type": "object",
+        "description": "One city as the picker submits it.",
+        "required": [
+          "city_name",
+          "latitude",
+          "longitude"
+        ],
+        "properties": {
+          "city_name": {
+            "type": "string",
+            "description": "Display name; blank entries are dropped."
+          },
+          "country_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Country code, when known."
+          },
+          "latitude": {
+            "type": "number",
+            "format": "double",
+            "description": "Latitude, -90 to 90."
+          },
+          "longitude": {
+            "type": "number",
+            "format": "double",
+            "description": "Longitude, -180 to 180."
+          },
+          "radius_km": {
+            "type": "number",
+            "format": "double",
+            "description": "Match radius in km, clamped to 1-500.",
+            "default": 30.0
+          }
+        }
+      },
+      "EventSource": {
+        "type": "string",
+        "description": "Where a feed row came from.",
+        "enum": [
+          "ticketmaster",
+          "skiddle"
+        ]
       },
       "EventsSettings": {
         "type": "object",

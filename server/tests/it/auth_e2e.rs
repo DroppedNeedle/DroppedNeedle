@@ -239,7 +239,20 @@ impl E2e {
             .parent()
             .map(|parent| parent.join("backups"))
             .unwrap_or_else(std::env::temp_dir);
-        let jobs = droppedneedle::jobs::wiring::JobsSetup::for_tests(auth.users.clone());
+        // Concerts over the scratch database; the sources point at the
+        // discard port so no row can reach a real provider.
+        let jobs = droppedneedle::jobs::wiring::JobsSetup::for_tests(auth.users.clone())
+            .with_concerts(droppedneedle::concerts::ConcertsSetup::new(
+                self.runtime.pool().clone(),
+                self.runtime.lane().clone(),
+                self.http.shared().clone(),
+                Arc::clone(&self.store),
+                droppedneedle::concerts::Endpoints {
+                    ticketmaster: "http://127.0.0.1:9".to_owned(),
+                    skiddle: "http://127.0.0.1:9".to_owned(),
+                    geocoding: "http://127.0.0.1:9".to_owned(),
+                },
+            ));
         let admin = droppedneedle::admin::AdminSetup::new(
             auth.users.clone(),
             acquire.requests.quota.clone(),
@@ -1508,6 +1521,20 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         Posture::User,
     ),
     ("POST", "/api/v3/following/new-releases/seen", Posture::User),
+    ("GET", "/api/v3/following/concerts", Posture::User),
+    ("GET", "/api/v3/following/concerts/cities", Posture::User),
+    ("PUT", "/api/v3/following/concerts/cities", Posture::User),
+    (
+        "GET",
+        "/api/v3/following/concerts/city-search",
+        Posture::User,
+    ),
+    (
+        "GET",
+        "/api/v3/following/concerts/unseen-count",
+        Posture::User,
+    ),
+    ("POST", "/api/v3/following/concerts/seen", Posture::User),
     (
         "GET",
         "/api/v3/requests/auto-download-approvals",

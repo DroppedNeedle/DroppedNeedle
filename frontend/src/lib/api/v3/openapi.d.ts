@@ -1861,6 +1861,98 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/following/concerts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Upcoming gigs for the caller's followed artists in their saved cities,
+         *     date ascending. `configured` is false when no events source is on.
+         */
+        get: operations["list_concerts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/following/concerts/cities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The caller's saved cities in picker order. */
+        get: operations["list_event_cities"];
+        /** Replace the caller's cities with the submitted list, in order. */
+        put: operations["replace_event_cities"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/following/concerts/city-search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * City suggestions for the picker. An empty list means no such place; a
+         *     geocoder failure answers 503.
+         */
+        get: operations["search_cities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/following/concerts/seen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark the caller's concerts seen. The count is zero afterwards. */
+        post: operations["mark_concerts_seen"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/following/concerts/unseen-count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Gigs in the caller's cities first seen since they last opened the page. */
+        get: operations["unseen_concerts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/following/new-releases": {
         parameters: {
             query?: never;
@@ -8187,10 +8279,88 @@ export interface components {
              */
             wal_file_bytes: number;
         };
+        /** @description City suggestions. Empty means the geocoder knows no such place. */
+        CitySearchResponse: {
+            /** @description Suggestions, best first. */
+            items: components["schemas"]["CitySearchResult"][];
+        };
+        /** @description One geocoder suggestion. */
+        CitySearchResult: {
+            /** @description Country name. */
+            country?: string | null;
+            /** @description Country code. */
+            country_code?: string | null;
+            /**
+             * Format: double
+             * @description Latitude in degrees.
+             */
+            latitude: number;
+            /**
+             * Format: double
+             * @description Longitude in degrees.
+             */
+            longitude: number;
+            /** @description City name. */
+            name: string;
+            /** @description First-level region. */
+            region?: string | null;
+        };
         /** @description Clear-history outcome. */
         ClearHistoryResponse: {
             /** @description Whether a row was cleared. */
             success: boolean;
+        };
+        /** @description One upcoming gig in one of the caller's cities. */
+        Concert: {
+            /** @description Followed artist's MBID (lowercase in library sweep scope). */
+            artist_mbid: string;
+            /** @description Artist name as followed. */
+            artist_name: string;
+            /** @description Venue town or city. */
+            city?: string | null;
+            /** @description Venue country code. */
+            country_code?: string | null;
+            /**
+             * Format: double
+             * @description Distance from the matched city in km, one decimal; null when the
+             *     venue had no coordinates and matched by city name.
+             */
+            distance_km?: number | null;
+            /** @description Event title from the source. */
+            event_name: string;
+            /** @description Venue-local date, `YYYY-MM-DD`. */
+            local_date: string;
+            /** @description The saved city this gig matched. */
+            matched_city: string;
+            /** @description Venue region. */
+            region?: string | null;
+            /** @description Source of the listing. */
+            source: components["schemas"]["EventSource"];
+            /** @description Listing id, unique per source. */
+            source_event_id: string;
+            /** @description Start time, ISO, when the source gives one. */
+            starts_at?: string | null;
+            /** @description Whether the gig is still on. */
+            status: components["schemas"]["ConcertStatus"];
+            /** @description Ticket or listing link. */
+            ticket_url?: string | null;
+            /** @description Venue name. */
+            venue_name?: string | null;
+        };
+        /**
+         * @description Whether the gig is still on. Ticketmaster's `postponed` reads as
+         *     rescheduled: the gig is not happening on its listed date.
+         * @enum {string}
+         */
+        ConcertStatus: "scheduled" | "cancelled" | "rescheduled";
+        /** @description The caller's concerts list. */
+        ConcertsResponse: {
+            /** @description False when the admin has no events source switched on with a key. */
+            configured: boolean;
+            /** @description Gigs, date ascending. */
+            items: components["schemas"]["Concert"][];
+            /** @description Item count. */
+            total: number;
         };
         /** @description Inbound Connect Apps config. Both protocols default off. */
         ConnectApps: {
@@ -8974,6 +9144,66 @@ export interface components {
             /** @description The single error payload. */
             error: components["schemas"]["ErrorBody"];
         };
+        /** @description The caller's saved cities, in picker order. */
+        EventCitiesResponse: {
+            /** @description Cities in order. */
+            items: components["schemas"]["EventCity"][];
+        };
+        /** @description Replace-all body: the picker sends its whole list in order. */
+        EventCitiesUpdate: {
+            /** @description Cities in order. At most 50 are kept. */
+            items: components["schemas"]["EventCityInput"][];
+        };
+        /** @description One saved city. */
+        EventCity: {
+            /** @description Display name. */
+            city_name: string;
+            /** @description Country code, when known. */
+            country_code?: string | null;
+            /**
+             * Format: double
+             * @description Latitude in degrees.
+             */
+            latitude: number;
+            /**
+             * Format: double
+             * @description Longitude in degrees.
+             */
+            longitude: number;
+            /**
+             * Format: double
+             * @description Match radius in km.
+             */
+            radius_km: number;
+        };
+        /** @description One city as the picker submits it. */
+        EventCityInput: {
+            /** @description Display name; blank entries are dropped. */
+            city_name: string;
+            /** @description Country code, when known. */
+            country_code?: string | null;
+            /**
+             * Format: double
+             * @description Latitude, -90 to 90.
+             */
+            latitude: number;
+            /**
+             * Format: double
+             * @description Longitude, -180 to 180.
+             */
+            longitude: number;
+            /**
+             * Format: double
+             * @description Match radius in km, clamped to 1-500.
+             * @default 30
+             */
+            radius_km: number;
+        };
+        /**
+         * @description Where a feed row came from.
+         * @enum {string}
+         */
+        EventSource: "ticketmaster" | "skiddle";
         /** @description Upcoming-events sources. The sweep runs daily at `poll_time`. */
         EventsSettings: {
             /**
@@ -19699,6 +19929,196 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FollowedArtistListResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_concerts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's concerts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConcertsResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_event_cities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Saved cities */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventCitiesResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    replace_event_cities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EventCitiesUpdate"];
+            };
+        };
+        responses: {
+            /** @description Saved cities */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventCitiesResponse"];
+                };
+            };
+            /** @description Coordinates out of range or malformed body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    search_cities: {
+        parameters: {
+            query: {
+                /** @description Search text, 2-100 characters. */
+                q: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Suggestions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CitySearchResponse"];
+                };
+            };
+            /** @description Query missing or not 2-100 characters */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Geocoder unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    mark_concerts_seen: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Zeroed count */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnseenCountResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    unseen_concerts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Unseen count */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnseenCountResponse"];
                 };
             };
             /** @description Not authenticated */

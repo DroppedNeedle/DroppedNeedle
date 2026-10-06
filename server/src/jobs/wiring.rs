@@ -11,10 +11,13 @@
 //! restarts); test states bind [`MemoryRegistryStore`] behind the same
 //! [`StoreKind`] seam so the setup type stays concrete. Loop backends are
 //! real where they exist (checkpoint passes, the now-playing feed and its
-//! upstream session pollers, the Navidrome playlist export, events
-//! settings reads) and no-ops where their services do not exist yet (the
-//! personal mixer, the events sweep); each interim adapter says what is
-//! missing.
+//! upstream session pollers, the Navidrome playlist export, the concerts
+//! sweep) and no-ops where their services do not exist yet (the personal
+//! mixer); each interim adapter says what is missing.
+//!
+//! The concerts bundle rides here because its sweep is the events watcher
+//! loop and the settings kick; its routes mount through
+//! [`JobsSetup::concerts_router`].
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,12 +25,11 @@ use std::time::Duration;
 use axum::Router;
 
 use crate::auth::users::{UsersDeps, roles::Role};
+use crate::concerts::ConcertsSetup;
 use crate::db::{CheckpointService, DurableWorkWakeups, WriteLane};
 use crate::jobs::checkpoint::{self, CheckpointRunner};
 use crate::jobs::events_kick::{self, EventsKick, FnKick, KickOutcome};
-use crate::jobs::events_watcher::{
-    self, EventsWatcher, PollTimeSource, SweepEnd, SystemWatchClock,
-};
+use crate::jobs::events_watcher::{self, PollTimeSource, SystemWatchClock};
 use crate::jobs::media::{MediaJobs, RegistryFeed, RemoteSessionPollers};
 use crate::jobs::personal_mix::{self, PersonalMixer};
 use crate::jobs::playlist_export::M3uPlaylistExporter;
@@ -190,21 +192,6 @@ impl SyncRoles for StoreSyncRoles {
     }
 }
 
-/// Events sweep without a backend: sweeps succeed without walking any
-/// source until the Ticketmaster/Skiddle sweep service lands here.
-#[derive(Clone, Debug, Default)]
-pub struct UnwiredEventsWatcher;
-
-impl EventsWatcher for UnwiredEventsWatcher {
-    fn run_sweep(
-        &self,
-        _skip_recent_hours: Option<f64>,
-        _stop: Arc<tokio::sync::Notify>,
-    ) -> BoxFuture<'_, Result<SweepEnd, String>> {
-        Box::pin(async { Ok(SweepEnd::Finished) })
-    }
-}
-
 /// Precache phases without an implementation: every run reports the reason
 /// and lands failed, so the trigger reports the gap until the artist,
 /// album, discovery, and AudioDB passes are wired here.
@@ -288,14 +275,15 @@ pub struct JobsSetup {
     playlist: PlaylistSyncState<NavidromeSyncSettings, M3uPlaylistExporter>,
     presence: (RegistryFeed, RemoteSessionPollers),
     poll_time: EventsPollTime,
-    watcher: UnwiredEventsWatcher,
+    concerts: Option<ConcertsSetup>,
     config: Option<Arc<ConfigStore>>,
 }
 
 impl JobsSetup {
     /// Bind the production backends: durable rows, live checkpoint passes,
     /// settings reads over the shared store, the route's admin gate over
-    /// the user store, and the media feeds (presence, playlist export).
+    /// the user store, the media feeds (presence, playlist export), and the
+    /// concerts sweep and routes.
     pub fn build(
         users: UsersDeps,
         wakeups: DurableWorkWakeups,
@@ -303,6 +291,7 @@ impl JobsSetup {
         checkpoint: CheckpointService,
         config: Arc<ConfigStore>,
         media: MediaJobs,
+        concerts: ConcertsSetup,
     ) -> Self {
         Self {
             registry: JobRegistry::new(StoreKind::Durable(DurableRegistryStore::new(
@@ -322,7 +311,7 @@ impl JobsSetup {
             poll_time: EventsPollTime {
                 store: Some(Arc::clone(&config)),
             },
-            watcher: UnwiredEventsWatcher,
+            concerts: Some(concerts),
             config: Some(config),
         }
     }
@@ -344,9 +333,31 @@ impl JobsSetup {
             },
             presence: (media.feed(), media.pollers()),
             poll_time: EventsPollTime { store: None },
-            watcher: UnwiredEventsWatcher,
+            concerts: None,
             config: None,
         }
+    }
+
+    /// Mount concerts over a test database (route and sweep tests).
+    #[cfg(any(test, feature = "test-support"))]
+    #[must_use]
+    pub fn with_concerts(mut self, concerts: ConcertsSetup) -> Self {
+        self.concerts = Some(concerts);
+        self
+    }
+
+    /// The concerts routes, empty on states without concerts. Mounts
+    /// inside the session gate.
+    pub fn concerts_router(&self) -> Router {
+        self.concerts
+            .as_ref()
+            .map(ConcertsSetup::gated_router)
+            .unwrap_or_default()
+    }
+
+    /// The concerts sweep, or `None` on states without concerts.
+    fn watcher(&self) -> Option<crate::concerts::ConcertsSweep> {
+        self.concerts.as_ref().map(ConcertsSetup::sweep)
     }
 
     /// The shared registry. The plugins bundle takes a clone so tick loops
@@ -377,7 +388,7 @@ impl JobsSetup {
     /// Overlapping kicks collapse (the sweep is idempotent).
     pub fn events_kick(&self) -> Arc<dyn EventsKick> {
         let registry = self.registry.clone();
-        let watcher = self.watcher.clone();
+        let watcher = self.watcher();
         Arc::new(FnKick {
             kick_fn: move || {
                 let registry = registry.clone();
@@ -427,7 +438,7 @@ impl JobsSetup {
         .map_err(|_| format!("{} is already running", playlist_sync::JOB_NAME))?;
         events_watcher::spawn_on(
             &self.registry,
-            self.watcher.clone(),
+            self.watcher(),
             self.poll_time.clone(),
             SystemWatchClock,
         )

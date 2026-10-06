@@ -325,6 +325,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
             http: http.shared().clone(),
             pool: Some(runtime.pool().clone()),
         },
+        crate::concerts::ConcertsSetup::from_runtime(&runtime, &http, &config_store),
     );
     let admin = admin.with_precache(jobs.precache_trigger());
     let effects: Arc<dyn SaveEffects> = Arc::new(LiveSaveEffects::new(
