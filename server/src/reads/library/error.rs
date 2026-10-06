@@ -34,6 +34,12 @@ pub enum LibraryError {
     },
     /// Unknown id. Fixed message, no details.
     NotFound,
+    /// The caller's role may not do this, or the file left the library
+    /// roots. The message is shown to the user.
+    Forbidden {
+        /// Why.
+        message: String,
+    },
     /// Bad input. The message is shown to the user.
     InvalidInput {
         /// What was wrong.
@@ -58,6 +64,7 @@ impl LibraryError {
         match self {
             Self::Unauthorized { .. } => StatusCode::UNAUTHORIZED,
             Self::NotFound => StatusCode::NOT_FOUND,
+            Self::Forbidden { .. } => StatusCode::FORBIDDEN,
             Self::InvalidInput { .. } => StatusCode::BAD_REQUEST,
             Self::Internal { .. } => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -71,6 +78,9 @@ impl LibraryError {
                 crate::error::NOT_FOUND_MESSAGE.to_owned(),
                 None,
             ),
+            Self::Forbidden { message } => {
+                (crate::error::FORBIDDEN.to_owned(), message.clone(), None)
+            }
             Self::InvalidInput { message } => (INVALID_INPUT.to_owned(), message.clone(), None),
             Self::Internal { error_id } => (
                 crate::error::INTERNAL_ERROR.to_owned(),

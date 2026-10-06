@@ -8,15 +8,16 @@ use super::LibraryDeps;
 use super::models::{
     AlbumCard, AlbumCardPage, AlbumPage, AlbumQuery, AlbumView, ArtistPage, ArtistQuery,
     ArtistView, BrowseQuery, DecadeShelf, DecadesResponse, GenreList, GenreView,
-    LibraryAlbumStatus, LibraryMembershipRequest, LibraryMembershipResponse, LibraryStatusTrack,
-    LyricLine, LyricsView, PageQuery, RecentQuery, ResolveTracksRequest, ResolveTracksResponse,
-    ResolvedTrack, SearchQuery, SearchResults, StatsView, SuggestionTrack, SuggestionsQuery,
-    SuggestionsResponse, TrackPage, TrackQuery, TrackView,
+    LibraryAlbumStatus, LibraryMbids, LibraryMembershipRequest, LibraryMembershipResponse,
+    LibraryStatusTrack, LyricLine, LyricsView, PageQuery, RecentQuery, ResolveTracksRequest,
+    ResolveTracksResponse, ResolvedTrack, SearchQuery, SearchResults, StatsView, SuggestionTrack,
+    SuggestionsQuery, SuggestionsResponse, TrackPage, TrackQuery, TrackTags, TrackView,
 };
 use super::stores::{
     AlbumFilter, AlbumRecord, AlbumSort, ArtistRecord, ArtistScope, ArtistSort, StoreError,
-    TrackFilter, TrackRecord, TrackSort, UpgradePolicy,
+    TagRead, TrackFilter, TrackRecord, TrackSort, UpgradePolicy,
 };
+use crate::auth::users::roles::Role;
 
 /// Domain failures. Handlers convert these; nothing here names HTTP.
 #[derive(Debug, PartialEq, Eq)]
@@ -25,6 +26,8 @@ pub enum LibraryFailure {
     NotFound,
     /// Bad input. The message is user-facing.
     InvalidInput(String),
+    /// Not allowed. The message is user-facing.
+    Forbidden(String),
     /// Store or port fault. The string goes to the log only.
     Internal(String),
 }
@@ -848,6 +851,41 @@ pub async fn membership(
     Ok(LibraryMembershipResponse {
         owned_ids: keep(owned),
         requested_ids: keep(requested),
+    })
+}
+
+/// The tags in one catalog track's file, as v2 read them: admins only.
+/// A file gone from disk or unreadable is a 400 with v2's message, one
+/// outside the library roots a 403.
+pub async fn track_tags(
+    deps: &LibraryDeps,
+    role: Role,
+    track_id: &str,
+) -> Result<TrackTags, LibraryFailure> {
+    if role != Role::Admin {
+        return Err(LibraryFailure::Forbidden("Admin role required".to_owned()));
+    }
+    match deps.tags.read(track_id).await? {
+        TagRead::Found(tag) => Ok(TrackTags::from(*tag)),
+        TagRead::Unknown => Err(LibraryFailure::NotFound),
+        TagRead::Gone => Err(LibraryFailure::InvalidInput(
+            "The audio file is no longer present on disk.".to_owned(),
+        )),
+        TagRead::Unreadable => Err(LibraryFailure::InvalidInput(
+            "Could not read the audio file.".to_owned(),
+        )),
+        TagRead::Outside => Err(LibraryFailure::Forbidden(
+            crate::stream::gateway::OUTSIDE_MESSAGE.to_owned(),
+        )),
+    }
+}
+
+/// Every held release group and every open album request.
+pub async fn album_mbids(deps: &LibraryDeps) -> Result<LibraryMbids, LibraryFailure> {
+    let found = deps.lookups.all_album_mbids().await?;
+    Ok(LibraryMbids {
+        mbids: found.owned,
+        requested_mbids: found.requested,
     })
 }
 

@@ -483,6 +483,125 @@ pub struct LibraryMembershipResponse {
     pub requested_ids: Vec<String>,
 }
 
+/// One artist value as the file carries it (v2 `AudioArtistCredit`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct TagArtistCredit {
+    /// Artist name.
+    pub name: String,
+    /// Name as credited, when it differs.
+    pub credited_name: Option<String>,
+    /// Sort name.
+    pub sort_name: Option<String>,
+    /// MusicBrainz artist id.
+    pub musicbrainz_artist_id: Option<String>,
+    /// Text joining this credit to the next.
+    pub join_phrase: String,
+}
+
+/// The tags in one audio file, field for field v2's `AudioTag`. The
+/// `musicbrainz_*` fields use Picard's tag names.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct TrackTags {
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub track_number: u32,
+    pub album_artist: Option<String>,
+    pub disc_number: u32,
+    pub year: Option<i32>,
+    pub genre: Option<String>,
+    pub musicbrainz_release_group_id: Option<String>,
+    pub musicbrainz_release_id: Option<String>,
+    pub musicbrainz_recording_id: Option<String>,
+    pub musicbrainz_release_track_id: Option<String>,
+    pub musicbrainz_artist_id: Option<String>,
+    pub musicbrainz_album_artist_id: Option<String>,
+    pub acoustid_id: Option<String>,
+    pub compilation: bool,
+    /// Raw RELEASETYPE / MUSICBRAINZ_ALBUMTYPE value.
+    pub release_type: Option<String>,
+    pub title_sort: Option<String>,
+    pub artist_sort: Option<String>,
+    pub album_sort: Option<String>,
+    pub album_artist_sort: Option<String>,
+    pub disc_subtitle: Option<String>,
+    pub original_release_date: Option<String>,
+    pub replaygain_track_gain: Option<f64>,
+    pub replaygain_album_gain: Option<f64>,
+    pub replaygain_track_peak: Option<f64>,
+    pub replaygain_album_peak: Option<f64>,
+    pub genres: Vec<String>,
+    pub artists: Vec<TagArtistCredit>,
+    pub album_artists: Vec<TagArtistCredit>,
+    pub musicbrainz_artist_ids: Vec<String>,
+    pub musicbrainz_album_artist_ids: Vec<String>,
+}
+
+impl From<crate::library::tags::AudioArtistCredit> for TagArtistCredit {
+    fn from(credit: crate::library::tags::AudioArtistCredit) -> Self {
+        Self {
+            name: credit.name,
+            credited_name: credit.credited_name,
+            sort_name: credit.sort_name,
+            musicbrainz_artist_id: credit.musicbrainz_artist_id,
+            join_phrase: credit.join_phrase,
+        }
+    }
+}
+
+impl From<crate::library::tags::AudioTag> for TrackTags {
+    fn from(tag: crate::library::tags::AudioTag) -> Self {
+        let credits = |list: Vec<crate::library::tags::AudioArtistCredit>| {
+            list.into_iter().map(TagArtistCredit::from).collect()
+        };
+        Self {
+            title: tag.title,
+            artist: tag.artist,
+            album: tag.album,
+            track_number: tag.track_number,
+            album_artist: tag.album_artist,
+            disc_number: tag.disc_number,
+            year: tag.year,
+            genre: tag.genre,
+            musicbrainz_release_group_id: tag.musicbrainz_release_group_id,
+            musicbrainz_release_id: tag.musicbrainz_release_id,
+            musicbrainz_recording_id: tag.musicbrainz_recording_id,
+            musicbrainz_release_track_id: tag.musicbrainz_release_track_id,
+            musicbrainz_artist_id: tag.musicbrainz_artist_id,
+            musicbrainz_album_artist_id: tag.musicbrainz_album_artist_id,
+            acoustid_id: tag.acoustid_id,
+            compilation: tag.compilation,
+            release_type: tag.release_type,
+            title_sort: tag.title_sort,
+            artist_sort: tag.artist_sort,
+            album_sort: tag.album_sort,
+            album_artist_sort: tag.album_artist_sort,
+            disc_subtitle: tag.disc_subtitle,
+            original_release_date: tag.original_release_date,
+            replaygain_track_gain: tag.replaygain_track_gain,
+            replaygain_album_gain: tag.replaygain_album_gain,
+            replaygain_track_peak: tag.replaygain_track_peak,
+            replaygain_album_peak: tag.replaygain_album_peak,
+            genres: tag.genres,
+            artists: credits(tag.artists),
+            album_artists: credits(tag.album_artists),
+            musicbrainz_artist_ids: tag.musicbrainz_artist_ids,
+            musicbrainz_album_artist_ids: tag.musicbrainz_album_artist_ids,
+        }
+    }
+}
+
+/// Every MusicBrainz release group the library holds and every album with
+/// an open request (v2 `/library/mbids`). Both lists are lowercase and
+/// sorted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct LibraryMbids {
+    /// Release groups held with at least one streamable track.
+    pub mbids: Vec<String>,
+    /// Album ids with an open acquisition request.
+    pub requested_mbids: Vec<String>,
+}
+
 /// One held track on the album status view, judged against the upgrade
 /// settings.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]

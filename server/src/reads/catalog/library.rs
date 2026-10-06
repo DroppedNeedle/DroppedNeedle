@@ -188,6 +188,34 @@ impl LocalCatalog {
         Ok(by_group.union(&by_release).cloned().collect())
     }
 
+    /// Every release-group MBID (lowercase, sorted) the library holds with
+    /// at least one indexed file: the unfiltered form of
+    /// [`Self::owned_albums`].
+    pub async fn all_owned_release_groups(&self) -> Result<Vec<String>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT DISTINCT lower(e.release_group_mbid) FROM local_album_external_identities e \
+             JOIN local_albums b ON b.id = e.local_album_id \
+             WHERE b.retired_into_album_id IS NULL AND e.release_group_mbid IS NOT NULL \
+             AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = b.id \
+             AND t.availability = 'indexed') \
+             ORDER BY 1",
+        )
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    /// Every album MBID (lowercase, sorted) with an open acquisition
+    /// request: the unfiltered form of [`Self::requested_albums`].
+    pub async fn all_requested_albums(&self) -> Result<Vec<String>, sqlx::Error> {
+        sqlx::query_scalar(&format!(
+            "SELECT DISTINCT musicbrainz_id_lower FROM request_history \
+             WHERE request_kind = 'album' AND status IN ({OPEN_REQUEST_STATUSES}) \
+             ORDER BY 1"
+        ))
+        .fetch_all(&self.pool)
+        .await
+    }
+
     /// The album MBIDs (lowercase) with an open acquisition request.
     pub async fn requested_albums(&self, mbids: &[String]) -> Result<HashSet<String>, sqlx::Error> {
         let sql = format!(

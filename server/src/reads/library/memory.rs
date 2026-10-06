@@ -812,6 +812,12 @@ impl LibraryLookups for EmptyLookups {
         Box::pin(async move { Ok(HashSet::new()) })
     }
 
+    fn all_album_mbids<'a>(
+        &'a self,
+    ) -> BoxFuture<'a, Result<super::stores::AlbumMbids, StoreError>> {
+        Box::pin(async move { Ok(super::stores::AlbumMbids::default()) })
+    }
+
     fn resolve_albums<'a>(
         &'a self,
         _identifiers: &'a [String],

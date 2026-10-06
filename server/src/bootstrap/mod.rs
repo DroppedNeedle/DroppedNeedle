@@ -233,6 +233,10 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         config_store.clone(),
     )
     .map_err(stage("library setup"))?;
+    reads = reads.with_library_files(crate::stream::local_files::LibraryFiles::new(
+        runtime.pool().clone(),
+        library.root_source(),
+    ));
     let (media, media_workers) = MediaSetup::build(
         &config.library_db_path,
         &config,

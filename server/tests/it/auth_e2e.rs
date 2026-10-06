@@ -1324,6 +1324,8 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("GET", "/api/v3/library/tracks/{id}/lyrics", Posture::User),
     ("GET", "/api/v3/library/stats", Posture::User),
     ("POST", "/api/v3/library/membership", Posture::User),
+    ("GET", "/api/v3/library/mbids", Posture::User),
+    ("GET", "/api/v3/library/tracks/{id}/tags", Posture::Admin),
     ("GET", "/api/v3/library/albums/{id}/status", Posture::User),
     ("POST", "/api/v3/library/resolve-tracks", Posture::User),
     ("GET", "/api/v3/library/recently-added", Posture::User),

@@ -20,10 +20,10 @@ use super::LibraryDeps;
 use super::error::LibraryError;
 use super::models::{
     AlbumCardPage, AlbumPage, AlbumQuery, AlbumView, ArtistPage, ArtistQuery, ArtistView,
-    BrowseQuery, DecadesResponse, GenreList, LibraryAlbumStatus, LibraryMembershipRequest,
-    LibraryMembershipResponse, LyricsView, PageQuery, RecentQuery, ResolveTracksRequest,
-    ResolveTracksResponse, SearchQuery, SearchResults, StatsView, SuggestionsQuery,
-    SuggestionsResponse, TrackPage, TrackQuery, TrackView,
+    BrowseQuery, DecadesResponse, GenreList, LibraryAlbumStatus, LibraryMbids,
+    LibraryMembershipRequest, LibraryMembershipResponse, LyricsView, PageQuery, RecentQuery,
+    ResolveTracksRequest, ResolveTracksResponse, SearchQuery, SearchResults, StatsView,
+    SuggestionsQuery, SuggestionsResponse, TrackPage, TrackQuery, TrackTags, TrackView,
 };
 use super::services::{self, LibraryFailure};
 
@@ -94,6 +94,7 @@ fn failed(failure: LibraryFailure, deps: &LibraryDeps) -> LibraryError {
     match failure {
         LibraryFailure::NotFound => LibraryError::NotFound,
         LibraryFailure::InvalidInput(message) => LibraryError::InvalidInput { message },
+        LibraryFailure::Forbidden(message) => LibraryError::Forbidden { message },
         LibraryFailure::Internal(cause) => LibraryError::internal(&cause, deps.ids.as_ref()),
     }
 }
@@ -579,6 +580,50 @@ impl<T: DeserializeOwned, S: Send + Sync> axum::extract::FromRequest<S> for Vali
                 message: format!("Invalid request body: {cause}"),
             })
     }
+}
+
+/// The tags in one track's file on disk (admins only).
+#[utoipa::path(
+    get,
+    path = "/api/v3/library/tracks/{id}/tags",
+    params(("id" = String, Path, description = "Local track id")),
+    responses(
+        (status = 200, description = "The file's tags", body = TrackTags),
+        (status = 400, description = "The file is gone from disk or cannot be read"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin role required, or the file left the library roots"),
+        (status = 404, description = "Unknown track"),
+    )
+)]
+pub async fn track_tags(
+    State(deps): State<LibraryDeps>,
+    LibraryUser(ctx): LibraryUser,
+    Path(id): Path<String>,
+) -> Result<Json<TrackTags>, LibraryError> {
+    services::track_tags(&deps, ctx.role, &id)
+        .await
+        .map(Json)
+        .map_err(|failure| failed(failure, &deps))
+}
+
+/// Every MusicBrainz release group the library holds, and every album
+/// with an open request.
+#[utoipa::path(
+    get,
+    path = "/api/v3/library/mbids",
+    responses(
+        (status = 200, description = "Held and requested album ids", body = LibraryMbids),
+        (status = 401, description = "Not authenticated"),
+    )
+)]
+pub async fn album_mbids(
+    State(deps): State<LibraryDeps>,
+    LibraryUser(_ctx): LibraryUser,
+) -> Result<Json<LibraryMbids>, LibraryError> {
+    services::album_mbids(&deps)
+        .await
+        .map(Json)
+        .map_err(|failure| failed(failure, &deps))
 }
 
 /// Which MusicBrainz album ids the library holds or has requested.

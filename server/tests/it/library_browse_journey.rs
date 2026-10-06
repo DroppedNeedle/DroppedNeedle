@@ -27,6 +27,7 @@ use droppedneedle::reads::library::{
     memory::MemoryLyrics,
     sqlite::{LibraryDb, SqliteCatalog, SqliteFavorites},
     stores::UpgradePolicy,
+    tags::FileTagReader,
 };
 use droppedneedle::runtime_config::sections::{DownloadAccess, SecuritySettings};
 use droppedneedle::stream::download::{DownloadState, download_routes};
@@ -39,7 +40,7 @@ use droppedneedle::stream::transcode::{
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
-/// A real FLAC from the library fixtures.
+/// A real tagged FLAC, so the tag view has something to read.
 fn opener() -> Vec<u8> {
     std::fs::read(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -185,6 +186,7 @@ impl Fixture {
                 quality_cutoff: Some("lossless".to_owned()),
                 upgrade_allowed: true,
             }),
+            tags: Arc::new(FileTagReader::new(files.clone())),
             auth: self.rig.deps.clone(),
             ids: ids.clone(),
         };
@@ -318,6 +320,40 @@ async fn browse_gaps_journey() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    // The unfiltered form: every held release group and open request.
+    let (status, body) = json_call(app.clone(), "GET", "/library/mbids", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body,
+        json!({"mbids": ["rg1"], "requested_mbids": ["rg-req"]})
+    );
+
+    // Tags straight from the file: admins only, with v2's answers for a
+    // file that is gone or unreadable.
+    let admin = fixture.rig.seed_user("root", Role::Admin).await;
+    let admin_app = fixture.app(Some(&admin.id));
+    let (status, body) = json_call(admin_app.clone(), "GET", "/library/tracks/t1/tags", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["title"], "Airbag");
+    assert_eq!(
+        body["musicbrainz_release_group_id"],
+        "b1392450-e666-3926-a536-22c65f834433"
+    );
+    let (status, body) = json_call(admin_app.clone(), "GET", "/library/tracks/t2/tags", None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["message"], "Could not read the audio file.");
+    let (status, body) = json_call(admin_app.clone(), "GET", "/library/tracks/t3/tags", None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(
+        body["error"]["message"],
+        "The audio file is no longer present on disk."
+    );
+    let (status, _) = json_call(admin_app.clone(), "GET", "/library/tracks/t4/tags", None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = json_call(admin_app, "GET", "/library/tracks/nope/tags", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = json_call(app.clone(), "GET", "/library/tracks/t1/tags", None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
 
     // Album status by MusicBrainz id: tiers judged against the cutoff.
     let (status, body) = json_call(app.clone(), "GET", "/library/albums/rg1/status", None).await;

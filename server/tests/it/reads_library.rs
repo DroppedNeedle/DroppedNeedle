@@ -234,6 +234,7 @@ fn deps(
         lyrics,
         lookups: Arc::new(library::memory::EmptyLookups),
         upgrade_policy: Arc::new(library::stores::UpgradePolicy::default),
+        tags: Arc::new(library::tags::UnwiredTagReader),
         auth: auth.clone(),
         ids: Arc::new(FixedIdGenerator),
     }

@@ -26,6 +26,7 @@ pub mod player;
 pub mod services;
 pub mod sqlite;
 pub mod stores;
+pub mod tags;
 
 use std::sync::Arc;
 
@@ -36,7 +37,9 @@ use axum::{
     routing::{get, post},
 };
 
-use stores::{FavoriteReads, LibraryCatalog, LibraryLookups, LyricsPort, UpgradePolicySource};
+use stores::{
+    FavoriteReads, LibraryCatalog, LibraryLookups, LyricsPort, TrackTagReader, UpgradePolicySource,
+};
 
 /// Every dependency the library reads need, injected by constructor.
 #[derive(Clone)]
@@ -51,6 +54,8 @@ pub struct LibraryDeps {
     pub lookups: Arc<dyn LibraryLookups>,
     /// Upgrade cutoff for album status, read per call.
     pub upgrade_policy: UpgradePolicySource,
+    /// Tag reads from the files on disk (admin tag view).
+    pub tags: Arc<dyn TrackTagReader>,
     /// Auth bundle, used only to resolve the caller for favorite flags.
     pub auth: UsersDeps,
     /// Fresh ids for 5xx error ids.
@@ -67,6 +72,8 @@ pub fn library_router(deps: LibraryDeps) -> Router {
         .route("/library/albums/{id}", get(handlers::get_album))
         .route("/library/albums/{id}/status", get(handlers::album_status))
         .route("/library/membership", post(handlers::membership))
+        .route("/library/mbids", get(handlers::album_mbids))
+        .route("/library/tracks/{id}/tags", get(handlers::track_tags))
         .route("/library/resolve-tracks", post(handlers::resolve_tracks))
         .route(
             "/library/albums/{id}/tracks",

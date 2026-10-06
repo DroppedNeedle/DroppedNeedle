@@ -13,7 +13,7 @@ use sqlx::SqlitePool;
 use super::sqlite::{
     LibraryDb, TRACK_COLUMNS, TRACK_JOINS, in_placeholders, internal, map_track, unwired_store,
 };
-use super::stores::{BoxFuture, LibraryLookups, StatsExtras, StoreError, TrackRecord};
+use super::stores::{AlbumMbids, BoxFuture, LibraryLookups, StatsExtras, StoreError, TrackRecord};
 use crate::reads::catalog::library::LocalCatalog;
 
 /// Most ids bound into one `IN (...)` list.
@@ -147,6 +147,21 @@ impl LibraryLookups for SqliteLookups {
                 .requested_albums(mbids)
                 .await
                 .map_err(|error| internal("library.membership.requested", error))
+        })
+    }
+
+    fn all_album_mbids<'a>(&'a self) -> BoxFuture<'a, Result<AlbumMbids, StoreError>> {
+        Box::pin(async move {
+            let catalog = LocalCatalog::new(self.pool()?.clone());
+            let owned = catalog
+                .all_owned_release_groups()
+                .await
+                .map_err(|error| internal("library.mbids.owned", error))?;
+            let requested = catalog
+                .all_requested_albums()
+                .await
+                .map_err(|error| internal("library.mbids.requested", error))?;
+            Ok(AlbumMbids { owned, requested })
         })
     }
 

@@ -106,6 +106,7 @@ impl ReadsSetup {
             lyrics,
             lookups: Arc::new(library::lookups::SqliteLookups::new(&library_db)),
             upgrade_policy: upgrade_policy_source(inputs_config.clone()),
+            tags: Arc::new(library::tags::UnwiredTagReader),
             auth: users.clone(),
             ids: ids.clone(),
         };
@@ -142,6 +143,7 @@ impl ReadsSetup {
                 lyrics: Arc::new(library::memory::MemoryLyrics::new()),
                 lookups: Arc::new(library::memory::EmptyLookups),
                 upgrade_policy: Arc::new(library::stores::UpgradePolicy::default),
+                tags: Arc::new(library::tags::UnwiredTagReader),
                 auth: users,
                 ids: ids.clone(),
             },
@@ -155,6 +157,14 @@ impl ReadsSetup {
             catalog: None,
             platform: test_platform_state(),
         })
+    }
+
+    /// Read file tags from the library catalog and roots, which are built
+    /// after the reads bundle.
+    #[must_use]
+    pub fn with_library_files(mut self, files: crate::stream::local_files::LibraryFiles) -> Self {
+        self.library.tags = Arc::new(library::tags::FileTagReader::new(files));
+        self
     }
 
     /// Serve collections from this database (pool plus writer lane).

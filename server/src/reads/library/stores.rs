@@ -475,6 +475,37 @@ pub trait LyricsPort: Send + Sync {
     fn get<'a>(&'a self, track_id: &'a str) -> BoxFuture<'a, Result<Option<LyricDoc>, StoreError>>;
 }
 
+/// Every held release group and every open album request, lowercase and
+/// sorted.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AlbumMbids {
+    /// Release groups held with at least one streamable track.
+    pub owned: Vec<String>,
+    /// Album ids with an open acquisition request.
+    pub requested: Vec<String>,
+}
+
+/// What reading one catalog track's tags from disk found.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TagRead {
+    /// The file's tags.
+    Found(Box<crate::library::tags::AudioTag>),
+    /// No streamable catalog track has this id.
+    Unknown,
+    /// The catalog knows the track, but its file is gone from disk.
+    Gone,
+    /// The file resolves outside every library root.
+    Outside,
+    /// The file is there but its tags cannot be read.
+    Unreadable,
+}
+
+/// Tag reads from the audio files themselves (not the catalog copy).
+pub trait TrackTagReader: Send + Sync {
+    /// Read the tags of one catalog track's file.
+    fn read<'a>(&'a self, track_id: &'a str) -> BoxFuture<'a, Result<TagRead, StoreError>>;
+}
+
 /// Identity lookups behind membership, album status, track resolution and
 /// the stats extras.
 ///
@@ -498,6 +529,10 @@ pub trait LibraryLookups: Send + Sync {
         &'a self,
         mbids: &'a [String],
     ) -> BoxFuture<'a, Result<HashSet<String>, StoreError>>;
+
+    /// Every held release group and every open album request (the
+    /// unfiltered membership answer).
+    fn all_album_mbids<'a>(&'a self) -> BoxFuture<'a, Result<AlbumMbids, StoreError>>;
 
     /// The one live local album each identifier names. Identifiers that
     /// name nothing, or a MusicBrainz id held by more than one album, are
