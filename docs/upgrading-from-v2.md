@@ -144,6 +144,9 @@ Then check:
   v2 registered (Settings > Spotify shows it). Spotify sign-ins don't carry
   over, so each user clicks Connect on the Spotify card in their profile
   once.
+- If you had a MusicBrainz contribution open in the release editor during
+  the upgrade: saving it still brings you back, because v3 also answers on
+  the v2 return address.
 
 ## Going back to v2
 
