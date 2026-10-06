@@ -288,6 +288,10 @@ pub struct PlaylistSummary {
     pub duration_secs: i64,
     /// Relative covers URL under `/api/v3`, when art exists.
     pub image_url: Option<String>,
+    /// True for a smart (rule-based) playlist. Only Plex reports it.
+    pub is_smart: bool,
+    /// True when the caller already imported this playlist.
+    pub is_imported: bool,
 }
 
 /// Playlist list.
@@ -333,6 +337,8 @@ pub struct InfoView {
     pub musicbrainz_id: String,
     /// Best upstream image URL, when offered.
     pub image_url: String,
+    /// Last.fm page URL, empty when the source offers none.
+    pub lastfm_url: String,
     /// Similar artists (artist info only).
     pub similar_artists: Vec<ArtistView>,
 }
@@ -413,6 +419,8 @@ pub struct HistoryEntry {
     pub viewed_at: i64,
     /// Track length in milliseconds.
     pub duration_ms: i64,
+    /// Player or device the track was played on, empty when unknown.
+    pub device_name: String,
 }
 
 /// Listening history page.
@@ -608,6 +616,14 @@ pub struct AlbumBrowseQuery {
     pub year: Option<i32>,
     /// Decade filter in `"2020s"` spelling (Plex honors it, others ignore it).
     pub decade: Option<String>,
+    /// Mood filter (Plex honors it, others ignore it).
+    pub mood: Option<String>,
+    /// Tag filter, `|`-separated for several (Jellyfin honors it, others
+    /// ignore it).
+    pub tags: Option<String>,
+    /// Studio (label) filter, `|`-separated for several (Jellyfin honors
+    /// it, others ignore it).
+    pub studios: Option<String>,
 }
 
 /// Artist browse filters shared by every source.
@@ -659,7 +675,10 @@ pub struct SearchQuery {
 #[into_params(parameter_in = Query)]
 pub struct GenreSongsQuery {
     /// Genre label.
-    pub genre: String,
+    pub genre: Option<String>,
+    /// Several genre labels, comma-separated (up to 10). Tracks of any of
+    /// them come back merged, without duplicates.
+    pub genres: Option<String>,
     /// Max items (1-500, default 50).
     pub limit: Option<i64>,
     /// Records to skip (default 0).

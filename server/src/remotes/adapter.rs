@@ -83,6 +83,12 @@ pub struct AlbumBrowse {
     pub year: Option<i32>,
     /// Decade filter in `"2020s"` spelling, when non-empty.
     pub decade: String,
+    /// Mood filter (Plex), when non-empty.
+    pub mood: String,
+    /// Tag filter (Jellyfin), when non-empty.
+    pub tags: String,
+    /// Studio filter (Jellyfin), when non-empty.
+    pub studios: String,
 }
 
 impl Default for AlbumBrowse {
@@ -95,6 +101,9 @@ impl Default for AlbumBrowse {
             genre: String::new(),
             year: None,
             decade: String::new(),
+            mood: String::new(),
+            tags: String::new(),
+            studios: String::new(),
         }
     }
 }
@@ -195,6 +204,14 @@ pub trait ImportSink: Send + Sync {
         playlist_name: &'a str,
         tracks: Vec<TrackView>,
     ) -> BoxFuture<'a, Result<ImportReceipt, String>>;
+
+    /// Remote ids of the playlists from `source` that `owner_id` already
+    /// imported. The error text goes to the log.
+    fn imported_ids<'a>(
+        &'a self,
+        owner_id: &'a str,
+        source: SourceName,
+    ) -> BoxFuture<'a, Result<std::collections::HashSet<String>, String>>;
 }
 
 /// Imports into the user's native playlists, so an imported Plex,
@@ -276,6 +293,32 @@ impl ImportSink for PlaylistImportSink {
             })
         })
     }
+
+    fn imported_ids<'a>(
+        &'a self,
+        owner_id: &'a str,
+        source: SourceName,
+    ) -> BoxFuture<'a, Result<std::collections::HashSet<String>, String>> {
+        use crate::reads::collections::models::PlaylistListItem;
+        use crate::reads::collections::service::CollectionsService;
+
+        Box::pin(async move {
+            let prefix = format!("{}:", source.as_str());
+            let list = CollectionsService::new(&self.collections)
+                .list_playlists(owner_id)
+                .await
+                .map_err(|error| format!("playlist list failed: {error:?}"))?;
+            Ok(list
+                .playlists
+                .into_iter()
+                .filter_map(|item| match item {
+                    PlaylistListItem::Full(summary) if summary.is_owner => summary.source_ref,
+                    _ => None,
+                })
+                .filter_map(|source_ref| source_ref.strip_prefix(&prefix).map(str::to_owned))
+                .collect())
+        })
+    }
 }
 
 /// In-memory import sink. Idempotency key is
@@ -352,6 +395,25 @@ impl ImportSink for MemoryImportSink {
             };
             guard.receipts.insert(key, receipt.clone());
             Ok(receipt)
+        })
+    }
+
+    fn imported_ids<'a>(
+        &'a self,
+        owner_id: &'a str,
+        source: SourceName,
+    ) -> BoxFuture<'a, Result<std::collections::HashSet<String>, String>> {
+        Box::pin(async move {
+            let prefix = format!("{owner_id}\0{}\0", source.as_str());
+            let guard = match self.inner.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            Ok(guard
+                .receipts
+                .keys()
+                .filter_map(|key| key.strip_prefix(&prefix).map(str::to_owned))
+                .collect())
         })
     }
 }
@@ -517,6 +579,36 @@ impl RemoteHandle {
             Self::Navidrome(inner) => inner.genre_songs(genre, limit, offset).await,
             Self::Plex(inner) => inner.genre_songs(genre, limit, offset).await,
         }
+    }
+
+    /// Tracks of any of several genres, merged in genre order without
+    /// duplicates. Each genre fills an even share of everything up to the
+    /// end of the page (at least 10, as in v2), and the page is sliced from
+    /// the merged list. v2 applied the offset to each genre instead, which
+    /// skipped tracks on every page after the first.
+    pub async fn genres_songs(
+        &self,
+        genres: &[String],
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<TrackView>, AdapterError> {
+        if let [genre] = genres {
+            return self.genre_songs(genre, limit, offset).await;
+        }
+        let count = genres.len().max(1) as i64;
+        let share = ((offset + limit + count - 1) / count).max(10);
+        let pages = futures_util::future::try_join_all(
+            genres.iter().map(|genre| self.genre_songs(genre, share, 0)),
+        )
+        .await?;
+        let mut seen = std::collections::HashSet::new();
+        Ok(pages
+            .into_iter()
+            .flatten()
+            .filter(|track| seen.insert(track.id.clone()))
+            .skip(usize::try_from(offset).unwrap_or(0))
+            .take(usize::try_from(limit).unwrap_or(0))
+            .collect())
     }
 
     /// Playlists.

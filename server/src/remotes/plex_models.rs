@@ -123,6 +123,9 @@ pub struct Metadata {
     /// Child count (album tracks, playlist entries).
     #[serde(rename = "leafCount", deserialize_with = "lenient_int")]
     pub leaf_count: Option<i64>,
+    /// True for a smart (rule-based) playlist.
+    #[serde(deserialize_with = "lenient_bool")]
+    pub smart: Option<bool>,
     /// Plays.
     #[serde(rename = "viewCount", deserialize_with = "lenient_int")]
     pub view_count: Option<i64>,
@@ -273,6 +276,28 @@ fn lenient_int<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<i64>
         Some(Loose::Number(number)) => Some(number),
         Some(Loose::Float(number)) if number.is_finite() => Some(number as i64),
         Some(Loose::Text(text)) => text.trim().parse().ok(),
+        _ => None,
+    })
+}
+
+/// A boolean, `0`/`1`, or `"0"`/`"1"`; anything else is absent.
+fn lenient_bool<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<bool>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Loose {
+        Bool(bool),
+        Number(i64),
+        Text(String),
+        Other(serde::de::IgnoredAny),
+    }
+    Ok(match Option::<Loose>::deserialize(deserializer)? {
+        Some(Loose::Bool(value)) => Some(value),
+        Some(Loose::Number(number)) => Some(number != 0),
+        Some(Loose::Text(text)) => match text.trim() {
+            "1" | "true" => Some(true),
+            "0" | "false" => Some(false),
+            _ => None,
+        },
         _ => None,
     })
 }

@@ -82,6 +82,8 @@ struct AlbumFilters<'a> {
     decade: &'a str,
     /// Exact year, empty for none. Wins over the decade.
     exact_year: &'a str,
+    /// Mood label, empty for none.
+    mood: &'a str,
 }
 
 impl PlexAdapter {
@@ -275,6 +277,7 @@ impl PlexAdapter {
             genre: &browse.genre,
             decade: &decade,
             exact_year: &exact_year,
+            mood: &browse.mood,
         };
         if let [section] = sections.as_slice() {
             let container = self
@@ -749,6 +752,11 @@ impl PlexAdapter {
                 album_name: item.parent_title.clone().unwrap_or_default(),
                 viewed_at: item.viewed_at.unwrap_or(0),
                 duration_ms: item.duration.unwrap_or(0),
+                device_name: item
+                    .player
+                    .as_ref()
+                    .and_then(|player| player.title.clone())
+                    .unwrap_or_default(),
             })
             .collect();
         let total = container.total_size.unwrap_or(items.len() as i64);
@@ -971,6 +979,9 @@ impl PlexAdapter {
         ]);
         if !filters.genre.is_empty() {
             pairs.push(("genre".to_owned(), filters.genre.to_owned()));
+        }
+        if !filters.mood.is_empty() {
+            pairs.push(("mood".to_owned(), filters.mood.to_owned()));
         }
         if !filters.exact_year.is_empty() {
             pairs.push(("year".to_owned(), filters.exact_year.to_owned()));
@@ -1265,6 +1276,8 @@ fn playlist_summary(playlist: &Metadata) -> Result<PlaylistSummary, AdapterError
         name: playlist.title.clone().unwrap_or_default(),
         track_count: playlist.leaf_count.unwrap_or(0),
         duration_secs: playlist.duration.map(|ms| ms / 1000).unwrap_or(0),
+        is_smart: playlist.smart.unwrap_or(false),
+        is_imported: false,
         id,
     })
 }

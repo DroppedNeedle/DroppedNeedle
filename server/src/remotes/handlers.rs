@@ -268,6 +268,9 @@ pub async fn list_albums(
         genre: query.genre.unwrap_or_default(),
         year: query.year,
         decade: query.decade.unwrap_or_default(),
+        mood: query.mood.unwrap_or_default(),
+        tags: query.tags.unwrap_or_default(),
+        studios: query.studios.unwrap_or_default(),
     };
     reply(&deps, deps.service.albums(&user, source, browse).await)
 }
@@ -473,10 +476,19 @@ pub async fn list_genre_songs(
     let source = parse_source(&source)?;
     let limit = query.limit.unwrap_or(50).clamp(1, 500);
     let offset = query.offset.unwrap_or(0).max(0);
+    let genres: Vec<String> = query
+        .genres
+        .iter()
+        .flat_map(|list| list.split(','))
+        .chain(query.genre.as_deref())
+        .map(str::trim)
+        .filter(|genre| !genre.is_empty())
+        .map(str::to_owned)
+        .collect();
     reply(
         &deps,
         deps.service
-            .genre_songs(&user, source, query.genre, limit, offset)
+            .genre_songs(&user, source, genres, limit, offset)
             .await,
     )
 }

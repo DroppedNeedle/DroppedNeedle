@@ -318,6 +318,8 @@ pub struct Info {
     pub notes: Option<String>,
     /// MusicBrainz id.
     pub music_brainz_id: Option<String>,
+    /// Last.fm page URL.
+    pub last_fm_url: Option<String>,
     /// Small image URL.
     pub small_image_url: Option<String>,
     /// Medium image URL.

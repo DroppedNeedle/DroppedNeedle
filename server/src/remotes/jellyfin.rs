@@ -247,6 +247,12 @@ impl JellyfinAdapter {
         if let Some(year) = browse.year {
             query.push(("years".to_owned(), year.to_string()));
         }
+        if !browse.tags.is_empty() {
+            query.push(("tags".to_owned(), browse.tags.clone()));
+        }
+        if !browse.studios.is_empty() {
+            query.push(("studios".to_owned(), browse.studios.clone()));
+        }
         let page = self.items("/Items", &query).await?;
         Ok(page_of(page, album_view))
     }
@@ -1211,6 +1217,8 @@ fn playlist_summary(item: &Item) -> PlaylistSummary {
             .run_time_ticks
             .map(|ticks| ticks / 10_000_000)
             .unwrap_or(0),
+        is_smart: false,
+        is_imported: false,
     }
 }
 

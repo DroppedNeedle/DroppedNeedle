@@ -538,6 +538,7 @@ impl NavidromeAdapter {
             biography: info.biography.clone().unwrap_or_default(),
             musicbrainz_id: info.music_brainz_id.clone().unwrap_or_default(),
             image_url: info.best_image(),
+            lastfm_url: info.last_fm_url.clone().unwrap_or_default(),
             similar_artists: info.similar_artist.iter().map(artist_view).collect(),
         })
     }
@@ -557,6 +558,7 @@ impl NavidromeAdapter {
             biography: info.notes.clone().unwrap_or_default(),
             musicbrainz_id: info.music_brainz_id.clone().unwrap_or_default(),
             image_url: info.best_image(),
+            lastfm_url: info.last_fm_url.clone().unwrap_or_default(),
             similar_artists: Vec::new(),
         })
     }
@@ -1173,6 +1175,8 @@ fn playlist_summary(playlist: &Playlist) -> PlaylistSummary {
         name: playlist.name.clone().unwrap_or_default(),
         track_count: playlist.song_count.unwrap_or(0),
         duration_secs: playlist.duration.unwrap_or(0),
+        is_smart: false,
+        is_imported: false,
     }
 }
 

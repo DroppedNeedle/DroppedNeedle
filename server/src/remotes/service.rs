@@ -121,6 +121,8 @@ pub struct AccountLogin {
 /// Plex listening analytics over the history feed.
 pub const ANALYTICS_MAX_ENTRIES: i64 = 5_000;
 const ANALYTICS_BATCH: i64 = 500;
+/// Most genres one genre-songs read merges, as in v2.
+const MAX_GENRES: usize = 10;
 
 /// The remotes service. Cheap to clone.
 #[derive(Clone)]
@@ -440,13 +442,21 @@ impl RemotesService {
         &self,
         user_id: &str,
         source: SourceName,
-        genre: String,
+        mut genres: Vec<String>,
         limit: i64,
         offset: i64,
     ) -> RemotesResult<TrackPage> {
+        if genres.is_empty() {
+            return Err(RemotesFailure::InvalidInput(
+                "Name at least one genre.".to_owned(),
+            ));
+        }
+        let mut seen = std::collections::HashSet::new();
+        genres.retain(|genre| seen.insert(genre.to_lowercase()));
+        genres.truncate(MAX_GENRES);
         let items = self
             .call(user_id, source, move |handle| async move {
-                handle.genre_songs(&genre, limit, offset).await
+                handle.genres_songs(&genres, limit, offset).await
             })
             .await?;
         let total = offset + items.len() as i64;
@@ -527,6 +537,21 @@ impl RemotesService {
                 |handle| async move { handle.playlists().await },
             )
             .await?;
+        // The imported flag is a nicety: a failed read leaves it unset.
+        let imported = match self.imports.imported_ids(user_id, source).await {
+            Ok(ids) => ids,
+            Err(error) => {
+                tracing::warn!(%error, "imported playlist ids unavailable; flags left unset");
+                Default::default()
+            }
+        };
+        let items = items
+            .into_iter()
+            .map(|mut playlist| {
+                playlist.is_imported = imported.contains(&playlist.id);
+                playlist
+            })
+            .collect();
         Ok(PlaylistCollection { items })
     }
 
