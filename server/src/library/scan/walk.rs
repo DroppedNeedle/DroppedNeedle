@@ -461,8 +461,8 @@ impl<S: ScanStore> InventoryScanner<S> {
             result
         });
         match tokio::time::timeout(self.walk_deadline, job).await {
-            Ok(Ok(exists)) => Ok(exists),
-            Ok(Err(_)) => Err(ProbeOutcome::Wedged),
+            Ok(Ok(Ok(exists))) => Ok(exists),
+            Ok(Ok(Err(_)) | Err(_)) => Err(ProbeOutcome::Wedged),
             Err(_) => {
                 // Tombstone the slot so it is recovered instead of
                 // staying occupied for the process lifetime.
@@ -782,16 +782,19 @@ impl<S: ScanStore> InventoryScanner<S> {
         let producer_root = root.to_owned();
         let pool = self.pool.clone();
         let mut producer = Some(tokio::spawn(async move {
-            pool.run(move || {
-                produce_inventory(
-                    &producer_selected,
-                    &producer_root,
-                    &sender,
-                    &producer_stopped,
-                    &producer_heartbeat,
-                )
-            })
-            .await;
+            // A panic drops the sender before `Done`; the consumer reads
+            // that as an incomplete walk.
+            let _ = pool
+                .run(move || {
+                    produce_inventory(
+                        &producer_selected,
+                        &producer_root,
+                        &sender,
+                        &producer_stopped,
+                        &producer_heartbeat,
+                    )
+                })
+                .await;
         }));
 
         let mut batch: Vec<(PathBuf, DiscoveredFile, String)> = Vec::new();
@@ -818,7 +821,21 @@ impl<S: ScanStore> InventoryScanner<S> {
             let item = match tokio::time::timeout(Duration::from_millis(250), receiver.recv()).await
             {
                 Ok(Some(item)) => item,
-                Ok(None) => break,
+                Ok(None) => {
+                    // The producer ended without `Done`: it panicked. What
+                    // it delivered is not the whole scope, so reconcile
+                    // must not read the gap as missing files.
+                    completed = false;
+                    walk_failure_code = Some(failure_codes::WALK_ERROR.to_owned());
+                    self.record_failure(
+                        &run.id,
+                        scope,
+                        scope.relative_path.clone(),
+                        failure_codes::WALK_ERROR,
+                        "The directory walk stopped unexpectedly.".to_owned(),
+                    );
+                    break;
+                }
                 Err(_) => {
                     if heartbeat.age() > self.walk_deadline
                         && last_item_at.elapsed() > self.walk_deadline

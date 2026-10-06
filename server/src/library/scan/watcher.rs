@@ -285,7 +285,10 @@ pub async fn poll_once(
         for (root_id, root_path) in root_paths {
             let path = root_path.clone();
             let pool = pool.clone();
-            let snapshot = pool.run(move || snapshot_tree(&path)).await;
+            let snapshot = pool
+                .run(move || snapshot_tree(&path))
+                .await
+                .unwrap_or_else(|error| Err(std::io::Error::other(error)));
             let snapshot = match snapshot {
                 Ok(snapshot) => snapshot,
                 Err(error) => {

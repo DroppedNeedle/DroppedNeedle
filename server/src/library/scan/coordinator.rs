@@ -1195,7 +1195,11 @@ impl<S: ScanStore, T: TagReader + 'static> LibraryScanCoordinator<S, T> {
                 let tags = Arc::clone(&self.tags);
                 let path = PathBuf::from(&item.absolute_path);
                 let pool = self.pool.clone();
-                async move { pool.run(move || tags.read_tags(&path)).await }
+                async move {
+                    pool.run(move || tags.read_tags(&path))
+                        .await
+                        .unwrap_or(Err(TagReadError::Fatal))
+                }
             });
             let outcomes = futures_util::future::join_all(reads).await;
             for (item, outcome) in chunk.iter().zip(outcomes) {

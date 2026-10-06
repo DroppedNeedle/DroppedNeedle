@@ -56,43 +56,37 @@ impl BlockingPool {
 
     /// Run `job` on a blocking thread, waiting for a free permit first.
     /// The permit is held for the whole job, so at most `max_workers` jobs
-    /// ever run concurrently.
-    pub async fn run<F, R>(&self, job: F) -> R
+    /// ever run concurrently. A job that panics comes back as an error
+    /// the caller records, so one bad file never parks the worker.
+    pub async fn run<F, R>(&self, job: F) -> Result<R, PoolError>
     where
         F: FnOnce() -> R + Send + 'static,
         R: Send + 'static,
     {
-        // The semaphore is owned by this pool and never closed; a
-        // closure here means a bug, so the worker parks (logged) rather
-        // than panicking the scan.
-        let _permit = match self.semaphore.acquire().await {
-            Ok(permit) => permit,
-            Err(error) => {
-                tracing::error!(%error, "blocking pool semaphore closed; parking worker");
-                std::future::pending().await
-            }
-        };
+        let _permit = self.semaphore.acquire().await.map_err(|error| {
+            tracing::error!(%error, "blocking pool semaphore closed");
+            PoolError
+        })?;
         self.in_flight.fetch_add(1, Ordering::Relaxed);
         let in_flight = Arc::clone(&self.in_flight);
-        let completed = Arc::clone(&self.completed);
-        // Jobs must not panic (crate rule); a panicking job parks
-        // (logged) instead of taking the scan worker down with it.
-        let result = match tokio::task::spawn_blocking(move || {
+        let joined = tokio::task::spawn_blocking(move || {
             let _guard = InFlightGuard(in_flight);
             job()
         })
-        .await
-        {
-            Ok(result) => result,
-            Err(error) => {
-                tracing::error!(%error, "blocking pool job panicked; parking worker");
-                std::future::pending().await
-            }
-        };
-        completed.fetch_add(1, Ordering::Relaxed);
-        result
+        .await;
+        self.completed.fetch_add(1, Ordering::Relaxed);
+        joined.map_err(|error| {
+            tracing::error!(%error, "blocking pool job panicked");
+            PoolError
+        })
     }
 }
+
+/// A pool job that panicked or could not start. The cause is logged where
+/// it happens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("blocking pool job failed")]
+pub struct PoolError;
 
 struct InFlightGuard(Arc<AtomicUsize>);
 
@@ -124,7 +118,8 @@ mod tests {
                     std::thread::sleep(Duration::from_millis(10));
                     current.fetch_sub(1, Ordering::SeqCst);
                 })
-                .await;
+                .await
+                .expect("job runs");
             }));
         }
         for handle in handles {
@@ -132,5 +127,13 @@ mod tests {
         }
         assert!(peak.load(Ordering::SeqCst) <= 2, "peak exceeded the bound");
         assert_eq!(pool.completed(), 8);
+    }
+
+    #[tokio::test]
+    async fn panicking_job_returns_an_error() {
+        let pool = BlockingPool::new(1);
+        let outcome = pool.run(|| -> u8 { panic!("bad file") }).await;
+        assert_eq!(outcome, Err(PoolError));
+        assert_eq!(pool.run(|| 7u8).await, Ok(7));
     }
 }
