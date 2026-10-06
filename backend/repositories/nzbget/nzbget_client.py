@@ -43,6 +43,14 @@ class NzbgetApiError(ExternalServiceError):
         self.auth = auth
 
 
+def _describe(exc: Exception) -> str:
+    """httpx connect/timeout errors frequently stringify to nothing, which would leave
+    the user staring at "NZBGet request failed:" and no cause. Fall back to the
+    exception class, which at least distinguishes a refused connection from a timeout
+    or a DNS failure."""
+    return str(exc) or type(exc).__name__
+
+
 def _redacted_url_error(exc: NzbgetApiError) -> NzbgetApiError:
     """Rebuild an append-by-URL error with any echoed enclosure credentials scrubbed."""
     details = exc.details
@@ -105,7 +113,7 @@ class NzbgetClient:
                 "POST", self._url(), timeout=timeout, json=payload, auth=self._auth
             )
         except httpx.HTTPError as exc:
-            raise NzbgetApiError(f"NZBGet request failed: {exc}") from exc
+            raise NzbgetApiError(f"NZBGet request failed: {_describe(exc)}") from exc
         return self._parse(response, method)
 
     def _parse(self, response: httpx.Response, method: str) -> Any:
@@ -248,7 +256,7 @@ class NzbgetClient:
                 self._url(), json=payload, timeout=timeout, auth=self._auth
             )
         except httpx.HTTPError as exc:
-            message = f"NZBGet append failed: {exc}"
+            message = f"NZBGet append failed: {_describe(exc)}"
             raise NzbgetApiError(
                 redact_query_secrets(message) if redact else message
             ) from exc

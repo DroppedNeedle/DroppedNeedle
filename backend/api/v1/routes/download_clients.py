@@ -13,9 +13,9 @@ import msgspec
 from fastapi import APIRouter, Depends
 
 from api.v1.schemas.download import (
+    NzbgetTestResponse,
     PolicyImpactResponse,
     PolicySummaryResponse,
-    NzbgetTestResponse,
     SabnzbdTestResponse,
     SourcePriority,
 )
@@ -28,7 +28,11 @@ from api.v1.schemas.settings import (
     WantedWatcherSettings,
     validate_new_quality_fields,
 )
-from core.dependencies import build_sabnzbd_download_client, get_preferences_service
+from core.dependencies import (
+    build_nzbget_download_client,
+    build_sabnzbd_download_client,
+    get_preferences_service,
+)
 from core.exceptions import ExternalServiceError
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
 from middleware import CurrentAdminDep, CurrentUserDep
@@ -213,10 +217,10 @@ async def test_nzbget(
     if password == NZBGET_PASSWORD_MASK:
         password = preferences.get_nzbget_connection_raw().password
 
-    client = build_nzbget_download_client(
-        settings.url, settings.username, password, settings.downloads_mount
-    )
     try:
+        client = build_nzbget_download_client(
+            settings.url, settings.username, password, settings.downloads_mount
+        )
         status = await client.health_check()
         if status.status != "ok":
             return NzbgetTestResponse(
@@ -269,10 +273,10 @@ async def get_nzbget_status(
     raw = preferences.get_nzbget_connection_raw()
     if not raw.url.strip():
         return NzbgetTestResponse(valid=False, message="Not configured")
-    client = build_nzbget_download_client(
-        raw.url, raw.username, raw.password, raw.downloads_mount
-    )
     try:
+        client = build_nzbget_download_client(
+            raw.url, raw.username, raw.password, raw.downloads_mount
+        )
         status = await client.health_check()
         if status.status != "ok":
             return NzbgetTestResponse(
