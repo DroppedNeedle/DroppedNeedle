@@ -58,6 +58,9 @@ pub struct SettingsService {
     pub timezone: Option<String>,
     /// Connection probes behind the verify methods.
     probes: Arc<dyn VerifyProbes>,
+    /// Serializes library settings writes: the revision check and the
+    /// write of one save happen with no other library save in between.
+    library_writes: tokio::sync::Mutex<()>,
 }
 
 impl SettingsService {
@@ -74,6 +77,7 @@ impl SettingsService {
             ids,
             timezone: None,
             probes,
+            library_writes: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -266,19 +270,37 @@ impl SettingsService {
 
     /// The library settings: normalized roots plus the policy revision,
     /// the reconciliation projection, and warnings (AcoustID key masked).
-    pub fn get_library(&self) -> Result<LibrarySettingsResponse, SettingsError> {
-        let stored = self.get_masked::<TypedLibrary>()?;
-        let resolved = stored.try_map(|library| library_policy::resolve(&library))?;
-        Ok(library_policy::settings_response(resolved))
+    /// Normalizing checks each root on disk, so it runs on the blocking
+    /// pool.
+    pub async fn get_library(&self) -> Result<LibrarySettingsResponse, SettingsError> {
+        let store = self.store.clone();
+        let ids = self.ids.clone();
+        let task = tokio::task::spawn_blocking(move || {
+            let stored = store
+                .get_masked::<TypedLibrary>()
+                .map_err(|error| SettingsError::from_config(error, ids.as_ref()))?;
+            let resolved = stored.try_map(|library| library_policy::resolve(&library))?;
+            Ok(library_policy::settings_response(resolved))
+        });
+        match task.await {
+            Ok(result) => result,
+            Err(cause) => Err(SettingsError::internal(
+                &format!("library settings read failed: {cause}"),
+                self.ids.as_ref(),
+            )),
+        }
     }
 
     /// Save the library settings. The expected revision must match the
     /// stored one or the save is a 409; a masked AcoustID key keeps the
-    /// stored one. The save invalidates the AcoustID cache root.
+    /// stored one. The check and the write run under the library write
+    /// lock, so two saves holding the same revision cannot both land.
+    /// The save invalidates the AcoustID cache root.
     pub async fn save_library(
         &self,
         request: LibrarySettingsSaveRequest,
     ) -> Result<LibrarySettingsResponse, SettingsError> {
+        let _writing = self.library_writes.lock().await;
         let stored = self.get_masked::<TypedLibrary>()?.into_inner();
         if request.expected_policy_revision != library_policy::revision(&stored) {
             return Err(SettingsError::StaleRevision {
@@ -310,6 +332,7 @@ impl SettingsService {
                 message: format!("Path does not exist or is not a directory: {candidate}"),
             });
         }
+        let _writing = self.library_writes.lock().await;
         let mut library = self.get_masked::<TypedLibrary>()?.into_inner();
         if !library
             .library_roots
@@ -339,6 +362,7 @@ impl SettingsService {
         &self,
         path: &str,
     ) -> Result<LibrarySettingsResponse, SettingsError> {
+        let _writing = self.library_writes.lock().await;
         let mut library = self.get_masked::<TypedLibrary>()?.into_inner();
         library.library_roots.retain(|root| root.path != path);
         self.save_library_roots(library).await

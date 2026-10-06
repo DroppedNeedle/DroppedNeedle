@@ -431,7 +431,7 @@ pub async fn put_search_backend(
 pub async fn get_library(
     State(settings): State<SettingsSetup>,
 ) -> JsonResult<LibrarySettingsResponse> {
-    settings.service().get_library().map(Json)
+    settings.service().get_library().await.map(Json)
 }
 
 /// Save the typed library settings. The expected revision must match

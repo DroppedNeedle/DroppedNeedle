@@ -323,7 +323,7 @@ async fn library_round_trip_cas_and_paths() {
     use droppedneedle::runtime_config::mask::ACOUSTID_KEY_MASK;
 
     let (service, effects, _scratch) = scratch_service();
-    let view = service.get_library().expect("reads default");
+    let view = service.get_library().await.expect("reads default");
     assert!(!view.policy_revision.is_empty());
 
     // Requests decode the way a client body would.
@@ -378,6 +378,41 @@ async fn library_round_trip_cas_and_paths() {
         .remove_library_path("/nothing/here")
         .await
         .expect("unknown remove is silent");
+}
+
+/// Two saves holding the same revision: exactly one lands, the other is
+/// a stale-revision 409 instead of silently overwriting the first.
+#[tokio::test]
+async fn concurrent_library_saves_cannot_both_pass_the_revision_check() {
+    let (service, _effects, _scratch) = scratch_service();
+    let revision = service
+        .get_library()
+        .await
+        .expect("reads default")
+        .policy_revision;
+    let request = |id: &str| -> LibrarySettingsSaveRequest {
+        serde_json::from_value(json!({
+            "settings": {"library_roots": [
+                {"id": id, "path": format!("/music/{id}"), "label": id}
+            ]},
+            "expected_policy_revision": revision,
+        }))
+        .expect("request decodes")
+    };
+    let (first, second) = tokio::join!(
+        service.save_library(request("a")),
+        service.save_library(request("b"))
+    );
+    let stale = [&first, &second]
+        .iter()
+        .filter(|result| {
+            matches!(
+                result,
+                Err(droppedneedle::settings::error::SettingsError::StaleRevision { .. })
+            )
+        })
+        .count();
+    assert_eq!((first.is_ok() as u8 + second.is_ok() as u8, stale), (1, 1));
 }
 
 // --- HTTP journeys -----------------------------------------------------------
