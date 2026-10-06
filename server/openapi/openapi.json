@@ -6187,6 +6187,215 @@
         }
       }
     },
+    "/api/v3/library/artists/duplicate-groups": {
+      "get": {
+        "tags": [
+          "crate::library::http::reconcile"
+        ],
+        "summary": "List duplicate artist groups, sorted by name.",
+        "operationId": "list_artist_duplicate_groups",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "path",
+            "description": "Page size, 1 to 100 (default 50).",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "path",
+            "description": "`next_cursor` from the previous page.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "state",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/ArtistGroupState"
+                }
+              ]
+            }
+          },
+          {
+            "name": "search",
+            "in": "path",
+            "description": "Matches the group name or any member's name.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of groups",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtistDuplicateGroupListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad page size or cursor"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        }
+      }
+    },
+    "/api/v3/library/artists/duplicate-groups/{group_id}": {
+      "get": {
+        "tags": [
+          "crate::library::http::reconcile"
+        ],
+        "summary": "One duplicate artist group with its evidence, albums, and tracks.",
+        "operationId": "get_artist_duplicate_group",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Group detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtistDuplicateGroupDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "The group no longer exists"
+          }
+        }
+      }
+    },
+    "/api/v3/library/artists/duplicate-groups/{group_id}/dismiss": {
+      "post": {
+        "tags": [
+          "crate::library::http::reconcile"
+        ],
+        "summary": "Mark a group's records as distinct people. The group comes back if any\nmember changes or another record with the name appears.",
+        "operationId": "dismiss_artist_duplicate_group",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArtistDuplicateGroupDismissRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Group dismissed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtistDuplicateGroupDismissResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad body, or the group was merged automatically"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "The group no longer exists"
+          },
+          "409": {
+            "description": "A member changed since the group was read"
+          }
+        }
+      }
+    },
+    "/api/v3/library/artists/reconciliation": {
+      "get": {
+        "tags": [
+          "crate::library::http::reconcile"
+        ],
+        "summary": "Artist reconciliation progress and open group counts.",
+        "operationId": "artist_reconciliation",
+        "responses": {
+          "200": {
+            "description": "Progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtistReconciliationProgress"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        }
+      }
+    },
     "/api/v3/library/artists/{id}": {
       "get": {
         "tags": [
@@ -11225,6 +11434,33 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "mood",
+            "in": "query",
+            "description": "Mood filter (Plex honors it, others ignore it).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "description": "Tag filter, `|`-separated for several (Jellyfin honors it, others\nignore it).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "studios",
+            "in": "query",
+            "description": "Studio (label) filter, `|`-separated for several (Jellyfin honors\nit, others ignore it).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -11825,7 +12061,16 @@
             "name": "genre",
             "in": "query",
             "description": "Genre label.",
-            "required": true,
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "genres",
+            "in": "query",
+            "description": "Several genre labels, comma-separated (up to 10). Tracks of any of\nthem come back merged, without duplicates.",
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -20147,6 +20392,79 @@
           }
         }
       },
+      "ArtistCreditEvidence": {
+        "type": "object",
+        "description": "A MusicBrainz credit proof behind one record's credit.",
+        "required": [
+          "subject_kind",
+          "subject_id",
+          "subject_name",
+          "local_artist_id",
+          "artist_mbid",
+          "canonical_name",
+          "credited_name",
+          "join_phrase",
+          "release_mbid",
+          "album_identity_revision",
+          "evidence_hash"
+        ],
+        "properties": {
+          "album_identity_revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "artist_mbid": {
+            "type": "string"
+          },
+          "canonical_name": {
+            "type": "string"
+          },
+          "credited_name": {
+            "type": "string"
+          },
+          "evidence_hash": {
+            "type": "string"
+          },
+          "join_phrase": {
+            "type": "string"
+          },
+          "local_artist_id": {
+            "type": "string"
+          },
+          "release_mbid": {
+            "type": "string"
+          },
+          "release_track_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_local_artist_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subject_id": {
+            "type": "string"
+          },
+          "subject_kind": {
+            "type": "string",
+            "description": "`album` or `track`."
+          },
+          "subject_name": {
+            "type": "string"
+          },
+          "track_identity_revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
       "ArtistCreditSettings": {
         "type": "object",
         "description": "Artist-credit handling.",
@@ -20172,6 +20490,216 @@
             "type": "boolean",
             "description": "Translate names.",
             "default": false
+          }
+        }
+      },
+      "ArtistDuplicateGroupDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ArtistDuplicateGroupSummary"
+          },
+          {
+            "type": "object",
+            "required": [
+              "evidence",
+              "releases",
+              "tracks",
+              "reference_counts",
+              "member_revisions"
+            ],
+            "properties": {
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ArtistCreditEvidence"
+                }
+              },
+              "member_revisions": {
+                "type": "object",
+                "description": "Each member's revision, to send back when dismissing.",
+                "additionalProperties": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "propertyNames": {
+                  "type": "string"
+                }
+              },
+              "reference_counts": {
+                "type": "object",
+                "description": "Reference totals over every member, by kind.",
+                "additionalProperties": {
+                  "type": "integer",
+                  "format": "int64"
+                },
+                "propertyNames": {
+                  "type": "string"
+                }
+              },
+              "releases": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ArtistOwnedReference"
+                }
+              },
+              "tracks": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ArtistOwnedReference"
+                }
+              }
+            }
+          }
+        ],
+        "description": "One duplicate artist group with its evidence and references."
+      },
+      "ArtistDuplicateGroupDismissRequest": {
+        "type": "object",
+        "description": "Mark a group's records as distinct people.",
+        "required": [
+          "expected_member_revisions"
+        ],
+        "properties": {
+          "expected_member_revisions": {
+            "type": "object",
+            "description": "Every member's `row_revision` as shown; a changed member refuses.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ArtistDuplicateGroupDismissResponse": {
+        "type": "object",
+        "required": [
+          "group_id",
+          "dismissed_pairs"
+        ],
+        "properties": {
+          "dismissed_pairs": {
+            "type": "integer",
+            "description": "Pairs of records now marked distinct.",
+            "minimum": 0
+          },
+          "group_id": {
+            "type": "string"
+          }
+        }
+      },
+      "ArtistDuplicateGroupListResponse": {
+        "type": "object",
+        "description": "One page of duplicate artist groups.",
+        "required": [
+          "items",
+          "has_more",
+          "total",
+          "counts"
+        ],
+        "properties": {
+          "counts": {
+            "type": "object",
+            "description": "Every group by state, before the filters.",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArtistDuplicateGroupSummary"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "total": {
+            "type": "integer",
+            "description": "Groups matching the filters.",
+            "minimum": 0
+          }
+        }
+      },
+      "ArtistDuplicateGroupSummary": {
+        "type": "object",
+        "description": "One duplicate artist group.",
+        "required": [
+          "id",
+          "display_name",
+          "state",
+          "member_count",
+          "members",
+          "provider_mbids",
+          "affected_reference_count",
+          "reason_code",
+          "reason"
+        ],
+        "properties": {
+          "affected_reference_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Credits, favorites, playlist entries, plays, and client ids a merge\nwould move."
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable for the same set of records."
+          },
+          "member_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArtistReconciliationMember"
+            }
+          },
+          "provider_mbids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reason": {
+            "$ref": "#/components/schemas/ReasonView",
+            "description": "Why the group is listed and what to do about it."
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "recommended_survivor_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The record a merge would keep, when the evidence names one."
+          },
+          "resolved_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "When an automatic merge resolved the group (unix seconds)."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ArtistGroupState"
           }
         }
       },
@@ -20247,6 +20775,17 @@
             "description": "Artist images from TheAudioDB, fetched and cached by this call."
           }
         }
+      },
+      "ArtistGroupState": {
+        "type": "string",
+        "description": "What kind of duplicate group this is.",
+        "enum": [
+          "waiting_for_identity",
+          "provider_conflict",
+          "ambiguous_credit_structure",
+          "same_name_only",
+          "resolved_automatically"
+        ]
       },
       "ArtistImages": {
         "type": "object",
@@ -20506,6 +21045,37 @@
           }
         }
       },
+      "ArtistOwnedReference": {
+        "type": "object",
+        "description": "An album or track the group's records are credited on.",
+        "required": [
+          "id",
+          "name",
+          "row_revision",
+          "identity_ready",
+          "exact_track_mapping_ready"
+        ],
+        "properties": {
+          "exact_track_mapping_ready": {
+            "type": "boolean",
+            "description": "Every indexed file maps to a track of that release."
+          },
+          "id": {
+            "type": "string"
+          },
+          "identity_ready": {
+            "type": "boolean",
+            "description": "The album is matched to a MusicBrainz release."
+          },
+          "name": {
+            "type": "string"
+          },
+          "row_revision": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "ArtistPage": {
         "type": "object",
         "description": "One page of catalog artists, with scope totals.",
@@ -20575,6 +21145,145 @@
               "$ref": "#/components/schemas/PurchaseLink"
             },
             "description": "Store pages."
+          }
+        }
+      },
+      "ArtistReconciliationMember": {
+        "type": "object",
+        "description": "One artist record in a group, with how often it is referenced.",
+        "required": [
+          "id",
+          "name",
+          "row_revision",
+          "album_credit_count",
+          "track_credit_count",
+          "primary_album_count",
+          "favorite_count",
+          "playlist_count",
+          "history_count",
+          "compatibility_id_count",
+          "proven_credit_count",
+          "active_credit_count"
+        ],
+        "properties": {
+          "active_credit_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "album_credit_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "compatibility_id_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "favorite_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "history_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "playlist_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "primary_album_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "proven_credit_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "provider_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "row_revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sort_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "track_credit_count": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ArtistReconciliationProgress": {
+        "type": "object",
+        "description": "Where the artist reconciliation pass stands.",
+        "required": [
+          "state",
+          "completed_count",
+          "expected_count",
+          "automatically_resolved_count",
+          "waiting_for_identity_count",
+          "genuine_review_count",
+          "provider_conflict_count",
+          "ambiguous_credit_structure_count",
+          "same_name_only_count"
+        ],
+        "properties": {
+          "ambiguous_credit_structure_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "automatically_resolved_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Artist records merged automatically so far."
+          },
+          "completed_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expected_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "genuine_review_count": {
+            "type": "integer",
+            "description": "Groups that need an administrator's judgement.",
+            "minimum": 0
+          },
+          "operation_job_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider_conflict_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "same_name_only_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "state": {
+            "type": "string",
+            "description": "The newest reconciliation job's state, or `idle`."
+          },
+          "waiting_for_identity_count": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       },
@@ -25160,6 +25869,34 @@
           }
         }
       },
+      "DownloadsMountView": {
+        "type": "object",
+        "description": "The slskd downloads folder as DroppedNeedle sees it.",
+        "required": [
+          "ok",
+          "move_supported",
+          "reason",
+          "path"
+        ],
+        "properties": {
+          "move_supported": {
+            "type": "boolean",
+            "description": "Imports can move files into a library root in one step. When false\nthey copy and then delete, which is slower but still works."
+          },
+          "ok": {
+            "type": "boolean",
+            "description": "The folder exists and is writable."
+          },
+          "path": {
+            "type": "string",
+            "description": "The mount path inside DroppedNeedle's container."
+          },
+          "reason": {
+            "type": "string",
+            "description": "`ok`, `not_set`, `missing`, `not_writable`, `different_mount`,\n`different_filesystem`, or `stat_error`."
+          }
+        }
+      },
       "DropImportUpdated": {
         "type": "object",
         "description": "`drop_import_updated`: one of the user's drop-import jobs moved.",
@@ -26862,7 +27599,8 @@
           "artist_name",
           "album_name",
           "viewed_at",
-          "duration_ms"
+          "duration_ms",
+          "device_name"
         ],
         "properties": {
           "album_name": {
@@ -26872,6 +27610,10 @@
           "artist_name": {
             "type": "string",
             "description": "Track artist."
+          },
+          "device_name": {
+            "type": "string",
+            "description": "Player or device the track was played on, empty when unknown."
           },
           "duration_ms": {
             "type": "integer",
@@ -27818,6 +28560,7 @@
           "biography",
           "musicbrainz_id",
           "image_url",
+          "lastfm_url",
           "similar_artists"
         ],
         "properties": {
@@ -27832,6 +28575,10 @@
           "image_url": {
             "type": "string",
             "description": "Best upstream image URL, when offered."
+          },
+          "lastfm_url": {
+            "type": "string",
+            "description": "Last.fm page URL, empty when the source offers none."
           },
           "musicbrainz_id": {
             "type": "string",
@@ -36177,7 +36924,9 @@
           "id",
           "name",
           "track_count",
-          "duration_secs"
+          "duration_secs",
+          "is_smart",
+          "is_imported"
         ],
         "properties": {
           "duration_secs": {
@@ -36195,6 +36944,14 @@
               "null"
             ],
             "description": "Relative covers URL under `/api/v3`, when art exists."
+          },
+          "is_imported": {
+            "type": "boolean",
+            "description": "True when the caller already imported this playlist."
+          },
+          "is_smart": {
+            "type": "boolean",
+            "description": "True for a smart (rule-based) playlist. Only Plex reports it."
           },
           "name": {
             "type": "string",
@@ -39241,13 +39998,45 @@
             "type": "boolean",
             "description": "Credentials/URL present."
           },
+          "effective_downloads_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The folder DroppedNeedle reads: the mount plus the downloads\nsubfolder."
+          },
           "message": {
             "type": "string",
             "description": "User-safe summary."
           },
+          "mount": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DownloadsMountView",
+                "description": "The downloads mount, once the first probe pass checked it."
+              }
+            ]
+          },
+          "mount_advisory": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "One plain sentence when the mount looks fine but cannot see slskd's\nfinished downloads, with what to change."
+          },
           "reachable": {
             "type": "boolean",
             "description": "Live probe answered."
+          },
+          "slskd_downloads_dir": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "slskd's own downloads folder (in slskd's container), when slskd\nreported it."
           },
           "version": {
             "type": [

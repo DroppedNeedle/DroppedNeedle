@@ -2730,6 +2730,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/artists/duplicate-groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List duplicate artist groups, sorted by name. */
+        get: operations["list_artist_duplicate_groups"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/artists/duplicate-groups/{group_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One duplicate artist group with its evidence, albums, and tracks. */
+        get: operations["get_artist_duplicate_group"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/artists/duplicate-groups/{group_id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark a group's records as distinct people. The group comes back if any
+         *     member changes or another record with the name appears.
+         */
+        post: operations["dismiss_artist_duplicate_group"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/artists/reconciliation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Artist reconciliation progress and open group counts. */
+        get: operations["artist_reconciliation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/artists/{id}": {
         parameters: {
             query?: never;
@@ -8657,6 +8728,26 @@ export interface components {
             /** @description Candidate key from the review. */
             candidate_key: string;
         };
+        /** @description A MusicBrainz credit proof behind one record's credit. */
+        ArtistCreditEvidence: {
+            /** Format: int64 */
+            album_identity_revision: number;
+            artist_mbid: string;
+            canonical_name: string;
+            credited_name: string;
+            evidence_hash: string;
+            join_phrase: string;
+            local_artist_id: string;
+            release_mbid: string;
+            release_track_mbid?: string | null;
+            source_local_artist_id?: string | null;
+            subject_id: string;
+            /** @description `album` or `track`. */
+            subject_kind: string;
+            subject_name: string;
+            /** Format: int64 */
+            track_identity_revision?: number | null;
+        };
         /** @description Artist-credit handling. */
         ArtistCreditSettings: {
             /**
@@ -8671,6 +8762,70 @@ export interface components {
              * @default false
              */
             translate_names: boolean;
+        };
+        /** @description One duplicate artist group with its evidence and references. */
+        ArtistDuplicateGroupDetail: components["schemas"]["ArtistDuplicateGroupSummary"] & {
+            evidence: components["schemas"]["ArtistCreditEvidence"][];
+            /** @description Each member's revision, to send back when dismissing. */
+            member_revisions: {
+                [key: string]: number;
+            };
+            /** @description Reference totals over every member, by kind. */
+            reference_counts: {
+                [key: string]: number;
+            };
+            releases: components["schemas"]["ArtistOwnedReference"][];
+            tracks: components["schemas"]["ArtistOwnedReference"][];
+        };
+        /** @description Mark a group's records as distinct people. */
+        ArtistDuplicateGroupDismissRequest: {
+            /** @description Every member's `row_revision` as shown; a changed member refuses. */
+            expected_member_revisions: {
+                [key: string]: number;
+            };
+        };
+        ArtistDuplicateGroupDismissResponse: {
+            /** @description Pairs of records now marked distinct. */
+            dismissed_pairs: number;
+            group_id: string;
+        };
+        /** @description One page of duplicate artist groups. */
+        ArtistDuplicateGroupListResponse: {
+            /** @description Every group by state, before the filters. */
+            counts: {
+                [key: string]: number;
+            };
+            has_more: boolean;
+            items: components["schemas"]["ArtistDuplicateGroupSummary"][];
+            next_cursor?: string | null;
+            /** @description Groups matching the filters. */
+            total: number;
+        };
+        /** @description One duplicate artist group. */
+        ArtistDuplicateGroupSummary: {
+            /**
+             * Format: int64
+             * @description Credits, favorites, playlist entries, plays, and client ids a merge
+             *     would move.
+             */
+            affected_reference_count: number;
+            display_name: string;
+            /** @description Stable for the same set of records. */
+            id: string;
+            member_count: number;
+            members: components["schemas"]["ArtistReconciliationMember"][];
+            provider_mbids: string[];
+            /** @description Why the group is listed and what to do about it. */
+            reason: components["schemas"]["ReasonView"];
+            reason_code: string;
+            /** @description The record a merge would keep, when the evidence names one. */
+            recommended_survivor_id?: string | null;
+            /**
+             * Format: double
+             * @description When an automatic merge resolved the group (unix seconds).
+             */
+            resolved_at?: number | null;
+            state: components["schemas"]["ArtistGroupState"];
         };
         /** @description Enriched artist counts. Absent counts mean unknown, never zero. */
         ArtistEnrichment: {
@@ -8703,6 +8858,11 @@ export interface components {
             /** @description Artist images from TheAudioDB, fetched and cached by this call. */
             images: components["schemas"]["ArtistImages"];
         };
+        /**
+         * @description What kind of duplicate group this is.
+         * @enum {string}
+         */
+        ArtistGroupState: "waiting_for_identity" | "provider_conflict" | "ambiguous_credit_structure" | "same_name_only" | "resolved_automatically";
         /** @description Artist images from TheAudioDB. Every field is optional. */
         ArtistImages: {
             /** @description Banner. */
@@ -8797,6 +8957,17 @@ export interface components {
             /** @description Artist type (`Person`, `Group`, ...). */
             type?: string | null;
         };
+        /** @description An album or track the group's records are credited on. */
+        ArtistOwnedReference: {
+            /** @description Every indexed file maps to a track of that release. */
+            exact_track_mapping_ready: boolean;
+            id: string;
+            /** @description The album is matched to a MusicBrainz release. */
+            identity_ready: boolean;
+            name: string;
+            /** Format: int64 */
+            row_revision: number;
+        };
         /** @description One page of catalog artists, with scope totals. */
         ArtistPage: {
             /**
@@ -8836,6 +9007,54 @@ export interface components {
             bandcamp_search_url: string;
             /** @description Store pages. */
             links: components["schemas"]["PurchaseLink"][];
+        };
+        /** @description One artist record in a group, with how often it is referenced. */
+        ArtistReconciliationMember: {
+            /** Format: int64 */
+            active_credit_count: number;
+            /** Format: int64 */
+            album_credit_count: number;
+            /** Format: int64 */
+            compatibility_id_count: number;
+            /** Format: int64 */
+            favorite_count: number;
+            /** Format: int64 */
+            history_count: number;
+            id: string;
+            name: string;
+            /** Format: int64 */
+            playlist_count: number;
+            /** Format: int64 */
+            primary_album_count: number;
+            /** Format: int64 */
+            proven_credit_count: number;
+            provider_mbid?: string | null;
+            /** Format: int64 */
+            row_revision: number;
+            sort_name?: string | null;
+            /** Format: int64 */
+            track_credit_count: number;
+        };
+        /** @description Where the artist reconciliation pass stands. */
+        ArtistReconciliationProgress: {
+            ambiguous_credit_structure_count: number;
+            /**
+             * Format: int64
+             * @description Artist records merged automatically so far.
+             */
+            automatically_resolved_count: number;
+            /** Format: int64 */
+            completed_count: number;
+            /** Format: int64 */
+            expected_count: number;
+            /** @description Groups that need an administrator's judgement. */
+            genuine_review_count: number;
+            operation_job_id?: string | null;
+            provider_conflict_count: number;
+            same_name_only_count: number;
+            /** @description The newest reconciliation job's state, or `idle`. */
+            state: string;
+            waiting_for_identity_count: number;
         };
         /**
          * @description `GET /artists/{artist_mbid}/releases`: one page of the discography,
@@ -10903,6 +11122,23 @@ export interface components {
              */
             id: string;
         };
+        /** @description The slskd downloads folder as DroppedNeedle sees it. */
+        DownloadsMountView: {
+            /**
+             * @description Imports can move files into a library root in one step. When false
+             *     they copy and then delete, which is slower but still works.
+             */
+            move_supported: boolean;
+            /** @description The folder exists and is writable. */
+            ok: boolean;
+            /** @description The mount path inside DroppedNeedle's container. */
+            path: string;
+            /**
+             * @description `ok`, `not_set`, `missing`, `not_writable`, `different_mount`,
+             *     `different_filesystem`, or `stat_error`.
+             */
+            reason: string;
+        };
         /** @description `drop_import_updated`: one of the user's drop-import jobs moved. */
         DropImportUpdated: {
             /** @description Id for de-duplication. */
@@ -11762,6 +11998,8 @@ export interface components {
             album_name: string;
             /** @description Track artist. */
             artist_name: string;
+            /** @description Player or device the track was played on, empty when unknown. */
+            device_name: string;
             /**
              * Format: int64
              * @description Track length in milliseconds.
@@ -12137,6 +12375,8 @@ export interface components {
             id: string;
             /** @description Best upstream image URL, when offered. */
             image_url: string;
+            /** @description Last.fm page URL, empty when the source offers none. */
+            lastfm_url: string;
             /** @description Linked MusicBrainz id. */
             musicbrainz_id: string;
             /** @description Similar artists (artist info only). */
@@ -16185,6 +16425,10 @@ export interface components {
             id: string;
             /** @description Relative covers URL under `/api/v3`, when art exists. */
             image_url?: string | null;
+            /** @description True when the caller already imported this playlist. */
+            is_imported: boolean;
+            /** @description True for a smart (rule-based) playlist. Only Plex reports it. */
+            is_smart: boolean;
             /** @description Playlist name. */
             name: string;
             /** @description Owning source. */
@@ -17610,10 +17854,26 @@ export interface components {
         SlskdStatusResponse: {
             /** @description Credentials/URL present. */
             configured: boolean;
+            /**
+             * @description The folder DroppedNeedle reads: the mount plus the downloads
+             *     subfolder.
+             */
+            effective_downloads_path?: string | null;
             /** @description User-safe summary. */
             message: string;
+            mount?: null | components["schemas"]["DownloadsMountView"];
+            /**
+             * @description One plain sentence when the mount looks fine but cannot see slskd's
+             *     finished downloads, with what to change.
+             */
+            mount_advisory?: string | null;
             /** @description Live probe answered. */
             reachable: boolean;
+            /**
+             * @description slskd's own downloads folder (in slskd's container), when slskd
+             *     reported it.
+             */
+            slskd_downloads_dir?: string | null;
             /** @description slskd version, when the probe reached it. */
             version?: string | null;
         };
@@ -24797,6 +25057,195 @@ export interface operations {
             };
         };
     };
+    list_artist_duplicate_groups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Page size, 1 to 100 (default 50). */
+                limit: number | null;
+                /** @description `next_cursor` from the previous page. */
+                cursor: string | null;
+                state: null | components["schemas"]["ArtistGroupState"];
+                /** @description Matches the group name or any member's name. */
+                search: string | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of groups */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtistDuplicateGroupListResponse"];
+                };
+            };
+            /** @description Bad page size or cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_artist_duplicate_group: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Group id */
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Group detail */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtistDuplicateGroupDetail"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The group no longer exists */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    dismiss_artist_duplicate_group: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Group id */
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtistDuplicateGroupDismissRequest"];
+            };
+        };
+        responses: {
+            /** @description Group dismissed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtistDuplicateGroupDismissResponse"];
+                };
+            };
+            /** @description Bad body, or the group was merged automatically */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The group no longer exists */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A member changed since the group was read */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    artist_reconciliation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Progress */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtistReconciliationProgress"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     get_artist: {
         parameters: {
             query?: never;
@@ -29882,6 +30331,18 @@ export interface operations {
                 year?: number;
                 /** @description Decade filter in `"2020s"` spelling (Plex honors it, others ignore it). */
                 decade?: string;
+                /** @description Mood filter (Plex honors it, others ignore it). */
+                mood?: string;
+                /**
+                 * @description Tag filter, `|`-separated for several (Jellyfin honors it, others
+                 *     ignore it).
+                 */
+                tags?: string;
+                /**
+                 * @description Studio (label) filter, `|`-separated for several (Jellyfin honors
+                 *     it, others ignore it).
+                 */
+                studios?: string;
             };
             header?: never;
             path: {
@@ -30257,9 +30718,14 @@ export interface operations {
     };
     remotes_list_genre_songs: {
         parameters: {
-            query: {
+            query?: {
                 /** @description Genre label. */
-                genre: string;
+                genre?: string;
+                /**
+                 * @description Several genre labels, comma-separated (up to 10). Tracks of any of
+                 *     them come back merged, without duplicates.
+                 */
+                genres?: string;
                 /** @description Max items (1-500, default 50). */
                 limit?: number;
                 /** @description Records to skip (default 0). */
