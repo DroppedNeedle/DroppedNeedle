@@ -2,16 +2,20 @@ import { createMutation, createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
+import { v3 } from '$lib/api/v3/endpoint';
 import { CACHE_TTL } from '$lib/constants';
 import { DownloadQueryKeyFactory } from '$lib/queries/downloads/DownloadQueryKeyFactory';
 import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { musicBrainzSourceKey } from '$lib/queries/musicbrainz/sourceScope.svelte';
 import { authStore } from '$lib/stores/authStore.svelte';
-import type { AlbumEditionsResponse, EditionAcquireResponse, EditionPinResponse } from '$lib/types';
+import { LibraryV3Api } from '$lib/queries/library/LibraryV3Api';
+import type { AlbumEditionsResponse } from '$lib/types';
 
 // CollectionManagement Feature E: the picker is an admin/trusted surface,
-// viewing the list is open to any authenticated user.
+// viewing the list is open to any authenticated user. The release-group
+// edition list and pin have no v3 route yet (see the waiting-on-backend list
+// in eslint.config.js); acquire and the per-copy pin are on v3.
 
 const editionsUrl = (mbid: string) => `/api/v1/albums/${encodeURIComponent(mbid)}/editions`;
 const pinUrl = (mbid: string) => `/api/v1/albums/${encodeURIComponent(mbid)}/edition`;
@@ -72,7 +76,9 @@ export function clearEditionPin() {
 export function acquireEdition() {
 	return createMutation(() => ({
 		mutationFn: ({ mbid }: { mbid: string }) =>
-			api.global.post<EditionAcquireResponse>(`${pinUrl(mbid)}/acquire`, {}),
+			api.global.v3.POST(
+				v3('/api/v3/albums/{album_id}/edition/acquire', { path: { album_id: mbid } })
+			),
 		// the acquire fans out into download tasks - surface them in the queue now,
 		// not on the next poll
 		onSuccess: () =>
@@ -88,11 +94,8 @@ export function acquireEdition() {
 // localAlbumId is a library-local album id (LibraryAlbumSummary.id /
 // LibraryAlbumDetail.id) - never an RG MBID. Unowned RGs (no local copies)
 // stay on the RG-keyed pin above; only a known local id may enter here.
-export const localAlbumEditionPinUrl = (localAlbumId: string) =>
-	`/api/v1/library/albums/${encodeURIComponent(localAlbumId)}/edition`;
-
-export const localAlbumEditionPinKey = (userId: EditionUserId, localAlbumId: string) =>
-	['albums', 'edition-pin', userId ?? null, localAlbumId] as const;
+// The pin key lives in the library catalog keys so it clears with the user.
+const localAlbumEditionPinKey = LibraryQueryKeyFactory.catalog.editionPin;
 
 export const getLocalAlbumEditionPinQuery = (
 	getUserId: Getter<EditionUserId>,
@@ -103,8 +106,7 @@ export const getLocalAlbumEditionPinQuery = (
 		queryKey: localAlbumEditionPinKey(getUserId(), getLocalId()),
 		enabled: getEnabled() && !!getUserId() && !!getLocalId(),
 		staleTime: CACHE_TTL.ALBUM_DETAIL_EDITIONS,
-		queryFn: ({ signal }) =>
-			api.global.get<EditionPinResponse>(localAlbumEditionPinUrl(getLocalId()), { signal })
+		queryFn: ({ signal }) => api.global.v3.GET(LibraryV3Api.editionPin(getLocalId()), { signal })
 	}));
 
 type LocalEditionPinVariables = {
@@ -152,9 +154,7 @@ export function setLocalAlbumEditionPin() {
 	return createMutation(() => ({
 		mutationFn: ({ localId, rgMbid, releaseMbid }: LocalEditionPinVariables) => {
 			assertLocalAlbumId(localId, rgMbid);
-			return api.global.put<EditionPinResponse>(localAlbumEditionPinUrl(localId), {
-				release_mbid: releaseMbid
-			});
+			return api.global.v3.PUT(LibraryV3Api.editionPin(localId), { release_mbid: releaseMbid });
 		},
 		onSuccess: (_d, variables) => invalidateLocalPinScope(variables)
 	}));
@@ -164,7 +164,7 @@ export function clearLocalAlbumEditionPin() {
 	return createMutation(() => ({
 		mutationFn: ({ localId, rgMbid }: LocalEditionClearVariables) => {
 			assertLocalAlbumId(localId, rgMbid);
-			return api.global.delete<EditionPinResponse>(localAlbumEditionPinUrl(localId));
+			return api.global.v3.DELETE(LibraryV3Api.editionPin(localId));
 		},
 		onSuccess: (_d, variables) => invalidateLocalPinScope(variables)
 	}));

@@ -273,19 +273,14 @@
 	async function handleAcquireEdition() {
 		try {
 			const result = await acquireMutation.mutateAsync({ mbid: editionsMbid });
-			if (result.requested === 0 && result.upgrades === 0) {
+			if (result.status === 'already_complete') {
 				toastStore.show({
 					message: 'Nothing to do - this edition is complete and at your cutoff.',
 					type: 'info'
 				});
 			} else {
 				acquireQueued = true;
-				toastStore.show({
-					message: `Requested ${result.requested} missing and ${result.upgrades} upgrade${
-						result.upgrades === 1 ? '' : 's'
-					} for this edition.`,
-					type: 'success'
-				});
+				toastStore.show({ message: result.message, type: 'success' });
 			}
 		} catch (e) {
 			toastStore.show({

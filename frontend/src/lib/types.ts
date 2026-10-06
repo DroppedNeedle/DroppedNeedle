@@ -1976,18 +1976,6 @@ export interface AlbumEditionsResponse {
 	selected_release_mbid: string | null;
 }
 
-export interface EditionPinResponse {
-	pinned_release_mbid: string | null;
-}
-
-export interface EditionAcquireResponse {
-	release_mbid: string;
-	total_tracks: number;
-	requested: number;
-	upgrades: number;
-	skipped: number;
-}
-
 export interface CutoffUnmetItem {
 	release_group_mbid: string;
 	current_tier: string;

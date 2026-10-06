@@ -237,11 +237,8 @@ describe('AlbumHeader automatic edition selection', () => {
 		h.setLocalPin.mockReset().mockResolvedValue(undefined);
 		h.clearLocalPin.mockReset().mockResolvedValue(undefined);
 		h.acquire.mockReset().mockResolvedValue({
-			release_mbid: 'release-20',
-			total_tracks: 20,
-			requested: 0,
-			upgrades: 0,
-			skipped: 20
+			status: 'already_complete',
+			message: 'Edition already complete'
 		});
 		h.editions = {
 			items: [

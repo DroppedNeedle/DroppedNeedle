@@ -5,6 +5,12 @@ const h = vi.hoisted(() => ({
 	put: vi.fn().mockResolvedValue(undefined),
 	delete: vi.fn().mockResolvedValue(undefined),
 	post: vi.fn().mockResolvedValue({ requested: 0, upgrades: 0 }),
+	v3: {
+		GET: vi.fn().mockResolvedValue({}),
+		PUT: vi.fn().mockResolvedValue({}),
+		POST: vi.fn().mockResolvedValue({ status: 'started', message: 'ok' }),
+		DELETE: vi.fn().mockResolvedValue({})
+	},
 	invalidate: vi.fn().mockResolvedValue(undefined)
 }));
 
@@ -19,7 +25,8 @@ vi.mock('$lib/api/client', () => ({
 			get: h.get,
 			put: h.put,
 			delete: h.delete,
-			post: h.post
+			post: h.post,
+			v3: h.v3
 		}
 	}
 }));
@@ -46,8 +53,7 @@ import {
 	clearLocalAlbumEditionPin,
 	editionsKey,
 	getAlbumEditionsQuery,
-	localAlbumEditionPinKey,
-	localAlbumEditionPinUrl,
+	getLocalAlbumEditionPinQuery,
 	setEditionPin,
 	setLocalAlbumEditionPin
 } from './EditionQueries.svelte';
@@ -128,29 +134,33 @@ it('keeps acquire invalidation scoped to the authenticated download queue', asyn
 	const acquire = acquireEdition() as unknown as EditionMutationOptions;
 	await acquire.mutationFn({ mbid: 'release-group' });
 
-	expect(h.post).toHaveBeenCalledWith('/api/v1/albums/release-group/edition/acquire', {});
+	expect(h.v3.POST).toHaveBeenCalledWith('/api/v3/albums/release-group/edition/acquire');
 });
 
 it('addresses per-copy pins by local id and scopes the key by user', () => {
-	expect(localAlbumEditionPinUrl('local-album-1')).toBe(
-		'/api/v1/library/albums/local-album-1/edition'
-	);
-	expect(localAlbumEditionPinUrl('a/b')).toBe('/api/v1/library/albums/a%2Fb/edition');
+	const queryFor = (userId: string | undefined, localId: string) =>
+		getLocalAlbumEditionPinQuery(
+			() => userId,
+			() => localId,
+			() => true
+		) as unknown as EditionQueryOptions;
 
-	expect(localAlbumEditionPinKey('user-a', 'local-1')).toEqual([
-		'albums',
-		'edition-pin',
+	expect(queryFor('user-a', 'local-1').queryKey).toEqual([
+		'library',
+		'catalog',
 		'user-a',
-		'local-1'
-	]);
-	expect(localAlbumEditionPinKey(undefined, 'local-1')).toEqual([
-		'albums',
 		'edition-pin',
-		null,
 		'local-1'
 	]);
-	expect(localAlbumEditionPinKey('user-a', 'local-1')).not.toEqual(
-		localAlbumEditionPinKey('user-b', 'local-1')
+	expect(queryFor(undefined, 'local-1').queryKey).toEqual([
+		'library',
+		'catalog',
+		null,
+		'edition-pin',
+		'local-1'
+	]);
+	expect(queryFor('user-a', 'local-1').queryKey).not.toEqual(
+		queryFor('user-b', 'local-1').queryKey
 	);
 });
 
@@ -168,6 +178,6 @@ it('refuses per-album pins carrying an RG MBID or a missing local id', async () 
 	expect(() =>
 		clear.mutationFn({ userId: 'user-a', localId: '', rgMbid: 'release-group' })
 	).toThrow('Missing local album id for the edition pin.');
-	expect(h.put).not.toHaveBeenCalled();
-	expect(h.delete).not.toHaveBeenCalled();
+	expect(h.v3.PUT).not.toHaveBeenCalled();
+	expect(h.v3.DELETE).not.toHaveBeenCalled();
 });
