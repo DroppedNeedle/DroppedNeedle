@@ -419,6 +419,71 @@ impl LibrarySetup {
         super::publish::staging::document_from_file(&path).map_err(publish_error)
     }
 
+    /// The before-state document for a write: the file's fields plus an
+    /// empty entry per field the write adds, so undo removes those.
+    fn live_doc_for_write(
+        sandbox: &Sandbox,
+        root_id: &str,
+        rel_path: &str,
+        managed_updates: &BTreeMap<String, Vec<String>>,
+    ) -> Result<TagDocument, ServiceError> {
+        let path = sandbox
+            .resolve_no_symlink(root_id, rel_path)
+            .map_err(publish_error)?;
+        super::publish::staging::document_for_write(&path, managed_updates).map_err(publish_error)
+    }
+
+    /// The tags a retag writes: the identified release's full tag set
+    /// (when its document is on file and the format is writable), with
+    /// the caller's explicit updates on top.
+    fn with_release_tags(
+        &self,
+        identity: &ReleaseIdentity,
+        rel_path: &str,
+        explicit: &BTreeMap<String, Vec<String>>,
+    ) -> BTreeMap<String, Vec<String>> {
+        use super::identify::stores::ReleaseStore as _;
+
+        let writable = super::tags::format_for_path(PathBuf::from(rel_path).as_path())
+            .is_ok_and(super::tags::save::writable);
+        if !writable {
+            return explicit.clone();
+        }
+        let Some(release) = self.identify_store.release(&identity.release_mbid, None) else {
+            tracing::info!(
+                release = identity.release_mbid,
+                "no stored release document; retag writes only the requested fields"
+            );
+            return explicit.clone();
+        };
+        let Some(track) = release
+            .tracks
+            .iter()
+            .find(|track| track.id.eq_ignore_ascii_case(&identity.release_track_mbid))
+        else {
+            tracing::info!(
+                release = identity.release_mbid,
+                track = identity.release_track_mbid,
+                "release document lacks the mapped track; retag writes only the requested fields"
+            );
+            return explicit.clone();
+        };
+        let mut tags = super::tags::picard::release_tags(&release, track);
+        // A value the writer would refuse is dropped here, at preview,
+        // rather than failing the publish.
+        tags.retain(|name, values| {
+            super::tags::TagField::from_name(name).is_some_and(|field| {
+                super::tags::save::accepts(&super::tags::TagEdit::new(field, values.clone()))
+            })
+        });
+        tags.extend(
+            explicit
+                .iter()
+                .map(|(name, values)| (name.clone(), values.clone())),
+        );
+        tags
+    }
+
     /// Lowercase container format for one rel path.
     fn live_format(rel_path: &str) -> Result<String, ServiceError> {
         super::tags::format_for_path(PathBuf::from(rel_path).as_path())
@@ -501,6 +566,14 @@ impl LibrarySetup {
             let fingerprint = Self::live_fingerprint(&sandbox, &item.root_id, &item.rel_path)?;
             let format = Self::live_format(&item.rel_path)?;
             let identity = self.resolve_identity(album_id, &track_id)?;
+            // A retag writes the release's full tag set; explicit
+            // updates win over it. Organize moves keep their tags.
+            let managed_updates = match kind {
+                PlanKind::SamePath => {
+                    self.with_release_tags(&identity, &item.rel_path, &item.managed_updates)
+                }
+                PlanKind::Move => item.managed_updates.clone(),
+            };
             let (dest_root, dest_rel, item_kind) = match kind {
                 PlanKind::SamePath => (
                     item.root_id.clone(),
@@ -522,7 +595,7 @@ impl LibrarySetup {
                 }
             };
             let mut capabilities = Vec::new();
-            if !item.managed_updates.is_empty() {
+            if !managed_updates.is_empty() {
                 capabilities.push(Capability::Metadata);
             }
             if item_kind == PlanKind::Move {
@@ -546,13 +619,18 @@ impl LibrarySetup {
                 override_revision: PINNED_OVERRIDE,
                 capabilities,
                 format,
-                managed_updates: item.managed_updates.clone(),
+                managed_updates: managed_updates.clone(),
                 sidecars: Vec::new(),
                 staged_bytes_estimate: size + STAGED_HEADROOM_BYTES,
             });
             docs.insert(
                 track_id.clone(),
-                Self::live_doc(&sandbox, &item.root_id, &item.rel_path)?,
+                Self::live_doc_for_write(
+                    &sandbox,
+                    &item.root_id,
+                    &item.rel_path,
+                    &managed_updates,
+                )?,
             );
             files.push(PreviewFile {
                 track_id,

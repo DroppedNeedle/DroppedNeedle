@@ -712,6 +712,7 @@ async fn library_journey_retag_apply_baseline_restore() {
     let music = lib.dir.join("music");
     let file = plant(&music, "album-b/01.flac", "management_full.flac");
     let original_title = read_title(&file);
+    let fields_before = droppedneedle::library::tags::read_fields(&file).expect("fields read");
     let (status, body) = call(
         lib.router(),
         "POST",
@@ -822,6 +823,10 @@ async fn library_journey_retag_apply_baseline_restore() {
         lib.library.fs.revision("music") > rev_before,
         "apply holds the write lease across refresh plus publish"
     );
+    // The retag also wrote the approved release's tags.
+    let written = droppedneedle::library::tags::read_fields(&file).expect("fields read");
+    let release_field = droppedneedle::library::tags::TagField::MusicBrainzReleaseId;
+    assert_eq!(written[&release_field], vec!["rel-1".to_owned()]);
 
     // Baseline restore returns the pre-management tags.
     let (status, body) = call(
@@ -835,6 +840,11 @@ async fn library_journey_retag_apply_baseline_restore() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["restored"], json!([track_id]));
     assert_eq!(read_title(&file), original_title);
+    assert_eq!(
+        droppedneedle::library::tags::read_fields(&file).expect("fields read"),
+        fields_before,
+        "every field the retag wrote is back"
+    );
 }
 
 #[tokio::test]
