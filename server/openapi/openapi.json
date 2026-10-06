@@ -937,7 +937,7 @@
           {
             "name": "album_id",
             "in": "path",
-            "description": "Release-group MBID",
+            "description": "Release-group MBID, or a library album id identified as one",
             "required": true,
             "schema": {
               "type": "string"
@@ -981,7 +981,7 @@
           {
             "name": "album_id",
             "in": "path",
-            "description": "Release-group MBID",
+            "description": "Release-group MBID, or a library album id identified as one",
             "required": true,
             "schema": {
               "type": "string"
@@ -1025,7 +1025,7 @@
           {
             "name": "album_id",
             "in": "path",
-            "description": "Release-group MBID",
+            "description": "Release-group MBID, or a library album id identified as one",
             "required": true,
             "schema": {
               "type": "string"
@@ -1080,7 +1080,7 @@
           {
             "name": "album_id",
             "in": "path",
-            "description": "Release-group MBID",
+            "description": "Release-group MBID, or a library album id identified as one",
             "required": true,
             "schema": {
               "type": "string"
@@ -1159,7 +1159,7 @@
           {
             "name": "album_id",
             "in": "path",
-            "description": "Release-group MBID",
+            "description": "Release-group MBID, or a library album id identified as one",
             "required": true,
             "schema": {
               "type": "string"
@@ -1203,7 +1203,7 @@
           {
             "name": "album_id",
             "in": "path",
-            "description": "Release-group MBID",
+            "description": "Release-group MBID, or a library album id identified as one",
             "required": true,
             "schema": {
               "type": "string"
@@ -1320,7 +1320,7 @@
           {
             "name": "album_id",
             "in": "path",
-            "description": "Release-group MBID",
+            "description": "Release-group MBID, or a library album id identified as one",
             "required": true,
             "schema": {
               "type": "string"
@@ -1361,7 +1361,7 @@
           {
             "name": "album_id",
             "in": "path",
-            "description": "Release-group MBID",
+            "description": "Release-group MBID, or a library album id identified as one",
             "required": true,
             "schema": {
               "type": "string"
@@ -1466,7 +1466,7 @@
           {
             "name": "album_id",
             "in": "path",
-            "description": "Release-group MBID",
+            "description": "Release-group MBID, or a library album id identified as one",
             "required": true,
             "schema": {
               "type": "string"
@@ -24515,7 +24515,7 @@
             "items": {
               "$ref": "#/components/schemas/DiscoveryAlbum"
             },
-            "description": "Other release groups by the artist, newest first."
+            "description": "Other release groups by the artist, in MusicBrainz browse order."
           },
           "artist_name": {
             "type": "string",

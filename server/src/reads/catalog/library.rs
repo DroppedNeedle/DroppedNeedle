@@ -297,6 +297,20 @@ impl LocalCatalog {
         }))
     }
 
+    /// The release group a library album (or the album it was merged
+    /// into) is identified as.
+    pub async fn group_for_album(&self, album_id: &str) -> Result<Option<String>, sqlx::Error> {
+        sqlx::query_scalar(
+            "SELECT e.release_group_mbid FROM local_albums b \
+             JOIN local_album_external_identities e \
+               ON e.local_album_id = COALESCE(b.retired_into_album_id, b.id) \
+             WHERE b.id = ? AND e.release_group_mbid IS NOT NULL LIMIT 1",
+        )
+        .bind(album_id)
+        .fetch_optional(&self.pool)
+        .await
+    }
+
     /// The live library albums identified as one release group.
     pub async fn albums_for_group(
         &self,

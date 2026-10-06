@@ -281,7 +281,7 @@ pub async fn artist_purchase_options(
 #[utoipa::path(
     get,
     path = "/api/v3/albums/{album_id}",
-    params(("album_id" = String, Path, description = "Release-group MBID")),
+    params(("album_id" = String, Path, description = "Release-group MBID, or a library album id identified as one")),
     responses(
         (status = 200, description = "Album page", body = AlbumInfo),
         (status = 400, description = "Not a MusicBrainz id"),
@@ -298,7 +298,7 @@ pub async fn album(State(deps): State<CatalogDeps>, Path(id): Path<String>) -> A
 #[utoipa::path(
     get,
     path = "/api/v3/albums/{album_id}/basic",
-    params(("album_id" = String, Path, description = "Release-group MBID")),
+    params(("album_id" = String, Path, description = "Release-group MBID, or a library album id identified as one")),
     responses(
         (status = 200, description = "Album header", body = AlbumBasicInfo),
         (status = 400, description = "Not a MusicBrainz id"),
@@ -318,7 +318,7 @@ pub async fn album_basic(
 #[utoipa::path(
     get,
     path = "/api/v3/albums/{album_id}/tracks",
-    params(("album_id" = String, Path, description = "Release-group MBID")),
+    params(("album_id" = String, Path, description = "Release-group MBID, or a library album id identified as one")),
     responses(
         (status = 200, description = "Tracklist", body = AlbumTracksInfo),
         (status = 400, description = "Not a MusicBrainz id"),
@@ -338,7 +338,7 @@ pub async fn album_tracks(
 #[utoipa::path(
     get,
     path = "/api/v3/albums/{album_id}/editions",
-    params(("album_id" = String, Path, description = "Release-group MBID")),
+    params(("album_id" = String, Path, description = "Release-group MBID, or a library album id identified as one")),
     responses(
         (status = 200, description = "Editions", body = AlbumEditionsResponse),
         (status = 400, description = "Not a MusicBrainz id"),
@@ -358,7 +358,7 @@ pub async fn album_editions(
 #[utoipa::path(
     post,
     path = "/api/v3/albums/{album_id}/refresh",
-    params(("album_id" = String, Path, description = "Release-group MBID")),
+    params(("album_id" = String, Path, description = "Release-group MBID, or a library album id identified as one")),
     responses(
         (status = 200, description = "Fresh album header", body = AlbumBasicInfo),
         (status = 400, description = "Not a MusicBrainz id"),
@@ -378,7 +378,7 @@ pub async fn album_refresh(
 #[utoipa::path(
     put,
     path = "/api/v3/albums/{album_id}/edition",
-    params(("album_id" = String, Path, description = "Release-group MBID")),
+    params(("album_id" = String, Path, description = "Release-group MBID, or a library album id identified as one")),
     request_body = GroupEditionPinBody,
     responses(
         (status = 200, description = "Pinned", body = GroupEditionPinResponse),
@@ -410,7 +410,7 @@ pub async fn set_album_edition(
 #[utoipa::path(
     delete,
     path = "/api/v3/albums/{album_id}/edition",
-    params(("album_id" = String, Path, description = "Release-group MBID")),
+    params(("album_id" = String, Path, description = "Release-group MBID, or a library album id identified as one")),
     responses(
         (status = 200, description = "Cleared", body = GroupEditionPinResponse),
         (status = 400, description = "Not a MusicBrainz id"),
@@ -486,7 +486,7 @@ pub async fn more_by_artist(
 #[utoipa::path(
     get,
     path = "/api/v3/albums/{album_id}/lastfm",
-    params(("album_id" = String, Path, description = "Release-group MBID"), AlbumLastFmQuery),
+    params(("album_id" = String, Path, description = "Release-group MBID, or a library album id identified as one"), AlbumLastFmQuery),
     responses(
         (status = 200, description = "Last.fm data; empty when Last.fm is not set up", body = LastFmAlbumEnrichment),
         (status = 400, description = "Not a MusicBrainz id"),
@@ -511,7 +511,7 @@ pub async fn album_lastfm(
 #[utoipa::path(
     get,
     path = "/api/v3/albums/{album_id}/purchase-options",
-    params(("album_id" = String, Path, description = "Release-group MBID")),
+    params(("album_id" = String, Path, description = "Release-group MBID, or a library album id identified as one")),
     responses(
         (status = 200, description = "Store links plus a Bandcamp search", body = PurchaseOptionsResponse),
         (status = 400, description = "Not a MusicBrainz id"),

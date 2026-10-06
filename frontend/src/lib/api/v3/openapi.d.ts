@@ -11193,7 +11193,7 @@ export interface components {
         };
         /** @description `GET /albums/{album_id}/more-by-artist`. */
         MoreByArtistResponse: {
-            /** @description Other release groups by the artist, newest first. */
+            /** @description Other release groups by the artist, in MusicBrainz browse order. */
             albums: components["schemas"]["DiscoveryAlbum"][];
             /** @description The artist's name, empty when MusicBrainz had nothing. */
             artist_name: string;
@@ -16291,7 +16291,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Release-group MBID */
+                /** @description Release-group MBID, or a library album id identified as one */
                 album_id: string;
             };
             cookie?: never;
@@ -16342,7 +16342,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Release-group MBID */
+                /** @description Release-group MBID, or a library album id identified as one */
                 album_id: string;
             };
             cookie?: never;
@@ -16393,7 +16393,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Release-group MBID */
+                /** @description Release-group MBID, or a library album id identified as one */
                 album_id: string;
             };
             cookie?: never;
@@ -16455,7 +16455,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Release-group MBID */
+                /** @description Release-group MBID, or a library album id identified as one */
                 album_id: string;
             };
             cookie?: never;
@@ -16535,7 +16535,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Release-group MBID */
+                /** @description Release-group MBID, or a library album id identified as one */
                 album_id: string;
             };
             cookie?: never;
@@ -16586,7 +16586,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Release-group MBID */
+                /** @description Release-group MBID, or a library album id identified as one */
                 album_id: string;
                 /** @description Artist name for the Last.fm lookup. */
                 artist_name: string;
@@ -16668,7 +16668,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Release-group MBID */
+                /** @description Release-group MBID, or a library album id identified as one */
                 album_id: string;
             };
             cookie?: never;
@@ -16712,7 +16712,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Release-group MBID */
+                /** @description Release-group MBID, or a library album id identified as one */
                 album_id: string;
             };
             cookie?: never;
@@ -16804,7 +16804,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Release-group MBID */
+                /** @description Release-group MBID, or a library album id identified as one */
                 album_id: string;
             };
             cookie?: never;

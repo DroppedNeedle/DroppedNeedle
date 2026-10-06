@@ -707,6 +707,23 @@ async fn album_page_shows_the_owned_edition_and_where_to_buy() {
     assert_eq!(album["tracks"][0]["length"], 284_000);
     assert_eq!(album["total_length"], 667_000);
     assert_eq!(album["label"], "Parlophone");
+    let by_local = get(&app, "/api/v3/albums/album-okc/basic").await;
+    assert_eq!(
+        by_local["musicbrainz_id"], OK_COMPUTER,
+        "library ids resolve"
+    );
+    let (status, _) = call(
+        &app,
+        Method::GET,
+        "/api/v3/albums/album-bootleg/basic",
+        Some(TOKEN),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "unidentified library album"
+    );
 
     let editions = get(&app, &format!("/api/v3/albums/{OK_COMPUTER}/editions")).await;
     assert_eq!(editions["items"].as_array().unwrap().len(), 3);

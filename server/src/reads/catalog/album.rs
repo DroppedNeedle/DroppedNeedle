@@ -21,7 +21,7 @@ use super::models::{
     PurchaseOptionsResponse,
 };
 use super::ports::PurchaseQuery;
-use super::{Catalog, MISS_TTL, mb_error, mb_retry, record_mb_down, secs};
+use super::{Catalog, MISS_TTL, is_mbid, mb_error, mb_retry, record_mb_down, secs};
 
 /// Includes for the release-group lookup: one call serves the header, the
 /// edition list (with track counts) and the group's store links.
@@ -337,10 +337,31 @@ impl Catalog {
         serde_json::from_slice::<ReleaseCore>(&bytes).ok().flatten()
     }
 
+    /// The release-group MBID a route's album id names. A library album
+    /// id resolves to the group it is identified as, as in v2; anything
+    /// else that is not an MBID is rejected.
+    async fn album_id(&self, raw_id: &str) -> Result<String, CatalogError> {
+        if let Ok(id) = checked_mbid(raw_id, "album") {
+            return Ok(id);
+        }
+        let local = raw_id.trim();
+        if !local.is_empty() && local.len() <= 128 {
+            let group = self
+                .local()
+                .group_for_album(local)
+                .await
+                .map_err(CatalogError::database)?;
+            if let Some(group) = group.filter(|group| is_mbid(group)) {
+                return Ok(group.to_ascii_lowercase());
+            }
+        }
+        checked_mbid(raw_id, "album")
+    }
+
     /// `GET /albums/{album_id}/basic`: the header. A dead MusicBrainz falls
     /// back to the library's copy.
     pub async fn album_basic(&self, raw_id: &str) -> Result<AlbumBasicInfo, CatalogError> {
-        let id = checked_mbid(raw_id, "album")?;
+        let id = self.album_id(raw_id).await?;
         let (result, context) = scoped(self.build_basic(&id)).await;
         result.map(|mut basic| {
             basic.service_status = mapping::service_status(&context);
@@ -534,7 +555,7 @@ impl Catalog {
     /// `GET /albums/{album_id}/tracks`: the shown edition's tracklist. A
     /// dead MusicBrainz falls back to the library's tracks.
     pub async fn album_tracks(&self, raw_id: &str) -> Result<AlbumTracksInfo, CatalogError> {
-        let id = checked_mbid(raw_id, "album")?;
+        let id = self.album_id(raw_id).await?;
         match self.group_detail(&id).await {
             Ok(Some(group)) => self.tracks_for_group(&group).await,
             Ok(None) => Err(CatalogError::NotFound),
@@ -551,7 +572,7 @@ impl Catalog {
 
     /// `GET /albums/{album_id}`: header, tracklist and TheAudioDB artwork.
     pub async fn album(&self, raw_id: &str) -> Result<AlbumInfo, CatalogError> {
-        let id = checked_mbid(raw_id, "album")?;
+        let id = self.album_id(raw_id).await?;
         let (result, context) = scoped(self.build_album(&id)).await;
         result.map(|mut info| {
             info.basic.service_status = mapping::service_status(&context);
@@ -664,7 +685,7 @@ impl Catalog {
         &self,
         raw_id: &str,
     ) -> Result<AlbumEditionsResponse, CatalogError> {
-        let id = checked_mbid(raw_id, "album")?;
+        let id = self.album_id(raw_id).await?;
         let group = self
             .group_detail(&id)
             .await?
@@ -702,7 +723,7 @@ impl Catalog {
     /// `POST /albums/{album_id}/refresh`: drop the album's cached
     /// MusicBrainz, artwork and store answers, then rebuild the header.
     pub async fn album_refresh(&self, raw_id: &str) -> Result<AlbumBasicInfo, CatalogError> {
-        let id = checked_mbid(raw_id, "album")?;
+        let id = self.album_id(raw_id).await?;
         let mut keys = vec![self.group_key(&id), audiodb_album_key(&id)];
         if let Ok(Some(group)) = self.group_detail(&id).await {
             keys.push(self.group_key(&group.mbid));
@@ -779,7 +800,7 @@ impl Catalog {
         release_mbid: &str,
     ) -> Result<GroupEditionPinResponse, CatalogError> {
         self.require_curator(user_id).await?;
-        let id = checked_mbid(raw_id, "album")?;
+        let id = self.album_id(raw_id).await?;
         let group = self
             .group_detail(&id)
             .await?
@@ -811,7 +832,7 @@ impl Catalog {
         raw_id: &str,
     ) -> Result<GroupEditionPinResponse, CatalogError> {
         self.require_curator(user_id).await?;
-        let id = checked_mbid(raw_id, "album")?;
+        let id = self.album_id(raw_id).await?;
         let group = self
             .group_detail(&id)
             .await?
@@ -854,7 +875,7 @@ impl Catalog {
         &self,
         raw_id: &str,
     ) -> Result<PurchaseOptionsResponse, CatalogError> {
-        let id = checked_mbid(raw_id, "album")?;
+        let id = self.album_id(raw_id).await?;
         let region = self.upstream().settings().store_region();
         let catalog = self.clone();
         let key = self.purchase_key(&id);
@@ -979,7 +1000,7 @@ impl Catalog {
         artist_name: &str,
         album_name: &str,
     ) -> Result<LastFmAlbumEnrichment, CatalogError> {
-        let id = checked_mbid(raw_id, "album")?;
+        let id = self.album_id(raw_id).await?;
         let Some((client, creds)) = self.upstream().lastfm(user_id).await else {
             return Ok(LastFmAlbumEnrichment::default());
         };
