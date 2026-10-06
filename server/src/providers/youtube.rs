@@ -10,8 +10,8 @@
 //!
 //! The quota governor is the heart of the port. Every fresh search reserves
 //! one unit from a daily budget persisted in `youtube_quota.json` before any
-//! HTTP leaves the box, so two client instances (two users) cannot spend the
-//! last slot twice, and a restart never forgets what today already spent.
+//! HTTP leaves the box, so two concurrent searches (two users) cannot spend
+//! the last slot twice, and a restart never forgets what today already spent.
 //! Rollover is by UTC date: a file stamped yesterday reads as zero. The
 //! write path is atomic (temp file, fsync, rename, directory fsync), kept
 //! from v2.
@@ -36,11 +36,13 @@
 //! rather than sharing the owner's error (v2 joins waiters onto the owner's
 //! outcome instead). Also note the sync-to-async shifts: quota getters are
 //! async here because the quota state sits behind an async lock.
-//! Wire the quota path to `<cache_dir>/youtube_quota.json`.
+//! Wire the quota path to `<cache_dir>/youtube_quota.json`, and build one
+//! client per quota path: clones share its budget, cache and settings.
+//! There is no process-wide registry; the composition root owns the client.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -227,7 +229,7 @@ impl PreviewCache {
     }
 }
 
-/// State shared by every client instance on one quota path: the quota file
+/// State shared by every clone of one client: the quota file
 /// guard, the preview cache, in-flight searches, and the settings snapshot.
 #[derive(Debug)]
 struct ClientState {
@@ -238,12 +240,6 @@ struct ClientState {
     inflight: tokio::sync::Mutex<HashMap<SearchKey, Arc<tokio::sync::Mutex<()>>>>,
     settings: Mutex<YouTubeSettings>,
 }
-
-/// Per-path shared state, mirroring v2's `_states` weak registry so two
-/// client instances on one quota file share one budget. Weak refs let idle
-/// paths drop out; the registry lock is only ever held in the constructor,
-/// never during searches.
-static STATES: OnceLock<Mutex<HashMap<PathBuf, Weak<ClientState>>>> = OnceLock::new();
 
 /// The YouTube client. Cheap to clone: clones share the quota file, the
 /// cache, and the settings of their path. Construct once per quota path at
@@ -275,26 +271,15 @@ impl YouTubeClient {
         base_url: impl Into<String>,
     ) -> Result<Self, YoutubeError> {
         settings.validate()?;
-        let key = registry_key(&quota_path);
-        let state = {
-            let registry = STATES.get_or_init(|| Mutex::new(HashMap::new()));
-            let mut guard = registry.lock().unwrap_or_else(|poison| poison.into_inner());
-            if let Some(shared) = guard.get(&key).and_then(Weak::upgrade) {
-                shared
-            } else {
-                let loaded = load_quota_file(&quota_path)?;
-                let shared = Arc::new(ClientState {
-                    quota_path,
-                    quota: tokio::sync::Mutex::new(loaded),
-                    today_override: Mutex::new(None),
-                    cache: Mutex::new(PreviewCache::new()),
-                    inflight: tokio::sync::Mutex::new(HashMap::new()),
-                    settings: Mutex::new(settings),
-                });
-                guard.insert(key, Arc::downgrade(&shared));
-                shared
-            }
-        };
+        let loaded = load_quota_file(&quota_path)?;
+        let state = Arc::new(ClientState {
+            quota_path,
+            quota: tokio::sync::Mutex::new(loaded),
+            today_override: Mutex::new(None),
+            cache: Mutex::new(PreviewCache::new()),
+            inflight: tokio::sync::Mutex::new(HashMap::new()),
+            settings: Mutex::new(settings),
+        });
         Ok(Self {
             http,
             base_url: base_url.into(),
@@ -413,7 +398,7 @@ impl YouTubeClient {
     }
 
     /// Test seam: pin the client's UTC date (rollover tests). `None`
-    /// restores the real clock. Applies to every instance on this path.
+    /// restores the real clock. Applies to every clone of this client.
     pub fn set_today_override(&self, today: Option<String>) {
         let mut guard = self
             .state
@@ -658,18 +643,6 @@ impl YouTubeClient {
             .cache
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
-    }
-}
-
-/// Registry key for a quota path: absolute when the working directory is
-/// known, as-given otherwise. Mirrors v2's resolved-path sharing.
-fn registry_key(path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .map(|cwd| cwd.join(path))
-            .unwrap_or_else(|_| path.to_path_buf())
     }
 }
 

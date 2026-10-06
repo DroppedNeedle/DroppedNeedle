@@ -643,7 +643,8 @@ async fn youtube_upstream_429_and_bad_payload_map() {
     let _ = std::fs::remove_file(&path);
 }
 
-/// Two client instances on one quota path cannot spend the last slot twice.
+/// Two users sharing the one client of a quota path cannot spend the last
+/// slot twice.
 #[tokio::test]
 async fn youtube_two_instances_share_last_slot() {
     let calls = Arc::new(AtomicUsize::new(0));
@@ -664,8 +665,7 @@ async fn youtube_two_instances_share_last_slot() {
     let (_scratch, path) = quota_path("last-slot");
     let first =
         YouTubeClient::with_base_url(http(), path.clone(), enabled_settings(1), &base).unwrap();
-    let second =
-        YouTubeClient::with_base_url(http(), path.clone(), enabled_settings(1), &base).unwrap();
+    let second = first.clone();
 
     let (one, two) = tokio::join!(
         first.search_video("a", "one"),
