@@ -30,22 +30,16 @@ type Signal = AbortSignal | undefined;
 export const remoteApi = {
 	albums: (source: RemoteSource, params: RemoteAlbumParams, signal?: Signal) =>
 		api.global.get<RemoteAlbumPage>(REMOTE_ENDPOINTS.albums(source, params), { signal }),
-	album: (source: RemoteSource, id: string, signal?: Signal) =>
-		api.global.get<RemoteAlbum>(REMOTE_ENDPOINTS.album(source, id), { signal }),
 	albumTracks: (source: RemoteSource, id: string, params: RemotePageParams, signal?: Signal) =>
 		api.global.get<RemoteTrackPage>(REMOTE_ENDPOINTS.albumTracks(source, id, params), {
 			signal
 		}),
 	artists: (source: RemoteSource, params: RemoteArtistParams, signal?: Signal) =>
 		api.global.get<RemoteArtistPage>(REMOTE_ENDPOINTS.artists(source, params), { signal }),
-	artist: (source: RemoteSource, id: string, signal?: Signal) =>
-		api.global.get<RemoteArtist>(REMOTE_ENDPOINTS.artist(source, id), { signal }),
 	tracks: (source: RemoteSource, params: RemoteTrackParams, signal?: Signal) =>
 		api.global.get<RemoteTrackPage>(REMOTE_ENDPOINTS.tracks(source, params), { signal }),
 	stats: (source: RemoteSource, signal?: Signal) =>
 		api.global.get<RemoteStats>(REMOTE_ENDPOINTS.stats(source), { signal }),
-	sessions: (source: RemoteSource, signal?: Signal) =>
-		api.global.get<RemoteSessions>(REMOTE_ENDPOINTS.sessions(source), { signal }),
 	genres: (source: RemoteSource, signal?: Signal) =>
 		api.global.get<string[]>(REMOTE_ENDPOINTS.genres(source), { signal }),
 	lyrics: (source: RemoteSource, id: string, params: RemoteLyricsParams, signal?: Signal) =>
@@ -53,7 +47,5 @@ export const remoteApi = {
 	match: (source: RemoteSource, mbid: string, signal?: Signal) =>
 		api.global.get<RemoteMatch>(REMOTE_ENDPOINTS.match(source, mbid), { signal }),
 	recent: (source: RemoteSource, params: RemotePageParams, signal?: Signal) =>
-		api.global.get<RemoteAlbum[]>(REMOTE_ENDPOINTS.recent(source, params), { signal }),
-	recentlyAdded: (source: RemoteSource, params: RemotePageParams, signal?: Signal) =>
-		api.global.get<RemoteAlbum[]>(REMOTE_ENDPOINTS.recentlyAdded(source, params), { signal })
+		api.global.get<RemoteAlbum[]>(REMOTE_ENDPOINTS.recent(source, params), { signal })
 } as const;

@@ -71,8 +71,6 @@ export const REMOTE_ENDPOINTS = {
 		v3('/api/v3/remotes/{source}/connection', { path: { source } }),
 	albums: (source: RemoteSource, params: RemoteAlbumParams = {}) =>
 		v3('/api/v3/remotes/{source}/albums', { path: { source }, query: query(params) }),
-	album: (source: RemoteSource, id: string) =>
-		v3('/api/v3/remotes/{source}/albums/{id}', { path: { source, id } }),
 	albumTracks: (source: RemoteSource, id: string, params: RemotePageParams = {}) =>
 		v3('/api/v3/remotes/{source}/albums/{id}/tracks', {
 			path: { source, id },
@@ -82,8 +80,6 @@ export const REMOTE_ENDPOINTS = {
 		v3('/api/v3/remotes/{source}/artists', { path: { source }, query: query(params) }),
 	artistIndex: (source: RemoteSource) =>
 		v3('/api/v3/remotes/{source}/artists/index', { path: { source } }),
-	artist: (source: RemoteSource, id: string) =>
-		v3('/api/v3/remotes/{source}/artists/{id}', { path: { source, id } }),
 	tracks: (source: RemoteSource, params: RemoteTrackParams = {}) =>
 		v3('/api/v3/remotes/{source}/tracks', { path: { source }, query: query(params) }),
 	search: (source: RemoteSource, params: RemoteSearchParams) =>
@@ -92,12 +88,9 @@ export const REMOTE_ENDPOINTS = {
 		v3('/api/v3/remotes/{source}/favorites', { path: { source } }),
 	recent: (source: RemoteSource, params: RemotePageParams = {}) =>
 		v3('/api/v3/remotes/{source}/recent', { path: { source }, query: query(params) }),
-	recentlyAdded: (source: RemoteSource, params: RemotePageParams = {}) =>
-		v3('/api/v3/remotes/{source}/recently-added', { path: { source }, query: query(params) }),
 	history: (source: RemoteSource, params: RemotePageParams = {}) =>
 		v3('/api/v3/remotes/{source}/history', { path: { source }, query: query(params) }),
 	stats: (source: RemoteSource) => v3('/api/v3/remotes/{source}/stats', { path: { source } }),
-	sessions: (source: RemoteSource) => v3('/api/v3/remotes/{source}/sessions', { path: { source } }),
 	genres: (source: RemoteSource) => v3('/api/v3/remotes/{source}/genres', { path: { source } }),
 	genreSongs: (source: RemoteSource, genre: string, params: RemotePageParams = {}) =>
 		v3('/api/v3/remotes/{source}/genres/songs', {
@@ -118,16 +111,6 @@ export const REMOTE_ENDPOINTS = {
 		v3('/api/v3/remotes/{source}/lyrics/{id}', {
 			path: { source, id },
 			query: query(params)
-		}),
-	image: (source: RemoteSource, id: string, size?: number) =>
-		v3('/api/v3/remotes/{source}/images/{id}', {
-			path: { source, id },
-			query: query({ size })
-		}),
-	playlistCover: (source: RemoteSource, id: string, size?: number) =>
-		v3('/api/v3/remotes/{source}/covers/playlists/{id}', {
-			path: { source, id },
-			query: query({ size })
 		}),
 	match: (source: RemoteSource, mbid: string) =>
 		v3('/api/v3/remotes/{source}/match', { path: { source }, query: query({ mbid }) }),

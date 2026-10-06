@@ -7,20 +7,11 @@ import { authStore } from '$lib/stores/authStore.svelte';
 import { PlaylistQueryKeyFactory, type PlaylistV3UserId } from './PlaylistQueryKeyFactory';
 import { PlaylistV3Api } from './PlaylistV3Api';
 
-export type CreatePlaylistBodyV3 = components['schemas']['CreatePlaylistBody'];
 export type UpdatePlaylistBodyV3 = components['schemas']['UpdatePlaylistBody'];
 export type AddTracksBodyV3 = components['schemas']['AddTracksBody'];
-export type AddTracksResponseV3 = components['schemas']['AddTracksResponse'];
-export type RemoveTracksBodyV3 = components['schemas']['RemoveTracksBody'];
-export type UpdateTrackBodyV3 = components['schemas']['UpdateTrackBody'];
-export type ReorderBodyV3 = components['schemas']['ReorderBody'];
-export type ReorderResponseV3 = components['schemas']['ReorderResponse'];
-export type VisibilityBodyV3 = components['schemas']['VisibilityBody'];
 export type PlaylistSummaryV3 = components['schemas']['PlaylistSummary'];
-export type CoverUploadResponseV3 = components['schemas']['CoverUploadResponse'];
 export type CheckTracksBodyV3 = components['schemas']['CheckTracksBody'];
 export type CheckTracksResponseV3 = components['schemas']['CheckTracksResponse'];
-export type ResolveSourcesResponseV3 = components['schemas']['ResolveSourcesResponse'];
 export type TrackInputV3 = components['schemas']['TrackInput'];
 function invalidateList(userId: PlaylistV3UserId): Promise<unknown> {
 	return invalidateQueriesWithPersister({

@@ -7,9 +7,7 @@ describe('RemoteQueryKeyFactory', () => {
 		const prefix = [...RemoteQueryKeyFactory.all];
 		for (const key of [
 			RemoteQueryKeyFactory.hub('userA', 'plex'),
-			RemoteQueryKeyFactory.albums('userA', 'jellyfin', {}),
-			RemoteQueryKeyFactory.search('userA', 'navidrome', 'blue', 20),
-			RemoteQueryKeyFactory.playlistDetail('userA', 'plex', 'pl1'),
+			RemoteQueryKeyFactory.stats('userA', 'jellyfin'),
 			RemoteQueryKeyFactory.random('userA', 'navidrome', {}),
 			RemoteQueryKeyFactory.discovery('userA', 'plex', 10),
 			RemoteQueryKeyFactory.folders('userA')
@@ -21,7 +19,8 @@ describe('RemoteQueryKeyFactory', () => {
 	it('carries userId and source segments on every key', () => {
 		expect(RemoteQueryKeyFactory.hub('userA', 'plex')).toContain('userA');
 		expect(RemoteQueryKeyFactory.hub('userA', 'plex')).toContain('plex');
-		expect(RemoteQueryKeyFactory.albums('userA', 'jellyfin', {})).toContain('jellyfin');
+		expect(RemoteQueryKeyFactory.stats('userA', 'jellyfin')).toContain('jellyfin');
+		expect(RemoteQueryKeyFactory.stats(undefined, 'jellyfin')).toContain(null);
 	});
 
 	it('isolates sources and users from each other', () => {
@@ -34,12 +33,6 @@ describe('RemoteQueryKeyFactory', () => {
 	});
 
 	it('keys browse pages separately by params', () => {
-		expect(RemoteQueryKeyFactory.albums('userA', 'plex', { limit: 10 })).not.toEqual(
-			RemoteQueryKeyFactory.albums('userA', 'plex', { limit: 20 })
-		);
-		expect(RemoteQueryKeyFactory.search('userA', 'plex', 'blue', 20)).not.toEqual(
-			RemoteQueryKeyFactory.search('userA', 'plex', 'red', 20)
-		);
 		expect(RemoteQueryKeyFactory.random('userA', 'navidrome', { genre: 'Jazz' })).not.toEqual(
 			RemoteQueryKeyFactory.random('userA', 'navidrome', { genre: 'Rock' })
 		);
