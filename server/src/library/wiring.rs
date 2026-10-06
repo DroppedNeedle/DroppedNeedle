@@ -326,13 +326,15 @@ impl LibrarySetup {
     ) -> Result<Self, String> {
         use crate::providers::acoustid::{AcoustIdClient, DEFAULT_BASE_URL};
         use crate::providers::adapters::{CorePacer, CoreSink};
-        use crate::providers::musicbrainz::{MusicBrainzClient, ReqwestMbTransport};
+        use crate::providers::musicbrainz::{MbPacing, MusicBrainzClient, ReqwestMbTransport};
 
+        let musicbrainz = MusicBrainzClient::official(
+            ReqwestMbTransport::new(http.no_redirect().clone()),
+            MbPacing::new(providers.clone()),
+        )
+        .with_sink(CoreSink);
         let pacer = CorePacer::for_source(providers, "acoustid")
             .ok_or_else(|| "acoustid has no verified rate row".to_owned())?;
-        let musicbrainz =
-            MusicBrainzClient::official(ReqwestMbTransport::new(http.no_redirect().clone()))
-                .with_sink(CoreSink);
         let acoustid =
             AcoustIdClient::new(http.shared().clone(), DEFAULT_BASE_URL, pacer, CoreSink);
         let live =

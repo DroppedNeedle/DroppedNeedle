@@ -8,9 +8,9 @@
 //! background priority explicitly at the call site; nothing here guesses it.
 //!
 //! The policy rows below encode the verified per-provider table: MusicBrainz
-//! 1/s hard, ListenBrainz 1/s, AudioDB 30/min free tier, AcoustID 3/s,
-//! Cover Art Archive conservative ~1/s with backoff, Last.fm 5/s with
-//! backoff. Two rows differ from v2's running config on purpose: v2 paced
+//! 1/s hard, the BrainzMash mirror 10/s, ListenBrainz 1/s, AudioDB 30/min
+//! free tier, AcoustID 3/s, Cover Art Archive conservative ~1/s with
+//! backoff, Last.fm 5/s with backoff. Two rows differ from v2's running config on purpose: v2 paced
 //! ListenBrainz at 2.5/s against a 1/s documented allocation (now fixed to
 //! the verified 1/s), and v2's cover-art lane self-throttled at 10/s (now
 //! conservative ~1/s per the verified row). Raise a row only by re-verifying
@@ -53,6 +53,9 @@ impl RatePolicy {
 /// MusicBrainz: 1 req/s hard, no burst. The capacity of 1 means two callers
 /// can never squeeze into the same instant.
 pub const MUSICBRAINZ_POLICY: RatePolicy = RatePolicy::new(1.0, 1);
+/// BrainzMash, the server-owned MusicBrainz mirror: 10 req/s sustained with
+/// no burst (v2 `_BRAINZMASH_RATE_LIMIT`, one in flight).
+pub const BRAINZMASH_POLICY: RatePolicy = RatePolicy::new(10.0, 1);
 /// ListenBrainz: 1 req/s, no burst.
 pub const LISTENBRAINZ_POLICY: RatePolicy = RatePolicy::new(1.0, 1);
 /// AudioDB free tier: 30 req/min, paced as 0.5/s with a small burst of 2.
@@ -72,6 +75,9 @@ pub const fn policy_for(source: &str) -> Option<RatePolicy> {
     // `const fn` with `str` matching keeps this usable in const contexts.
     if source.len() == "musicbrainz".len() && matches_name(source, "musicbrainz") {
         return Some(MUSICBRAINZ_POLICY);
+    }
+    if source.len() == "brainzmash".len() && matches_name(source, "brainzmash") {
+        return Some(BRAINZMASH_POLICY);
     }
     if source.len() == "listenbrainz".len() && matches_name(source, "listenbrainz") {
         return Some(LISTENBRAINZ_POLICY);
@@ -368,7 +374,7 @@ impl BucketState {
     }
 }
 
-/// The six verified provider limiters, built once and shared.
+/// The verified provider limiters, built once and shared.
 #[derive(Debug)]
 pub struct LimiterSet {
     limiters: Vec<(&'static str, RateLimiter)>,
@@ -381,12 +387,23 @@ impl LimiterSet {
         Self {
             limiters: vec![
                 ("musicbrainz", RateLimiter::new(MUSICBRAINZ_POLICY)),
+                ("brainzmash", RateLimiter::new(BRAINZMASH_POLICY)),
                 ("listenbrainz", RateLimiter::new(LISTENBRAINZ_POLICY)),
                 ("audiodb", RateLimiter::new(AUDIODB_POLICY)),
                 ("acoustid", RateLimiter::new(ACOUSTID_POLICY)),
                 ("coverartarchive", RateLimiter::new(COVERARTARCHIVE_POLICY)),
                 ("lastfm", RateLimiter::new(LASTFM_POLICY)),
             ],
+        }
+    }
+
+    /// A set with no rows, so nothing waits. Tests only: production always
+    /// paces through [`LimiterSet::new`].
+    #[cfg(any(test, feature = "test-support"))]
+    #[must_use]
+    pub fn unpaced() -> Self {
+        Self {
+            limiters: Vec::new(),
         }
     }
 
@@ -427,12 +444,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn table_holds_the_six_verified_rows() {
+    fn table_holds_the_verified_rows() {
         let set = LimiterSet::new();
         assert_eq!(
             set.sources(),
             [
                 "musicbrainz",
+                "brainzmash",
                 "listenbrainz",
                 "audiodb",
                 "acoustid",
@@ -449,6 +467,7 @@ mod tests {
     fn musicbrainz_row_is_one_per_second_hard() {
         assert_eq!(MUSICBRAINZ_POLICY.per_second, 1.0);
         assert_eq!(MUSICBRAINZ_POLICY.burst, 1);
+        assert_eq!(BRAINZMASH_POLICY, RatePolicy::new(10.0, 1));
         assert_eq!(LISTENBRAINZ_POLICY, RatePolicy::new(1.0, 1));
         assert_eq!(AUDIODB_POLICY, RatePolicy::new(0.5, 2));
         assert_eq!(ACOUSTID_POLICY, RatePolicy::new(3.0, 3));

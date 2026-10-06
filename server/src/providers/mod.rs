@@ -7,9 +7,9 @@
 //!   401/403/404/400 semantics (no blanket non-2xx mapping) and `Retry-After`
 //!   / rate-limit header honoring for 429/503.
 //! - [`limiter`]: token-bucket limiters with priority waiters, one per
-//!   verified policy row (MusicBrainz 1/s hard, ListenBrainz 1/s, AudioDB
-//!   30/min, AcoustID 3/s, Cover Art Archive ~1/s + backoff, Last.fm 5/s +
-//!   backoff).
+//!   verified policy row (MusicBrainz 1/s hard, BrainzMash 10/s,
+//!   ListenBrainz 1/s, AudioDB 30/min, AcoustID 3/s, Cover Art Archive
+//!   ~1/s + backoff, Last.fm 5/s + backoff).
 //! - [`retry`]: idempotency-aware retry with exponential backoff, jitter,
 //!   `Retry-After` override, and an optional budget. Writes run exactly once.
 //! - [`slots`]: priority-queue lanes (user / image / background). Background
@@ -103,8 +103,8 @@ pub use singleflight::Singleflight;
 pub use slots::{RequestPriority, SlotError, SlotManager, SlotStats, USER_QUIET_WINDOW};
 
 /// The shared provider dependencies, built once at boot and cloned into
-/// every provider client: the six verified limiters, the three slot lanes,
-/// and the byte cache.
+/// every provider client: the verified limiters, the three slot lanes, the
+/// byte cache, and the BrainzMash cooldown.
 #[derive(Debug)]
 pub struct Providers {
     /// One token bucket per verified policy row.
@@ -113,6 +113,8 @@ pub struct Providers {
     pub slots: SlotManager,
     /// Shared byte cache behind every client's cache-aside reads.
     pub cache: Arc<dyn ProviderCache>,
+    /// BrainzMash 429 cooldown, shared by every MusicBrainz client.
+    pub brainzmash_cooldown: musicbrainz::BrainzMashCooldown,
 }
 
 impl Providers {
@@ -123,6 +125,18 @@ impl Providers {
             limiters: LimiterSet::new(),
             slots: SlotManager::new(),
             cache,
+            brainzmash_cooldown: musicbrainz::BrainzMashCooldown::default(),
+        }
+    }
+
+    /// Shared deps with no limiter rows and an in-process cache, so tests
+    /// never wait on pacing. Production builds through [`Providers::new`].
+    #[cfg(any(test, feature = "test-support"))]
+    #[must_use]
+    pub fn unpaced() -> Self {
+        Self {
+            limiters: LimiterSet::unpaced(),
+            ..Self::with_memory_cache()
         }
     }
 
@@ -144,10 +158,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn deps_carry_all_six_limiters() {
+    fn deps_carry_every_limiter() {
         let providers = Providers::with_memory_cache();
         for source in [
             "musicbrainz",
+            "brainzmash",
             "listenbrainz",
             "audiodb",
             "acoustid",

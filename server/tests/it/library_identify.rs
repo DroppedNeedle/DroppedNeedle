@@ -1132,11 +1132,11 @@ fn release_page() -> Vec<u8> {
 
 #[tokio::test]
 async fn live_recall_maps_hits_and_stays_critical() {
-    let mb = MusicBrainzClient::official(FakeMb::with_page(release_page())).with_gates(
-        droppedneedle::providers::musicbrainz::RateGate::new(1000.0),
-        droppedneedle::providers::musicbrainz::BrainzMashScheduler::with_gate(
-            droppedneedle::providers::musicbrainz::RateGate::new(1000.0),
-        ),
+    let mb = MusicBrainzClient::official(
+        FakeMb::with_page(release_page()),
+        droppedneedle::providers::musicbrainz::MbPacing::new(std::sync::Arc::new(
+            droppedneedle::providers::Providers::unpaced(),
+        )),
     );
     let acoustid = AcoustIdClient::new(
         reqwest::Client::new(),
@@ -1162,11 +1162,11 @@ async fn live_recall_maps_hits_and_stays_critical() {
 
 #[tokio::test]
 async fn edition_search_is_best_effort_and_silent_on_outage() {
-    let mb = MusicBrainzClient::official(FakeMb::failing()).with_gates(
-        droppedneedle::providers::musicbrainz::RateGate::new(1000.0),
-        droppedneedle::providers::musicbrainz::BrainzMashScheduler::with_gate(
-            droppedneedle::providers::musicbrainz::RateGate::new(1000.0),
-        ),
+    let mb = MusicBrainzClient::official(
+        FakeMb::failing(),
+        droppedneedle::providers::musicbrainz::MbPacing::new(std::sync::Arc::new(
+            droppedneedle::providers::Providers::unpaced(),
+        )),
     );
     let acoustid = AcoustIdClient::new(
         reqwest::Client::new(),

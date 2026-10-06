@@ -21,9 +21,6 @@
 //! - [`ProviderClient`](super::client::ProviderClient) conformance: no
 //!   client performs cache writes yet, so claiming `cache_prefixes` would be
 //!   vacuous conformance. The impls land with cache-aside integration.
-//! - The MusicBrainz `RateGate` / `BrainzMashScheduler` pair: the official
-//!   1/s gate is limiter-shaped, but the BrainzMash cooldown scheduler is
-//!   endpoint-specific behavior with no core counterpart, so it stays.
 //! - `MbTransport` / `CaaTransport`: typed ports whose requests carry
 //!   redirect-hop validation the catalog GET port cannot express; each keeps
 //!   its own reqwest adapter in its module.

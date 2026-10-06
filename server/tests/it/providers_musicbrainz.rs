@@ -217,21 +217,15 @@ impl coverart::CaaTransport for SharedCaa {
     }
 }
 
-fn fast_gate() -> musicbrainz::RateGate {
-    musicbrainz::RateGate::new(1000.0)
-}
-
-fn fast_scheduler() -> musicbrainz::BrainzMashScheduler {
-    musicbrainz::BrainzMashScheduler::with_gate(musicbrainz::RateGate::new(1000.0))
+fn unpaced() -> musicbrainz::MbPacing {
+    musicbrainz::MbPacing::new(Arc::new(droppedneedle::providers::Providers::unpaced()))
 }
 
 fn official_client(
     fake: Arc<SharedFakeMb>,
     sink: Arc<VecSink>,
 ) -> musicbrainz::MusicBrainzClient<SharedMb, SharedSink> {
-    musicbrainz::MusicBrainzClient::official(SharedMb(fake))
-        .with_sink(SharedSink(sink))
-        .with_gates(fast_gate(), fast_scheduler())
+    musicbrainz::MusicBrainzClient::official(SharedMb(fake), unpaced()).with_sink(SharedSink(sink))
 }
 
 fn fast_caa(fake: Arc<FakeCaa>) -> coverart::CaaClient<SharedCaa> {
@@ -649,6 +643,7 @@ fn ranking_orders_one_recording_without_substitution() {
         primary_type_id: None,
         secondary_types: secondaries.into_iter().map(str::to_owned).collect(),
         artist_credit: Vec::new(),
+        disambiguation: None,
     };
     let official_album = musicbrainz::RecordingRelease {
         id: RELEASE_MBID.to_owned(),
@@ -932,9 +927,9 @@ fn brainzmash_request_url_validation_holds() {
 #[tokio::test]
 async fn brainzmash_binding_invalid_fails_closed_without_wire() {
     let (fake, sink) = fast_mb(vec![]);
-    let client = musicbrainz::MusicBrainzClient::brainzmash(SharedMb(fake.clone()), false)
-        .with_sink(SharedSink(sink))
-        .with_gates(fast_gate(), fast_scheduler());
+    let client =
+        musicbrainz::MusicBrainzClient::brainzmash(SharedMb(fake.clone()), false, unpaced())
+            .with_sink(SharedSink(sink));
     let error = client
         .lookup_release(RELEASE_MBID, &[], musicbrainz::Criticality::BestEffort)
         .await
@@ -951,13 +946,13 @@ async fn brainzmash_binding_invalid_fails_closed_without_wire() {
 
 #[test]
 fn brainzmash_cooldown_honors_retry_after_then_backs_off() {
-    let scheduler = musicbrainz::BrainzMashScheduler::default();
-    assert!(scheduler.cooldown_remaining().is_zero());
+    let scheduler = musicbrainz::BrainzMashCooldown::default();
+    assert!(scheduler.remaining().is_zero());
     let selected = scheduler.note_cooldown(Some(5.0));
     assert_eq!(selected, 5.0);
-    assert!(!scheduler.cooldown_remaining().is_zero());
+    assert!(!scheduler.remaining().is_zero());
     scheduler.note_success();
-    assert!(scheduler.cooldown_remaining().is_zero());
+    assert!(scheduler.remaining().is_zero());
 
     let first = scheduler.note_cooldown(None);
     assert!(
