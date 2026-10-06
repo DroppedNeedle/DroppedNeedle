@@ -20,21 +20,25 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use super::super::tags::{Refusal, TagEdit, TagField, TagsError, read_fields, save_tags};
+use super::super::tags::save::{accepts, writable};
+use super::super::tags::{
+    Refusal, TagEdit, TagField, TagsError, format_for_path, read_document, save_tags,
+};
 use super::PublishError;
 use super::tags_seam::TagDocument;
 
 /// Map managed updates onto save-wrapper edits. An empty value list
-/// removes the field (undo uses that for fields an edit added). Unknown
-/// names block loudly: the caller runs this at preview time so Apply
-/// never meets a name the writer cannot express.
+/// removes the field (undo uses that for fields an edit added). Values
+/// are written as given: new values are checked at preview
+/// ([`check_new_values`]), and values replayed from a file go back
+/// exactly as they were. Unknown names block loudly.
 pub fn check_managed_updates(
     managed_updates: &BTreeMap<String, Vec<String>>,
 ) -> Result<Vec<TagEdit>, PublishError> {
     let mut edits = Vec::with_capacity(managed_updates.len());
     for (name, values) in managed_updates {
         match TagField::from_name(name) {
-            Some(field) => edits.push(TagEdit::new(field, values.clone())),
+            Some(field) => edits.push(TagEdit::verbatim(field, values.clone())),
             None => {
                 return Err(PublishError::Capability(format!(
                     "field {name} is outside the staged writer's surface"
@@ -43,6 +47,27 @@ pub fn check_managed_updates(
         }
     }
     Ok(edits)
+}
+
+/// Check values a caller asks to write: known names, and values each
+/// field can hold (dates parse, counts are numbers, one value where the
+/// field holds one). Runs at preview, so Apply never meets them.
+pub fn check_new_values(
+    managed_updates: &BTreeMap<String, Vec<String>>,
+) -> Result<(), PublishError> {
+    for (name, values) in managed_updates {
+        let field = TagField::from_name(name).ok_or_else(|| {
+            PublishError::Capability(format!(
+                "field {name} is outside the staged writer's surface"
+            ))
+        })?;
+        if !accepts(&TagEdit::new(field, values.clone())) {
+            return Err(PublishError::Capability(format!(
+                "field {name} cannot hold {values:?}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Audio extensions the staged writer routes. Anything else (WMA
@@ -113,7 +138,7 @@ pub fn render_staged_bytes(
 /// save wrapper's byte-level handling, not by this document.
 pub fn document_from_file(path: &Path) -> Result<TagDocument, PublishError> {
     let name = message_name_path(path);
-    let fields = read_fields(path).map_err(|error| match error {
+    let fields = read_document(path).map_err(|error| match error {
         TagsError::UnrecognizedExtension { extension } => {
             PublishError::Capability(format!("format {extension} has no staged writer"))
         }
@@ -121,26 +146,62 @@ pub fn document_from_file(path: &Path) -> Result<TagDocument, PublishError> {
     })?;
     Ok(TagDocument {
         managed: fields
+            .values
             .into_iter()
             .map(|(field, values)| (field.name().to_owned(), values))
             .collect(),
         custom: BTreeMap::new(),
         unknown_frames: BTreeMap::new(),
+        opaque: fields
+            .opaque
+            .into_iter()
+            .map(|field| field.name().to_owned())
+            .collect(),
     })
 }
 
 /// The before-state document for a write of `managed_updates`: the
 /// file's fields, plus an empty entry for each field the write adds, so
-/// undo removes what the write put there.
+/// undo removes what the write put there. A write that would overwrite
+/// a field the file holds in a shape undo cannot put back is refused
+/// here, before anything is staged.
 pub fn document_for_write(
     path: &Path,
     managed_updates: &BTreeMap<String, Vec<String>>,
 ) -> Result<TagDocument, PublishError> {
     let mut document = document_from_file(path)?;
+    if let Some(name) = managed_updates
+        .keys()
+        .find(|name| document.opaque.contains(name))
+    {
+        return Err(PublishError::Capability(format!(
+            "field {name} of '{}' holds a value undo could not restore",
+            message_name_path(path)
+        )));
+    }
     for name in managed_updates.keys() {
         document.managed.entry(name.clone()).or_default();
     }
     Ok(document)
+}
+
+/// What a baseline restore writes: the baseline's fields, plus a removal
+/// for every other writable field, so fields added by any later write go
+/// away. Fields the baseline held in an unwritable shape are left alone,
+/// and read-only containers get no tag writes at all.
+pub fn restore_updates(baseline: &TagDocument, rel_path: &str) -> BTreeMap<String, Vec<String>> {
+    let writable_format = format_for_path(Path::new(rel_path)).is_ok_and(writable);
+    if !writable_format {
+        return baseline.managed.clone();
+    }
+    let mut updates = baseline.managed.clone();
+    for field in TagField::ALL {
+        let name = field.name();
+        if !baseline.opaque.iter().any(|opaque| opaque == name) {
+            updates.entry(name.to_owned()).or_default();
+        }
+    }
+    updates
 }
 
 /// Map a tag failure onto the publisher gates. Deterministic

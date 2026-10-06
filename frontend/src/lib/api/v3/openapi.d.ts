@@ -11047,10 +11047,11 @@ export interface components {
              */
             dest_rel?: string | null;
             /**
-             * @description Managed-field updates by Picard tag-set name: `title`, `artist`,
-             *     `artists`, `album`, `album_artist`, `album_artist_sort`,
-             *     `artist_sort`, `genre`, `track_number`, `total_tracks`,
-             *     `disc_number`, `total_discs`, `date`, `original_date`,
+             * @description Managed-field updates by Picard tag-set name: `title`,
+             *     `title_sort`, `artist`, `artists`, `artist_sort`, `album`,
+             *     `album_sort`, `album_artist`, `album_artist_sort`, `genre`,
+             *     `compilation` (`1` or `0`), `track_number`, `total_tracks`,
+             *     `disc_number`, `total_discs`, `disc_subtitle`, `date`, `original_date`,
              *     `release_status`, `release_country`, `release_type`, `media`,
              *     `label`, `catalog_number`, `barcode`, `asin`, and the
              *     `musicbrainz_*` ids (`recording`, `release_track`, `release`,

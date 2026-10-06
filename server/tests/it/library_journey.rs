@@ -1463,3 +1463,143 @@ async fn identification_survives_restarts() {
     assert_eq!(identity.decision_source, DecisionSource::Manual);
     assert_eq!(identity.release_mbid.as_deref(), Some("rel-1"));
 }
+
+/// Identify the album by approving the first of two tied candidates.
+async fn approve_first_candidate(library: &LibrarySetup, album: &str) {
+    library
+        .test_providers
+        .as_ref()
+        .expect("scripted providers")
+        .set_recall(ambiguous_recall(library, album));
+    assert_eq!(library.identify_tick().await, 1);
+    let review = library.pending_reviews(album);
+    library
+        .approve_review(&review[0].id, "curator", "rg-1:rel-1")
+        .expect("review approves");
+}
+
+/// Preview and apply one managed write; returns the bundle id.
+fn publish_one(
+    library: &LibrarySetup,
+    kind: droppedneedle::library::publish::planner::PlanKind,
+    album: &str,
+    rel_path: &str,
+    dest_rel: Option<&str>,
+    updates: &[(&str, &str)],
+) -> String {
+    use droppedneedle::library::manage::PreviewItemInput;
+    let sealed = library
+        .plan_preview(
+            kind,
+            album,
+            vec![PreviewItemInput {
+                root_id: "music".to_owned(),
+                rel_path: rel_path.to_owned(),
+                dest_rel: dest_rel.map(str::to_owned),
+                managed_updates: updates
+                    .iter()
+                    .map(|(name, value)| ((*name).to_owned(), vec![(*value).to_owned()]))
+                    .collect(),
+            }],
+        )
+        .expect("preview seals");
+    library
+        .apply_preview(&sealed.token)
+        .expect("apply publishes")
+        .bundle_id
+}
+
+/// Values a new edit could never carry (a `3/12` track number, a
+/// free-text date) come back exactly when a retag is undone.
+#[tokio::test]
+async fn undo_restores_values_no_new_edit_could_write() {
+    use droppedneedle::library::publish::planner::PlanKind;
+    use droppedneedle::library::scan::CatalogStore as _;
+    use droppedneedle::library::tags::save::{TagEdit, save_tags};
+    use droppedneedle::library::tags::{TagField, read_fields};
+
+    let (_scratch, library, music) = bare_library("lib-undo-raw");
+    let file = plant(&music, "album/01.flac", "management_full.flac");
+    save_tags(
+        &file,
+        &[
+            TagEdit::verbatim(TagField::TrackNumber, vec!["3/12".to_owned()]),
+            TagEdit::verbatim(TagField::Date, vec!["circa 1970".to_owned()]),
+        ],
+    )
+    .expect("odd values planted");
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "album/01.flac")
+        .expect("track indexed");
+    let album = library.scan_store.album_for_track(&track).expect("album");
+    approve_first_candidate(&library, &album).await;
+    let before = read_fields(&file).expect("fields read");
+
+    let bundle = publish_one(
+        &library,
+        PlanKind::SamePath,
+        &album,
+        "album/01.flac",
+        None,
+        &[("date", "2001")],
+    );
+    let retagged = read_fields(&file).expect("fields read");
+    assert_eq!(retagged[&TagField::Date], vec!["2001".to_owned()]);
+    assert_ne!(retagged[&TagField::TrackNumber], vec!["3/12".to_owned()]);
+
+    library.undo_bundle(&bundle).expect("undo publishes");
+    assert_eq!(read_fields(&file).expect("fields read"), before);
+}
+
+/// Baseline restore takes a file back to how it was before its first
+/// managed write, removing fields a later write added: organize first
+/// (no tags written), retag second, restore last.
+#[tokio::test]
+async fn baseline_restore_removes_fields_added_later() {
+    use droppedneedle::library::publish::planner::PlanKind;
+    use droppedneedle::library::scan::CatalogStore as _;
+    use droppedneedle::library::tags::{TagField, read_fields};
+
+    let (_scratch, library, music) = bare_library("lib-baseline-added");
+    let file = plant(&music, "album/01.flac", "flac_full_02.flac");
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "album/01.flac")
+        .expect("track indexed");
+    let album = library.scan_store.album_for_track(&track).expect("album");
+    approve_first_candidate(&library, &album).await;
+    let before = read_fields(&file).expect("fields read");
+    assert!(!before.contains_key(&TagField::MusicBrainzReleaseId));
+
+    publish_one(
+        &library,
+        PlanKind::Move,
+        &album,
+        "album/01.flac",
+        Some("moved/01.flac"),
+        &[],
+    );
+    publish_one(
+        &library,
+        PlanKind::SamePath,
+        &album,
+        "moved/01.flac",
+        None,
+        &[],
+    );
+    let moved = music.join("moved/01.flac");
+    let retagged = read_fields(&moved).expect("fields read");
+    assert_eq!(
+        retagged[&TagField::MusicBrainzReleaseId],
+        vec!["rel-1".to_owned()]
+    );
+
+    library
+        .baseline_restore(std::slice::from_ref(&track))
+        .expect("restore publishes");
+    assert!(file.is_file(), "the file is back where it started");
+    assert_eq!(read_fields(&file).expect("fields read"), before);
+}

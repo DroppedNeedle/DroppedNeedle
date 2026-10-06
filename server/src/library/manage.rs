@@ -407,18 +407,6 @@ impl LibrarySetup {
         })
     }
 
-    /// Current semantic tag document for one sandbox file.
-    fn live_doc(
-        sandbox: &Sandbox,
-        root_id: &str,
-        rel_path: &str,
-    ) -> Result<TagDocument, ServiceError> {
-        let path = sandbox
-            .resolve_no_symlink(root_id, rel_path)
-            .map_err(publish_error)?;
-        super::publish::staging::document_from_file(&path).map_err(publish_error)
-    }
-
     /// The before-state document for a write: the file's fields plus an
     /// empty entry per field the write adds, so undo removes those.
     fn live_doc_for_write(
@@ -560,7 +548,7 @@ impl LibrarySetup {
                     message: "Preview items need a root and a relative path".to_owned(),
                 });
             }
-            super::publish::staging::check_managed_updates(&item.managed_updates)
+            super::publish::staging::check_new_values(&item.managed_updates)
                 .map_err(publish_error)?;
             let track_id = self.scan_track(&item.root_id, &item.rel_path)?;
             let fingerprint = Self::live_fingerprint(&sandbox, &item.root_id, &item.rel_path)?;
@@ -964,7 +952,7 @@ impl LibrarySetup {
             }
             docs.insert(
                 item.track_id.clone(),
-                Self::live_doc(&sandbox, &live_loc.0, &live_loc.1)?,
+                Self::live_doc_for_write(&sandbox, &live_loc.0, &live_loc.1, &item.doc.managed)?,
             );
         }
         self.publish_restoration(&mut cell, plan_items, docs)
@@ -1076,8 +1064,9 @@ impl LibrarySetup {
             } else {
                 PlanKind::Move
             };
+            let updates = super::publish::staging::restore_updates(&before.doc, &live_loc.1);
             let mut capabilities = Vec::new();
-            if !before.doc.managed.is_empty() {
+            if !updates.is_empty() {
                 capabilities.push(Capability::Metadata);
             }
             if item_kind == PlanKind::Move {
@@ -1105,13 +1094,13 @@ impl LibrarySetup {
                 override_revision: PINNED_OVERRIDE,
                 capabilities,
                 format,
-                managed_updates: before.doc.managed.clone(),
+                managed_updates: updates.clone(),
                 sidecars: Vec::new(),
                 staged_bytes_estimate: size + STAGED_HEADROOM_BYTES,
             });
             docs.insert(
                 track_id.clone(),
-                Self::live_doc(&sandbox, &live_loc.0, &live_loc.1)?,
+                Self::live_doc_for_write(&sandbox, &live_loc.0, &live_loc.1, &updates)?,
             );
         }
         self.publish_restoration(&mut cell, plan_items, docs)

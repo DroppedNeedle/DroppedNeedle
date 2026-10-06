@@ -29,6 +29,11 @@ pub struct TagDocument {
     /// descriptor. The writer never inspects these.
     #[serde(default)]
     pub unknown_frames: BTreeMap<String, Vec<u8>>,
+    /// Managed fields the file held in a shape that cannot be written
+    /// back (see `tags::FieldDocument`). No write touches them, and a
+    /// restore never removes them.
+    #[serde(default)]
+    pub opaque: Vec<String>,
 }
 
 impl TagDocument {
@@ -38,6 +43,7 @@ impl TagDocument {
             managed: BTreeMap::new(),
             custom: BTreeMap::new(),
             unknown_frames: BTreeMap::new(),
+            opaque: Vec::new(),
         }
     }
 }
