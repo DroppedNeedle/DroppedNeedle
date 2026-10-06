@@ -446,7 +446,6 @@ pub fn transition_scopes(
     current: &ResolvedLibraryPolicy,
     proposed: &ResolvedLibraryPolicy,
 ) -> Vec<TransitionScope> {
-    use std::collections::BTreeMap;
     let current_roots: BTreeMap<&str, &LibraryRoot> = current
         .settings
         .library_roots
@@ -553,8 +552,7 @@ pub fn collapse_scopes(scopes: Vec<TransitionScope>) -> Vec<TransitionScope> {
         .filter(|scope| scope.relative_path == ".")
         .map(|scope| scope.root_id.clone())
         .collect();
-    let mut unique: std::collections::BTreeMap<(String, String), TransitionScope> =
-        std::collections::BTreeMap::new();
+    let mut unique: BTreeMap<(String, String), TransitionScope> = BTreeMap::new();
     for scope in scopes {
         if whole_roots.contains(scope.root_id.as_str()) && scope.relative_path != "." {
             continue;
