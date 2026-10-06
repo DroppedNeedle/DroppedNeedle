@@ -435,9 +435,9 @@ impl RunStore for SqliteScanStore {
         })
     }
 
-    fn cleanup_terminal_inventory(&self, limit: usize) {
+    fn cleanup_terminal_inventory(&self, limit: usize) -> bool {
         let guard = self.lock();
-        if let Err(error) = (|| -> rusqlite::Result<()> {
+        let pending = (|| -> rusqlite::Result<bool> {
             let target: Option<String> = guard
                 .conn
                 .query_row(
@@ -456,7 +456,7 @@ impl RunStore for SqliteScanStore {
                      ORDER BY terminal_at DESC, id DESC LIMIT -1 OFFSET ?1)",
                     params![HISTORY_KEPT as i64],
                 )?;
-                return Ok(());
+                return Ok(false);
             };
             let page = limit.max(1) as i64;
             guard.conn.execute(
@@ -466,7 +466,7 @@ impl RunStore for SqliteScanStore {
                 params![target, failure_codes::TAG_READ_DEFERRED, page],
             )?;
             if guard.conn.changes() > 0 {
-                return Ok(());
+                return Ok(true);
             }
             guard.conn.execute(
                 "DELETE FROM library_scan_inventory WHERE rowid IN ( \
@@ -484,10 +484,12 @@ impl RunStore for SqliteScanStore {
                     params![target],
                 )?;
             }
-            Ok(())
-        })() {
+            Ok(true)
+        })();
+        pending.unwrap_or_else(|error| {
             tracing::error!(%error, "scan cleanup_terminal_inventory failed");
-        }
+            false
+        })
     }
 }
 

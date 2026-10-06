@@ -179,7 +179,10 @@ pub trait RunStore: Send + Sync {
 
     fn recover_stopping(&self, now: f64) -> Vec<ScanRun>;
 
-    fn cleanup_terminal_inventory(&self, limit: usize);
+    /// Delete one page (at most `limit` rows) of a finished run's
+    /// inventory or failures, or prune old history when none is left.
+    /// Returns true while more cleanup is pending.
+    fn cleanup_terminal_inventory(&self, limit: usize) -> bool;
 }
 
 /// Discovery state and the per-run file inventory.

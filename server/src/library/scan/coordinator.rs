@@ -691,10 +691,11 @@ impl<S: ScanStore, T: TagReader + 'static> LibraryScanCoordinator<S, T> {
     /// Drive one run to the next stopping point (v2 `run_once`). Returns
     /// the run, or `None` when no work was available.
     pub async fn run_once(&self, root_paths: &HashMap<String, PathBuf>) -> Option<ScanRun> {
+        // Finished runs' inventory goes even while the library is off.
+        self.cleanup_terminal_inventory().await;
         if !self.resolvers.resolver().enabled() {
             return None;
         }
-        self.store.cleanup_terminal_inventory(5_000);
         let mut run = self.store.resumable();
         let newly_claimed = run.is_none();
         if run.is_none() {
@@ -713,7 +714,15 @@ impl<S: ScanStore, T: TagReader + 'static> LibraryScanCoordinator<S, T> {
         if outcome.state.is_terminal() {
             // Post-terminal housekeeping, off the observed scan wall: fold
             // the WAL, then release the heap the scan churned.
-            self.store.checkpoint_terminal();
+            let folded = self
+                .on_store(|store| {
+                    store.checkpoint_terminal();
+                    Ok(())
+                })
+                .await;
+            if let Err(error) = folded {
+                tracing::warn!(%error, "scan terminal checkpoint did not run");
+            }
             release_scan_memory();
         }
         Some(outcome)
@@ -1014,6 +1023,24 @@ impl<S: ScanStore, T: TagReader + 'static> LibraryScanCoordinator<S, T> {
                 }
                 Err(error) => return Err(error),
             }
+        }
+    }
+
+    /// Clear finished runs' inventory, a bounded number of pages per
+    /// call, on a blocking thread.
+    async fn cleanup_terminal_inventory(&self) {
+        let cleaned = self
+            .on_store(|store| {
+                for _ in 0..CLEANUP_PAGES_PER_CALL {
+                    if !store.cleanup_terminal_inventory(CLEANUP_PAGE_ROWS) {
+                        break;
+                    }
+                }
+                Ok(())
+            })
+            .await;
+        if let Err(error) = cleaned {
+            tracing::warn!(%error, "scan inventory cleanup did not run");
         }
     }
 
@@ -1342,6 +1369,12 @@ impl<S: ScanStore, T: TagReader + 'static> LibraryScanCoordinator<S, T> {
         missing
     }
 }
+
+/// Inventory rows deleted per cleanup page.
+const CLEANUP_PAGE_ROWS: usize = 5_000;
+
+/// Cleanup pages per drive: a 100k-row run clears in one call.
+const CLEANUP_PAGES_PER_CALL: usize = 25;
 
 /// Missing rows marked per transaction during reconcile.
 const RECONCILE_CHUNK: usize = 500;
