@@ -260,7 +260,7 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
 /// `Content-Encoding` (the web UI's precompressed assets, audio's
 /// `identity`) pass through untouched, as do bodies under 32 bytes and
 /// event streams.
-fn compression_layer() -> tower_http::compression::CompressionLayer<impl Predicate + Clone> {
+fn compression_layer() -> tower_http::compression::CompressionLayer<impl Predicate> {
     let predicate = DefaultPredicate::new()
         .and(NotForContentType::const_new("audio/"))
         .and(NotForContentType::const_new("video/"))
