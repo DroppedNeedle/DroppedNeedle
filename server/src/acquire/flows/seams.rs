@@ -478,23 +478,32 @@ pub struct Tick {
     pub at: i64,
 }
 
-/// Durable tick sink. Production logs each tick and forwards the ones
-/// plugins care about (`acquire::plugin_events::PluginTicks`); tests read
-/// them back.
+/// Durable tick sink. Production logs each tick, forwards the outcomes
+/// plugins care about and sends user notices to the live event stream
+/// (`acquire::plugin_events::FlowTicks`); tests read them back.
 pub trait TickSink: Send + Sync {
     /// Record one tick.
     fn emit(&self, kind: &str, detail: &str, at: i64);
 
-    /// Announce one flow outcome to plugin subscribers. The default
-    /// drops it; the production sink forwards it to the plugin host.
+    /// Announce one flow outcome. The default drops it; the production
+    /// sink forwards it to the plugin host or the event stream.
     fn announce(&self, event: FlowEvent) {
         let _ = event;
     }
 }
 
-/// A flow outcome plugin subscribers hear about.
+/// A flow outcome announced to plugin subscribers or to a user's open
+/// tabs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FlowEvent {
+    /// Tell one user's open tabs (`wanted_*`, `auto_download_enqueued`,
+    /// `request_imported`).
+    Notify {
+        /// Who to tell.
+        user_id: String,
+        /// What happened.
+        notice: crate::events::UserNotice,
+    },
     /// A request reached the library.
     RequestFulfilled {
         /// Request key (the release-group MBID for albums).

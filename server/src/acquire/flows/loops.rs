@@ -32,6 +32,7 @@ use crate::acquire::requests::error::RequestsError;
 use crate::acquire::requests::ledger::{RequestRecord, WATCH_WATCHING, WantedWatch};
 use crate::acquire::requests::models::RequestKind;
 use crate::acquire::requests::sqlite::{RequestStore, WantedStore};
+use crate::events::{AutoDownloadEnqueued, UserNotice, WantedNotice};
 
 /// Wanted-watcher sweep cadence in seconds (v2 `_WANTED_WATCHER_INTERVAL`).
 pub const WANTED_INTERVAL: Duration = Duration::from_secs(900);
@@ -427,6 +428,7 @@ async fn check_watch(
             user_id: watch.user_id.clone(),
             release_group_mbid: watch.key.clone(),
         });
+        notify_wanted(deps, watch, UserNotice::WantedFulfilled, |_| {});
         summary.fulfilled += 1;
         return Ok(());
     }
@@ -463,6 +465,10 @@ async fn check_watch(
                     ),
                     now,
                 );
+                let found = u32::try_from(candidates.len()).unwrap_or(u32::MAX);
+                notify_wanted(deps, watch, UserNotice::WantedNewCandidates, |notice| {
+                    notice.new_candidates = Some(found);
+                });
                 return Ok(());
             }
             let dispatch = DispatchRequest {
@@ -489,6 +495,9 @@ async fn check_watch(
                         &format!("wanted {} auto-dispatched as {task_id}", watch.key),
                         now,
                     );
+                    notify_wanted(deps, watch, UserNotice::WantedAutoDispatched, |notice| {
+                        notice.task_id = Some(task_id.clone());
+                    });
                     summary.dispatched += 1;
                 }
                 Err(cause) => {
@@ -517,6 +526,21 @@ async fn check_watch(
         }
     }
     Ok(())
+}
+
+/// Tell the watch's owner what the watcher did (v2 `_publish`).
+fn notify_wanted(
+    deps: &WantedDeps,
+    watch: &WantedWatch,
+    kind: fn(WantedNotice) -> UserNotice,
+    extra: impl FnOnce(&mut WantedNotice),
+) {
+    let mut notice = WantedNotice::new(&watch.key, &watch.artist_name, &watch.album_title);
+    extra(&mut notice);
+    deps.ticks.announce(FlowEvent::Notify {
+        user_id: watch.user_id.clone(),
+        notice: kind(notice),
+    });
 }
 
 /// Enrol availability-dead album requests as watches: `failed` rows, plus
@@ -787,13 +811,24 @@ async fn enqueue_for_followers(
             idempotency_key: Some(format!("follow:{follower}:{}", rg_mbid.to_lowercase())),
         };
         match deps.downloads.dispatch(&dispatch).await {
-            Ok(_) => {
+            Ok(task_id) => {
                 enqueued += 1;
                 deps.ticks.emit(
                     "follow.enqueued",
                     &format!("follow {rg_mbid} enqueued for {follower}"),
                     now,
                 );
+                deps.ticks.announce(FlowEvent::Notify {
+                    user_id: follower.clone(),
+                    notice: UserNotice::AutoDownloadEnqueued(AutoDownloadEnqueued {
+                        artist_mbid: cursor.artist_mbid.clone(),
+                        // The release page carries no artist name.
+                        artist_name: String::new(),
+                        release_group_mbid: rg_mbid.to_owned(),
+                        title: title.to_owned(),
+                        task_id,
+                    }),
+                });
             }
             Err(cause) => {
                 tracing::warn!(rg_mbid, follower, %cause, "follow dispatch failed");

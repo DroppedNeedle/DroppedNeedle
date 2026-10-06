@@ -72,6 +72,7 @@ use crate::auth::users::roles::Role as AuthRole;
 use crate::auth::users::stores::StoreError;
 use crate::config::AppConfig;
 use crate::db::{DurableWorkWakeups, JobState, WriteLane};
+use crate::events::{EventSink, PlaylistImported, UserNotice, new_event_id};
 use crate::ids::IdGenerator;
 use crate::reads::collections::state::CollectionsState;
 use crate::runtime_config::ConfigStore;
@@ -376,6 +377,8 @@ pub struct AcquireSetup {
     pub staging_root: PathBuf,
     /// Store-prune deps (request history and wanted rows).
     pub prune: Arc<PruneDeps>,
+    /// Live event hub handle shared by the flows and the imports.
+    pub events: EventSink,
 }
 
 /// Flows stores plus the loop deps built over them.
@@ -527,6 +530,7 @@ fn core(
     upgrade_policy: Arc<dyn Fn() -> UpgradePolicy + Send + Sync>,
     collections: &mut CollectionsState,
     plugins: PluginSlot,
+    events: EventSink,
 ) -> Core {
     let journal = Arc::new(Journal::new(db.clone()));
     let dispatch = Arc::new(UnifiedDispatch::new(
@@ -547,6 +551,7 @@ fn core(
     collections.approval_seeds = Some(Arc::new(ApprovalSeedBridge::new(requests.follows.clone()))
         as Arc<dyn crate::reads::collections::state::ApprovalSeedSink>);
     requests.plugins = plugins.clone();
+    let ticks: Arc<dyn TickSink> = Arc::new(super::plugin_events::FlowTicks::new(plugins, events));
     let flows = Arc::new(flows_bundle(
         db,
         &requests,
@@ -554,7 +559,7 @@ fn core(
         dispatch.clone(),
         wanted_settings,
         upgrade_policy,
-        plugins,
+        ticks,
     ));
     Core {
         requests,
@@ -619,6 +624,7 @@ impl AcquireSetup {
         let search: Arc<dyn CandidateSearch> = Arc::new(LiveSearch {
             clients: clients.clone(),
         });
+        let events = EventSink::default();
         let core = core(
             &db,
             ids.clone(),
@@ -630,6 +636,7 @@ impl AcquireSetup {
             upgrade_policy,
             collections,
             clients.plugins().clone(),
+            events.clone(),
         );
         let prune_store = config_store.clone();
         let prune = Arc::new(PruneDeps {
@@ -672,20 +679,25 @@ impl AcquireSetup {
         ));
         let jobs = Arc::new(JobRegistry::new());
         let runner = spotify_service.clone();
+        let import_events = events.clone();
         let executor = Arc::new(TaskExecutor::new(
             jobs.clone(),
             move |job: QueuedSpotifyImport| {
                 let service = runner.clone();
+                let events = import_events.clone();
                 tokio::spawn(async move {
                     let result = service
                         .populate_playlist(&job.user_id, &job.spotify_playlist_id, &job.playlist_id)
-                        .await
-                        .map_err(|error| {
-                            if let super::imports::spotify::SpotifyError::Store(cause) = &error {
-                                tracing::error!(%cause, "spotify import write failed");
-                            }
-                            error.user_message()
-                        });
+                        .await;
+                    if result.is_ok() {
+                        announce_playlist_imported(&events, &job);
+                    }
+                    let result = result.map_err(|error| {
+                        if let super::imports::spotify::SpotifyError::Store(cause) = &error {
+                            tracing::error!(%cause, "spotify import write failed");
+                        }
+                        error.user_message()
+                    });
                     (job.playlist_id.clone(), result)
                 })
             },
@@ -762,7 +774,14 @@ impl AcquireSetup {
             probe_cache,
             staging_root,
             prune,
+            events,
         })
+    }
+
+    /// Send flow notices and import completions to `hub`.
+    /// [`crate::AppState::with_events`] calls this.
+    pub fn attach_events(&self, hub: &crate::events::EventHub) {
+        self.events.attach(hub);
     }
 
     /// Let enabled plugins act as download sources and feed usenet. Boot
@@ -807,6 +826,7 @@ impl AcquireSetup {
             staging_root.clone(),
             Arc::new(Journal::new(db.clone())),
         ));
+        let events = EventSink::default();
         let core = core(
             &db,
             ids.clone(),
@@ -820,6 +840,7 @@ impl AcquireSetup {
             Arc::new(UpgradePolicy::default),
             collections,
             clients.plugins().clone(),
+            events.clone(),
         );
         let spotify_client = SpotifyClient::new(
             http.clone(),
@@ -841,15 +862,20 @@ impl AcquireSetup {
             resolver.clone(),
         ));
         let jobs = Arc::new(JobRegistry::new());
+        let import_events = events.clone();
         let executor = Arc::new(TaskExecutor::new(
             jobs.clone(),
             move |job: QueuedSpotifyImport| {
                 let service = service.clone();
+                let events = import_events.clone();
                 tokio::spawn(async move {
                     let result = service
                         .populate_playlist(&job.user_id, &job.spotify_playlist_id, &job.playlist_id)
                         .await
                         .map_err(|_| "spotify import failed".to_owned());
+                    if result.is_ok() {
+                        announce_playlist_imported(&events, &job);
+                    }
                     (job.playlist_id.clone(), result)
                 })
             },
@@ -916,6 +942,7 @@ impl AcquireSetup {
             probe_cache,
             staging_root,
             prune,
+            events,
         })
     }
 
@@ -1174,7 +1201,7 @@ fn flows_bundle(
     dispatch: Arc<UnifiedDispatch>,
     wanted_settings: Arc<dyn Fn() -> WantedSettings + Send + Sync>,
     upgrade_policy: Arc<dyn Fn() -> UpgradePolicy + Send + Sync>,
-    plugins: PluginSlot,
+    ticks: Arc<dyn TickSink>,
 ) -> FlowsBundle {
     let watches = requests.wanted.clone();
     let ledger = requests.store.clone();
@@ -1183,7 +1210,6 @@ fn flows_bundle(
     let quarantine = QuarantineStore::new(db.clone());
     let library = Arc::new(LibraryPresence::new());
     let admins = Arc::new(AdminDirectory::new());
-    let ticks: Arc<dyn TickSink> = Arc::new(super::plugin_events::PluginTicks::new(plugins));
     let handoff = Arc::new(MemoryHandoff::new());
     let ops = OpStore::new(db.clone());
     let wanted_deps = Arc::new(WantedDeps {
@@ -1242,6 +1268,18 @@ fn flows_bundle(
         sweep_deps,
         sync_deps,
     }
+}
+
+/// Tell the importing user's open tabs the playlist has its tracks, so the
+/// list and detail views refresh (v2 `spotify.py` import completion).
+fn announce_playlist_imported(events: &EventSink, job: &QueuedSpotifyImport) {
+    events.notify(
+        &job.user_id,
+        UserNotice::PlaylistImported(PlaylistImported {
+            playlist_id: job.playlist_id.clone(),
+            event_id: new_event_id(),
+        }),
+    );
 }
 
 /// Days since epoch to `YYYY-MM-DD` (Howard Hinnant's civil algorithm).

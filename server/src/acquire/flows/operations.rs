@@ -29,6 +29,7 @@ use super::seams::{
     LandedHandoff, LibraryOrganise, TickSink, VerifyVerdict,
 };
 use super::stores::{QuarantineEntry, QuarantineStore};
+use crate::events::{RequestImported, UserNotice, new_event_id};
 
 /// Registry name for the free-music durable operation.
 pub const FREE_MUSIC_JOB: &str = "free-music";
@@ -763,9 +764,6 @@ pub async fn process_drop_job(
             VerifyVerdict::Ok => {
                 let final_path = deps.organise.organise(&job.id, &item.staged_path)?;
                 item.outcome = Some(DropItemOutcome::Resolved(final_path.clone()));
-                if let Some(rg) = rg_mbid {
-                    mark_imported(&deps.ledger, rg, at).await;
-                }
                 resolved += 1;
                 deps.ticks.emit(
                     "drop_import.resolved",
@@ -818,14 +816,18 @@ pub async fn process_drop_job(
         }
         heartbeat(wakeups, lane, DROP_IMPORT_JOB).await;
     }
+    let done = deps.clock.now_unix();
     if resolved > 0 {
+        // Once per job, not per file, so requesters hear about it once.
+        if let Some(rg) = rg_mbid {
+            mark_imported(deps, &job.user_id, rg, done).await;
+        }
         deps.ticks.announce(FlowEvent::ImportFinished {
             release_group_mbid: rg_mbid.unwrap_or_default().to_owned(),
             track_count: resolved,
             source: "drop_import".to_owned(),
         });
     }
-    let done = deps.clock.now_unix();
     ops.transition(
         &op_id,
         OpState::Succeeded,
@@ -857,6 +859,7 @@ pub async fn resolve_quarantined_item(
     decision: ResolveDecision,
     rg_mbid: Option<&str>,
 ) -> Result<bool, String> {
+    let importer = job.user_id.clone();
     let Some(item) = job.items.iter_mut().find(|item| item.name == file_name) else {
         return Ok(false);
     };
@@ -876,7 +879,7 @@ pub async fn resolve_quarantined_item(
                 .map_err(|error| error.to_string())?;
             item.outcome = Some(DropItemOutcome::Resolved(final_path.clone()));
             if let Some(rg) = rg_mbid {
-                mark_imported(&deps.ledger, rg, at).await;
+                mark_imported(deps, &importer, rg, at).await;
             }
             deps.ticks.emit(
                 "drop_import.resolved",
@@ -908,11 +911,14 @@ pub async fn resolve_quarantined_item(
     Ok(true)
 }
 
-/// Mark one album request imported after a drop resolved it. A failed
+/// Mark one album request imported after a drop resolved it, and tell
+/// everyone who asked for it, other than the importer, that it arrived
+/// (v2 `request_imported`; v2 told only the first requester). A failed
 /// write is logged; the status sync reconciles the row later.
-async fn mark_imported(ledger: &RequestStore, rg_mbid: &str, at: i64) {
+async fn mark_imported(deps: &DropImportDeps, importer: &str, rg_mbid: &str, at: i64) {
     let at = u64::try_from(at).unwrap_or(0);
-    if let Err(error) = ledger
+    if let Err(error) = deps
+        .ledger
         .update_status(RequestKind::Album, rg_mbid, "imported", Some(at), None)
         .await
     {
@@ -921,6 +927,35 @@ async fn mark_imported(ledger: &RequestStore, rg_mbid: &str, at: i64) {
             ?error,
             "drop import could not mark the request imported"
         );
+        return;
+    }
+    let record = match deps.ledger.get(RequestKind::Album, rg_mbid).await {
+        Ok(Some(record)) => record,
+        Ok(None) => return,
+        Err(error) => {
+            tracing::warn!(rg_mbid, ?error, "drop import could not read the request");
+            return;
+        }
+    };
+    let mut askers: Vec<&str> = record
+        .requesters
+        .iter()
+        .map(|requester| requester.user_id.as_str())
+        .chain(record.user_id.as_deref())
+        .filter(|user_id| !user_id.is_empty() && *user_id != importer)
+        .collect();
+    askers.sort_unstable();
+    askers.dedup();
+    for user_id in askers {
+        deps.ticks.announce(FlowEvent::Notify {
+            user_id: user_id.to_owned(),
+            notice: UserNotice::RequestImported(RequestImported {
+                event_id: new_event_id(),
+                release_group_mbid: rg_mbid.to_owned(),
+                artist_name: record.artist_name.clone(),
+                album_title: record.album_title.clone(),
+            }),
+        });
     }
 }
 

@@ -1,10 +1,12 @@
-//! Acquisition events for `subscriber` plugins.
+//! Acquisition events for `subscriber` plugins and the live event stream.
 //!
 //! The download worker reports `download_started`, `download_completed`
 //! and `download_failed`; request intake reports `request_created`; the
 //! flow ticks report `request_fulfilled` and `import_finished`. Each goes
 //! to the plugin host when boot attached one, in the background: a slow
-//! plugin never delays the flow that raised the event.
+//! plugin never delays the flow that raised the event. Flow notices for a
+//! user (`wanted_*`, `auto_download_enqueued`, `request_imported`) go to
+//! the event hub once one is attached.
 
 use super::flows::seams::{FlowEvent, TickSink};
 use super::wiring::PluginSlot;
@@ -44,26 +46,28 @@ pub fn download_event(
     );
 }
 
-/// Flow ticks: logged as before, and the ones plugins care about are also
-/// sent to them.
-pub struct PluginTicks {
+/// Flow ticks: logged as before, the outcomes plugins care about go to
+/// them, and user notices go to the live event stream.
+pub struct FlowTicks {
     plugins: PluginSlot,
+    events: crate::events::EventSink,
 }
 
-impl PluginTicks {
-    /// Tick sink over the plugin slot.
-    pub fn new(plugins: PluginSlot) -> Self {
-        Self { plugins }
+impl FlowTicks {
+    /// Tick sink over the plugin slot and the event hub handle.
+    pub fn new(plugins: PluginSlot, events: crate::events::EventSink) -> Self {
+        Self { plugins, events }
     }
 }
 
-impl TickSink for PluginTicks {
+impl TickSink for FlowTicks {
     fn emit(&self, kind: &str, detail: &str, at: i64) {
         tracing::debug!(kind, detail, at, "flow tick");
     }
 
     fn announce(&self, event: FlowEvent) {
         match event {
+            FlowEvent::Notify { user_id, notice } => self.events.notify(&user_id, notice),
             FlowEvent::RequestFulfilled {
                 request_id,
                 user_id,
