@@ -80,6 +80,7 @@
 	import ConcertsNavBadge from '$lib/components/ConcertsNavBadge.svelte';
 	import { createFollowingEvents } from '$lib/queries/following/FollowingEvents';
 	import { createLibraryActivityEvents } from '$lib/queries/library/LibraryActivityEvents';
+	import { createDownloadEvents } from '$lib/queries/downloads/DownloadEvents';
 	import { muxEventStream } from '$lib/queries/events/MuxEventStream';
 	import LibraryActivityStrip from '$lib/components/library/LibraryActivityStrip.svelte';
 	import DownloadsNavBadge from '$lib/components/DownloadsNavBadge.svelte';
@@ -92,6 +93,7 @@
 
 	const followingEvents = createFollowingEvents();
 	const libraryActivityEvents = createLibraryActivityEvents();
+	const downloadEvents = createDownloadEvents();
 
 	let query = $state('');
 	let audioElement = $state<HTMLAudioElement | undefined>(undefined);
@@ -260,6 +262,7 @@
 		untrack(() => {
 			followingEvents.start();
 			libraryActivityEvents.start(authStore.isAdmin, sessionUserId);
+			downloadEvents.start();
 			// presence is server-driven now (the backend polls upstream servers itself),
 			// so it no longer waits on integration status
 			nowPlayingStore.start();
@@ -275,6 +278,7 @@
 		return () => {
 			followingEvents.stop();
 			libraryActivityEvents.stop();
+			downloadEvents.stop();
 			nowPlayingStore.stop();
 			nowPlayingReporter.stop();
 			muxEventStream.disconnect();

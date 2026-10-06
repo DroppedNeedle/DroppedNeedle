@@ -18,6 +18,7 @@
 	import { withBasePath } from '$lib/utils/basePath';
 
 	import DownloadProgressBar from './DownloadProgressBar.svelte';
+	import DownloadReasonNote from './DownloadReasonNote.svelte';
 	import DownloadSourceStatus from './DownloadSourceStatus.svelte';
 	import DownloadStatusBadge from './DownloadStatusBadge.svelte';
 	import VinylProgress from './VinylProgress.svelte';
@@ -123,9 +124,7 @@
 				bytesDownloaded={progress?.bytes_downloaded ?? task.downloaded_bytes}
 				compact
 			/>
-			{#if task.error_message}
-				<p class="mt-1 line-clamp-2 text-xs text-error/80">{task.error_message}</p>
-			{/if}
+			<DownloadReasonNote {task} />
 		{/if}
 	</div>
 

@@ -31,6 +31,7 @@
 	import { EMPTY_STATE_COPY, classifyEmptyState } from '$lib/utils/acquisitionLabels';
 
 	import DownloadProgressBar from './DownloadProgressBar.svelte';
+	import DownloadReasonNote from './DownloadReasonNote.svelte';
 	import DownloadSourceStatus from './DownloadSourceStatus.svelte';
 	import DownloadStatusBadge from './DownloadStatusBadge.svelte';
 	import ReviewCandidates from './ReviewCandidates.svelte';
@@ -182,15 +183,7 @@
 				bytesDownloaded={progress?.bytes_downloaded ?? task.downloaded_bytes}
 				compact
 			/>
-			{#if task.error_message}
-				<p
-					class="mt-1 line-clamp-2 text-xs {task.held_for_review
-						? 'text-warning/85'
-						: 'text-error/80'}"
-				>
-					{task.error_message}
-				</p>
-			{/if}
+			<DownloadReasonNote {task} />
 			{#if emptyCopy}
 				<div class="mt-1 rounded-box border border-base-300 bg-base-100 px-2 py-1.5 text-xs">
 					<p class="font-semibold">{emptyCopy.title}</p>

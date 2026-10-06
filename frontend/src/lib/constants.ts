@@ -405,29 +405,11 @@ export const API = {
 		discard: (itemId: number) => `/api/v1/import/items/${itemId}/discard`
 	},
 	downloads: {
-		activitySummary: () => '/api/v1/downloads/activity-summary',
 		searchAlbum: () => '/api/v1/downloads/search/album',
 		searchJob: (jobId: string) => `/api/v1/downloads/search/${jobId}`,
 		pick: (jobId: string) => `/api/v1/downloads/search/${jobId}/pick`,
 		dismissReview: (jobId: string) => `/api/v1/downloads/search/${jobId}/dismiss`,
 		cancelSearch: (jobId: string) => `/api/v1/downloads/search/${jobId}/cancel`,
-		quarantine: () => '/api/v1/downloads/quarantine',
-		quarantineDelete: (id: number) => `/api/v1/downloads/quarantine/${id}`,
-		list: (status?: string, page = 1, pageSize = 100, releaseGroupMbid?: string) => {
-			const params = new URLSearchParams();
-			if (status) params.set('status', status);
-			if (releaseGroupMbid) params.set('release_group_mbid', releaseGroupMbid);
-			params.set('page', String(page));
-			params.set('page_size', String(pageSize));
-			return `/api/v1/downloads?${params.toString()}`;
-		},
-		stream: (taskId: string) => `/api/v1/downloads/${taskId}/stream`,
-		cancel: (taskId: string) => `/api/v1/downloads/${taskId}/cancel`,
-		nextSource: (taskId: string) => `/api/v1/downloads/${taskId}/next-source`,
-		retry: (taskId: string) => `/api/v1/downloads/${taskId}/retry`,
-		clear: () => '/api/v1/downloads/clear',
-		stopAllRetries: () => '/api/v1/downloads/stop-all-retries',
-		retryAllFailed: () => '/api/v1/downloads/retry-all-failed',
 		held: (releaseGroupMbid?: string) => {
 			const params = new URLSearchParams();
 			if (releaseGroupMbid) params.set('release_group_mbid', releaseGroupMbid);

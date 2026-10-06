@@ -1,5 +1,8 @@
-import { openEventStream } from '$lib/api/channels';
-import { API } from '$lib/constants';
+import {
+	muxEventStream,
+	type MuxEventStream,
+	type MuxUnsubscribe
+} from '$lib/queries/events/MuxEventStream';
 import type { DownloadProgress, DownloadSourceUpdate } from '$lib/types';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
@@ -188,23 +191,23 @@ function parseSourceUpdate(
 	};
 }
 
-// EventSource authenticates via the droppedneedle_session cookie (no custom headers).
-// no 'error' handler so keepalive gaps/close don't clobber a terminal state
-export function createDownloadStream() {
+// Live progress for one task, read from the tab's shared event stream: the
+// worker sends `download_progress` to the task owner after every poll. Status
+// changes reach the cards through the queue list, which `downloads.changed`
+// refreshes (see DownloadEvents), so this only carries bytes and source.
+export function createDownloadStream(mux: MuxEventStream = muxEventStream) {
 	let state = $state<DownloadStreamState>({
 		progress: null,
 		status: null,
 		source: null,
 		done: false
 	});
-	let source: EventSource | null = null;
+	let unsubscribes: MuxUnsubscribe[] = [];
 	let streamScope = getDownloadScope();
 
 	function stop() {
-		if (source) {
-			source.close();
-			source = null;
-		}
+		for (const unsubscribe of unsubscribes) unsubscribe();
+		unsubscribes = [];
 	}
 
 	function start(taskId: string) {
@@ -212,31 +215,30 @@ export function createDownloadStream() {
 		state = { progress: null, status: null, source: null, done: false };
 		const scope = getDownloadScope();
 		streamScope = scope;
-		source = openEventStream(API.downloads.stream(taskId));
-		source.addEventListener('status', (e) => {
+		// A held-file management retry reports its stages as `organizer_retry`,
+		// keyed by the task it retries; snapshots land in the task-keyed store.
+		unsubscribes.push(
+			mux.on('organizer_retry', (e) => {
+				if (scope !== getDownloadScope()) return;
+				const d = parse(e);
+				if (d.task_id === taskId) recordOrganizerRetry(taskId, d);
+			})
+		);
+		const unsubscribe = mux.on('download_progress', (e) => {
 			if (scope !== getDownloadScope()) return;
 			const d = parse(e);
+			if (d.task_id !== taskId) return;
 			const sourceUpdate = parseSourceUpdate(d, state.source);
 			if (
 				state.status !== d.status ||
 				state.source?.candidate_index !== sourceUpdate.candidate_index ||
-				state.source?.attempt_number !== sourceUpdate.attempt_number ||
-				state.source?.attempt_total !== sourceUpdate.attempt_total
+				state.source?.attempt_number !== sourceUpdate.attempt_number
 			) {
 				refreshObservedActivity();
 			}
 			state = {
 				...state,
-				status: (d.status as string) ?? state.status,
-				source: sourceUpdate
-			};
-		});
-		source.addEventListener('progress', (e) => {
-			if (scope !== getDownloadScope()) return;
-			const d = parse(e);
-			const sourceUpdate = parseSourceUpdate(d, state.source);
-			state = {
-				...state,
+				status: typeof d.status === 'string' ? d.status : state.status,
 				progress: {
 					...sourceUpdate,
 					bytes_downloaded: Number(d.bytes_downloaded ?? 0),
@@ -248,20 +250,7 @@ export function createDownloadStream() {
 				source: sourceUpdate
 			};
 		});
-		source.addEventListener('complete', (e) => {
-			if (scope !== getDownloadScope()) return;
-			refreshObservedActivity();
-			const d = parse(e);
-			state = { ...state, status: (d.status as string) ?? state.status, done: true };
-			stop();
-		});
-		// Organizer retry progress shares this connection; snapshots land in the
-		// task-keyed store (latest wins, terminal settles once). Unlike `complete`
-		// this never closes the stream - the card owns that lifecycle.
-		source.addEventListener('organizer_retry', (e) => {
-			if (scope !== getDownloadScope()) return;
-			recordOrganizerRetry(taskId, parse(e));
-		});
+		unsubscribes.push(unsubscribe);
 	}
 
 	return {

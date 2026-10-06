@@ -229,7 +229,7 @@ export function requestTrack() {
 export function cancelDownload() {
 	return createMutation(() => ({
 		mutationFn: (id: string) =>
-			api.global.post<CancelDownloadResponse>(API.downloads.cancel(id), {}),
+			api.global.post<CancelDownloadResponse>(DOWNLOAD_TASKS_ENDPOINTS.cancel(id), {}),
 		onSuccess: () => {
 			toastStore.show({ message: 'Download cancelled', type: 'info' });
 			void invalidateTasks();
@@ -247,7 +247,7 @@ interface NextSourceInput {
 export function tryNextSource() {
 	return createMutation(() => ({
 		mutationFn: (input: NextSourceInput) =>
-			api.global.post<NextSourceResponse>(API.downloads.nextSource(input.id), {
+			api.global.post<NextSourceResponse>(DOWNLOAD_TASKS_ENDPOINTS.nextSource(input.id), {
 				expected_candidate_index: input.candidateIndex
 			}),
 		onSuccess: () => {
@@ -269,7 +269,7 @@ export function tryNextSource() {
 export function stopAutoRetry() {
 	return createMutation(() => ({
 		mutationFn: (id: string) =>
-			api.global.post<CancelDownloadResponse>(API.downloads.cancel(id), {}),
+			api.global.post<CancelDownloadResponse>(DOWNLOAD_TASKS_ENDPOINTS.cancel(id), {}),
 		onSuccess: () => {
 			toastStore.show({ message: 'Stopped retrying', type: 'info' });
 			void invalidateTasks();
@@ -281,7 +281,8 @@ export function stopAutoRetry() {
 
 export function retryDownload() {
 	return createMutation(() => ({
-		mutationFn: (id: string) => api.global.post<RetryDownloadResponse>(API.downloads.retry(id), {}),
+		mutationFn: (id: string) =>
+			api.global.post<RetryDownloadResponse>(DOWNLOAD_TASKS_ENDPOINTS.retry(id), {}),
 		onSuccess: () => {
 			toastStore.show({ message: 'Download retry initiated', type: 'info' });
 			void invalidateTasks();
@@ -299,7 +300,7 @@ function pluralDownloads(n: number): string {
 
 export function clearFinished() {
 	return createMutation(() => ({
-		mutationFn: () => api.global.post<{ cleared: number }>(API.downloads.clear(), {}),
+		mutationFn: () => api.global.post<{ cleared: number }>(DOWNLOAD_TASKS_ENDPOINTS.clear(), {}),
 		onSuccess: (data: { cleared: number }) => {
 			toastStore.show({
 				message: data.cleared > 0 ? `Cleared ${pluralDownloads(data.cleared)}` : 'Nothing to clear',
@@ -314,7 +315,8 @@ export function clearFinished() {
 
 export function stopAllRetries() {
 	return createMutation(() => ({
-		mutationFn: () => api.global.post<{ stopped: number }>(API.downloads.stopAllRetries(), {}),
+		mutationFn: () =>
+			api.global.post<{ stopped: number }>(DOWNLOAD_TASKS_ENDPOINTS.stopAllRetries(), {}),
 		onSuccess: (data: { stopped: number }) => {
 			toastStore.show({
 				message:
@@ -332,7 +334,8 @@ export function stopAllRetries() {
 
 export function retryAllFailed() {
 	return createMutation(() => ({
-		mutationFn: () => api.global.post<{ retried: number }>(API.downloads.retryAllFailed(), {}),
+		mutationFn: () =>
+			api.global.post<{ retried: number }>(DOWNLOAD_TASKS_ENDPOINTS.retryAllFailed(), {}),
 		onSuccess: (data: { retried: number }) => {
 			toastStore.show({
 				message:

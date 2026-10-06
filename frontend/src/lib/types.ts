@@ -2321,6 +2321,29 @@ export interface DownloadTask {
 	// Wrong-product verdict (Slice 2). Optional for backward-compat with cached responses.
 	wrong_product_verdict_at?: number | null;
 	wrong_product_detail?: string | null;
+	// Why the task sits where it does: one stable code, one plain sentence and what
+	// to do about it. Shown instead of the raw error_message.
+	reason?: DownloadReason | null;
+	// What the import decided about the newest landing.
+	decision?: DownloadImportDecision | null;
+}
+
+export interface DownloadReason {
+	code: string;
+	text: string;
+	action: string;
+}
+
+export interface DownloadImportDecision {
+	outcome: 'imported' | 'partial' | 'held' | 'rejected' | 'deferred' | string;
+	reason_code: string | null;
+	reason_text: string | null;
+	reason_action: string | null;
+	detail: string | null;
+	files_total: number;
+	files_imported: number;
+	files_held: number;
+	decided_at: number;
 }
 
 export interface DownloadListResponse {
@@ -2463,10 +2486,13 @@ export interface RetryDownloadResponse {
 
 export interface QuarantineEntry {
 	id: number;
+	source?: string;
 	client_id: string;
 	username: string;
 	filename: string;
 	reason: string;
+	// The reason as a plain sentence.
+	reason_text?: string;
 	quarantined_at: number;
 	release_group_mbid?: string | null;
 }
