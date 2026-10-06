@@ -83,6 +83,7 @@ pub mod snapshots;
 pub mod staging;
 pub mod tags_seam;
 pub mod undo;
+pub mod v2_baseline;
 
 pub use archive::{ArchiveBlock, ArchiveEntry, ArchivePolicy, ArchiveReport, validate_archive};
 pub use journal::{FileJournal, JournalKind, JournalState, JournalStore, fsync_dir};

@@ -342,8 +342,9 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         }
     }
 
-    /// Pre-gates, in order: seal, capability, collision, snapshot
-    /// inputs, disk preflight. Nothing is staged until all pass.
+    /// Pre-gates, in order: seal, capability (plus a v2 original that
+    /// never arrived), collision, snapshot inputs, disk preflight. Nothing
+    /// is staged until all pass.
     fn run_pregates(&self, sealed: &SealedPreview, live: &SealRecheck) -> Result<(), PublishError> {
         sealed.recheck(live).map_err(|err| match err {
             SealError::StaleFile(text) | SealError::StaleIdentity(text) => {
@@ -357,8 +358,16 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             SealError::Expired => PublishError::Validation("preview expired".into()),
         })?;
         let journals = JournalStore::new(&self.conn);
+        let baselines = super::snapshots::BaselineStore::new(&self.conn);
         for item in sealed.bundle.items.iter() {
             self.gate.check(item)?;
+            if baselines.v2_original_missing(&item.track_id)? {
+                return Err(PublishError::Snapshot(format!(
+                    "track {} has an original-file baseline from v2 that was not imported; \
+                     run the v2 import again before managing it",
+                    item.track_id
+                )));
+            }
             if let Some(held) =
                 journals.unsettled_bundle_for_track(&item.track_id, &sealed.bundle.id)?
             {

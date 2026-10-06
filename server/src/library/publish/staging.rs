@@ -147,6 +147,13 @@ pub fn document_from_file(path: &Path) -> Result<TagDocument, PublishError> {
         }
         other => PublishError::Validation(sanitize_tags_message(&name, other)),
     })?;
+    Ok(document_from_fields(fields))
+}
+
+/// The semantic document of a file's fields, however they were read
+/// (from the file itself, or from tags captured before an earlier
+/// version of DroppedNeedle changed it).
+pub fn document_from_fields(fields: super::super::tags::FieldDocument) -> TagDocument {
     let mut managed: BTreeMap<String, Vec<String>> = fields
         .values
         .into_iter()
@@ -157,7 +164,7 @@ pub fn document_from_file(path: &Path) -> Result<TagDocument, PublishError> {
     for ((field, spelling), values) in fields.spellings {
         managed.insert(field.spelling_name(spelling), values);
     }
-    Ok(TagDocument {
+    TagDocument {
         managed,
         custom: BTreeMap::new(),
         unknown_frames: BTreeMap::new(),
@@ -167,7 +174,7 @@ pub fn document_from_file(path: &Path) -> Result<TagDocument, PublishError> {
             .map(|field| field.name().to_owned())
             .collect(),
         version: TAG_DOCUMENT_VERSION,
-    })
+    }
 }
 
 /// The before-state document for a write of `managed_updates`: the

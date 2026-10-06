@@ -24,7 +24,8 @@ pub use fingerprint::{Fingerprint, generate_fingerprint};
 pub use probe::{AudioInfo, probe};
 pub use read::{AudioArtistCredit, AudioTag, read_cover_art, read_tags};
 pub use save::{
-    FieldDocument, Refusal, SaveReport, TagEdit, read_document, read_fields, save_tags,
+    CapturedAtom, CapturedTags, CapturedValue, FieldDocument, Refusal, SaveReport, TagEdit,
+    document_from_captured, read_document, read_fields, save_tags,
 };
 
 use std::path::Path;

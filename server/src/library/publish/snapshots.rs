@@ -267,6 +267,27 @@ impl<'a> BaselineStore<'a> {
             .map_err(PublishError::from)
     }
 
+    /// True when v2 recorded an original for this track (its carried
+    /// management state names a v2 baseline, or v2's baseline row itself
+    /// came across) but no baseline reached v3:
+    /// the v2 import has not run that far, or could not translate it. A
+    /// managed write would then record the file v2 already changed as its
+    /// original, losing the real one, so the track waits.
+    pub fn v2_original_missing(&self, track_id: &str) -> Result<bool, PublishError> {
+        self.conn
+            .query_row(
+                "SELECT (EXISTS(SELECT 1 FROM library_track_management_state m \
+                 WHERE m.local_track_id = ?1 AND m.baseline_id IS NOT NULL) \
+                 OR EXISTS(SELECT 1 FROM library_management_baselines v \
+                 WHERE v.local_track_id = ?1)) \
+                 AND NOT EXISTS (SELECT 1 FROM library_publish_baselines b \
+                 WHERE b.track_id = ?1)",
+                rusqlite::params![track_id],
+                |row| row.get(0),
+            )
+            .map_err(PublishError::from)
+    }
+
     /// Baseline count plus distinct referenced blob count for the purge
     /// impact report.
     pub fn impact(&self) -> Result<(usize, usize), PublishError> {
