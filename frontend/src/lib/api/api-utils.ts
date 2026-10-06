@@ -8,12 +8,12 @@ import { withBasePath } from '$lib/utils/basePath';
  * instead of going through the API client (which calls this internally, so
  * every standard `api.*`/`api.global.*` call inherits the same behavior).
  *
- * Root-relative paths (`/api/v1/...`) get the base prefix exactly once;
+ * Root-relative paths (`/api/v3/...`) get the base prefix exactly once;
  * external, data:, blob:, hash, and protocol-relative (`//host/...`) URLs
  * pass through untouched. See
  * {@link withBasePath} for the full prefixing contract.
  *
- * @param path The API path (e.g., '/api/v1/covers/...')
+ * @param path The API path (e.g., '/api/v3/covers/...')
  * @returns The fully qualified API URL or the original path if PUBLIC_API_URL is unset.
  */
 export function getApiUrl(path: string): string {

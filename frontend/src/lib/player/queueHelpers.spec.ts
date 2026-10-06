@@ -181,7 +181,7 @@ describe('buildQueueItemsFromLocal', () => {
 		expect.assertions(1);
 		const items = buildQueueItemsFromLocal([localTrack], {
 			...baseMeta,
-			coverUrl: '/api/v1/covers/release-group/album-1?size=250'
+			coverUrl: '/api/v3/covers/release-group/album-1?size=250'
 		});
 		expect(items[0].coverRemoteUrl).toBeNull();
 	});

@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { coverSrc } from '$lib/api/covers';
+	import { integrationStore } from '$lib/stores/integration';
 	import { onDestroy, onMount } from 'svelte';
 	import { fly } from 'svelte/transition';
 	import {
@@ -14,12 +16,10 @@
 		Volume2,
 		X
 	} from 'lucide-svelte';
-	import { getApiUrl } from '$lib/api/api-utils';
 	import { discoverQueueDeck } from '$lib/stores/discoverQueueDeck.svelte';
 	import { deckSampler } from '$lib/stores/deckSampler.svelte';
 	import { audioFocus } from '$lib/stores/audioFocus.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
-	import { integrationStore } from '$lib/stores/integration';
 	import { libraryStore } from '$lib/stores/library';
 	import { requestAlbum } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
@@ -255,7 +255,7 @@
 >
 	{#if current}
 		<HeroBackdrop
-			imageUrl={getApiUrl(`/api/v1/covers/release-group/${current.release_group_mbid}?size=500`)}
+			imageUrl={coverSrc('release-group', current.release_group_mbid, 500)}
 			opacity={0.16}
 			hoverOpacity={0.22}
 			blur={22}

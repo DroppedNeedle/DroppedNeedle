@@ -1,4 +1,5 @@
 import { getApiUrl } from '$lib/api/api-utils';
+import { coverPath } from '$lib/api/covers';
 import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 import type { QueueItem, SourceType } from '$lib/player/types';
 import type { CrateReason, CrateTrack, LocalAlbumSummary } from '$lib/types';
@@ -24,7 +25,7 @@ export function localCoverUrl(
 	size: 250 | 500 | 1200 = 250
 ): string | null {
 	if (!releaseGroupMbid) return null;
-	return `/api/v3/covers/release-group/${releaseGroupMbid}?size=${size}`;
+	return coverPath('release-group', releaseGroupMbid, size);
 }
 
 // Absolute cover URL for a crate track: the adapted v3 path first, then

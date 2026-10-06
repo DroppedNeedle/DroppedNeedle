@@ -1,10 +1,10 @@
 <script lang="ts">
+	import { coverSrc } from '$lib/api/covers';
 	import type { Artist, Album } from '$lib/types';
 	import { artistHref, albumHref } from '$lib/utils/entityRoutes';
 	import HeroBackdrop from './HeroBackdrop.svelte';
 	import ArtistImage from './ArtistImage.svelte';
 	import AlbumImage from './AlbumImage.svelte';
-	import { getApiUrl } from '$lib/api/api-utils';
 	import { ArrowRight } from 'lucide-svelte';
 
 	interface Props {
@@ -16,10 +16,10 @@
 
 	let imageUrl = $derived.by(() => {
 		if (artist) {
-			return getApiUrl(`/api/v1/covers/artist/${artist.musicbrainz_id}?size=250`);
+			return coverSrc('artist', artist.musicbrainz_id, 250);
 		}
 		if (album) {
-			return getApiUrl(`/api/v1/covers/release-group/${album.musicbrainz_id}?size=250`);
+			return coverSrc('release-group', album.musicbrainz_id, 250);
 		}
 		return null;
 	});

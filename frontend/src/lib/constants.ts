@@ -240,8 +240,6 @@ export const API = {
 			`/api/v1/library/contributions/${contributionId}/musicbrainz/verify`,
 		cachedAlbumArtwork: (albumId: string, coverVersion: number) =>
 			`/api/v1/library/albums/${encodeURIComponent(albumId)}/artwork/cached?v=${coverVersion}`,
-		exactReleaseArtwork: (releaseMbid: string, size = 250) =>
-			`/api/v1/covers/release/${encodeURIComponent(releaseMbid)}?size=${size}`,
 		artistDetail: (artistId: string) => `/api/v1/library/artists/${artistId}`,
 		artistAlbums: (artistId: string) => `/api/v1/library/artists/${artistId}/albums`,
 		artistAppearances: (artistId: string, limit = 20, offset = 0) =>

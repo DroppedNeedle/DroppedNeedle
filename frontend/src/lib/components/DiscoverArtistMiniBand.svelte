@@ -1,11 +1,11 @@
 <script lang="ts">
-	import { getApiUrl } from '$lib/api/api-utils';
+	import { coverSrc } from '$lib/api/covers';
+	import { imageSettingsStore } from '$lib/stores/imageSettings';
 	import type { BecauseYouListenTo } from '$lib/types';
 	import HomeSection from './HomeSection.svelte';
 	import HeroBackdrop from './HeroBackdrop.svelte';
 	import ArtistImage from './ArtistImage.svelte';
 	import { Headphones } from 'lucide-svelte';
-	import { imageSettingsStore } from '$lib/stores/imageSettings';
 
 	interface Props {
 		entry: BecauseYouListenTo;
@@ -24,9 +24,7 @@
 			if (entry.wide_thumb_url) return entry.wide_thumb_url;
 			if (entry.fanart_url) return entry.fanart_url;
 		}
-		return entry.seed_artist_mbid
-			? getApiUrl(`/api/v1/covers/artist/${entry.seed_artist_mbid}?size=500`)
-			: null;
+		return entry.seed_artist_mbid ? coverSrc('artist', entry.seed_artist_mbid, 500) : null;
 	});
 
 	let avatarRemoteUrl = $derived.by(() => {

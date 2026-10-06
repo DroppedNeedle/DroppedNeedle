@@ -23,7 +23,7 @@ export function basePathPrefix(): string {
 }
 
 /**
- * Prefixes an internal root-relative path (`/api/v1/...`, media, SSE) with the
+ * Prefixes an internal root-relative path (`/api/v3/...`, media, SSE) with the
  * deployment base exactly once. Idempotent and segment-aware: an already
  * prefixed path is returned unchanged, a duplicated base collapses back to one,
  * and lookalike first segments (`/dnx` when base is `/dn`) still get prefixed.

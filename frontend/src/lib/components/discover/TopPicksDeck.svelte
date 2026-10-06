@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { coverSrc } from '$lib/api/covers';
+	import { integrationStore } from '$lib/stores/integration';
 	import { ChevronLeft, ChevronRight, Sparkles, ThumbsDown } from 'lucide-svelte';
 	import { fly } from 'svelte/transition';
 	import type { TopPickItem, TopPicksSection } from '$lib/types';
@@ -12,9 +14,7 @@
 	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
 	import HorizontalCarousel from '$lib/components/HorizontalCarousel.svelte';
 	import { albumHrefOrNull, artistHrefOrNull } from '$lib/utils/entityRoutes';
-	import { integrationStore } from '$lib/stores/integration';
 	import { libraryStore } from '$lib/stores/library';
-	import { getApiUrl } from '$lib/api/api-utils';
 
 	interface Props {
 		section: TopPicksSection;
@@ -78,9 +78,7 @@
 			class="relative overflow-hidden rounded-2xl border border-primary/15 bg-base-200/40 p-5 shadow-[0_4px_24px_oklch(from_var(--color-primary)_l_c_h_/_0.08)] sm:p-6"
 		>
 			<HeroBackdrop
-				imageUrl={featured.album.mbid
-					? getApiUrl(`/api/v1/covers/release-group/${featured.album.mbid}?size=500`)
-					: null}
+				imageUrl={featured.album.mbid ? coverSrc('release-group', featured.album.mbid, 500) : null}
 				opacity={0.1}
 				hoverOpacity={0.14}
 				blur={26}

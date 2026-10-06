@@ -1,14 +1,14 @@
 <script lang="ts">
+	import { coverSrc } from '$lib/api/covers';
+	import { imageSettingsStore } from '$lib/stores/imageSettings';
 	import { Check, MicVocal, RefreshCw } from 'lucide-svelte';
 	import type { ArtistInfo } from '$lib/types';
 	import { extractDominantColor, DEFAULT_GRADIENT } from '$lib/utils/colors';
-	import { imageSettingsStore } from '$lib/stores/imageSettings';
 	import ArtistImage from './ArtistImage.svelte';
 	import ArtistLinks from './ArtistLinks.svelte';
 	import FollowControl from './FollowControl.svelte';
 	import BackButton from './BackButton.svelte';
 	import HeroBackdrop from './HeroBackdrop.svelte';
-	import { getApiUrl } from '$lib/api/api-utils';
 
 	interface Props {
 		artist: ArtistInfo;
@@ -28,8 +28,7 @@
 			if (artist.wide_thumb_url) return artist.wide_thumb_url;
 			if (artist.fanart_url) return artist.fanart_url;
 		}
-		if (heroImageLoaded)
-			return getApiUrl(`/api/v1/covers/artist/${artist.musicbrainz_id}?size=500`);
+		if (heroImageLoaded) return coverSrc('artist', artist.musicbrainz_id, 500);
 		return null;
 	});
 
@@ -40,7 +39,7 @@
 
 	function onHeroImageLoad() {
 		heroImageLoaded = true;
-		extractDominantColor(getApiUrl(`/api/v1/covers/artist/${artist.musicbrainz_id}?size=500`)).then(
+		extractDominantColor(coverSrc('artist', artist.musicbrainz_id, 500)).then(
 			(gradient) => (heroGradient = gradient)
 		);
 	}

@@ -1,3 +1,4 @@
+import { coverSrc } from '$lib/api/covers';
 import { isValidMbid } from '$lib/utils/formatting';
 import { getApiUrl } from '$lib/api/api-utils';
 
@@ -10,9 +11,7 @@ export function isAbortError(error: unknown): boolean {
 
 export function getCoverUrl(coverUrl: string | null | undefined, albumId: string): string {
 	if (isValidMbid(albumId)) {
-		return getApiUrl(`/api/v1/covers/release-group/${albumId}?size=250`);
+		return coverSrc('release-group', albumId, 250);
 	}
-	return coverUrl
-		? getApiUrl(coverUrl)
-		: getApiUrl(`/api/v1/covers/release-group/${albumId}?size=250`);
+	return coverUrl ? getApiUrl(coverUrl) : coverSrc('release-group', albumId, 250);
 }

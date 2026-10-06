@@ -1,10 +1,11 @@
 <script lang="ts">
+	import { coverSrc, type CoverKind } from '$lib/api/covers';
+	import { imageSettingsStore } from '$lib/stores/imageSettings';
 	import { onDestroy } from 'svelte';
 	import { Disc3, Users } from 'lucide-svelte';
 	import { lazyImage, resetLazyImage } from '$lib/utils/lazyImage';
 	import { API_SIZES } from '$lib/constants';
 	import { isValidMbid } from '$lib/utils/formatting';
-	import { imageSettingsStore } from '$lib/stores/imageSettings';
 	import { appendAudioDBSizeSuffix } from '$lib/utils/imageSuffix';
 	import { getApiUrl } from '$lib/api/api-utils';
 	import {
@@ -123,7 +124,7 @@
 
 	let canonicalAlbumCoverUrl = $derived(
 		imageType === 'album' && isValidMbid(mbid)
-			? getApiUrl(`/api/v1/covers/release-group/${mbid}?size=${requestedPixels}`)
+			? coverSrc('release-group', mbid, requestedPixels)
 			: null
 	);
 	let validMbid = $derived(source === 'local' || imageType === 'album' ? true : isValidMbid(mbid));
@@ -132,14 +133,10 @@
 			((useRemoteUrl && resolvedRemoteUrl) ||
 				(imageType === 'album' ? canonicalAlbumCoverUrl || resolvedCustomUrl || mbid : validMbid))
 	);
-	let apiEndpoint = $derived(imageType === 'album' ? 'release-group' : 'artist');
-	let fallbackCoverUrl = $derived(
-		getApiUrl(`/api/v1/covers/${apiEndpoint}/${mbid}?size=${requestedPixels}`)
-	);
+	let apiEndpoint: CoverKind = $derived(imageType === 'album' ? 'release-group' : 'artist');
+	let fallbackCoverUrl = $derived(coverSrc(apiEndpoint, mbid, requestedPixels));
 	let responsiveCoverUrl = $derived(
-		requestSize === 250 && responsiveSizes
-			? getApiUrl(`/api/v1/covers/${apiEndpoint}/${mbid}?size=500`)
-			: null
+		requestSize === 250 && responsiveSizes ? coverSrc(apiEndpoint, mbid, 500) : null
 	);
 	let coverUrl = $derived(
 		imageType === 'album'

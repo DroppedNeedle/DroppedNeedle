@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { getApiUrl } from '$lib/api/api-utils';
+	import { coverSrc } from '$lib/api/covers';
 	import { Disc3, Search } from 'lucide-svelte';
 	import type { SearchRemoteStatus, SuggestResult } from '$lib/types';
 	import { getSearchSuggestionsV3Query } from '$lib/queries/search/SearchV3Queries.svelte';
@@ -65,8 +65,8 @@
 
 	function coverUrl(result: SuggestResult): string {
 		return result.type === 'artist'
-			? getApiUrl(`/api/v1/covers/artist/${result.musicbrainz_id}?size=250`)
-			: getApiUrl(`/api/v1/covers/release-group/${result.musicbrainz_id}?size=250`);
+			? coverSrc('artist', result.musicbrainz_id, 250)
+			: coverSrc('release-group', result.musicbrainz_id, 250);
 	}
 
 	function handleInput() {

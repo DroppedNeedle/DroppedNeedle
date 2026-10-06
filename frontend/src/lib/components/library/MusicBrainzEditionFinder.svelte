@@ -10,7 +10,7 @@
 	} from 'lucide-svelte';
 
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
-	import { API } from '$lib/constants';
+	import { coverPath } from '$lib/api/covers';
 	import { getReleaseEditionSearchQuery } from '$lib/queries/library/LibraryEditionQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 
@@ -174,7 +174,7 @@
 			{#each suggestedEditions as edition (edition.release_mbid)}
 				<article class="edition-finder-row">
 					<AlbumImage
-						customUrl={API.library.exactReleaseArtwork(edition.release_mbid)}
+						customUrl={coverPath('release', edition.release_mbid, 250)}
 						alt={`Cover for ${edition.title}`}
 						size="sm"
 						className="edition-finder-art border border-base-content/10"
@@ -281,7 +281,7 @@
 	{#if currentReleaseMbid}
 		<article class="edition-finder-current">
 			<AlbumImage
-				customUrl={API.library.exactReleaseArtwork(currentReleaseMbid)}
+				customUrl={coverPath('release', currentReleaseMbid, 250)}
 				alt={`Cover for ${currentEdition?.title ?? albumTitle}`}
 				size="sm"
 				className="edition-finder-current-art border border-base-content/10"

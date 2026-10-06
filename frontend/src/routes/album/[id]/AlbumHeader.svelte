@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { coverSrc } from '$lib/api/covers';
 	import type {
 		AlbumBasicInfo,
 		AlbumTracksInfo,
@@ -6,7 +7,6 @@
 		HeldImport,
 		LibraryAlbumSummary
 	} from '$lib/types';
-	import { getApiUrl } from '$lib/api/api-utils';
 	import { colors } from '$lib/colors';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import HeroBackdrop from '$lib/components/HeroBackdrop.svelte';
@@ -297,7 +297,7 @@
 
 	let backdropUrl = $derived(
 		album.musicbrainz_id
-			? getApiUrl(`/api/v1/covers/release-group/${album.musicbrainz_id}?size=500`)
+			? coverSrc('release-group', album.musicbrainz_id, 500)
 			: album.cover_url || album.album_thumb_url || null
 	);
 </script>
