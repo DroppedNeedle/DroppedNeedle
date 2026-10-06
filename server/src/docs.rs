@@ -333,6 +333,7 @@ use crate::{
         crate::reads::platform::covers::cover_from_release_group,
         crate::reads::platform::covers::cover_from_release,
         crate::reads::platform::covers::artist_cover,
+        crate::reads::platform::covers::album_artwork,
         crate::reads::platform::version::get_version,
         crate::reads::platform::version::check_update,
         crate::reads::platform::version::get_releases,

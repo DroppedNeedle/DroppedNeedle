@@ -23,9 +23,11 @@
 //! Seam note: the aggregation role traits below (`MusicBrainzClient`,
 //! `ListenBrainzClient`, `LastFmClient`, `LyricsClient`, `EventsClient`)
 //! are the stable aggregator surface. The adapters in
-//! [`adapters`](super::adapters) implement them over the concrete HTTP
+//! [`live`] implement them over the concrete HTTP
 //! clients (live where credentials and persistence allow, unconfigured
 //! stubs that report the gap elsewhere).
+
+pub mod live;
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -33,7 +35,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::degradation::{IntegrationStatus as CoreStatus, record_current};
+use crate::providers::degradation::{IntegrationStatus as CoreStatus, record_current};
 use crate::reads::library::stores::{LibraryCatalog, LyricDoc, LyricsPort, StoreError};
 use crate::reads::search::models::{
     AlbumEnrichment, ArtistEnrichment, Degradation, EnrichmentBatchRequest, EnrichmentResponse,

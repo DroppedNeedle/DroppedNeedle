@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
-use droppedneedle::providers::enrich::{
+use droppedneedle::reads::enrichment::{
     AggregatingEnrichment, AlbumPageInput, ArtistCore, EnrichmentAggregator, EventCity,
     EventsClient, LastFmAlbumInfo, LastFmArtistInfo, LastFmClient, ListenBrainzClient, LiveEvent,
     LyricsClient, LyricsLookup, LyricsQuery, MatchedConcert, MusicBrainzClient, ProviderError,
@@ -29,7 +29,7 @@ impl MusicBrainzClient for ScriptedMb {
     fn release_group<'a>(
         &'a self,
         mbid: &'a str,
-    ) -> droppedneedle::providers::enrich::BoxFuture<'a, Result<ReleaseGroupCore, ProviderError>>
+    ) -> droppedneedle::reads::enrichment::BoxFuture<'a, Result<ReleaseGroupCore, ProviderError>>
     {
         Box::pin(async move {
             if self.fail {
@@ -52,7 +52,7 @@ impl MusicBrainzClient for ScriptedMb {
     fn artist_core<'a>(
         &'a self,
         mbid: &'a str,
-    ) -> droppedneedle::providers::enrich::BoxFuture<'a, Result<ArtistCore, ProviderError>> {
+    ) -> droppedneedle::reads::enrichment::BoxFuture<'a, Result<ArtistCore, ProviderError>> {
         Box::pin(async move {
             if self.fail {
                 return Err(ProviderError::new(
@@ -102,7 +102,7 @@ impl ListenBrainzClient for ScriptedLb {
         &'a self,
         mbid: &'a str,
         count: usize,
-    ) -> droppedneedle::providers::enrich::BoxFuture<'a, Result<Vec<TopRelease>, ProviderError>>
+    ) -> droppedneedle::reads::enrichment::BoxFuture<'a, Result<Vec<TopRelease>, ProviderError>>
     {
         Box::pin(async move {
             if self.fail_artists.contains(mbid) {
@@ -130,7 +130,7 @@ impl ListenBrainzClient for ScriptedLb {
     fn release_group_popularity_batch<'a>(
         &'a self,
         mbids: &'a [String],
-    ) -> droppedneedle::providers::enrich::BoxFuture<'a, Result<HashMap<String, i64>, ProviderError>>
+    ) -> droppedneedle::reads::enrichment::BoxFuture<'a, Result<HashMap<String, i64>, ProviderError>>
     {
         Box::pin(async move {
             if let Ok(mut calls) = self.batch_calls.lock() {
@@ -165,7 +165,7 @@ impl LastFmClient for ScriptedLfm {
         &'a self,
         name: &'a str,
         _mbid: &'a str,
-    ) -> droppedneedle::providers::enrich::BoxFuture<
+    ) -> droppedneedle::reads::enrichment::BoxFuture<
         'a,
         Result<Option<LastFmArtistInfo>, ProviderError>,
     > {
@@ -192,7 +192,7 @@ impl LastFmClient for ScriptedLfm {
         _artist: &'a str,
         _album: &'a str,
         _mbid: Option<&'a str>,
-    ) -> droppedneedle::providers::enrich::BoxFuture<
+    ) -> droppedneedle::reads::enrichment::BoxFuture<
         'a,
         Result<Option<LastFmAlbumInfo>, ProviderError>,
     > {
@@ -225,7 +225,7 @@ impl LyricsClient for ScriptedLyrics {
     fn exact_lyrics<'a>(
         &'a self,
         query: &'a LyricsQuery,
-    ) -> droppedneedle::providers::enrich::BoxFuture<'a, Result<LyricsLookup, ProviderError>> {
+    ) -> droppedneedle::reads::enrichment::BoxFuture<'a, Result<LyricsLookup, ProviderError>> {
         Box::pin(async move {
             if let Ok(mut seen) = self.seen.lock() {
                 seen.push(format!("{} - {}", query.artist, query.title));
@@ -256,7 +256,7 @@ impl EventsClient for ScriptedEvents {
     fn concerts_for_user<'a>(
         &'a self,
         _user_id: &'a str,
-    ) -> droppedneedle::providers::enrich::BoxFuture<'a, Result<Vec<UserConcert>, ProviderError>>
+    ) -> droppedneedle::reads::enrichment::BoxFuture<'a, Result<Vec<UserConcert>, ProviderError>>
     {
         Box::pin(async move {
             if self.fail {
@@ -272,7 +272,7 @@ impl EventsClient for ScriptedEvents {
     fn cities<'a>(
         &'a self,
         _user_id: &'a str,
-    ) -> droppedneedle::providers::enrich::BoxFuture<'a, Result<Vec<EventCity>, ProviderError>>
+    ) -> droppedneedle::reads::enrichment::BoxFuture<'a, Result<Vec<EventCity>, ProviderError>>
     {
         Box::pin(async move {
             if self.fail {

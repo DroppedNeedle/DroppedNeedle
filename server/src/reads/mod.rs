@@ -17,6 +17,7 @@
 pub mod catalog;
 pub mod collections;
 pub mod discover;
+pub mod enrichment;
 pub mod library;
 pub mod platform;
 pub mod search;
@@ -67,7 +68,7 @@ impl ReadsSetup {
         users: UsersDeps,
         ids: Arc<dyn IdGenerator>,
         platform: PlatformInputs,
-        enrichment: Option<crate::providers::adapters::ProductionEnrichment>,
+        enrichment: Option<enrichment::live::ProductionEnrichment>,
     ) -> Self {
         let library_db = library::sqlite::LibraryDb::new(pool);
         let catalog: Arc<dyn library::stores::LibraryCatalog> =
@@ -78,10 +79,10 @@ impl ReadsSetup {
         // setting (read per call) is on, and read as absent while it is off.
         let lyrics: Arc<dyn library::stores::LyricsPort> = match &enrichment {
             Some(pair) => Arc::new(
-                crate::providers::enrich::ProviderLyrics::new(
+                enrichment::ProviderLyrics::new(
                     catalog.clone(),
                     pair.lyrics.clone(),
-                    crate::providers::enrich::SourceBudgets::default(),
+                    enrichment::SourceBudgets::default(),
                 )
                 .with_switch(pair.lyrics_enabled.clone()),
             ),

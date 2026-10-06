@@ -31,7 +31,7 @@ use crate::{
     library::wiring::LibrarySetup,
     media::MediaSetup,
     plugins::wiring::PluginsSetup,
-    providers::{InMemoryProviderCache, Providers, adapters::production_enrichment},
+    providers::{InMemoryProviderCache, Providers},
     reads::{
         PlatformInputs, ReadsSetup,
         catalog::{
@@ -40,6 +40,7 @@ use crate::{
             upstream::{Upstream, instance_lastfm_key},
         },
         collections::db::CollectionsDb,
+        enrichment::live::production_enrichment,
     },
     remotes::adapter::PlaylistImportSink,
     runtime_config::{
@@ -141,7 +142,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
     let providers = Arc::new(Providers::new(provider_cache.clone()));
     // Read per call so turning ListenBrainz on or off takes effect at once.
     let listenbrainz_store = config_store.clone();
-    let listenbrainz_enabled: crate::providers::adapters::Switch = Arc::new(move || {
+    let listenbrainz_enabled: crate::reads::enrichment::live::Switch = Arc::new(move || {
         listenbrainz_store
             .get_raw::<ListenBrainzConnection>()
             .map(|settings| settings.enabled)
@@ -152,7 +153,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
     });
     // Read per call so turning lyrics on or off takes effect at once.
     let lyrics_store = config_store.clone();
-    let lyrics_enabled: crate::providers::adapters::Switch = Arc::new(move || {
+    let lyrics_enabled: crate::reads::enrichment::live::Switch = Arc::new(move || {
         lyrics_store
             .get::<LyricsSettings>()
             .map(|settings| settings.enabled)

@@ -46,7 +46,7 @@ impl std::fmt::Display for EnrichmentPortError {
     }
 }
 
-/// The single enrichment seam. `providers::enrich` implements it for
+/// The single enrichment seam. `reads::enrichment` implements it for
 /// ListenBrainz and Last.fm; [`UnconfiguredEnrichment`] serves when no
 /// provider is wired.
 pub trait EnrichmentPort: Send + Sync {

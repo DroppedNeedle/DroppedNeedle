@@ -27,8 +27,9 @@
 //!   conformance harness for client tests.
 //! - [`adapters`]: bridges from the shared core seams
 //!   onto production (limiter-backed pacing, context-backed degradation
-//!   recording, one shared reqwest transport, core/enrichment error mapping,
-//!   enrichment role adapters over the concrete clients).
+//!   recording, one shared reqwest transport). The enrichment aggregator
+//!   and its role adapters live in `reads::enrichment`: providers never
+//!   depend on reads.
 //!
 //! # Wiring
 //!
@@ -41,8 +42,8 @@
 //! Each client is reached by module path
 //! (`providers::musicbrainz::MusicBrainzClient`, ...). The names are not
 //! re-exported at this root, on purpose: several collide across
-//! modules (`enrich::MusicBrainzClient` is an aggregation role trait while
-//! `musicbrainz::MusicBrainzClient` is the concrete HTTP client, and the
+//! modules (`musicbrainz::MusicBrainzClient` is the concrete HTTP client
+//! while `reads::enrichment::MusicBrainzClient` is a role trait, and the
 //! same holds for `LastFmClient`, `LyricsLookup`, `IntegrationStatus`, and
 //! `ProviderError`), so the module path is the disambiguator. The shared
 //! seams the clients pace, record, and fetch through
@@ -59,7 +60,6 @@ pub mod client;
 pub mod coverart;
 pub mod degradation;
 pub mod discogs;
-pub mod enrich;
 pub mod error;
 pub mod geocoding;
 pub mod github;
