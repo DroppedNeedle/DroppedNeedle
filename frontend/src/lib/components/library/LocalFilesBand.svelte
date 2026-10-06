@@ -5,8 +5,7 @@
 	import { buildDiscoveryQueueFromLocal } from '$lib/player/queueHelpers';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { playbackToast } from '$lib/stores/playbackToast.svelte';
-	import { API } from '$lib/constants';
-	import { api } from '$lib/api/client';
+	import { fetchLibraryTracks } from '$lib/queries/library/libraryTracks';
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import type { NativeTrackListItem, NativeTrackPage } from '$lib/types';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -19,7 +18,7 @@
 	const PAGE_SIZE = 100;
 	const loader = createLibraryTrackLoader<NativeTrackListItem>(
 		{
-			fetchPageUrl: (limit, offset) => API.library.tracks(limit, offset, 'recent'),
+			fetchPage: (limit, offset, signal) => fetchLibraryTracks(limit, offset, 'recent', '', signal),
 			buildQueue: (tracks) => buildDiscoveryQueueFromLocal(tracks),
 			pageSize: PAGE_SIZE
 		},
@@ -32,7 +31,7 @@
 	let busy = $state<'' | 'play' | 'shuffle' | 'surprise'>('');
 
 	function firstPage(): Promise<NativeTrackPage> {
-		return api.global.get<NativeTrackPage>(API.library.tracks(PAGE_SIZE, 0, 'recent'));
+		return fetchLibraryTracks(PAGE_SIZE, 0, 'recent');
 	}
 
 	async function playAll() {
@@ -75,7 +74,7 @@
 		try {
 			const count = stats?.total_tracks ?? 0;
 			const offset = count > 0 ? Math.floor(Math.random() * count) : 0;
-			const page = await api.global.get<NativeTrackPage>(API.library.tracks(1, offset, 'recent'));
+			const page = await fetchLibraryTracks(1, offset, 'recent');
 			const track = page.items[0];
 			if (!track) {
 				playbackToast.show('Nothing to surprise you with yet', 'info');

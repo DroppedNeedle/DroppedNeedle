@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { API } from '$lib/constants';
-	import { api } from '$lib/api/client';
+	import { remoteApi } from '$lib/queries/remotes/remoteApi';
+	import { toPlexTrack } from '$lib/queries/remotes/remoteAdapters';
 	import { buildDiscoveryQueueFromPlex } from '$lib/player/queueHelpers';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
@@ -43,12 +43,20 @@
 
 	const totalPages = $derived(Math.ceil(data.total / PAGE_SIZE));
 
+	async function loadPage(limit: number, offset: number, signal?: AbortSignal) {
+		const page = await remoteApi.tracks(
+			'plex',
+			{ limit, offset, sort_by: sortBy, sort_order: sortOrder, search: searchQuery },
+			signal
+		);
+		return { ...page, items: page.items.map(toPlexTrack) };
+	}
+
 	const playableTracks = $derived(data.items.filter((t) => t.part_key));
 
 	const loader = createLibraryTrackLoader<PlexTrackInfo>(
 		{
-			fetchPageUrl: (limit, offset) =>
-				API.plexLibrary.tracks(limit, offset, `${sortBy}:${sortOrder}`, searchQuery),
+			fetchPage: loadPage,
 			buildQueue: (tracks) => buildDiscoveryQueueFromPlex(tracks),
 			pageSize: PAGE_SIZE,
 			resolveShuffleStartIndex: (tracks, requestedIndex, queue) => {
@@ -68,14 +76,7 @@
 		loader.abort();
 		loading = true;
 		try {
-			data = await api.get<PlexTrackPage>(
-				API.plexLibrary.tracks(
-					PAGE_SIZE,
-					currentPage * PAGE_SIZE,
-					`${sortBy}:${sortOrder}`,
-					searchQuery
-				)
-			);
+			data = await loadPage(PAGE_SIZE, currentPage * PAGE_SIZE);
 		} catch {
 			data = { items: [], total: 0, offset: 0, limit: PAGE_SIZE };
 		} finally {

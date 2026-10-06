@@ -1,17 +1,14 @@
 import type { QueueItem } from '$lib/player/types';
-import { api } from '$lib/api/client';
 
 const BACKGROUND_BATCH_SIZE = 100;
 
-interface TrackPageResponse<T> {
+export interface TrackPageResponse<T> {
 	items: T[];
 	total: number;
-	offset: number;
-	limit: number;
 }
 
 export interface LibraryTrackLoaderConfig<T> {
-	fetchPageUrl(limit: number, offset: number): string;
+	fetchPage(limit: number, offset: number, signal: AbortSignal): Promise<TrackPageResponse<T>>;
 	buildQueue(tracks: T[]): QueueItem[];
 	pageSize: number;
 	resolveShuffleStartIndex?(tracks: T[], requestedIndex: number, queue: QueueItem[]): number;
@@ -68,8 +65,7 @@ export function createLibraryTrackLoader<T>(
 			try {
 				while (offset < snapshotTotal) {
 					if (ac.signal.aborted) return;
-					const url = config.fetchPageUrl(BACKGROUND_BATCH_SIZE, offset);
-					const page = await api.global.get<TrackPageResponse<T>>(url, { signal: ac.signal });
+					const page = await config.fetchPage(BACKGROUND_BATCH_SIZE, offset, ac.signal);
 					if (ac.signal.aborted) return;
 					if (page.items.length === 0) break;
 
@@ -118,10 +114,7 @@ export function createLibraryTrackLoader<T>(
 				const randomTrackIndex = Math.floor(Math.random() * snapshotTotal);
 				const initialOffset = randomTrackIndex - (randomTrackIndex % config.pageSize);
 
-				const initialUrl = config.fetchPageUrl(config.pageSize, initialOffset);
-				const initialPage = await api.global.get<TrackPageResponse<T>>(initialUrl, {
-					signal: ac.signal
-				});
+				const initialPage = await config.fetchPage(config.pageSize, initialOffset, ac.signal);
 				if (ac.signal.aborted) return;
 
 				const initialQueue = config.buildQueue(initialPage.items);
@@ -141,10 +134,7 @@ export function createLibraryTrackLoader<T>(
 
 				for (const offset of allOffsets) {
 					if (ac.signal.aborted) return;
-					const batchUrl = config.fetchPageUrl(config.pageSize, offset);
-					const batchPage = await api.global.get<TrackPageResponse<T>>(batchUrl, {
-						signal: ac.signal
-					});
+					const batchPage = await config.fetchPage(config.pageSize, offset, ac.signal);
 					if (ac.signal.aborted) return;
 
 					const batchQueue = config.buildQueue(batchPage.items);

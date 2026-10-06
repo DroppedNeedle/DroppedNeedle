@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { API } from '$lib/constants';
-	import { api } from '$lib/api/client';
+	import { remoteApi } from '$lib/queries/remotes/remoteApi';
+	import { toNavidromeArtist } from '$lib/queries/remotes/remoteAdapters';
 	import SourceArtistCard from '$lib/components/SourceArtistCard.svelte';
 	import ArtistCardSkeleton from '$lib/components/ArtistCardSkeleton.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
@@ -24,9 +24,12 @@
 	async function fetchArtists() {
 		loading = true;
 		try {
-			artists = await api.get<NavidromeArtistPage>(
-				API.navidromeLibrary.artistsBrowse(PAGE_SIZE, currentPage * PAGE_SIZE, searchQuery)
-			);
+			const page = await remoteApi.artists('navidrome', {
+				limit: PAGE_SIZE,
+				offset: currentPage * PAGE_SIZE,
+				search: searchQuery
+			});
+			artists = { ...page, items: page.items.map(toNavidromeArtist) };
 		} catch {
 			artists = { items: [], total: 0, offset: 0, limit: PAGE_SIZE };
 		} finally {

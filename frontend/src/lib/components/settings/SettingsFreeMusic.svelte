@@ -2,7 +2,6 @@
 	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
 	import { onDestroy, onMount } from 'svelte';
 	import { ExternalLink, Landmark } from 'lucide-svelte';
-	import { API } from '$lib/constants';
 	import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 	import { getPolicySummaryQuery } from '$lib/queries/downloads/PolicyQueries.svelte';
 	import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';

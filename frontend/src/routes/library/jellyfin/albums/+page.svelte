@@ -1,6 +1,8 @@
 <script lang="ts">
-	import { API } from '$lib/constants';
 	import { api } from '$lib/api/client';
+	import { REMOTE_ENDPOINTS } from '$lib/queries/remotes/endpoints';
+	import { remoteApi } from '$lib/queries/remotes/remoteApi';
+	import { toJellyfinAlbum, toJellyfinTrack } from '$lib/queries/remotes/remoteAdapters';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
 	import { buildQueueItemsFromJellyfin } from '$lib/player/queueHelpers';
 	import { launchJellyfinPlayback } from '$lib/player/launchJellyfinPlayback';
@@ -18,28 +20,13 @@
 		type SidebarData
 	} from '$lib/utils/libraryController.svelte';
 	import LibraryPage from '$lib/components/LibraryPage.svelte';
-	import type {
-		JellyfinAlbumSummary,
-		JellyfinPaginatedResponse,
-		JellyfinLibraryStats,
-		JellyfinTrackInfo,
-		JellyfinFilterFacets
-	} from '$lib/types';
+	import type { JellyfinAlbumSummary, JellyfinLibraryStats } from '$lib/types';
 	import { Tv } from 'lucide-svelte';
 
-	let filterFacets = $state<JellyfinFilterFacets | null>(null);
-	let yearChips = $derived(filterFacets?.years?.map((y) => String(y)) ?? []);
-	let tagChips = $derived(filterFacets?.tags ?? []);
-
-	$effect(() => {
-		(async () => {
-			try {
-				filterFacets = await api.get<JellyfinFilterFacets>(API.jellyfinLibrary.filters());
-			} catch {
-				filterFacets = null;
-			}
-		})();
-	});
+	async function fetchAlbumTracks(albumId: string) {
+		const page = await remoteApi.albumTracks('jellyfin', albumId, { limit: 500 });
+		return page.items.map(toJellyfinTrack);
+	}
 
 	const adapter: LibraryAdapter<JellyfinAlbumSummary> = {
 		sourceType: 'jellyfin',
@@ -51,56 +38,52 @@
 		getAlbumImageUrl: (a) => a.image_url ?? null,
 		getAlbumYear: (a) => a.year,
 
-		async fetchAlbums({
-			limit,
-			offset,
-			sortBy,
-			sortOrder,
-			genre,
-			mood,
-			decade,
-			tag,
-			search,
-			signal
-		}) {
+		async fetchAlbums({ limit, offset, sortBy, sortOrder, genre, search, signal }) {
 			if (search) {
-				const data = await api.get<{ albums?: JellyfinAlbumSummary[] }>(
-					API.jellyfinLibrary.search(search),
-					{ signal }
-				);
-				const items = data.albums ?? [];
+				const data = await api.v3.GET(REMOTE_ENDPOINTS.search('jellyfin', { q: search }), {
+					signal
+				});
+				const items = data.albums.map(toJellyfinAlbum);
 				return { items, total: items.length };
 			}
-			const year = decade ? parseInt(decade) || undefined : undefined;
-			const studios = mood || undefined;
-			const tags = tag || undefined;
-			const data: JellyfinPaginatedResponse = await api.get(
-				API.jellyfinLibrary.albums(limit, offset, sortBy, genre, sortOrder, year, tags, studios),
-				{ signal }
+			const data = await remoteApi.albums(
+				'jellyfin',
+				{
+					limit,
+					offset,
+					sort_by: sortBy,
+					sort_order: sortOrder,
+					genre
+				},
+				signal
 			);
-			return { items: data.items, total: data.total };
+			return { items: data.items.map(toJellyfinAlbum), total: data.total };
 		},
 
 		async fetchSidebarData(signal, current) {
-			const [recentRes, favRes, genreRes, statsRes, filtersRes] = await Promise.allSettled([
-				api.get<JellyfinAlbumSummary[]>(API.jellyfinLibrary.recent(), { signal }),
-				api.get<JellyfinAlbumSummary[]>(API.jellyfinLibrary.favorites(), { signal }),
-				api.get<string[]>(API.jellyfinLibrary.genres(), { signal }),
-				api.get<JellyfinLibraryStats>(API.jellyfinLibrary.stats(), { signal }),
-				api.get<JellyfinFilterFacets>(API.jellyfinLibrary.filters(), { signal })
+			const [recentRes, favRes, genreRes, statsRes] = await Promise.allSettled([
+				remoteApi.recent('jellyfin', {}, signal),
+				api.v3.GET(REMOTE_ENDPOINTS.favorites('jellyfin'), { signal }),
+				remoteApi.genres('jellyfin', signal),
+				remoteApi.stats('jellyfin', signal)
 			]);
 			const hasFreshData =
 				recentRes.status === 'fulfilled' ||
 				favRes.status === 'fulfilled' ||
 				genreRes.status === 'fulfilled' ||
 				statsRes.status === 'fulfilled';
-			const studios = filtersRes.status === 'fulfilled' ? (filtersRes.value.studios ?? []) : [];
 			return {
 				data: {
-					recentAlbums: recentRes.status === 'fulfilled' ? recentRes.value : current.recentAlbums,
-					favoriteAlbums: favRes.status === 'fulfilled' ? favRes.value : current.favoriteAlbums,
+					recentAlbums:
+						recentRes.status === 'fulfilled'
+							? recentRes.value.map(toJellyfinAlbum)
+							: current.recentAlbums,
+					favoriteAlbums:
+						favRes.status === 'fulfilled'
+							? favRes.value.albums.map(toJellyfinAlbum)
+							: current.favoriteAlbums,
 					genres: genreRes.status === 'fulfilled' ? genreRes.value : current.genres,
-					moods: studios,
+					moods: [],
 					stats:
 						statsRes.status === 'fulfilled'
 							? (statsRes.value as unknown as Record<string, unknown>)
@@ -111,9 +94,7 @@
 		},
 
 		async fetchAlbumQueueItems(album) {
-			const tracks: JellyfinTrackInfo[] = await api.get(
-				API.jellyfinLibrary.albumTracks(album.jellyfin_id)
-			);
+			const tracks = await fetchAlbumTracks(album.jellyfin_id);
 			if (tracks.length === 0) return [];
 			const sorted = [...tracks].sort((a, b) => a.track_number - b.track_number);
 			return buildQueueItemsFromJellyfin(sorted, {
@@ -126,9 +107,7 @@
 		},
 
 		async launchPlayback(album, shuffle) {
-			const tracks: JellyfinTrackInfo[] = await api.get(
-				API.jellyfinLibrary.albumTracks(album.jellyfin_id)
-			);
+			const tracks = await fetchAlbumTracks(album.jellyfin_id);
 			if (tracks.length === 0) return;
 			launchJellyfinPlayback(tracks, 0, shuffle, {
 				albumId: album.musicbrainz_id || album.jellyfin_id,
@@ -169,13 +148,13 @@
 			{ value: 'ProductionYear', label: 'Year' }
 		],
 		defaultSortBy: 'SortName',
-		ascValue: 'Ascending',
-		descValue: 'Descending',
-		getDefaultSortOrder: (field) => (field === 'SortName' ? 'Ascending' : 'Descending'),
+		ascValue: 'asc',
+		descValue: 'desc',
+		getDefaultSortOrder: (field) => (field === 'SortName' ? 'asc' : 'desc'),
 		supportsGenres: true,
-		supportsMoods: true,
-		supportsDecades: true,
-		supportsTags: true,
+		supportsMoods: false,
+		supportsDecades: false,
+		supportsTags: false,
 		supportsFavorites: true,
 		supportsShuffle: true,
 		errorMessage: "Couldn't connect to Jellyfin."
@@ -188,11 +167,8 @@
 	{ctrl}
 	headerTitle="Jellyfin Library"
 	backHref="/library/jellyfin"
-	moodLabel="Studio"
 	emptyTitle="No albums found"
 	emptyDescription="Make sure Jellyfin is set up and has at least one music library."
-	decades={yearChips}
-	tags={tagChips}
 >
 	{#snippet headerIcon()}
 		<Tv class="h-8 w-8 text-info" />

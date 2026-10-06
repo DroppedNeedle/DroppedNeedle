@@ -15,6 +15,7 @@ import {
 	type RemoteTrackParams
 } from './endpoints';
 import { RemoteQueryKeyFactory } from './RemoteQueryKeyFactory';
+import { remoteApi } from './remoteApi';
 import type { RemoteAlbum, RemoteArtist, RemoteSource } from './types';
 
 type Source = Getter<RemoteSource>;
@@ -24,11 +25,8 @@ const userId = () => authStore.user?.id;
 const authed = (getEnabled: Enabled) => getEnabled() && !!userId();
 
 // Each call site passes its own fetch closure so the typed client infers
-// the response from that call's registry URL. Five reads stay on the
-// untyped client because the contract spells no response schema for their
-// routes (album/artist detail, genres, recent, recently-added); those name
-// their contract-aliased payload type explicitly until the backend
-// annotates the routes.
+// the response from that call's registry URL; the reads the typed client
+// cannot infer yet go through remoteApi (see there).
 function query<T>(
 	build: () => {
 		key: readonly unknown[];
@@ -70,8 +68,7 @@ export const getRemoteAlbumsQuery = (
 ) =>
 	query(() => ({
 		key: RemoteQueryKeyFactory.albums(userId(), getSource(), getParams()),
-		fetch: (signal: AbortSignal) =>
-			api.global.v3.GET(REMOTE_ENDPOINTS.albums(getSource(), getParams()), { signal }),
+		fetch: (signal: AbortSignal) => remoteApi.albums(getSource(), getParams(), signal),
 		getEnabled
 	}));
 
@@ -82,8 +79,7 @@ export const getRemoteAlbumDetailQuery = (
 ) =>
 	query<RemoteAlbum>(() => ({
 		key: RemoteQueryKeyFactory.albumDetail(userId(), getSource(), getId()),
-		fetch: (signal: AbortSignal) =>
-			api.global.get<RemoteAlbum>(REMOTE_ENDPOINTS.album(getSource(), getId()), { signal }),
+		fetch: (signal: AbortSignal) => remoteApi.album(getSource(), getId(), signal),
 		getEnabled,
 		extraGate: getId().length > 0
 	}));
@@ -97,9 +93,7 @@ export const getRemoteAlbumTracksQuery = (
 	query(() => ({
 		key: RemoteQueryKeyFactory.albumTracks(userId(), getSource(), getId(), getParams()),
 		fetch: (signal: AbortSignal) =>
-			api.global.v3.GET(REMOTE_ENDPOINTS.albumTracks(getSource(), getId(), getParams()), {
-				signal
-			}),
+			remoteApi.albumTracks(getSource(), getId(), getParams(), signal),
 		getEnabled,
 		extraGate: getId().length > 0
 	}));
@@ -111,8 +105,7 @@ export const getRemoteArtistsQuery = (
 ) =>
 	query(() => ({
 		key: RemoteQueryKeyFactory.artists(userId(), getSource(), getParams()),
-		fetch: (signal: AbortSignal) =>
-			api.global.v3.GET(REMOTE_ENDPOINTS.artists(getSource(), getParams()), { signal }),
+		fetch: (signal: AbortSignal) => remoteApi.artists(getSource(), getParams(), signal),
 		getEnabled
 	}));
 
@@ -131,8 +124,7 @@ export const getRemoteArtistDetailQuery = (
 ) =>
 	query<RemoteArtist>(() => ({
 		key: RemoteQueryKeyFactory.artistDetail(userId(), getSource(), getId()),
-		fetch: (signal: AbortSignal) =>
-			api.global.get<RemoteArtist>(REMOTE_ENDPOINTS.artist(getSource(), getId()), { signal }),
+		fetch: (signal: AbortSignal) => remoteApi.artist(getSource(), getId(), signal),
 		getEnabled,
 		extraGate: getId().length > 0
 	}));
@@ -144,8 +136,7 @@ export const getRemoteTracksQuery = (
 ) =>
 	query(() => ({
 		key: RemoteQueryKeyFactory.tracks(userId(), getSource(), getParams()),
-		fetch: (signal: AbortSignal) =>
-			api.global.v3.GET(REMOTE_ENDPOINTS.tracks(getSource(), getParams()), { signal }),
+		fetch: (signal: AbortSignal) => remoteApi.tracks(getSource(), getParams(), signal),
 		getEnabled
 	}));
 
@@ -180,8 +171,7 @@ export const getRemoteRecentQuery = (
 ) =>
 	query<RemoteAlbum[]>(() => ({
 		key: RemoteQueryKeyFactory.recent(userId(), getSource(), getParams()),
-		fetch: (signal: AbortSignal) =>
-			api.global.get<RemoteAlbum[]>(REMOTE_ENDPOINTS.recent(getSource(), getParams()), { signal }),
+		fetch: (signal: AbortSignal) => remoteApi.recent(getSource(), getParams(), signal),
 		getEnabled
 	}));
 
@@ -192,10 +182,7 @@ export const getRemoteRecentlyAddedQuery = (
 ) =>
 	query<RemoteAlbum[]>(() => ({
 		key: RemoteQueryKeyFactory.recentlyAdded(userId(), getSource(), getParams()),
-		fetch: (signal: AbortSignal) =>
-			api.global.get<RemoteAlbum[]>(REMOTE_ENDPOINTS.recentlyAdded(getSource(), getParams()), {
-				signal
-			}),
+		fetch: (signal: AbortSignal) => remoteApi.recentlyAdded(getSource(), getParams(), signal),
 		getEnabled
 	}));
 
@@ -214,24 +201,21 @@ export const getRemoteHistoryQuery = (
 export const getRemoteStatsQuery = (getSource: Source, getEnabled: Enabled = () => true) =>
 	query(() => ({
 		key: RemoteQueryKeyFactory.stats(userId(), getSource()),
-		fetch: (signal: AbortSignal) =>
-			api.global.v3.GET(REMOTE_ENDPOINTS.stats(getSource()), { signal }),
+		fetch: (signal: AbortSignal) => remoteApi.stats(getSource(), signal),
 		getEnabled
 	}));
 
 export const getRemoteSessionsQuery = (getSource: Source, getEnabled: Enabled = () => true) =>
 	query(() => ({
 		key: RemoteQueryKeyFactory.sessions(userId(), getSource()),
-		fetch: (signal: AbortSignal) =>
-			api.global.v3.GET(REMOTE_ENDPOINTS.sessions(getSource()), { signal }),
+		fetch: (signal: AbortSignal) => remoteApi.sessions(getSource(), signal),
 		getEnabled
 	}));
 
 export const getRemoteGenresQuery = (getSource: Source, getEnabled: Enabled = () => true) =>
 	query<string[]>(() => ({
 		key: RemoteQueryKeyFactory.genres(userId(), getSource()),
-		fetch: (signal: AbortSignal) =>
-			api.global.get<string[]>(REMOTE_ENDPOINTS.genres(getSource()), { signal }),
+		fetch: (signal: AbortSignal) => remoteApi.genres(getSource(), signal),
 		getEnabled
 	}));
 
@@ -310,8 +294,7 @@ export const getRemoteLyricsQuery = (
 ) =>
 	query(() => ({
 		key: RemoteQueryKeyFactory.lyrics(userId(), getSource(), getId(), getParams()),
-		fetch: (signal: AbortSignal) =>
-			api.global.v3.GET(REMOTE_ENDPOINTS.lyrics(getSource(), getId(), getParams()), { signal }),
+		fetch: (signal: AbortSignal) => remoteApi.lyrics(getSource(), getId(), getParams(), signal),
 		getEnabled,
 		extraGate: getId().length > 0
 	}));
@@ -323,8 +306,7 @@ export const getRemoteMatchQuery = (
 ) =>
 	query(() => ({
 		key: RemoteQueryKeyFactory.match(userId(), getSource(), getMbid()),
-		fetch: (signal: AbortSignal) =>
-			api.global.v3.GET(REMOTE_ENDPOINTS.match(getSource(), getMbid()), { signal }),
+		fetch: (signal: AbortSignal) => remoteApi.match(getSource(), getMbid(), signal),
 		getEnabled,
 		extraGate: getMbid().length > 0
 	}));

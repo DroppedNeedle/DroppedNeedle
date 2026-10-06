@@ -1,8 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
-	import { API } from '$lib/constants';
-	import { api } from '$lib/api/client';
+	import { fetchLibraryTracks, type LibraryTrackSort } from '$lib/queries/library/libraryTracks';
 	import { buildDiscoveryQueueFromLocal } from '$lib/player/queueHelpers';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
@@ -25,7 +24,7 @@
 		Search,
 		X
 	} from 'lucide-svelte';
-	import type { NativeTrackListItem, NativeTrackPage, TrackSort } from '$lib/types';
+	import type { NativeTrackListItem, NativeTrackPage } from '$lib/types';
 	import { untrack } from 'svelte';
 
 	const PAGE_SIZE = 48;
@@ -34,14 +33,15 @@
 	let data = $state<NativeTrackPage>({ items: [], total: 0, offset: 0, limit: PAGE_SIZE });
 	let currentPage = $state(0);
 	let searchQuery = $state('');
-	let sort = $state<TrackSort>('recent');
+	let sort = $state<LibraryTrackSort>('recent');
 	let searchTimeout: ReturnType<typeof setTimeout> | undefined;
 
 	const totalPages = $derived(Math.ceil(data.total / PAGE_SIZE));
 
 	const loader = createLibraryTrackLoader<NativeTrackListItem>(
 		{
-			fetchPageUrl: (limit, offset) => API.library.tracks(limit, offset, sort, searchQuery),
+			fetchPage: (limit, offset, signal) =>
+				fetchLibraryTracks(limit, offset, sort, searchQuery, signal),
 			buildQueue: (tracks) => buildDiscoveryQueueFromLocal(tracks),
 			pageSize: PAGE_SIZE
 		},
@@ -55,9 +55,7 @@
 		loader.abort();
 		loading = true;
 		try {
-			data = await api.global.get<NativeTrackPage>(
-				API.library.tracks(PAGE_SIZE, currentPage * PAGE_SIZE, sort, searchQuery)
-			);
+			data = await fetchLibraryTracks(PAGE_SIZE, currentPage * PAGE_SIZE, sort, searchQuery);
 		} catch {
 			data = { items: [], total: 0, offset: 0, limit: PAGE_SIZE };
 		} finally {
@@ -87,7 +85,7 @@
 	}
 
 	function handleSortChange(e: Event) {
-		sort = (e.target as HTMLSelectElement).value as TrackSort;
+		sort = (e.target as HTMLSelectElement).value as LibraryTrackSort;
 		currentPage = 0;
 		fetchTracks();
 	}
@@ -196,8 +194,6 @@
 		>
 			<option value="recent">Recently added</option>
 			<option value="title">Title</option>
-			<option value="artist">Artist</option>
-			<option value="album">Album</option>
 		</select>
 	</div>
 

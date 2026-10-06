@@ -1,10 +1,14 @@
 <script lang="ts">
-	import { API } from '$lib/constants';
 	import { api } from '$lib/api/client';
+	import { REMOTE_ENDPOINTS } from '$lib/queries/remotes/endpoints';
+	import { remoteApi } from '$lib/queries/remotes/remoteApi';
+	import { toNavidromeAlbum, toNavidromeTrack } from '$lib/queries/remotes/remoteAdapters';
+	import { getRemoteFoldersQuery } from '$lib/queries/remotes/RemoteQueries.svelte';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
 	import { buildQueueItemsFromNavidrome } from '$lib/player/queueHelpers';
 	import { launchNavidromePlayback } from '$lib/player/launchNavidromePlayback';
 	import {
+		setNavidromeFolderScopeRevision,
 		getNavidromeSidebarCachedData,
 		getNavidromeAlbumsListCachedData,
 		isNavidromeSidebarCacheStale,
@@ -19,20 +23,26 @@
 	} from '$lib/utils/libraryController.svelte';
 	import LibraryPage from '$lib/components/LibraryPage.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
-	import type {
-		NavidromeAlbumSummary,
-		NavidromeAlbumDetail,
-		NavidromePaginatedResponse,
-		NavidromeSearchResponse,
-		NavidromeLibraryStats,
-		NavidromeTrackInfo
-	} from '$lib/types';
+	import type { NavidromeAlbumSummary, NavidromeLibraryStats } from '$lib/types';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { getNavidromeFolderPreferenceQuery } from '$lib/queries/navidrome-folders/NavidromeFolderQueries.svelte';
 
 	const userId = authStore.user?.id ?? '';
-	const folderPreferenceQuery = getNavidromeFolderPreferenceQuery(() => userId);
-	const scopeRevision = $derived(folderPreferenceQuery.data?.scope_revision ?? 'unresolved');
+	const foldersQuery = getRemoteFoldersQuery(() => Boolean(userId));
+	// The resolved folder selection scopes the cached album lists: a changed
+	// selection reads as a new scope.
+	const scopeRevision = $derived(
+		foldersQuery.data
+			? `${foldersQuery.data.mode}:${[...foldersQuery.data.folder_ids].sort().join(',')}`
+			: 'unresolved'
+	);
+	$effect(() => {
+		if (foldersQuery.data) setNavidromeFolderScopeRevision(userId, scopeRevision);
+	});
+
+	async function fetchAlbumTracks(albumId: string) {
+		const page = await remoteApi.albumTracks('navidrome', albumId, { limit: 500 });
+		return page.items.map(toNavidromeTrack);
+	}
 
 	const adapter: LibraryAdapter<NavidromeAlbumSummary> = {
 		sourceType: 'navidrome',
@@ -46,35 +56,32 @@
 
 		async fetchAlbums({ limit, offset, sortBy, sortOrder, genre, search, signal }) {
 			if (search) {
-				const data: NavidromeSearchResponse = await api.get(API.navidromeLibrary.search(search), {
+				const data = await api.v3.GET(REMOTE_ENDPOINTS.search('navidrome', { q: search }), {
 					signal
 				});
-				const items = data.albums ?? [];
+				const items = data.albums.map(toNavidromeAlbum);
 				return { items, total: items.length };
 			}
-			const params = [
-				['limit', String(limit)],
-				['offset', String(offset)],
-				['sort_by', sortBy],
-				['sort_order', sortOrder],
-				...(genre ? ([['genre', genre]] as const) : [])
-			];
-			const query = params
-				.map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
-				.join('&');
-			const data: NavidromePaginatedResponse = await api.get(
-				`${API.navidromeLibrary.albums()}?${query}`,
-				{ signal }
+			const data = await remoteApi.albums(
+				'navidrome',
+				{
+					limit,
+					offset,
+					sort_by: sortBy,
+					sort_order: sortOrder,
+					genre
+				},
+				signal
 			);
-			return { items: data.items, total: data.total };
+			return { items: data.items.map(toNavidromeAlbum), total: data.total };
 		},
 
 		async fetchSidebarData(signal, current) {
 			const [recentRes, favRes, genreRes, statsRes] = await Promise.allSettled([
-				api.get<NavidromeAlbumSummary[]>(API.navidromeLibrary.recent(), { signal }),
-				api.get<NavidromeAlbumSummary[]>(API.navidromeLibrary.favorites(), { signal }),
-				api.get<string[]>(API.navidromeLibrary.genres(), { signal }),
-				api.get<NavidromeLibraryStats>(API.navidromeLibrary.stats(), { signal })
+				remoteApi.recent('navidrome', {}, signal),
+				api.v3.GET(REMOTE_ENDPOINTS.favorites('navidrome'), { signal }),
+				remoteApi.genres('navidrome', signal),
+				remoteApi.stats('navidrome', signal)
 			]);
 			const hasFreshData =
 				recentRes.status === 'fulfilled' ||
@@ -83,8 +90,14 @@
 				statsRes.status === 'fulfilled';
 			return {
 				data: {
-					recentAlbums: recentRes.status === 'fulfilled' ? recentRes.value : current.recentAlbums,
-					favoriteAlbums: favRes.status === 'fulfilled' ? favRes.value : current.favoriteAlbums,
+					recentAlbums:
+						recentRes.status === 'fulfilled'
+							? recentRes.value.map(toNavidromeAlbum)
+							: current.recentAlbums,
+					favoriteAlbums:
+						favRes.status === 'fulfilled'
+							? favRes.value.albums.map(toNavidromeAlbum)
+							: current.favoriteAlbums,
 					genres: genreRes.status === 'fulfilled' ? genreRes.value : current.genres,
 					moods: [],
 					stats:
@@ -97,10 +110,7 @@
 		},
 
 		async fetchAlbumQueueItems(album) {
-			const detail: NavidromeAlbumDetail = await api.get(
-				API.navidromeLibrary.albumDetail(album.navidrome_id)
-			);
-			const tracks: NavidromeTrackInfo[] = detail.tracks ?? [];
+			const tracks = await fetchAlbumTracks(album.navidrome_id);
 			if (tracks.length === 0) return [];
 			const sorted = [...tracks].sort((a, b) => a.track_number - b.track_number);
 			return buildQueueItemsFromNavidrome(sorted, {
@@ -113,10 +123,7 @@
 		},
 
 		async launchPlayback(album, shuffle) {
-			const detail: NavidromeAlbumDetail = await api.get(
-				API.navidromeLibrary.albumDetail(album.navidrome_id)
-			);
-			const tracks: NavidromeTrackInfo[] = detail.tracks ?? [];
+			const tracks = await fetchAlbumTracks(album.navidrome_id);
 			if (tracks.length === 0) return;
 			launchNavidromePlayback(tracks, 0, shuffle, {
 				albumId: album.musicbrainz_id || album.navidrome_id,

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { API } from '$lib/constants';
+	import { PLEX_ENDPOINTS } from '$lib/queries/plex/endpoints';
 	import { api, ApiError } from '$lib/api/client';
 	import { REMOTE_ENDPOINTS } from '$lib/queries/remotes/endpoints';
 	import {
@@ -38,7 +38,6 @@
 	import { goto } from '$app/navigation';
 	import type {
 		PlexAlbumSummary,
-		PlexConnectionSettings,
 		PlexTrackInfo,
 		ArtistIndexEntry,
 		BrowseHeroCard
@@ -237,12 +236,11 @@
 		});
 	}
 
-	// The scrobble toggle stays on the settings surface, which migrates
-	// separately; only the library reads moved to remote queries.
+	// The scrobble toggle writes the shared Plex connection settings.
 	onMount(() => {
 		(async () => {
 			try {
-				const settings = await api.get<PlexConnectionSettings>(API.settingsPlex());
+				const settings = await api.v3.GET(PLEX_ENDPOINTS.settings());
 				scrobbleEnabled = settings.scrobble_to_plex ?? false;
 			} catch (err) {
 				console.warn('[Hub] scrobble setting load failed:', err);
@@ -253,9 +251,9 @@
 	async function toggleScrobble() {
 		scrobbleLoading = true;
 		try {
-			const settings = await api.get<PlexConnectionSettings>(API.settingsPlex());
+			const settings = await api.v3.GET(PLEX_ENDPOINTS.settings());
 			settings.scrobble_to_plex = !scrobbleEnabled;
-			await api.global.put(API.settingsPlex(), settings);
+			await api.global.v3.PUT(PLEX_ENDPOINTS.settings(), settings);
 			scrobbleEnabled = settings.scrobble_to_plex;
 			resetPlexScrobblePreference();
 		} catch (err) {

@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { API } from '$lib/constants';
-	import { api } from '$lib/api/client';
+	import { remoteApi } from '$lib/queries/remotes/remoteApi';
+	import { toPlexArtist } from '$lib/queries/remotes/remoteAdapters';
 	import SourceArtistCard from '$lib/components/SourceArtistCard.svelte';
 	import ArtistCardSkeleton from '$lib/components/ArtistCardSkeleton.svelte';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
@@ -32,14 +32,14 @@
 	async function fetchArtists() {
 		loading = true;
 		try {
-			artists = await api.get<PlexArtistPage>(
-				API.plexLibrary.artistsBrowse(
-					PAGE_SIZE,
-					currentPage * PAGE_SIZE,
-					`${sortBy}:${sortOrder}`,
-					searchQuery
-				)
-			);
+			const page = await remoteApi.artists('plex', {
+				limit: PAGE_SIZE,
+				offset: currentPage * PAGE_SIZE,
+				sort_by: sortBy,
+				sort_order: sortOrder,
+				search: searchQuery
+			});
+			artists = { ...page, items: page.items.map(toPlexArtist) };
 		} catch {
 			artists = { items: [], total: 0, offset: 0, limit: PAGE_SIZE };
 		} finally {

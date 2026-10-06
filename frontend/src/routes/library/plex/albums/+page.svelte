@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import { API } from '$lib/constants';
 	import { api } from '$lib/api/client';
+	import { REMOTE_ENDPOINTS } from '$lib/queries/remotes/endpoints';
+	import { remoteApi } from '$lib/queries/remotes/remoteApi';
+	import { toPlexAlbum, toPlexTrack } from '$lib/queries/remotes/remoteAdapters';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
 	import { buildQueueItemsFromPlex } from '$lib/player/queueHelpers';
 	import { launchPlexPlayback } from '$lib/player/launchPlexPlayback';
@@ -20,14 +22,12 @@
 	} from '$lib/utils/libraryController.svelte';
 	import LibraryPage from '$lib/components/LibraryPage.svelte';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
-	import type {
-		PlexAlbumSummary,
-		PlexAlbumDetail,
-		PlexPaginatedResponse,
-		PlexSearchResponse,
-		PlexLibraryStats,
-		PlexTrackInfo
-	} from '$lib/types';
+	import type { PlexAlbumSummary, PlexLibraryStats } from '$lib/types';
+
+	async function fetchAlbumTracks(albumId: string) {
+		const page = await remoteApi.albumTracks('plex', albumId, { limit: 500 });
+		return page.items.map(toPlexTrack);
+	}
 
 	const DECADES = ['2020s', '2010s', '2000s', '1990s', '1980s', '1970s', '1960s'];
 
@@ -41,47 +41,49 @@
 		getAlbumImageUrl: (a) => a.image_url ?? null,
 		getAlbumYear: (a) => a.year ?? null,
 
-		async fetchAlbums({ limit, offset, sortBy, sortOrder, genre, mood, decade, search, signal }) {
+		async fetchAlbums({ limit, offset, sortBy, sortOrder, genre, decade, search, signal }) {
 			if (search) {
-				const data: PlexSearchResponse = await api.get(API.plexLibrary.search(search), {
+				const data = await api.v3.GET(REMOTE_ENDPOINTS.search('plex', { q: search }), {
 					signal
 				});
-				const items = data.albums ?? [];
+				const items = data.albums.map(toPlexAlbum);
 				return { items, total: items.length };
 			}
-			const data: PlexPaginatedResponse = await api.get(
-				API.plexLibrary.albums(
+			const data = await remoteApi.albums(
+				'plex',
+				{
 					limit,
 					offset,
-					sortBy,
-					genre || undefined,
-					sortOrder,
-					mood || undefined,
-					decade || undefined
-				),
-				{ signal }
+					sort_by: sortBy,
+					sort_order: sortOrder,
+					genre,
+					decade
+				},
+				signal
 			);
-			return { items: data.items, total: data.total };
+			return { items: data.items.map(toPlexAlbum), total: data.total };
 		},
 
 		async fetchSidebarData(signal, current) {
-			const [recentRes, genreRes, moodsRes, statsRes] = await Promise.allSettled([
-				api.get<PlexAlbumSummary[]>(API.plexLibrary.recent(), { signal }),
-				api.get<string[]>(API.plexLibrary.genres(), { signal }),
-				api.get<string[]>(API.plexLibrary.moods(), { signal }),
-				api.get<PlexLibraryStats>(API.plexLibrary.stats(), { signal })
+			// v3 has no Plex mood list.
+			const [recentRes, genreRes, statsRes] = await Promise.allSettled([
+				remoteApi.recent('plex', {}, signal),
+				remoteApi.genres('plex', signal),
+				remoteApi.stats('plex', signal)
 			]);
 			const hasFreshData =
 				recentRes.status === 'fulfilled' ||
 				genreRes.status === 'fulfilled' ||
-				moodsRes.status === 'fulfilled' ||
 				statsRes.status === 'fulfilled';
 			return {
 				data: {
-					recentAlbums: recentRes.status === 'fulfilled' ? recentRes.value : current.recentAlbums,
+					recentAlbums:
+						recentRes.status === 'fulfilled'
+							? recentRes.value.map(toPlexAlbum)
+							: current.recentAlbums,
 					favoriteAlbums: current.favoriteAlbums,
 					genres: genreRes.status === 'fulfilled' ? genreRes.value : current.genres,
-					moods: moodsRes.status === 'fulfilled' ? moodsRes.value : current.moods,
+					moods: [],
 					stats:
 						statsRes.status === 'fulfilled'
 							? (statsRes.value as unknown as Record<string, unknown>)
@@ -92,8 +94,7 @@
 		},
 
 		async fetchAlbumQueueItems(album) {
-			const detail: PlexAlbumDetail = await api.get(API.plexLibrary.albumDetail(album.plex_id));
-			const tracks: PlexTrackInfo[] = detail.tracks ?? [];
+			const tracks = await fetchAlbumTracks(album.plex_id);
 			if (tracks.length === 0) return [];
 			const sorted = [...tracks].sort((a, b) => a.track_number - b.track_number);
 			return buildQueueItemsFromPlex(sorted, {
@@ -106,8 +107,7 @@
 		},
 
 		async launchPlayback(album, shuffle) {
-			const detail: PlexAlbumDetail = await api.get(API.plexLibrary.albumDetail(album.plex_id));
-			const tracks: PlexTrackInfo[] = detail.tracks ?? [];
+			const tracks = await fetchAlbumTracks(album.plex_id);
 			if (tracks.length === 0) return;
 			launchPlexPlayback(tracks, 0, shuffle, {
 				albumId: album.musicbrainz_id || album.plex_id,
@@ -155,7 +155,7 @@
 		descValue: 'desc',
 		getDefaultSortOrder: (field) => (field === 'name' ? 'asc' : 'desc'),
 		supportsGenres: true,
-		supportsMoods: true,
+		supportsMoods: false,
 		supportsDecades: true,
 		supportsTags: false,
 		supportsFavorites: false,

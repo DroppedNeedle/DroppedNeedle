@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { API } from '$lib/constants';
-	import { api } from '$lib/api/client';
+	import { remoteApi } from '$lib/queries/remotes/remoteApi';
+	import { toJellyfinTrack } from '$lib/queries/remotes/remoteAdapters';
 	import { buildDiscoveryQueueFromJellyfin } from '$lib/player/queueHelpers';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import { toastStore } from '$lib/stores/toast';
@@ -30,7 +30,7 @@
 	let data = $state<JellyfinTrackPage>({ items: [], total: 0, offset: 0, limit: PAGE_SIZE });
 	let currentPage = $state(0);
 	let sortBy = $state('SortName');
-	let sortOrder = $state('Ascending');
+	let sortOrder = $state('asc');
 	let searchQuery = $state('');
 	let searchTimeout: ReturnType<typeof setTimeout> | undefined;
 
@@ -44,10 +44,18 @@
 
 	const totalPages = $derived(Math.ceil(data.total / PAGE_SIZE));
 
+	async function loadPage(limit: number, offset: number, signal?: AbortSignal) {
+		const page = await remoteApi.tracks(
+			'jellyfin',
+			{ limit, offset, sort_by: sortBy, sort_order: sortOrder, search: searchQuery },
+			signal
+		);
+		return { ...page, items: page.items.map(toJellyfinTrack) };
+	}
+
 	const loader = createLibraryTrackLoader<JellyfinTrackInfo>(
 		{
-			fetchPageUrl: (limit, offset) =>
-				API.jellyfinLibrary.tracks(limit, offset, sortBy, sortOrder, searchQuery),
+			fetchPage: loadPage,
 			buildQueue: (tracks) => buildDiscoveryQueueFromJellyfin(tracks),
 			pageSize: PAGE_SIZE
 		},
@@ -61,15 +69,7 @@
 		loader.abort();
 		loading = true;
 		try {
-			data = await api.get<JellyfinTrackPage>(
-				API.jellyfinLibrary.tracks(
-					PAGE_SIZE,
-					currentPage * PAGE_SIZE,
-					sortBy,
-					sortOrder,
-					searchQuery
-				)
-			);
+			data = await loadPage(PAGE_SIZE, currentPage * PAGE_SIZE);
 		} catch {
 			data = { items: [], total: 0, offset: 0, limit: PAGE_SIZE };
 		} finally {
@@ -86,14 +86,14 @@
 	function handleSortChange(value: string) {
 		if (value !== sortBy) {
 			sortBy = value;
-			sortOrder = value === 'SortName' ? 'Ascending' : 'Descending';
+			sortOrder = value === 'SortName' ? 'asc' : 'desc';
 		}
 		currentPage = 0;
 		fetchTracks();
 	}
 
 	function toggleSortOrder() {
-		sortOrder = sortOrder === 'Ascending' ? 'Descending' : 'Ascending';
+		sortOrder = sortOrder === 'asc' ? 'desc' : 'asc';
 		currentPage = 0;
 		fetchTracks();
 	}
@@ -197,7 +197,7 @@
 		onSortChange={handleSortChange}
 		{sortOrder}
 		onToggleSortOrder={toggleSortOrder}
-		ascValue="Ascending"
+		ascValue="asc"
 		resultCount={loading ? null : data.total}
 		{loading}
 	/>

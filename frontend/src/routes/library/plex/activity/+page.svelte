@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { API } from '$lib/constants';
 	import { api } from '$lib/api/client';
+	import { REMOTE_ENDPOINTS } from '$lib/queries/remotes/endpoints';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
-	import type { PlexAnalyticsResponse, PlexHistoryResponse, PlexHistoryEntry } from '$lib/types';
+	import type { PlexAnalyticsResponse, PlexHistoryEntry } from '$lib/types';
 
 	let analytics = $state<PlexAnalyticsResponse | null>(null);
 	let analyticsLoading = $state(true);
@@ -28,8 +29,17 @@
 	async function loadHistory(offset = 0) {
 		historyLoading = true;
 		try {
-			const resp = await api.get<PlexHistoryResponse>(API.plexLibrary.history(PAGE_SIZE, offset));
-			history = resp.entries;
+			const resp = await api.v3.GET(REMOTE_ENDPOINTS.history('plex', { limit: PAGE_SIZE, offset }));
+			// v3 history rows carry no device name; the column reads blank.
+			history = resp.items.map((item) => ({
+				rating_key: item.id,
+				track_title: item.track_title,
+				artist_name: item.artist_name,
+				album_name: item.album_name,
+				cover_url: '',
+				viewed_at: String(item.viewed_at),
+				device_name: ''
+			}));
 			historyTotal = resp.total;
 			historyOffset = offset;
 		} catch {

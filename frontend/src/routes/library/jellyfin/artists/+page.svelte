@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { API } from '$lib/constants';
-	import { api } from '$lib/api/client';
+	import { remoteApi } from '$lib/queries/remotes/remoteApi';
+	import { toJellyfinArtist } from '$lib/queries/remotes/remoteAdapters';
 	import SourceArtistCard from '$lib/components/SourceArtistCard.svelte';
 	import ArtistCardSkeleton from '$lib/components/ArtistCardSkeleton.svelte';
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
@@ -17,7 +17,7 @@
 	let artists = $state<JellyfinArtistPage>({ items: [], total: 0, offset: 0, limit: PAGE_SIZE });
 	let currentPage = $state(0);
 	let sortBy = $state('SortName');
-	let sortOrder = $state('Ascending');
+	let sortOrder = $state('asc');
 	let searchQuery = $state('');
 	let searchTimeout: ReturnType<typeof setTimeout> | undefined;
 
@@ -33,15 +33,14 @@
 	async function fetchArtists() {
 		loading = true;
 		try {
-			artists = await api.get<JellyfinArtistPage>(
-				API.jellyfinLibrary.artistsBrowse(
-					PAGE_SIZE,
-					currentPage * PAGE_SIZE,
-					sortBy,
-					sortOrder,
-					searchQuery
-				)
-			);
+			const page = await remoteApi.artists('jellyfin', {
+				limit: PAGE_SIZE,
+				offset: currentPage * PAGE_SIZE,
+				sort_by: sortBy,
+				sort_order: sortOrder,
+				search: searchQuery
+			});
+			artists = { ...page, items: page.items.map(toJellyfinArtist) };
 		} catch {
 			artists = { items: [], total: 0, offset: 0, limit: PAGE_SIZE };
 		} finally {
@@ -58,14 +57,14 @@
 	function handleSortChange(value: string) {
 		if (value !== sortBy) {
 			sortBy = value;
-			sortOrder = value === 'SortName' ? 'Ascending' : 'Descending';
+			sortOrder = value === 'SortName' ? 'asc' : 'desc';
 		}
 		currentPage = 0;
 		fetchArtists();
 	}
 
 	function toggleSortOrder() {
-		sortOrder = sortOrder === 'Ascending' ? 'Descending' : 'Ascending';
+		sortOrder = sortOrder === 'asc' ? 'desc' : 'asc';
 		currentPage = 0;
 		fetchArtists();
 	}
@@ -116,7 +115,7 @@
 		onSortChange={handleSortChange}
 		{sortOrder}
 		onToggleSortOrder={toggleSortOrder}
-		ascValue="Ascending"
+		ascValue="asc"
 		resultCount={loading ? null : artists.total}
 		{loading}
 	/>

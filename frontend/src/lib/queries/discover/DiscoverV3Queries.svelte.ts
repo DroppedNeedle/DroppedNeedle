@@ -10,7 +10,6 @@ import { discoverHasContent } from '$lib/utils/discoverContent';
 import { DiscoverV3Api } from './DiscoverV3Api';
 import {
 	DiscoverQueryKeyFactory,
-	type DiscoverV3CacheCheckItem,
 	type DiscoverV3RadioParams,
 	type DiscoverV3UserId
 } from './DiscoverQueryKeyFactory';
