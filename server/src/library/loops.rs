@@ -254,12 +254,24 @@ pub(crate) async fn scan_loop(setup: LibrarySetup, mut shutdown: watch::Receiver
             artwork_due = true;
             continue;
         }
-        if std::mem::take(&mut artwork_due) {
-            let (store, shutdown) = (setup.scan_store.clone(), shutdown.clone());
-            drive_blocking(
-                move || async move { store.refresh_album_artwork(&|| *shutdown.borrow()) },
-            )
+        if artwork_due {
+            // The sweep gives way to shutdown and to any scan request (a
+            // wakeup, or a queued run), and resumes on a later pass.
+            let (sweep_setup, shutdown) = (setup.clone(), shutdown.clone());
+            let swept = drive_blocking(move || async move {
+                let wakeups = sweep_setup.wakeups.clone();
+                let coordinator = sweep_setup.coordinator.clone();
+                let polls = std::cell::Cell::new(0u32);
+                sweep_setup.scan_store.refresh_album_artwork(&|| {
+                    polls.set(polls.get().wrapping_add(1));
+                    *shutdown.borrow()
+                        || wakeups.revision("scan") != revision
+                        || (polls.get() % 32 == 0 && !coordinator.current().is_empty())
+                })
+            })
             .await;
+            // A panicked sweep (already logged) waits for the next scan.
+            artwork_due = swept.is_some_and(|sweep| !sweep.complete);
         }
         tokio::select! {
             _ = shutdown.changed() => break,

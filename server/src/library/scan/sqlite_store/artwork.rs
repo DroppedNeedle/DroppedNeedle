@@ -21,6 +21,15 @@
 //!
 //! Manual art is never touched. Provider rows (Cover Art Archive art kept
 //! from v2) are replaced only when local art turns up.
+//!
+//! Versions never go backwards: the check row keeps the highest version
+//! ever issued, so art that disappears and later comes back gets a new
+//! version rather than one a client may still hold for older art.
+//!
+//! A sweep is a background chore and gives way to scans: it stops between
+//! albums when `stop` says so (shutdown, or a scan was requested) and after
+//! [`SWEEP_SLICE`], and reports itself incomplete. Finished albums are
+//! already saved, so the next sweep carries on from there.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -37,8 +46,11 @@ use crate::providers::coverart::sniff_image_content_type;
 const COVER_STEMS: [&str; 5] = ["cover", "folder", "front", "album", "artwork"];
 /// Folder image extensions (v2 `_LOCAL_COVER_EXTENSIONS`).
 const COVER_EXTENSIONS: [&str; 4] = ["jpg", "jpeg", "png", "webp"];
-/// Folder images larger than this are ignored (v2 `_LOCAL_COVER_MAX_BYTES`).
+/// Folder images and embedded pictures larger than this are ignored (v2
+/// `_LOCAL_COVER_MAX_BYTES`).
 const COVER_MAX_BYTES: u64 = 25 * 1024 * 1024;
+/// Longest stretch one sweep runs before handing back to the scan loop.
+pub const SWEEP_SLICE: std::time::Duration = std::time::Duration::from_secs(30);
 /// Albums written per transaction, so the store lock is held briefly.
 const WRITE_BATCH: usize = 200;
 
@@ -51,6 +63,8 @@ pub struct ArtworkSweep {
     pub changed: usize,
     /// Albums whose local art disappeared.
     pub cleared: usize,
+    /// False when the sweep stopped early; run it again to finish.
+    pub complete: bool,
 }
 
 /// One indexed track of an album, in album order.
@@ -93,20 +107,28 @@ struct Snapshot {
 impl SqliteScanStore {
     /// Record local album art for every album whose files changed since the
     /// last sweep. File reads happen outside the store lock; writes go in
-    /// small transactions. `stop` is polled between albums so shutdown does
-    /// not wait for a large first sweep.
+    /// small transactions. `stop` is polled between albums so neither
+    /// shutdown nor a requested scan waits for a large first sweep.
     pub fn refresh_album_artwork(&self, stop: &dyn Fn() -> bool) -> ArtworkSweep {
+        let started = std::time::Instant::now();
         let snapshot = match self.artwork_snapshot() {
             Ok(snapshot) => snapshot,
             Err(error) => {
                 tracing::warn!(%error, "album art sweep could not read the catalog; skipped");
-                return ArtworkSweep::default();
+                return ArtworkSweep {
+                    complete: true,
+                    ..ArtworkSweep::default()
+                };
             }
         };
-        let mut sweep = ArtworkSweep::default();
+        let mut sweep = ArtworkSweep {
+            complete: true,
+            ..ArtworkSweep::default()
+        };
         let mut pending = Vec::new();
         for (album_id, tracks) in &snapshot.albums {
-            if stop() {
+            if stop() || started.elapsed() >= SWEEP_SLICE {
+                sweep.complete = false;
                 break;
             }
             let current = snapshot.current.get(album_id);
@@ -142,6 +164,7 @@ impl SqliteScanStore {
                 checked = sweep.checked,
                 changed = sweep.changed,
                 cleared = sweep.cleared,
+                complete = sweep.complete,
                 "album art sweep finished"
             );
         }
@@ -227,15 +250,18 @@ impl SqliteScanStore {
                         if !same {
                             changed += tx.execute(
                                 "INSERT INTO local_album_artwork \
-                                 (local_album_id, source, source_locator, content_hash, updated_at) \
-                                 SELECT ?1, ?2, ?3, ?4, ?5 \
+                                 (local_album_id, source, source_locator, content_hash, \
+                                  updated_at, version) \
+                                 SELECT ?1, ?2, ?3, ?4, ?5, COALESCE((SELECT art_version \
+                                     FROM local_album_artwork_checks \
+                                     WHERE local_album_id = ?1), 0) + 1 \
                                  WHERE EXISTS (SELECT 1 FROM local_albums WHERE id = ?1) \
                                  ON CONFLICT(local_album_id) DO UPDATE SET \
                                  source = excluded.source, \
                                  source_locator = excluded.source_locator, \
                                  cover_url = NULL, \
                                  version = CASE WHEN content_hash IS excluded.content_hash \
-                                     THEN version ELSE version + 1 END, \
+                                     THEN version ELSE MAX(version + 1, excluded.version) END, \
                                  content_hash = excluded.content_hash, \
                                  updated_at = excluded.updated_at, \
                                  row_revision = row_revision + 1",
@@ -258,10 +284,14 @@ impl SqliteScanStore {
                     }
                 }
                 tx.execute(
-                    "INSERT INTO local_album_artwork_checks (local_album_id, signature, checked_at) \
-                     SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM local_albums WHERE id = ?1) \
+                    "INSERT INTO local_album_artwork_checks \
+                     (local_album_id, signature, checked_at, art_version) \
+                     SELECT ?1, ?2, ?3, COALESCE((SELECT version FROM local_album_artwork \
+                         WHERE local_album_id = ?1), 0) \
+                     WHERE EXISTS (SELECT 1 FROM local_albums WHERE id = ?1) \
                      ON CONFLICT(local_album_id) DO UPDATE SET \
-                     signature = excluded.signature, checked_at = excluded.checked_at",
+                     signature = excluded.signature, checked_at = excluded.checked_at, \
+                     art_version = MAX(art_version, excluded.art_version)",
                     params![checked.album_id, checked.signature, now],
                 )?;
             }
@@ -358,7 +388,10 @@ fn find_art(tracks: &[TrackFile], dirs: &[PathBuf]) -> Option<FoundArt> {
     }
     for track in tracks {
         match crate::library::tags::read_cover_art(&track.path) {
-            Ok(Some(bytes)) if sniff_image_content_type(&bytes).is_some() => {
+            Ok(Some(bytes))
+                if bytes.len() as u64 <= COVER_MAX_BYTES
+                    && sniff_image_content_type(&bytes).is_some() =>
+            {
                 return Some(FoundArt {
                     source: "embedded",
                     locator: track.id.clone(),

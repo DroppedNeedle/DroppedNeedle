@@ -10,7 +10,9 @@
 --   the version changes with it, so clients fetch the new art.
 -- - local_album_artwork_checks remembers what the scan last looked at for
 --   each album (a signature of its track files and folders), so a scan only
---   re-reads albums whose files changed, including albums with no art.
+--   re-reads albums whose files changed, including albums with no art. It
+--   also keeps the highest art version issued, so art that disappears and
+--   comes back never reuses an old version.
 -- - An index on release MBIDs lets the release cover route find the local
 --   album for a release without a table scan.
 --
@@ -79,7 +81,8 @@ END;
 CREATE TABLE IF NOT EXISTS local_album_artwork_checks (
     local_album_id TEXT PRIMARY KEY REFERENCES local_albums(id) ON DELETE CASCADE,
     signature TEXT NOT NULL,
-    checked_at REAL NOT NULL
+    checked_at REAL NOT NULL,
+    art_version INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_local_album_identity_release
