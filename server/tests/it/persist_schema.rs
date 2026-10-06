@@ -367,6 +367,28 @@ async fn every_earlier_version_upgrades_and_keeps_data() {
     }
 }
 
+/// Each migration stamps its own number, so applying them in order on an
+/// empty database ends at the latest version. A file renumbered without
+/// its `user_version` stamp (or the reverse) fails here, before boot would
+/// refuse the database it leaves behind.
+#[tokio::test]
+async fn migrations_stamp_their_own_version_in_order() {
+    let pool = scratch_pool().await;
+    for migration in MIGRATOR.migrations.iter() {
+        sqlx::raw_sql(&migration.sql).execute(&pool).await.unwrap();
+        let stamped: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(stamped, migration.version, "{}", migration.description);
+    }
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(version, latest_version());
+}
+
 /// Number of migrations the binary carries.
 fn migration_count() -> i64 {
     i64::try_from(droppedneedle::schema::MIGRATOR.migrations.len()).unwrap_or(i64::MAX)
