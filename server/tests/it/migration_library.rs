@@ -2,8 +2,9 @@
 //! retagged and moved, and that a curator identified by hand, goes
 //! through export and import, v3 scans it, and everything that cannot be
 //! rebuilt is still there: the track and album ids (which every Subsonic
-//! and Jellyfin id derives from), the manual identity, and the original
-//! file, which "restore original" brings back exactly as v2 first found it.
+//! and Jellyfin id derives from), the manual identity, an edition pin as
+//! the album's protected edition, and the original file, which "restore
+//! original" brings back exactly as v2 first found it.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -29,6 +30,9 @@ const PASSPHRASE: &str = "operator-passphrase";
 /// The second track: v2 has it, its file changed since, so v3 re-reads it.
 const SECOND_TRACK_ID: &str = "v2-track-3";
 const SECOND_TRACK_REL: &str = "John Coltrane/Blue Train/02.flac";
+/// An album v2 identified on its own and a curator then pinned to another
+/// edition of the same release group.
+const PINNED_ALBUM_ID: &str = "v2-album-giant";
 /// Where the first track's file was before v2 first managed it.
 const ORIGINAL_REL: &str = "Incoming/blue train.flac";
 
@@ -161,6 +165,19 @@ fn managed_album(v2_root: &Path, alice: &str) -> PathBuf {
              stat_revision, tag_revision, created_at)
          VALUES ('baseline-1', '{V2_TRACK_ID}', '{MUSIC_ROOT_ID}', '{ORIGINAL_REL}', 'flac',
                  '1', '{sha}', '1:1', 'tags', 1700000600.0);
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+             album_artist_name, album_artist_name_folded, album_artist_id, grouping_source,
+             created_at, updated_at)
+         VALUES ('{PINNED_ALBUM_ID}', '{MUSIC_ROOT_ID}', 'k', 'Giant Steps', 'giant steps',
+                 'John Coltrane', 'john coltrane', 'v2-artist-1', 'automatic',
+                 1700000000.0, 1700000000.0);
+         INSERT INTO local_album_external_identities (local_album_id, release_group_mbid,
+             release_mbid, decision_source, selected_at)
+         VALUES ('{PINNED_ALBUM_ID}', 'rg-giant', 'rel-giant-us', 'automatic', 1700000500.0);
+         INSERT INTO library_album_release_pins (local_album_id, release_group_mbid,
+             release_mbid, set_by_user_id, set_at)
+         VALUES ('{PINNED_ALBUM_ID}', 'rg-giant', 'rel-giant-jp', '{alice}',
+                 '2025-06-01T00:00:00Z');
          INSERT INTO library_track_management_state (local_track_id, baseline_id,
              managed_root_id, last_managed_at, last_outcome)
          VALUES ('{V2_TRACK_ID}', 'baseline-1', '{MUSIC_ROOT_ID}', 1700000600.0, 'applied');",
@@ -299,6 +316,13 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
         .expect("identity kept");
     assert_eq!(identity.decision_source, DecisionSource::Manual);
     assert_eq!(identity.release_mbid.as_deref(), Some("rel-blue"));
+    // The pinned edition is now the album's protected edition.
+    let pinned = library
+        .identify_store
+        .album_identity(PINNED_ALBUM_ID)
+        .expect("pinned identity");
+    assert_eq!(pinned.decision_source, DecisionSource::LegacyImport);
+    assert_eq!(pinned.release_mbid.as_deref(), Some("rel-giant-jp"));
 
     // "Restore original" brings back the file as v2 first found it: its
     // place and exactly its tags, with the fields management added gone.

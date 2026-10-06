@@ -27,6 +27,7 @@ pub(crate) mod avatars;
 pub(crate) mod baselines;
 pub(crate) mod bundle;
 pub(crate) mod connections;
+pub(crate) mod editions;
 pub(crate) mod held;
 pub(crate) mod links;
 
@@ -109,6 +110,8 @@ pub(crate) struct CarryRun<'a> {
 enum Work {
     Connections,
     Section(&'static TableSection),
+    /// Make carried edition choices sticky (after the catalog).
+    Editions,
     /// Translate the carried v2 baselines (after the catalog and blobs).
     Baselines,
     /// Settle pending library links (last, on every import).
@@ -120,6 +123,7 @@ impl Work {
         match self {
             Self::Connections => connections::ENTITY,
             Self::Section(section) => section.name,
+            Self::Editions => editions::ENTITY,
             Self::Baselines => baselines::ENTITY,
             Self::Links => links::ENTITY,
         }
@@ -189,6 +193,7 @@ async fn run_sections(
     }
     if run.bundle.is_some() {
         work.extend(ALL.iter().copied().map(Work::Section));
+        work.push(Work::Editions);
         work.push(Work::Baselines);
     }
     work.push(Work::Links);
@@ -291,6 +296,7 @@ async fn apply(
         Work::Connections => {
             return connections::apply(conn, run.root, run.unsealed, run.crypto, run.dry_run).await;
         }
+        Work::Editions => return editions::apply(conn, run.dry_run).await,
         Work::Baselines => return baselines::apply(conn, run.dry_run).await,
         Work::Links => return links::apply(conn, run.dry_run).await,
         Work::Section(section) => section,

@@ -45,6 +45,12 @@ with the same ids, and v3 checks it against your files on its first scan.
 - Downloads held back for review, with their files. They land in
   `V3_ROOT/cache/held`.
 
+Every edition you chose in v2 stays the album's edition in v3: a manual
+match, an edition pin, or an active custom edition. v3's automatic
+identification never replaces it; only you can, from the album page. If an
+album had both a manual match and a pin naming a different release, the
+manual match wins and the import report says so.
+
 Albums that were waiting on a review question in v2 go back on v3's
 identify queue, so v3 asks again with its own candidates.
 
