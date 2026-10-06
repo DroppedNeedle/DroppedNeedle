@@ -21,7 +21,7 @@ use crate::reads::library::stores::{
     ArtistRecord, ArtistScope, ArtistSort, GenreRecord, LibraryCatalog, LyricDoc, LyricsPort,
     StoreError,
 };
-use crate::reads::platform::covers::CoverArt;
+use crate::reads::platform::covers::{CoverArt, CoverLookup};
 
 /// A compat read or write failed. Client faults keep their kind so each
 /// protocol answers its own code (Subsonic 70/50/10/0, Jellyfin
@@ -544,21 +544,16 @@ impl CompatLibrary {
         }
     }
 
-    /// Release art for a local album, through its release group.
+    /// Art for a local album: its own folder or embedded art, or the
+    /// release group's Cover Art Archive front, per the local-art setting.
     pub async fn album_cover(
         &self,
         album_id: &str,
         size: Option<&str>,
     ) -> Result<Option<ImageBytes>, CompatError> {
-        let Some(album) = self.catalog.get_album(album_id).await? else {
-            return Ok(None);
-        };
-        let Some(group) = album.release_group_mbid else {
-            return Ok(None);
-        };
         Ok(self
             .covers
-            .release_group_cover(&group, size)
+            .album_cover(album_id, size)
             .await
             .map(|cover| (cover.bytes, cover.content_type)))
     }
@@ -575,10 +570,9 @@ impl CompatLibrary {
         let Some(mbid) = artist.artist_mbid else {
             return Ok(None);
         };
-        Ok(self
-            .covers
-            .artist_image(&mbid, size_px)
-            .await
-            .map(|cover| (cover.bytes, cover.content_type)))
+        Ok(match self.covers.artist_image(&mbid, size_px).await {
+            CoverLookup::Found(cover) => Some((cover.bytes, cover.content_type)),
+            CoverLookup::Warming | CoverLookup::Missing => None,
+        })
     }
 }

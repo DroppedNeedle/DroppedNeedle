@@ -69,7 +69,7 @@ impl Rig {
             runtime.pool(),
             auth.users.clone(),
             ids.clone(),
-            String::new(),
+            crate::common::platform_inputs(crate::common::config_store(&dir), &dir),
             None,
         )
         .with_collections(CollectionsDb::new(

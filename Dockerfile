@@ -37,6 +37,11 @@ COPY server/ ./server/
 # The Python plugin helper is compiled into the binary.
 COPY sdk/ ./sdk/
 
+# The version check reports these; they are baked into the binary.
+ARG COMMIT_TAG=dev
+ARG BUILD_DATE=unknown
+ENV COMMIT_TAG=${COMMIT_TAG} BUILD_DATE=${BUILD_DATE}
+
 RUN cargo build --release --locked --manifest-path server/Cargo.toml --bins
 
 FROM debian:bookworm-slim

@@ -33,14 +33,13 @@ use crate::{
     plugins::wiring::PluginsSetup,
     providers::{InMemoryProviderCache, Providers, adapters::production_enrichment},
     reads::{
-        ReadsSetup,
+        PlatformInputs, ReadsSetup,
         catalog::{
             Catalog,
             library::LocalCatalog,
             upstream::{Upstream, instance_lastfm_key},
         },
         collections::db::CollectionsDb,
-        platform::wrapped::ConfigWrappedKey,
     },
     remotes::adapter::PlaylistImportSink,
     runtime_config::{
@@ -172,7 +171,13 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         runtime.pool(),
         auth.users.clone(),
         ids.clone(),
-        ConfigWrappedKey::new(config_store.clone()),
+        PlatformInputs {
+            config: config_store.clone(),
+            covers_dir: config.cache_dir.join("covers"),
+            cover_cache_max_bytes: config.cover_cache_max_bytes,
+            http: http.shared().clone(),
+            no_redirect: http.no_redirect().clone(),
+        },
         Some(enrichment),
     )
     .with_collections(CollectionsDb::new(

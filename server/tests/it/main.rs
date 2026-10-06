@@ -66,6 +66,7 @@ mod providers_core;
 mod providers_enrich;
 mod providers_events;
 mod providers_musicbrainz;
+mod reads_artwork;
 mod reads_catalog;
 mod reads_collections;
 mod reads_discover;

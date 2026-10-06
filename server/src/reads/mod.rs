@@ -58,15 +58,15 @@ pub struct ReadsSetup {
 impl ReadsSetup {
     /// Build the production bundle. `pool` serves library and search reads;
     /// `users` resolves library favorites and collections roles;
-    /// `wrapped_key` yields the `wrapped_settings` secret per request (empty
-    /// denies every wrapped request, the fail-closed rule); `enrichment`
+    /// `platform` carries what cover art, the version check and wrapped
+    /// read from the composition root; `enrichment`
     /// carries the live provider pair (`None` keeps the
     /// unconfigured ports: bare enrichment echoes and empty lyrics).
     pub fn build(
         pool: &sqlx::SqlitePool,
         users: UsersDeps,
         ids: Arc<dyn IdGenerator>,
-        wrapped_key: impl platform::wrapped::WrappedKeySource + 'static,
+        platform: PlatformInputs,
         enrichment: Option<crate::providers::adapters::ProductionEnrichment>,
     ) -> Self {
         let library_db = library::sqlite::LibraryDb::new(pool);
@@ -109,7 +109,7 @@ impl ReadsSetup {
             discover: discover_deps(ids.clone()),
             collections: collections::CollectionsState::unwired(),
             catalog: None,
-            platform: platform_state(wrapped_key),
+            platform: platform_state(pool, platform),
         }
     }
 
@@ -136,7 +136,7 @@ impl ReadsSetup {
             discover: discover_deps(ids.clone()),
             collections: collections::CollectionsState::unwired(),
             catalog: None,
-            platform: platform_state(String::new()),
+            platform: test_platform_state(),
         })
     }
 
@@ -218,24 +218,79 @@ fn discover_deps(ids: Arc<dyn IdGenerator>) -> discover::ReadsDeps {
     }
 }
 
-/// Platform states: empty art, tagged version with no known
-/// releases, and empty wrapped data behind the configured key.
-fn platform_state(
-    wrapped_key: impl platform::wrapped::WrappedKeySource + 'static,
-) -> platform::PlatformState {
+/// What the platform reads take from the composition root.
+pub struct PlatformInputs {
+    /// Runtime settings: the wrapped key and the local-art preference are
+    /// read from here per request.
+    pub config: Arc<crate::runtime_config::ConfigStore>,
+    /// Root of the cover cache (`<cache_dir>/covers`).
+    pub covers_dir: std::path::PathBuf,
+    /// Size bound of the cover cache in bytes.
+    pub cover_cache_max_bytes: u64,
+    /// The factory's shared client.
+    pub http: reqwest::Client,
+    /// The factory's no-redirect client (cover fetches check each hop).
+    pub no_redirect: reqwest::Client,
+}
+
+/// Production platform states: local and Cover Art Archive art through
+/// the disk cache, GitHub releases for the version check, and wrapped
+/// behind the configured key.
+fn platform_state(pool: &sqlx::SqlitePool, inputs: PlatformInputs) -> platform::PlatformState {
+    use crate::providers::coverart::ReqwestCaaTransport;
+    use crate::providers::github::GitHubClient;
+    use platform::{
+        artwork::{ArtworkService, cache::ArtworkCache, local::LocalArtwork, remote::cover_client},
+        covers::CoversState,
+        version::{GitHubReleases, VersionState},
+        wrapped::{ConfigWrappedKey, FakeWrappedData, WrappedState},
+    };
+
+    let config = inputs.config.clone();
+    let prefer_local: platform::artwork::PreferLocal = Arc::new(move || {
+        match config.get::<crate::runtime_config::secret_sections::AdvancedSettings>() {
+            Ok(settings) => settings.prefer_local_cover_art,
+            Err(error) => {
+                tracing::warn!(%error, "cannot read advanced settings; preferring local art");
+                true
+            }
+        }
+    });
+    let artwork = ArtworkService::new(
+        ArtworkCache::new(inputs.covers_dir, inputs.cover_cache_max_bytes),
+        LocalArtwork::new(pool.clone()),
+        Some(Arc::new(cover_client(ReqwestCaaTransport::new(
+            inputs.no_redirect,
+        )))),
+        prefer_local,
+    );
+    let year = (1970 + now_unix() / SECS_PER_YEAR) as i32;
+    platform::PlatformState::new(
+        CoversState::new(Arc::new(artwork)),
+        VersionState::new(Arc::new(GitHubReleases::new(GitHubClient::new(
+            inputs.http,
+        )))),
+        WrappedState::new(
+            ConfigWrappedKey::new(inputs.config),
+            Arc::new(FakeWrappedData::empty(year)),
+        ),
+    )
+}
+
+/// Test platform states: no art, a tagged build, and wrapped denying
+/// every request.
+#[cfg(any(test, feature = "test-support"))]
+fn test_platform_state() -> platform::PlatformState {
     use platform::{
         covers::{CoversState, FakeCoverArt},
         version::{FakeReleases, VersionState},
         wrapped::{FakeWrappedData, WrappedState},
     };
 
-    // Mean-year math is approximate by days at most; the fake only needs a
-    // plausible stats year until real data is aggregated.
-    let year = (1970 + now_unix() / SECS_PER_YEAR) as i32;
     platform::PlatformState::new(
         CoversState::new(Arc::new(FakeCoverArt::empty())),
-        VersionState::new(Arc::new(FakeReleases::tagged(env!("CARGO_PKG_VERSION")))),
-        WrappedState::new(wrapped_key, Arc::new(FakeWrappedData::empty(year))),
+        VersionState::new(Arc::new(FakeReleases::tagged("dev"))),
+        WrappedState::new(String::new(), Arc::new(FakeWrappedData::empty(2026))),
     )
 }
 

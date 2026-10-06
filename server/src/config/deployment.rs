@@ -45,6 +45,11 @@ pub const DEPLOYMENT_VARS: &[DeploymentVar] = &[
         note: "Database, backups, covers, stamped web UI, disk caches.",
     },
     DeploymentVar {
+        env_name: "COVER_CACHE_MAX_SIZE_MB",
+        default: "500",
+        note: "Size bound on the cover image cache under <cache>/covers.",
+    },
+    DeploymentVar {
         env_name: "LIBRARY_DB_PATH",
         default: "<cache>/library.db",
         note: "The single SQLite WAL file.",

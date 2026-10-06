@@ -1,16 +1,15 @@
-//! Platform reads: covers, version, and wrapped.
+//! Platform reads: cover art, version check, and wrapped.
 //!
-//! Clean-slate `/api/v3` handlers over trait ports that still run on fakes;
-//! real art providers, the GitHub client, and ListenBrainz aggregation
-//! belong behind the same traits. Mounting:
+//! Mounting:
 //!
-//! - `/covers/*` and `/version*` nest inside the session-gated v3 router
-//!   (any signed-in user, no role gate).
+//! - `/covers/*`, `/library/albums/{id}/artwork` and `/version*` nest
+//!   inside the session-gated v3 router (any signed-in user, no role gate).
 //! - `/wrapped/*` mounts outside the session middleware with only the
 //!   `X-Wrapped-API-Key` gate. Never add these paths to the session
 //!   allowlist: allowlisted means public.
 //! - The v2 covers debug route stays out of this router.
 
+pub mod artwork;
 pub mod covers;
 pub mod version;
 pub mod wrapped;

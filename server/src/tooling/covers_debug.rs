@@ -26,7 +26,7 @@ use axum::{
 };
 use serde::Serialize;
 
-use crate::reads::platform::covers::CoversState;
+use crate::reads::platform::covers::{CoverLookup, CoversState};
 
 /// Sizes probed, mirroring the v2 disk-cache slots.
 const DEBUG_SIZES: [u32; 2] = [250, 500];
@@ -88,13 +88,17 @@ async fn debug_artist_cover(
     let is_valid_mbid = validated_mbid.is_some();
     let mut sizes = Vec::with_capacity(DEBUG_SIZES.len());
     for size in DEBUG_SIZES {
-        let art = state.covers.artist_image(&artist_id, Some(size)).await;
+        let lookup = state.covers.artist_image(&artist_id, Some(size)).await;
+        let art = match &lookup {
+            CoverLookup::Found(found) => Some(found),
+            CoverLookup::Warming | CoverLookup::Missing => None,
+        };
         sizes.push(SizeDebug {
             size,
             cached: art.is_some(),
-            source: art.as_ref().map(|found| found.source.clone()),
-            bytes: art.as_ref().map(|found| found.bytes.len()),
-            warming: state.covers.is_artist_warming(&artist_id, Some(size)),
+            source: art.map(|found| found.source.clone()),
+            bytes: art.map(|found| found.bytes.len()),
+            warming: lookup == CoverLookup::Warming,
         });
     }
     let recommendation = recommend(is_valid_mbid, &sizes).to_owned();
@@ -139,7 +143,7 @@ fn recommend(is_valid_mbid: bool, sizes: &[SizeDebug]) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::reads::platform::covers::FakeCoverArt;
+    use crate::reads::platform::covers::{CoverBytes, FakeCoverArt};
     use std::sync::Arc;
 
     #[test]
@@ -157,7 +161,11 @@ mod tests {
         let mbid = uuid::Uuid::new_v4().to_string();
         let state = CoversState::new(Arc::new(
             FakeCoverArt::empty()
-                .with_artist(&mbid, Some(250), vec![1, 2, 3], "image/jpeg", "lidarr")
+                .with_artist(
+                    &mbid,
+                    Some(250),
+                    CoverBytes::new(vec![1, 2, 3], "image/jpeg", "lidarr"),
+                )
                 .warming_artist(&mbid, Some(500)),
         ));
         let answer = debug_artist_cover(State(state), Path(mbid.to_owned())).await;

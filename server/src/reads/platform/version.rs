@@ -1,9 +1,9 @@
 //! Version reads: current version, update check, release history.
 //!
-//! Carried over from v2's version route and `VersionService`,
-//! read-only: the check logic is pure over the [`ReleaseSource`] port, and
-//! there are no publish paths. [`FakeReleases`] feeds the route for now; the
-//! GitHub client belongs behind the same trait.
+//! Carried over from v2's version route and `VersionService`, read-only:
+//! the check logic is pure over the [`ReleaseSource`] port, and production
+//! runs [`GitHubReleases`], the build tag plus the GitHub releases client
+//! (cached for an hour, quiet on failure).
 //!
 //! Comparison rules, v2 kept: strip leading `v`s, compare numeric release
 //! cores; anything else fails closed as `comparison_failed`. Dev builds
@@ -12,8 +12,8 @@
 //! update is available; a missing latest release answers with the current
 //! version alone.
 //!
-//! Self-contained on purpose: no `crate::` imports, so this module compiles
-//! both inside the wired tree and standalone in the tests.
+//! The running version is the `COMMIT_TAG` the image was built with (v2
+//! read the same name from the container environment), else `dev`.
 
 use std::sync::Arc;
 
@@ -71,8 +71,7 @@ pub struct UpdateCheckResponse {
     pub latest_release: Option<GitHubRelease>,
 }
 
-/// Release-data port. Production reads the baked-in version plus the GitHub
-/// client; tests (and production, for now) run against [`FakeReleases`].
+/// Release-data port: [`GitHubReleases`] in production.
 pub trait ReleaseSource: Send + Sync + 'static {
     /// Running build identity.
     fn current_version(&self) -> VersionInfo;
@@ -82,7 +81,73 @@ pub trait ReleaseSource: Send + Sync + 'static {
     fn release_history(&self) -> BoxFuture<'_, Vec<GitHubRelease>>;
 }
 
-/// Fake release data.
+/// The running build: `COMMIT_TAG` and `BUILD_DATE` as baked in at compile
+/// time by the image build, else `dev` like v2.
+pub fn build_version() -> VersionInfo {
+    let version = option_env!("COMMIT_TAG")
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .unwrap_or("dev");
+    VersionInfo {
+        version: version.to_owned(),
+        build_date: option_env!("BUILD_DATE")
+            .map(str::trim)
+            .filter(|date| !date.is_empty())
+            .map(str::to_owned),
+    }
+}
+
+/// Production release data: the build tag plus GitHub releases.
+#[derive(Debug, Clone)]
+pub struct GitHubReleases {
+    client: crate::providers::github::GitHubClient,
+    current: VersionInfo,
+}
+
+impl GitHubReleases {
+    /// Wrap the releases client for the running build.
+    pub fn new(client: crate::providers::github::GitHubClient) -> Self {
+        Self {
+            client,
+            current: build_version(),
+        }
+    }
+}
+
+fn from_github(release: crate::providers::github::GitHubRelease) -> GitHubRelease {
+    GitHubRelease {
+        tag_name: release.tag_name,
+        published_at: release.published_at,
+        html_url: release.html_url,
+        name: Some(release.name),
+        body: Some(release.body),
+        prerelease: release.prerelease,
+    }
+}
+
+impl ReleaseSource for GitHubReleases {
+    fn current_version(&self) -> VersionInfo {
+        self.current.clone()
+    }
+
+    fn latest_release(&self) -> BoxFuture<'_, Option<GitHubRelease>> {
+        Box::pin(async move { self.client.fetch_latest_release().await.map(from_github) })
+    }
+
+    fn release_history(&self) -> BoxFuture<'_, Vec<GitHubRelease>> {
+        Box::pin(async move {
+            self.client
+                .fetch_releases()
+                .await
+                .into_iter()
+                .map(from_github)
+                .collect()
+        })
+    }
+}
+
+/// Scripted release data for tests.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone)]
 pub struct FakeReleases {
     current: VersionInfo,
@@ -90,9 +155,9 @@ pub struct FakeReleases {
     history: Vec<GitHubRelease>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl FakeReleases {
     /// Build a fake from its parts.
-    #[cfg(any(test, feature = "test-support"))]
     pub fn new(
         current: VersionInfo,
         latest: Option<GitHubRelease>,
@@ -107,17 +172,18 @@ impl FakeReleases {
 
     /// Fake for a tagged build with no known releases.
     pub fn tagged(version: &str) -> Self {
-        Self {
-            current: VersionInfo {
+        Self::new(
+            VersionInfo {
                 version: version.to_owned(),
                 build_date: None,
             },
-            latest: None,
-            history: Vec::new(),
-        }
+            None,
+            Vec::new(),
+        )
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl ReleaseSource for FakeReleases {
     fn current_version(&self) -> VersionInfo {
         self.current.clone()
@@ -138,7 +204,7 @@ impl ReleaseSource for FakeReleases {
 /// non-generic for utoipa.
 #[derive(Clone)]
 pub struct VersionState {
-    /// Release data (the fake until the GitHub client is wired).
+    /// Release data.
     pub releases: Arc<dyn ReleaseSource>,
 }
 

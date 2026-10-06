@@ -152,18 +152,14 @@ impl Lib {
             "",
         )
         .expect("prod auth bundle builds");
-        let wrapped_api_key = self
-            .store
-            .get_raw::<WrappedSettings>()
-            .expect("wrapped settings read")
-            .api_key
-            .expose()
-            .to_owned();
         let reads = ReadsSetup::build(
             self.runtime.pool(),
             auth.users.clone(),
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
-            wrapped_api_key,
+            crate::common::platform_inputs(
+                Arc::clone(&self.store),
+                self.db_path.parent().expect("db dir"),
+            ),
             None,
         )
         .with_collections(droppedneedle::reads::collections::db::CollectionsDb::new(

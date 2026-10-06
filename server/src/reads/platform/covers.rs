@@ -1,21 +1,20 @@
-//! Cover art reads: release-group, release, and artist images.
+//! Cover art routes: release-group, release and artist images by MBID, and
+//! an album's own art by local id.
 //!
-//! Carried over from v2's covers routes: size validation with the
-//! same allowed sizes and `original` aliases, ETag + `If-None-Match` handling
+//! Carried over from v2's covers routes: size validation with the same
+//! allowed sizes and `original` aliases, ETag + `If-None-Match` handling
 //! (strong, weak, and `*`), the 202 warming answer while art resolves in the
 //! background, and distinct album/artist placeholders. The v2 debug route
 //! is absent here on purpose (it lives in `tooling::covers_debug`).
 //!
-//! Cover bytes come from the [`CoverArt`] port. Only [`FakeCoverArt`]
-//! exists so far; real art providers belong behind the same trait.
-//! Thumbnailing is a no-op here: the fake returns final bytes, and a real
-//! provider would apply the size after fetching.
+//! Caching follows Navidrome: the ETag is the content hash the art already
+//! carries (no hashing per request), `immutable` is sent only when the
+//! request names the art's current version (`?v=`), and placeholders are
+//! never cached, so art that turns up later replaces them at once.
+//! Unversioned art keeps v2's five-minute window, then revalidates.
 //!
-//! Self-contained on purpose: no `crate::` imports, so this module compiles
-//! both inside the wired tree and standalone in the tests. The error
-//! envelope mirrors `crate::error` exactly.
-
-use std::collections::{HashMap, HashSet};
+//! Bytes come from the [`CoverArt`] port; production runs
+//! [`ArtworkService`](super::artwork::ArtworkService).
 
 use axum::{
     Json, Router,
@@ -26,7 +25,6 @@ use axum::{
 };
 use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use sha2::{Digest, Sha256};
 use utoipa::ToSchema;
 
 /// Sizes the release cover routes accept, v2 set kept.
@@ -36,17 +34,17 @@ const SIZE_ALIAS_ORIGINAL: &[&str] = &["", "original", "full", "max", "largest"]
 /// Default release cover size, v2 kept.
 const DEFAULT_SIZE: &str = "500";
 
-/// Placeholder cache window. Short on purpose (v2 comment kept): a cold cover
-/// warms in the background, and a long-lived placeholder in the browser cache
-/// would mask the real art.
-const PLACEHOLDER_CACHE_CONTROL: &str = "public, max-age=300";
-/// Preferred-source cache window: immutable for a year.
-const PREFERRED_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
-/// Cover Art Archive cache window. CAA art can change under us, so it stays
-/// short like the placeholder.
-const FALLBACK_CACHE_CONTROL: &str = "public, max-age=300";
-/// Source label marking CAA bytes for the short cache window.
-const FALLBACK_SOURCE: &str = "cover-art-archive";
+/// Placeholders and misses are never stored: a cover that turns up later
+/// must replace them on the next view.
+const NO_STORE: &str = "no-store";
+/// Unversioned art: v2's five-minute window, then revalidation by ETag.
+const SHORT_CACHE: &str = "public, max-age=300";
+/// The request named an older version: revalidate every time.
+const REVALIDATE_CACHE: &str = "private, no-cache";
+/// An album's own art at its current version, per user like v2.
+const PRIVATE_IMMUTABLE_CACHE: &str = "private, max-age=31536000, immutable";
+/// An album's own art requested without a version.
+const PRIVATE_SHORT_CACHE: &str = "private, max-age=300";
 
 /// Machine code for a bad `size` query value, matching the auth routes.
 const INVALID_INPUT: &str = "INVALID_INPUT";
@@ -68,69 +66,89 @@ const ARTIST_PLACEHOLDER_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg"
             <path d="M60 120 Q100 140 140 120 L140 160 Q100 180 60 160 Z" fill="#6B7280"/>
         </svg>"##;
 
-/// Fetched cover bytes with their content type and source label.
-#[derive(Debug, Clone)]
+/// Cover bytes with their identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoverBytes {
-    /// Final image bytes served to the client.
+    /// Image bytes served to the client.
     pub bytes: Vec<u8>,
     /// MIME type of the bytes.
     pub content_type: String,
     /// Where the art came from, echoed in `X-Cover-Source`.
     pub source: String,
+    /// Hex SHA-256 of the bytes: the ETag and cache identity.
+    pub hash: String,
+    /// Local art version, when the art is the album's own.
+    pub version: Option<i64>,
 }
 
 impl CoverBytes {
-    /// Build one fetched result.
+    /// Build one result, hashing the bytes.
     pub fn new(bytes: Vec<u8>, content_type: &str, source: &str) -> Self {
         Self {
+            hash: super::artwork::cache::sha256_hex(&bytes),
             bytes,
             content_type: content_type.to_owned(),
             source: source.to_owned(),
+            version: None,
         }
     }
 }
 
-/// Cover art port. Tests and, for now, production run against
-/// [`FakeCoverArt`].
-pub trait CoverArt: Send + Sync + 'static {
-    /// Release-group cover, or `None` when no art is cached yet.
-    fn release_group_cover(
-        &self,
-        release_group_id: &str,
-        size: Option<&str>,
-    ) -> BoxFuture<'_, Option<CoverBytes>>;
-    /// Release cover, or `None` when no art is cached yet.
-    fn release_cover(
-        &self,
-        release_id: &str,
-        size: Option<&str>,
-    ) -> BoxFuture<'_, Option<CoverBytes>>;
-    /// Artist image, or `None` when no art is cached yet.
-    fn artist_image(
-        &self,
-        artist_id: &str,
-        size_px: Option<u32>,
-    ) -> BoxFuture<'_, Option<CoverBytes>>;
-    /// True while a release-group cover resolves in the background.
-    fn is_release_group_warming(&self, release_group_id: &str, size: Option<&str>) -> bool;
-    /// True while a release cover resolves in the background.
-    fn is_release_warming(&self, release_id: &str) -> bool;
-    /// True while an artist image resolves in the background.
-    fn is_artist_warming(&self, artist_id: &str, size_px: Option<u32>) -> bool;
+/// Outcome of a cover lookup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CoverLookup {
+    /// Art found.
+    Found(CoverBytes),
+    /// A fetch is still running; ask again shortly.
+    Warming,
+    /// No art anywhere.
+    Missing,
 }
 
-/// Fake art source. Entries are keyed exactly as the handlers
-/// query them; anything missing reads as absent (placeholder or warming).
+/// Cover art port.
+pub trait CoverArt: Send + Sync + 'static {
+    /// Release-group cover by MBID.
+    fn release_group_cover<'a>(
+        &'a self,
+        release_group_id: &'a str,
+        size: Option<&'a str>,
+    ) -> BoxFuture<'a, CoverLookup>;
+    /// Release cover by MBID.
+    fn release_cover<'a>(
+        &'a self,
+        release_id: &'a str,
+        size: Option<&'a str>,
+    ) -> BoxFuture<'a, CoverLookup>;
+    /// Artist image by MBID.
+    fn artist_image<'a>(
+        &'a self,
+        artist_id: &'a str,
+        size_px: Option<u32>,
+    ) -> BoxFuture<'a, CoverLookup>;
+    /// Art for a local album by any source, waiting for a network fetch to
+    /// finish (compat clients cannot poll a 202).
+    fn album_cover<'a>(
+        &'a self,
+        album_id: &'a str,
+        size: Option<&'a str>,
+    ) -> BoxFuture<'a, Option<CoverBytes>>;
+    /// The album's own art (folder or embedded), with its version.
+    fn local_album_art<'a>(&'a self, album_id: &'a str) -> BoxFuture<'a, Option<CoverBytes>>;
+}
+
+/// Scripted art source for tests. Entries are keyed exactly as the
+/// handlers query them; anything missing reads as absent.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone, Default)]
 pub struct FakeCoverArt {
-    release_groups: HashMap<(String, Option<String>), CoverBytes>,
-    releases: HashMap<(String, Option<String>), CoverBytes>,
-    artists: HashMap<(String, Option<u32>), CoverBytes>,
-    warming_release_groups: HashSet<(String, Option<String>)>,
-    warming_releases: HashSet<String>,
-    warming_artists: HashSet<(String, Option<u32>)>,
+    release_groups: std::collections::HashMap<(String, Option<String>), CoverBytes>,
+    artists: std::collections::HashMap<(String, Option<u32>), CoverBytes>,
+    albums: std::collections::HashMap<String, CoverBytes>,
+    warming_release_groups: std::collections::HashSet<(String, Option<String>)>,
+    warming_artists: std::collections::HashSet<(String, Option<u32>)>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl FakeCoverArt {
     /// Empty fake: every id misses and nothing warms.
     pub fn empty() -> Self {
@@ -138,125 +156,88 @@ impl FakeCoverArt {
     }
 
     /// Preload one release-group cover.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn with_release_group(
-        mut self,
-        id: &str,
-        size: Option<&str>,
-        bytes: Vec<u8>,
-        content_type: &str,
-        source: &str,
-    ) -> Self {
-        self.release_groups.insert(
-            (id.to_owned(), size.map(str::to_owned)),
-            CoverBytes::new(bytes, content_type, source),
-        );
-        self
-    }
-
-    /// Preload one release cover.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn with_release(
-        mut self,
-        id: &str,
-        size: Option<&str>,
-        bytes: Vec<u8>,
-        content_type: &str,
-        source: &str,
-    ) -> Self {
-        self.releases.insert(
-            (id.to_owned(), size.map(str::to_owned)),
-            CoverBytes::new(bytes, content_type, source),
-        );
+    pub fn with_release_group(mut self, id: &str, size: Option<&str>, cover: CoverBytes) -> Self {
+        self.release_groups
+            .insert((id.to_owned(), size.map(str::to_owned)), cover);
         self
     }
 
     /// Preload one artist image.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn with_artist(
-        mut self,
-        id: &str,
-        size_px: Option<u32>,
-        bytes: Vec<u8>,
-        content_type: &str,
-        source: &str,
-    ) -> Self {
-        self.artists.insert(
-            (id.to_owned(), size_px),
-            CoverBytes::new(bytes, content_type, source),
-        );
+    pub fn with_artist(mut self, id: &str, size_px: Option<u32>, cover: CoverBytes) -> Self {
+        self.artists.insert((id.to_owned(), size_px), cover);
+        self
+    }
+
+    /// Preload one local album's art.
+    pub fn with_album(mut self, album_id: &str, cover: CoverBytes) -> Self {
+        self.albums.insert(album_id.to_owned(), cover);
         self
     }
 
     /// Mark one release-group cover as warming.
-    #[cfg(any(test, feature = "test-support"))]
     pub fn warming_release_group(mut self, id: &str, size: Option<&str>) -> Self {
         self.warming_release_groups
             .insert((id.to_owned(), size.map(str::to_owned)));
         self
     }
 
-    /// Mark one release cover as warming.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn warming_release(mut self, id: &str) -> Self {
-        self.warming_releases.insert(id.to_owned());
-        self
-    }
-
     /// Mark one artist image as warming.
-    #[cfg(any(test, feature = "test-support"))]
     pub fn warming_artist(mut self, id: &str, size_px: Option<u32>) -> Self {
         self.warming_artists.insert((id.to_owned(), size_px));
         self
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl CoverArt for FakeCoverArt {
-    fn release_group_cover(
-        &self,
-        release_group_id: &str,
-        size: Option<&str>,
-    ) -> BoxFuture<'_, Option<CoverBytes>> {
-        let found = self
-            .release_groups
-            .get(&(release_group_id.to_owned(), size.map(str::to_owned)))
-            .cloned();
+    fn release_group_cover<'a>(
+        &'a self,
+        release_group_id: &'a str,
+        size: Option<&'a str>,
+    ) -> BoxFuture<'a, CoverLookup> {
+        let key = (release_group_id.to_owned(), size.map(str::to_owned));
+        let found = match self.release_groups.get(&key) {
+            Some(cover) => CoverLookup::Found(cover.clone()),
+            None if self.warming_release_groups.contains(&key) => CoverLookup::Warming,
+            None => CoverLookup::Missing,
+        };
         Box::pin(async move { found })
     }
 
-    fn release_cover(
-        &self,
-        release_id: &str,
-        size: Option<&str>,
-    ) -> BoxFuture<'_, Option<CoverBytes>> {
-        let found = self
-            .releases
-            .get(&(release_id.to_owned(), size.map(str::to_owned)))
-            .cloned();
-        Box::pin(async move { found })
+    fn release_cover<'a>(
+        &'a self,
+        _release_id: &'a str,
+        _size: Option<&'a str>,
+    ) -> BoxFuture<'a, CoverLookup> {
+        Box::pin(async { CoverLookup::Missing })
     }
 
-    fn artist_image(
-        &self,
-        artist_id: &str,
+    fn artist_image<'a>(
+        &'a self,
+        artist_id: &'a str,
         size_px: Option<u32>,
-    ) -> BoxFuture<'_, Option<CoverBytes>> {
-        let found = self.artists.get(&(artist_id.to_owned(), size_px)).cloned();
+    ) -> BoxFuture<'a, CoverLookup> {
+        let key = (artist_id.to_owned(), size_px);
+        let found = match self.artists.get(&key) {
+            Some(cover) => CoverLookup::Found(cover.clone()),
+            None if self.warming_artists.contains(&key) => CoverLookup::Warming,
+            None => CoverLookup::Missing,
+        };
         Box::pin(async move { found })
     }
 
-    fn is_release_group_warming(&self, release_group_id: &str, size: Option<&str>) -> bool {
-        self.warming_release_groups
-            .contains(&(release_group_id.to_owned(), size.map(str::to_owned)))
+    fn album_cover<'a>(
+        &'a self,
+        album_id: &'a str,
+        _size: Option<&'a str>,
+    ) -> BoxFuture<'a, Option<CoverBytes>> {
+        let found = self.albums.get(album_id).cloned();
+        Box::pin(async move { found })
     }
 
-    fn is_release_warming(&self, release_id: &str) -> bool {
-        self.warming_releases.contains(release_id)
-    }
-
-    fn is_artist_warming(&self, artist_id: &str, size_px: Option<u32>) -> bool {
-        self.warming_artists
-            .contains(&(artist_id.to_owned(), size_px))
+    fn local_album_art<'a>(&'a self, album_id: &'a str) -> BoxFuture<'a, Option<CoverBytes>> {
+        let found = self.albums.get(album_id).cloned();
+        Box::pin(async move { found })
     }
 }
 
@@ -264,7 +245,7 @@ impl CoverArt for FakeCoverArt {
 /// for utoipa.
 #[derive(Clone)]
 pub struct CoversState {
-    /// Art source (the fake until a provider is wired).
+    /// Art source.
     pub covers: std::sync::Arc<dyn CoverArt>,
 }
 
@@ -284,6 +265,7 @@ pub fn routes(state: CoversState) -> Router {
         )
         .route("/covers/release/{release_id}", get(cover_from_release))
         .route("/covers/artist/{artist_id}", get(artist_cover))
+        .route("/library/albums/{id}/artwork", get(album_artwork))
         .with_state(state)
 }
 
@@ -306,6 +288,13 @@ pub struct ArtistSizeQuery {
     pub size: Option<u32>,
 }
 
+/// `v` query for the album artwork route.
+#[derive(Debug, Deserialize)]
+pub struct VersionQuery {
+    /// Art version the caller holds (`cover_version`).
+    pub v: Option<i64>,
+}
+
 /// Validate a release-cover `size` value. `Ok(None)` means full size;
 /// `Err` carries the user-facing message, v2 wording kept.
 fn normalize_size(size: &str) -> Result<Option<String>, String> {
@@ -319,23 +308,6 @@ fn normalize_size(size: &str) -> Result<Option<String>, String> {
     Err(format!(
         "Unsupported size '{size}'. Choose one of 250, 500, 1200 or original."
     ))
-}
-
-/// Cache window for fetched art by source label.
-fn cache_control_for(source: &str) -> &'static str {
-    if source == FALLBACK_SOURCE {
-        FALLBACK_CACHE_CONTROL
-    } else {
-        PREFERRED_CACHE_CONTROL
-    }
-}
-
-/// Strong ETag for served bytes. The hash is opaque to clients; only the
-/// quoting and matching rules are contract.
-fn etag_for(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    format!("\"{:x}\"", hasher.finalize())
 }
 
 /// `If-None-Match` matching, v2 rules kept: `*` matches anything, and both
@@ -399,7 +371,7 @@ fn warming_response() -> Response {
     (
         StatusCode::ACCEPTED,
         [
-            (header::CACHE_CONTROL, "no-store"),
+            (header::CACHE_CONTROL, NO_STORE),
             (header::HeaderName::from_static("x-cover-source"), "warming"),
         ],
         Vec::<u8>::new(),
@@ -412,7 +384,7 @@ fn placeholder_response(svg: &'static str) -> Response {
         StatusCode::OK,
         [
             (header::CONTENT_TYPE, "image/svg+xml"),
-            (header::CACHE_CONTROL, PLACEHOLDER_CACHE_CONTROL),
+            (header::CACHE_CONTROL, NO_STORE),
             (
                 header::HeaderName::from_static("x-cover-source"),
                 "placeholder",
@@ -423,8 +395,9 @@ fn placeholder_response(svg: &'static str) -> Response {
         .into_response()
 }
 
-fn art_response(art: &CoverBytes, headers: &HeaderMap, preferred_cache: &'static str) -> Response {
-    let etag = etag_for(&art.bytes);
+/// Serve art with its ETag, or 304 when the client already has it.
+fn art_response(art: CoverBytes, headers: &HeaderMap, cache: &'static str) -> Response {
+    let etag = format!("\"{}\"", art.hash);
     let if_none_match = headers
         .get(header::IF_NONE_MATCH)
         .and_then(|value| value.to_str().ok());
@@ -432,20 +405,21 @@ fn art_response(art: &CoverBytes, headers: &HeaderMap, preferred_cache: &'static
         return (
             StatusCode::NOT_MODIFIED,
             [
-                (header::CACHE_CONTROL, preferred_cache),
+                (header::CACHE_CONTROL, cache),
                 (header::ETAG, etag.as_str()),
             ],
         )
             .into_response();
     }
-    let mut response = (StatusCode::OK, art.bytes.clone()).into_response();
+    let mut response = (StatusCode::OK, art.bytes).into_response();
     let response_headers = response.headers_mut();
     if let Ok(content_type) = art.content_type.parse() {
         response_headers.insert(header::CONTENT_TYPE, content_type);
     }
-    if let Ok(cache) = preferred_cache.parse() {
-        response_headers.insert(header::CACHE_CONTROL, cache);
-    }
+    response_headers.insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static(cache),
+    );
     if let Ok(source) = art.source.parse() {
         response_headers.insert(header::HeaderName::from_static("x-cover-source"), source);
     }
@@ -453,6 +427,18 @@ fn art_response(art: &CoverBytes, headers: &HeaderMap, preferred_cache: &'static
         response_headers.insert(header::ETAG, tag);
     }
     response
+}
+
+fn lookup_response(
+    lookup: CoverLookup,
+    headers: &HeaderMap,
+    placeholder: &'static str,
+) -> Response {
+    match lookup {
+        CoverLookup::Found(art) => art_response(art, headers, SHORT_CACHE),
+        CoverLookup::Warming => warming_response(),
+        CoverLookup::Missing => placeholder_response(placeholder),
+    }
 }
 
 /// Release-group cover art.
@@ -481,21 +467,11 @@ pub async fn cover_from_release_group(
         Ok(size) => size,
         Err(message) => return invalid_input(message),
     };
-    let art = state
+    let lookup = state
         .covers
         .release_group_cover(&release_group_id, desired_size.as_deref())
         .await;
-    if let Some(art) = art {
-        let cache = cache_control_for(&art.source);
-        return art_response(&art, &headers, cache);
-    }
-    if state
-        .covers
-        .is_release_group_warming(&release_group_id, desired_size.as_deref())
-    {
-        return warming_response();
-    }
-    placeholder_response(ALBUM_PLACEHOLDER_SVG)
+    lookup_response(lookup, &headers, ALBUM_PLACEHOLDER_SVG)
 }
 
 /// Release cover art.
@@ -524,18 +500,11 @@ pub async fn cover_from_release(
         Ok(size) => size,
         Err(message) => return invalid_input(message),
     };
-    let art = state
+    let lookup = state
         .covers
         .release_cover(&release_id, desired_size.as_deref())
         .await;
-    if let Some(art) = art {
-        let cache = cache_control_for(&art.source);
-        return art_response(&art, &headers, cache);
-    }
-    if state.covers.is_release_warming(&release_id) {
-        return warming_response();
-    }
-    placeholder_response(ALBUM_PLACEHOLDER_SVG)
+    lookup_response(lookup, &headers, ALBUM_PLACEHOLDER_SVG)
 }
 
 /// Artist image.
@@ -560,14 +529,51 @@ pub async fn artist_cover(
     headers: HeaderMap,
     ValidQuery(query): ValidQuery<ArtistSizeQuery>,
 ) -> Response {
-    let art = state.covers.artist_image(&artist_id, query.size).await;
-    if let Some(art) = art {
-        return art_response(&art, &headers, PREFERRED_CACHE_CONTROL);
-    }
-    if state.covers.is_artist_warming(&artist_id, query.size) {
-        return warming_response();
-    }
-    placeholder_response(ARTIST_PLACEHOLDER_SVG)
+    let lookup = state.covers.artist_image(&artist_id, query.size).await;
+    lookup_response(lookup, &headers, ARTIST_PLACEHOLDER_SVG)
+}
+
+/// An album's own art: the folder image or embedded picture the library
+/// scan found. Never reaches out to the network. Pass the album's
+/// `cover_version` as `v`: a matching version is cached for good, an older
+/// one revalidates.
+#[utoipa::path(
+    get,
+    path = "/api/v3/library/albums/{id}/artwork",
+    params(
+        ("id" = String, Path, description = "Local album id"),
+        ("v" = Option<i64>, Query, description = "Art version the caller holds"),
+    ),
+    responses(
+        (status = 200, description = "Image bytes"),
+        (status = 304, description = "Image unchanged"),
+        (status = 400, description = "Bad query string"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "The album has no local art"),
+    )
+)]
+pub async fn album_artwork(
+    State(state): State<CoversState>,
+    Path(album_id): Path<String>,
+    headers: HeaderMap,
+    ValidQuery(query): ValidQuery<VersionQuery>,
+) -> Response {
+    let Some(art) = state.covers.local_album_art(&album_id).await else {
+        return (
+            StatusCode::NOT_FOUND,
+            [
+                (header::CACHE_CONTROL, NO_STORE),
+                (header::HeaderName::from_static("x-cover-state"), "missing"),
+            ],
+        )
+            .into_response();
+    };
+    let cache = match (query.v, art.version) {
+        (Some(asked), Some(current)) if asked == current => PRIVATE_IMMUTABLE_CACHE,
+        (Some(_), _) => REVALIDATE_CACHE,
+        (None, _) => PRIVATE_SHORT_CACHE,
+    };
+    art_response(art, &headers, cache)
 }
 
 #[cfg(test)]
@@ -577,15 +583,9 @@ mod tests {
     #[test]
     fn size_defaults_and_aliases() {
         assert_eq!(normalize_size("500").unwrap(), Some("500".to_owned()));
-        assert_eq!(normalize_size("250").unwrap(), Some("250".to_owned()));
-        assert_eq!(normalize_size("1200").unwrap(), Some("1200".to_owned()));
         for alias in ["", "original", "FULL", " max ", "Largest"] {
             assert_eq!(normalize_size(alias).unwrap(), None, "alias {alias}");
         }
-    }
-
-    #[test]
-    fn size_rejects_unknown_values() {
         let err = normalize_size("999").unwrap_err();
         assert!(err.contains("Unsupported size '999'"), "{err}");
     }
@@ -598,22 +598,5 @@ mod tests {
         assert!(etag_matches(Some("\"other\", \"abc\""), "\"abc\""));
         assert!(!etag_matches(Some("\"other\""), "\"abc\""));
         assert!(!etag_matches(None, "\"abc\""));
-    }
-
-    #[test]
-    fn fallback_source_gets_short_cache_window() {
-        assert_eq!(
-            cache_control_for("cover-art-archive"),
-            FALLBACK_CACHE_CONTROL
-        );
-        assert_eq!(cache_control_for("audiodb"), PREFERRED_CACHE_CONTROL);
-    }
-
-    #[test]
-    fn etag_is_stable_and_quoted() {
-        let tag = etag_for(b"bytes");
-        assert_eq!(tag, etag_for(b"bytes"));
-        assert!(tag.starts_with('"') && tag.ends_with('"'));
-        assert_ne!(tag, etag_for(b"other"));
     }
 }

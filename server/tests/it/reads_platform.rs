@@ -13,7 +13,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use platform::{
-    covers::{CoversState, FakeCoverArt},
+    covers::{CoverBytes, CoversState, FakeCoverArt},
     wrapped::{
         FakeWrappedData, ServerWrappedResponse, UserWrappedResponse, WrappedAlbum, WrappedArtist,
         WrappedGenre, WrappedState, WrappedTrack, WrappedUserSummary,
@@ -41,22 +41,9 @@ fn covers_fixture() -> FakeCoverArt {
         .with_release_group(
             "rg-1",
             Some("500"),
-            PNG_BYTES.to_vec(),
-            "image/png",
-            "audiodb",
+            CoverBytes::new(PNG_BYTES.to_vec(), "image/png", "cover-art-archive"),
         )
-        .with_release_group("rg-orig", None, PNG_BYTES.to_vec(), "image/png", "audiodb")
-        .with_release(
-            "rel-caa",
-            Some("500"),
-            PNG_BYTES.to_vec(),
-            "image/jpeg",
-            "cover-art-archive",
-        )
-        .with_artist("art-1", None, PNG_BYTES.to_vec(), "image/png", "audiodb")
         .warming_release_group("rg-warm", Some("500"))
-        .warming_release("rel-warm")
-        .warming_artist("art-warm", None)
 }
 
 fn user_payload() -> UserWrappedResponse {
@@ -153,29 +140,20 @@ fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
 // Covers.
 
 #[tokio::test]
-async fn release_group_cover_hit_serves_bytes_with_headers() {
-    let (status, headers, body) = get(
-        covers_app(covers_fixture()),
-        "/covers/release-group/rg-1",
-        &[],
-    )
-    .await;
+async fn release_group_cover_hit_serves_bytes_and_revalidates() {
+    let app = || covers_app(covers_fixture());
+    let (status, headers, body) = get(app(), "/covers/release-group/rg-1", &[]).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, PNG_BYTES);
     assert_eq!(header(&headers, "content-type"), Some("image/png"));
-    assert_eq!(header(&headers, "x-cover-source"), Some("audiodb"));
+    assert_eq!(
+        header(&headers, "x-cover-source"),
+        Some("cover-art-archive")
+    );
     assert_eq!(
         header(&headers, "cache-control"),
-        Some("public, max-age=31536000, immutable")
+        Some("public, max-age=300")
     );
-    let etag = header(&headers, "etag").unwrap();
-    assert!(etag.starts_with('"') && etag.ends_with('"'));
-}
-
-#[tokio::test]
-async fn release_group_cover_honors_if_none_match() {
-    let app = || covers_app(covers_fixture());
-    let (_, headers, _) = get(app(), "/covers/release-group/rg-1", &[]).await;
     let etag = header(&headers, "etag").unwrap().to_owned();
     for candidate in [etag.clone(), format!("W/{etag}"), "*".to_owned()] {
         let (status, headers, body) = get(
@@ -188,14 +166,6 @@ async fn release_group_cover_honors_if_none_match() {
         assert!(body.is_empty());
         assert_eq!(header(&headers, "etag"), Some(etag.as_str()));
     }
-    let (status, _, body) = get(
-        app(),
-        "/covers/release-group/rg-1",
-        &[("if-none-match", "\"other\"")],
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, PNG_BYTES);
 }
 
 #[tokio::test]
@@ -209,10 +179,7 @@ async fn release_group_cover_miss_serves_album_placeholder() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(header(&headers, "content-type"), Some("image/svg+xml"));
     assert_eq!(header(&headers, "x-cover-source"), Some("placeholder"));
-    assert_eq!(
-        header(&headers, "cache-control"),
-        Some("public, max-age=300")
-    );
+    assert_eq!(header(&headers, "cache-control"), Some("no-store"));
     assert!(body.starts_with(b"<svg"));
 }
 

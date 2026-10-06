@@ -275,3 +275,30 @@ impl Drop for ScratchDir {
         let _ = std::fs::remove_dir_all(&self.path);
     }
 }
+
+/// Platform inputs for production-shaped rigs: covers cached under `dir`,
+/// settings from `config`. Nothing dials out unless a test asks for a cover.
+pub fn platform_inputs(
+    config: Arc<droppedneedle::runtime_config::ConfigStore>,
+    dir: &Path,
+) -> droppedneedle::reads::PlatformInputs {
+    let http = test_http();
+    droppedneedle::reads::PlatformInputs {
+        config,
+        covers_dir: dir.join("covers"),
+        cover_cache_max_bytes: 16 * 1024 * 1024,
+        http: http.shared().clone(),
+        no_redirect: http.no_redirect().clone(),
+    }
+}
+
+/// A settings store in `dir` with a fixed test key.
+pub fn config_store(dir: &Path) -> Arc<droppedneedle::runtime_config::ConfigStore> {
+    Arc::new(
+        droppedneedle::runtime_config::ConfigStore::open(
+            &dir.join("config.json"),
+            droppedneedle::runtime_config::Crypto::from_key_bytes(&[7u8; 32]).expect("test key"),
+        )
+        .expect("config store opens"),
+    )
+}
