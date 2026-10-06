@@ -316,7 +316,8 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         Ok(loaded) => tracing::info!(loaded, "quota overrides reloaded"),
         Err(error) => tracing::warn!(%error, "quota overrides failed to reload; defaults apply"),
     }
-    let concerts = crate::concerts::ConcertsSetup::from_runtime(&runtime, &http, &config_store);
+    let concerts = crate::concerts::ConcertsSetup::from_runtime(&runtime, &http, &config_store)
+        .with_events(Arc::new(events.clone()));
     // The one registry every background job registers on.
     let jobs = JobsSetup::build(
         auth.users.clone(),
