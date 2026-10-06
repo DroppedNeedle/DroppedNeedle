@@ -15,12 +15,15 @@ from fastapi import APIRouter, Depends
 from api.v1.schemas.download import (
     PolicyImpactResponse,
     PolicySummaryResponse,
+    NzbgetTestResponse,
     SabnzbdTestResponse,
     SourcePriority,
 )
 from api.v1.schemas.settings import (
+    NZBGET_PASSWORD_MASK,
     SABNZBD_API_KEY_MASK,
     DownloadPolicySettings,
+    NzbgetConnectionSettings,
     SabnzbdConnectionSettings,
     WantedWatcherSettings,
     validate_new_quality_fields,
@@ -38,8 +41,10 @@ router = APIRouter(
 
 
 def _clear_download_client_cache() -> None:
-    # Both the SABnzbd connection and the shared policy feed the scorers, file processor,
-    # orchestrator and service - clear the whole chain so a save takes effect at once.
+    # Both Usenet client connections and the shared policy feed the scorers, file
+    # processor, orchestrator and service - clear the whole chain so a save takes effect
+    # at once. Both clients are cleared on either save, because which one owns the usenet
+    # source is decided from the pair.
     from core.dependencies import (
         get_acquisition_dispatcher,
         get_album_preflight_scorer,
@@ -48,6 +53,8 @@ def _clear_download_client_cache() -> None:
         get_file_processor,
         get_newznab_indexer,
         get_newznab_release_scorer,
+        get_nzbget_client,
+        get_nzbget_download_client,
         get_prowlarr_indexer,
         get_sabnzbd_client,
         get_sabnzbd_download_client,
@@ -61,6 +68,8 @@ def _clear_download_client_cache() -> None:
     for provider in (
         get_sabnzbd_client,
         get_sabnzbd_download_client,
+        get_nzbget_client,
+        get_nzbget_download_client,
         get_album_preflight_scorer,
         get_track_matcher,
         get_newznab_release_scorer,
@@ -171,6 +180,105 @@ async def get_sabnzbd_status(
         valid=True,
         version=status.version,
         message=f"SABnzbd {status.version}",
+        categories=cats,
+        complete_dir=complete_dir or None,
+    )
+
+
+@router.get("/nzbget", response_model=NzbgetConnectionSettings)
+async def get_nzbget(_: CurrentAdminDep, preferences=Depends(get_preferences_service)):
+    return preferences.get_nzbget_connection()
+
+
+@router.put("/nzbget", response_model=NzbgetConnectionSettings)
+async def update_nzbget(
+    _: CurrentAdminDep,
+    settings: NzbgetConnectionSettings = MsgSpecBody(NzbgetConnectionSettings),
+    preferences=Depends(get_preferences_service),
+):
+    preferences.save_nzbget_connection(settings)
+    _clear_download_client_cache()
+    return preferences.get_nzbget_connection()
+
+
+@router.post("/nzbget/test", response_model=NzbgetTestResponse)
+async def test_nzbget(
+    _: CurrentAdminDep,
+    settings: NzbgetConnectionSettings = MsgSpecBody(NzbgetConnectionSettings),
+    preferences=Depends(get_preferences_service),
+):
+    """Tests the submitted url/credentials (not stored config). A masked password
+    resolves to the stored one."""
+    password = settings.password
+    if password == NZBGET_PASSWORD_MASK:
+        password = preferences.get_nzbget_connection_raw().password
+
+    client = build_nzbget_download_client(
+        settings.url, settings.username, password, settings.downloads_mount
+    )
+    try:
+        status = await client.health_check()
+        if status.status != "ok":
+            return NzbgetTestResponse(
+                valid=False, message=status.message or "NZBGet unreachable"
+            )
+        cats = await client.get_categories()
+        complete_dir = await client.get_complete_dir()
+    except ExternalServiceError as exc:
+        return NzbgetTestResponse(valid=False, message=str(exc))
+    # Catch a misconfigured downloads mount at config time: the submitted mount - not
+    # the stored one - is diagnosed, so an unsaved correction already shows the fixed
+    # verdict.
+    diagnosis = await client.diagnose_downloads_mount()
+    mount_message = None
+    if (
+        diagnosis.sampled_downloads > 0
+        and diagnosis.resolvable_downloads < diagnosis.sampled_downloads
+    ):
+        mount_message = (
+            f"Only {diagnosis.resolvable_downloads}/{diagnosis.sampled_downloads} "
+            f"sampled NZBGet download(s) resolve under {settings.downloads_mount} - "
+            "the mount likely points at the wrong folder (for example a category "
+            "subfolder of NZBGet's DestDir shown above)"
+        )
+    return NzbgetTestResponse(
+        valid=True,
+        version=status.version,
+        message=f"NZBGet {status.version}",
+        categories=cats,
+        complete_dir=complete_dir or None,
+        mount_has_files=diagnosis.mount_has_files,
+        resolvable_downloads=diagnosis.resolvable_downloads,
+        sampled_downloads=diagnosis.sampled_downloads,
+        mount_message=mount_message,
+    )
+
+
+@router.get("/nzbget/status", response_model=NzbgetTestResponse)
+async def get_nzbget_status(
+    _: CurrentAdminDep, preferences=Depends(get_preferences_service)
+):
+    """Live per-client status checked against the SAVED config (not submitted values)."""
+    raw = preferences.get_nzbget_connection_raw()
+    if not raw.url.strip():
+        return NzbgetTestResponse(valid=False, message="Not configured")
+    client = build_nzbget_download_client(
+        raw.url, raw.username, raw.password, raw.downloads_mount
+    )
+    try:
+        status = await client.health_check()
+        if status.status != "ok":
+            return NzbgetTestResponse(
+                valid=False, message=status.message or "NZBGet unreachable"
+            )
+        cats = await client.get_categories()
+        complete_dir = await client.get_complete_dir()
+    except ExternalServiceError as exc:
+        return NzbgetTestResponse(valid=False, message=str(exc))
+    return NzbgetTestResponse(
+        valid=True,
+        version=status.version,
+        message=f"NZBGet {status.version}",
         categories=cats,
         complete_dir=complete_dir or None,
     )

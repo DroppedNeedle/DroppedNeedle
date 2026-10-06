@@ -847,6 +847,52 @@ def get_sabnzbd_download_client() -> "SabnzbdDownloadClient":
     )
 
 
+@singleton
+def get_nzbget_client() -> "NzbgetClient":
+    from repositories.nzbget.nzbget_client import NzbgetClient
+
+    nzb = get_preferences_service().get_nzbget_connection_raw()
+    http = HttpClientFactory.get_client(name="nzbget", timeout=60.0, connect_timeout=5.0)
+    return NzbgetClient(http, nzb.url, nzb.username, nzb.password)
+
+
+@singleton
+def get_nzbget_download_client() -> "NzbgetDownloadClient":
+    from pathlib import Path
+
+    from repositories.nzbget.nzbget_download_client import NzbgetDownloadClient
+
+    nzb = get_preferences_service().get_nzbget_connection_raw()
+    return NzbgetDownloadClient(
+        get_nzbget_client(),
+        nzb.url,
+        nzb.username,
+        nzb.password,
+        Path(nzb.downloads_mount),
+    )
+
+
+def build_nzbget_download_client(
+    url: str, username: str, password: str, downloads_mount: str = "/tmp"
+) -> "NzbgetDownloadClient":
+    """Transient client from caller-supplied credentials, for the Test-connection route."""
+    from pathlib import Path
+
+    from repositories.nzbget.nzbget_client import NzbgetClient
+    from repositories.nzbget.nzbget_download_client import NzbgetDownloadClient
+
+    http = HttpClientFactory.get_client(
+        name="nzbget-verify", timeout=60.0, connect_timeout=5.0
+    )
+    return NzbgetDownloadClient(
+        NzbgetClient(http, url, username, password),
+        url,
+        username,
+        password,
+        Path(downloads_mount),
+    )
+
+
 def build_sabnzbd_download_client(
     url: str, api_key: str, downloads_mount: str = "/tmp"
 ) -> "SabnzbdDownloadClient":
@@ -877,8 +923,8 @@ def get_download_client_repository() -> "DownloadClientProtocol":
 
 
 def get_download_client(client_type: str) -> "DownloadClientProtocol":
-    """Resolve a download client by type (the fixed v1 map: ``slskd``/``sabnzbd``).
-    NZBGet adds one case later (D5)."""
+    """Resolve a download client by type (the fixed v1 map:
+    ``slskd``/``sabnzbd``/``nzbget``)."""
     from core.exceptions import ConfigurationError
 
     match client_type:
@@ -886,14 +932,31 @@ def get_download_client(client_type: str) -> "DownloadClientProtocol":
             return get_slskd_repository()
         case "sabnzbd":
             return get_sabnzbd_download_client()
+        case "nzbget":
+            return get_nzbget_download_client()
         case other:
             raise ConfigurationError(f"Unknown download client type: {other!r}")
 
 
-# Fixed v1 source → client_type map (assembled in get_sources, dispatched here).
-_SOURCE_CLIENT_TYPE = {"soulseek": "slskd", "usenet": "sabnzbd"}
+# Source → client_type. Soulseek has exactly one client; usenet has two, and which one
+# owns the source is the user's choice (``usenet_client_type``), not a fixed mapping.
+_SOURCE_CLIENT_TYPE = {"soulseek": "slskd"}
+
+
+def usenet_client_type() -> str:
+    """Which Usenet client is active. Exactly one at a time: both can be configured, but
+    an enqueue has to go to one of them, and ``enabled`` is the switch. SABnzbd wins a
+    tie so an existing install keeps its behaviour on upgrade."""
+    preferences = get_preferences_service()
+    if preferences.get_sabnzbd_connection_raw().enabled:
+        return "sabnzbd"
+    if preferences.get_nzbget_connection_raw().enabled:
+        return "nzbget"
+    return "sabnzbd"
 
 
 def get_download_client_for_source(source: str) -> "DownloadClientProtocol":
     """Resolve the download client that owns a given acquisition source."""
+    if source == "usenet":
+        return get_download_client(usenet_client_type())
     return get_download_client(_SOURCE_CLIENT_TYPE.get(source, source))

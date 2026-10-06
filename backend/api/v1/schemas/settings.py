@@ -518,6 +518,33 @@ class SabnzbdConnectionSettings(AppStruct):
         self.url = self.url.rstrip("/")
 
 
+class NzbgetConnectionSettings(AppStruct):
+    """NZBGet download-client connection (D5). ``password`` is the control password
+    (``ControlPassword`` in nzbget.conf); encrypted at rest, masked on read. NZBGet has
+    no "all categories" wildcard, so ``category`` defaults to empty, which lets NZBGet
+    apply its own default. ``downloads_mount`` is where DroppedNeedle sees NZBGet's
+    ``DestDir`` (the remap target).
+
+    There is no ``post_processing`` counterpart to SABnzbd's ``pp``: NZBGet decides
+    unpack and repair per category and server, not per job.
+    """
+
+    enabled: bool = False
+    client_type: str = "nzbget"
+    url: str = ""
+    username: str = "nzbget"
+    password: str = ""
+    category: str = ""
+    priority: int = 0
+    downloads_mount: str = "/nzbget-downloads"
+
+    def __post_init__(self) -> None:
+        self.url = self.url.strip()
+        if self.url and not self.url.startswith(("http://", "https://")):
+            self.url = f"https://{self.url}"
+        self.url = self.url.rstrip("/")
+
+
 class NewznabIndexerSettings(AppStruct):
     """One configured Newznab indexer (D6). ``api_key`` is a Fernet-encrypted
     secret, masked on read and preserved on a masked save - per array element.
@@ -614,6 +641,7 @@ DOWNLOAD_CLIENT_API_KEY_MASK = "slskd****"
 INDEXER_API_KEY_MASK = "indexer****"
 PROWLARR_API_KEY_MASK = "prowlarr****"
 SABNZBD_API_KEY_MASK = "sabnzbd****"
+NZBGET_PASSWORD_MASK = "nzbget****"
 LIDARR_IMPORT_API_KEY_MASK = "lidarr****"
 SPOTIFY_SECRET_MASK = "spotify****"
 

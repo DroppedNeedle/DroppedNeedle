@@ -45,12 +45,14 @@ from api.v1.schemas.settings import (
     DOWNLOAD_CLIENT_API_KEY_MASK,
     INDEXER_API_KEY_MASK,
     PROWLARR_API_KEY_MASK,
+    NZBGET_PASSWORD_MASK,
     SABNZBD_API_KEY_MASK,
     LIDARR_IMPORT_API_KEY_MASK,
     DownloadPolicySettings,
     LidarrImportConnectionSettings,
     NewznabIndexerSettings,
     ProwlarrConnectionSettings,
+    NzbgetConnectionSettings,
     SabnzbdConnectionSettings,
     QualityRecipeEntry,
     SpotifySettings,
@@ -665,6 +667,59 @@ class PreferencesService:
         config = self._load_config().copy()
         config["source_priority"] = clean
         self._save_config(config)
+    # --- NZBGet download client (D5) - in the download_clients map ------------------
+
+    def get_nzbget_connection(self) -> NzbgetConnectionSettings:
+        """NZBGet connection with the ``password`` MASKED (safe for API responses)."""
+        settings = self._nzbget_settings()
+        if settings.password:
+            settings.password = NZBGET_PASSWORD_MASK
+        return settings
+
+    def get_nzbget_connection_raw(self) -> NzbgetConnectionSettings:
+        """NZBGet connection with the ``password`` DECRYPTED (for the client)."""
+        data = self._load_config().get("download_clients", {}).get("nzbget", {})
+        settings = self._nzbget_settings()
+        stored = data.get("password", "")
+        # Strip stray paste whitespace so a password saved before this fix still works.
+        settings.password = decrypt(stored)[0].strip() if stored else ""
+        return settings
+
+    def _nzbget_settings(self) -> NzbgetConnectionSettings:
+        data = self._load_config().get("download_clients", {}).get("nzbget", {})
+        return (
+            msgspec.convert(data, type=NzbgetConnectionSettings)
+            if data
+            else NzbgetConnectionSettings()
+        )
+
+    def save_nzbget_connection(self, settings: NzbgetConnectionSettings) -> None:
+        try:
+            config = self._load_config().copy()
+            clients = dict(config.get("download_clients", {}))
+            current = clients.get("nzbget", {})
+            password = settings.password.strip()
+            if password == NZBGET_PASSWORD_MASK:
+                password = current.get("password", "")  # preserve on masked sentinel
+            elif password:
+                password = encrypt(password)
+            clients["nzbget"] = {
+                "enabled": settings.enabled,
+                "client_type": "nzbget",
+                "url": settings.url,
+                "username": settings.username,
+                "password": password,
+                "category": settings.category,
+                "priority": settings.priority,
+                "downloads_mount": settings.downloads_mount,
+            }
+            config["download_clients"] = clients
+            self._save_config(config)
+            logger.info("Saved NZBGet connection settings")
+        except Exception as e:  # noqa: BLE001
+            logger.error("Failed to save NZBGet settings: %s", e)
+            raise ConfigurationError(f"Failed to save NZBGet settings: {e}")
+
     # --- SABnzbd download client (D5) - in the download_clients map -----------------
 
     def get_sabnzbd_connection(self) -> SabnzbdConnectionSettings:
@@ -950,16 +1005,18 @@ class PreferencesService:
         return dc.enabled and bool(dc.url)
 
     def is_usenet_ready(self) -> bool:
-        """SABnzbd (Usenet) is enabled with a URL AND a usable search side -
-        SABnzbd with nothing to search can't find anything to download. Only the
-        SELECTED backend counts (either/or): an enabled Newznab row when the
-        backend is ``"indexers"``, a configured Prowlarr connection (raw key -
-        the masked sentinel must never read as ready) when ``"prowlarr"``."""
-        # Masked SAB getter is safe here: only enabled+url are read, never the key.
-        # If a key ever joins this predicate, switch to get_sabnzbd_connection_raw()
-        # (a masked sentinel is truthy and would read as ready).
+        """A Usenet download client is enabled with a URL AND there is a usable search
+        side - a client with nothing to search can't find anything to download. Either
+        SABnzbd or NZBGet satisfies the client half. Only the SELECTED search backend
+        counts (either/or): an enabled Newznab row when the backend is ``"indexers"``,
+        a configured Prowlarr connection (raw key - the masked sentinel must never read
+        as ready) when ``"prowlarr"``."""
+        # Masked getters are safe here: only enabled+url are read, never the secret.
+        # If a secret ever joins this predicate, switch to the raw getters (a masked
+        # sentinel is truthy and would read as ready).
         sab = self.get_sabnzbd_connection()
-        if not (sab.enabled and sab.url):
+        nzbget = self.get_nzbget_connection()
+        if not ((sab.enabled and sab.url) or (nzbget.enabled and nzbget.url)):
             return False
         if self.get_usenet_search_backend() == "prowlarr":
             return self.is_prowlarr_configured()
