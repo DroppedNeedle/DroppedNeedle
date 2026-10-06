@@ -11,16 +11,15 @@
 //! ## Boundary
 //!
 //! * Tag parsing and provider identification live in `library::tags` and
-//!   `library::identify`. Scan calls them only through [`seams::TagReader`]
-//!   and [`seams::IdentifyQueue`]; the null implementations exist for
-//!   tests only.
+//!   `library::identify`. Scan reads tags only through [`seams::TagReader`]
+//!   (the null readers exist for tests only) and offers changed albums to
+//!   identification inside its catalog commit.
 //! * The stream gateway resolves bare local keys under the primary root of
 //!   [`roots::StreamRootSeam`] (via `Gateway::with_library_roots`). Per-root
 //!   `resolve_key` is unused because playback keys carry no root id; see
 //!   its docs.
-//! * Settings storage owns inclusion rules under excluded roots; the
-//!   scheduler resolves [`scheduler::InclusionRule`] values carried as
-//!   parameters.
+//! * The runtime settings own roots and their path rules; the scheduler
+//!   resolves [`scheduler::InclusionRule`] values carried as parameters.
 //!
 //! ## Purity
 //!
@@ -38,6 +37,7 @@
 pub mod coordinator;
 pub mod fs;
 pub mod models;
+pub mod naming;
 pub mod poller;
 pub mod pool;
 pub mod revision;
@@ -74,12 +74,12 @@ pub use roots::{
 };
 pub use scheduler::{InclusionRule, ScheduleSettings, scheduled_scopes, seconds_until_due};
 #[cfg(any(test, feature = "test-support"))]
-pub use seams::{ArmableDeferTagReader, NullIdentifyQueue, NullTagReader};
-pub use seams::{Checkpoint, IdentifyQueue, ScannedTags, TagReadError, TagReader};
+pub use seams::{ArmableDeferTagReader, NullTagReader};
+pub use seams::{Checkpoint, ScannedTags, TagReadError, TagReader};
 pub use sqlite_store::SqliteScanStore;
 pub use store::{
-    CatalogEntry, CatalogStore, ClassifyInput, CommitIndexedItem, InventoryPage, InventoryStore,
-    RevisionKind, RunStore, ScanStore, ScanStoreError,
+    CatalogEntry, CatalogStore, ClassifyInput, CommitIndexedItem, IndexWindow, InventoryPage,
+    InventoryStore, RevisionKind, RunStore, ScanStore, ScanStoreError, WindowOutcome,
 };
 pub use supervisor::SupervisorInputs;
 pub use walk::{InventoryScanner, inventory_key, is_audio_file, relativize, text_safe_posix};

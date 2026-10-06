@@ -2,53 +2,28 @@
 
 use super::*;
 
-/// Artist every scan-committed track credits until identify reconciles it.
-const UNKNOWN_ARTIST_ID: &str = "scan-unknown-artist";
-
-/// Title for tracks sitting directly under a root (no parent directory).
-const ROOT_ALBUM_TITLE: &str = "Unknown Album";
-
 impl CatalogStore for SqliteScanStore {
-    fn commit_indexed(
-        &self,
-        root_id: &str,
-        relative_path: &str,
-        size_bytes: u64,
-        mtime_ns: i64,
-        track_id: String,
-        tags_read_at: f64,
-    ) {
-        self.commit_indexed_batch(&[CommitIndexedItem {
-            root_id: root_id.to_owned(),
-            relative_path: relative_path.to_owned(),
-            size_bytes,
-            mtime_ns,
-            track_id,
-            tags_read_at,
-        }]);
-    }
-
-    fn commit_indexed_batch(&self, items: &[CommitIndexedItem]) {
-        if items.is_empty() {
-            return;
-        }
+    fn commit_window(&self, window: &IndexWindow) -> Result<WindowOutcome, ScanStoreError> {
         let mut guard = self.lock();
-        match retry_on_busy("commit_indexed_batch", || {
-            commit_indexed_batch_inner(&mut guard.conn, items)
-        }) {
-            Ok(()) => {
-                // Cleared only on success: a failed batch keeps the
-                // re-offer shortcut instead of losing it.
-                for item in items {
-                    guard
-                        .deferred
-                        .remove(&(item.root_id.clone(), item.relative_path.clone()));
-                }
-                guard.catalog_dirty = true;
-                guard.catalog_version += 1;
+        let outcome = super::commit::commit_window(&mut guard.conn, window).map_err(internal)?;
+        let failed: HashSet<(&str, &str)> = outcome
+            .failed
+            .iter()
+            .map(|(root, path, _)| (root.as_str(), path.as_str()))
+            .collect();
+        // A committed read clears the deferred re-offer shortcut.
+        for item in &window.items {
+            if !failed.contains(&(item.root_id.as_str(), item.relative_path.as_str())) {
+                guard
+                    .deferred
+                    .remove(&(item.root_id.clone(), item.relative_path.clone()));
             }
-            Err(error) => tracing::error!(%error, "scan commit_indexed_batch failed"),
         }
+        if outcome.committed > 0 {
+            guard.catalog_dirty = true;
+            guard.catalog_version += 1;
+        }
+        Ok(outcome)
     }
 
     fn mark_deferred(&self, root_id: &str, relative_path: &str, deferred: bool) {
@@ -133,53 +108,68 @@ impl CatalogStore for SqliteScanStore {
             })
     }
 
-    fn remove_catalog(&self, root_id: &str, relative_path: &str) {
-        let mut guard = self.lock();
-        let outcome = retry_on_busy("remove_catalog", || {
-            let tx = guard.conn.transaction()?;
-            let found: Option<(String, Option<String>)> = tx
-                .query_row(
-                    "SELECT id, local_album_id FROM local_tracks \
-                     WHERE root_id = ?1 AND relative_path = ?2",
-                    params![root_id, relative_path],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
-                .optional()?;
-            if let Some((track_id, album_id)) = found {
-                tx.execute(
-                    "UPDATE library_scan_inventory SET local_track_id = NULL \
-                     WHERE local_track_id = ?1",
-                    params![track_id],
-                )?;
-                tx.execute(
-                    "DELETE FROM local_track_artists WHERE local_track_id = ?1",
-                    params![track_id],
-                )?;
-                tx.execute("DELETE FROM local_tracks WHERE id = ?1", params![track_id])?;
-                tx.commit()?;
-                if let Some(album_id) = album_id
-                    && let Err(error) = cleanup_emptied_album(&mut guard.conn, &album_id)
-                {
-                    tracing::debug!(%error, "scan kept an emptied album row");
-                }
-            }
-            Ok(())
-        });
-        match outcome {
-            Ok(()) => {
-                // Cleared only on success, matching commit_indexed_batch:
-                // a failed delete keeps the re-offer shortcut.
-                guard
-                    .deferred
-                    .remove(&(root_id.to_owned(), relative_path.to_owned()));
-                guard.catalog_dirty = true;
-                guard.catalog_version += 1;
-                if let Some(cached) = guard.catalog_cache.get_mut(root_id) {
-                    cached.entries.remove(relative_path);
-                }
-            }
-            Err(error) => tracing::error!(%error, "scan remove_catalog failed"),
+    fn mark_missing(
+        &self,
+        run_id: &str,
+        root_id: &str,
+        relative_paths: &[String],
+        now: f64,
+    ) -> Result<usize, ScanStoreError> {
+        if relative_paths.is_empty() {
+            return Ok(0);
         }
+        let mut guard = self.lock();
+        let marked = retry_on_busy("mark_missing", || {
+            let tx = guard
+                .conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let mut marked = 0usize;
+            {
+                let mut stmt = tx.prepare_cached(
+                    "UPDATE local_tracks SET availability = 'missing', missing_since = ?3 \
+                     WHERE root_id = ?1 AND relative_path = ?2 AND availability = 'indexed'",
+                )?;
+                for path in relative_paths {
+                    marked += stmt.execute(params![root_id, path, now])?;
+                }
+            }
+            tx.execute(
+                "UPDATE library_scan_runs SET missing_count = missing_count + ?1 WHERE id = ?2",
+                params![marked as i64, run_id],
+            )?;
+            tx.commit()?;
+            Ok(marked)
+        })
+        .map_err(internal)?;
+        if marked > 0 {
+            guard.catalog_dirty = true;
+            guard.catalog_version += 1;
+            if let Some(cached) = guard.catalog_cache.get_mut(root_id) {
+                for path in relative_paths {
+                    cached.entries.remove(path);
+                }
+            }
+        }
+        Ok(marked)
+    }
+
+    fn indexed_count(
+        &self,
+        root_id: &str,
+        scope_relative_path: &str,
+    ) -> Result<usize, ScanStoreError> {
+        let guard = self.lock();
+        let prefix = format!("{}%", escape_like_prefix(scope_relative_path));
+        guard
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM local_tracks WHERE root_id = ?1 AND availability = 'indexed' \
+                 AND (?2 = '.' OR relative_path = ?2 OR relative_path LIKE ?3 ESCAPE '\\')",
+                params![root_id, scope_relative_path, prefix],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count.max(0) as usize)
+            .map_err(internal)
     }
 
     fn missing_catalog_paths(
@@ -350,181 +340,6 @@ impl CatalogStore for SqliteScanStore {
         }
         verdicts
     }
-}
-
-/// Catalog-commit path: upsert the track row plus its album, artist, and
-/// join rows so the reads layer shows the file as indexed. Metadata comes
-/// from the path alone (the coordinator passes no tags); identify owns
-/// real grouping and reconciliation later. One transaction with reused
-/// prepared statements for the whole batch: same rows as one transaction
-/// per file, one commit instead of hundreds.
-fn commit_indexed_batch_inner(
-    conn: &mut Connection,
-    items: &[CommitIndexedItem],
-) -> rusqlite::Result<()> {
-    let tx = conn.transaction()?;
-    let mut artist = tx.prepare(
-        "INSERT INTO local_artists (id, display_name, folded_name, normalized_name, kind, \
-         created_at, updated_at) VALUES (?1, 'Unknown Artist', ?2, '', 'unknown', ?3, ?3) \
-         ON CONFLICT (id) DO NOTHING",
-    )?;
-    let mut album = tx.prepare(
-        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
-         album_artist_id, grouping_source, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'automatic', ?7, ?7) \
-         ON CONFLICT (id) DO NOTHING",
-    )?;
-    let mut track = tx.prepare(
-        "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
-         path_hash, file_size_bytes, file_mtime_ns, stat_revision, stat_revision_kind, \
-         tags_read_at, title, title_folded, album_title, album_title_folded, disc_number, \
-         track_number, file_format, availability, ingest_source, imported_at, \
-         membership_source, title_provenance, album_title_provenance, album_artist_provenance) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'exact', ?10, ?11, ?12, ?13, ?14, 1, 0, \
-         ?15, 'indexed', 'scan', ?10, 'automatic', 'parsed', ?16, 'absent') \
-         ON CONFLICT (root_id, relative_path) DO UPDATE SET \
-         local_album_id = excluded.local_album_id, file_path = excluded.file_path, \
-         path_hash = excluded.path_hash, file_size_bytes = excluded.file_size_bytes, \
-         file_mtime_ns = excluded.file_mtime_ns, stat_revision = excluded.stat_revision, \
-         stat_revision_kind = excluded.stat_revision_kind, \
-         tags_read_at = excluded.tags_read_at, title = excluded.title, \
-         title_folded = excluded.title_folded, album_title = excluded.album_title, \
-         album_title_folded = excluded.album_title_folded, \
-         file_format = excluded.file_format, availability = 'indexed', missing_since = NULL, \
-         excluded_at = NULL",
-    )?;
-    let mut track_artist = tx.prepare(
-        "INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role) \
-         VALUES (?1, 0, ?2, 'main') ON CONFLICT (local_track_id, position) DO NOTHING",
-    )?;
-    let mut album_artist = tx.prepare(
-        "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role) \
-         VALUES (?1, 0, ?2, 'main') ON CONFLICT (local_album_id, position) DO NOTHING",
-    )?;
-    let unknown_folded = fold_text("Unknown Artist");
-    for item in items {
-        let file_name = item
-            .relative_path
-            .rsplit('/')
-            .next()
-            .unwrap_or(item.relative_path.as_str());
-        let (stem, extension) = match file_name.rsplit_once('.') {
-            Some((stem, extension)) if !stem.is_empty() && !extension.is_empty() => {
-                (stem, extension)
-            }
-            _ => (file_name, ""),
-        };
-        let title = if stem.is_empty() {
-            "Unknown Track"
-        } else {
-            stem
-        };
-        let file_format = if extension.is_empty() {
-            "unknown".to_owned()
-        } else {
-            extension.to_ascii_lowercase()
-        };
-        let parent = item
-            .relative_path
-            .rsplit_once('/')
-            .map(|(parent, _)| parent)
-            .unwrap_or(".");
-        let parent = if parent.is_empty() { "." } else { parent };
-        let album_title = if parent == "." {
-            ROOT_ALBUM_TITLE
-        } else {
-            parent.rsplit('/').next().unwrap_or(parent)
-        };
-        let album_provenance = if parent == "." {
-            "placeholder"
-        } else {
-            "parsed"
-        };
-        let album_id = format!(
-            "scan-album-{}",
-            &sha256_hex(&format!(
-                "scan-album-v1\0{root_id}\0{parent}",
-                root_id = item.root_id
-            ))[..32]
-        );
-        let grouping_key = format!("scan:{root_id}:{parent}", root_id = item.root_id);
-        let path_hash = sha256_hex(&format!(
-            "scan-track-v1\0{root_id}\0{relative_path}",
-            root_id = item.root_id,
-            relative_path = item.relative_path
-        ));
-        artist.execute(params![
-            UNKNOWN_ARTIST_ID,
-            unknown_folded,
-            item.tags_read_at
-        ])?;
-        album.execute(params![
-            album_id,
-            item.root_id,
-            grouping_key,
-            album_title,
-            fold_text(album_title),
-            UNKNOWN_ARTIST_ID,
-            item.tags_read_at,
-        ])?;
-        track.execute(params![
-            item.track_id,
-            album_id,
-            item.root_id,
-            item.relative_path,
-            item.relative_path,
-            path_hash,
-            item.size_bytes as i64,
-            item.mtime_ns,
-            exact_stat_revision(item.size_bytes, item.mtime_ns),
-            item.tags_read_at,
-            title,
-            fold_text(title),
-            album_title,
-            fold_text(album_title),
-            file_format,
-            album_provenance,
-        ])?;
-        // The join uses the passed track id directly: the upsert keeps a
-        // conflicting row's id, and that id is always the passed one.
-        // Changed files carry their classify-provided id (no catalog
-        // writer runs between classify and commit on the single worker),
-        // new files insert it (the walk dedupes keys, so no twin can
-        // claim the row first), and re-reads follow the same two cases.
-        track_artist.execute(params![item.track_id, UNKNOWN_ARTIST_ID])?;
-        album_artist.execute(params![album_id, UNKNOWN_ARTIST_ID])?;
-    }
-    drop(artist);
-    drop(album);
-    drop(track);
-    drop(track_artist);
-    drop(album_artist);
-    tx.commit()
-}
-
-/// Delete an album left with no tracks, with its scan-owned joins.
-/// Identity rows owned elsewhere block the delete (all-or-nothing) and the album
-/// stays; the caller logs that at debug.
-fn cleanup_emptied_album(conn: &mut Connection, album_id: &str) -> rusqlite::Result<()> {
-    let remaining: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM local_tracks WHERE local_album_id = ?1",
-        params![album_id],
-        |row| row.get(0),
-    )?;
-    if remaining > 0 {
-        return Ok(());
-    }
-    let tx = conn.transaction()?;
-    tx.execute(
-        "DELETE FROM local_album_artists WHERE local_album_id = ?1",
-        params![album_id],
-    )?;
-    tx.execute(
-        "DELETE FROM local_album_artwork WHERE local_album_id = ?1",
-        params![album_id],
-    )?;
-    tx.execute("DELETE FROM local_albums WHERE id = ?1", params![album_id])?;
-    tx.commit()
 }
 
 /// Bulk catalog load backing in-memory classify: same row shape as

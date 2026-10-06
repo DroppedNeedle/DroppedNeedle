@@ -4,28 +4,24 @@
 //! `library::identify`. This
 //! module defines the minimal traits the scan pipeline calls, plus null
 //! implementations the tests use. The contracts are small on purpose:
-//! read-only tag access, fire-and-forget identify enqueue, and a boolean
-//! checkpoint the coordinator backs.
+//! read-only tag access and a boolean checkpoint the coordinator backs.
+//! Identify offers ride the catalog commit itself.
 //!
 //! Purity rule: every implementation must treat library files as
 //! read-only. The `library_scan` purity test pins zero file writes across
 //! full runs; a tag reader that writes (padding rewrites, mtime restores)
 //! fails that test.
 
-use std::collections::HashMap;
 use std::path::Path;
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::Mutex;
 
-/// Tags for one file, as the indexer needs them. The real tag shape is
-/// owned by `library::tags`; this struct carries only what indexing consumes.
+/// Tags plus header properties for one file: everything the catalog
+/// stores per track.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ScannedTags {
-    pub artist: Option<String>,
-    pub album: Option<String>,
-    pub title: Option<String>,
-    pub duration_secs: Option<f64>,
-    pub extra: HashMap<String, String>,
+    pub tag: crate::library::tags::AudioTag,
+    pub header: crate::library::tags::read::HeaderInfo,
 }
 
 /// Why a tag read failed.
@@ -118,61 +114,6 @@ impl TagReader for ArmableDeferTagReader {
             return Err(TagReadError::Deferred);
         }
         self.inner.read_tags(path)
-    }
-}
-
-/// Fire-and-forget identify enqueue. Identify owns workers and
-/// provider calls; the scan pipeline only offers album keys.
-pub trait IdentifyQueue: Send + Sync {
-    /// Offer one album key with its fresh track ids. Returns tracks queued.
-    fn enqueue(&self, album_key: &str, track_ids: &[String]) -> usize;
-
-    fn enqueued_tracks(&self) -> usize {
-        0
-    }
-}
-
-/// Null identify queue: counts offers, queues nothing.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Debug, Default)]
-pub struct NullIdentifyQueue {
-    tracks: Mutex<usize>,
-    albums: Mutex<Vec<String>>,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl NullIdentifyQueue {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn albums(&self) -> Vec<String> {
-        self.albums
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl IdentifyQueue for NullIdentifyQueue {
-    fn enqueue(&self, album_key: &str, track_ids: &[String]) -> usize {
-        *self
-            .tracks
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) += track_ids.len();
-        self.albums
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .push(album_key.to_owned());
-        track_ids.len()
-    }
-
-    fn enqueued_tracks(&self) -> usize {
-        *self
-            .tracks
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 

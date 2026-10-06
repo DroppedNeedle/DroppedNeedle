@@ -88,6 +88,84 @@ pub struct TagFromBytes {
     pub lofty_bit_depth: Option<u8>,
 }
 
+/// Stream properties a scan stores, all from container headers.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct HeaderInfo {
+    pub duration_seconds: Option<f64>,
+    /// Audio bitrate in kbit/s (container average when the stream has none).
+    pub bitrate_kbps: Option<u32>,
+    pub sample_rate: Option<u32>,
+    pub channels: Option<u32>,
+    /// Meaningful bit depth: lossless containers only, as v2 stored it.
+    pub bit_depth: Option<u8>,
+}
+
+/// Tags plus header properties for one file, the way the scan indexes it.
+/// Reads only the tag blocks and stream headers the container parser
+/// needs and never decodes audio. ADTS has no container header, so its
+/// duration comes from counting frames, still without a decode.
+pub fn read_scan_metadata(
+    path: &Path,
+    format: AudioFormat,
+) -> Result<(AudioTag, HeaderInfo), TagsError> {
+    if format == AudioFormat::Aac {
+        let tag = read_ape_tag(path)?;
+        let header = match super::probe(path) {
+            Ok(info) => HeaderInfo {
+                duration_seconds: Some(info.duration_seconds),
+                bitrate_kbps: Some(info.bitrate).filter(|rate| *rate > 0),
+                sample_rate: Some(info.sample_rate).filter(|rate| *rate > 0),
+                channels: Some(info.channels).filter(|count| *count > 0),
+                bit_depth: None,
+            },
+            Err(_) => HeaderInfo::default(),
+        };
+        return Ok((tag, header));
+    }
+    let tagged = lofty::read_from_path(path).map_err(|error| {
+        // An I/O failure (a file vanishing mid-scan, a contended disk) is
+        // worth a retry; anything else is a broken file.
+        let io = std::error::Error::source(&error)
+            .and_then(|source| source.downcast_ref::<std::io::Error>())
+            .map(|source| std::io::Error::new(source.kind(), source.to_string()));
+        match io {
+            Some(source) => TagsError::Io {
+                path: path.display().to_string(),
+                source,
+            },
+            None => TagsError::TagRead {
+                path: path.display().to_string(),
+                reason: error.to_string(),
+            },
+        }
+    })?;
+    let tag = select_tag(&tagged, format).map_or_else(AudioTag::default, audio_tag_from_items);
+    let properties = tagged.properties();
+    let duration = properties.duration();
+    let lossless = matches!(
+        format,
+        AudioFormat::Flac | AudioFormat::Wav | AudioFormat::M4a
+    );
+    let header = HeaderInfo {
+        duration_seconds: (!duration.is_zero()).then(|| duration.as_secs_f64()),
+        bitrate_kbps: properties
+            .audio_bitrate()
+            .or_else(|| properties.overall_bitrate())
+            .filter(|rate| *rate > 0),
+        sample_rate: properties.sample_rate().filter(|rate| *rate > 0),
+        channels: properties
+            .channels()
+            .map(u32::from)
+            .filter(|count| *count > 0),
+        bit_depth: if lossless {
+            properties.bit_depth().filter(|depth| *depth > 0)
+        } else {
+            None
+        },
+    };
+    Ok((tag, header))
+}
+
 /// Read the tag half only. The probe half lives in [`super::probe`].
 pub fn read_tag_only(path: &Path, format: AudioFormat) -> Result<AudioTag, TagsError> {
     if format == AudioFormat::Aac {

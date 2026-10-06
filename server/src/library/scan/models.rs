@@ -265,6 +265,11 @@ pub mod failure_codes {
     pub const MTIME_SKEW: &str = "MTIME_SKEW";
     pub const SUPERSEDED_POLICY_CHANGED: &str = "SUPERSEDED_POLICY_CHANGED";
     pub const UNEXPECTED_WORKER_FAILURE: &str = "UNEXPECTED_WORKER_FAILURE";
+    /// A clean walk would have marked most of a scope missing at once (an
+    /// unmounted share looks exactly like this), so reconcile held off.
+    pub const MASS_MISSING_GUARD: &str = "MASS_MISSING_GUARD";
+    /// The catalog refused one file's rows; the file is skipped this run.
+    pub const CATALOG_COMMIT_FAILED: &str = "CATALOG_COMMIT_FAILED";
 }
 
 /// Counter names shared by the coordinator and the store.

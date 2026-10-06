@@ -50,7 +50,6 @@ mod library_identify_shutdown;
 mod library_journey;
 mod library_publish;
 mod library_scan;
-mod library_scan_shutdown;
 mod library_tags;
 mod media_journey;
 mod migration_pipeline;

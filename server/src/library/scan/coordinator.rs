@@ -1,12 +1,11 @@
 //! Single durable entry point for every scan trigger.
 //!
 //! Port of v2's library scan coordinator plus the indexing and
-//! reconciliation phases (v2's library indexer and reconciler, reduced to
-//! what scanning needs: tag reads ride
-//! the [`TagReader`](super::seams::TagReader) seam, identify offers ride
-//! the [`IdentifyQueue`](super::seams::IdentifyQueue) seam, and grouping
-//! collapses to parent-directory album keys until identify owns real
-//! grouping).
+//! reconciliation phases (v2's library indexer and reconciler). Tag reads
+//! ride the [`TagReader`](super::seams::TagReader) seam with bounded
+//! concurrency on the blocking pool; each index window commits its catalog
+//! rows, inventory marks, counters, and identify offers in one transaction,
+//! so a resumed run starts at the first unprocessed row.
 //!
 //! Pipeline per run: discover (walk) -> index (tag + catalog) ->
 //! reconcile (missing detection) -> completed. Control (pause/stop) and
@@ -22,43 +21,16 @@ use tokio::sync::watch;
 
 use super::fs::FsCoordinator;
 use super::models::{
-    Counters, Disposition, RequestedControl, ScanControl, ScanFailureRecord, ScanKind, ScanPhase,
-    ScanRequest, ScanRequestResult, ScanRun, ScanScope, ScanState, ScopeDiscoveryState, Verdict,
-    counter_names, failure_codes,
+    Counters, Disposition, RequestedControl, ScanControl, ScanFailureRecord, ScanInventoryItem,
+    ScanKind, ScanPhase, ScanRequest, ScanRequestResult, ScanRun, ScanScope, ScanState,
+    ScopeDiscoveryState, Verdict, counter_names, failure_codes,
 };
 use super::pool::BlockingPool;
 use super::roots::{PolicyResolver, RootRegistry};
-use super::seams::{Checkpoint, IdentifyQueue, TagReadError, TagReader};
-use super::store::{CommitIndexedItem, InventoryPage, ScanStore, ScanStoreError};
+use super::seams::{Checkpoint, TagReadError, TagReader};
+use super::store::{CommitIndexedItem, IndexWindow, InventoryPage, ScanStore, ScanStoreError};
 use super::walk::InventoryScanner;
 use super::watcher::WorkWakeups;
-
-/// Counter deltas held between checkpoints. Per-file `add_counter` calls
-/// cost one commit each on SQLite; buffering them and flushing one
-/// `add_counters` per checkpoint lands identical totals with one commit
-/// per sixteen files. Every early return in the index and reconcile loops
-/// flushes first, so progress is never lost to a pause, stop, or supersede.
-struct CounterBuffer {
-    deltas: Vec<(&'static str, i64)>,
-}
-
-impl CounterBuffer {
-    fn new() -> Self {
-        Self { deltas: Vec::new() }
-    }
-
-    fn add(&mut self, name: &'static str, delta: i64) {
-        self.deltas.push((name, delta));
-    }
-
-    fn flush<S: ScanStore>(&mut self, store: &S, run_id: &str) {
-        if self.deltas.is_empty() {
-            return;
-        }
-        store.add_counters(run_id, &self.deltas);
-        self.deltas.clear();
-    }
-}
 
 /// Return freed scan heap to the OS after a terminal run. A 100k scan
 /// churns hundreds of megabytes of transient buffers (inventory pages,
@@ -95,9 +67,6 @@ pub const INDEX_PAGE_READ_RETRY: Duration = Duration::from_millis(25);
 /// Bound on stale retries when settling control (v2
 /// `SETTLE_STALE_MAX_RETRIES`).
 pub const SETTLE_STALE_MAX_RETRIES: u32 = 10;
-/// Fixed settle retry sleep. v2 jitters 50ms; without a rand dependency
-/// this port keeps the bound and the base, not the jitter.
-pub const SETTLE_STALE_RETRY_SECS: f64 = 0.05;
 /// Counter-event throttle (v2 `COUNTER_EVENT_INTERVAL_SECONDS`).
 pub const COUNTER_EVENT_INTERVAL_SECS: f64 = 2.0;
 
@@ -278,11 +247,10 @@ fn default_id() -> String {
 }
 
 /// Scan coordinator (v2 `LibraryScanCoordinator`).
-pub struct LibraryScanCoordinator<S: ScanStore, T: TagReader, Q: IdentifyQueue> {
+pub struct LibraryScanCoordinator<S: ScanStore, T: TagReader> {
     store: Arc<S>,
     inventory: InventoryScanner<S>,
     tags: Arc<T>,
-    identify: Arc<Q>,
     pool: BlockingPool,
     fs: Option<FsCoordinator>,
     resolvers: Arc<dyn ResolverSource>,
@@ -294,13 +262,12 @@ pub struct LibraryScanCoordinator<S: ScanStore, T: TagReader, Q: IdentifyQueue> 
     last_progress_log: Mutex<HashMap<String, f64>>,
 }
 
-impl<S: ScanStore, T: TagReader + 'static, Q: IdentifyQueue> LibraryScanCoordinator<S, T, Q> {
+impl<S: ScanStore, T: TagReader + 'static> LibraryScanCoordinator<S, T> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         store: Arc<S>,
         pool: BlockingPool,
         tags: Arc<T>,
-        identify: Arc<Q>,
         resolvers: Arc<dyn ResolverSource>,
     ) -> Self {
         let inventory = InventoryScanner::new(Arc::clone(&store), pool.clone());
@@ -308,7 +275,6 @@ impl<S: ScanStore, T: TagReader + 'static, Q: IdentifyQueue> LibraryScanCoordina
             store,
             inventory,
             tags,
-            identify,
             pool,
             fs: None,
             resolvers,
@@ -699,76 +665,33 @@ impl<S: ScanStore, T: TagReader + 'static, Q: IdentifyQueue> LibraryScanCoordina
                         );
                         return run;
                     }
-                    std::thread::sleep(std::time::Duration::from_secs_f64(SETTLE_STALE_RETRY_SECS));
                 }
             }
         }
-    }
-
-    /// Request stop on every actively-driven run (shutdown path).
-    /// Only discovering/indexing/reconciling runs are in flight; queued
-    /// and paused runs are left alone so the next start resumes them.
-    /// Best effort: a racing revision retries once, anything else logs.
-    /// Returns runs stopped.
-    pub fn stop_all_active(&self) -> usize {
-        let mut stopped = 0;
-        for run in self.current() {
-            if !matches!(
-                run.state,
-                ScanState::Discovering | ScanState::Indexing | ScanState::Reconciling
-            ) {
-                continue;
-            }
-            let mut revision = run.row_revision;
-            for _ in 0..2 {
-                match self.control(&run.id, ScanControl::Stop, false, revision) {
-                    Ok(_) => {
-                        stopped += 1;
-                        break;
-                    }
-                    Err(ScanStoreError::StaleRevision { .. }) => {
-                        match self.store.get_run(&run.id) {
-                            Ok((fresh, _, _)) => revision = fresh.row_revision,
-                            Err(_) => break,
-                        }
-                    }
-                    Err(error) => {
-                        tracing::warn!(run_id = %run.id, %error, "scan shutdown stop request failed");
-                        break;
-                    }
-                }
-            }
-        }
-        stopped
     }
 
     /// Drive one run like [`run_once`](Self::run_once), but a signalled
-    /// shutdown stops the in-flight run instead of waiting it out. The
-    /// stop goes through the regular control latch, so the walk and
-    /// index checkpoints settle the run to cancelled on their next
-    /// check and the next start resumes cleanly. A pre-signalled
-    /// shutdown claims no new work. Returns the settled run, or `None`
-    /// when no work was available.
+    /// shutdown abandons the drive instead of waiting it out. The run keeps
+    /// its active state, exactly as after a crash: every committed window
+    /// is durable, the rest is still pending, and the next start resumes
+    /// it. A pre-signalled shutdown claims no new work. Returns the run
+    /// when it reached a stopping point, `None` otherwise.
     pub async fn run_once_with_shutdown(
         &self,
         root_paths: &HashMap<String, PathBuf>,
         shutdown: &watch::Receiver<bool>,
     ) -> Option<ScanRun> {
         if *shutdown.borrow() {
-            self.stop_all_active();
             return None;
         }
         let mut shutdown = shutdown.clone();
-        tokio::pin! {
-            let run = self.run_once(root_paths);
-        }
         tokio::select! {
             biased;
             _ = shutdown.changed() => {
-                self.stop_all_active();
-                run.await
+                tracing::info!("shutdown: the active scan resumes on the next start");
+                None
             }
-            outcome = &mut run => outcome,
+            outcome = self.run_once(root_paths) => outcome,
         }
     }
 
@@ -921,7 +844,9 @@ impl<S: ScanStore, T: TagReader + 'static, Q: IdentifyQueue> LibraryScanCoordina
             .get_run(&run.id)
             .map(|(_, scopes, _)| scopes)
             .unwrap_or_default();
-        let missing = self.reconcile(&run.id, &scopes, &frozen_policy_revision);
+        let missing = self
+            .reconcile(&run.id, &scopes, &frozen_policy_revision)
+            .await;
         if missing > 0
             && let Ok((fresh, _, _)) = self.store.get_run(&run.id)
         {
@@ -968,6 +893,54 @@ impl<S: ScanStore, T: TagReader + 'static, Q: IdentifyQueue> LibraryScanCoordina
             fs.forget_scan(&run.id);
         }
         run
+    }
+
+    /// A policy change superseded a run: queue its scopes again under the
+    /// new policy, so a root whose scan was cut short (adding another root
+    /// changes the policy) still gets scanned. Roots that are gone or now
+    /// excluded drop out.
+    fn requeue_superseded(&self, run: &ScanRun) {
+        let scopes = match self.store.get_run(&run.id) {
+            Ok((_, scopes, _)) => scopes,
+            Err(error) => {
+                tracing::warn!(run_id = %run.id, %error, "superseded scan scopes unreadable");
+                return;
+            }
+        };
+        let registry = self.registry();
+        let scopes: Vec<ScanScope> = scopes
+            .into_iter()
+            .filter_map(|mut scope| {
+                let root = registry.resolve(&scope.root_id)?;
+                if root.policy == super::models::EffectivePolicy::Excluded {
+                    return None;
+                }
+                scope.policy_revision = registry.policy_revision().to_owned();
+                scope.effective_policy = root.policy;
+                Some(scope)
+            })
+            .collect();
+        if scopes.is_empty() {
+            return;
+        }
+        let request = ScanRequest {
+            kind: run.kind,
+            trigger: run.trigger,
+            scopes,
+            requested_by_user_id: run.requested_by_user_id.clone(),
+            policy_revision: registry.policy_revision().to_owned(),
+        };
+        match self.request_run(&request) {
+            Ok(result) => tracing::info!(
+                superseded = %run.id,
+                run_id = %result.run_id,
+                disposition = ?result.disposition,
+                "superseded scan queued again under the new policy"
+            ),
+            Err(error) => {
+                tracing::warn!(superseded = %run.id, %error, "superseded scan not queued again");
+            }
+        }
     }
 
     /// Synthetic failed run for the impossible missing-run path.
@@ -1051,33 +1024,40 @@ impl<S: ScanStore, T: TagReader + 'static, Q: IdentifyQueue> LibraryScanCoordina
         }
     }
 
-    /// Indexing phase: tag-read new/changed rows, commit catalog rows,
-    /// offer album keys to identify (v2 `LibraryIndexer.index`, reduced).
-    /// The inventory streams in bounded pages; catalog commits and counter
-    /// deltas buffer between checkpoints and flush together, so a 100k run
-    /// pays hundreds of commits instead of hundreds of thousands.
+    /// Run one store call on a blocking thread so SQLite never stalls an
+    /// async worker.
+    async fn on_store<R: Send + 'static>(
+        &self,
+        op: impl FnOnce(&S) -> Result<R, ScanStoreError> + Send + 'static,
+    ) -> Result<R, ScanStoreError> {
+        let store = Arc::clone(&self.store);
+        tokio::task::spawn_blocking(move || op(&store))
+            .await
+            .map_err(|error| ScanStoreError::Internal {
+                message: format!("scan store task failed: {error}"),
+            })?
+    }
+
+    /// Indexing phase (v2 `LibraryIndexer.index`): page through the
+    /// unprocessed inventory, read tags for new and changed files with
+    /// bounded concurrency, and commit each window of rows atomically.
+    /// A pause, stop, or shutdown between windows loses nothing: the rows
+    /// not yet committed are still pending and the next drive resumes
+    /// there.
     async fn index(&self, run: &ScanRun, frozen_policy_revision: &str) -> IndexCounts {
         let mut counts = IndexCounts::default();
-        let mut counters = CounterBuffer::new();
-        let mut commits: Vec<CommitIndexedItem> = Vec::new();
-        // Album grouping collapses to parent directories until identify
-        // owns real grouping; one offer per directory.
-        let mut album_tracks: HashMap<String, Vec<String>> = HashMap::new();
-        let mut position = 0usize;
         let mut after: Option<(String, String)> = None;
         loop {
             let after_ref = after
                 .as_ref()
                 .map(|(root, path)| (root.as_str(), path.as_str()));
-            let (page, cursor) = match self.read_inventory_page(&run.id, after_ref).await {
+            let (page, _) = match self.read_inventory_page(&run.id, after_ref).await {
                 Ok(page) => page,
                 // A page that will not read is a persistent store error,
-                // not end-of-run: flush what landed and fail the run
-                // instead of completing it short.
+                // not end-of-run: fail the run instead of completing it
+                // short.
                 Err(error) => {
                     tracing::error!(%error, "scan inventory page read failed");
-                    self.store.commit_indexed_batch(&commits);
-                    counters.flush(self.store.as_ref(), &run.id);
                     self.fail_active(run, failure_codes::UNEXPECTED_WORKER_FAILURE)
                         .await;
                     return counts;
@@ -1087,159 +1067,205 @@ impl<S: ScanStore, T: TagReader + 'static, Q: IdentifyQueue> LibraryScanCoordina
                 break;
             }
             let short_page = page.len() < INDEX_PAGE_SIZE;
-            after = cursor;
-            for item in &page {
-                if position % INDEX_CHECKPOINT_EVERY == 0 && position > 0 {
-                    if !self.check(&run.id, frozen_policy_revision) {
-                        self.store.commit_indexed_batch(&commits);
-                        counters.flush(self.store.as_ref(), &run.id);
+            for rows in page.chunks(INDEX_FLUSH_EVERY) {
+                let Some(window) = self
+                    .read_window(
+                        run,
+                        rows,
+                        after.clone(),
+                        frozen_policy_revision,
+                        &mut counts,
+                    )
+                    .await
+                else {
+                    return counts;
+                };
+                let through = window.through.clone();
+                let failures = window_failures(&window, self.now());
+                if !failures.is_empty() {
+                    let run_id = run.id.clone();
+                    if let Err(error) = self
+                        .on_store(move |store| {
+                            store.record_failures(&run_id, failures);
+                            Ok(())
+                        })
+                        .await
+                    {
+                        tracing::error!(%error, "scan failure rows not recorded");
+                    }
+                }
+                let outcome = match self
+                    .on_store(move |store| store.commit_window(&window))
+                    .await
+                {
+                    Ok(outcome) => outcome,
+                    Err(error) => {
+                        tracing::error!(%error, "scan index window failed to commit");
+                        self.fail_active(run, failure_codes::UNEXPECTED_WORKER_FAILURE)
+                            .await;
                         return counts;
                     }
-                    if position % INDEX_FLUSH_EVERY == 0 {
-                        self.store.commit_indexed_batch(&commits);
-                        commits.clear();
-                        counters.flush(self.store.as_ref(), &run.id);
+                };
+                counts.identification_enqueued += outcome.enqueued;
+                if !outcome.failed.is_empty() {
+                    counts.indexed = counts.indexed.saturating_sub(outcome.failed.len());
+                    counts.errored += outcome.failed.len();
+                    let now = self.now();
+                    let records = outcome
+                        .failed
+                        .into_iter()
+                        .map(|(root_id, relative_path, error)| ScanFailureRecord {
+                            root_id,
+                            relative_path,
+                            failure_code: failure_codes::CATALOG_COMMIT_FAILED.to_owned(),
+                            recorded_at: now,
+                            failure_detail: format!(
+                                "The catalog could not store this file: {error}"
+                            ),
+                            phase: ScanPhase::Indexing,
+                        })
+                        .collect::<Vec<_>>();
+                    let run_id = run.id.clone();
+                    if let Err(error) = self
+                        .on_store(move |store| {
+                            store.record_failures(&run_id, records);
+                            Ok(())
+                        })
+                        .await
+                    {
+                        tracing::error!(%error, "scan failure rows not recorded");
                     }
                 }
-                position += 1;
-                counters.add(counter_names::INSPECTED, 1);
-                if item.effective_policy == super::models::EffectivePolicy::Excluded
-                    || item.comparison_result == Verdict::Excluded
-                {
-                    counters.add(counter_names::EXCLUDED, 1);
-                    counts.excluded += 1;
-                    continue;
-                }
-                if run.kind == ScanKind::PolicyReconcile {
-                    // Reconcile-only: inventory refreshes, tags are untouched.
-                    counters.add(counter_names::UNCHANGED, 1);
-                    counts.unchanged += 1;
-                    continue;
-                }
-                let force = run.kind == ScanKind::RescanFiles;
-                if !force && item.comparison_result == Verdict::Unchanged {
-                    counters.add(counter_names::UNCHANGED, 1);
-                    counts.unchanged += 1;
-                    continue;
-                }
-                if item.comparison_result == Verdict::CandidateMissing {
-                    continue;
-                }
-                // Tag reads ride the pool so slow disks never stall the worker.
-                let tags = Arc::clone(&self.tags);
-                let path = PathBuf::from(&item.absolute_path);
-                let outcome = self.pool.run(move || tags.read_tags(&path)).await;
-                match outcome {
-                    Err(TagReadError::Deferred) => {
-                        // The persisted marker re-offers the file next
-                        // run. v2 still counts the row errored this run.
-                        self.store.record_failures(
-                            &run.id,
-                            vec![ScanFailureRecord {
-                                root_id: item.root_id.clone(),
-                                relative_path: item.relative_path.clone(),
-                                failure_code: failure_codes::TAG_READ_DEFERRED.to_owned(),
-                                recorded_at: self.now(),
-                                failure_detail: "The tag-read capacity was exhausted; the read is deferred for this run.".to_owned(),
-                                phase: ScanPhase::Indexing,
-                            }],
-                        );
-                        self.store
-                            .mark_deferred(&item.root_id, &item.relative_path, true);
-                        counters.add(counter_names::ERRORED, 1);
-                        counts.errored += 1;
-                    }
-                    Err(TagReadError::Fatal) => {
-                        self.store.record_failures(
-                            &run.id,
-                            vec![ScanFailureRecord {
-                                root_id: item.root_id.clone(),
-                                relative_path: item.relative_path.clone(),
-                                failure_code: failure_codes::TAG_READ_FAILED.to_owned(),
-                                recorded_at: self.now(),
-                                failure_detail:
-                                    "The tag read failed; the file was skipped for this run."
-                                        .to_owned(),
-                                phase: ScanPhase::Indexing,
-                            }],
-                        );
-                        counters.add(counter_names::ERRORED, 1);
-                        counts.errored += 1;
-                    }
-                    Ok(_) => {
-                        let track_id = item
-                            .local_track_id
-                            .clone()
-                            .unwrap_or_else(|| (self.idgen)());
-                        commits.push(CommitIndexedItem {
-                            root_id: item.root_id.clone(),
-                            relative_path: item.relative_path.clone(),
-                            size_bytes: item.file_size_bytes,
-                            mtime_ns: item.file_mtime_ns,
-                            track_id: track_id.clone(),
-                            tags_read_at: self.now(),
-                        });
-                        counters.add(counter_names::INDEXED, 1);
-                        counts.indexed += 1;
-                        match item.comparison_result {
-                            Verdict::New => {
-                                counters.add(counter_names::NEW, 1);
-                                counts.new += 1;
-                            }
-                            Verdict::Changed => {
-                                counters.add(counter_names::CHANGED, 1);
-                                counts.changed += 1;
-                            }
-                            // A rescan_files re-read of an unchanged row lands
-                            // as indexed but keeps its unchanged verdict.
-                            Verdict::Unchanged => {
-                                counters.add(counter_names::UNCHANGED, 1);
-                                counts.unchanged += 1;
-                            }
-                            Verdict::Excluded | Verdict::CandidateMissing => {}
-                        }
-                        let album_key = format!(
-                            "{}::{}",
-                            item.root_id,
-                            item.relative_path
-                                .rsplit_once('/')
-                                .map(|(parent, _)| parent)
-                                .unwrap_or(".")
-                        );
-                        album_tracks.entry(album_key).or_default().push(track_id);
-                    }
+                after = Some(through);
+                if let Ok((fresh, _, _)) = self.store.get_run(&run.id) {
+                    self.publish(&fresh, "scan.progress", true);
+                    self.log_progress(&fresh, "progress", false);
                 }
             }
             if short_page {
                 break;
             }
         }
-        self.store.commit_indexed_batch(&commits);
-        for (album_key, track_ids) in &album_tracks {
-            let queued = self.identify.enqueue(album_key, track_ids);
-            counters.add(counter_names::IDENTIFICATION_ENQUEUED, queued as i64);
-            counts.identification_enqueued += queued;
-        }
-        counters.flush(self.store.as_ref(), &run.id);
-        if let Ok((fresh, _, _)) = self.store.get_run(&run.id) {
-            self.publish(&fresh, "scan.progress", true);
-            self.log_progress(&fresh, "progress", false);
-        }
         counts
     }
 
-    /// Reconciliation phase: catalog rows under a cleanly-walked scope
-    /// that the walk did not see are missing (v2 `LibraryReconciler`,
-    /// reduced). Only completed scopes allow missing detection: a
-    /// partially-read scope keeps the reconciler conservative.
-    /// The missing set comes from the store, so reconcile holds no
-    /// inventory or catalog listing resident.
-    fn reconcile(&self, run_id: &str, scopes: &[ScanScope], frozen_policy_revision: &str) -> usize {
-        let mut counters = CounterBuffer::new();
+    /// Classify one window of inventory rows and read the tags the
+    /// catalog needs. `None` when the checkpoint says stop.
+    async fn read_window(
+        &self,
+        run: &ScanRun,
+        rows: &[ScanInventoryItem],
+        after: Option<(String, String)>,
+        frozen_policy_revision: &str,
+        counts: &mut IndexCounts,
+    ) -> Option<IndexWindow> {
+        let last = rows.last()?;
+        let mut window = IndexWindow {
+            run_id: run.id.clone(),
+            after,
+            through: (last.root_id.clone(), last.relative_path.clone()),
+            now: self.now(),
+            ..IndexWindow::default()
+        };
+        let force = run.kind == ScanKind::RescanFiles;
+        let mut to_read: Vec<&ScanInventoryItem> = Vec::new();
+        for item in rows {
+            window.counters.push((counter_names::INSPECTED, 1));
+            if item.effective_policy == super::models::EffectivePolicy::Excluded
+                || item.comparison_result == Verdict::Excluded
+            {
+                window.counters.push((counter_names::EXCLUDED, 1));
+                counts.excluded += 1;
+            } else if run.kind == ScanKind::PolicyReconcile
+                || (!force && item.comparison_result == Verdict::Unchanged)
+            {
+                // Reconcile-only runs refresh inventory, never tags.
+                window.counters.push((counter_names::UNCHANGED, 1));
+                counts.unchanged += 1;
+            } else if item.comparison_result != Verdict::CandidateMissing {
+                to_read.push(item);
+            }
+        }
+        for chunk in to_read.chunks(INDEX_CHECKPOINT_EVERY) {
+            if !self.check(&run.id, frozen_policy_revision) {
+                return None;
+            }
+            // Reads run concurrently; the pool caps them at its worker count.
+            let reads = chunk.iter().map(|item| {
+                let tags = Arc::clone(&self.tags);
+                let path = PathBuf::from(&item.absolute_path);
+                let pool = self.pool.clone();
+                async move { pool.run(move || tags.read_tags(&path)).await }
+            });
+            let outcomes = futures_util::future::join_all(reads).await;
+            for (item, outcome) in chunk.iter().zip(outcomes) {
+                let key = (item.root_id.clone(), item.relative_path.clone());
+                match outcome {
+                    Err(TagReadError::Deferred) => {
+                        // The deferred marker re-offers the file next run.
+                        self.store
+                            .mark_deferred(&item.root_id, &item.relative_path, true);
+                        window.failed.push((key.0, key.1, "deferred"));
+                        window.counters.push((counter_names::ERRORED, 1));
+                        counts.errored += 1;
+                    }
+                    Err(TagReadError::Fatal) => {
+                        window.failed.push((key.0, key.1, "failed"));
+                        window.counters.push((counter_names::ERRORED, 1));
+                        counts.errored += 1;
+                    }
+                    Ok(tags) => {
+                        let verdict_counter = match item.comparison_result {
+                            Verdict::New => {
+                                counts.new += 1;
+                                counter_names::NEW
+                            }
+                            Verdict::Changed => {
+                                counts.changed += 1;
+                                counter_names::CHANGED
+                            }
+                            // A rescan_files re-read of an unchanged row
+                            // lands indexed but keeps its verdict.
+                            _ => {
+                                counts.unchanged += 1;
+                                counter_names::UNCHANGED
+                            }
+                        };
+                        window.counters.push((counter_names::INDEXED, 1));
+                        window.counters.push((verdict_counter, 1));
+                        counts.indexed += 1;
+                        window.items.push(CommitIndexedItem {
+                            root_id: item.root_id.clone(),
+                            relative_path: item.relative_path.clone(),
+                            size_bytes: item.file_size_bytes,
+                            mtime_ns: item.file_mtime_ns,
+                            tags_read_at: self.now(),
+                            tags,
+                            effective_policy: item.effective_policy,
+                            policy_revision: item.policy_revision.clone(),
+                            verdict_counter,
+                        });
+                    }
+                }
+            }
+        }
+        Some(window)
+    }
+
+    /// Reconciliation phase (v2 `LibraryReconciler`): catalog rows under a
+    /// cleanly walked scope that the walk did not see are marked missing,
+    /// never deleted. Only completed scopes qualify. A scope that would
+    /// lose most of its tracks at once (an unmounted share looks exactly
+    /// like that) is held back with a failure row instead.
+    async fn reconcile(
+        &self,
+        run_id: &str,
+        scopes: &[ScanScope],
+        frozen_policy_revision: &str,
+    ) -> usize {
         let mut missing = 0usize;
         for scope in scopes {
             if !self.check(run_id, frozen_policy_revision) {
-                counters.flush(self.store.as_ref(), run_id);
                 return missing;
             }
             if self
@@ -1249,24 +1275,120 @@ impl<S: ScanStore, T: TagReader + 'static, Q: IdentifyQueue> LibraryScanCoordina
             {
                 continue;
             }
-            for relative_path in
-                self.store
-                    .missing_catalog_paths(run_id, &scope.root_id, &scope.relative_path)
+            let (id, root, rel) = (
+                run_id.to_owned(),
+                scope.root_id.clone(),
+                scope.relative_path.clone(),
+            );
+            let paths = match self
+                .on_store(move |store| Ok(store.missing_catalog_paths(&id, &root, &rel)))
+                .await
             {
-                self.store.remove_catalog(&scope.root_id, &relative_path);
-                counters.add(counter_names::MISSING, 1);
-                missing += 1;
+                Ok(paths) => paths,
+                Err(error) => {
+                    tracing::error!(%error, "scan missing detection failed");
+                    continue;
+                }
+            };
+            if paths.is_empty() {
+                continue;
             }
-            counters.flush(self.store.as_ref(), run_id);
+            let indexed = self
+                .store
+                .indexed_count(&scope.root_id, &scope.relative_path)
+                .unwrap_or(paths.len());
+            if mass_missing(paths.len(), indexed) {
+                tracing::warn!(
+                    root_id = scope.root_id,
+                    scope = scope.relative_path,
+                    missing = paths.len(),
+                    indexed,
+                    "most of a scope vanished at once; missing detection held back"
+                );
+                self.store.record_failures(
+                    run_id,
+                    vec![ScanFailureRecord {
+                        root_id: scope.root_id.clone(),
+                        relative_path: scope.relative_path.clone(),
+                        failure_code: failure_codes::MASS_MISSING_GUARD.to_owned(),
+                        recorded_at: self.now(),
+                        failure_detail: format!(
+                            "{} of {} indexed files under this scope were not found. \
+                             Check that the library is mounted; nothing was marked missing.",
+                            paths.len(),
+                            indexed
+                        ),
+                        phase: ScanPhase::Reconciling,
+                    }],
+                );
+                continue;
+            }
+            for chunk in paths.chunks(RECONCILE_CHUNK) {
+                if !self.check(run_id, frozen_policy_revision) {
+                    return missing;
+                }
+                let (id, root, chunk, now) = (
+                    run_id.to_owned(),
+                    scope.root_id.clone(),
+                    chunk.to_vec(),
+                    self.now(),
+                );
+                match self
+                    .on_store(move |store| store.mark_missing(&id, &root, &chunk, now))
+                    .await
+                {
+                    Ok(marked) => missing += marked,
+                    Err(error) => tracing::error!(%error, "scan could not mark files missing"),
+                }
+            }
         }
-        counters.flush(self.store.as_ref(), run_id);
         missing
     }
 }
 
-impl<S: ScanStore, T: TagReader + 'static, Q: IdentifyQueue> Checkpoint
-    for LibraryScanCoordinator<S, T, Q>
-{
+/// Missing rows marked per transaction during reconcile.
+const RECONCILE_CHUNK: usize = 500;
+
+/// Scopes at or above this many indexed tracks are guarded against losing
+/// most of them in one walk.
+const MASS_MISSING_MIN_INDEXED: usize = 20;
+
+/// True when a walk would mark so much of a scope missing that a vanished
+/// mount is the likelier story: everything, or more than half.
+fn mass_missing(missing: usize, indexed: usize) -> bool {
+    indexed >= MASS_MISSING_MIN_INDEXED && missing * 2 > indexed
+}
+
+/// Failure rows for the files a window could not read.
+fn window_failures(window: &IndexWindow, now: f64) -> Vec<ScanFailureRecord> {
+    window
+        .failed
+        .iter()
+        .map(|(root_id, relative_path, state)| {
+            let (code, detail) = if *state == "deferred" {
+                (
+                    failure_codes::TAG_READ_DEFERRED,
+                    "The tag-read capacity was exhausted; the read is deferred for this run.",
+                )
+            } else {
+                (
+                    failure_codes::TAG_READ_FAILED,
+                    "The tag read failed; the file was skipped for this run.",
+                )
+            };
+            ScanFailureRecord {
+                root_id: root_id.clone(),
+                relative_path: relative_path.clone(),
+                failure_code: code.to_owned(),
+                recorded_at: now,
+                failure_detail: detail.to_owned(),
+                phase: ScanPhase::Indexing,
+            }
+        })
+        .collect()
+}
+
+impl<S: ScanStore, T: TagReader + 'static> Checkpoint for LibraryScanCoordinator<S, T> {
     /// v2 `checkpoint`: fast true while policy matches and no control is
     /// pending, otherwise settle or supersede through the store.
     fn check(&self, run_id: &str, frozen_policy_revision: &str) -> bool {
@@ -1297,14 +1419,19 @@ impl<S: ScanStore, T: TagReader + 'static, Q: IdentifyQueue> Checkpoint
                     | ScanState::Reconciling
                     | ScanState::Pausing
             ) {
-                let _ = self.store.transition(
+                match self.store.transition(
                     &run.id,
                     run.state,
                     run.row_revision,
                     ScanState::SupersededPolicyChanged,
                     self.now(),
                     Some(failure_codes::SUPERSEDED_POLICY_CHANGED),
-                );
+                ) {
+                    Ok(_) => self.requeue_superseded(&run),
+                    Err(error) => {
+                        tracing::warn!(run_id = %run.id, %error, "superseded scan did not settle");
+                    }
+                }
             }
             self.store.flush_invalidation(true);
             self.pending_control
@@ -1347,13 +1474,13 @@ pub struct IndexCounts {
 mod tests {
     use super::super::models::ScanTrigger;
     use super::super::roots::LibraryRoot;
-    use super::super::seams::{NullIdentifyQueue, NullTagReader};
+    use super::super::seams::NullTagReader;
     use super::super::sqlite_store::SqliteScanStore;
     use super::super::store::RunStore;
     use super::*;
     use std::path::PathBuf;
 
-    fn coordinator() -> LibraryScanCoordinator<SqliteScanStore, NullTagReader, NullIdentifyQueue> {
+    fn coordinator() -> LibraryScanCoordinator<SqliteScanStore, NullTagReader> {
         let registry = RootRegistry::new(
             vec![LibraryRoot::new(
                 "r1",
@@ -1367,7 +1494,6 @@ mod tests {
             Arc::new(SqliteScanStore::open_ephemeral().expect("scan store opens")),
             BlockingPool::new(2),
             Arc::new(NullTagReader::new()),
-            Arc::new(NullIdentifyQueue::new()),
             Arc::new(StaticResolver::new(registry)),
         )
     }

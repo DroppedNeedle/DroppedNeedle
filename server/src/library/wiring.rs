@@ -23,8 +23,8 @@ use axum::Router;
 use tokio::sync::watch;
 
 use super::adapters::{
-    EmptyContributionIdentity, IdentifyEnqueue, LoftyTagReader, MinimalAttachmentEvidence,
-    NoopContributionCatalog, UnavailableMusicBrainz,
+    EmptyContributionIdentity, LoftyTagReader, MinimalAttachmentEvidence, NoopContributionCatalog,
+    UnavailableMusicBrainz,
 };
 use super::clock::now_unix;
 use super::contrib::memory::MemoryStore as ContribMemoryStore;
@@ -64,7 +64,7 @@ fn scratch_state() -> Result<(Arc<super::scratch::ScratchDir>, Arc<ConfigStore>)
 }
 
 /// Scan coordinator over the wired seams.
-pub type ScanCoordinator = LibraryScanCoordinator<SqliteScanStore, LoftyTagReader, IdentifyEnqueue>;
+pub type ScanCoordinator = LibraryScanCoordinator<SqliteScanStore, LoftyTagReader>;
 
 /// Live root-registry source shared with the stream gateway.
 pub type RootSource = Arc<dyn Fn() -> RootRegistry + Send + Sync>;
@@ -270,10 +270,6 @@ impl LibrarySetup {
             SqliteIdentifyStore::open(db_path)
                 .map_err(|error| format!("identify store: {error}"))?,
         );
-        let enqueue = Arc::new(IdentifyEnqueue::new(
-            scan_store.clone(),
-            identify_store.clone(),
-        ));
         let pool = BlockingPool::new(4);
         let wakeups = WorkWakeups::new();
         let fs = FsCoordinator::new();
@@ -282,7 +278,6 @@ impl LibrarySetup {
                 scan_store.clone(),
                 pool.clone(),
                 Arc::new(LoftyTagReader),
-                enqueue,
                 registry.clone(),
             )
             .with_filesystem(fs.clone())

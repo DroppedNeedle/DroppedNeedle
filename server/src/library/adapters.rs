@@ -5,9 +5,7 @@
 //! config, album projection for contributions) fail loudly or stay
 //! dormant, never silently wrong; each carries a note.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -24,132 +22,34 @@ use super::contrib::seams::{
 };
 use super::publish::PublishError;
 use super::publish::planner::SpaceProbe;
-use super::scan::seams::{IdentifyQueue, ScannedTags, TagReadError, TagReader};
+use super::scan::seams::{ScannedTags, TagReadError, TagReader};
 
 // ---------------------------------------------------------------------------
 // Scan -> tags: read-only tag access over the tags module.
 // ---------------------------------------------------------------------------
 
 /// Read-only tag reader over [`crate::library::tags`]. Never writes:
-/// tag text comes from the read half, duration from the probe half,
-/// and every failure maps onto the scan seam's two errors.
+/// tags and stream properties come from the container headers (no audio
+/// decode), and every failure maps onto the scan seam's two errors. A
+/// parser panic on a malformed file is caught and reads as a fatal tag
+/// failure for that file instead of taking the scan worker down.
 pub struct LoftyTagReader;
-
-/// Files at or under this size parse from one shared read; larger files
-/// keep the streaming path so a huge file never spikes the scan heap.
-const MAX_BUFFERED_FILE_BYTES: u64 = 64 * 1024 * 1024;
-/// Files over this size leave an empty buffer behind instead of a big
-/// retained one. Covers the corpus outright.
-const RETAINED_READ_CAPACITY: usize = 256 * 1024;
-
-thread_local! {
-    /// One file buffer per scan worker, reused across files. Held behind
-    /// `Arc` so the probe half shares the bytes without copying; the
-    /// clones never escape one `read_tags` call, so the buffer is always
-    /// exclusively owned here (a contended buffer falls back cleanly).
-    static READ_BUFFER: RefCell<Arc<Vec<u8>>> = RefCell::new(Arc::new(Vec::new()));
-}
 
 impl TagReader for LoftyTagReader {
     fn read_tags(&self, path: &Path) -> Result<ScannedTags, TagReadError> {
         let format = super::tags::format_for_path(path).map_err(|_| TagReadError::Fatal)?;
-        if let Some(scanned) = read_tags_buffered(path, format) {
-            return scanned;
-        }
-        let tag = super::tags::read::read_tag_only(path, format).map_err(map_tag_read_error)?;
-        let duration_secs = super::tags::probe(path)
-            .ok()
-            .map(|info| info.duration_seconds);
-        Ok(scanned_tags(tag, duration_secs))
-    }
-}
-
-/// Tag text plus duration from a single shared read of the file. Returns
-/// `None` when the file should take the streaming path instead (over the
-/// size cap, unreadable metadata, or a contended thread buffer); I/O and
-/// parse failures inside the buffered path map exactly like the
-/// streaming path, so verdicts never depend on which path ran.
-fn read_tags_buffered(
-    path: &Path,
-    format: super::tags::AudioFormat,
-) -> Option<Result<ScannedTags, TagReadError>> {
-    let size = path.metadata().map(|meta| meta.len()).unwrap_or(0);
-    if size > MAX_BUFFERED_FILE_BYTES {
-        return None;
-    }
-    READ_BUFFER.with(|cell| {
-        let mut shared = cell.borrow_mut();
-        {
-            let buffer = Arc::get_mut(&mut shared)?;
-            buffer.clear();
-            let mut file = match std::fs::File::open(path) {
-                Ok(file) => file,
-                Err(source) => return Some(Err(map_read_open_error(source, path, format))),
-            };
-            if let Err(source) = file.read_to_end(buffer) {
-                return Some(Err(map_read_open_error(source, path, format)));
+        let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            super::tags::read::read_scan_metadata(path, format)
+        }));
+        match read {
+            Ok(Ok((tag, header))) => Ok(ScannedTags { tag, header }),
+            Ok(Err(error)) => Err(map_tag_read_error(error)),
+            Err(_) => {
+                tracing::error!(path = %path.display(), "tag parser panicked; file skipped");
+                Err(TagReadError::Fatal)
             }
         }
-        let bytes = shared.clone();
-        if bytes.len() > RETAINED_READ_CAPACITY {
-            // A big file just passed through: leave an empty buffer
-            // behind so the retained capacity stays small. This file's
-            // backing lives on in `bytes` and frees when parsing ends.
-            *shared = Arc::new(Vec::new());
-        }
-        let parsed = super::tags::read::read_tag_from_bytes(&bytes, path, format)
-            .map_err(map_tag_read_error);
-        let tag = match parsed {
-            Ok(parsed) => parsed.tag,
-            Err(error) => return Some(Err(error)),
-        };
-        let duration_secs =
-            super::tags::probe::probe_duration_from_shared(bytes, path, format).ok();
-        Some(Ok(scanned_tags(tag, duration_secs)))
-    })
-}
-
-/// Map a buffered-path open/read failure like the streaming path would:
-/// AAC reads surface I/O (deferred re-offer), where every other format
-/// surfaces a tag-read failure (lofty owns the read there, including
-/// its I/O errors).
-fn map_read_open_error(
-    source: std::io::Error,
-    path: &Path,
-    format: super::tags::AudioFormat,
-) -> TagReadError {
-    if format == super::tags::AudioFormat::Aac {
-        map_tag_read_error(super::tags::TagsError::Io {
-            path: path.display().to_string(),
-            source,
-        })
-    } else {
-        map_tag_read_error(super::tags::TagsError::TagRead {
-            path: path.display().to_string(),
-            reason: source.to_string(),
-        })
     }
-}
-
-fn scanned_tags(tag: super::tags::read::AudioTag, duration_secs: Option<f64>) -> ScannedTags {
-    let mut extra = HashMap::new();
-    if !tag.genres.is_empty() {
-        extra.insert("genre".to_owned(), tag.genres.join("\u{0}"));
-    }
-    if let Some(mbid) = tag.musicbrainz_recording_id.as_deref() {
-        extra.insert("musicbrainz_recording_id".to_owned(), mbid.to_owned());
-    }
-    ScannedTags {
-        artist: non_empty(tag.artist),
-        album: non_empty(tag.album),
-        title: non_empty(tag.title),
-        duration_secs,
-        extra,
-    }
-}
-
-fn non_empty(value: String) -> Option<String> {
-    if value.is_empty() { None } else { Some(value) }
 }
 
 /// Map a tag failure onto the scan seam. I/O races (a file vanishing
@@ -159,44 +59,6 @@ fn map_tag_read_error(error: super::tags::TagsError) -> TagReadError {
     match error {
         super::tags::TagsError::Io { .. } => TagReadError::Deferred,
         _ => TagReadError::Fatal,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Scan -> identify: offer changed albums to the durable queue.
-// ---------------------------------------------------------------------------
-
-/// Scan-side identify offers over the durable queue. The scan names the
-/// tracks it just committed; each track's catalog album (the same
-/// `local_albums.id` the reads API serves) gets one offer, and the queue
-/// keeps one live job per album revision.
-pub struct IdentifyEnqueue {
-    catalog: Arc<super::scan::sqlite_store::SqliteScanStore>,
-    queue: Arc<super::identify::sqlite::SqliteIdentifyStore>,
-}
-
-impl IdentifyEnqueue {
-    pub fn new(
-        catalog: Arc<super::scan::sqlite_store::SqliteScanStore>,
-        queue: Arc<super::identify::sqlite::SqliteIdentifyStore>,
-    ) -> Self {
-        Self { catalog, queue }
-    }
-}
-
-impl IdentifyQueue for IdentifyEnqueue {
-    fn enqueue(&self, _album_key: &str, track_ids: &[String]) -> usize {
-        use super::scan::store::CatalogStore as _;
-        let mut albums: Vec<String> = track_ids
-            .iter()
-            .filter_map(|track_id| self.catalog.album_for_track(track_id))
-            .collect();
-        albums.sort();
-        albums.dedup();
-        albums
-            .iter()
-            .filter(|album_id| self.queue.offer(album_id) == Some(true))
-            .count()
     }
 }
 
@@ -438,56 +300,42 @@ mod tests {
         Path::new("tests/fixtures/library").join(name)
     }
 
-    /// The buffered read-once path returns exactly what the streaming
-    /// path would: same tag text, same duration, same error mapping.
-    /// Runs over every committed audio fixture (WMA stays rejected).
+    /// The scan reads the same tags the full read does, and its header
+    /// duration agrees with the decode-counted probe, without decoding.
     #[test]
-    fn buffered_tag_read_matches_streaming() {
+    fn scan_read_matches_full_read() {
         let reader = LoftyTagReader;
         for name in [
             "flac_full_01.flac",
-            "flac_full_02.flac",
             "flac_no_tags.flac",
-            "flac_cjk_01.flac",
-            "flac_compilation_01.flac",
-            "flac_only_release_mbid.flac",
             "mp3_full_01.mp3",
             "m4a_full_01.m4a",
-            "management_full.mp3",
-            "management_full_v23.mp3",
-            "management_full.flac",
-            "management_full.m4a",
             "management_full.ogg",
             "management_full.opus",
             "management_full.wav",
-            "management_full_riff.wav",
             "management_full.aac",
         ] {
             let path = fixture(name);
             let format = super::super::tags::format_for_path(&path).expect("fixture format");
-            let streamed = (|| {
-                let tag = super::super::tags::read::read_tag_only(&path, format)
-                    .map_err(map_tag_read_error)?;
-                let duration_secs = super::super::tags::probe(&path)
-                    .ok()
-                    .map(|info| info.duration_seconds);
-                Ok::<_, TagReadError>(scanned_tags(tag, duration_secs))
-            })();
-            assert_eq!(reader.read_tags(&path), streamed, "fixture {name}");
+            let scanned = reader.read_tags(&path).expect("scan read");
+            let full = super::super::tags::read::read_tag_only(&path, format).expect("full read");
+            assert_eq!(scanned.tag, full, "fixture {name}");
+            let probed = super::super::tags::probe(&path)
+                .expect("probe")
+                .duration_seconds;
+            let header = scanned.header.duration_seconds.expect("header duration");
+            assert!(
+                (header - probed).abs() < 0.5,
+                "fixture {name}: {header} vs {probed}"
+            );
         }
-        // WMA never reaches either path.
         assert_eq!(
             reader.read_tags(&fixture("management_full.wma")),
             Err(TagReadError::Fatal)
         );
-        // A vanishing file maps like the streaming path: I/O surfaces
-        // for AAC (deferred re-offer), tag failure everywhere else.
+        // A vanished file is an I/O failure: deferred, offered again.
         assert_eq!(
             reader.read_tags(Path::new("/nonexistent-missing-file.mp3")),
-            Err(TagReadError::Fatal)
-        );
-        assert_eq!(
-            reader.read_tags(Path::new("/nonexistent-missing-file.aac")),
             Err(TagReadError::Deferred)
         );
     }

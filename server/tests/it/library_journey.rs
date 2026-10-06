@@ -448,7 +448,7 @@ async fn library_journey_scan_identify_review_organize_undo() {
     // Plant two tracks in one album dir, then add the root.
     let music = lib.dir.join("music");
     let file_a = plant(&music, "album-a/01.flac", "management_full.flac");
-    let file_b = plant(&music, "album-a/02.flac", "flac_full_01.flac");
+    let file_b = plant(&music, "album-a/02.flac", "management_full.flac");
     let title_a_before = read_title(&file_a);
     let title_b_before = read_title(&file_b);
     let bytes_before = snapshot_tree(&music);

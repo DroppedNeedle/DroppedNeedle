@@ -11,9 +11,10 @@
 use std::collections::HashMap;
 
 use super::models::{
-    Counters, ScanControl, ScanFailureRecord, ScanInventoryItem, ScanRequest, ScanRequestResult,
-    ScanRun, ScanScope, ScanState, ScopeDiscoveryState, Verdict,
+    Counters, EffectivePolicy, ScanControl, ScanFailureRecord, ScanInventoryItem, ScanRequest,
+    ScanRequestResult, ScanRun, ScanScope, ScanState, ScopeDiscoveryState, Verdict,
 };
+use super::seams::ScannedTags;
 
 /// Stat-revision lineage for one catalog row. `exact` rows compare the
 /// `size:mtime_ns` string; `legacy_float` rows use the symmetric epsilon
@@ -43,17 +44,46 @@ pub type ClassifyInput = (String, u64, i64, f64, String);
 /// page came up short).
 pub type InventoryPage = (Vec<ScanInventoryItem>, Option<(String, String)>);
 
-/// One row for [`ScanStore::commit_indexed_batch`]: the same fields as
-/// [`ScanStore::commit_indexed`], bundled so SQLite implementations can
-/// land a whole batch in one transaction.
+/// One file the index phase read, ready for the catalog.
 #[derive(Debug, Clone)]
 pub struct CommitIndexedItem {
     pub root_id: String,
     pub relative_path: String,
     pub size_bytes: u64,
     pub mtime_ns: i64,
-    pub track_id: String,
     pub tags_read_at: f64,
+    pub tags: ScannedTags,
+    pub effective_policy: EffectivePolicy,
+    pub policy_revision: String,
+    /// Verdict counter the coordinator bumped for this file (`new_count`,
+    /// `changed_count`, `unchanged_count`), undone if the row fails.
+    pub verdict_counter: &'static str,
+}
+
+/// One index window: every inventory row in `(after, through]` was
+/// handled. `items` go to the catalog; `failed` rows take the named
+/// processing state (`failed`, `deferred`); every other pending row in
+/// the range marks skipped. `counters` land with the rows.
+#[derive(Debug, Clone, Default)]
+pub struct IndexWindow {
+    pub run_id: String,
+    pub after: Option<(String, String)>,
+    pub through: (String, String),
+    pub items: Vec<CommitIndexedItem>,
+    pub failed: Vec<(String, String, &'static str)>,
+    pub counters: Vec<(&'static str, i64)>,
+    pub now: f64,
+}
+
+/// What one window commit landed.
+#[derive(Debug, Clone, Default)]
+pub struct WindowOutcome {
+    /// Catalog rows written.
+    pub committed: usize,
+    /// Identify jobs queued for the albums the window touched.
+    pub enqueued: usize,
+    /// Files that could not be written: root, path, store error.
+    pub failed: Vec<(String, String, String)>,
 }
 
 /// Store errors. Spelling mirrors the v2 exception mapping: stale reads
@@ -180,6 +210,10 @@ pub trait InventoryStore: Send + Sync {
     /// number of rows still pending afterwards.
     fn cleanup_stale_inventory(&self, run_id: &str) -> usize;
 
+    /// Record one inventory page. Returns the run revision after the
+    /// write plus how many rows could not be stored: when the page fails
+    /// as a whole it lands row by row, and each refused row gets a
+    /// `WALK_ERROR` failure naming the store error.
     fn add_inventory_batch(
         &self,
         run_id: &str,
@@ -187,11 +221,12 @@ pub trait InventoryStore: Send + Sync {
         expected_run_revision: u64,
         updated_at: f64,
         generation: u64,
-    ) -> Result<u64, ScanStoreError>;
+    ) -> Result<(u64, usize), ScanStoreError>;
 
     fn inventory_for_run(&self, run_id: &str) -> Vec<ScanInventoryItem>;
 
-    /// One bounded inventory page in `(root_id, relative_path)` order,
+    /// One bounded page of the run's unprocessed inventory rows in
+    /// `(root_id, relative_path)` order,
     /// starting after `after` (none for the first page). Returns the page
     /// plus the cursor for the next page (none when the page came up
     /// short). Keyset paging keeps every page O(page): no offset rescan,
@@ -211,20 +246,10 @@ pub trait InventoryStore: Send + Sync {
 /// The track catalog: classification against it, commits into it, and
 /// missing detection.
 pub trait CatalogStore: Send + Sync {
-    fn commit_indexed(
-        &self,
-        root_id: &str,
-        relative_path: &str,
-        size_bytes: u64,
-        mtime_ns: i64,
-        track_id: String,
-        tags_read_at: f64,
-    );
-
-    /// Commit several catalog rows with the exact per-row semantics of
-    /// [`ScanStore::commit_indexed`]. The default loops; SQLite lands one
-    /// transaction with reused prepared statements.
-    fn commit_indexed_batch(&self, items: &[CommitIndexedItem]);
+    /// Commit one index window atomically: catalog rows, inventory
+    /// marks, counters, and identify offers land together or not at all.
+    /// A row the catalog refuses fails alone and is reported back.
+    fn commit_window(&self, window: &IndexWindow) -> Result<WindowOutcome, ScanStoreError>;
 
     fn mark_deferred(&self, root_id: &str, relative_path: &str, deferred: bool);
 
@@ -236,7 +261,23 @@ pub trait CatalogStore: Send + Sync {
     /// Indexed track at one path.
     fn track_at(&self, root_id: &str, relative_path: &str) -> Option<String>;
 
-    fn remove_catalog(&self, root_id: &str, relative_path: &str);
+    /// Mark catalog rows missing (never delete: plays, playlists, and
+    /// identities keep pointing at them) and count them on the run.
+    /// Returns rows marked.
+    fn mark_missing(
+        &self,
+        run_id: &str,
+        root_id: &str,
+        relative_paths: &[String],
+        now: f64,
+    ) -> Result<usize, ScanStoreError>;
+
+    /// Indexed catalog rows under one scope.
+    fn indexed_count(
+        &self,
+        root_id: &str,
+        scope_relative_path: &str,
+    ) -> Result<usize, ScanStoreError>;
 
     /// Catalog paths under `scope_relative_path` that the run's current
     /// inventory does not contain: the missing set for one cleanly-walked
@@ -259,6 +300,6 @@ pub trait CatalogStore: Send + Sync {
 }
 
 /// Everything the coordinator and the walker need from durable scan state.
-pub trait ScanStore: RunStore + InventoryStore + CatalogStore {}
+pub trait ScanStore: RunStore + InventoryStore + CatalogStore + 'static {}
 
-impl<T: RunStore + InventoryStore + CatalogStore> ScanStore for T {}
+impl<T: RunStore + InventoryStore + CatalogStore + 'static> ScanStore for T {}

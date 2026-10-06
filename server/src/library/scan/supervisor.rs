@@ -19,7 +19,7 @@ use super::coordinator::LibraryScanCoordinator;
 use super::models::{Disposition, ScanKind, ScanRequest, ScanScope, ScanTrigger};
 use super::roots::RootRegistry;
 use super::scheduler::{InclusionRule, ScheduleSettings, scheduled_scopes, tick};
-use super::seams::{IdentifyQueue, TagReader};
+use super::seams::TagReader;
 use super::store::ScanStore;
 use super::watcher::{DirtyScopes, WorkWakeups};
 
@@ -83,13 +83,12 @@ pub fn scopes_for_dirty_ids(
 /// enabled, not manual, nothing resumable or current, non-empty scopes.
 /// Every request disposition is acceptable; failures log and the loop
 /// below still runs.
-pub async fn startup_recovery<S, T, Q>(
-    coordinator: &LibraryScanCoordinator<S, T, Q>,
+pub async fn startup_recovery<S, T>(
+    coordinator: &LibraryScanCoordinator<S, T>,
     inputs: &SupervisorInputs,
 ) where
     S: ScanStore,
     T: TagReader + 'static,
-    Q: IdentifyQueue,
 {
     let registry = coordinator.registry();
     let enabled = registry.enabled();
@@ -122,14 +121,13 @@ pub async fn startup_recovery<S, T, Q>(
 
 /// One supervisor iteration. Returns true when a run was driven (the
 /// caller loops immediately instead of sleeping).
-pub async fn supervise_once<S, T, Q>(
-    coordinator: &LibraryScanCoordinator<S, T, Q>,
+pub async fn supervise_once<S, T>(
+    coordinator: &LibraryScanCoordinator<S, T>,
     inputs: &SupervisorInputs,
 ) -> bool
 where
     S: ScanStore,
     T: TagReader + 'static,
-    Q: IdentifyQueue,
 {
     supervise_once_inner(coordinator, inputs, None).await
 }
@@ -138,28 +136,26 @@ where
 /// exactly like [`supervise_once`], but a signalled shutdown stops the
 /// in-flight run instead of waiting it out. A pre-signalled shutdown
 /// claims no new work. Returns true when a run was driven.
-pub async fn supervise_once_with_shutdown<S, T, Q>(
-    coordinator: &LibraryScanCoordinator<S, T, Q>,
+pub async fn supervise_once_with_shutdown<S, T>(
+    coordinator: &LibraryScanCoordinator<S, T>,
     inputs: &SupervisorInputs,
     shutdown: &watch::Receiver<bool>,
 ) -> bool
 where
     S: ScanStore,
     T: TagReader + 'static,
-    Q: IdentifyQueue,
 {
     supervise_once_inner(coordinator, inputs, Some(shutdown)).await
 }
 
-async fn supervise_once_inner<S, T, Q>(
-    coordinator: &LibraryScanCoordinator<S, T, Q>,
+async fn supervise_once_inner<S, T>(
+    coordinator: &LibraryScanCoordinator<S, T>,
     inputs: &SupervisorInputs,
     shutdown: Option<&watch::Receiver<bool>>,
 ) -> bool
 where
     S: ScanStore,
     T: TagReader + 'static,
-    Q: IdentifyQueue,
 {
     let registry = coordinator.registry();
     let enabled = registry.enabled();
@@ -235,14 +231,13 @@ where
 /// shutdown-watch loop (`LibrarySetup::scan_startup_recovery` /
 /// `supervisor_tick`), so no production caller reaches this; the
 /// scan tests pin its Hook-A-then-exit behavior.
-pub async fn supervise_target_scans<S, T, Q>(
-    coordinator: &LibraryScanCoordinator<S, T, Q>,
+pub async fn supervise_target_scans<S, T>(
+    coordinator: &LibraryScanCoordinator<S, T>,
     inputs: &SupervisorInputs,
     shutdown: &AtomicBool,
 ) where
     S: ScanStore,
     T: TagReader + 'static,
-    Q: IdentifyQueue,
 {
     startup_recovery(coordinator, inputs).await;
     loop {
@@ -274,12 +269,12 @@ mod tests {
     use super::super::coordinator::{LibraryScanCoordinator, StaticResolver};
     use super::super::pool::BlockingPool;
     use super::super::roots::LibraryRoot;
-    use super::super::seams::{NullIdentifyQueue, NullTagReader};
+    use super::super::seams::NullTagReader;
     use super::super::sqlite_store::SqliteScanStore;
     use super::*;
     use std::sync::atomic::Ordering;
 
-    fn coordinator() -> LibraryScanCoordinator<SqliteScanStore, NullTagReader, NullIdentifyQueue> {
+    fn coordinator() -> LibraryScanCoordinator<SqliteScanStore, NullTagReader> {
         let registry = RootRegistry::new(
             vec![LibraryRoot::new(
                 "r1",
@@ -293,7 +288,6 @@ mod tests {
             Arc::new(SqliteScanStore::open_ephemeral().expect("scan store opens")),
             BlockingPool::new(2),
             Arc::new(NullTagReader::new()),
-            Arc::new(NullIdentifyQueue::new()),
             Arc::new(StaticResolver::new(registry)),
         )
     }

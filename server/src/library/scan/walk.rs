@@ -1101,7 +1101,7 @@ impl<S: ScanStore> InventoryScanner<S> {
             (self.clock)(),
             generation,
         ) {
-            Ok(revision) => (revision, true),
+            Ok((revision, refused)) => (revision, refused == 0),
             Err(ScanStoreError::StaleRevision { .. }) => {
                 let fresh = self
                     .store
@@ -1115,7 +1115,7 @@ impl<S: ScanStore> InventoryScanner<S> {
                     (self.clock)(),
                     generation,
                 ) {
-                    Ok(revision) => (revision, true),
+                    Ok((revision, refused)) => (revision, refused == 0),
                     Err(error) => {
                         tracing::error!(%error, "scan inventory batch lost its retry");
                         self.record_failure(
@@ -1123,7 +1123,7 @@ impl<S: ScanStore> InventoryScanner<S> {
                             scope,
                             scope.relative_path.clone(),
                             failure_codes::WALK_ERROR,
-                            "IoError while walking.".to_owned(),
+                            format!("The inventory page failed to persist: {error}"),
                         );
                         (fresh, false)
                     }
@@ -1136,7 +1136,7 @@ impl<S: ScanStore> InventoryScanner<S> {
                     scope,
                     scope.relative_path.clone(),
                     failure_codes::WALK_ERROR,
-                    "The inventory page failed to persist; the page was skipped.".to_owned(),
+                    format!("The inventory page failed to persist: {error}"),
                 );
                 (row_revision, false)
             }
