@@ -2087,6 +2087,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/albums/{id}/artwork": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * An album's own art: the folder image or embedded picture the library
+         *     scan found. Never reaches out to the network. Pass the album's
+         *     `cover_version` as `v`: a matching version is cached for good, an older
+         *     one revalidates.
+         */
+        get: operations["album_artwork"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/albums/{id}/copies": {
         parameters: {
             query?: never;
@@ -19669,6 +19691,58 @@ export interface operations {
                 content?: never;
             };
             /** @description Unknown album id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    album_artwork: {
+        parameters: {
+            query?: {
+                /** @description Art version the caller holds */
+                v?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Local album id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Image bytes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Image unchanged */
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Bad query string */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The album has no local art */
             404: {
                 headers: {
                     [name: string]: unknown;

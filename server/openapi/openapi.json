@@ -4558,6 +4558,53 @@
         }
       }
     },
+    "/api/v3/library/albums/{id}/artwork": {
+      "get": {
+        "tags": [
+          "crate::reads::platform::covers"
+        ],
+        "summary": "An album's own art: the folder image or embedded picture the library\nscan found. Never reaches out to the network. Pass the album's\n`cover_version` as `v`: a matching version is cached for good, an older\none revalidates.",
+        "operationId": "album_artwork",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "v",
+            "in": "query",
+            "description": "Art version the caller holds",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Image bytes"
+          },
+          "304": {
+            "description": "Image unchanged"
+          },
+          "400": {
+            "description": "Bad query string"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "The album has no local art"
+          }
+        }
+      }
+    },
     "/api/v3/library/albums/{id}/copies": {
       "get": {
         "tags": [
