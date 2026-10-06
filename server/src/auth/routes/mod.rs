@@ -57,6 +57,7 @@
 //! POST /api/v3/auth/logout                      (public)
 //! POST /api/v3/auth/setup                       (public)
 //! GET  /api/v3/auth/setup/status                (public)
+//! GET  /api/v3/auth/providers                   (public)
 //! POST /api/v3/auth/oidc/authorize              (public)
 //! GET  /api/v3/auth/oidc/callback               (public)
 //! POST /api/v3/auth/oidc/exchange               (public)
@@ -74,6 +75,7 @@
 //! native::logout_handler,
 //! native::setup_handler,
 //! native::setup_status_handler,
+//! federated::providers_handler,
 //! federated::oidc_authorize_handler,
 //! federated::oidc_callback_handler,
 //! federated::oidc_exchange_handler,

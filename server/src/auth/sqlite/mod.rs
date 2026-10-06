@@ -92,6 +92,12 @@ impl AuthDb {
         self.inner.as_ref().map(|inner| (&inner.pool, &inner.lane))
     }
 
+    /// The pool and lane, for wiring sibling stores over the same database.
+    /// `None` on the unwired test handle.
+    pub fn handles(&self) -> Option<(SqlitePool, WriteLane)> {
+        self.live().map(|(pool, lane)| (pool.clone(), lane.clone()))
+    }
+
     /// Current unix time in whole seconds.
     fn now_unix() -> i64 {
         super::session::store::now_unix()

@@ -52,20 +52,16 @@ pub trait JellyfinIdp: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = Result<JellyfinProfile, FederatedError>> + Send;
 }
 
-/// Best-effort auto-link of the per-user media connection. Implementations
-/// swallow their own failures: a failed link must never fail the login.
-/// [`NoopJellyfinLink`] covers deployments without a connections store.
+/// Stores a user's Jellyfin media link (the per-user connection used for
+/// playback). The login treats a failure as a warning: a failed link must
+/// never fail the sign-in.
 pub trait JellyfinConnectionLink: Clone + Send + Sync + 'static {
     /// Store the fresh user-scoped token for later playback.
-    fn link(&self, user_id: &str, profile: &JellyfinProfile) -> impl Future<Output = ()> + Send;
-}
-
-/// No connections store: linking is a no-op.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct NoopJellyfinLink;
-
-impl JellyfinConnectionLink for NoopJellyfinLink {
-    async fn link(&self, _user_id: &str, _profile: &JellyfinProfile) {}
+    fn link(
+        &self,
+        user_id: &str,
+        profile: &JellyfinProfile,
+    ) -> impl Future<Output = Result<(), String>> + Send;
 }
 
 /// Jellyfin login service. Generic over stores so tests inject fakes.
@@ -118,14 +114,15 @@ where
             },
         )
         .await?;
-        self.links.link(&user.id, &profile).await;
+        if let Err(error) = self.links.link(&user.id, &profile).await {
+            tracing::warn!(%error, "could not link the signed-in Jellyfin account; the user can link it by hand");
+        }
         let raw_token = self.sessions.issue_session(&user.id, user_agent).await?;
         Ok((user, raw_token))
     }
 
-    /// Check credentials with no DroppedNeedle side effects (used by the
-    /// per-user connection link flow).
-    pub async fn authenticate_credentials(
+    /// Check credentials with no DroppedNeedle side effects.
+    async fn authenticate_credentials(
         &self,
         username: &str,
         password: &str,

@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 
 use super::super::federated::users::{
-    CREATE_RETRIES, PROVIDER_JELLYFIN, PROVIDER_PLEX, ProviderBinding, username_base,
+    CREATE_RETRIES, PROVIDER_PLEX, ProviderBinding, username_base,
 };
 use super::error::UsersError;
 use super::models::{
@@ -22,44 +22,8 @@ use super::models::{
 };
 use super::roles::Role;
 use super::services::{self, MAX_DISPLAY_NAME_LEN, store_internal, user_response as render_user};
-use super::stores::{DirectoryError, DirectoryUser, StoreError, UserDirectory};
+use super::stores::{DirectoryUser, StoreError, UserDirectory};
 use super::{UsersDeps, clock_now};
-
-/// Jellyfin directory with no live client: every listing reports
-/// unconfigured (503). A live client would replace this at the
-/// handler with the real directory, threaded through wiring like the login
-/// IdPs.
-#[derive(Debug, Clone, Default)]
-pub struct DisabledJellyfinDirectory;
-
-impl UserDirectory for DisabledJellyfinDirectory {
-    fn provider(&self) -> &'static str {
-        PROVIDER_JELLYFIN
-    }
-
-    fn list_users(
-        &self,
-    ) -> super::stores::BoxFuture<'_, Result<Vec<DirectoryUser>, DirectoryError>> {
-        Box::pin(async { Err(DirectoryError::NotConfigured) })
-    }
-}
-
-/// Plex directory with no live client: every listing reports unconfigured
-/// (503). Replaced the same way as its Jellyfin twin.
-#[derive(Debug, Clone, Default)]
-pub struct DisabledPlexDirectory;
-
-impl UserDirectory for DisabledPlexDirectory {
-    fn provider(&self) -> &'static str {
-        PROVIDER_PLEX
-    }
-
-    fn list_users(
-        &self,
-    ) -> super::stores::BoxFuture<'_, Result<Vec<DirectoryUser>, DirectoryError>> {
-        Box::pin(async { Err(DirectoryError::NotConfigured) })
-    }
-}
 
 /// GET /admin/import/{jellyfin,plex}: every importable account with its
 /// already-imported flag.

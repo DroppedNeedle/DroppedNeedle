@@ -505,6 +505,7 @@ dependencies = [
  "md5",
  "regex",
  "reqwest",
+ "ring",
  "rubato",
  "rusqlite",
  "rusty-chromaprint",

@@ -1081,6 +1081,7 @@ impl LastFmAuthClient for FakeLastFmAuthClient {
     fn request_token<'a>(
         &'a self,
         _api_key: &'a str,
+        _shared_secret: &'a str,
     ) -> BoxFuture<'a, Result<(String, String), LastFmError>> {
         Box::pin(async move {
             let guard = self.state.lock().await;
@@ -1280,6 +1281,8 @@ impl TestRig {
                     local_path: String::new(),
                 },
             }),
+            jellyfin_directory: Arc::new(FakeUserDirectory::jellyfin(Vec::new())),
+            plex_directory: Arc::new(FakeUserDirectory::plex(Vec::new())),
         };
         Ok(Self {
             deps,

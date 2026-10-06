@@ -1156,10 +1156,10 @@ pub async fn lastfm_request_token(
             message: "Set your Last.fm API credentials first".to_owned(),
         });
     };
-    let (api_key, _secret) = lastfm_keypair(deps, &link)?;
+    let (api_key, shared_secret) = lastfm_keypair(deps, &link)?;
     let (token, auth_url) = deps
         .lastfm_client
-        .request_token(&api_key)
+        .request_token(&api_key, &shared_secret)
         .await
         .map_err(|error| lastfm_error(deps, error))?;
     Ok(LastFmTokenResponse { token, auth_url })
@@ -1217,27 +1217,6 @@ pub async fn lastfm_unlink(deps: &UsersDeps, user_id: &str) -> Result<(), UsersE
         .await
         .map_err(|error| store_internal(deps, error))?;
     Ok(())
-}
-
-/// Wiring point for scrobble forwarding (not called yet): the linked session for one
-/// user, or None when disabled, unlinked, or undecryptable. Scrobbling is
-/// optional enrichment, so every miss degrades to None with a log line.
-pub async fn lastfm_scrobble_session(deps: &UsersDeps, user_id: &str) -> Option<(String, String)> {
-    if !deps.lastfm_switch.enabled() {
-        return None;
-    }
-    let link = deps.lastfm.get(user_id).await.ok()??;
-    let (username, session_cipher) = match (link.username, link.session_key_encrypted) {
-        (Some(username), Some(cipher)) => (username, cipher),
-        _ => return None,
-    };
-    match deps.crypto.decrypt(&session_cipher) {
-        Ok(session_key) => Some((username, session_key)),
-        Err(cause) => {
-            tracing::error!(user_id = %user_id.chars().take(8).collect::<String>(), %cause, "last.fm session undecryptable");
-            None
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------

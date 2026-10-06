@@ -20,9 +20,7 @@ use utoipa::ToSchema;
 use super::super::federated::users::{PROVIDER_JELLYFIN, PROVIDER_PLEX};
 use super::UsersDeps;
 use super::error::UsersError;
-use super::import::{
-    DisabledJellyfinDirectory, DisabledPlexDirectory, import_users, list_import_candidates,
-};
+use super::import::{import_users, list_import_candidates};
 use super::models::{
     AdminUserCreate, AdminUserListResponse, AppPasswordCreate, AppPasswordCreatedResponse,
     DeviceSessionMint, DeviceSessionResponse, DisplayNameUpdate, EmailUpdate,
@@ -695,35 +693,41 @@ pub async fn admin_revoke_app_password(
         .map_err(UsersHttpError::from)
 }
 
-/// List Jellyfin accounts available for import. 503 until a live Jellyfin
-/// client exists (same posture as the login flows).
+/// List Jellyfin accounts available for import. 503 when Jellyfin is off,
+/// has no API key, or cannot be reached.
 #[utoipa::path(
     get,
     path = "/api/v3/admin/import/jellyfin",
-    responses((status = 200, description = "Importable accounts", body = ImportCandidateListResponse))
+    responses(
+        (status = 200, description = "Importable accounts", body = ImportCandidateListResponse),
+        (status = 503, description = "Jellyfin is not set up or unreachable")
+    )
 )]
 pub async fn admin_import_list_jellyfin(
     State(deps): State<UsersDeps>,
     CurrentAdmin(_): CurrentAdmin,
 ) -> Result<Json<ImportCandidateListResponse>, UsersHttpError> {
-    list_import_candidates(&deps, &DisabledJellyfinDirectory)
+    list_import_candidates(&deps, deps.jellyfin_directory.as_ref())
         .await
         .map(Json)
         .map_err(UsersHttpError::from)
 }
 
-/// List Plex accounts available for import. 503 until a live Plex client
-/// exists (same posture as the login flows).
+/// List Plex accounts (Plex Home users and friends) available for import.
+/// 503 when no Plex token is set up or plex.tv cannot be reached.
 #[utoipa::path(
     get,
     path = "/api/v3/admin/import/plex",
-    responses((status = 200, description = "Importable accounts", body = ImportCandidateListResponse))
+    responses(
+        (status = 200, description = "Importable accounts", body = ImportCandidateListResponse),
+        (status = 503, description = "Plex is not set up or unreachable")
+    )
 )]
 pub async fn admin_import_list_plex(
     State(deps): State<UsersDeps>,
     CurrentAdmin(_): CurrentAdmin,
 ) -> Result<Json<ImportCandidateListResponse>, UsersHttpError> {
-    list_import_candidates(&deps, &DisabledPlexDirectory)
+    list_import_candidates(&deps, deps.plex_directory.as_ref())
         .await
         .map(Json)
         .map_err(UsersHttpError::from)
@@ -742,13 +746,9 @@ pub async fn admin_import_users(
     CurrentAdmin(_): CurrentAdmin,
     ValidJson(body): ValidJson<ImportUsersRequest>,
 ) -> Result<Json<ImportUsersResponse>, UsersHttpError> {
-    // Disabled directories until the live clients land: every provider
-    // branch 503s below; only the provider name validates here.
     let directory = match body.provider.as_str() {
-        PROVIDER_JELLYFIN => {
-            import_users(&deps, &DisabledJellyfinDirectory, &body.provider_uids).await
-        }
-        PROVIDER_PLEX => import_users(&deps, &DisabledPlexDirectory, &body.provider_uids).await,
+        PROVIDER_JELLYFIN => deps.jellyfin_directory.clone(),
+        PROVIDER_PLEX => deps.plex_directory.clone(),
         _ => {
             return Err(UsersError::InvalidInput {
                 message: "Unsupported import provider".to_owned(),
@@ -756,7 +756,10 @@ pub async fn admin_import_users(
             .into());
         }
     };
-    directory.map(Json).map_err(UsersHttpError::from)
+    import_users(&deps, directory.as_ref(), &body.provider_uids)
+        .await
+        .map(Json)
+        .map_err(UsersHttpError::from)
 }
 
 /// Curator probe body: proves the extractor admitted the caller.

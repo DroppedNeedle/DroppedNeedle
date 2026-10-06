@@ -1,13 +1,14 @@
-//! Federated auth routes: OIDC, Jellyfin, and the unified Plex journey.
+//! Federated auth routes: the provider list, OIDC, Jellyfin, and the
+//! unified Plex journey.
 //!
 //! Thin HTTP over the federated services. Shapes are clean-slate v3;
 //! behavior follows the services: OIDC keeps the PKCE
 //! authorize/callback/exchange steps, Jellyfin keeps credential login, Plex
-//! keeps one start plus one poll per purpose (login/link/connect). OIDC,
-//! Jellyfin, Plex start, and Plex poll/login are allowlisted public; Plex
-//! poll/link and poll/connect require a session (v2 parity: the link and
-//! settings flows always ran authenticated) and return no session. Only the
-//! login-shaped completions mint sessions.
+//! keeps one start plus one poll per purpose (login/link/connect). The
+//! provider list, OIDC, Jellyfin, Plex start, and Plex poll/login are
+//! allowlisted public; Plex poll/link and poll/connect require a session
+//! (v2 parity: the link and settings flows always ran authenticated) and
+//! return no session. Only the login-shaped completions mint sessions.
 
 use std::sync::Arc;
 
@@ -37,10 +38,12 @@ use serde::Deserialize;
 
 use super::error::{AuthRouteError, ValidQuery};
 use super::models::{
-    FederatedUserView, JellyfinLoginBody, OidcAuthorizeBody, OidcCallbackQuery, OidcExchangeBody,
-    PlexConnectPollResult, PlexLinkPollResult, PlexLoginPollBody, PlexLoginPollResult, PlexPinBody,
-    PlexProfileView, PlexStartBody, TransportDto,
+    AuthProvidersBody, FederatedUserView, JellyfinLoginBody, OidcAuthorizeBody, OidcCallbackQuery,
+    OidcExchangeBody, PlexConnectPollResult, PlexLinkPollResult, PlexLoginPollBody,
+    PlexLoginPollResult, PlexPinBody, PlexStartBody, TransportDto,
 };
+use crate::auth::federated::settings::{enabled_providers, oidc_config};
+use crate::runtime_config::ConfigStore;
 
 /// Jellyfin rejection, v2 message verbatim.
 pub const JELLYFIN_INVALID: &str = "Invalid credentials";
@@ -84,14 +87,38 @@ pub trait OidcConfigSource: Clone + Send + Sync + 'static {
     fn current(&self) -> impl Future<Output = OidcConfig> + Send;
 }
 
-/// Fixed OIDC settings for tests and single-config deployments.
-#[derive(Debug, Clone)]
-pub struct StaticOidcConfig(pub OidcConfig);
+/// OIDC settings read from the config store on every request.
+#[derive(Clone)]
+pub struct StoreOidcConfig(pub Arc<ConfigStore>);
 
-impl OidcConfigSource for StaticOidcConfig {
+impl OidcConfigSource for StoreOidcConfig {
     async fn current(&self) -> OidcConfig {
-        self.0.clone()
+        oidc_config(&self.0)
     }
+}
+
+/// The sign-in methods the login page offers. Public: the page asks before
+/// anyone is signed in.
+pub fn providers_router(store: Arc<ConfigStore>) -> Router {
+    Router::new()
+        .route("/auth/providers", get(providers_handler))
+        .with_state(store)
+}
+
+/// Which sign-in methods are switched on (v2 `GET /auth/providers`).
+#[utoipa::path(
+    get,
+    path = "/api/v3/auth/providers",
+    responses((status = 200, description = "Enabled sign-in methods", body = AuthProvidersBody))
+)]
+pub async fn providers_handler(State(store): State<Arc<ConfigStore>>) -> Json<AuthProvidersBody> {
+    let providers = enabled_providers(&store);
+    Json(AuthProvidersBody {
+        local: providers.local,
+        plex: providers.plex,
+        jellyfin: providers.jellyfin,
+        oidc: providers.oidc,
+    })
 }
 
 /// State for the OIDC routes.
@@ -495,7 +522,7 @@ pub struct PlexStartQuery {
     responses(
         (status = 200, description = "Fresh PIN and browser URL", body = PlexStartBody),
         (status = 400, description = "Link/connect start without a configured Plex server"),
-        (status = 503, description = "Plex unreachable")
+        (status = 503, description = "Plex login is off, or Plex is unreachable")
     )
 )]
 pub async fn plex_start_handler<S, C, L, N>(
@@ -600,15 +627,15 @@ where
     }
 }
 
-/// Plex link completion: polls the PIN and returns the verified profile.
-/// Requires a session (the profile carries account tokens); no login side
-/// effects, the caller attaches the profile to its own account.
+/// Plex link completion: polls the PIN and, once authorized, stores the
+/// verified account as the caller's Plex media link (v2 parity). Requires
+/// a session; the answer carries the Plex user name, never its tokens.
 #[utoipa::path(
     post,
     path = "/api/v3/auth/plex/poll/link",
     request_body = PlexPinBody,
     responses(
-        (status = 200, description = "Pending flag, or the verified profile", body = PlexLinkPollResult),
+        (status = 200, description = "Pending flag, or the linked Plex user name", body = PlexLinkPollResult),
         (status = 401, description = "Missing or invalid session"),
         (status = 403, description = "Access denied"),
         (status = 503, description = "Plex unreachable")
@@ -616,7 +643,7 @@ where
 )]
 pub async fn plex_poll_link_handler<S, C, L, N>(
     State(state): State<PlexRouteState<S, C, L, N>>,
-    AuthenticatedSession(_session): AuthenticatedSession,
+    AuthenticatedSession(session): AuthenticatedSession,
     ValidJson(body): ValidJson<PlexPinBody>,
 ) -> Result<Json<PlexLinkPollResult>, AuthRouteError>
 where
@@ -625,14 +652,14 @@ where
     L: PlexConnectionLink,
     N: SessionIssuer,
 {
-    match state.journey.poll_link(body.pin_id).await {
+    match state.journey.poll_link(body.pin_id, &session.user_id).await {
         Ok(PlexPoll::Pending) => Ok(Json(PlexLinkPollResult {
             completed: false,
-            profile: None,
+            username: None,
         })),
         Ok(PlexPoll::Complete(profile)) => Ok(Json(PlexLinkPollResult {
             completed: true,
-            profile: Some(PlexProfileView::from(&profile)),
+            username: Some(profile.display_name),
         })),
         Err(FederatedError::Authentication(cause)) => {
             tracing::debug!(%cause, "plex link poll rejected");

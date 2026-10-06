@@ -27,7 +27,7 @@ use droppedneedle::auth::prod::ProdAuth;
 use droppedneedle::auth::session::cookies::COOKIE_NAME;
 use droppedneedle::auth::users::UsersDeps;
 use droppedneedle::auth::users::stores::SystemClock;
-use droppedneedle::auth::wiring::AuthSetup;
+use droppedneedle::auth::wiring::{AuthSetup, Upstreams};
 use droppedneedle::config::DEFAULT_PORT;
 use droppedneedle::db::{DbConfig, DbRuntime, open_runtime};
 use droppedneedle::docs::ApiDoc;
@@ -49,13 +49,15 @@ const ORIGIN: &str = "http://e2e.test";
 const TEST_WRAPPED_KEY: &str = "e2e-wrapped-key-1";
 
 /// One scratch deployment: migrated database, production adapters, config.
-struct E2e {
+/// The federated suite reuses it with its upstreams pointed at mocks.
+pub(crate) struct E2e {
     /// Held, never read: dropping it would close the pool out from under
     /// the adapters.
     #[allow(dead_code)]
     runtime: DbRuntime,
     bundle: ProdAuth,
-    store: Arc<ConfigStore>,
+    pub(crate) store: Arc<ConfigStore>,
+    upstreams: Upstreams,
     crypto: Arc<Crypto>,
     http: HttpClientFactory,
     ids: Arc<UuidGenerator>,
@@ -65,7 +67,7 @@ struct E2e {
 }
 
 impl E2e {
-    async fn open(tag: &str) -> Self {
+    pub(crate) async fn open(tag: &str) -> Self {
         let scratch = crate::common::ScratchDir::new(&format!("auth-e2e-{tag}"));
         let dir = scratch.to_path_buf();
         let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
@@ -106,6 +108,7 @@ impl E2e {
             runtime,
             bundle,
             store,
+            upstreams: Upstreams::default(),
             crypto,
             http,
             ids,
@@ -115,10 +118,19 @@ impl E2e {
         }
     }
 
-    /// A fresh router over the same database. Each build carries fresh rate
-    /// buckets, so multi-pass tests rebuild instead of tripping the limiter.
-    fn router(&self) -> Router {
-        let auth = AuthSetup::build(
+    /// Point the plex.tv and Last.fm clients at local mocks.
+    pub(crate) fn with_upstreams(mut self, upstreams: Upstreams) -> Self {
+        self.upstreams = upstreams;
+        self
+    }
+
+    /// The scratch database pool, for assertions on stored rows.
+    pub(crate) fn pool(&self) -> &sqlx::SqlitePool {
+        self.runtime.pool()
+    }
+
+    fn auth_setup(&self) -> AuthSetup {
+        AuthSetup::build_with_upstreams(
             self.bundle.clone(),
             Arc::clone(&self.store),
             Arc::clone(&self.crypto),
@@ -126,8 +138,15 @@ impl E2e {
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             Arc::clone(&self.clock) as Arc<dyn droppedneedle::auth::users::stores::Clock>,
             "",
+            &self.upstreams,
         )
-        .expect("prod auth bundle builds");
+        .expect("prod auth bundle builds")
+    }
+
+    /// A fresh router over the same database. Each build carries fresh rate
+    /// buckets, so multi-pass tests rebuild instead of tripping the limiter.
+    pub(crate) fn router(&self) -> Router {
+        let auth = self.auth_setup();
         let wrapped_api_key = self
             .store
             .get_raw::<WrappedSettings>()
@@ -259,17 +278,7 @@ impl E2e {
     fn users(&self) -> UsersDeps {
         // Rebuild is cheap, but the stores are what matter: clone the deps
         // through one throwaway bundle so the compat adapter reads live rows.
-        AuthSetup::build(
-            self.bundle.clone(),
-            Arc::clone(&self.store),
-            Arc::clone(&self.crypto),
-            self.http.shared().clone(),
-            Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
-            Arc::clone(&self.clock) as Arc<dyn droppedneedle::auth::users::stores::Clock>,
-            "",
-        )
-        .expect("prod auth bundle builds")
-        .users
+        self.auth_setup().users
     }
 }
 
@@ -279,7 +288,7 @@ impl E2e {
 
 /// One request through the real app. Every call carries Host; cookie
 /// mutations additionally need Origin (pass `with_origin`).
-async fn call(
+pub(crate) async fn call(
     app: Router,
     method: &str,
     uri: &str,
@@ -837,6 +846,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("POST", "/api/v3/auth/logout", Posture::Public),
     ("POST", "/api/v3/auth/setup", Posture::Public),
     ("GET", "/api/v3/auth/setup/status", Posture::Public),
+    ("GET", "/api/v3/auth/providers", Posture::Public),
     // Federated journeys: public, own state-token auth.
     ("POST", "/api/v3/auth/oidc/authorize", Posture::Public),
     ("GET", "/api/v3/auth/oidc/callback", Posture::Public),
@@ -2005,8 +2015,8 @@ async fn auth_on_every_endpoint() {
             StatusCode::TOO_MANY_REQUESTS,
             "{method} {uri}: admin pass tripped the limiter"
         );
-        // Honest-503 rows: the import directories are disabled until the
-        // live clients land (stage-3 posture, documented on the handlers).
+        // Honest-503 rows: no Jellyfin or Plex server is set up in the
+        // scratch config, so the import directories report unconfigured.
         // The 503 is the contract here, not a failure, so it pins exactly.
         if *method == "GET"
             && matches!(

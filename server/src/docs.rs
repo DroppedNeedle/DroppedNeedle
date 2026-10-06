@@ -34,9 +34,9 @@ use crate::{
     },
     auth::{
         routes::models::{
-            FederatedUserView, JellyfinLoginBody, LoginBody, OidcAuthorizeBody, OidcCallbackQuery,
-            OidcExchangeBody, PlexConnectPollResult, PlexLinkPollResult, PlexLoginPollBody,
-            PlexLoginPollResult, PlexPinBody, PlexProfileView, PlexStartBody, SetupBody,
+            AuthProvidersBody, FederatedUserView, JellyfinLoginBody, LoginBody, OidcAuthorizeBody,
+            OidcCallbackQuery, OidcExchangeBody, PlexConnectPollResult, PlexLinkPollResult,
+            PlexLoginPollBody, PlexLoginPollResult, PlexPinBody, PlexStartBody, SetupBody,
             SetupStatusBody, TransportDto,
         },
         users::models::{
@@ -203,6 +203,7 @@ use crate::{
         crate::auth::routes::native::logout_handler,
         crate::auth::routes::native::setup_handler,
         crate::auth::routes::native::setup_status_handler,
+        crate::auth::routes::federated::providers_handler,
         crate::auth::routes::federated::oidc_authorize_handler,
         crate::auth::routes::federated::oidc_callback_handler,
         crate::auth::routes::federated::oidc_exchange_handler,
@@ -600,7 +601,7 @@ use crate::{
         PlexPinBody,
         PlexLoginPollBody,
         PlexLoginPollResult,
-        PlexProfileView,
+        AuthProvidersBody,
         PlexLinkPollResult,
         PlexConnectPollResult,
         AlbumCard,

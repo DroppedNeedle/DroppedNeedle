@@ -11,10 +11,11 @@
 //! store's username derivation (`_derive_username`, `_slugify`), and the
 //! auth, connection and Plex auth routes.
 //!
-//! No live IdP calls anywhere here: every network edge sits behind a trait
-//! (`OidcIdp`, `JellyfinIdp`, `PlexPinClient`) and tests use the scripted
-//! fakes in [`fakes`]. The exact mappings a live adapter must implement are
-//! documented on each trait.
+//! Every network edge sits behind a trait (`OidcIdp`, `JellyfinIdp`,
+//! `PlexPinClient`, `UserDirectory`) whose live implementation lives in a
+//! `*_http` module and talks through the shared outbound client. Wire
+//! shapes live in the matching `*_models` module. The services stay free
+//! of HTTP, and the integration tests run them against local mock servers.
 //!
 //! Contracts with the rest of auth:
 //!
@@ -29,10 +30,18 @@
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod fakes;
+pub mod jellyfin_http;
 pub mod jellyfin_login;
+pub mod jellyfin_models;
+pub mod jwt;
 pub mod oidc;
+pub mod oidc_http;
+pub mod oidc_models;
 pub mod password_import;
 pub mod plex;
+pub mod plex_http;
+pub mod plex_models;
+pub mod settings;
 pub mod users;
 
 use thiserror::Error;

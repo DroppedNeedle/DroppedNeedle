@@ -14,6 +14,10 @@
 //! rules verbatim, so each old flow maps to exactly one method:
 //! login to [`PlexJourney::poll_login`], link to [`PlexJourney::poll_link`],
 //! settings to [`PlexJourney::poll_connect`].
+//!
+//! One rule is new: login starts and completes only while the admin has
+//! Plex login switched on. v2 hid the tab but still accepted the calls,
+//! which let any Plex account create a user when no server was set up.
 
 use super::users::{
     FederatedProfile, FederatedUserStore, PROVIDER_PLEX, StoredUser, find_or_create_federated_user,
@@ -71,6 +75,9 @@ pub trait PlexPinClient: Clone + Send + Sync + 'static {
     /// Stable install id (`plex_client_id` setting).
     fn client_id(&self) -> String;
 
+    /// The admin's Plex login switch, read live.
+    fn login_enabled(&self) -> bool;
+
     /// Mint a PIN.
     fn create_pin(&self) -> impl Future<Output = Result<PlexPin, FederatedError>> + Send;
 
@@ -105,19 +112,16 @@ pub trait PlexPinClient: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = Result<Option<String>, FederatedError>> + Send;
 }
 
-/// Best-effort auto-link of the per-user media connection.
-/// [`NoopPlexLink`] covers deployments without a connections store.
+/// Stores a user's Plex media link (the per-user connection used for
+/// playback). The login flow treats a failure as a warning; the link flow,
+/// where linking is the whole point, fails the request.
 pub trait PlexConnectionLink: Clone + Send + Sync + 'static {
     /// Store the fresh user-scoped tokens for later playback.
-    fn link(&self, user_id: &str, profile: &PlexProfile) -> impl Future<Output = ()> + Send;
-}
-
-/// No connections store: linking is a no-op.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct NoopPlexLink;
-
-impl PlexConnectionLink for NoopPlexLink {
-    async fn link(&self, _user_id: &str, _profile: &PlexProfile) {}
+    fn link(
+        &self,
+        user_id: &str,
+        profile: &PlexProfile,
+    ) -> impl Future<Output = Result<(), String>> + Send;
 }
 
 /// Poll outcome: still pending, or finished with a value.
@@ -201,11 +205,15 @@ where
     }
 
     /// Start gated by purpose: link/connect refuse without a configured
-    /// Plex server (no resolvable machine id); login always mints.
+    /// Plex server (no resolvable machine id); login needs the admin's
+    /// Plex login switch.
     pub async fn start_for_purpose(
         &self,
         purpose: PlexPurpose,
     ) -> Result<(i64, String), PlexStartDenied> {
+        if purpose == PlexPurpose::Login && !self.client.login_enabled() {
+            return Err(PlexStartDenied::StartFailed(login_disabled()));
+        }
         if purpose.needs_server() && self.client.server_machine_id().await.is_none() {
             return Err(PlexStartDenied::NotConfigured);
         }
@@ -219,6 +227,9 @@ where
         pin_id: i64,
         user_agent: Option<&str>,
     ) -> Result<PlexPoll<(StoredUser, String)>, FederatedError> {
+        if !self.client.login_enabled() {
+            return Err(login_disabled());
+        }
         let Some(auth_token) = self.client.poll_pin(pin_id).await? else {
             return Ok(PlexPoll::Pending);
         };
@@ -243,21 +254,31 @@ where
             },
         )
         .await?;
-        self.links.link(&user.id, &profile).await;
+        // v2 parity: a failed auto-link never fails the sign-in.
+        if let Err(error) = self.links.link(&user.id, &profile).await {
+            tracing::warn!(%error, "could not link the signed-in Plex account; the user can link it by hand");
+        }
         let raw_token = self.sessions.issue_session(&user.id, user_agent).await?;
         Ok(PlexPoll::Complete((user, raw_token)))
     }
 
-    /// Link flow: poll and return the verified profile. The machine id is
-    /// required and the membership gate is mandatory; no login side
-    /// effects (no session, no auto-link).
-    pub async fn poll_link(&self, pin_id: i64) -> Result<PlexPoll<PlexProfile>, FederatedError> {
+    /// Link flow: poll, verify the profile and store it as `user_id`'s
+    /// Plex media link. The machine id is required and the membership gate
+    /// is mandatory; no session is minted.
+    pub async fn poll_link(
+        &self,
+        pin_id: i64,
+        user_id: &str,
+    ) -> Result<PlexPoll<PlexProfile>, FederatedError> {
         let Some(auth_token) = self.client.poll_pin(pin_id).await? else {
             return Ok(PlexPoll::Pending);
         };
-        Ok(PlexPoll::Complete(
-            self.verified_profile(&auth_token, true).await?,
-        ))
+        let profile = self.verified_profile(&auth_token, true).await?;
+        self.links
+            .link(user_id, &profile)
+            .await
+            .map_err(FederatedError::StoreUnavailable)?;
+        Ok(PlexPoll::Complete(profile))
     }
 
     /// Settings flow: poll and return the raw auth token untouched.
@@ -328,6 +349,10 @@ where
             server_access_token,
         })
     }
+}
+
+fn login_disabled() -> FederatedError {
+    FederatedError::NotConfigured("Plex login is not enabled".to_owned())
 }
 
 /// Browser URL for a PIN. The one builder all three flows share (both v2

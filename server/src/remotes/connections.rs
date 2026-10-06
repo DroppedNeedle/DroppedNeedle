@@ -1039,8 +1039,8 @@ fn cache_scope(user_id: &str, source: SourceName, base_url: &str, credential: &s
 }
 
 /// Stores the media link a Plex or Jellyfin sign-in hands back, so the
-/// account works for playback with no extra setup (v2 auto-link). Failures
-/// log and never fail the sign-in.
+/// account works for playback with no extra setup (v2 auto-link). The
+/// sign-in flows decide whether a failure is fatal.
 #[derive(Clone)]
 pub struct SignInLinks {
     resolver: Arc<ConnectionResolver>,
@@ -1052,19 +1052,25 @@ impl SignInLinks {
         Self { resolver }
     }
 
-    async fn store(&self, user_id: &str, link: UserLink) {
-        if let Err(error) = self.resolver.save_link(user_id, &link).await {
-            tracing::warn!(
-                source = link.source().as_str(),
-                %error,
-                "could not store the signed-in media link; the user can link it by hand"
-            );
-        }
+    async fn store(&self, user_id: &str, link: UserLink) -> Result<(), String> {
+        self.resolver
+            .save_link(user_id, &link)
+            .await
+            .map_err(|error| {
+                format!(
+                    "could not store the {} link: {error}",
+                    link.source().as_str()
+                )
+            })
     }
 }
 
 impl crate::auth::federated::plex::PlexConnectionLink for SignInLinks {
-    async fn link(&self, user_id: &str, profile: &crate::auth::federated::plex::PlexProfile) {
+    async fn link(
+        &self,
+        user_id: &str,
+        profile: &crate::auth::federated::plex::PlexProfile,
+    ) -> Result<(), String> {
         self.store(
             user_id,
             UserLink::Plex {
@@ -1074,7 +1080,7 @@ impl crate::auth::federated::plex::PlexConnectionLink for SignInLinks {
                 username: profile.display_name.clone(),
             },
         )
-        .await;
+        .await
     }
 }
 
@@ -1083,7 +1089,7 @@ impl crate::auth::federated::jellyfin_login::JellyfinConnectionLink for SignInLi
         &self,
         user_id: &str,
         profile: &crate::auth::federated::jellyfin_login::JellyfinProfile,
-    ) {
+    ) -> Result<(), String> {
         self.store(
             user_id,
             UserLink::Jellyfin {
@@ -1092,7 +1098,7 @@ impl crate::auth::federated::jellyfin_login::JellyfinConnectionLink for SignInLi
                 username: profile.username.clone(),
             },
         )
-        .await;
+        .await
     }
 }
 

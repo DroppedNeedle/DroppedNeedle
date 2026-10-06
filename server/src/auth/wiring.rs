@@ -1,149 +1,42 @@
-//! Production auth wiring: disabled providers, config bridges, one bundle.
+//! Production auth wiring: live sign-in clients, config bridges, one bundle.
 //!
-//! The auth modules define ports and the adapters implement the SQLite
-//! ones. This module holds what is left for serving traffic: providers
-//! with no live client yet (503s, never fakes), bridges from the config
+//! The auth modules define ports and the adapters implement them. This
+//! module binds the live ones for serving traffic: the OIDC, Jellyfin,
+//! plex.tv and Last.fm clients over the shared HTTP client, the sign-in
+//! links into the per-user media connections, bridges from the config
 //! store to the live-read policy traits, and [`AuthSetup`], the single
 //! bundle `create_app` builds its routers from.
-//!
-//! Live IdP clients (OIDC discovery/token/userinfo, Jellyfin auth, Plex
-//! PIN/account/resources, Last.fm web calls) are not written yet. Their
-//! contracts are tested against fakes, and production reports an outage
-//! until they exist: federated `NotConfigured` maps to 503 `UPSTREAM_ERROR`
-//! (the federated contract's "unconfigured-or-provider-down" row), while
-//! the users routes map Last.fm `Transport` faults to 502. Same fixed body
-//! and error-id shape on both.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use super::federated::FederatedError;
-use super::federated::jellyfin_login::{JellyfinIdp, JellyfinProfile, NoopJellyfinLink};
-use super::federated::oidc::{
-    DiscoveryDoc, EXCHANGE_TTL_SECS, OidcConfig, OidcExchangeStore, OidcIdp, OidcTokens, RawClaims,
-    TokenRequest,
+use super::federated::jellyfin_http::JellyfinHttp;
+use super::federated::oidc::{EXCHANGE_TTL_SECS, OidcExchangeStore, OidcLogin};
+use super::federated::oidc_http::OidcHttp;
+use super::federated::plex_http::PlexTv;
+use super::federated::settings::InstallIds;
+use super::prod::{
+    ProdAuth, SqliteFederatedStore, SqliteOidcStateStore, SqliteSessionIssuer, SqliteSessionStore,
 };
-use super::federated::plex::{NoopPlexLink, PlexAccount, PlexPin, PlexPinClient};
-use super::prod::ProdAuth;
 use super::routes::federated::{
-    JellyfinRouteState, OidcRouteState, PlexRouteState, StaticOidcConfig,
+    JellyfinRouteState, OidcRouteState, PlexRouteState, StoreOidcConfig,
 };
 use super::routes::native::NativeAuthState;
 use super::session::middleware::SessionAuth;
 use super::session::middleware::TrustedProxies;
 use super::session::rate_limit::RateLimiter;
-use super::users::stores::{
-    BoxFuture, Clock, HibpPolicy, LastFmAuthClient, LastFmError, LastFmSwitch, SecurityPolicy,
-};
+use super::users::lastfm_http::LastFmAuthHttp;
+use super::users::stores::{Clock, HibpPolicy, LastFmSwitch, SecurityPolicy};
 use super::users::{UsersDeps, admin_router, public_router, users_router};
 use crate::ids::IdGenerator;
-use crate::runtime_config::secret_sections::OidcConnection;
+use crate::remotes::connections::{
+    ConfigServers, ConnectionResolver, ConnectionStore, CredentialCoder, SignInLinks,
+    SqliteConnectionStore,
+};
 use crate::runtime_config::sections::{LastFmSettings, SecuritySettings};
 use crate::runtime_config::{ConfigStore, Crypto};
-
-/// OIDC IdP with no live client: every call reports unconfigured.
-#[derive(Debug, Clone, Default)]
-pub struct DisabledOidcIdp;
-
-impl OidcIdp for DisabledOidcIdp {
-    async fn discover(&self, _issuer: &str) -> Result<DiscoveryDoc, FederatedError> {
-        Err(FederatedError::NotConfigured("oidc client".to_owned()))
-    }
-
-    async fn exchange_code(&self, _request: &TokenRequest) -> Result<OidcTokens, FederatedError> {
-        Err(FederatedError::NotConfigured("oidc client".to_owned()))
-    }
-
-    async fn fetch_claims(
-        &self,
-        _userinfo_endpoint: Option<&str>,
-        _access_token: &str,
-        _id_token: &str,
-    ) -> Result<RawClaims, FederatedError> {
-        Err(FederatedError::NotConfigured("oidc client".to_owned()))
-    }
-}
-
-/// Jellyfin IdP with no live client. `is_configured` is false so the login
-/// service short-circuits before any network use.
-#[derive(Debug, Clone, Default)]
-pub struct DisabledJellyfinIdp;
-
-impl JellyfinIdp for DisabledJellyfinIdp {
-    fn is_configured(&self) -> bool {
-        false
-    }
-
-    async fn authenticate_by_name(
-        &self,
-        _username: &str,
-        _password: &str,
-    ) -> Result<JellyfinProfile, FederatedError> {
-        Err(FederatedError::NotConfigured("jellyfin client".to_owned()))
-    }
-}
-
-/// Plex PIN client with no live client. `server_machine_id` is None, which
-/// v2 treats as "disabled or unreachable" without failing.
-#[derive(Debug, Clone, Default)]
-pub struct DisabledPlexPinClient;
-
-impl PlexPinClient for DisabledPlexPinClient {
-    fn client_id(&self) -> String {
-        String::new()
-    }
-
-    async fn create_pin(&self) -> Result<PlexPin, FederatedError> {
-        Err(FederatedError::NotConfigured("plex client".to_owned()))
-    }
-
-    async fn poll_pin(&self, _pin_id: i64) -> Result<Option<String>, FederatedError> {
-        Err(FederatedError::NotConfigured("plex client".to_owned()))
-    }
-
-    async fn account_profile(&self, _auth_token: &str) -> Result<PlexAccount, FederatedError> {
-        Err(FederatedError::NotConfigured("plex client".to_owned()))
-    }
-
-    async fn server_machine_id(&self) -> Option<String> {
-        None
-    }
-
-    async fn account_server_ids(&self, _auth_token: &str) -> Result<Vec<String>, FederatedError> {
-        Err(FederatedError::NotConfigured("plex client".to_owned()))
-    }
-
-    async fn server_access_token(
-        &self,
-        _auth_token: &str,
-        _machine_id: &str,
-    ) -> Result<Option<String>, FederatedError> {
-        Err(FederatedError::NotConfigured("plex client".to_owned()))
-    }
-}
-
-/// Last.fm web client with no live client: every call reports an outage.
-#[derive(Debug, Clone, Default)]
-pub struct DisabledLastFmAuthClient;
-
-impl LastFmAuthClient for DisabledLastFmAuthClient {
-    fn request_token<'a>(
-        &'a self,
-        _api_key: &'a str,
-    ) -> BoxFuture<'a, Result<(String, String), LastFmError>> {
-        Box::pin(async { Err(LastFmError::Transport) })
-    }
-
-    fn exchange_session<'a>(
-        &'a self,
-        _api_key: &'a str,
-        _shared_secret: &'a str,
-        _token: &'a str,
-    ) -> BoxFuture<'a, Result<(String, String), LastFmError>> {
-        Box::pin(async { Err(LastFmError::Transport) })
-    }
-}
 
 /// One stored exchange code: owning user, sealed token, expiry.
 type StoredExchange = (String, String, SystemTime);
@@ -252,23 +145,41 @@ impl LastFmSwitch for StoreLastFmSwitch {
     }
 }
 
-/// Snapshot the OIDC connection into route config. The secret is decrypted
-/// here, once, and never logged. The snapshot is taken at boot; re-reading
-/// it per request is not wired yet.
-pub fn oidc_route_config(
-    store: &ConfigStore,
-) -> Result<StaticOidcConfig, crate::runtime_config::ConfigError> {
-    let connection = store.get_raw::<OidcConnection>()?;
-    let secret = connection.client_secret.expose();
-    Ok(StaticOidcConfig(OidcConfig {
-        enabled: connection.enabled,
-        issuer: connection.issuer,
-        client_id: connection.client_id,
-        client_secret: (!secret.is_empty()).then(|| secret.to_owned()),
-        redirect_uri: connection.redirect_uri,
-        scopes: connection.scopes,
-    }))
+/// Where the plex.tv and Last.fm clients send their calls. Production uses
+/// the real services; the integration tests point both at local mocks.
+/// OIDC and Jellyfin need no entry: their URLs come from the settings.
+#[derive(Debug, Clone)]
+pub struct Upstreams {
+    /// plex.tv account API root.
+    pub plex_tv: String,
+    /// Last.fm web service root.
+    pub lastfm: String,
 }
+
+impl Default for Upstreams {
+    fn default() -> Self {
+        Self {
+            plex_tv: crate::remotes::plex::PLEX_TV_BASE.to_owned(),
+            lastfm: crate::providers::lastfm::DEFAULT_BASE_URL.to_owned(),
+        }
+    }
+}
+
+/// Production OIDC route state.
+pub type ProdOidcRoutes = OidcRouteState<
+    SqliteFederatedStore,
+    OidcHttp,
+    SqliteOidcStateStore,
+    MemoryOidcExchangeStore,
+    SqliteSessionIssuer,
+    StoreOidcConfig,
+>;
+/// Production Jellyfin route state.
+pub type ProdJellyfinRoutes =
+    JellyfinRouteState<SqliteFederatedStore, JellyfinHttp, SignInLinks, SqliteSessionIssuer>;
+/// Production Plex route state.
+pub type ProdPlexRoutes =
+    PlexRouteState<SqliteFederatedStore, PlexTv, SignInLinks, SqliteSessionIssuer>;
 
 /// Everything `create_app` needs to mount `/api/v3`, built once at boot.
 #[derive(Clone)]
@@ -276,45 +187,45 @@ pub struct AuthSetup {
     /// Account, device, recovery, and app-password routes.
     pub users: UsersDeps,
     /// Session gate state for the middleware layer.
-    pub session_auth: SessionAuth<super::prod::SqliteSessionStore>,
+    pub session_auth: SessionAuth<SqliteSessionStore>,
     /// Request limiter, mounted inside the session gate.
     pub limits: Arc<RateLimiter>,
     /// Login/logout/setup routes.
     pub native: NativeAuthState<
-        super::prod::SqliteSessionStore,
+        SqliteSessionStore,
         super::prod::Argon2idHasher,
         super::prod::SqliteCredentialLookup,
     >,
     /// OIDC routes.
-    pub oidc: OidcRouteState<
-        super::prod::SqliteFederatedStore,
-        DisabledOidcIdp,
-        super::prod::SqliteOidcStateStore,
-        MemoryOidcExchangeStore,
-        super::prod::SqliteSessionIssuer,
-        StaticOidcConfig,
-    >,
+    pub oidc: ProdOidcRoutes,
     /// Jellyfin login route.
-    pub jellyfin: JellyfinRouteState<
-        super::prod::SqliteFederatedStore,
-        DisabledJellyfinIdp,
-        NoopJellyfinLink,
-        super::prod::SqliteSessionIssuer,
-    >,
+    pub jellyfin: ProdJellyfinRoutes,
     /// Plex journey routes.
-    pub plex: PlexRouteState<
-        super::prod::SqliteFederatedStore,
-        DisabledPlexPinClient,
-        NoopPlexLink,
-        super::prod::SqliteSessionIssuer,
-    >,
+    pub plex: ProdPlexRoutes,
+    /// Live settings, read by the provider list.
+    pub config_store: Arc<ConfigStore>,
     /// Deployment base path (`""` at the domain root).
     pub base_path: String,
 }
 
+/// Saves the media link a Plex or Jellyfin sign-in hands back into the
+/// per-user connections table (the same rows the remotes routes read).
+fn sign_in_links(
+    rows: Arc<dyn ConnectionStore>,
+    crypto: Arc<Crypto>,
+    config_store: Arc<ConfigStore>,
+) -> SignInLinks {
+    SignInLinks::new(Arc::new(ConnectionResolver::new(
+        rows,
+        Arc::new(CredentialCoder::new(crypto)),
+        Arc::new(ConfigServers::new(config_store)),
+    )))
+}
+
 impl AuthSetup {
-    /// Build the production bundle. `http` feeds the HIBP range client;
-    /// `ids` mints row ids; `clock` drives management-side expiry.
+    /// Build the production bundle. `http` is the shared outbound client
+    /// every sign-in client uses; `ids` mints row ids; `clock` drives
+    /// management-side expiry.
     #[allow(clippy::too_many_arguments)]
     pub fn build(
         auth: ProdAuth,
@@ -325,9 +236,35 @@ impl AuthSetup {
         clock: Arc<dyn Clock>,
         base_path: &str,
     ) -> Result<Self, crate::runtime_config::ConfigError> {
-        use super::federated::oidc::OidcLogin;
+        Self::build_with_upstreams(
+            auth,
+            config_store,
+            crypto,
+            http,
+            ids,
+            clock,
+            base_path,
+            &Upstreams::default(),
+        )
+    }
+
+    /// [`AuthSetup::build`] with the plex.tv and Last.fm roots given.
+    #[allow(clippy::too_many_arguments)]
+    pub fn build_with_upstreams(
+        auth: ProdAuth,
+        config_store: Arc<ConfigStore>,
+        crypto: Arc<Crypto>,
+        http: reqwest::Client,
+        ids: Arc<dyn IdGenerator>,
+        clock: Arc<dyn Clock>,
+        base_path: &str,
+        upstreams: &Upstreams,
+    ) -> Result<Self, crate::runtime_config::ConfigError> {
         use super::users::hibp::{HibpScreen, PwnedPasswordsHttp};
 
+        InstallIds::new(config_store.clone()).ensure();
+        let plex_tv = PlexTv::with_base(http.clone(), config_store.clone(), &upstreams.plex_tv);
+        let jellyfin_http = JellyfinHttp::new(http.clone(), config_store.clone());
         let users = UsersDeps {
             users: Arc::new(auth.users.clone()),
             sessions: Arc::new(auth.session_manager.clone()),
@@ -337,15 +274,28 @@ impl AuthSetup {
             avatars: Arc::new(auth.avatars.clone()),
             passwords: Arc::new(auth.hasher.clone()),
             screen: Arc::new(HibpScreen::new(Arc::new(PwnedPasswordsHttp {
-                client: http,
+                client: http.clone(),
             }))),
             clock: clock.clone(),
             ids: ids.clone(),
-            crypto,
-            lastfm_client: Arc::new(DisabledLastFmAuthClient),
+            crypto: crypto.clone(),
+            lastfm_client: Arc::new(LastFmAuthHttp::with_base(http.clone(), &upstreams.lastfm)),
             lastfm_switch: Arc::new(StoreLastFmSwitch::new(config_store.clone())),
             security: Arc::new(StoreSecurityPolicy::new(config_store.clone())),
+            jellyfin_directory: Arc::new(jellyfin_http.clone()),
+            plex_directory: Arc::new(plex_tv.clone()),
         };
+        let rows: Arc<dyn ConnectionStore> = match auth.db.handles() {
+            Some((pool, lane)) => Arc::new(SqliteConnectionStore::new(pool, lane)),
+            None => {
+                return Err(crate::runtime_config::ConfigError::Validation {
+                    section: "auth",
+                    field: "database",
+                    reason: "the production auth bundle needs a live database".to_owned(),
+                });
+            }
+        };
+        let links = sign_in_links(rows, crypto, config_store.clone());
         let limits = Arc::new(RateLimiter::new());
         let native = NativeAuthState::new(
             auth.sessions.clone(),
@@ -358,27 +308,27 @@ impl AuthSetup {
         let oidc = OidcRouteState::new(
             OidcLogin::new(
                 auth.federated.clone(),
-                DisabledOidcIdp,
+                OidcHttp::new(http),
                 auth.oidc_states.clone(),
                 MemoryOidcExchangeStore::default(),
                 auth.issuer.clone(),
             ),
-            oidc_route_config(&config_store)?,
+            StoreOidcConfig(config_store.clone()),
             ids.clone(),
             base_path,
         );
         let jellyfin = JellyfinRouteState::new(
             auth.federated.clone(),
-            DisabledJellyfinIdp,
-            NoopJellyfinLink,
+            jellyfin_http,
+            links.clone(),
             auth.issuer.clone(),
             ids.clone(),
             base_path,
         );
         let plex = PlexRouteState::new(
             auth.federated.clone(),
-            DisabledPlexPinClient,
-            NoopPlexLink,
+            plex_tv,
+            links,
             auth.issuer.clone(),
             ids,
             base_path,
@@ -392,6 +342,7 @@ impl AuthSetup {
             oidc,
             jellyfin,
             plex,
+            config_store,
             base_path: base_path.to_owned(),
         })
     }
@@ -411,7 +362,9 @@ impl AuthSetup {
             .native
             .with_trusted_proxies(trusted.clone())
             .with_limits(limits.clone());
-        self.oidc = self.oidc.with_trusted_proxies(trusted);
+        self.oidc = self.oidc.with_trusted_proxies(trusted.clone());
+        self.jellyfin = self.jellyfin.with_trusted_proxies(trusted.clone());
+        self.plex = self.plex.with_trusted_proxies(trusted);
         self.limits = limits;
         self
     }
@@ -419,7 +372,9 @@ impl AuthSetup {
     /// Mount every auth router under `/api/v3`. Layers are applied by
     /// `create_app`, not here.
     pub fn router(&self) -> axum::Router {
-        use super::routes::federated::{jellyfin_router, oidc_router, plex_router};
+        use super::routes::federated::{
+            jellyfin_router, oidc_router, plex_router, providers_router,
+        };
         use super::routes::native::native_auth_router;
 
         axum::Router::new()
@@ -427,6 +382,7 @@ impl AuthSetup {
             .merge(users_router(self.users.clone()))
             .merge(admin_router(self.users.clone()))
             .merge(public_router(self.users.clone()))
+            .merge(providers_router(self.config_store.clone()))
             .merge(oidc_router(self.oidc.clone()))
             .merge(jellyfin_router(self.jellyfin.clone()))
             .merge(plex_router(self.plex.clone()))
@@ -444,16 +400,18 @@ impl AuthSetup {
 
         use super::prod::{
             Argon2idHasher, AuthDb, FileAvatarStore, SqliteAppPasswordStore,
-            SqliteCredentialLookup, SqliteFederatedStore, SqliteLastFmStore, SqliteOidcStateStore,
-            SqliteRecoveryStore, SqliteSessionIssuer, SqliteSessionManager, SqliteSessionStore,
+            SqliteCredentialLookup, SqliteLastFmStore, SqliteRecoveryStore, SqliteSessionManager,
             SqliteUserStore,
         };
         use super::users::hibp::{HibpScreen, PwnedPasswordsHttp};
         use super::users::stores::SystemClock;
         use crate::ids::UuidGenerator;
+        use crate::remotes::connections::MemoryConnectionStore;
 
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let tag = COUNTER.fetch_add(1, Ordering::Relaxed);
+        // Never written: the store only touches disk on save, and nothing
+        // here saves.
         let dir = std::env::temp_dir().join(format!(
             "droppedneedle-auth-test-{}-{tag}",
             std::process::id()
@@ -466,8 +424,11 @@ impl AuthSetup {
         let store = ConfigStore::open(&dir.join("config.json"), test_key()?)
             .map_err(|error| format!("test config: {error}"))?;
         let store = Arc::new(store);
+        let http = reqwest::Client::new();
         let db = AuthDb::unwired();
         let hasher = Argon2idHasher::new();
+        let plex_tv = PlexTv::new(http.clone(), store.clone());
+        let jellyfin_http = JellyfinHttp::new(http.clone(), store.clone());
         let users = UsersDeps {
             users: Arc::new(SqliteUserStore::new(&db)),
             sessions: Arc::new(SqliteSessionManager::new(&db, clock.clone())),
@@ -477,15 +438,22 @@ impl AuthSetup {
             avatars: Arc::new(FileAvatarStore::unwired()),
             passwords: Arc::new(hasher.clone()),
             screen: Arc::new(HibpScreen::new(Arc::new(PwnedPasswordsHttp {
-                client: reqwest::Client::new(),
+                client: http.clone(),
             }))),
             clock,
             ids: ids.clone(),
             crypto: crypto.clone(),
-            lastfm_client: Arc::new(DisabledLastFmAuthClient),
+            lastfm_client: Arc::new(LastFmAuthHttp::new(http.clone())),
             lastfm_switch: Arc::new(StoreLastFmSwitch::new(store.clone())),
             security: Arc::new(StoreSecurityPolicy::new(store.clone())),
+            jellyfin_directory: Arc::new(jellyfin_http.clone()),
+            plex_directory: Arc::new(plex_tv.clone()),
         };
+        let links = sign_in_links(
+            Arc::new(MemoryConnectionStore::new()),
+            crypto.clone(),
+            store.clone(),
+        );
         let sessions = SqliteSessionStore::new(&db);
         let native = NativeAuthState::new(
             sessions.clone(),
@@ -494,36 +462,29 @@ impl AuthSetup {
             users.clone(),
             "",
         );
-        let federated = SqliteFederatedStore::new(&db, crypto.clone(), ids.clone());
+        let federated = SqliteFederatedStore::new(&db, crypto, ids.clone());
         let issuer = SqliteSessionIssuer::new(&db, ids.clone());
         let oidc = OidcRouteState::new(
-            super::federated::oidc::OidcLogin::new(
+            OidcLogin::new(
                 federated.clone(),
-                DisabledOidcIdp,
+                OidcHttp::new(http),
                 SqliteOidcStateStore::new(&db),
                 MemoryOidcExchangeStore::default(),
                 issuer.clone(),
             ),
-            oidc_route_config(&store).map_err(|error| format!("test oidc: {error}"))?,
+            StoreOidcConfig(store.clone()),
             ids.clone(),
             "",
         );
         let jellyfin = JellyfinRouteState::new(
             federated.clone(),
-            DisabledJellyfinIdp,
-            NoopJellyfinLink,
+            jellyfin_http,
+            links.clone(),
             issuer.clone(),
             ids.clone(),
             "",
         );
-        let plex = PlexRouteState::new(
-            federated,
-            DisabledPlexPinClient,
-            NoopPlexLink,
-            issuer,
-            ids,
-            "",
-        );
+        let plex = PlexRouteState::new(federated, plex_tv, links, issuer, ids, "");
         let limits = Arc::new(RateLimiter::new());
         Ok(Self {
             users,
@@ -533,6 +494,7 @@ impl AuthSetup {
             oidc,
             jellyfin,
             plex,
+            config_store: store,
             base_path: String::new(),
         })
     }

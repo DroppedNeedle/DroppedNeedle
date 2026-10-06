@@ -26,6 +26,8 @@ pub mod error;
 pub mod handlers;
 pub mod hibp;
 pub mod import;
+pub mod lastfm_http;
+pub mod lastfm_models;
 #[cfg(any(test, feature = "test-support"))]
 pub mod memory;
 pub mod models;
@@ -47,7 +49,8 @@ pub use roles::{AuthContext, CurrentAdmin, CurrentCurator, CurrentUser, Role, Se
 use crate::{ids::IdGenerator, runtime_config::crypto::Crypto};
 use stores::{
     AppPasswordStore, AvatarStore, Clock, FalliblePasswordHasher, LastFmAuthClient, LastFmStore,
-    LastFmSwitch, PasswordScreen, RecoveryStore, SecurityPolicy, SessionManager, UserStore,
+    LastFmSwitch, PasswordScreen, RecoveryStore, SecurityPolicy, SessionManager, UserDirectory,
+    UserStore,
 };
 
 /// Every dependency the users routes need, injected by constructor.
@@ -81,6 +84,10 @@ pub struct UsersDeps {
     pub lastfm_switch: Arc<dyn LastFmSwitch>,
     /// HIBP knobs (live read).
     pub security: Arc<dyn SecurityPolicy>,
+    /// Jellyfin accounts for the admin user import.
+    pub jellyfin_directory: Arc<dyn UserDirectory>,
+    /// Plex accounts for the admin user import.
+    pub plex_directory: Arc<dyn UserDirectory>,
 }
 
 /// Now, unix seconds, from the injected clock.

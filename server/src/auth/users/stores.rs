@@ -419,13 +419,15 @@ pub trait LastFmSwitch: Send + Sync {
     fn enabled(&self) -> bool;
 }
 
-/// The two Last.fm auth web calls, behind a seam so tests never touch the
-/// network. No live implementation exists yet.
+/// The two Last.fm auth web calls. The live client is
+/// [`super::lastfm_http::LastFmAuthHttp`].
 pub trait LastFmAuthClient: Send + Sync {
-    /// `auth.getToken` with the user's own API key.
+    /// `auth.getToken` with the user's own key pair (the call is signed).
+    /// Returns the token and the browser URL that approves it.
     fn request_token<'a>(
         &'a self,
         api_key: &'a str,
+        shared_secret: &'a str,
     ) -> BoxFuture<'a, Result<(String, String), LastFmError>>;
     /// `auth.getSession` with the user's key pair and an approved token.
     fn exchange_session<'a>(
@@ -477,10 +479,9 @@ pub enum DirectoryError {
 }
 
 /// Network edge for admin user import: enumerate the accounts on one media
-/// server (Jellyfin `GET /Users`, Plex users). Production has no live
-/// client yet, so the import serves a 503 through its disabled
-/// implementations until the provider clients land (same posture as the
-/// login IdPs). Tests use the scripted fakes in `memory.rs`.
+/// server (Jellyfin `GET /Users`, Plex Home users and friends). The live
+/// directories are the federated Jellyfin and plex.tv clients; a provider
+/// that is switched off or unreachable answers with a [`DirectoryError`].
 pub trait UserDirectory: Send + Sync {
     /// Which provider this directory enumerates (`jellyfin` or `plex`).
     fn provider(&self) -> &'static str;

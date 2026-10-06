@@ -5,7 +5,6 @@
 //! body carries no token; Bearer mode returns the raw token once in the body and
 //! sets no cookie. Every token-mint response carries `no-store`.
 
-use crate::auth::federated::plex::PlexProfile;
 use crate::auth::federated::users::StoredUser;
 use crate::auth::session::login::TransportParam;
 use serde::{Deserialize, Serialize};
@@ -182,45 +181,28 @@ pub struct PlexLoginPollResult {
     pub token: Option<String>,
 }
 
-/// Verified Plex profile for the link flow. No login side effects; the
-/// caller attaches it to its account on an authenticated route.
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq, Eq)]
-pub struct PlexProfileView {
-    /// Plex uuid; the provider uid.
-    pub uuid: String,
-    /// Account email; empty when the API omits it.
-    pub email: String,
-    /// Account display name.
-    pub display_name: String,
-    /// Account avatar URL.
-    pub thumb: Option<String>,
-    /// The authorized account token.
-    pub auth_token: String,
-    /// Server-scoped token; empty when no server is configured.
-    pub server_access_token: String,
-}
-
-impl From<&PlexProfile> for PlexProfileView {
-    fn from(profile: &PlexProfile) -> Self {
-        Self {
-            uuid: profile.uuid.clone(),
-            email: profile.email.clone(),
-            display_name: profile.display_name.clone(),
-            thumb: profile.thumb.clone(),
-            auth_token: profile.auth_token.clone(),
-            server_access_token: profile.server_access_token.clone(),
-        }
-    }
-}
-
-/// Link-completion poll answer.
+/// Link-completion poll answer. The link itself is stored server-side; the
+/// account tokens never reach the browser.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct PlexLinkPollResult {
-    /// True once the user authorized the PIN.
+    /// True once the user authorized the PIN and the link is stored.
     pub completed: bool,
-    /// Present only when completed.
+    /// The linked Plex user name; present only when completed.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub profile: Option<PlexProfileView>,
+    pub username: Option<String>,
+}
+
+/// Sign-in methods the login page offers (v2 `AuthProvidersResponse`).
+#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+pub struct AuthProvidersBody {
+    /// Username and password; always true.
+    pub local: bool,
+    /// Plex sign-in is switched on.
+    pub plex: bool,
+    /// Jellyfin sign-in is switched on and the server is set up.
+    pub jellyfin: bool,
+    /// OIDC sign-in is switched on with an issuer and client id.
+    pub oidc: bool,
 }
 
 /// Settings-completion poll answer: the raw auth token, untouched.

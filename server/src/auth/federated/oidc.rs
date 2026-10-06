@@ -1,11 +1,16 @@
-//! OIDC login: authorize URL (PKCE S256), callback, exchange-code hand-off.
+//! OIDC login: authorize URL (PKCE S256 plus nonce), callback, exchange-code
+//! hand-off.
 //!
 //! v2 parity: discovery is cached by the production adapter, the PKCE
 //! verifier is persisted against the state row, the callback mints the
-//! session and returns a 60-second single-use exchange code, and userinfo
-//! is tried before the `id_token` fallback. Claims normalisation keeps
-//! the v2 fallback chain (`name`, `preferred_username`, `nickname`,
-//! email local-part, `"OIDC User"`).
+//! session and returns a 60-second single-use exchange code, and claims
+//! normalisation keeps the v2 fallback chain (`name`, `preferred_username`,
+//! `nickname`, email local-part, `"OIDC User"`).
+//!
+//! Tighter than v2: the `id_token` is required and verified (signature
+//! against the provider's JWKS, issuer, audience, expiry, nonce) before
+//! anything in it is trusted. Userinfo, when the provider has it, fills in
+//! profile fields, but only when its `sub` matches the verified token.
 
 use base64::{
     Engine as _,
@@ -14,6 +19,8 @@ use base64::{
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
+use super::jwt::{IdTokenError, IdTokenRules, verify_id_token};
+use super::oidc_models::Jwk;
 use super::users::{
     FederatedProfile, FederatedUserStore, PROVIDER_OIDC, StoredUser, find_or_create_federated_user,
 };
@@ -45,6 +52,13 @@ pub struct OidcConfig {
     pub scopes: String,
 }
 
+impl OidcConfig {
+    /// Enabled with an issuer and client id: the login page's `oidc` flag.
+    pub fn is_usable(&self) -> bool {
+        self.enabled && !self.issuer.is_empty() && !self.client_id.is_empty()
+    }
+}
+
 /// Cached discovery document (production adapter caches per issuer).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveryDoc {
@@ -56,6 +70,8 @@ pub struct DiscoveryDoc {
     pub token_endpoint: String,
     /// Where profiles are fetched; `None` means id_token only.
     pub userinfo_endpoint: Option<String>,
+    /// Where the provider publishes its signing keys.
+    pub jwks_uri: String,
 }
 
 /// Tokens from the token endpoint.
@@ -65,7 +81,7 @@ pub struct OidcTokens {
     pub access_token: String,
     /// Stored for later refresh; may be empty.
     pub refresh_token: String,
-    /// JWT fallback for claims.
+    /// Signed identity token; empty when the provider sent none.
     pub id_token: String,
 }
 
@@ -125,14 +141,14 @@ pub struct OidcClaims {
     pub thumb: Option<String>,
 }
 
-/// Network edge for OIDC. Production adapter rules (v2 parity):
-/// discovery over HTTPS with a 10s timeout (non-200 becomes
-/// `ProviderUnavailable`, missing endpoints become `NotConfigured`);
-/// token POST with a 15s timeout (transport failure is
-/// `ProviderUnavailable`, non-2xx is `Authentication("OIDC token exchange
-/// failed")`, bad JSON is `ProviderUnavailable`); `fetch_claims` tries
-/// userinfo first (200 only) then [`jwt_payload_claims`], else
-/// `Authentication("Could not retrieve user info from OIDC provider")`.
+/// Network edge for OIDC. Production adapter rules (v2 parity where v2
+/// had the step): discovery with a 10s timeout, cached per issuer (non-200
+/// is `ProviderUnavailable`, a document missing an endpoint or `jwks_uri`
+/// is `NotConfigured`); token POST with a 15s timeout (transport failure
+/// is `ProviderUnavailable`, non-2xx is `Authentication("OIDC token
+/// exchange failed")`, bad JSON is `ProviderUnavailable`); signing keys
+/// cached per `jwks_uri` and refetched when `refresh` is set; userinfo
+/// answers `None` on any failure so the verified `id_token` claims stand.
 pub trait OidcIdp: Clone + Send + Sync + 'static {
     /// Fetch (and cache) the discovery document for `issuer`.
     fn discover(
@@ -146,13 +162,20 @@ pub trait OidcIdp: Clone + Send + Sync + 'static {
         request: &TokenRequest,
     ) -> impl Future<Output = Result<OidcTokens, FederatedError>> + Send;
 
-    /// Resolve claims: userinfo when reachable, else the id_token payload.
-    fn fetch_claims(
+    /// The provider's published signing keys. `refresh` bypasses the cache
+    /// (used once when a token names a key the cached set lacks).
+    fn signing_keys(
         &self,
-        userinfo_endpoint: Option<&str>,
+        jwks_uri: &str,
+        refresh: bool,
+    ) -> impl Future<Output = Result<Vec<Jwk>, FederatedError>> + Send;
+
+    /// Userinfo claims, or `None` when the endpoint fails.
+    fn userinfo(
+        &self,
+        userinfo_endpoint: &str,
         access_token: &str,
-        id_token: &str,
-    ) -> impl Future<Output = Result<RawClaims, FederatedError>> + Send;
+    ) -> impl Future<Output = Option<RawClaims>> + Send;
 }
 
 /// Short-lived PKCE state rows (`auth_oidc_states` in production).
@@ -219,24 +242,22 @@ where
     E: OidcExchangeStore,
     N: SessionIssuer,
 {
-    /// The `oidc` flag in the providers response: enabled with an issuer
-    /// and client id set.
-    pub fn providers_flag(config: &OidcConfig) -> bool {
-        config.enabled && !config.issuer.is_empty() && !config.client_id.is_empty()
-    }
-
     /// Start a login: discover, mint PKCE + state, return the browser URL.
+    /// The nonce is derived from the verifier, so the state row holds
+    /// everything the callback needs.
     pub async fn build_authorize_url(&self, config: &OidcConfig) -> Result<String, FederatedError> {
         let doc = self.idp.discover(&require_config(config)?.issuer).await?;
         let verifier = generate_verifier()?;
-        let challenge = pkce_challenge(&verifier);
         let state = generate_state()?;
         self.states.store_state(&state, &verifier).await?;
         Ok(authorize_url(
             &doc.authorization_endpoint,
             config,
-            &state,
-            &challenge,
+            &AuthorizeParams {
+                state: &state,
+                challenge: &pkce_challenge(&verifier),
+                nonce: &nonce_for(&verifier),
+            },
         ))
     }
 
@@ -254,6 +275,7 @@ where
         })?;
         let config = require_config(config)?;
         let doc = self.idp.discover(&config.issuer).await?;
+        let nonce = nonce_for(&verifier);
         let tokens = self
             .idp
             .exchange_code(&TokenRequest {
@@ -265,14 +287,13 @@ where
                 code_verifier: Some(verifier),
             })
             .await?;
-        let raw = self
-            .idp
-            .fetch_claims(
-                doc.userinfo_endpoint.as_deref(),
-                &tokens.access_token,
-                &tokens.id_token,
-            )
-            .await?;
+        let mut raw = self.verified_claims(&config, &doc, &tokens, &nonce).await?;
+        if let Some(endpoint) = doc.userinfo_endpoint.as_deref()
+            && !tokens.access_token.is_empty()
+            && let Some(profile) = self.idp.userinfo(endpoint, &tokens.access_token).await
+        {
+            raw = merge_userinfo(raw, profile);
+        }
         let claims = normalise_claims(&raw)?;
         let user = find_or_create_federated_user(
             &self.users,
@@ -293,6 +314,45 @@ where
             .store_exchange(&exchange_code, &user.id, &raw_token)
             .await?;
         Ok(exchange_code)
+    }
+
+    /// Verify the `id_token` and return its claims. A token naming a key
+    /// the cached set lacks refreshes the set once (key rotation).
+    async fn verified_claims(
+        &self,
+        config: &OidcConfig,
+        doc: &DiscoveryDoc,
+        tokens: &OidcTokens,
+        nonce: &str,
+    ) -> Result<RawClaims, FederatedError> {
+        if tokens.id_token.is_empty() {
+            return Err(FederatedError::Authentication(
+                "OIDC provider returned no id_token; check that the scopes include openid"
+                    .to_owned(),
+            ));
+        }
+        let rules = IdTokenRules {
+            issuer: &doc.issuer,
+            client_id: &config.client_id,
+            client_secret: config.client_secret.as_deref(),
+            nonce,
+            now_unix: unix_now(),
+        };
+        let keys = self.idp.signing_keys(&doc.jwks_uri, false).await?;
+        let verified = match verify_id_token(&tokens.id_token, &keys, &rules) {
+            Err(IdTokenError::UnknownKey) => {
+                let keys = self.idp.signing_keys(&doc.jwks_uri, true).await?;
+                verify_id_token(&tokens.id_token, &keys, &rules)
+            }
+            other => other,
+        };
+        match verified {
+            Ok(claims) => Ok(raw_claims(&claims)),
+            Err(error) => {
+                tracing::warn!(%error, "OIDC id_token rejected");
+                Err(FederatedError::Authentication(error.to_string()))
+            }
+        }
     }
 
     /// Swap a single-use exchange code for the user and raw token.
@@ -331,22 +391,56 @@ fn require_config(config: &OidcConfig) -> Result<OidcConfig, FederatedError> {
     Ok(config.clone())
 }
 
+/// Per-login values baked into the authorize URL.
+#[derive(Debug, Clone, Copy)]
+pub struct AuthorizeParams<'a> {
+    /// CSRF state, echoed back on the callback.
+    pub state: &'a str,
+    /// PKCE S256 challenge.
+    pub challenge: &'a str,
+    /// Replay guard the `id_token` must echo.
+    pub nonce: &'a str,
+}
+
 /// Build the browser redirect URL. Param order and `+` for spaces match
-/// v2 (`urllib.parse.urlencode` insertion order).
+/// v2 (`urllib.parse.urlencode` insertion order); `nonce` is new and last.
 pub fn authorize_url(
     authorization_endpoint: &str,
     config: &OidcConfig,
-    state: &str,
-    challenge: &str,
+    params: &AuthorizeParams<'_>,
 ) -> String {
+    let separator = if authorization_endpoint.contains('?') {
+        '&'
+    } else {
+        '?'
+    };
     format!(
-        "{authorization_endpoint}?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}&code_challenge={}&code_challenge_method=S256",
+        "{authorization_endpoint}{separator}response_type=code&client_id={}&redirect_uri={}&scope={}&state={}&code_challenge={}&code_challenge_method=S256&nonce={}",
         form_encode(&config.client_id),
         form_encode(&config.redirect_uri),
         form_encode(&config.scopes),
-        form_encode(state),
-        form_encode(challenge),
+        form_encode(params.state),
+        form_encode(params.challenge),
+        form_encode(params.nonce),
     )
+}
+
+/// The nonce for a login, derived from its PKCE verifier: unpadded
+/// base64url of SHA-256 over a fixed label plus the verifier. The verifier
+/// never leaves the server, so the nonce cannot be predicted, and the
+/// label keeps it distinct from the PKCE challenge.
+pub fn nonce_for(verifier: &str) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"droppedneedle-oidc-nonce:");
+    digest.update(verifier.as_bytes());
+    URL_SAFE_NO_PAD.encode(digest.finalize())
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 /// Percent-encode one form value (Python `quote_plus` parity: alnum plus
@@ -437,28 +531,10 @@ pub fn normalise_claims(raw: &RawClaims) -> Result<OidcClaims, FederatedError> {
     })
 }
 
-/// Decode the payload of a compact JWT into raw claims. `None` on any
-/// malformed input (wrong part count, bad base64, bad JSON).
-pub fn jwt_payload_claims(id_token: &str) -> Option<RawClaims> {
-    let mut parts = id_token.split('.');
-    let (Some(_header), Some(payload), Some(_sig)) = (parts.next(), parts.next(), parts.next())
-    else {
-        return None;
-    };
-    if parts.next().is_some() {
-        return None;
-    }
-    let mut padded = payload.to_owned();
-    if padded.len() % 4 == 1 {
-        return None;
-    }
-    while padded.len() % 4 != 0 {
-        padded.push('=');
-    }
-    let decoded = URL_SAFE.decode(padded.as_bytes()).ok()?;
-    let value: Value = serde_json::from_slice(&decoded).ok()?;
-    let obj = value.as_object()?;
-    Some(RawClaims {
+/// Read the claim fields we use from a JSON object (verified `id_token`
+/// payload or userinfo answer).
+pub fn raw_claims(obj: &Map<String, Value>) -> RawClaims {
+    RawClaims {
         sub: str_field(obj, "sub"),
         email: str_field(obj, "email"),
         email_verified: bool_field(obj, "email_verified"),
@@ -467,7 +543,26 @@ pub fn jwt_payload_claims(id_token: &str) -> Option<RawClaims> {
         nickname: str_field(obj, "nickname"),
         picture: str_field(obj, "picture"),
         avatar: str_field(obj, "avatar"),
-    })
+    }
+}
+
+/// Lay userinfo over the verified token claims, field by field. Userinfo
+/// for another subject is ignored (OIDC Core 5.3.2).
+fn merge_userinfo(verified: RawClaims, userinfo: RawClaims) -> RawClaims {
+    if userinfo.sub != verified.sub {
+        tracing::warn!("OIDC userinfo subject differs from the id_token; ignoring userinfo");
+        return verified;
+    }
+    RawClaims {
+        sub: verified.sub,
+        email: userinfo.email.or(verified.email),
+        email_verified: userinfo.email_verified.or(verified.email_verified),
+        name: userinfo.name.or(verified.name),
+        preferred_username: userinfo.preferred_username.or(verified.preferred_username),
+        nickname: userinfo.nickname.or(verified.nickname),
+        picture: userinfo.picture.or(verified.picture),
+        avatar: userinfo.avatar.or(verified.avatar),
+    }
 }
 
 fn str_field(obj: &Map<String, Value>, key: &str) -> Option<String> {

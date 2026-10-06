@@ -18,6 +18,7 @@
 /// that carry their own credential and never need the gate (the Spotify
 /// OAuth callback, the wrapped API) mount outside it instead.
 pub const PUBLIC_PATHS: &[&str] = &[
+    "/api/v3/auth/providers",
     "/api/v3/auth/setup/status",
     "/api/v3/auth/setup",
     "/api/v3/auth/login",
