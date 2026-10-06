@@ -79,7 +79,13 @@ where
     Ok(fresh)
 }
 
-/// In-process TTL cache for tests and single-node deployments.
+/// Most entries the in-process cache holds. Past this, a write first drops
+/// expired entries and then the entry closest to expiry, so search and page
+/// caches keyed by user text can never grow without bound.
+pub const MAX_MEMORY_ENTRIES: usize = 20_000;
+
+/// In-process TTL cache for tests and single-node deployments, bounded at
+/// [`MAX_MEMORY_ENTRIES`].
 #[derive(Debug, Default)]
 pub struct InMemoryProviderCache {
     entries: tokio::sync::Mutex<HashMap<String, CacheEntry>>,
@@ -134,7 +140,20 @@ impl ProviderCache for InMemoryProviderCache {
 
     fn set_bytes<'a>(&'a self, key: &'a str, value: Vec<u8>, ttl: Duration) -> BoxFuture<'a, ()> {
         Box::pin(async move {
-            self.entries.lock().await.insert(
+            let mut entries = self.entries.lock().await;
+            if entries.len() >= MAX_MEMORY_ENTRIES && !entries.contains_key(key) {
+                let now = tokio::time::Instant::now();
+                entries.retain(|_, entry| entry.expires > now);
+                if entries.len() >= MAX_MEMORY_ENTRIES
+                    && let Some(oldest) = entries
+                        .iter()
+                        .min_by_key(|(_, entry)| entry.expires)
+                        .map(|(key, _)| key.clone())
+                {
+                    entries.remove(&oldest);
+                }
+            }
+            entries.insert(
                 key.to_owned(),
                 CacheEntry {
                     value,
