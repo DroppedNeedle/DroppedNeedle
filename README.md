@@ -137,7 +137,7 @@ A `:dev` tag (`droppedneedle/droppedneedle:dev`) is built from `main` on every p
 | Discovery | Trending, charts, genre browsing, recommendations from your ListenBrainz and Last.fm history, and a weekly mix that can queue up to five missing albums |
 | Live events | Ticketmaster and Skiddle gig alerts for artists you follow, each user with their own cities |
 | Following | New-release radar with optional auto-download, release-type filters, and sidebar badges |
-| Library | Browse, filter, rescan, and remove albums; unmatched files wait in a manual-review queue |
+| Library | Browse, filter, download, rescan, and remove albums; unmatched files wait in a manual-review queue |
 | Free Music | Internet Archive items under Creative Commons or public-domain licences, licence shown up front, no account or API key, off with one toggle |
 | Drop imports | Drag in a zip or loose files from anywhere you buy music; identified, tagged, and shelved, or held for a manual match |
 | Playlists | Mix Jellyfin, Navidrome, Plex, local, YouTube, and Spotify imports in one place, share read-only with one toggle |
@@ -301,7 +301,7 @@ Where things live in the UI:
 | Scrobbling and discovery accounts | Profile > Scrobbling & Discovery |
 | Home layout, release types, MusicBrainz source | Settings > Preferences |
 | Users, roles, Jellyfin and Plex user import | Settings > Users |
-| Password breach checking, HSTS | Settings > Security |
+| Password breach checking, HSTS, who can download library files | Settings > Security |
 
 Album covers come from your own files first: an image in the album folder (`cover.jpg`, `folder.png`, `front.jpg` and the like) or a picture embedded in a track. The library picks these up after each scan, and large pictures are scaled down for the grid. Albums without local art get their cover from the Cover Art Archive, cached on disk. To prefer the Cover Art Archive over your files, turn off "Prefer local cover art" under Settings > Advanced.
 
@@ -310,6 +310,8 @@ Last.fm works like this: the admin registers one Last.fm API application at last
 Music apps (Subsonic and Jellyfin) sign in with an app password from Settings > Connect Apps. A track is only transcoded when the app asks for another format or a lower bitrate. If the app names no bitrate, Opus streams at 128 kbps and MP3 at 192 kbps, never above the max bitrate you set. Each user can run two transcodes at once, so gapless players can load the next track early. Finamp's transcoded playback uses HLS, which needs transcoding on and ffmpeg installed. Only sign-in attempts are rate limited per IP address, and a run of wrong passwords locks that address out for a short while.
 
 Spotify playlist import needs an app from the Spotify developer dashboard. Add the redirect URI that Settings > Spotify shows (it ends in `/api/v3/acquire/spotify/auth/callback`) to the app, then save the app's client ID and secret there. Each user then clicks Connect on the Spotify card in their profile, and Disconnect there unlinks it again. If you set up Spotify on v2 and imported your settings, nothing changes in the dashboard: DroppedNeedle keeps using the old address the app already lists, and Settings > Spotify shows that one. Saving a different client ID switches to the new address.
+
+You can download a single track or a whole album from the library. A track comes as the original file. An album comes as a zip of its files, untouched and uncompressed, and starts downloading straight away, so even a big box set doesn't keep you waiting while the server packs it. Only files the library has scanned, sitting inside one of your library folders, can be downloaded. By default every signed-in user can download; to keep it to trusted users and admins, or admins only, change "Library downloads" under Settings > Security. Streaming is never limited by this setting.
 
 ### Users and roles
 
