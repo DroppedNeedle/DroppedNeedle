@@ -118,7 +118,7 @@ docker compose up -d
 
 Before a new version changes the database schema, DroppedNeedle writes a verified backup of the database to `/app/cache/backups`. If an upgrade goes wrong, stop the container, delete `library.db-wal` and `library.db-shm` if they exist, put the backup back in place of `/app/cache/library.db`, and run the previous image.
 
-Coming from v2? Follow [docs/upgrading-from-v2.md](docs/upgrading-from-v2.md). v3 does not read a v2 data directory in place. The upgrade tool brings over accounts, settings, linked accounts, follows, playlists, favorites, play history, finished requests and downloads, and per-user preferences. Your library is rescanned from disk, and the guide lists exactly what stays behind. Run the import before anyone signs in to v3.
+Coming from v2? Follow [docs/upgrading-from-v2.md](docs/upgrading-from-v2.md). v3 does not read a v2 data directory in place. The upgrade tool brings over accounts, settings, linked accounts, follows, playlists, favorites, play history, finished requests and downloads, per-user preferences, and your library as v2 knew it: the same song and album ids (so Subsonic and Jellyfin apps keep their stars and downloads), your manual matches and edition choices, and the originals of files Library Management changed, which "restore original" still brings back. The guide lists exactly what stays behind. Run the import before anyone signs in to v3.
 
 A `:dev` tag (`droppedneedle/droppedneedle:dev`) is built from `main` on every push and may break. Pin a commit with `:dev-<short-sha>`.
 

@@ -5,8 +5,8 @@ in place. You export from v2, import into a fresh v3 data directory, then
 start v3 on that directory. Your v2 directory is never modified by the
 export, so you can always go back.
 
-Your music files are not touched. The library itself is rescanned from disk
-on first start.
+Your music files are not touched. Your library comes across as v2 knew it,
+with the same ids, and v3 checks it against your files on its first scan.
 
 ## What moves across
 
@@ -25,35 +25,44 @@ on first start.
 - Finished requests and finished downloads, wanted watches, and the list of
   bad download sources.
 - Per-user quota overrides. Past requests still count toward each user's
-  request limit. Storage a user's past downloads take up counts again once
-  the later library step links your files to the downloads that brought
-  them in; until then it starts from zero.
+  request limit, and storage counts each finished download v2 recorded a
+  size for.
 - Concert cities and the concerts you marked as seen.
 - Small per-user preferences: scrobble targets, home page sections,
   Navidrome folders, personal-mix approvals, and profile pictures.
 - Saved play queues and bookmarks of Subsonic and Jellyfin apps.
+- Your library: every artist, album and song with the id v2 gave it. Apps
+  like Symfonium, Feishin or Finamp keep their stars, downloads and queues,
+  because the ids they know do not change. Playlists, favorites, history,
+  queues and bookmarks find their songs again.
+- Matches you made by hand (and v2's own matches), retired ids that still
+  point at the album or artist that replaced them, "keep as tagged" and
+  "exclude" decisions, edition pins and custom editions, albums you kept
+  out of Library Management, and field overrides.
+- The original of every file Library Management changed. "Restore original"
+  in v3 puts such a file back where it was and gives it back the tags it had
+  before v2 first touched it.
+- Downloads held back for review, with their files. They land in
+  `V3_ROOT/cache/held`.
 
-One catch for the last two groups. v3 gives the songs in your library new
-ids when it rescans. Playlist entries, favorites, play history, saved
-queues and bookmarks keep the song ids v2 used, and the import records each
-one so a later version of the upgrade tool can link them to the rescanned
-library. Until then a playlist entry still shows its title but does not play
-from the library, and favorites, queues and bookmarks of library songs may
-not show up. Nothing is thrown away.
+Albums that were waiting on a review question in v2 go back on v3's
+identify queue, so v3 asks again with its own candidates.
+
+A song that points at something v2 itself no longer had (say a queued song
+you deleted in v2) keeps its title and is left as it is.
 
 ## What stays behind
 
 The export lists everything it leaves behind with a count, and so do
 `validate` and the import report (`left_behind`). In short:
 
-- The library catalog and everything tied to it: matches you made by hand,
-  review decisions, edition pins and custom editions, exclusions, and
-  Library Management history including the saved original tags. A later
-  version of the upgrade tool carries these. If you may want to restore
-  original tags of files v2 changed, keep your v2 backup, and do not apply
-  Library Management changes in v3 until then: v3 records the file as it
-  finds it as the original.
-- Held imports and their files. They stay in `V2_ROOT/cache/held`.
+- Undo of single Library Management changes made in v2 ("undo this
+  change"). Restoring a file's original still works.
+- Library Management job, preview and identification history, and scan
+  state. v3 keeps its own from now on.
+- Album art you picked by hand in v2. v3 reads album art from your files
+  again.
+- Held downloads you already imported or threw away.
 - Requests still waiting for approval or downloading, and unfinished
   downloads. Ask again in v3.
 - Download attempts still cleaning up their download folder.
@@ -66,6 +75,19 @@ The export lists everything it leaves behind with a count, and so do
 - Caches, which v3 fills again on its own.
 - Plugins. Install them again from Settings > Plugins; their settings come
   across.
+
+## Library Management originals
+
+v3 never changes a file whose v2 original did not come across. If the
+import report lists an `original_baseline` as `dropped_invalid` (for
+example because its saved tags were missing from `V2_ROOT/cache`), v3
+refuses to retag or move that song. Otherwise its first change would record
+the file as v2 left it as the "original", and the real original would be
+lost. Restore `V2_ROOT/cache/library-management` from your backup, export
+again and import again into a fresh `V3_ROOT`.
+
+The export copies these saved originals into the bundle, so the bundle can
+be large if v2 managed a big library.
 
 ## Each kind of data moves once
 
@@ -199,8 +221,10 @@ Profile pictures land in `V3_ROOT/cache/avatars`, the folder that holds the
 database. If your v3 cache lives somewhere else, add
 `--cache-dir /path/to/cache`.
 
-`pending_links` in the report counts the song, album and artist ids waiting
-for the library step described above.
+`pending_links` in the report counts the song, album and artist ids the user
+data named before the library itself came across. The report's
+`library_link` notes say how many of them now point at your library and how
+many name something v2 had already lost.
 
 Settings the export could not carry are listed under `settings_defaulted`
 in `WORK/import.json`. Check that list for anything you expected to keep.
@@ -230,8 +254,10 @@ Then check:
 - Settings > Download Client and Settings > Indexers / Prowlarr look right.
 - Your library folders are listed under Settings > Library. They come across
   with your settings, so check them rather than adding them again: a folder
-  added a second time gets a new id, and the later library step relies on
-  the old one. Then let the first scan run.
+  added a second time gets a new id, and your carried library is filed under
+  the old one. Mount your music at the same path v2 used. Then let the first
+  scan run. Files that did not change since v2 last saw them are not even
+  read again, and a song keeps its album while its tags still name it.
 - If you import Spotify playlists: your Spotify app keeps working with no
   change in the Spotify dashboard. v3 goes on sending the redirect address
   v2 registered (Settings > Spotify shows it). Linked Spotify accounts carry
