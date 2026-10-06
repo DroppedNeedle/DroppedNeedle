@@ -1,6 +1,8 @@
 //! The tags a file gets from its identified release, the way Picard
 //! fills them: credits, numbering, dates, release facts, and every
 //! MusicBrainz id. Keys are [`TagField`] names; empty facts are left out.
+//! MusicBrainz has no title or album sort names, so those stay as the
+//! file has them.
 
 use std::collections::BTreeMap;
 
@@ -42,6 +44,11 @@ pub fn release_tags(release: &Release, track: &ReleaseTrack) -> BTreeMap<String,
     if let Some(medium) = medium {
         put(TagField::TrackTotal, vec![medium.track_count.to_string()]);
         put(TagField::Media, one(medium.format.as_deref()));
+        put(TagField::DiscSubtitle, one(medium.title.as_deref()));
+    }
+    if release.is_various_artists() {
+        // Picard marks Various Artists releases as compilations.
+        put(TagField::Compilation, vec!["1".to_owned()]);
     }
     put(TagField::DiscNumber, vec![track.disc.to_string()]);
     put(

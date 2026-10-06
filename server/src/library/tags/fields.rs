@@ -6,17 +6,21 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum TagField {
     Title,
+    TitleSort,
     Artist,
     Artists,
+    ArtistSort,
     Album,
+    AlbumSort,
     AlbumArtist,
     AlbumArtistSort,
-    ArtistSort,
     Genre,
+    Compilation,
     TrackNumber,
     TrackTotal,
     DiscNumber,
     DiscTotal,
+    DiscSubtitle,
     Date,
     OriginalDate,
     ReleaseStatus,
@@ -35,7 +39,8 @@ pub enum TagField {
     MusicBrainzAlbumArtistId,
 }
 
-/// How a field's values must look.
+/// How a new value for a field must look. Values replayed from a file
+/// (undo, baseline restore) are written back as they were.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldKind {
     /// Free text, one or more values.
@@ -44,8 +49,10 @@ pub enum FieldKind {
     Count,
     /// One `YYYY`, `YYYY-MM`, or `YYYY-MM-DD` date.
     Date,
-    /// One identifier.
+    /// One identifier or word.
     Single,
+    /// `1` or `0`.
+    Flag,
 }
 
 /// Which half of an `n/m` pair (ID3 `TRCK`/`TPOS`, MP4 `trkn`/`disk`).
@@ -64,6 +71,9 @@ pub enum Id3Target {
     /// `UFID` with this owner.
     Ufid(&'static str),
     Pair(&'static str, Slot),
+    /// ID3v2.3's split date: `TYER` (year), `TDAT` (`DDMM`), `TIME`
+    /// (`HHMM`).
+    SplitDate,
 }
 
 /// Where a field lives in an MP4 `ilst`.
@@ -73,6 +83,8 @@ pub enum Mp4Target {
     /// `----:com.apple.iTunes:<name>`.
     Freeform(&'static str),
     Pair([u8; 4], Slot),
+    /// A one-byte boolean atom.
+    Flag([u8; 4]),
 }
 
 /// The freeform namespace Picard and iTunes use.
@@ -81,19 +93,23 @@ pub const MP4_MEAN: &str = "com.apple.iTunes";
 pub const MUSICBRAINZ_UFID_OWNER: &str = "http://musicbrainz.org";
 
 impl TagField {
-    pub const ALL: [TagField; 28] = [
+    pub const ALL: [TagField; 32] = [
         TagField::Title,
+        TagField::TitleSort,
         TagField::Artist,
         TagField::Artists,
+        TagField::ArtistSort,
         TagField::Album,
+        TagField::AlbumSort,
         TagField::AlbumArtist,
         TagField::AlbumArtistSort,
-        TagField::ArtistSort,
         TagField::Genre,
+        TagField::Compilation,
         TagField::TrackNumber,
         TagField::TrackTotal,
         TagField::DiscNumber,
         TagField::DiscTotal,
+        TagField::DiscSubtitle,
         TagField::Date,
         TagField::OriginalDate,
         TagField::ReleaseStatus,
@@ -116,17 +132,21 @@ impl TagField {
     pub fn name(self) -> &'static str {
         match self {
             TagField::Title => "title",
+            TagField::TitleSort => "title_sort",
             TagField::Artist => "artist",
             TagField::Artists => "artists",
+            TagField::ArtistSort => "artist_sort",
             TagField::Album => "album",
+            TagField::AlbumSort => "album_sort",
             TagField::AlbumArtist => "album_artist",
             TagField::AlbumArtistSort => "album_artist_sort",
-            TagField::ArtistSort => "artist_sort",
             TagField::Genre => "genre",
+            TagField::Compilation => "compilation",
             TagField::TrackNumber => "track_number",
             TagField::TrackTotal => "total_tracks",
             TagField::DiscNumber => "disc_number",
             TagField::DiscTotal => "total_discs",
+            TagField::DiscSubtitle => "disc_subtitle",
             TagField::Date => "date",
             TagField::OriginalDate => "original_date",
             TagField::ReleaseStatus => "release_status",
@@ -157,11 +177,13 @@ impl TagField {
             | TagField::DiscNumber
             | TagField::DiscTotal => FieldKind::Count,
             TagField::Date | TagField::OriginalDate => FieldKind::Date,
+            TagField::Compilation => FieldKind::Flag,
             TagField::ReleaseStatus
             | TagField::ReleaseCountry
             | TagField::Barcode
             | TagField::Asin
             | TagField::Media
+            | TagField::DiscSubtitle
             | TagField::MusicBrainzRecordingId
             | TagField::MusicBrainzReleaseTrackId
             | TagField::MusicBrainzReleaseId
@@ -170,70 +192,74 @@ impl TagField {
         }
     }
 
-    /// The Vorbis comment key. Totals may also be spelled `TRACKTOTAL` /
-    /// `DISCTOTAL`; see [`TagField::vorbis_aliases`].
-    pub fn vorbis_key(self) -> &'static str {
+    /// Every Vorbis comment key the field goes by, Picard's first. A
+    /// write updates each spelling the file already uses (Picard's own
+    /// first when it uses none), so readers of either agree.
+    pub fn vorbis_keys(self) -> &'static [&'static str] {
         match self {
-            TagField::Title => "TITLE",
-            TagField::Artist => "ARTIST",
-            TagField::Artists => "ARTISTS",
-            TagField::Album => "ALBUM",
-            TagField::AlbumArtist => "ALBUMARTIST",
-            TagField::AlbumArtistSort => "ALBUMARTISTSORT",
-            TagField::ArtistSort => "ARTISTSORT",
-            TagField::Genre => "GENRE",
-            TagField::TrackNumber => "TRACKNUMBER",
-            TagField::TrackTotal => "TOTALTRACKS",
-            TagField::DiscNumber => "DISCNUMBER",
-            TagField::DiscTotal => "TOTALDISCS",
-            TagField::Date => "DATE",
-            TagField::OriginalDate => "ORIGINALDATE",
-            TagField::ReleaseStatus => "RELEASESTATUS",
-            TagField::ReleaseCountry => "RELEASECOUNTRY",
-            TagField::ReleaseType => "RELEASETYPE",
-            TagField::Media => "MEDIA",
-            TagField::Label => "LABEL",
-            TagField::CatalogNumber => "CATALOGNUMBER",
-            TagField::Barcode => "BARCODE",
-            TagField::Asin => "ASIN",
-            TagField::MusicBrainzRecordingId => "MUSICBRAINZ_TRACKID",
-            TagField::MusicBrainzReleaseTrackId => "MUSICBRAINZ_RELEASETRACKID",
-            TagField::MusicBrainzReleaseId => "MUSICBRAINZ_ALBUMID",
-            TagField::MusicBrainzReleaseGroupId => "MUSICBRAINZ_RELEASEGROUPID",
-            TagField::MusicBrainzArtistId => "MUSICBRAINZ_ARTISTID",
-            TagField::MusicBrainzAlbumArtistId => "MUSICBRAINZ_ALBUMARTISTID",
+            TagField::Title => &["TITLE"],
+            TagField::TitleSort => &["TITLESORT"],
+            TagField::Artist => &["ARTIST"],
+            TagField::Artists => &["ARTISTS"],
+            TagField::ArtistSort => &["ARTISTSORT"],
+            TagField::Album => &["ALBUM"],
+            TagField::AlbumSort => &["ALBUMSORT"],
+            TagField::AlbumArtist => &["ALBUMARTIST"],
+            TagField::AlbumArtistSort => &["ALBUMARTISTSORT"],
+            TagField::Genre => &["GENRE"],
+            TagField::Compilation => &["COMPILATION"],
+            TagField::TrackNumber => &["TRACKNUMBER"],
+            TagField::TrackTotal => &["TOTALTRACKS", "TRACKTOTAL"],
+            TagField::DiscNumber => &["DISCNUMBER"],
+            TagField::DiscTotal => &["TOTALDISCS", "DISCTOTAL"],
+            TagField::DiscSubtitle => &["DISCSUBTITLE"],
+            TagField::Date => &["DATE"],
+            TagField::OriginalDate => &["ORIGINALDATE"],
+            TagField::ReleaseStatus => &["RELEASESTATUS"],
+            TagField::ReleaseCountry => &["RELEASECOUNTRY"],
+            TagField::ReleaseType => &["RELEASETYPE"],
+            TagField::Media => &["MEDIA"],
+            TagField::Label => &["LABEL"],
+            TagField::CatalogNumber => &["CATALOGNUMBER"],
+            TagField::Barcode => &["BARCODE"],
+            TagField::Asin => &["ASIN"],
+            TagField::MusicBrainzRecordingId => &["MUSICBRAINZ_TRACKID"],
+            TagField::MusicBrainzReleaseTrackId => &["MUSICBRAINZ_RELEASETRACKID"],
+            TagField::MusicBrainzReleaseId => &["MUSICBRAINZ_ALBUMID"],
+            TagField::MusicBrainzReleaseGroupId => &["MUSICBRAINZ_RELEASEGROUPID"],
+            TagField::MusicBrainzArtistId => &["MUSICBRAINZ_ARTISTID"],
+            TagField::MusicBrainzAlbumArtistId => &["MUSICBRAINZ_ALBUMARTISTID"],
         }
     }
 
-    /// Other spellings readers accept for the same Vorbis field.
-    pub fn vorbis_aliases(self) -> &'static [&'static str] {
-        match self {
-            TagField::TrackTotal => &["TRACKTOTAL"],
-            TagField::DiscTotal => &["DISCTOTAL"],
-            _ => &[],
-        }
-    }
-
-    /// The ID3v2 home. Version 2.3 has no `TDRC`, `TDOR`, `TSOP`, or
-    /// `TSO2`: dates go to `TYER`/`TORY` (year only) and sort names to
-    /// `TXXX`, so the tag stays a clean v2.3 tag.
+    /// The ID3v2 home. In version 2.3 the date goes to
+    /// `TYER`/`TDAT`/`TIME` and the original date to `TORY` (year only).
+    /// lofty's v2.3 writer drops `TSOP`, `TSOA`, `TSOT`, and `TSST`, so in
+    /// v2.3 those fields go to `TXXX` frames; `TSO2` survives and is used in
+    /// both versions.
     pub fn id3(self, v23: bool) -> Id3Target {
         match self {
             TagField::Title => Id3Target::Text("TIT2"),
+            TagField::TitleSort if v23 => Id3Target::User("TITLESORT"),
+            TagField::TitleSort => Id3Target::Text("TSOT"),
             TagField::Artist => Id3Target::Text("TPE1"),
             TagField::Artists => Id3Target::User("ARTISTS"),
-            TagField::Album => Id3Target::Text("TALB"),
-            TagField::AlbumArtist => Id3Target::Text("TPE2"),
-            TagField::AlbumArtistSort if v23 => Id3Target::User("ALBUMARTISTSORT"),
-            TagField::AlbumArtistSort => Id3Target::Text("TSO2"),
             TagField::ArtistSort if v23 => Id3Target::User("ARTISTSORT"),
             TagField::ArtistSort => Id3Target::Text("TSOP"),
+            TagField::Album => Id3Target::Text("TALB"),
+            TagField::AlbumSort if v23 => Id3Target::User("ALBUMSORT"),
+            TagField::AlbumSort => Id3Target::Text("TSOA"),
+            TagField::AlbumArtist => Id3Target::Text("TPE2"),
+            TagField::AlbumArtistSort => Id3Target::Text("TSO2"),
             TagField::Genre => Id3Target::Text("TCON"),
+            TagField::Compilation => Id3Target::Text("TCMP"),
             TagField::TrackNumber => Id3Target::Pair("TRCK", Slot::Number),
             TagField::TrackTotal => Id3Target::Pair("TRCK", Slot::Total),
             TagField::DiscNumber => Id3Target::Pair("TPOS", Slot::Number),
             TagField::DiscTotal => Id3Target::Pair("TPOS", Slot::Total),
-            TagField::Date if v23 => Id3Target::Text("TYER"),
+            TagField::DiscSubtitle if v23 => Id3Target::User("DISCSUBTITLE"),
+            TagField::DiscSubtitle => Id3Target::Text("TSST"),
+            TagField::Date if v23 => Id3Target::SplitDate,
             TagField::Date => Id3Target::Text("TDRC"),
             TagField::OriginalDate if v23 => Id3Target::Text("TORY"),
             TagField::OriginalDate => Id3Target::Text("TDOR"),
@@ -257,17 +283,21 @@ impl TagField {
     pub fn mp4(self) -> Mp4Target {
         match self {
             TagField::Title => Mp4Target::Text(*b"\xa9nam"),
+            TagField::TitleSort => Mp4Target::Text(*b"sonm"),
             TagField::Artist => Mp4Target::Text(*b"\xa9ART"),
             TagField::Artists => Mp4Target::Freeform("ARTISTS"),
+            TagField::ArtistSort => Mp4Target::Text(*b"soar"),
             TagField::Album => Mp4Target::Text(*b"\xa9alb"),
+            TagField::AlbumSort => Mp4Target::Text(*b"soal"),
             TagField::AlbumArtist => Mp4Target::Text(*b"aART"),
             TagField::AlbumArtistSort => Mp4Target::Text(*b"soaa"),
-            TagField::ArtistSort => Mp4Target::Text(*b"soar"),
             TagField::Genre => Mp4Target::Text(*b"\xa9gen"),
+            TagField::Compilation => Mp4Target::Flag(*b"cpil"),
             TagField::TrackNumber => Mp4Target::Pair(*b"trkn", Slot::Number),
             TagField::TrackTotal => Mp4Target::Pair(*b"trkn", Slot::Total),
             TagField::DiscNumber => Mp4Target::Pair(*b"disk", Slot::Number),
             TagField::DiscTotal => Mp4Target::Pair(*b"disk", Slot::Total),
+            TagField::DiscSubtitle => Mp4Target::Freeform("DISCSUBTITLE"),
             TagField::Date => Mp4Target::Text(*b"\xa9day"),
             TagField::OriginalDate => Mp4Target::Freeform("ORIGINALDATE"),
             TagField::ReleaseStatus => Mp4Target::Freeform("MusicBrainz Album Status"),

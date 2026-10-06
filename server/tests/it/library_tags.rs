@@ -887,16 +887,26 @@ fn save_pure_v23_stays_v23() {
     assert!(byte_report.frame_ids.contains(&"TYER".to_owned()));
     assert_eq!(mp3_audio_tail(&bytes), audio);
 
-    // The full tag set keeps it a clean v2.3 tag: years in TYER/TORY,
-    // sort names in TXXX, multiple values joined with '/'.
+    // The full tag set keeps it a clean v2.3 tag: the date split over
+    // TYER/TDAT, the original year in TORY, album artist sort in TSO2 and
+    // the other sort names in TXXX, multiple values joined with '/'.
     let report = tags::save_tags(&path, &picard_edits()).unwrap();
     assert_eq!(report.id3_version.as_deref(), Some("2.3"));
     let bytes = std::fs::read(&path).unwrap();
     let byte_report = inspect_id3_bytes(&bytes).unwrap();
     assert_eq!(mixed_v23_detail(&byte_report), None);
+    for id in ["TYER", "TDAT", "TORY", "TSO2"] {
+        assert!(byte_report.frame_ids.contains(&id.to_owned()), "{id}");
+    }
     let fields = tags::read_fields(&path).unwrap();
-    assert_eq!(fields[&TagField::Date], vec!["2024".to_owned()]);
+    assert_eq!(fields[&TagField::Date], vec!["2024-05-10".to_owned()]);
     assert_eq!(fields[&TagField::OriginalDate], vec!["2019".to_owned()]);
+    assert_eq!(
+        fields[&TagField::ArtistSort],
+        vec!["Lanterns, The & Guest".to_owned()]
+    );
+    // A later save keeps the clean v2.3 tag writable.
+    tags::save_tags(&path, &[TagEdit::set_title("Again")]).unwrap();
     assert_eq!(
         fields[&TagField::Artists],
         vec!["The Lanterns/Guest".to_owned()]
@@ -945,6 +955,50 @@ fn save_refused(name: &str, test: &str, edits: &[TagEdit]) -> (Refusal, Vec<u8>,
     (refusal, before, after)
 }
 
+/// A total the file spells both ways is updated under both spellings;
+/// a file using neither gets Picard's.
+#[test]
+fn vorbis_totals_update_every_spelling() {
+    let (_scratch, path) = temp_copy("management_full.flac", "totals");
+    flac_inject_pairs(&path, &[("TRACKTOTAL", "9")]);
+    tags::save_tags(
+        &path,
+        &[
+            TagEdit::new(TagField::TrackTotal, vec!["12".to_owned()]),
+            TagEdit::new(TagField::DiscTotal, vec!["3".to_owned()]),
+        ],
+    )
+    .unwrap();
+    assert_eq!(vorbis_values(&path, "TOTALTRACKS"), vec!["12"]);
+    assert_eq!(vorbis_values(&path, "TRACKTOTAL"), vec!["12"]);
+    assert_eq!(vorbis_values(&path, "TOTALDISCS"), vec!["3"]);
+    assert!(vorbis_values(&path, "DISCTOTAL").is_empty());
+}
+
+/// Values no new edit could carry (a `3/12` track number, a free-text
+/// date) are written back exactly when replayed verbatim.
+#[test]
+fn verbatim_values_round_trip() {
+    let (_scratch, path) = temp_copy("management_full.flac", "verbatim");
+    let raw = [
+        (TagField::TrackNumber, "3/12"),
+        (TagField::Date, "circa 1970"),
+    ];
+    assert!(!tags::save::accepts(&TagEdit::new(
+        raw[0].0,
+        vec![raw[0].1.to_owned()]
+    )));
+    let edits: Vec<TagEdit> = raw
+        .iter()
+        .map(|(field, value)| TagEdit::verbatim(*field, vec![(*value).to_owned()]))
+        .collect();
+    tags::save_tags(&path, &edits).unwrap();
+    let fields = tags::read_fields(&path).unwrap();
+    for (field, value) in raw {
+        assert_eq!(fields[&field], vec![value.to_owned()], "{field:?}");
+    }
+}
+
 #[test]
 fn save_refuses_values_a_field_cannot_hold() {
     let cases = [
@@ -980,6 +1034,10 @@ fn picard_edits() -> Vec<TagEdit> {
     let one = |field: TagField, value: &str| TagEdit::new(field, vec![value.to_owned()]);
     vec![
         one(TagField::Title, "Blue Hour"),
+        one(TagField::TitleSort, "Blue Hour, The"),
+        one(TagField::AlbumSort, "Night Shift (sorted)"),
+        one(TagField::Compilation, "1"),
+        one(TagField::DiscSubtitle, "The Late Side"),
         one(TagField::Artist, "The Lanterns & Guest"),
         TagEdit::new(
             TagField::Artists,

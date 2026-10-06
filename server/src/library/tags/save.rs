@@ -57,20 +57,35 @@ use super::{AudioFormat, TagsError, format_for_path};
 pub struct TagEdit {
     pub field: TagField,
     pub values: Vec<String>,
+    /// Values read back from a file (undo, baseline restore): written as
+    /// they were, without the checks a new value gets. The post-save
+    /// verify still refuses anything that does not land exactly.
+    pub verbatim: bool,
 }
 
 impl TagEdit {
     #[must_use]
     pub fn new(field: TagField, values: Vec<String>) -> Self {
-        Self { field, values }
+        Self {
+            field,
+            values,
+            verbatim: false,
+        }
+    }
+
+    /// Values a file held, to be written back unchanged.
+    #[must_use]
+    pub fn verbatim(field: TagField, values: Vec<String>) -> Self {
+        Self {
+            field,
+            values,
+            verbatim: true,
+        }
     }
 
     #[must_use]
     pub fn set_title(title: impl Into<String>) -> Self {
-        Self {
-            field: TagField::Title,
-            values: vec![title.into()],
-        }
+        Self::new(TagField::Title, vec![title.into()])
     }
 }
 
@@ -174,7 +189,7 @@ pub fn save_tags(path: &Path, edits: &[TagEdit]) -> Result<SaveReport, TagsError
     for edit in edits {
         check_edit(edit).map_err(|refusal| refused(path, refusal))?;
     }
-    let native = resolve_edits(&snapshot, edits);
+    let native = resolve_edits(&snapshot, edits).map_err(|refusal| refused(path, refusal))?;
 
     let temp = TempCopy::create(path)?;
     apply_edits(format, &snapshot, &tagged, &native, temp.path())
@@ -200,13 +215,25 @@ pub fn save_tags(path: &Path, edits: &[TagEdit]) -> Result<SaveReport, TagsError
     })
 }
 
-/// Every writable field the file carries, read from the same native
-/// homes the writer uses, so writing the result back changes nothing.
-/// Read-only containers report nothing: there is nothing to write back.
-pub fn read_fields(path: &Path) -> Result<BTreeMap<TagField, Vec<String>>, TagsError> {
+/// Every writable field a file carries, read from the native homes the
+/// writer uses and kept exactly as written, so writing them back
+/// verbatim restores the file.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FieldDocument {
+    pub values: BTreeMap<TagField, Vec<String>>,
+    /// Fields present in a shape that is not text (an MP4 atom holding a
+    /// number, a non-UTF-8 identifier, a v2.3 date split oddly): they
+    /// cannot be written back, so nothing may overwrite or remove them.
+    pub opaque: std::collections::BTreeSet<TagField>,
+}
+
+/// Read a file's [`FieldDocument`]. Read-only containers report nothing:
+/// there is nothing to write back.
+pub fn read_document(path: &Path) -> Result<FieldDocument, TagsError> {
     let format = format_for_path(path)?;
+    let mut document = FieldDocument::default();
     if !writable(format) {
-        return Ok(BTreeMap::new());
+        return Ok(document);
     }
     let bytes = fs::read(path).map_err(|source| TagsError::Io {
         path: path.display().to_string(),
@@ -216,52 +243,49 @@ pub fn read_fields(path: &Path) -> Result<BTreeMap<TagField, Vec<String>>, TagsE
         path: path.display().to_string(),
         reason: refusal.to_string(),
     };
-    let mut fields = BTreeMap::new();
-    match format {
-        AudioFormat::Mp3 => {
-            let Some(tag) = parse_id3_deep(&bytes).map_err(unreadable)? else {
-                return Ok(fields);
-            };
-            for field in TagField::ALL {
-                let values = id3_values(&tag, field);
-                if !values.is_empty() {
-                    fields.insert(field, values);
-                }
-            }
-        }
+    let reads: Vec<(TagField, FieldRead)> = match format {
+        AudioFormat::Mp3 => match parse_id3_deep(&bytes).map_err(unreadable)? {
+            Some(tag) => TagField::ALL
+                .into_iter()
+                .map(|field| (field, id3_read(&tag, field)))
+                .collect(),
+            None => Vec::new(),
+        },
         AudioFormat::Flac | AudioFormat::Ogg | AudioFormat::Opus => {
-            let Some(truth) = parse_vorbis_truth(format, &bytes).map_err(unreadable)? else {
-                return Ok(fields);
-            };
-            for field in TagField::ALL {
-                let key = vorbis_key_for(field, Some(&truth));
-                let values: Vec<String> = truth
-                    .pairs
-                    .iter()
-                    .filter(|(name, _)| name.eq_ignore_ascii_case(&key))
-                    .map(|(_, value)| value.clone())
-                    .collect();
-                if !values.is_empty() {
-                    fields.insert(field, values);
-                }
+            match parse_vorbis_truth(format, &bytes).map_err(unreadable)? {
+                Some(truth) => TagField::ALL
+                    .into_iter()
+                    .map(|field| (field, vorbis_read(&truth, field)))
+                    .collect(),
+                None => Vec::new(),
             }
         }
-        AudioFormat::M4a => {
-            let Some(atoms) = parse_mp4_atoms(&bytes).map_err(unreadable)? else {
-                return Ok(fields);
-            };
-            for field in TagField::ALL {
-                let values = mp4_values(&atoms, field);
-                if !values.is_empty() {
-                    fields.insert(field, values);
-                }
+        AudioFormat::M4a => match parse_mp4_atoms(&bytes).map_err(unreadable)? {
+            Some(atoms) => TagField::ALL
+                .into_iter()
+                .map(|field| (field, mp4_read(&atoms, field)))
+                .collect(),
+            None => Vec::new(),
+        },
+        AudioFormat::Aac | AudioFormat::Wav => Vec::new(),
+    };
+    for (field, read) in reads {
+        match read {
+            FieldRead::Absent => {}
+            FieldRead::Values(values) => {
+                document.values.insert(field, values);
+            }
+            FieldRead::Opaque => {
+                document.opaque.insert(field);
             }
         }
-        AudioFormat::Aac | AudioFormat::Wav => {}
     }
-    // Only values the writer accepts are worth replaying.
-    fields.retain(|field, values| check_edit(&TagEdit::new(*field, values.clone())).is_ok());
-    Ok(fields)
+    Ok(document)
+}
+
+/// The writable fields a file carries as text (see [`read_document`]).
+pub fn read_fields(path: &Path) -> Result<BTreeMap<TagField, Vec<String>>, TagsError> {
+    Ok(read_document(path)?.values)
 }
 
 // ---------------------------------------------------------------------------
@@ -269,10 +293,13 @@ pub fn read_fields(path: &Path) -> Result<BTreeMap<TagField, Vec<String>>, TagsE
 // ---------------------------------------------------------------------------
 
 /// Frame ids that only exist in ID3v2.4. Any of them inside a v2.3 tag
-/// means a mixed tag lofty would silently rewrite.
+/// means a mixed tag lofty would silently rewrite. `TSO2` is not on the
+/// list: Picard writes it in v2.3 tags too and lofty's v2.3 writer keeps
+/// it. lofty drops `TSOA`, `TSOP`, `TSOT`, and `TSST` from v2.3 tags, so
+/// a v2.3 file carrying them is refused before anything is written.
 const V24_ONLY_IDS: &[&str] = &[
     "ASPI", "EQU2", "POSS", "RVA2", "SEEK", "SIGN", "TDOR", "TDRC", "TDRL", "TIPL", "TMCL", "TMOO",
-    "TPRO", "TRSN", "TSO2", "TSOA", "TSOP", "TSOT", "TSST",
+    "TPRO", "TRSN", "TSOA", "TSOP", "TSOT", "TSST",
 ];
 
 /// True when the field can hold these values (dates parse, counts are
@@ -283,6 +310,9 @@ pub fn accepts(edit: &TagEdit) -> bool {
 }
 
 fn check_edit(edit: &TagEdit) -> Result<(), Refusal> {
+    if edit.verbatim {
+        return Ok(());
+    }
     let unencodable = |reason: String| Refusal::UnencodableItem {
         field: edit.field,
         reason,
@@ -300,6 +330,9 @@ fn check_edit(edit: &TagEdit) -> Result<(), Refusal> {
                 return Err(unencodable(format!(
                     "non-numeric count '{value}' would be dropped"
                 )));
+            }
+            FieldKind::Flag if value != "0" && value != "1" => {
+                return Err(unencodable(format!("flag '{value}' is not 1 or 0")));
             }
             FieldKind::Date if value.parse::<Timestamp>().is_err() => {
                 return Err(unencodable(format!(
@@ -1185,7 +1218,8 @@ fn mismatch(detail: String) -> Result<(), Refusal> {
 // Edits resolved to their native homes in this file's tag.
 // ---------------------------------------------------------------------------
 
-/// One edit at its native home. No values (or a zero pair) removes it.
+/// One edit at its native home. No values (or a zero pair, or no flag)
+/// removes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum NativeEdit {
     Id3Text {
@@ -1217,6 +1251,10 @@ enum NativeEdit {
         number: u32,
         total: u32,
     },
+    Mp4Flag {
+        code: [u8; 4],
+        value: Option<bool>,
+    },
 }
 
 impl NativeEdit {
@@ -1234,7 +1272,8 @@ impl NativeEdit {
         match (self, other) {
             (NativeEdit::Vorbis { key: a, .. }, NativeEdit::Vorbis { key: b, .. }) => a == b,
             (NativeEdit::Mp4Text { code: a, .. }, NativeEdit::Mp4Text { code: b, .. })
-            | (NativeEdit::Mp4Pair { code: a, .. }, NativeEdit::Mp4Pair { code: b, .. }) => a == b,
+            | (NativeEdit::Mp4Pair { code: a, .. }, NativeEdit::Mp4Pair { code: b, .. })
+            | (NativeEdit::Mp4Flag { code: a, .. }, NativeEdit::Mp4Flag { code: b, .. }) => a == b,
             (NativeEdit::Mp4Freeform { name: a, .. }, NativeEdit::Mp4Freeform { name: b, .. }) => {
                 a == b
             }
@@ -1244,10 +1283,11 @@ impl NativeEdit {
 }
 
 /// Resolve edits against the file's own spellings (an existing `TXXX`
-/// description or Vorbis total key keeps its spelling), fold track and
-/// disc halves into one pair with the half that was not edited, and let
-/// a later edit of the same target win.
-fn resolve_edits(snapshot: &Snapshot, edits: &[TagEdit]) -> Vec<NativeEdit> {
+/// description, every Vorbis spelling of a total the file uses, a
+/// freeform name's case), fold track and disc halves into one pair with
+/// the half that was not edited, split a v2.3 date over its three
+/// frames, and let a later edit of the same target win.
+fn resolve_edits(snapshot: &Snapshot, edits: &[TagEdit]) -> Result<Vec<NativeEdit>, Refusal> {
     let mut resolved: Vec<NativeEdit> = Vec::new();
     let mut push = |edit: NativeEdit| {
         resolved.retain(|known| !known.same_target(&edit));
@@ -1257,9 +1297,10 @@ fn resolve_edits(snapshot: &Snapshot, edits: &[TagEdit]) -> Vec<NativeEdit> {
         Snapshot::Id3 { tag, .. } => {
             let tag = tag.as_ref();
             let v23 = tag.is_some_and(|tag| tag.major == 3);
-            let mut pairs: Vec<(&'static str, Option<u32>, Option<u32>)> = Vec::new();
+            let mut pairs: Vec<(&'static str, Option<String>, Option<String>)> = Vec::new();
             for edit in edits {
-                // v2.3 has no multi-value separator lofty round-trips.
+                // lofty writes v2.3 multi-values with '/', so say so up
+                // front and verify what lands.
                 let values = if v23 && edit.values.len() > 1 {
                     vec![edit.values.join("/")]
                 } else {
@@ -1267,8 +1308,8 @@ fn resolve_edits(snapshot: &Snapshot, edits: &[TagEdit]) -> Vec<NativeEdit> {
                 };
                 match edit.field.id3(v23) {
                     Id3Target::Text(id) => {
-                        let values = if id == "TYER" || id == "TORY" {
-                            values.iter().map(|value| year_part(value)).collect()
+                        let values = if id == "TORY" {
+                            values.iter().map(|value| year_of(value)).collect()
                         } else {
                             values
                         };
@@ -1297,10 +1338,22 @@ fn resolve_edits(snapshot: &Snapshot, edits: &[TagEdit]) -> Vec<NativeEdit> {
                                 pairs.len() - 1
                             }
                         };
-                        let value = values.first().and_then(|value| value.trim().parse().ok());
+                        let value = values
+                            .first()
+                            .map(|value| value.trim().to_owned())
+                            .filter(|value| !value.is_empty());
                         match slot {
                             Slot::Number => pairs[index].1 = value,
                             Slot::Total => pairs[index].2 = value,
+                        }
+                    }
+                    Id3Target::SplitDate => {
+                        let (year, day, time) = split_v23_date(values.first().map(String::as_str));
+                        for (id, values) in [("TYER", year), ("TDAT", day), ("TIME", time)] {
+                            push(NativeEdit::Id3Text {
+                                id: id.to_owned(),
+                                values,
+                            });
                         }
                     }
                 }
@@ -1308,8 +1361,10 @@ fn resolve_edits(snapshot: &Snapshot, edits: &[TagEdit]) -> Vec<NativeEdit> {
             for (id, number, total) in pairs {
                 let values = match (number, total) {
                     (None, None) => Vec::new(),
-                    (number, None) => vec![number.unwrap_or(0).to_string()],
-                    (number, Some(total)) => vec![format!("{}/{total}", number.unwrap_or(0))],
+                    (Some(number), None) => vec![number],
+                    (number, Some(total)) => {
+                        vec![format!("{}/{total}", number.as_deref().unwrap_or("0"))]
+                    }
                 };
                 push(NativeEdit::Id3Text {
                     id: id.to_owned(),
@@ -1319,15 +1374,21 @@ fn resolve_edits(snapshot: &Snapshot, edits: &[TagEdit]) -> Vec<NativeEdit> {
         }
         Snapshot::Vorbis { truth, .. } => {
             for edit in edits {
-                push(NativeEdit::Vorbis {
-                    key: vorbis_key_for(edit.field, truth.as_ref()),
-                    values: edit.values.clone(),
-                });
+                for key in vorbis_write_keys(edit.field, truth.as_ref()) {
+                    push(NativeEdit::Vorbis {
+                        key: key.to_owned(),
+                        values: edit.values.clone(),
+                    });
+                }
             }
         }
         Snapshot::Mp4 { atoms, .. } => {
             let mut pairs: Vec<([u8; 4], u32, u32)> = Vec::new();
             for edit in edits {
+                let unencodable = |reason: &str| Refusal::UnencodableItem {
+                    field: edit.field,
+                    reason: reason.to_owned(),
+                };
                 match edit.field.mp4() {
                     Mp4Target::Text(code) => push(NativeEdit::Mp4Text {
                         code,
@@ -1352,15 +1413,26 @@ fn resolve_edits(snapshot: &Snapshot, edits: &[TagEdit]) -> Vec<NativeEdit> {
                                 pairs.len() - 1
                             }
                         };
-                        let value = edit
-                            .values
-                            .first()
-                            .and_then(|value| value.trim().parse().ok())
-                            .unwrap_or(0);
+                        let value = match edit.values.first() {
+                            None => 0,
+                            Some(value) => value
+                                .trim()
+                                .parse()
+                                .map_err(|_| unencodable("MP4 numbers must be whole numbers"))?,
+                        };
                         match slot {
                             Slot::Number => pairs[index].1 = value,
                             Slot::Total => pairs[index].2 = value,
                         }
+                    }
+                    Mp4Target::Flag(code) => {
+                        let value = match edit.values.first().map(|value| value.trim()) {
+                            None => None,
+                            Some("1") => Some(true),
+                            Some("0") => Some(false),
+                            Some(_) => return Err(unencodable("MP4 flags are 1 or 0")),
+                        };
+                        push(NativeEdit::Mp4Flag { code, value });
                     }
                 }
             }
@@ -1373,11 +1445,81 @@ fn resolve_edits(snapshot: &Snapshot, edits: &[TagEdit]) -> Vec<NativeEdit> {
             }
         }
     }
-    resolved
+    Ok(resolved)
 }
 
-fn year_part(value: &str) -> String {
-    value.trim().chars().take(4).collect()
+/// A date's parts: year, then month and day, then hour and minute.
+type DateParts<'a> = (
+    &'a str,
+    Option<(&'a str, &'a str)>,
+    Option<(&'a str, &'a str)>,
+);
+
+/// Split `YYYY`, `YYYY-MM`, `YYYY-MM-DD`, or `YYYY-MM-DDTHH:MM[:SS]`;
+/// anything else is not a date this code reshapes.
+fn date_parts(value: &str) -> Option<DateParts<'_>> {
+    let digits = |part: &str, width: usize| {
+        part.len() == width && part.bytes().all(|byte| byte.is_ascii_digit())
+    };
+    let (date, time) = match value.trim().split_once('T') {
+        Some((date, time)) => (date, Some(time)),
+        None => (value.trim(), None),
+    };
+    let mut parts = date.split('-');
+    let year = parts.next().filter(|year| digits(year, 4))?;
+    let month = parts.next();
+    let day = parts.next();
+    if parts.next().is_some() || month.is_some_and(|month| !digits(month, 2)) {
+        return None;
+    }
+    if day.is_some_and(|day| !digits(day, 2)) {
+        return None;
+    }
+    let month_day = match (month, day) {
+        (Some(month), Some(day)) => Some((month, day)),
+        (Some(_), None) if time.is_none() => None,
+        (None, None) if time.is_none() => None,
+        _ => return None,
+    };
+    let clock = match time {
+        None => None,
+        Some(time) => {
+            let mut clock = time.split(':');
+            let hour = clock.next().filter(|hour| digits(hour, 2))?;
+            let minute = clock.next().filter(|minute| digits(minute, 2))?;
+            Some((hour, minute))
+        }
+    };
+    Some((year, month_day, clock))
+}
+
+/// The year of a date, or the value as it is when it is not a date.
+fn year_of(value: &str) -> String {
+    match date_parts(value) {
+        Some((year, _, _)) => year.to_owned(),
+        None => value.to_owned(),
+    }
+}
+
+/// v2.3 date frames for one date: `TYER`, `TDAT` (`DDMM`), `TIME`
+/// (`HHMM`). A value that is not a date goes to `TYER` as it is.
+fn split_v23_date(value: Option<&str>) -> (Vec<String>, Vec<String>, Vec<String>) {
+    let Some(value) = value else {
+        return (Vec::new(), Vec::new(), Vec::new());
+    };
+    match date_parts(value) {
+        None => (vec![value.to_owned()], Vec::new(), Vec::new()),
+        Some((year, month_day, clock)) => (
+            vec![year.to_owned()],
+            month_day
+                .map(|(month, day)| vec![format!("{day}{month}")])
+                .unwrap_or_default(),
+            match (month_day, clock) {
+                (Some(_), Some((hour, minute))) => vec![format!("{hour}{minute}")],
+                _ => Vec::new(),
+            },
+        ),
+    }
 }
 
 fn existing_txxx(tag: &DeepId3, desc: &str) -> Option<String> {
@@ -1403,25 +1545,25 @@ fn existing_freeform(atoms: &[Mp4AtomTruth], name: &str) -> Option<String> {
         })
 }
 
-/// The `n/m` halves of an ID3 pair frame.
-fn id3_pair(tag: &DeepId3, id: &str) -> (Option<u32>, Option<u32>) {
-    let Some(text) = tag
-        .frames
+fn id3_text<'a>(tag: &'a DeepId3, id: &str) -> Option<&'a Vec<String>> {
+    tag.frames
         .iter()
         .find(|frame| frame.id == id)
         .and_then(|frame| frame.text.as_ref())
-        .and_then(|text| text.values.first())
-    else {
+        .map(|text| &text.values)
+}
+
+/// The `n/m` halves of an ID3 pair frame, exactly as written.
+fn id3_pair(tag: &DeepId3, id: &str) -> (Option<String>, Option<String>) {
+    let Some(text) = id3_text(tag, id).and_then(|values| values.first()) else {
         return (None, None);
     };
     let (number, total) = match text.split_once('/') {
         Some((number, total)) => (number, Some(total)),
         None => (text.as_str(), None),
     };
-    (
-        number.trim().parse().ok(),
-        total.and_then(|total| total.trim().parse().ok()),
-    )
+    let present = |part: &str| (!part.is_empty()).then(|| part.to_owned());
+    (present(number), total.and_then(present))
 }
 
 fn mp4_pair(atoms: &[Mp4AtomTruth], code: [u8; 4]) -> Option<(u32, u32)> {
@@ -1435,104 +1577,185 @@ fn mp4_pair(atoms: &[Mp4AtomTruth], code: [u8; 4]) -> Option<(u32, u32)> {
         })
 }
 
-/// The Vorbis key for a field: the file's own spelling of a total when
-/// it uses `TRACKTOTAL`/`DISCTOTAL`, else Picard's.
-fn vorbis_key_for(field: TagField, truth: Option<&VorbisTruth>) -> String {
-    let canonical = field.vorbis_key();
-    let present = |key: &str| {
-        truth.is_some_and(|truth| {
-            truth
-                .pairs
-                .iter()
-                .any(|(name, _)| name.eq_ignore_ascii_case(key))
-        })
-    };
-    if !present(canonical)
-        && let Some(alias) = field.vorbis_aliases().iter().find(|alias| present(alias))
-    {
-        return (*alias).to_owned();
+fn vorbis_present(truth: Option<&VorbisTruth>, key: &str) -> bool {
+    truth.is_some_and(|truth| {
+        truth
+            .pairs
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case(key))
+    })
+}
+
+/// The Vorbis keys a write of `field` updates: every spelling the file
+/// already uses, or Picard's when it uses none.
+fn vorbis_write_keys(field: TagField, truth: Option<&VorbisTruth>) -> Vec<&'static str> {
+    let keys = field.vorbis_keys();
+    let present: Vec<&'static str> = keys
+        .iter()
+        .copied()
+        .filter(|key| vorbis_present(truth, key))
+        .collect();
+    if present.is_empty() {
+        keys[..1].to_vec()
+    } else {
+        present
     }
-    canonical.to_owned()
+}
+
+/// What a file holds for one field.
+enum FieldRead {
+    Absent,
+    Values(Vec<String>),
+    /// Present, but not as text this code can write back unchanged.
+    Opaque,
+}
+
+fn values_or_absent(values: Vec<String>) -> FieldRead {
+    if values.is_empty() {
+        FieldRead::Absent
+    } else {
+        FieldRead::Values(values)
+    }
 }
 
 /// A field's values as the file's ID3 tag holds them.
-fn id3_values(tag: &DeepId3, field: TagField) -> Vec<String> {
+fn id3_read(tag: &DeepId3, field: TagField) -> FieldRead {
     let v23 = tag.major == 3;
     match field.id3(v23) {
-        Id3Target::Text(id) => tag
-            .frames
-            .iter()
-            .find(|frame| frame.id == id)
-            .and_then(|frame| frame.text.as_ref())
-            .map(|text| text.values.clone())
-            .unwrap_or_default(),
-        Id3Target::User(desc) => tag
-            .frames
-            .iter()
-            .find_map(|frame| {
-                let text = frame.text.as_ref()?;
-                text.desc
-                    .as_ref()?
-                    .eq_ignore_ascii_case(desc)
-                    .then(|| text.values.clone())
-            })
-            .unwrap_or_default(),
+        Id3Target::Text(id) => values_or_absent(id3_text(tag, id).cloned().unwrap_or_default()),
+        Id3Target::User(desc) => values_or_absent(
+            tag.frames
+                .iter()
+                .find_map(|frame| {
+                    let text = frame.text.as_ref()?;
+                    text.desc
+                        .as_ref()?
+                        .eq_ignore_ascii_case(desc)
+                        .then(|| text.values.clone())
+                })
+                .unwrap_or_default(),
+        ),
         Id3Target::Ufid(owner) => tag
             .frames
             .iter()
             .filter(|frame| frame.id == "UFID")
             .find_map(|frame| {
                 let (frame_owner, identifier) = split_ufid(&frame.payload);
-                (frame_owner == owner).then(|| String::from_utf8_lossy(identifier).into_owned())
+                (frame_owner == owner).then(|| match std::str::from_utf8(identifier) {
+                    Ok(text) => FieldRead::Values(vec![text.to_owned()]),
+                    Err(_) => FieldRead::Opaque,
+                })
             })
-            .into_iter()
-            .collect(),
+            .unwrap_or(FieldRead::Absent),
         Id3Target::Pair(id, slot) => {
             let (number, total) = id3_pair(tag, id);
             match slot {
                 Slot::Number => number,
                 Slot::Total => total,
             }
-            .map(|value| vec![value.to_string()])
-            .unwrap_or_default()
+            .map_or(FieldRead::Absent, |value| FieldRead::Values(vec![value]))
+        }
+        Id3Target::SplitDate => {
+            let first = |id: &str| id3_text(tag, id).and_then(|values| values.first()).cloned();
+            let four_digits =
+                |value: &str| value.len() == 4 && value.bytes().all(|byte| byte.is_ascii_digit());
+            match (first("TYER"), first("TDAT"), first("TIME")) {
+                (None, None, None) => FieldRead::Absent,
+                (Some(year), None, None) => FieldRead::Values(vec![year]),
+                (Some(year), Some(day), time)
+                    if four_digits(&year)
+                        && four_digits(&day)
+                        && time.as_deref().is_none_or(four_digits) =>
+                {
+                    let mut date = format!("{year}-{}-{}", &day[2..], &day[..2]);
+                    if let Some(time) = time {
+                        date.push_str(&format!("T{}:{}", &time[..2], &time[2..]));
+                    }
+                    FieldRead::Values(vec![date])
+                }
+                _ => FieldRead::Opaque,
+            }
         }
     }
 }
 
+/// A field's values as the file's Vorbis comment holds them (Picard's
+/// spelling first when the file uses several).
+fn vorbis_read(truth: &VorbisTruth, field: TagField) -> FieldRead {
+    for key in field.vorbis_keys() {
+        let values: Vec<String> = truth
+            .pairs
+            .iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case(key))
+            .map(|(_, value)| value.clone())
+            .collect();
+        if !values.is_empty() {
+            return FieldRead::Values(values);
+        }
+    }
+    FieldRead::Absent
+}
+
 /// A field's values as the file's MP4 atoms hold them.
-fn mp4_values(atoms: &[Mp4AtomTruth], field: TagField) -> Vec<String> {
-    match field.mp4() {
-        Mp4Target::Text(code) => atoms
+fn mp4_read(atoms: &[Mp4AtomTruth], field: TagField) -> FieldRead {
+    let items_of = |code: [u8; 4]| -> Vec<&Mp4Item> {
+        atoms
             .iter()
             .filter(|atom| atom.kind == code)
             .flat_map(|atom| atom.items.iter())
-            .filter_map(|item| match item {
-                Mp4Item::Text(text) => Some(text.clone()),
-                _ => None,
-            })
-            .collect(),
-        Mp4Target::Freeform(name) => atoms
-            .iter()
-            .flat_map(|atom| atom.items.iter())
-            .filter_map(|item| match item {
-                Mp4Item::Freeform {
+            .collect()
+    };
+    match field.mp4() {
+        Mp4Target::Text(code) => {
+            let mut values = Vec::new();
+            for item in items_of(code) {
+                match item {
+                    Mp4Item::Text(text) => values.push(text.clone()),
+                    _ => return FieldRead::Opaque,
+                }
+            }
+            values_or_absent(values)
+        }
+        Mp4Target::Freeform(name) => {
+            let mut values = Vec::new();
+            for item in atoms.iter().flat_map(|atom| atom.items.iter()) {
+                if let Mp4Item::Freeform {
                     mean,
                     name: existing,
                     data,
-                } if mean == MP4_MEAN && existing.eq_ignore_ascii_case(name) => {
-                    std::str::from_utf8(data).ok().map(str::to_owned)
+                } = item
+                    && mean == MP4_MEAN
+                    && existing.eq_ignore_ascii_case(name)
+                {
+                    match std::str::from_utf8(data) {
+                        Ok(text) => values.push(text.to_owned()),
+                        Err(_) => return FieldRead::Opaque,
+                    }
                 }
-                _ => None,
-            })
-            .collect(),
-        Mp4Target::Pair(code, slot) => mp4_pair(atoms, code)
-            .map(|(number, total)| match slot {
-                Slot::Number => number,
-                Slot::Total => total,
-            })
-            .filter(|value| *value > 0)
-            .map(|value| vec![value.to_string()])
-            .unwrap_or_default(),
+            }
+            values_or_absent(values)
+        }
+        Mp4Target::Pair(code, slot) => match mp4_pair(atoms, code) {
+            None => FieldRead::Absent,
+            Some((number, total)) => {
+                let value = match slot {
+                    Slot::Number => number,
+                    Slot::Total => total,
+                };
+                if value > 0 {
+                    FieldRead::Values(vec![value.to_string()])
+                } else {
+                    FieldRead::Absent
+                }
+            }
+        },
+        Mp4Target::Flag(code) => match items_of(code).as_slice() {
+            [] => FieldRead::Absent,
+            [Mp4Item::Bool(value)] => {
+                FieldRead::Values(vec![if *value { "1" } else { "0" }.to_owned()])
+            }
+            _ => FieldRead::Opaque,
+        },
     }
 }
 
@@ -1812,7 +2035,9 @@ fn verify_mp4(
     let edited_codes: Vec<[u8; 4]> = edits
         .iter()
         .filter_map(|edit| match edit {
-            NativeEdit::Mp4Text { code, .. } | NativeEdit::Mp4Pair { code, .. } => Some(*code),
+            NativeEdit::Mp4Text { code, .. }
+            | NativeEdit::Mp4Pair { code, .. }
+            | NativeEdit::Mp4Flag { code, .. } => Some(*code),
             _ => None,
         })
         .collect();
@@ -1909,6 +2134,18 @@ fn verify_mp4(
                     seen.is_none()
                 } else {
                     seen == Some((*number, *total))
+                };
+                (String::from_utf8_lossy(code).into_owned(), landed)
+            }
+            NativeEdit::Mp4Flag { code, value } => {
+                let seen: Vec<&Mp4Item> = atoms
+                    .iter()
+                    .filter(|atom| atom.kind == *code)
+                    .flat_map(|atom| atom.items.iter())
+                    .collect();
+                let landed = match value {
+                    None => seen.is_empty(),
+                    Some(value) => seen.as_slice() == [&Mp4Item::Bool(*value)],
                 };
                 (String::from_utf8_lossy(code).into_owned(), landed)
             }
@@ -2140,6 +2377,13 @@ fn apply_edits(
                             name: std::borrow::Cow::Owned(name.clone()),
                         };
                         replace_mp4(&mut native, ident, values);
+                    }
+                    NativeEdit::Mp4Flag { code, value } => {
+                        let ident = AtomIdent::Fourcc(*code);
+                        let _ = native.remove(&ident).count();
+                        if let Some(value) = value {
+                            native.insert(Atom::new(ident, AtomData::Bool(*value)));
+                        }
                     }
                     NativeEdit::Mp4Pair {
                         code,
