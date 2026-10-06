@@ -51,9 +51,9 @@ struct CoordinatorState {
 /// Async read/write leases per root plus monotonic revision fences.
 ///
 /// The lease is a plain mutex-guarded condition: readers proceed unless a
-/// writer holds the root, writers wait for readers to drain. Polling with
-/// short sleeps keeps the implementation dependency-free; hold times are
-/// short (one walk generation, one publication).
+/// writer holds the root, writers wait for readers to drain, and every
+/// release wakes the waiters. Hold times are short (one walk generation,
+/// one publication).
 #[derive(Debug, Clone, Default)]
 pub struct FsCoordinator {
     inner: Arc<Mutex<CoordinatorState>>,
@@ -76,25 +76,41 @@ impl FsCoordinator {
             .unwrap_or(0)
     }
 
-    /// Hold a read lease for `root_id` until the guard drops.
-    pub async fn read(&self, root_id: &str) -> ReadGuard {
+    /// Wait until `attempt` succeeds under the state lock. The wakeup is
+    /// registered before the state is checked, so a release that lands
+    /// between the check and the wait is never lost.
+    async fn acquire<T>(&self, mut attempt: impl FnMut(&mut CoordinatorState) -> Option<T>) -> T {
         loop {
+            let notified = self.changed.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             {
                 let mut state = self
                     .inner
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
-                let lease = state.roots.entry(root_id.to_owned()).or_default();
-                if !lease.locked {
-                    lease.readers += 1;
-                    return ReadGuard {
-                        owner: self.clone(),
-                        root_id: root_id.to_owned(),
-                    };
+                if let Some(granted) = attempt(&mut state) {
+                    return granted;
                 }
             }
-            self.changed.notified().await;
+            notified.await;
         }
+    }
+
+    /// Hold a read lease for `root_id` until the guard drops.
+    pub async fn read(&self, root_id: &str) -> ReadGuard {
+        self.acquire(|state| {
+            let lease = state.roots.entry(root_id.to_owned()).or_default();
+            if lease.locked {
+                return None;
+            }
+            lease.readers += 1;
+            Some(ReadGuard {
+                owner: self.clone(),
+                root_id: root_id.to_owned(),
+            })
+        })
+        .await
     }
 
     /// Try the write lease once without waiting. `None` when a
@@ -131,23 +147,18 @@ impl FsCoordinator {
     /// Hold the write lease for `root_id` until the guard drops. Bumps the
     /// revision on release so in-flight walks detect supersede.
     pub async fn write(&self, root_id: &str) -> WriteGuard {
-        loop {
-            {
-                let mut state = self
-                    .inner
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                let lease = state.roots.entry(root_id.to_owned()).or_default();
-                if !lease.locked && lease.readers == 0 {
-                    lease.locked = true;
-                    return WriteGuard {
-                        owner: self.clone(),
-                        root_id: root_id.to_owned(),
-                    };
-                }
+        self.acquire(|state| {
+            let lease = state.roots.entry(root_id.to_owned()).or_default();
+            if lease.locked || lease.readers > 0 {
+                return None;
             }
-            self.changed.notified().await;
-        }
+            lease.locked = true;
+            Some(WriteGuard {
+                owner: self.clone(),
+                root_id: root_id.to_owned(),
+            })
+        })
+        .await
     }
 
     /// Record the fence for a clean walk generation (v2
@@ -206,8 +217,6 @@ impl FsCoordinator {
             lease.locked = false;
             lease.revision += 1;
         }
-        // Read the current waiter set before notifying.
-        let _ = &state;
         self.changed.notify_waiters();
     }
 }
@@ -264,5 +273,25 @@ mod tests {
         assert_eq!(fs.scan_revision("run-1", "r1"), Some(1));
         fs.forget_scan("run-1");
         assert_eq!(fs.scan_revision("run-1", "r1"), None);
+    }
+
+    /// A release racing a waiter's state check must still wake it: a lost
+    /// wakeup parks the scan (and shutdown) until the next lease change.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn release_racing_a_waiter_always_wakes_it() {
+        let fs = FsCoordinator::new();
+        for _ in 0..500 {
+            let write = fs.write("r1").await;
+            let reader = {
+                let fs = fs.clone();
+                tokio::spawn(async move { drop(fs.read("r1").await) })
+            };
+            tokio::task::yield_now().await;
+            drop(write);
+            tokio::time::timeout(Duration::from_secs(2), reader)
+                .await
+                .expect("reader woke after the release")
+                .expect("reader task");
+        }
     }
 }
