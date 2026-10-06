@@ -3,7 +3,7 @@ import type { SearchV3Bucket, SearchV3Limits } from './SearchQueryKeyFactory';
 
 // /api/v3 search URLs, built through the typed registry: every template is
 // a literal the contract-coverage gate verifies against the generated spec.
-// Nothing outside this feature imports them.
+// The album bucket also backs the drop-import and YouTube album pickers.
 export const SearchV3Api = {
 	unified: (query: string, limits: SearchV3Limits, buckets: SearchV3Bucket[] | null) =>
 		v3('/api/v3/search', {

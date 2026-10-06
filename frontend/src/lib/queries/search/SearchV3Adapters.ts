@@ -39,6 +39,15 @@ export function toV1Album(row: SearchResultItemV3): Album {
 	};
 }
 
+/**
+ * Album picks that must name a MusicBrainz release group (drop-import match,
+ * YouTube link). Library-only rows carry just a local id, so they are left
+ * out rather than offered under a local id.
+ */
+export function toMusicBrainzAlbums(rows: SearchResultItemV3[]): Album[] {
+	return rows.filter((row) => !!row.musicbrainz_id).map(toV1Album);
+}
+
 // The v3 contract mirrors the v1 status values exactly, so statuses pass
 // straight into getSearchStatusNotice and the stale-time helpers. Typed as
 // a function so the build fails if the two unions ever drift apart.

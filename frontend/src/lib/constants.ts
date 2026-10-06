@@ -469,12 +469,6 @@ export const API = {
 		previewArtwork: (jobId: string, ordinal: number, sha256: string) =>
 			`/api/v1/library/management/previews/${encodeURIComponent(jobId)}/items/${ordinal}/artwork/${encodeURIComponent(sha256)}`
 	},
-	search: {
-		// MusicBrainz album search. v3 search buckets read the local catalog
-		// and have no MusicBrainz-backed album search yet.
-		albums: (query: string, limit = 50, offset = 0) =>
-			`/api/v1/search/albums?q=${encodeURIComponent(query)}&limit=${limit}${offset ? `&offset=${offset}` : ''}`
-	},
 	system: {
 		health: () => '/api/v1/system/health'
 	},

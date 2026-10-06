@@ -14,6 +14,8 @@ import {
 	type LibraryV3UserId
 } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
+import { SearchV3Api } from '../search/SearchV3Api';
+import { toMusicBrainzAlbums } from '../search/SearchV3Adapters';
 import {
 	toAlbumDetail,
 	toAlbumSummary,
@@ -409,8 +411,7 @@ export const getLibrarySearchQuery = (getTerm: Getter<string>) =>
 	});
 
 // MusicBrainz album search, used to match dropped files to a release group.
-// The results must carry real release-group MBIDs, which the v3 search
-// buckets (local catalog) cannot give, so this read waits on a v3 route.
+// Only rows with a real release-group MBID are offered.
 export const getAlbumSearchQuery = (getTerm: Getter<string>) =>
 	createQuery(() => {
 		const term = getTerm().trim();
@@ -419,10 +420,10 @@ export const getAlbumSearchQuery = (getTerm: Getter<string>) =>
 			staleTime: CACHE_TTL.LIBRARY_NATIVE,
 			queryKey: LibraryQueryKeyFactory.catalog.albumSearch(userId(), term),
 			queryFn: async ({ signal }): Promise<Album[]> => {
-				const data = await api.global.get<{ results?: Album[] }>(API.search.albums(term, 20), {
+				const data = await api.global.v3.GET(SearchV3Api.bucket('albums', term, 20, 0), {
 					signal
 				});
-				return data.results ?? [];
+				return toMusicBrainzAlbums(data.results);
 			}
 		};
 	});
