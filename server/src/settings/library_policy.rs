@@ -180,6 +180,12 @@ fn normalise_rule_path(path: &str) -> Result<String, SettingsError> {
     Ok(parts.join("/"))
 }
 
+/// Whether two cleaned root paths collide: the same directory, or one
+/// inside the other. Roots may not overlap.
+fn paths_overlap(a: &Path, b: &Path) -> bool {
+    a.starts_with(b) || b.starts_with(a)
+}
+
 /// Normalized settings plus warnings and the content revision.
 pub struct ResolvedLibraryPolicy {
     /// Normalized settings.
@@ -232,10 +238,7 @@ pub fn resolve(settings: &TypedLibrary) -> Result<ResolvedLibraryPolicy, Setting
         }
         let canonical = normalise_root_path(&root.path)?;
         for (other_id, other_path) in &canonical_paths {
-            if canonical == *other_path
-                || canonical.starts_with(other_path)
-                || other_path.starts_with(&canonical)
-            {
+            if paths_overlap(&canonical, other_path) {
                 return Err(SettingsError::InvalidInput {
                     message: format!("Library root {root_id} overlaps another root ({other_id})."),
                 });
@@ -778,40 +781,63 @@ pub fn apply_preview(
 }
 
 /// Recover a root's path from one of its rows: the file path minus the
-/// root-relative path. A row whose two paths disagree falls back to the
-/// file's directory, which the restore dialog lets the user correct.
-fn recovered_root_path(root: &CatalogRoot) -> String {
+/// root-relative path, cleaned. When the relative path is not plain
+/// directory names or the file path does not end with it, fall back to
+/// the file's directory, which the restore dialog lets the user correct.
+/// None when the stored file path is not absolute.
+fn recovered_root_path(root: &CatalogRoot) -> Option<PathBuf> {
     let file = Path::new(&root.sample_file_path);
     let relative = Path::new(&root.sample_relative_path);
+    let plain = relative.components().next().is_some()
+        && relative
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)));
     let mut path = file.to_path_buf();
-    if !root.sample_relative_path.is_empty() && file.ends_with(relative) {
+    if plain && file.ends_with(relative) {
         for _ in relative.components() {
             path.pop();
         }
     } else {
         path.pop();
     }
-    path.to_string_lossy().into_owned()
+    clean_absolute(&path.to_string_lossy())
 }
 
 /// Roots the catalog holds rows for that the saved settings no longer
-/// list, with their recovered paths.
+/// list, with their recovered paths. A root whose recovered path equals,
+/// holds, or sits inside a configured root is left out: restoring it
+/// would fail the overlap check, and its files already belong to that
+/// root.
 pub fn restorable_roots(
     settings: &TypedLibrary,
     catalog: &[CatalogRoot],
 ) -> Vec<LibraryRestorableRoot> {
-    let configured: BTreeSet<&str> = settings
+    let configured_ids: BTreeSet<&str> = settings
         .library_roots
         .iter()
         .map(|root| root.id.as_str())
         .collect();
+    let configured_paths: Vec<PathBuf> = settings
+        .library_roots
+        .iter()
+        .filter_map(|root| clean_absolute(&root.path))
+        .collect();
     catalog
         .iter()
-        .filter(|root| !configured.contains(root.root_id.as_str()))
-        .map(|root| LibraryRestorableRoot {
-            root_id: root.root_id.clone(),
-            path: recovered_root_path(root),
-            indexed_file_count: root.track_count,
+        .filter(|root| !configured_ids.contains(root.root_id.as_str()))
+        .filter_map(|root| {
+            let path = recovered_root_path(root)?;
+            if configured_paths
+                .iter()
+                .any(|configured| paths_overlap(&path, configured))
+            {
+                return None;
+            }
+            Some(LibraryRestorableRoot {
+                root_id: root.root_id.clone(),
+                path: path.to_string_lossy().into_owned(),
+                indexed_file_count: root.track_count,
+            })
         })
         .collect()
 }
@@ -853,12 +879,16 @@ pub fn with_restored_roots(
         .map(|root| root.label.to_lowercase())
         .collect();
     for root in restorable {
-        let path = paths
+        let submitted = paths
             .get(&root.root_id)
             .map(|path| path.trim())
             .filter(|path| !path.is_empty())
-            .unwrap_or(&root.path)
-            .to_owned();
+            .unwrap_or(&root.path);
+        // Label from the cleaned path; a relative override stays as sent so
+        // the resolver rejects it with its own message.
+        let path = clean_absolute(submitted)
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_else(|| submitted.to_owned());
         let label = restored_root_label(&path, &mut used);
         settings.library_roots.push(LibraryRoot {
             id: root.root_id.clone(),
@@ -949,5 +979,42 @@ pub fn settings_response(resolved: Masked<ResolvedLibraryPolicy>) -> LibrarySett
         affected_scope_ids: Vec::new(),
         actions_applied: Vec::new(),
         warnings,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn catalog_root(id: &str, file: &str, relative: &str) -> CatalogRoot {
+        CatalogRoot {
+            root_id: id.to_owned(),
+            sample_file_path: file.to_owned(),
+            sample_relative_path: relative.to_owned(),
+            track_count: 1,
+        }
+    }
+
+    #[test]
+    fn restorable_roots_skip_paths_a_configured_root_covers() {
+        let settings = TypedLibrary {
+            library_roots: vec![LibraryRoot {
+                id: "new".to_owned(),
+                path: "/music".to_owned(),
+                label: "music".to_owned(),
+                ..LibraryRoot::default()
+            }],
+            ..TypedLibrary::default()
+        };
+        let catalog = [
+            catalog_root("same", "/music/A/one.flac", "A/one.flac"),
+            catalog_root("inside", "/music/A/one.flac", "one.flac"),
+            catalog_root("holds", "/one.flac", "one.flac"),
+            catalog_root("apart", "/other/x/../B/two.flac", "B/two.flac"),
+        ];
+        let offered = restorable_roots(&settings, &catalog);
+        assert_eq!(offered.len(), 1);
+        assert_eq!(offered[0].root_id, "apart");
+        assert_eq!(offered[0].path, "/other");
     }
 }
