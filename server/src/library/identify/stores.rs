@@ -47,6 +47,65 @@ pub trait ReleaseStore: Send + Sync {
     fn save_release(&self, release: &Release);
 }
 
+/// Keep every candidate document the store does not hold fresh, on a
+/// blocking thread: the stores are synchronous SQLite.
+pub async fn keep_releases(store: &std::sync::Arc<dyn ReleaseStore>, releases: Vec<Release>) {
+    if releases.is_empty() {
+        return;
+    }
+    let store = store.clone();
+    let kept = tokio::task::spawn_blocking(move || {
+        for release in &releases {
+            if store
+                .release(&release.id, Some(RELEASE_FRESH_SECS))
+                .is_none()
+            {
+                store.save_release(release);
+            }
+        }
+    })
+    .await;
+    if let Err(error) = kept {
+        tracing::warn!(%error, "keeping release documents failed");
+    }
+}
+
+/// A stored document fresh enough for recall, read on a blocking thread.
+pub async fn fresh_release(
+    store: &std::sync::Arc<dyn ReleaseStore>,
+    release_mbid: &str,
+) -> Option<Release> {
+    let store = store.clone();
+    let release_mbid = release_mbid.to_owned();
+    match tokio::task::spawn_blocking(move || {
+        store.release(&release_mbid, Some(RELEASE_FRESH_SECS))
+    })
+    .await
+    {
+        Ok(found) => found,
+        Err(error) => {
+            tracing::warn!(%error, "reading a release document failed");
+            None
+        }
+    }
+}
+
+/// Fingerprints already taken, keyed by track and its file's stat
+/// revision, so an unchanged file is never decoded twice.
+pub trait FingerprintStore: Send + Sync {
+    /// The stored print and its duration in seconds.
+    fn fingerprint(&self, local_track_id: &str, stat_revision: &str) -> Option<(String, u32)>;
+    /// Keep a print; `matched` says whether AcoustID knew it.
+    fn save_fingerprint(
+        &self,
+        local_track_id: &str,
+        stat_revision: &str,
+        fingerprint: &str,
+        duration_seconds: u32,
+        matched: bool,
+    );
+}
+
 /// Durable credit proof rows.
 pub trait ProofStore: Send + Sync {
     fn proofs_for_artist(&self, source_local_artist_id: &str) -> Vec<CreditProof>;

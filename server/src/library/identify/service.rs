@@ -24,9 +24,9 @@ use super::rules::{
 };
 use super::stores::{
     AliasStore, Approval, AttemptLanding, FactsSource, IdentityStore, PinStore, ProofStore,
-    QueueStore, RELEASE_FRESH_SECS, ReleaseStore, ReviewStore, StoreError, land_job,
+    QueueStore, ReleaseStore, ReviewStore, StoreError, keep_releases, land_job,
 };
-use crate::library::matching::{EditionPrefs, Verdict, decide, match_release};
+use crate::library::matching::{EditionPrefs, Support, Verdict, decide, match_release};
 
 /// Every dependency the identify service needs, injected by constructor.
 pub struct IdentifyDeps {
@@ -97,7 +97,7 @@ impl IdentifyService {
             });
         };
         let RecallOutcome { result: recall, .. } =
-            self.deps.providers.recall_candidates(&facts, 10).await;
+            self.deps.providers.recall_candidates(&facts).await;
         if recall.provider_deferred {
             land_job(
                 &mut job,
@@ -116,16 +116,7 @@ impl IdentifyService {
         // Every candidate's document stays on file: the identity's release
         // for tagging, the others because a curator may approve them.
         // Live recall already stored what it fetched.
-        for release in &recall.releases {
-            if self
-                .deps
-                .releases
-                .release(&release.id, Some(RELEASE_FRESH_SECS))
-                .is_none()
-            {
-                self.deps.releases.save_release(release);
-            }
-        }
+        keep_releases(&self.deps.releases, recall.releases.clone()).await;
         let (scored, decision) = self.score(&facts, &recall);
         let report = self.apply_decision(&mut job, &facts, &scored, decision, now_ms);
         self.deps.queue.update(job);
@@ -424,7 +415,12 @@ impl IdentifyService {
         };
         let album_revision = self.deps.proofs.album_revision(&facts.local_album_id);
         for track in &winner.track_evidence {
-            if track.classification != EvidenceClass::Supported {
+            // Proof rows need provider proof: an embedded id or the
+            // audio's fingerprint, never a title and length match.
+            let proven = track.evidence_kinds.iter().any(|kind| {
+                kind == Support::EmbeddedId.code() || kind == Support::Fingerprint.code()
+            });
+            if track.classification != EvidenceClass::Supported || !proven {
                 continue;
             }
             let track_revision = self.deps.proofs.track_revision(&track.local_track_id);

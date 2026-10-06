@@ -22,10 +22,12 @@ pub struct MemoryReleaseStore {
 
 impl ReleaseStore for MemoryReleaseStore {
     fn release(&self, release_mbid: &str, _max_age_secs: Option<u64>) -> Option<Release> {
-        self.releases
-            .lock()
-            .ok()?
-            .get(&release_mbid.to_ascii_lowercase())
+        let all = self.releases.lock().ok()?;
+        all.get(&release_mbid.to_ascii_lowercase())
+            .or_else(|| {
+                all.values()
+                    .find(|release| release.answers_to(release_mbid))
+            })
             .cloned()
     }
 

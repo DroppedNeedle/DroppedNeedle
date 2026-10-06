@@ -195,6 +195,7 @@ impl LibrarySetup {
                 parts.config,
                 parts.roots,
                 parts.pool,
+                parts.store.clone(),
             );
             Arc::new(super::identify::providers::LiveProviders::new(
                 musicbrainz,

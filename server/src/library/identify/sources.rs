@@ -16,6 +16,7 @@ use std::sync::Arc;
 use futures_util::future::BoxFuture;
 
 use super::models::LocalTrackFacts;
+use super::stores::FingerprintStore;
 use crate::library::matching::{CreditedArtist, Release, ReleaseMedium, ReleaseTrack};
 use crate::library::scan::pool::BlockingPool;
 use crate::library::scan::roots::RootRegistry;
@@ -263,12 +264,14 @@ impl FingerprintSource for NoFingerprints {
 /// Live roots, read when a job needs them.
 pub type Roots = Arc<dyn Fn() -> RootRegistry + Send + Sync>;
 
-/// Chromaprint on the blocking pool plus batched AcoustID lookups.
+/// Chromaprint on the blocking pool plus batched AcoustID lookups. Prints
+/// are kept per track and file revision, so a file is decoded once.
 pub struct AcoustIdFingerprints<P, S> {
     client: AcoustIdClient<P, S>,
     config: Arc<ConfigStore>,
     roots: Roots,
     pool: BlockingPool,
+    store: Arc<dyn FingerprintStore>,
 }
 
 impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
@@ -277,12 +280,14 @@ impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
         config: Arc<ConfigStore>,
         roots: Roots,
         pool: BlockingPool,
+        store: Arc<dyn FingerprintStore>,
     ) -> Self {
         Self {
             client,
             config,
             roots,
             pool,
+            store,
         }
     }
 
@@ -303,9 +308,30 @@ impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
         if key.is_empty() {
             return AudioMatches::default();
         }
+        // Prints already taken for these exact files come from the store.
+        let wanted: Vec<(String, String)> = tracks
+            .iter()
+            .map(|track| (track.local_track_id.clone(), track.stat_revision.clone()))
+            .collect();
+        let store = self.store.clone();
+        let stored: HashMap<String, (String, u32)> = tokio::task::spawn_blocking(move || {
+            wanted
+                .into_iter()
+                .filter_map(|(id, revision)| {
+                    let print = store.fingerprint(&id, &revision)?;
+                    Some((id, print))
+                })
+                .collect()
+        })
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "reading stored fingerprints failed");
+            HashMap::new()
+        });
         let registry = (self.roots)();
         let jobs: Vec<(String, PathBuf)> = tracks
             .iter()
+            .filter(|track| !stored.contains_key(&track.local_track_id))
             .filter_map(|track| {
                 let root = registry.resolve(&track.root_id)?;
                 Some((
@@ -324,10 +350,15 @@ impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
             }
         }))
         .await;
-        let mut prints = Vec::new();
+        let mut prints: Vec<(String, String, u32)> = stored
+            .into_iter()
+            .map(|(id, (print, seconds))| (id, print, seconds))
+            .collect();
         for (id, result) in printed {
             match result {
-                Ok(Ok(print)) if print.duration_seconds > 0 => prints.push((id, print)),
+                Ok(Ok(print)) if print.duration_seconds > 0 => {
+                    prints.push((id, print.fingerprint, print.duration_seconds));
+                }
                 Ok(Ok(_)) => tracing::debug!(track = id, "zero-length audio not fingerprinted"),
                 Ok(Err(error)) => tracing::info!(track = id, %error, "fingerprint failed"),
                 Err(error) => tracing::warn!(track = id, %error, "fingerprint job failed"),
@@ -335,23 +366,51 @@ impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
         }
         let queries: Vec<BatchQuery<'_>> = prints
             .iter()
-            .map(|(_, print)| BatchQuery {
-                fingerprint: &print.fingerprint,
-                duration_secs: u64::from(print.duration_seconds),
+            .map(|(_, print, seconds)| BatchQuery {
+                fingerprint: print,
+                duration_secs: u64::from(*seconds),
             })
             .collect();
         let found = self.client.lookup_batch(&key, &queries).await;
         let mut matches = AudioMatches::default();
-        for (index, heard) in found {
-            let Some((id, _)) = prints.get(index) else {
+        for (index, heard) in &found {
+            let Some((id, _, _)) = prints.get(*index) else {
                 continue;
             };
             if !heard.recording_ids.is_empty() {
-                matches.recordings.insert(id.clone(), heard.recording_ids);
+                matches
+                    .recordings
+                    .insert(id.clone(), heard.recording_ids.clone());
             }
             if !heard.release_ids.is_empty() {
-                matches.releases.insert(id.clone(), heard.release_ids);
+                matches
+                    .releases
+                    .insert(id.clone(), heard.release_ids.clone());
             }
+        }
+        // Keep every print the lookup answered for, matched or not.
+        let revisions: HashMap<String, String> = tracks
+            .iter()
+            .map(|track| (track.local_track_id.clone(), track.stat_revision.clone()))
+            .collect();
+        let keep: Vec<(String, String, String, u32, bool)> = found
+            .keys()
+            .filter_map(|index| {
+                let (id, print, seconds) = prints.get(*index)?;
+                let revision = revisions.get(id)?.clone();
+                let matched = matches.recordings.contains_key(id);
+                Some((id.clone(), revision, print.clone(), *seconds, matched))
+            })
+            .collect();
+        let store = self.store.clone();
+        let kept = tokio::task::spawn_blocking(move || {
+            for (id, revision, print, seconds, matched) in keep {
+                store.save_fingerprint(&id, &revision, &print, seconds, matched);
+            }
+        })
+        .await;
+        if let Err(error) = kept {
+            tracing::warn!(%error, "keeping fingerprints failed");
         }
         matches
     }

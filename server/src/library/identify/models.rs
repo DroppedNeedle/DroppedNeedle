@@ -309,6 +309,9 @@ pub struct LocalTrackFacts {
     pub root_id: String,
     #[serde(default)]
     pub relative_path: String,
+    /// The file's size and mtime revision, which keys stored prints.
+    #[serde(default)]
+    pub stat_revision: String,
 }
 
 /// Provider recall result: candidate releases with their tracklists,

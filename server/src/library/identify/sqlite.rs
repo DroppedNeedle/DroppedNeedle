@@ -28,8 +28,8 @@ use super::models::{
 };
 use super::queue::PRIORITY_NEW_OR_CHANGED;
 use super::stores::{
-    AliasStore, Approval, FactsSource, IdentityStore, PinStore, ProofStore, QueueStore,
-    RELEASE_FRESH_SECS, ReleaseStore, ReviewStore, StoreError,
+    AliasStore, Approval, FactsSource, FingerprintStore, IdentityStore, PinStore, ProofStore,
+    QueueStore, RELEASE_FRESH_SECS, ReleaseStore, ReviewStore, StoreError,
 };
 use crate::library::matching::Release;
 
@@ -564,7 +564,7 @@ impl FactsSource for SqliteIdentifyStore {
                 "SELECT id, title, COALESCE(artist_name, ''), track_number, disc_number, \
                  duration_seconds, embedded_recording_mbid, embedded_release_track_mbid, \
                  embedded_release_mbid, embedded_release_group_mbid, membership_locked, \
-                 root_id, relative_path \
+                 root_id, relative_path, stat_revision \
                  FROM local_tracks WHERE local_album_id = ?1 AND availability = 'indexed' \
                  ORDER BY disc_number, track_number, relative_path",
             )?;
@@ -587,6 +587,7 @@ impl FactsSource for SqliteIdentifyStore {
                         release_group_mbid: row.get(9)?,
                         root_id: row.get(11)?,
                         relative_path: row.get(12)?,
+                        stat_revision: row.get(13)?,
                     },
                     row.get::<_, i64>(10)? != 0,
                 ))
@@ -612,6 +613,67 @@ impl FactsSource for SqliteIdentifyStore {
     }
 }
 
+/// Version tag for stored prints: the Chromaprint pipeline in
+/// `tags::fingerprint` (test2 preset, 120 s window).
+const FINGERPRINTER_VERSION: &str = "chromaprint-test2-120s";
+
+impl FingerprintStore for SqliteIdentifyStore {
+    fn fingerprint(&self, local_track_id: &str, stat_revision: &str) -> Option<(String, u32)> {
+        self.read("stored fingerprint", |conn| {
+            conn.query_row(
+                "SELECT fingerprint, duration_seconds FROM audio_fingerprint_outcomes \
+                 WHERE local_track_id = ?1 AND stat_revision = ?2 \
+                 AND fingerprinter_version = ?3 AND fingerprint IS NOT NULL",
+                params![local_track_id, stat_revision, FINGERPRINTER_VERSION],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<f64>>(1)?.unwrap_or(0.0).max(0.0) as u32,
+                    ))
+                },
+            )
+            .optional()
+        })
+        .flatten()
+    }
+
+    fn save_fingerprint(
+        &self,
+        local_track_id: &str,
+        stat_revision: &str,
+        fingerprint: &str,
+        duration_seconds: u32,
+        matched: bool,
+    ) {
+        let now = now_secs();
+        self.write("save fingerprint", |tx| {
+            tx.execute(
+                "INSERT INTO audio_fingerprint_outcomes (id, local_track_id, stat_revision, \
+                 fingerprinter_version, state, fingerprint, duration_seconds, \
+                 first_attempt_at, last_attempt_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8) \
+                 ON CONFLICT (local_track_id, stat_revision, fingerprinter_version) DO UPDATE SET \
+                 state = excluded.state, fingerprint = excluded.fingerprint, \
+                 duration_seconds = excluded.duration_seconds, \
+                 last_attempt_at = excluded.last_attempt_at, attempt_count = attempt_count + 1",
+                params![
+                    hex_sha256(
+                        format!("{local_track_id}\0{stat_revision}\0{FINGERPRINTER_VERSION}")
+                            .as_bytes()
+                    ),
+                    local_track_id,
+                    stat_revision,
+                    FINGERPRINTER_VERSION,
+                    if matched { "matched" } else { "no_match" },
+                    fingerprint,
+                    f64::from(duration_seconds),
+                    now,
+                ],
+            )
+        });
+    }
+}
+
 impl ReleaseStore for SqliteIdentifyStore {
     fn release(&self, release_mbid: &str, max_age_secs: Option<u64>) -> Option<Release> {
         let oldest = max_age_secs.map_or(0.0, |age| now_secs() - age as f64);
@@ -619,9 +681,11 @@ impl ReleaseStore for SqliteIdentifyStore {
             .read("release document", |conn| {
                 conn.query_row(
                     "SELECT canonical_payload_json FROM library_management_metadata_snapshots \
-                     WHERE provider = ?1 AND entity_kind = ?2 AND entity_id = ?3 \
-                     AND input_hash = ?4 AND fetched_at >= ?5 \
-                     ORDER BY fetched_at DESC LIMIT 1",
+                     WHERE provider = ?1 AND entity_kind = ?2 AND input_hash = ?4 \
+                     AND fetched_at >= ?5 AND (entity_id = ?3 OR EXISTS (SELECT 1 \
+                     FROM json_each(canonical_payload_json, '$.old_ids') \
+                     WHERE lower(json_each.value) = ?3)) \
+                     ORDER BY entity_id = ?3 DESC, fetched_at DESC LIMIT 1",
                     params![
                         PROVIDER,
                         RELEASE_KIND,
@@ -679,13 +743,17 @@ impl ReleaseStore for SqliteIdentifyStore {
                     now + RELEASE_FRESH_SECS as f64,
                 ],
             )?;
-            // Expired documents stay only while an identity names them.
+            // Expired documents stay while an identity names them or a
+            // pending review offers them to a curator.
             tx.execute(
                 "DELETE FROM library_management_metadata_snapshots \
                  WHERE provider = ?1 AND entity_kind = ?2 AND expires_at < ?3 \
                  AND entity_id NOT IN (SELECT lower(release_mbid) \
-                 FROM local_album_external_identities WHERE release_mbid IS NOT NULL)",
-                params![PROVIDER, RELEASE_KIND, now],
+                 FROM local_album_external_identities WHERE release_mbid IS NOT NULL) \
+                 AND entity_id NOT IN (SELECT lower(json_extract(candidate.value, '$.release_mbid')) \
+                 FROM library_identify_reviews, json_each(candidates_json) AS candidate \
+                 WHERE state = ?4 AND json_extract(candidate.value, '$.release_mbid') IS NOT NULL)",
+                params![PROVIDER, RELEASE_KIND, now, review_state_str(ReviewState::Pending)],
             )?;
             Ok(())
         });

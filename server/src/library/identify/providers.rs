@@ -24,7 +24,7 @@ use std::sync::Arc;
 use super::evidence::local_album;
 use super::models::{LocalAlbumFacts, RecallResult};
 use super::sources::{FingerprintSource, ReleaseHit, ReleaseSource, SourceError};
-use super::stores::{RELEASE_FRESH_SECS, ReleaseStore};
+use super::stores::{ReleaseStore, fresh_release, keep_releases};
 use crate::library::matching::decide::STRONG;
 use crate::library::matching::strings::fold;
 use crate::library::matching::{LocalAlbum, Release, match_release, should_fingerprint};
@@ -49,7 +49,6 @@ pub trait IdentifyProviders: Send + Sync {
     fn recall_candidates(
         &self,
         facts: &LocalAlbumFacts,
-        limit: u32,
     ) -> std::pin::Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>>;
 }
 
@@ -143,12 +142,12 @@ impl<R: ReleaseSource, F: FingerprintSource> LiveProviders<R, F> {
 
     /// A release from the store when fresh, else from the source.
     async fn release(&self, mbid: &str) -> Result<Option<Release>, SourceError> {
-        if let Some(stored) = self.store.release(mbid, Some(RELEASE_FRESH_SECS)) {
+        if let Some(stored) = fresh_release(&self.store, mbid).await {
             return Ok(Some(stored));
         }
         let fetched = self.releases.release(mbid).await?;
         if let Some(release) = &fetched {
-            self.store.save_release(release);
+            keep_releases(&self.store, vec![release.clone()]).await;
         }
         Ok(fetched)
     }
@@ -193,7 +192,6 @@ impl<R: ReleaseSource, F: FingerprintSource> IdentifyProviders for LiveProviders
     fn recall_candidates(
         &self,
         facts: &LocalAlbumFacts,
-        _limit: u32,
     ) -> std::pin::Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>> {
         let facts = facts.clone();
         Box::pin(async move {
@@ -340,7 +338,6 @@ impl IdentifyProviders for FakeProviders {
     fn recall_candidates(
         &self,
         _facts: &LocalAlbumFacts,
-        _limit: u32,
     ) -> std::pin::Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>> {
         let result = self
             .recall
