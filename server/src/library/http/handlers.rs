@@ -1,7 +1,8 @@
 //! Library handlers: thin Axum handlers over [`LibrarySetup`].
 //!
-//! Blocking publisher work runs on `spawn_blocking`; everything else
-//! answers inline from the memory stores.
+//! Everything that reaches the library stores (synchronous SQLite) or the
+//! publisher runs on `spawn_blocking`; only the in-memory root registry
+//! answers inline.
 
 use axum::{
     Json,
@@ -28,6 +29,16 @@ use crate::library::wiring::LibrarySetup;
 // ---------------------------------------------------------------------------
 // Views.
 // ---------------------------------------------------------------------------
+
+/// Run store-backed service work on a blocking thread: the library stores
+/// are synchronous SQLite and must not stall the async workers.
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, LibraryError> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|cause| LibraryError::internal(&cause))
+}
 
 fn policy_label(policy: EffectivePolicy) -> String {
     match policy {
@@ -229,7 +240,8 @@ pub async fn trigger_scan(
     caller: RequireAdmin,
     ValidJson(body): ValidJson<ScanBody>,
 ) -> Result<Json<ScanResponse>, LibraryError> {
-    let result = state.request_scan(body.root_id.as_deref(), &caller.0.user_id)?;
+    let user_id = caller.0.user_id;
+    let result = blocking(move || state.request_scan(body.root_id.as_deref(), &user_id)).await??;
     Ok(Json(ScanResponse {
         run_id: result.run_id,
         disposition: snake(&result.disposition),
@@ -250,9 +262,11 @@ pub async fn list_runs(
     State(state): State<LibrarySetup>,
     _caller: Principal,
 ) -> Result<Json<ScanRunsResponse>, LibraryError> {
+    let (current, history) =
+        blocking(move || (state.coordinator.current(), state.coordinator.history(20))).await?;
     Ok(Json(ScanRunsResponse {
-        current: state.coordinator.current().iter().map(run_view).collect(),
-        history: state.coordinator.history(20).iter().map(run_view).collect(),
+        current: current.iter().map(run_view).collect(),
+        history: history.iter().map(run_view).collect(),
     }))
 }
 
@@ -272,7 +286,7 @@ pub async fn get_run(
     _caller: Principal,
     Path(id): Path<String>,
 ) -> Result<Json<RunDetailResponse>, LibraryError> {
-    let (run, scopes, files) = state.run_detail(&id)?;
+    let (run, scopes, files) = blocking(move || state.run_detail(&id)).await??;
     Ok(Json(RunDetailResponse {
         run: run_view(&run),
         scopes: scopes.iter().map(scope_view).collect(),
@@ -316,7 +330,8 @@ pub async fn enqueue_identify(
         });
     }
     let kind = parse_identify_kind(body.kind.as_deref())?;
-    let job = state.enqueue_identify(&body.album_id, kind, &caller.0.user_id)?;
+    let user_id = caller.0.user_id;
+    let job = blocking(move || state.enqueue_identify(&body.album_id, kind, &user_id)).await??;
     let state_label: String = match job.state {
         JobState::Queued => "queued".to_owned(),
         other => snake(&other),
@@ -344,17 +359,14 @@ pub async fn list_reviews(
     _caller: Principal,
     ValidQuery(query): ValidQuery<std::collections::HashMap<String, String>>,
 ) -> Result<Json<ReviewsResponse>, LibraryError> {
-    let Some(album_id) = query.get("album_id") else {
+    let Some(album_id) = query.get("album_id").cloned() else {
         return Err(LibraryError::InvalidInput {
             message: "Query needs album_id".to_owned(),
         });
     };
+    let reviews = blocking(move || state.pending_reviews(&album_id)).await?;
     Ok(Json(ReviewsResponse {
-        reviews: state
-            .pending_reviews(album_id)
-            .iter()
-            .map(review_view)
-            .collect(),
+        reviews: reviews.iter().map(review_view).collect(),
     }))
 }
 
@@ -384,7 +396,9 @@ pub async fn approve_review(
             message: "Candidate key must not be empty".to_owned(),
         });
     }
-    let (review, identity) = state.approve_review(&id, &caller.0.user_id, &body.candidate_key)?;
+    let user_id = caller.0.user_id;
+    let (review, identity) =
+        blocking(move || state.approve_review(&id, &user_id, &body.candidate_key)).await??;
     Ok(Json(ReviewResolveResponse {
         review: review_view(&review),
         identity: identity.as_ref().map(identity_view),
@@ -409,7 +423,8 @@ pub async fn reject_review(
     caller: RequireCurator,
     Path(id): Path<String>,
 ) -> Result<Json<ReviewResolveResponse>, LibraryError> {
-    let review = state.reject_review(&id, &caller.0.user_id)?;
+    let user_id = caller.0.user_id;
+    let review = blocking(move || state.reject_review(&id, &user_id)).await??;
     Ok(Json(ReviewResolveResponse {
         review: review_view(&review),
         identity: None,
