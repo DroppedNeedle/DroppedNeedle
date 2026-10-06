@@ -182,12 +182,7 @@ pub fn is_artwork_request(path: &str) -> bool {
     if let Some(endpoint) = subsonic_endpoint(&low) {
         return matches!(endpoint, "getcoverart" | "getavatar");
     }
-    let segs: Vec<&str> = low.split('/').collect();
-    matches!(
-        segs.as_slice(),
-        ["", "jellyfin", "items", id, "images", kind] | ["", "jellyfin", "items", id, "images", kind, _]
-            if !id.is_empty() && !kind.is_empty()
-    )
+    super::auth::is_image_route(&low)
 }
 
 /// Mutation classification (v2 `is_mutation_request`): DELETE/PATCH/PUT

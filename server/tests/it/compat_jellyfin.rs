@@ -680,6 +680,11 @@ async fn finamp_file_universal_and_hls_routes() {
         .find(|line| !line.starts_with('#'))
         .expect("one segment line");
     assert_eq!(segment, format!("main.ts?{query}"));
+    let head = fx
+        .send("HEAD", &audio(&format!("main.m3u8?{query}")), None, b"")
+        .await;
+    assert_eq!((head.status, head.body.len()), (200, 0));
+    assert_eq!(head.header("content-length"), text.len().to_string());
     let ts = fx.get(&audio(segment), None).await;
     assert_eq!(ts.status, 200);
     assert!(

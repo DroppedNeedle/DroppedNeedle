@@ -51,7 +51,7 @@ pub fn jellyfin_is_anonymous(method: &str, path: &str) -> bool {
 }
 
 /// `GET /Items/{id}/Images/{type}[/{index}]` (v2 `_image`, anon).
-fn is_image_route(low: &str) -> bool {
+pub(crate) fn is_image_route(low: &str) -> bool {
     let segs: Vec<&str> = low.split('/').collect();
     if segs.len() != 6 && segs.len() != 7 {
         return false;

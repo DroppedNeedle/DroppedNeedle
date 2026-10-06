@@ -49,7 +49,8 @@ use std::os::unix::fs::PermissionsExt as _;
 pub const SUPPORTED_OUT_FORMATS: &[&str] = &["mp3", "opus"];
 
 /// Internal format name for AAC in MPEG-TS, the segment format the
-/// Jellyfin HLS playlist serves. Not a client-facing codec choice.
+/// Jellyfin HLS playlist serves. Not a client-facing codec choice: only the
+/// compat forced plan accepts it, never [`decide`].
 pub const HLS_SEGMENT_FORMAT: &str = "aac-ts";
 
 /// Output bitrate when the client sets no cap, per codec (Navidrome's
@@ -300,7 +301,6 @@ pub fn decide(
     let out_format = match requested.as_str() {
         "mp3" => OutFormat::Mp3,
         "opus" => OutFormat::Opus,
-        HLS_SEGMENT_FORMAT => OutFormat::AacTs,
         _ => settings.default_format,
     };
     let bitrate = out_bitrate_kbps(

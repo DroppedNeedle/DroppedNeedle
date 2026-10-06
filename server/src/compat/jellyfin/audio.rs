@@ -367,16 +367,32 @@ where
         return denied;
     }
     // Unknown tails 404 exactly like GET (no `universal`/`stream` probe
-    // that answers 200 for a route GET would refuse). The HLS tails are
-    // GET-only.
+    // that answers 200 for a route GET would refuse). The playlist answers
+    // like GET with the body dropped; the HLS segment is a live transcode,
+    // so HEAD never starts one.
     let tail = tail.to_ascii_lowercase();
-    if tail != "universal" && !is_stream_tail(&tail) {
+    if tail != "universal" && tail != HLS_PLAYLIST && !is_stream_tail(&tail) {
         return error(StatusCode::NOT_FOUND);
     }
     let headers = request.headers().clone();
     let query = request.uri().query().map(str::to_owned);
     if let Err(denied) = authed(&state.passwords, &headers, query.as_deref()).await {
         return denied;
+    }
+    if tail == HLS_PLAYLIST {
+        let (parts, body) = hls_playlist(&state, query.as_deref(), &item_id)
+            .await
+            .into_parts();
+        let length = axum::body::to_bytes(body, usize::MAX)
+            .await
+            .map_or(0, |bytes| bytes.len());
+        let mut response = Response::from_parts(parts, Body::empty());
+        if let Ok(value) = length.to_string().parse() {
+            response
+                .headers_mut()
+                .insert(axum::http::header::CONTENT_LENGTH, value);
+        }
+        return response;
     }
     head_response(&state, &headers, &item_id).await
 }

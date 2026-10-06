@@ -488,8 +488,9 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
 }
 
 /// Build the transcode plan a compat verdict dictates: the adapter's
-/// codec (compat only ever sends `mp3`/`opus`) and its already-decided
-/// bitrate, plus the seek offset. Duration is unknown at this layer, so
+/// codec (`mp3`, `opus`, or the Jellyfin HLS segment format `aac-ts`, which
+/// only this path accepts) and its already-decided bitrate, plus the seek
+/// offset. Duration is unknown at this layer, so
 /// the size estimate degrades to zero remaining seconds.
 fn forced_plan(
     params: &StreamParams,
