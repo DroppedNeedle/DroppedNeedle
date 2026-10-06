@@ -232,7 +232,11 @@ fn warn_on_public_http_oidc(store: &ConfigStore) {
     if config.enabled && super::federated::transport::looks_public_http(&config.issuer) {
         tracing::warn!(
             issuer = %config.issuer,
-            "OIDC sign-in uses plain http on what looks like a public host; logins will be              refused unless it resolves to this machine or your local network. Switch the              provider to https."
+            concat!(
+                "OIDC sign-in uses plain http on what looks like a public host; logins will be ",
+                "refused unless it resolves to this machine or your local network. Switch the ",
+                "provider to https.",
+            )
         );
     }
 }

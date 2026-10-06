@@ -618,6 +618,10 @@ where
         Err(PlexStartDenied::StartFailed(error)) => {
             Err(federated_unavailable(&error, state.ids.as_ref()))
         }
+        Err(PlexStartDenied::Busy) => Err(AuthRouteError::unavailable(
+            &"too many Plex sign-ins are waiting",
+            state.ids.as_ref(),
+        )),
     }
 }
 

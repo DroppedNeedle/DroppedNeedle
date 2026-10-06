@@ -44,6 +44,10 @@ pub const PRODUCT: &str = "DroppedNeedle";
 /// How long a started PIN may be polled. plex.tv expires strong PINs
 /// sooner; this only bounds our own records.
 pub const PIN_TTL: Duration = Duration::from_secs(30 * 60);
+/// Most PINs waiting at once. Starts are public, so the map is bounded:
+/// when it is full of live PINs, new starts are refused until some finish
+/// or expire.
+pub const MAX_PENDING_PINS: usize = 10_000;
 
 /// A freshly minted PIN awaiting authorization.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -175,6 +179,8 @@ pub enum PlexStartDenied {
     Forbidden,
     /// PIN creation or the server lookup failed, or login is switched off.
     StartFailed(FederatedError),
+    /// [`MAX_PENDING_PINS`] sign-ins are already waiting.
+    Busy,
 }
 
 /// A started PIN: what the browser gets back, once.
@@ -218,12 +224,37 @@ fn unknown_pin() -> FederatedError {
 }
 
 impl PendingPins {
-    fn insert(&self, pin_id: i64, record: PendingPin) -> Result<(), FederatedError> {
-        let mut pins = self
-            .0
-            .lock()
-            .map_err(|_| FederatedError::StoreUnavailable("plex pin lock".to_owned()))?;
-        pins.retain(|_, pin| pin.started.elapsed() < PIN_TTL);
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, HashMap<i64, PendingPin>>, PlexStartDenied> {
+        self.0.lock().map_err(|_| {
+            PlexStartDenied::StartFailed(FederatedError::StoreUnavailable(
+                "plex pin lock".to_owned(),
+            ))
+        })
+    }
+
+    /// Make room as of `now`: drop expired PINs when the map is full, and
+    /// refuse when it is still full.
+    fn make_room(pins: &mut HashMap<i64, PendingPin>, now: Instant) -> Result<(), PlexStartDenied> {
+        if pins.len() >= MAX_PENDING_PINS {
+            pins.retain(|_, pin| now.saturating_duration_since(pin.started) < PIN_TTL);
+        }
+        if pins.len() >= MAX_PENDING_PINS {
+            tracing::warn!("too many Plex sign-ins are waiting; refusing new starts");
+            return Err(PlexStartDenied::Busy);
+        }
+        Ok(())
+    }
+
+    /// Check there is room before minting a PIN at plex.tv.
+    fn has_room(&self, now: Instant) -> Result<(), PlexStartDenied> {
+        Self::make_room(&mut *self.lock()?, now)
+    }
+
+    fn insert(&self, pin_id: i64, record: PendingPin, now: Instant) -> Result<(), PlexStartDenied> {
+        let mut pins = self.lock()?;
+        if !pins.contains_key(&pin_id) {
+            Self::make_room(&mut pins, now)?;
+        }
         pins.insert(pin_id, record);
         Ok(())
     }
@@ -320,6 +351,7 @@ where
                 }
             }
         }
+        self.pins.has_room(Instant::now())?;
         let pin = self.client.create_pin().await.map_err(|error| {
             tracing::warn!(%error, "could not create a Plex PIN");
             PlexStartDenied::StartFailed(FederatedError::ProviderUnavailable(
@@ -328,20 +360,19 @@ where
         })?;
         let pin_secret = mint_token()
             .map_err(|_| PlexStartDenied::StartFailed(FederatedError::RngUnavailable))?;
-        self.pins
-            .insert(
-                pin.id,
-                PendingPin {
-                    purpose,
-                    secret_hash: hash_token(&pin_secret),
-                    user_id: match purpose {
-                        PlexPurpose::Login => None,
-                        PlexPurpose::Link | PlexPurpose::Connect => caller.map(str::to_owned),
-                    },
-                    started: Instant::now(),
+        self.pins.insert(
+            pin.id,
+            PendingPin {
+                purpose,
+                secret_hash: hash_token(&pin_secret),
+                user_id: match purpose {
+                    PlexPurpose::Login => None,
+                    PlexPurpose::Link | PlexPurpose::Connect => caller.map(str::to_owned),
                 },
-            )
-            .map_err(PlexStartDenied::StartFailed)?;
+                started: Instant::now(),
+            },
+            Instant::now(),
+        )?;
         Ok(PlexStart {
             pin_id: pin.id,
             authorize_url: plex_auth_url(&self.client.client_id(), &pin.code),
@@ -514,4 +545,36 @@ pub fn plex_auth_url(client_id: &str, pin_code: &str) -> String {
 /// Plaintext token JSON for the store to seal (v2 field names kept).
 pub fn plex_token_json(auth_token: &str) -> String {
     format!("{{\"auth_token\":{}}}", json_string(auth_token))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pending(started: Instant) -> PendingPin {
+        PendingPin {
+            purpose: PlexPurpose::Login,
+            secret_hash: String::new(),
+            user_id: None,
+            started,
+        }
+    }
+
+    #[test]
+    fn pending_pins_are_capped_and_expired_ones_make_room() {
+        let pins = PendingPins::default();
+        let start = Instant::now();
+        for id in 0..MAX_PENDING_PINS as i64 {
+            pins.insert(id, pending(start), start).unwrap();
+        }
+        assert_eq!(
+            pins.insert(-1, pending(start), start),
+            Err(PlexStartDenied::Busy)
+        );
+        assert_eq!(pins.has_room(start), Err(PlexStartDenied::Busy));
+        // Once the waiting PINs expire, a new start prunes them.
+        let later = start + PIN_TTL + Duration::from_secs(1);
+        pins.insert(-1, pending(later), later).unwrap();
+        assert_eq!(pins.lock().unwrap().len(), 1);
+    }
 }
