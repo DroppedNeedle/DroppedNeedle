@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 	import { onDestroy } from 'svelte';
 	import { Info } from 'lucide-svelte';
@@ -16,9 +17,9 @@
 	};
 
 	const form = createSettingsForm<YouTubeConnectionSettings>({
-		loadEndpoint: '/api/v1/settings/youtube',
-		saveEndpoint: '/api/v1/settings/youtube',
-		testEndpoint: '/api/v1/settings/youtube/verify',
+		loadEndpoint: SETTINGS_ENDPOINTS.youtube(),
+		saveEndpoint: SETTINGS_ENDPOINTS.youtube(),
+		testEndpoint: SETTINGS_ENDPOINTS.youtubeVerify(),
 		enabledField: 'enabled',
 		refreshIntegration: true
 	}) as YouTubeSettingsForm;

@@ -610,9 +610,6 @@ export const API = {
 	},
 	settings: () => '/api/v1/settings',
 	settingsPrimarySource: () => '/api/v1/settings/primary-source',
-	settingsNavidrome: () => '/api/v1/settings/navidrome',
-	settingsNavidromeVerify: () => '/api/v1/settings/navidrome/verify',
-	settingsNavidromePlaylistSync: () => '/api/v1/settings/navidrome/playlist-sync',
 	settingsPlex: () => '/api/v1/settings/plex',
 	settingsPlexVerify: () => '/api/v1/settings/plex/verify',
 	settingsPlexLibraries: () => '/api/v1/settings/plex/libraries',
@@ -621,10 +618,6 @@ export const API = {
 	settingsMusicbrainzBrainzMashConsent: () => '/api/v1/settings/musicbrainz/brainzmash/consent',
 	settingsMusicbrainzVerify: () => '/api/v1/settings/musicbrainz/verify',
 	settingsMusicbrainzActivate: () => '/api/v1/settings/musicbrainz/activate',
-	settingsSpotify: () => '/api/v1/settings/spotify',
-	settingsSpotifyRedirectUri: () => '/api/v1/settings/spotify/redirect-uri',
-	settingsGetIt: () => '/api/v1/settings/get-it',
-	settingsFreeMusic: () => '/api/v1/settings/free-music',
 	// profile + connections + spotify builders lived here until the profile
 	// seam migration moved them onto the v3 registry (their endpoints.ts
 	// files); only stragglers with out-of-scope consumers remain.
@@ -703,16 +696,6 @@ export const API = {
 		clearHistory: (all: boolean = false) => `/api/v1/free-music/tasks${all ? '?all=true' : ''}`,
 		cancel: (id: string) => `/api/v1/free-music/tasks/${id}/cancel`,
 		retry: (id: string) => `/api/v1/free-music/tasks/${id}/retry`
-	},
-	plugins: {
-		list: () => '/api/v1/plugins',
-		install: () => '/api/v1/plugins/install',
-		sources: () => '/api/v1/plugins/sources',
-		ext: (name: string, subpath: string) =>
-			`/api/v1/plugins/ext/${encodeURIComponent(name)}/${subpath.replace(/^\/+/, '')}`,
-		uiBundle: (name: string) => `/api/v1/plugins/${encodeURIComponent(name)}/ui/panel.js`,
-		update: (name: string) => `/api/v1/plugins/${encodeURIComponent(name)}`,
-		uninstall: (name: string) => `/api/v1/plugins/${encodeURIComponent(name)}`
 	},
 	dropImport: {
 		uploads: () => '/api/v1/import/uploads',
@@ -1037,7 +1020,3 @@ export const API = {
 		decades: () => '/api/v1/local/decades'
 	}
 } as const;
-
-// URL builder for the admin-only plugin UI bundle; kept beside API so the
-// Settings -> Plugins panel mount stays a pure URL (no fetching here).
-export const getPluginUiBundleUrl = (name: string): string => API.plugins.uiBundle(name);

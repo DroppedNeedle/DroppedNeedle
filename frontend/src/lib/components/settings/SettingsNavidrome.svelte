@@ -1,8 +1,8 @@
 <script lang="ts">
+	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 	import { onDestroy } from 'svelte';
 	import { api, ApiError } from '$lib/api/client';
-	import { API } from '$lib/constants';
 	import type { NavidromeConnectionSettings, NavidromePlaylistSyncResult } from '$lib/types';
 
 	type NavidromeTestResult = { valid: boolean; message: string };
@@ -13,9 +13,9 @@
 	};
 
 	const form = createSettingsForm<NavidromeConnectionSettings>({
-		loadEndpoint: API.settingsNavidrome(),
-		saveEndpoint: API.settingsNavidrome(),
-		testEndpoint: API.settingsNavidromeVerify(),
+		loadEndpoint: SETTINGS_ENDPOINTS.navidrome(),
+		saveEndpoint: SETTINGS_ENDPOINTS.navidrome(),
+		testEndpoint: SETTINGS_ENDPOINTS.navidromeVerify(),
 		enabledField: 'enabled',
 		refreshIntegration: true
 	}) as NavidromeSettingsForm;
@@ -35,9 +35,7 @@
 			// The endpoint reads saved settings, so save first or an edited
 			// path or scope is ignored.
 			await form.save();
-			syncResult = await api.global.post<NavidromePlaylistSyncResult>(
-				API.settingsNavidromePlaylistSync()
-			);
+			syncResult = await api.global.v3.POST(SETTINGS_ENDPOINTS.navidromePlaylistSync());
 		} catch (error) {
 			syncResult = {
 				success: false,

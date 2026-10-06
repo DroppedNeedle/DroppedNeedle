@@ -107,9 +107,11 @@
 										<p class="mt-0.5 text-xs text-base-content/55">{plugin.description}</p>
 									{/if}
 									<div class="mt-1.5 flex flex-wrap gap-1">
-										{#each plugin.capabilities as capability (capability)}
+										{#each plugin.capabilities ?? [] as capability (capability)}
 											<span
-												class="badge badge-sm {plugin.active_capabilities.includes(capability)
+												class="badge badge-sm {(plugin.active_capabilities ?? []).includes(
+													capability
+												)
 													? 'badge-primary badge-outline'
 													: 'badge-ghost'}"
 											>
@@ -122,13 +124,13 @@
 										{#each plugin.targets ?? [] as target (target)}
 											<span class="badge badge-sm badge-success badge-outline">dst:{target}</span>
 										{/each}
-										{#if plugin.capabilities.includes('scheduler')}
+										{#if plugin.capabilities?.includes('scheduler')}
 											<span class="badge badge-sm badge-warning badge-outline">scheduler</span>
 										{/if}
-										{#if plugin.capabilities.includes('streaming_source')}
+										{#if plugin.capabilities?.includes('streaming_source')}
 											<span class="badge badge-sm badge-accent badge-outline">streaming</span>
 										{/if}
-										{#if plugin.capabilities.includes('metadata_provider')}
+										{#if plugin.capabilities?.includes('metadata_provider')}
 											<span class="badge badge-sm badge-secondary badge-outline">metadata</span>
 										{/if}
 									</div>
@@ -181,9 +183,9 @@
 								</div>
 							{/if}
 
-							{#if plugin.settings_fields.length}
+							{#if plugin.settings_fields?.length}
 								<div class="mt-3 grid gap-3 sm:grid-cols-2">
-									{#each plugin.settings_fields as field (field.key)}
+									{#each plugin.settings_fields ?? [] as field (field.key)}
 										<div class="form-control">
 											<label class="label py-1" for="plugin-{plugin.name}-{field.key}">
 												<span class="label-text text-sm">{field.label}</span>

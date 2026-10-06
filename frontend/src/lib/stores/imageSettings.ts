@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store';
 import { api } from '$lib/api/client';
+import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
 
 interface ImageSettings {
 	directRemoteImagesEnabled: boolean;
@@ -19,9 +20,7 @@ async function load(): Promise<void> {
 	if (now - lastFetch < CACHE_MS) return;
 
 	try {
-		const data = await api.global.get<{ direct_remote_images_enabled?: boolean }>(
-			'/api/v1/settings/advanced'
-		);
+		const data = await api.global.v3.GET(SETTINGS_ENDPOINTS.advanced());
 		set({
 			directRemoteImagesEnabled: data.direct_remote_images_enabled ?? true
 		});

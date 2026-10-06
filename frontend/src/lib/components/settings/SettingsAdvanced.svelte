@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
 	import {
 		CircleCheck,
 		CircleAlert,
@@ -21,8 +22,8 @@
 	import SettingsAudioDB from './SettingsAudioDB.svelte';
 
 	const form = createSettingsForm<AdvancedSettingsForm>({
-		loadEndpoint: '/api/v1/settings/advanced',
-		saveEndpoint: '/api/v1/settings/advanced',
+		loadEndpoint: SETTINGS_ENDPOINTS.advanced(),
+		saveEndpoint: SETTINGS_ENDPOINTS.advanced(),
 		afterSave: () => {
 			form.showMessage('Settings saved. Some changes take effect after a page reload');
 		}

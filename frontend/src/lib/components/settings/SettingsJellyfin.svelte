@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 	import { onDestroy } from 'svelte';
 	import type { JellyfinConnectionSettings } from '$lib/types';
@@ -10,9 +11,9 @@
 	};
 
 	const form = createSettingsForm<JellyfinConnectionSettings>({
-		loadEndpoint: '/api/v1/settings/jellyfin',
-		saveEndpoint: '/api/v1/settings/jellyfin',
-		testEndpoint: '/api/v1/settings/jellyfin/verify',
+		loadEndpoint: SETTINGS_ENDPOINTS.jellyfin(),
+		saveEndpoint: SETTINGS_ENDPOINTS.jellyfin(),
+		testEndpoint: SETTINGS_ENDPOINTS.jellyfinVerify(),
 		enabledField: 'enabled',
 		secondaryEnabledField: 'login_enabled',
 		refreshIntegration: true,

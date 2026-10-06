@@ -1,3 +1,4 @@
+import type { components } from '$lib/api/v3/openapi';
 export type Artist = {
 	title: string;
 	musicbrainz_id: string;
@@ -238,22 +239,9 @@ export type AlbumTracksInfo = {
 	selected_release_mbid?: string | null;
 };
 
-export type JellyfinConnectionSettings = {
-	jellyfin_url: string;
-	api_key: string;
-	user_id: string;
-	enabled: boolean;
-	login_enabled: boolean;
-};
+export type JellyfinConnectionSettings = components['schemas']['JellyfinConnection'];
 
-export type OIDCConnectionSettings = {
-	enabled: boolean;
-	issuer: string;
-	client_id: string;
-	client_secret: string;
-	scopes: string;
-	redirect_uri: string;
-};
+export type OIDCConnectionSettings = components['schemas']['OidcConnection'];
 
 export type HomeArtist = {
 	mbid: string | null;
@@ -807,29 +795,9 @@ export type JellyfinTrackPage = {
 // mirrors backend api/v1/schemas/settings.py (NavidromeConnectionSettings, NavidromePlaylistSyncResult)
 export type NavidromePlaylistSyncScope = 'public' | 'all';
 
-export type NavidromeConnectionSettings = {
-	navidrome_url: string;
-	username: string;
-	password: string;
-	enabled: boolean;
-	playlist_sync_enabled: boolean;
-	playlist_sync_path: string;
-	playlist_sync_scope: NavidromePlaylistSyncScope;
-	playlist_sync_remove_deleted: boolean;
-};
+export type NavidromeConnectionSettings = components['schemas']['NavidromeConnection'];
 
-export type NavidromePlaylistSyncResult = {
-	success: boolean;
-	message: string;
-	written: number;
-	unchanged: number;
-	removed: number;
-	removal_failures: number;
-	skipped_empty: number;
-	skipped_not_ours: number;
-	tracks_missing_files: number;
-	tracks_unrepresentable: number;
-};
+export type NavidromePlaylistSyncResult = components['schemas']['PlaylistSyncResult'];
 
 export type NavidromeTrackInfo = {
 	navidrome_id: string;
@@ -939,14 +907,7 @@ export type NavidromePaginatedResponse = {
 	total: number;
 };
 
-export type PlexConnectionSettings = {
-	plex_url: string;
-	plex_token: string;
-	enabled: boolean;
-	login_enabled: boolean;
-	music_library_ids: string[];
-	scrobble_to_plex: boolean;
-};
+export type PlexConnectionSettings = components['schemas']['PlexConnection'];
 
 export type PlexTrackInfo = {
 	plex_id: string;
@@ -1202,31 +1163,15 @@ export type LocalStorageStats = {
 	format_breakdown: Record<string, FormatInfo>;
 };
 
-export type LastFmConnectionSettingsResponse = {
-	api_key: string;
-	shared_secret: string;
-	session_key: string;
-	username: string;
-	enabled: boolean;
-};
+export type LastFmConnectionSettingsResponse = components['schemas']['LastFmSettings'];
 
-export type SpotifySettings = {
-	client_id: string;
-	client_secret: string;
-	enabled: boolean;
-	spotify_redirect_origin: string;
-};
+export type SpotifySettings = components['schemas']['SpotifySettings'];
 
 // mirrors backend api/v1/schemas/settings.py (FreeMusicSettings)
-export type FreeMusicSettings = {
-	enabled: boolean;
-	preferred_format: 'flac' | 'mp3';
-};
+export type FreeMusicSettings = components['schemas']['FreeMusic'];
 
 // mirrors backend api/v1/schemas/settings.py (GetItSettings)
-export type GetItSettings = {
-	store_region: string; // ISO 3166-1 alpha-2, feeds the iTunes storefront
-};
+export type GetItSettings = components['schemas']['GetIt'];
 
 // mirrors backend api/v1/schemas/get_it.py
 export type PurchaseLink = {
@@ -1249,19 +1194,9 @@ export type ArtistPurchaseOptionsResponse = {
 };
 
 // mirrors backend api/v1/schemas/settings.py (EventsSettings)
-export type EventsSettings = {
-	enabled: boolean;
-	ticketmaster_enabled: boolean;
-	ticketmaster_api_key: string;
-	skiddle_enabled: boolean;
-	skiddle_api_key: string;
-	poll_time: string; // server-local HH:MM, daily sweep slot
-	sweep_scope: 'followed' | 'library';
-};
+export type EventsSettings = components['schemas']['EventsSettings'];
 
-export type WrappedSettingsResponse = {
-	api_key: string;
-};
+export type WrappedSettingsResponse = components['schemas']['WrappedSettings'];
 
 export type SpotifyPlaylistItem = {
 	id: string;

@@ -11,10 +11,12 @@ const h = vi.hoisted(() => ({
 
 vi.mock('$lib/api/client', () => ({
 	api: {
-		get: (...args: unknown[]) => h.get(...args),
-		post: vi.fn(),
-		patch: vi.fn(),
-		delete: vi.fn()
+		v3: {
+			GET: (...args: unknown[]) => h.get(...args),
+			POST: vi.fn(),
+			PUT: vi.fn(),
+			DELETE: vi.fn()
+		}
 	}
 }));
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
 	import { api } from '$lib/api/client';
 	import type { EventsSettings } from '$lib/types';
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
@@ -9,8 +10,8 @@
 	import { onDestroy, onMount } from 'svelte';
 
 	const form = createSettingsForm<EventsSettings>({
-		loadEndpoint: '/api/v1/settings/events',
-		saveEndpoint: '/api/v1/settings/events',
+		loadEndpoint: SETTINGS_ENDPOINTS.events(),
+		saveEndpoint: SETTINGS_ENDPOINTS.events(),
 		afterSave: async () => {
 			// the concerts response carries the `configured` flag and the save
 			// kicks a backend sweep - refetch so the events page reflects both
@@ -33,15 +34,16 @@
 	let ticketmasterTest = $state<TestState>({ testing: false, message: '', valid: false });
 	let skiddleTest = $state<TestState>({ testing: false, message: '', valid: false });
 
-	async function runTest(endpoint: string, state: TestState) {
+	async function runTest(provider: 'ticketmaster' | 'skiddle', state: TestState) {
 		if (!form.data) return;
 		state.testing = true;
 		state.message = '';
 		try {
-			const result = await api.global.post<{ valid: boolean; message: string }>(
-				endpoint,
-				form.data
-			);
+			const endpoint =
+				provider === 'ticketmaster'
+					? SETTINGS_ENDPOINTS.eventsTestTicketmaster()
+					: SETTINGS_ENDPOINTS.eventsTestSkiddle();
+			const result = await api.global.v3.POST(endpoint, form.data);
 			state.valid = result.valid;
 			state.message = result.message;
 		} catch {
@@ -153,7 +155,7 @@
 					<button
 						type="button"
 						class="btn btn-outline btn-sm rounded-full"
-						onclick={() => runTest('/api/v1/settings/events/test-ticketmaster', ticketmasterTest)}
+						onclick={() => runTest('ticketmaster', ticketmasterTest)}
 						disabled={ticketmasterTest.testing}
 					>
 						{#if ticketmasterTest.testing}
@@ -217,7 +219,7 @@
 					<button
 						type="button"
 						class="btn btn-outline btn-sm rounded-full"
-						onclick={() => runTest('/api/v1/settings/events/test-skiddle', skiddleTest)}
+						onclick={() => runTest('skiddle', skiddleTest)}
 						disabled={skiddleTest.testing}
 					>
 						{#if skiddleTest.testing}

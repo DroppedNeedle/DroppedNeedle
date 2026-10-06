@@ -2,8 +2,8 @@
 	import { onMount } from 'svelte';
 
 	import { api } from '$lib/api/client';
-	import { API } from '$lib/constants';
-	import type { PluginInfo, PluginListResponse } from '$lib/queries/plugins/types';
+	import { PLUGIN_ENDPOINTS } from '$lib/queries/plugins/endpoints';
+	import { fetchPluginSources } from '$lib/queries/plugins/PluginSourceQueries.svelte';
 
 	interface Props {
 		pluginName: string;
@@ -51,22 +51,22 @@
 		signal: AbortSignal
 	): Promise<unknown> {
 		if (method === 'sources.list') {
-			return api.global.get<{ sources: unknown[] }>(API.plugins.sources(), { signal });
+			return fetchPluginSources(signal);
 		}
 		if (method === 'search.preview') {
 			const query = typeof params.query === 'string' ? params.query.slice(0, 200) : '';
-			const qs = query ? `?query=${encodeURIComponent(query)}` : '';
-			return api.global.get<unknown>(API.plugins.ext(pluginName, `search${qs}`), {
-				signal
-			});
+			return api.global.get<unknown>(
+				PLUGIN_ENDPOINTS.ext(pluginName, 'search', query ? { query } : undefined),
+				{ signal }
+			);
 		}
 		if (method === 'get_settings') {
-			const list = await api.global.get<PluginListResponse>(API.plugins.list(), { signal });
-			const own = list.plugins.find((p: PluginInfo) => p.name === pluginName);
+			const list = await api.global.v3.GET(PLUGIN_ENDPOINTS.list(), { signal });
+			const own = list.plugins.find((p) => p.name === pluginName);
 			return { settings_values: own?.settings_values ?? {} };
 		}
-		const list = await api.global.get<PluginListResponse>(API.plugins.list(), { signal });
-		const own = list.plugins.find((p: PluginInfo) => p.name === pluginName);
+		const list = await api.global.v3.GET(PLUGIN_ENDPOINTS.list(), { signal });
+		const own = list.plugins.find((p) => p.name === pluginName);
 		if (!own) throw new Error('Plugin not found');
 		return { enabled: own.enabled, error: own.error, active_capabilities: own.active_capabilities };
 	}
@@ -78,7 +78,7 @@
 
 		async function load(): Promise<void> {
 			try {
-				const res = await api.global.get<Response>(API.plugins.uiBundle(pluginName), {
+				const res = await api.global.get<Response>(PLUGIN_ENDPOINTS.uiBundle(pluginName), {
 					signal,
 					raw: true
 				});

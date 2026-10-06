@@ -1,8 +1,7 @@
 import { writable } from 'svelte/store';
 import type { UserPreferences } from '$lib/types';
 import { api } from '$lib/api/client';
-
-const API_BASE = '/api/v1';
+import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
 
 const defaultPreferences: UserPreferences = {
 	primary_types: ['album', 'ep', 'single'],
@@ -13,8 +12,8 @@ const { subscribe, set, update } = writable<UserPreferences>(defaultPreferences)
 
 async function loadPreferences(): Promise<void> {
 	try {
-		const prefs = await api.global.get<UserPreferences>(`${API_BASE}/settings/preferences`);
-		set(prefs);
+		const prefs = await api.global.v3.GET(SETTINGS_ENDPOINTS.preferences());
+		set({ ...defaultPreferences, ...prefs });
 	} catch {
 		// use defaults on fetch failure
 	}
@@ -22,11 +21,8 @@ async function loadPreferences(): Promise<void> {
 
 async function savePreferences(prefs: UserPreferences): Promise<boolean> {
 	try {
-		const updated = await api.global.put<UserPreferences>(
-			`${API_BASE}/settings/preferences`,
-			prefs
-		);
-		set(updated);
+		const updated = await api.global.v3.PUT(SETTINGS_ENDPOINTS.preferences(), prefs);
+		set({ ...defaultPreferences, ...updated });
 		return true;
 	} catch {
 		return false;

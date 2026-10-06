@@ -125,13 +125,4 @@
 		max={720}
 		unit="hrs"
 	/>
-
-	<SettingsNumberField
-		label="Recently Viewed Bytes TTL"
-		description="Default: 48 hours"
-		bind:value={data.cache_ttl_recently_viewed_bytes}
-		min={1}
-		max={168}
-		unit="hrs"
-	/>
 </div>

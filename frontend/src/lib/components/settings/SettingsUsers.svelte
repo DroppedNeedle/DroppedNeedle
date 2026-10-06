@@ -32,17 +32,10 @@
 	import { SvelteSet } from 'svelte/reactivity';
 	import { createPasswordRecoveryCodeMutation } from '$lib/queries/auth/AuthMutations.svelte';
 	import { getApiUrl } from '$lib/api/api-utils';
+	import type { components } from '$lib/api/v3/openapi';
+	import { AUTH_ENDPOINTS } from '$lib/queries/auth/endpoints';
 
-	interface UserRecord {
-		id: string;
-		display_name: string;
-		role: 'admin' | 'trusted' | 'user';
-		email: string | null;
-		username: string | null;
-		username_display: string | null;
-		avatar_url: string | null;
-		providers: string[];
-	}
+	type UserRecord = components['schemas']['UserResponse'];
 
 	const PAGE_SIZE = 20;
 
@@ -131,9 +124,7 @@
 		error = null;
 		try {
 			const offset = (targetPage - 1) * PAGE_SIZE;
-			const data = await api.get<{ users: UserRecord[]; total: number }>(
-				`/api/v1/auth/admin/users?limit=${PAGE_SIZE}&offset=${offset}`
-			);
+			const data = await api.v3.GET(AUTH_ENDPOINTS.adminUsers(PAGE_SIZE, offset));
 			users = data.users;
 			total = data.total;
 			page = targetPage;
@@ -148,7 +139,7 @@
 		savingRole = userId;
 		roleError = null;
 		try {
-			await api.patch(`/api/v1/auth/admin/users/${userId}/role`, { role });
+			await api.v3.PUT(AUTH_ENDPOINTS.adminUserRole(userId), { role });
 			users = users.map((u) => (u.id === userId ? { ...u, role } : u));
 		} catch (e: unknown) {
 			roleError = (e as { message?: string })?.message ?? 'Could not update role';
@@ -166,7 +157,7 @@
 		}
 		creating = true;
 		try {
-			const user = await api.post<UserRecord>('/api/v1/auth/admin/users', {
+			const user = await api.v3.POST(AUTH_ENDPOINTS.adminCreateUser, {
 				display_name: newName,
 				username: newUsername,
 				email: newEmail || undefined,
@@ -213,7 +204,7 @@
 		deleting = true;
 		deleteError = null;
 		try {
-			await api.delete(`/api/v1/auth/admin/users/${userToDelete.id}`);
+			await api.v3.DELETE(AUTH_ENDPOINTS.adminUser(userToDelete.id));
 			deleteDialogEl?.close();
 			const wasLastOnPage = users.length === 1 && page > 1;
 			userToDelete = null;

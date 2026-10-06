@@ -22,7 +22,7 @@ vi.mock('$lib/api/client', () => {
 	}
 	return {
 		api: {
-			global: { get: mockApiGet, put: mockApiPut, post: mockApiPost },
+			global: { get: mockApiGet, put: mockApiPut, post: mockApiPost, v3: { GET: mockApiGet } },
 			get: mockApiGet,
 			put: mockApiPut,
 			post: mockApiPost
@@ -41,6 +41,10 @@ vi.mock('$lib/stores/integration', () => ({
 }));
 
 import { createSettingsForm } from './settingsForm.svelte';
+import type { V3Url } from '$lib/api/v3/endpoint';
+
+// Plain test URLs; the form only passes them through to the client.
+const url = (path: string) => path as V3Url;
 
 interface TestSettings {
 	url: string;
@@ -48,8 +52,8 @@ interface TestSettings {
 }
 
 const defaultConfig = {
-	loadEndpoint: '/api/v1/settings/test',
-	saveEndpoint: '/api/v1/settings/test'
+	loadEndpoint: url('/api/v3/settings/test'),
+	saveEndpoint: url('/api/v3/settings/test')
 };
 
 describe('createSettingsForm', () => {
@@ -69,7 +73,7 @@ describe('createSettingsForm', () => {
 			const form = createSettingsForm<TestSettings>(defaultConfig);
 			await form.load();
 
-			expect(mockApiGet).toHaveBeenCalledWith('/api/v1/settings/test');
+			expect(mockApiGet).toHaveBeenCalledWith('/api/v3/settings/test');
 			expect(form.data).toEqual(data);
 			expect(form.loading).toBe(false);
 			expect(form.message).toBe('');
@@ -100,7 +104,7 @@ describe('createSettingsForm', () => {
 			await form.load();
 			const result = await form.save();
 
-			expect(mockApiPut).toHaveBeenCalledWith('/api/v1/settings/test', data);
+			expect(mockApiPut).toHaveBeenCalledWith('/api/v3/settings/test', data);
 			expect(result).toBe(true);
 			expect(form.message).toBe('Settings saved');
 			expect(form.messageType).toBe('success');
@@ -131,12 +135,12 @@ describe('createSettingsForm', () => {
 
 			const form = createSettingsForm<TestSettings>({
 				...defaultConfig,
-				testEndpoint: '/api/v1/settings/test/verify'
+				testEndpoint: url('/api/v3/settings/test/verify')
 			});
 			await form.load();
 			await form.test();
 
-			expect(mockApiPost).toHaveBeenCalledWith('/api/v1/settings/test/verify', data);
+			expect(mockApiPost).toHaveBeenCalledWith('/api/v3/settings/test/verify', data);
 			expect(form.testResult).toEqual(testData);
 			expect(form.testing).toBe(false);
 			form.cleanup();
@@ -148,7 +152,7 @@ describe('createSettingsForm', () => {
 
 			const form = createSettingsForm<TestSettings>({
 				...defaultConfig,
-				testEndpoint: '/api/v1/settings/test/verify'
+				testEndpoint: url('/api/v3/settings/test/verify')
 			});
 			await form.load();
 			await form.test();

@@ -1,6 +1,7 @@
 import { browser } from '$app/environment';
 import { CACHE_TTL } from '$lib/constants';
 import { api } from '$lib/api/client';
+import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
 import { updateHomeCacheTTL } from '$lib/utils/homeCache';
 import { updateDiscoveryCacheTTL } from '$lib/stores/discoveryCache';
 import { updateDiscoverQueueCacheTTL } from '$lib/utils/discoverQueueCache';
@@ -11,7 +12,6 @@ import {
 	updatePlexAlbumsListCacheTTL
 } from '$lib/utils/plexLibraryCache';
 import { updateLocalFilesSidebarCacheTTL } from '$lib/utils/localFilesCache';
-import { recentlyAddedStore } from '$lib/stores/recentlyAdded';
 
 export interface CacheTTLs {
 	home: number;
@@ -70,7 +70,6 @@ export function ttl<K extends keyof CacheTTLs>(key: K, fallback?: CacheTTLs[K]):
 
 function applyTTLs(ttls: CacheTTLs): void {
 	updateHomeCacheTTL(ttls.home);
-	recentlyAddedStore.updateCacheTTL(ttls.recentlyAdded);
 	updateDiscoveryCacheTTL(ttls.discover);
 	updateDiscoverQueueCacheTTL(ttls.discoverQueue);
 	updateSearchCacheTTL(ttls.search);
@@ -85,22 +84,22 @@ export async function initCacheTTLs(): Promise<void> {
 	initialized = true;
 
 	try {
-		const data = await api.global.get<Record<string, unknown>>('/api/v1/settings/cache-ttls');
+		const data = await api.global.v3.GET(SETTINGS_ENDPOINTS.cacheTtls());
 		resolved = {
-			home: (data.home as number) ?? DEFAULTS.home,
-			discover: (data.discover as number) ?? DEFAULTS.discover,
-			library: (data.library as number) ?? DEFAULTS.library,
-			recentlyAdded: (data.recently_added as number) ?? DEFAULTS.recentlyAdded,
-			discoverQueue: (data.discover_queue as number) ?? DEFAULTS.discoverQueue,
-			search: (data.search as number) ?? DEFAULTS.search,
-			localFilesSidebar: (data.local_files_sidebar as number) ?? DEFAULTS.localFilesSidebar,
-			jellyfinSidebar: (data.jellyfin_sidebar as number) ?? DEFAULTS.jellyfinSidebar,
-			plexSidebar: (data.plex_sidebar as number) ?? DEFAULTS.plexSidebar,
-			playlistSources: (data.playlist_sources as number) ?? DEFAULTS.playlistSources,
+			home: data.home ?? DEFAULTS.home,
+			discover: data.discover ?? DEFAULTS.discover,
+			library: data.library ?? DEFAULTS.library,
+			recentlyAdded: data.recently_added ?? DEFAULTS.recentlyAdded,
+			discoverQueue: data.discover_queue ?? DEFAULTS.discoverQueue,
+			search: data.search ?? DEFAULTS.search,
+			localFilesSidebar: data.local_files_sidebar ?? DEFAULTS.localFilesSidebar,
+			jellyfinSidebar: data.jellyfin_sidebar ?? DEFAULTS.jellyfinSidebar,
+			plexSidebar: data.plex_sidebar ?? DEFAULTS.plexSidebar,
+			playlistSources: data.playlist_sources ?? DEFAULTS.playlistSources,
 			discoverQueuePollingInterval:
-				(data.discover_queue_polling_interval as number) ?? DEFAULTS.discoverQueuePollingInterval,
+				data.discover_queue_polling_interval ?? DEFAULTS.discoverQueuePollingInterval,
 			discoverQueueAutoGenerate:
-				(data.discover_queue_auto_generate as boolean) ?? DEFAULTS.discoverQueueAutoGenerate
+				data.discover_queue_auto_generate ?? DEFAULTS.discoverQueueAutoGenerate
 		};
 		applyTTLs(resolved);
 	} catch {

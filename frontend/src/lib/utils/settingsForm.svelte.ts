@@ -1,11 +1,13 @@
 import { api, ApiError } from '$lib/api/client';
 import { isAbortError } from '$lib/utils/errorHandling';
 import { integrationStore } from '$lib/stores/integration';
+import type { V3Url } from '$lib/api/v3/endpoint';
+import { HOME_ENDPOINTS } from '$lib/queries/charts/endpoints';
 
 export interface SettingsFormConfig<T> {
-	loadEndpoint: string;
-	saveEndpoint: string;
-	testEndpoint?: string;
+	loadEndpoint: V3Url;
+	saveEndpoint: V3Url;
+	testEndpoint?: V3Url;
 	defaultValue?: T;
 	enabledField?: keyof T;
 	/** A second toggle (e.g. "allow login") that should also stay locked until a test succeeds. */
@@ -44,9 +46,7 @@ export function createSettingsForm<T>(config: SettingsFormConfig<T>) {
 
 	async function refreshIntegrationStatus() {
 		try {
-			const status = await api.global.get<Record<string, boolean>>(
-				'/api/v1/home/integration-status'
-			);
+			const status = await api.global.v3.GET(HOME_ENDPOINTS.integrationStatus());
 			if (status) integrationStore.setStatus(status);
 		} catch {
 			/* sidebar will refresh on next page load */

@@ -1,14 +1,14 @@
 <script lang="ts">
+	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
 	import { onDestroy, onMount } from 'svelte';
 	import { Coffee, ExternalLink, ShoppingBag } from 'lucide-svelte';
 	import GitHubIcon from '$lib/components/GitHubIcon.svelte';
-	import { API } from '$lib/constants';
 	import type { GetItSettings } from '$lib/types';
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 
 	const form = createSettingsForm<GetItSettings>({
-		loadEndpoint: API.settingsGetIt(),
-		saveEndpoint: API.settingsGetIt()
+		loadEndpoint: SETTINGS_ENDPOINTS.getIt(),
+		saveEndpoint: SETTINGS_ENDPOINTS.getIt()
 	});
 
 	onMount(() => form.load());

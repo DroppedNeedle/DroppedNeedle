@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
 	import { onDestroy, onMount } from 'svelte';
 	import { ExternalLink, Landmark } from 'lucide-svelte';
 	import { API } from '$lib/constants';
@@ -12,8 +13,8 @@
 	// Enabling this flips is_download_source_ready(), which gates the request buttons,
 	// so the sidebar's integration status has to be re-read after a save.
 	const form = createSettingsForm<FreeMusicSettings>({
-		loadEndpoint: API.settingsFreeMusic(),
-		saveEndpoint: API.settingsFreeMusic(),
+		loadEndpoint: SETTINGS_ENDPOINTS.freeMusic(),
+		saveEndpoint: SETTINGS_ENDPOINTS.freeMusic(),
 		refreshIntegration: true,
 		afterSave: () =>
 			invalidateQueriesWithPersister({ queryKey: HomeQueryKeyFactory.prefix }).catch(

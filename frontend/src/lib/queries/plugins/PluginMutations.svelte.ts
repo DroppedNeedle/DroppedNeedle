@@ -1,12 +1,11 @@
 import { createMutation } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
 
 import { PluginQueryKeyFactory } from './PluginQueryKeyFactory';
-import type { PluginInfo } from './types';
+import { PLUGIN_ENDPOINTS } from './endpoints';
 
 export const updatePluginMutation = () =>
 	createMutation(() => ({
@@ -18,7 +17,7 @@ export const updatePluginMutation = () =>
 			name: string;
 			enabled: boolean;
 			settings: Record<string, string>;
-		}) => api.global.put<PluginInfo>(API.plugins.update(name), { enabled, settings }),
+		}) => api.global.v3.PUT(PLUGIN_ENDPOINTS.plugin(name), { enabled, settings }),
 		onSuccess: async (plugin) => {
 			toastStore.show({
 				message: plugin.error
@@ -35,7 +34,7 @@ export const updatePluginMutation = () =>
 
 export const uninstallPluginMutation = () =>
 	createMutation(() => ({
-		mutationFn: (name: string) => api.global.delete(API.plugins.uninstall(name)),
+		mutationFn: (name: string) => api.global.v3.DELETE(PLUGIN_ENDPOINTS.plugin(name)),
 		onSuccess: async () => {
 			toastStore.show({ message: 'Plugin removed.', type: 'info' });
 			await invalidateQueriesWithPersister({ queryKey: PluginQueryKeyFactory.prefix });

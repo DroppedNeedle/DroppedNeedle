@@ -20,8 +20,14 @@ export const AUTH_ENDPOINTS = {
 	// (PROFILE_ENDPOINTS.get); it is not duplicated here.
 	logout: v3('/api/v3/auth/logout'),
 	oidcAuthorize: v3('/api/v3/auth/oidc/authorize'),
+	oidcCallback: v3('/api/v3/auth/oidc/callback'),
 	oidcExchange: v3('/api/v3/auth/oidc/exchange'),
 	passwordRecoveryReset: v3('/api/v3/auth/password-recovery/reset'),
+	adminUsers: (limit: number, offset: number) =>
+		v3('/api/v3/admin/users', { query: { limit, offset } }),
+	adminCreateUser: v3('/api/v3/admin/users'),
+	adminUser: (userId: string) => v3('/api/v3/admin/users/{id}', { path: { id: userId } }),
+	adminUserRole: (userId: string) => v3('/api/v3/admin/users/{id}/role', { path: { id: userId } }),
 	adminPasswordRecovery: (userId: string) =>
 		v3('/api/v3/admin/users/{id}/recovery-code', { path: { id: userId } }),
 	adminImportJellyfin: v3('/api/v3/admin/import/jellyfin'),

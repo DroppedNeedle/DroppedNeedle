@@ -1,12 +1,13 @@
 <script lang="ts">
+	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
 	import type { WrappedSettingsResponse } from '$lib/types';
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 	import { Gift } from 'lucide-svelte';
 	import { onMount, onDestroy } from 'svelte';
 
 	const form = createSettingsForm<WrappedSettingsResponse>({
-		loadEndpoint: '/api/v1/settings/wrapped',
-		saveEndpoint: '/api/v1/settings/wrapped'
+		loadEndpoint: SETTINGS_ENDPOINTS.wrapped(),
+		saveEndpoint: SETTINGS_ENDPOINTS.wrapped()
 	});
 
 	let showKey = $state(false);
@@ -47,7 +48,7 @@
 			Generate a key here, then paste the same value into the other service's settings. It's sent as <code
 				>X-Wrapped-Api-Key</code
 			>
-			on requests to <code>/api/v1/wrapped/*</code>; those endpoints are disabled entirely while
+			on requests to <code>/api/v3/wrapped/*</code>; those endpoints are disabled entirely while
 			this is empty.
 		</div>
 

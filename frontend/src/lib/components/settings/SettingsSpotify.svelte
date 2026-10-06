@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { getApiUrl } from '$lib/api/api-utils';
 	import { api } from '$lib/api/client';
-	import { API } from '$lib/constants';
+	import { SPOTIFY_ENDPOINTS } from '$lib/queries/spotify/endpoints';
 	import type { SpotifySettings } from '$lib/types';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
@@ -24,8 +24,8 @@
 	}
 
 	const form = createSettingsForm<SpotifySettings>({
-		loadEndpoint: API.settingsSpotify(),
-		saveEndpoint: API.settingsSpotify()
+		loadEndpoint: SPOTIFY_ENDPOINTS.settings(),
+		saveEndpoint: SPOTIFY_ENDPOINTS.settings()
 	});
 
 	let showSecret = $state(false);
@@ -33,11 +33,11 @@
 	onMount(async () => {
 		form.load();
 		try {
-			const data = await api.global.get<{ redirect_uri: string }>(API.settingsSpotifyRedirectUri());
+			const data = await api.global.v3.GET(SPOTIFY_ENDPOINTS.redirectUri());
 			redirectUri = data.redirect_uri;
 		} catch {
 			redirectUri = new URL(
-				getApiUrl('/api/v1/me/connections/spotify/auth/callback'),
+				getApiUrl(SPOTIFY_ENDPOINTS.authCallback()),
 				window.location.origin
 			).toString();
 		}

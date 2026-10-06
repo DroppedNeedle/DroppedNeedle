@@ -102,17 +102,6 @@
 			/>
 		</label>
 	</fieldset>
-	<fieldset class="fieldset">
-		<legend class="fieldset-legend">Pre-Build in Warm Cycle</legend>
-		<label class="label cursor-pointer gap-3">
-			<span class="text-sm">Build queue during periodic cache warming</span>
-			<input
-				type="checkbox"
-				bind:checked={data.discover_queue_warm_cycle_build}
-				class="toggle toggle-primary"
-			/>
-		</label>
-	</fieldset>
 	<SettingsNumberField
 		label="Status Polling Interval"
 		description="How often the app checks queue progress (default: 4s)"
@@ -138,35 +127,6 @@
 		bind:value={data.discover_queue_wildcard_slots}
 		min={0}
 		max={10}
-	/>
-	<SettingsNumberField
-		label="Similar Artists Limit"
-		description="Max similar artists per seed (default: 15)"
-		bind:value={data.discover_queue_similar_artists_limit}
-		min={5}
-		max={50}
-	/>
-	<SettingsNumberField
-		label="Albums Per Similar Artist"
-		description="Top albums fetched per artist (default: 5)"
-		bind:value={data.discover_queue_albums_per_similar}
-		min={1}
-		max={20}
-	/>
-	<SettingsNumberField
-		label="Enrichment Cache TTL"
-		description="How long item details stay fresh during queue building (default: 24h)"
-		bind:value={data.discover_queue_enrich_ttl}
-		min={1}
-		max={168}
-		unit="hours"
-	/>
-	<SettingsNumberField
-		label="Last.fm MBID Lookups"
-		description="Max MusicBrainz MBID resolution calls (default: 10)"
-		bind:value={data.discover_queue_lastfm_mbid_max_lookups}
-		min={1}
-		max={50}
 	/>
 </div>
 <div class="divider my-4"></div>

@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { SETTINGS_ENDPOINTS } from '$lib/queries/settings/endpoints';
+	import { AUTH_ENDPOINTS } from '$lib/queries/auth/endpoints';
 	import { createSettingsForm } from '$lib/utils/settingsForm.svelte';
 	import { onDestroy } from 'svelte';
 	import {
@@ -36,8 +38,8 @@
 	};
 
 	const form = createSettingsForm<SecuritySettingsForm>({
-		loadEndpoint: '/api/v1/settings/security',
-		saveEndpoint: '/api/v1/settings/security',
+		loadEndpoint: SETTINGS_ENDPOINTS.security(),
+		saveEndpoint: SETTINGS_ENDPOINTS.security(),
 		defaultValue: DEFAULTS
 	});
 
@@ -50,9 +52,9 @@
 	};
 
 	const oidcForm = createSettingsForm<OIDCConnectionSettings>({
-		loadEndpoint: '/api/v1/settings/oidc',
-		saveEndpoint: '/api/v1/settings/oidc',
-		testEndpoint: '/api/v1/settings/oidc/verify',
+		loadEndpoint: SETTINGS_ENDPOINTS.oidc(),
+		saveEndpoint: SETTINGS_ENDPOINTS.oidc(),
+		testEndpoint: SETTINGS_ENDPOINTS.oidcVerify(),
 		enabledField: 'enabled'
 	}) as OIDCSettingsForm;
 
@@ -80,10 +82,7 @@
 		verifying = true;
 		verifyResult = null;
 		try {
-			verifyResult = await api.post<{ valid: boolean; message: string }>(
-				'/api/v1/settings/security/verify-hibp',
-				form.data
-			);
+			verifyResult = await api.v3.POST(SETTINGS_ENDPOINTS.securityVerifyHibp(), form.data);
 		} catch (e: unknown) {
 			verifyResult = {
 				valid: false,
@@ -519,11 +518,11 @@
 							type="url"
 							bind:value={oidcForm.data.redirect_uri}
 							class="input input-bordered w-full"
-							placeholder="https://droppedneedle.example.com/api/v1/auth/oidc/callback"
+							placeholder={`https://droppedneedle.example.com${AUTH_ENDPOINTS.oidcCallback}`}
 						/>
 						<p class="text-xs text-base-content/50 mt-1.5 ml-1">
 							This must point to the DroppedNeedle <strong>backend API</strong> (it ends in
-							<code class="text-xs">/api/v1/auth/oidc/callback</code>), not the web app page.
+							<code class="text-xs">{AUTH_ENDPOINTS.oidcCallback}</code>), not the web app page.
 							Register this exact URL as a redirect/callback URI with your provider.
 						</p>
 					</div>
