@@ -104,6 +104,8 @@ Then open [http://localhost:8688](http://localhost:8688).
 4. Hit Scan on Settings > Library. The scan reads and identifies files without renaming or retagging anything.
 5. Search the catalogue, open an album, and Request it. Watch it land live on the Downloads page.
 
+Settings > Library won't let you remove your last library path while the library still has tracks in it. Set the path to Excluded instead if you want it left alone. If a path disappears from the settings while its tracks are still in the library, the page offers to put it back.
+
 <details>
 <summary>Updating and the dev tag</summary>
 
