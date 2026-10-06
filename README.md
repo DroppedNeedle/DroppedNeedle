@@ -361,6 +361,7 @@ Either way the user's own media account is linked for playback, so plays count f
 
 - Tier-3 fingerprinting stays off until you add an AcoustID API key. Without it, scans use tags and text matching only.
 - MusicBrainz lookups pace at 1 request per second on the official MusicBrainz server. Built-in BrainzMash runs its own local pacing instead. Either way, later scans are incremental, so the first one is the slow one.
+- Moving or renaming music files yourself is fine. Albums are grouped by their tags (the MusicBrainz release ID, or album artist plus album title), not by folder, and the next scan picks up a moved file as the same track, so favorites, play history, playlists and album matches stay put. Files with no tags are still grouped by folder.
 
 </details>
 
