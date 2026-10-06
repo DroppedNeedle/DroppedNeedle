@@ -1,20 +1,24 @@
-//! Library policy resolution: normalize-and-validate, content
-//! revisions, the policy tree, and impact previews.
+//! Library policy: normalize-and-validate, content revisions, and the
+//! pure logic behind the policy routes (tree, impact, apply preview,
+//! restorable roots, path mapping).
 //!
 //! Ports v2's `LibraryPolicyResolver` (root/rule normalization, warnings,
-//! SHA-256 content revision) plus the pure parts of
-//! `LibraryPolicyService` (transition scopes, collapse, tree, impact).
-//! Catalog counts ride behind the [`LibraryPolicyCatalog`] port: the
-//! production implementation counts `local_tracks` rows under each
-//! scope. v2 split indexed vs indexed-plus-excluded rows; v3 stores no
-//! excluded rows, so both counts read the rows under the scope.
+//! SHA-256 content revision) plus the pure parts of v2's library policy
+//! services. Catalog rows come in through the [`LibraryPolicyCatalog`]
+//! read port; the SQLite adapter is `settings::library_catalog` and the
+//! orchestration (blocking hops, revision checks, saves) is
+//! `settings::library_policy_service`.
+//!
+//! v3 keeps no pending-policy state: a save applies at once and the scan
+//! engine reads the roots on its next tick, so every preview reads the
+//! saved settings only.
 //!
 //! The revision hash is byte-compatible with v2 (`sort_keys`, compact
 //! separators, ASCII-escaped JSON over the same payload), so a migrated
 //! config keeps its revisions. Golden vectors minted from v2 pin this in
 //! the settings tests.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 
 use futures_util::future::BoxFuture;
@@ -22,10 +26,11 @@ use sha2::{Digest, Sha256};
 
 use super::error::SettingsError;
 use super::models::{
+    LibraryPathMappingItem, LibraryPathMappingReport, LibraryPolicyApplyPreviewResponse,
     LibraryPolicyImpactResponse, LibraryPolicyTreeNode, LibraryPolicyTreeResponse,
-    LibrarySettingsResponse,
+    LibraryRestorableRoot, LibrarySettingsResponse, PathMappingError, PathMappingSource,
+    PolicyNodeKind,
 };
-use crate::ids::IdGenerator;
 use crate::runtime_config::Masked;
 use crate::runtime_config::secret_sections::{
     IdentificationPolicy, LibraryPathRule, LibraryRoot, TypedLibrary,
@@ -518,204 +523,415 @@ pub fn collapse_scopes(scopes: Vec<TransitionScope>) -> Vec<TransitionScope> {
     unique.into_values().collect()
 }
 
-/// Scope counts: (indexed, on-disk) rows per (root, relative path).
-pub type ScopeCounts = std::collections::HashMap<(String, String), (i64, i64)>;
+/// Scope counts: (indexed, on-disk) catalog files per (root, relative
+/// path). On-disk counts indexed plus excluded files, like v2.
+pub type ScopeCounts = HashMap<(String, String), (i64, i64)>;
 
-/// Catalog counts port: rows under each (root, relative path) scope.
+/// Catalog files under a set of scopes, each file counted once however
+/// many scopes cover it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScopeTotals {
+    /// Indexed files.
+    pub indexed: i64,
+    /// Indexed plus excluded files.
+    pub on_disk: i64,
+    /// Every catalog row, missing files included.
+    pub all: i64,
+}
+
+/// One root id the catalog holds rows for, with one sample row to
+/// recover the root path from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogRoot {
+    /// Root id on the rows.
+    pub root_id: String,
+    /// Absolute path of the sample row.
+    pub sample_file_path: String,
+    /// Root-relative path of the same row.
+    pub sample_relative_path: String,
+    /// Rows under the root.
+    pub track_count: i64,
+}
+
+/// One catalog track path, for the path-mapping dry run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogPath {
+    /// Track id.
+    pub track_id: String,
+    /// Absolute file path.
+    pub file_path: String,
+}
+
+/// Read port over the library catalog. Settings reads catalog rows only
+/// through this; the production adapter is `settings::library_catalog`.
 pub trait LibraryPolicyCatalog: Send + Sync {
-    /// Count rows under each scope. Returns (indexed, on_disk) per scope;
-    /// missing scopes count zero.
+    /// Counts per scope. Every requested scope is in the result.
     fn scope_counts<'a>(
         &'a self,
         scopes: &'a [(String, String)],
     ) -> BoxFuture<'a, Result<ScopeCounts, String>>;
-    /// Whether the catalog holds any tracks (the remove-every-root guard).
-    fn has_tracks<'a>(&'a self) -> BoxFuture<'a, Result<bool, String>>;
-}
-
-/// Production catalog counts over `local_tracks`.
-pub struct SqliteLibraryPolicyCatalog {
-    /// Reader pool.
-    pub pool: sqlx::SqlitePool,
-}
-
-impl LibraryPolicyCatalog for SqliteLibraryPolicyCatalog {
-    fn scope_counts<'a>(
+    /// Totals across scopes, each file counted once.
+    fn scope_totals<'a>(
         &'a self,
         scopes: &'a [(String, String)],
-    ) -> BoxFuture<'a, Result<std::collections::HashMap<(String, String), (i64, i64)>, String>>
-    {
-        Box::pin(async move {
-            // v3 stores no excluded rows: indexed and on-disk read the
-            // same rows-under-scope count.
-            let mut out = std::collections::HashMap::new();
-            let mut unique: BTreeSet<&(String, String)> = BTreeSet::new();
-            unique.extend(scopes.iter());
-            for (root_id, relative) in unique {
-                let prefix = relative.trim_matches('/').to_owned();
-                let count: i64 = if prefix.is_empty() || prefix == "." {
-                    sqlx::query_scalar("SELECT COUNT(*) FROM local_tracks WHERE root_id = ?1")
-                        .bind(root_id)
-                        .fetch_one(&self.pool)
-                        .await
-                        .map_err(|cause| cause.to_string())?
-                } else {
-                    let escaped: String = prefix
-                        .chars()
-                        .flat_map(|ch| {
-                            if ch == '%' || ch == '_' {
-                                vec!['\\', ch]
-                            } else {
-                                vec![ch]
-                            }
-                        })
-                        .collect();
-                    let like = format!("{escaped}/%");
-                    sqlx::query_scalar(
-                        "SELECT COUNT(*) FROM local_tracks WHERE root_id = ?1
-                         AND (relative_path = ?2 OR relative_path LIKE ?3 ESCAPE '\\')",
-                    )
-                    .bind(root_id)
-                    .bind(&prefix)
-                    .bind(&like)
-                    .fetch_one(&self.pool)
-                    .await
-                    .map_err(|cause| cause.to_string())?
-                };
-                out.insert((root_id.clone(), relative.clone()), (count, count));
-            }
-            Ok(out)
-        })
-    }
-
-    fn has_tracks<'a>(&'a self) -> BoxFuture<'a, Result<bool, String>> {
-        Box::pin(async move {
-            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM local_tracks")
-                .fetch_one(&self.pool)
-                .await
-                .map_err(|cause| cause.to_string())?;
-            Ok(count > 0)
-        })
-    }
+    ) -> BoxFuture<'a, Result<ScopeTotals, String>>;
+    /// Whether the catalog holds any tracks.
+    fn has_tracks<'a>(&'a self) -> BoxFuture<'a, Result<bool, String>>;
+    /// Every root id the catalog holds rows for, sorted by id.
+    fn catalog_roots<'a>(&'a self) -> BoxFuture<'a, Result<Vec<CatalogRoot>, String>>;
+    /// Every track path, ordered by track id.
+    fn track_paths<'a>(&'a self) -> BoxFuture<'a, Result<Vec<CatalogPath>, String>>;
 }
 
 /// Build the policy tree: one node per root plus one per rule, counts
-/// filled from the catalog port.
-pub async fn policy_tree(
-    resolved: &ResolvedLibraryPolicy,
-    catalog: &dyn LibraryPolicyCatalog,
-    ids: &dyn IdGenerator,
-) -> Result<LibraryPolicyTreeResponse, SettingsError> {
-    let mut scopes: Vec<(String, String)> = Vec::new();
-    for root in &resolved.settings.library_roots {
-        scopes.push((root.id.clone(), ".".to_owned()));
-        for rule in &root.rules {
-            scopes.push((root.id.clone(), rule.relative_path.clone()));
-        }
-    }
-    let counts = catalog
-        .scope_counts(&scopes)
-        .await
-        .map_err(|cause| SettingsError::internal(&cause, ids))?;
-    let mut roots = Vec::new();
-    for root in &resolved.settings.library_roots {
-        let root_path = PathBuf::from(&root.path);
-        let mut children = Vec::new();
-        for rule in &root.rules {
-            let (indexed, on_disk) = counts
-                .get(&(root.id.clone(), rule.relative_path.clone()))
-                .copied()
-                .unwrap_or((0, 0));
-            let label = rule
-                .relative_path
-                .rsplit('/')
-                .next()
-                .unwrap_or(&rule.relative_path)
-                .to_owned();
-            children.push(LibraryPolicyTreeNode {
-                id: rule.id.clone(),
-                kind: "rule".to_owned(),
-                label,
-                path: rule.relative_path.clone(),
-                policy: rule.policy,
-                inherited_from_id: Some(rule.id.clone()),
-                available: root_path.join(&rule.relative_path).exists(),
-                indexed_file_count: Some(indexed),
-                on_disk_file_count: Some(on_disk),
-                children: Vec::new(),
-            });
-        }
-        let (indexed, on_disk) = counts
-            .get(&(root.id.clone(), ".".to_owned()))
-            .copied()
-            .unwrap_or((0, 0));
-        roots.push(LibraryPolicyTreeNode {
-            id: root.id.clone(),
-            kind: "root".to_owned(),
-            label: root.label.clone(),
-            path: root.path.clone(),
-            policy: root.policy,
-            inherited_from_id: Some(root.id.clone()),
-            available: root_path.exists(),
-            indexed_file_count: Some(indexed),
-            on_disk_file_count: Some(on_disk),
-            children,
-        });
-    }
-    Ok(LibraryPolicyTreeResponse {
+/// left empty. Checks each path on disk, so run it off the async workers.
+pub fn policy_tree(resolved: &ResolvedLibraryPolicy) -> LibraryPolicyTreeResponse {
+    let roots = resolved
+        .settings
+        .library_roots
+        .iter()
+        .map(|root| {
+            let root_path = PathBuf::from(&root.path);
+            let children = root
+                .rules
+                .iter()
+                .map(|rule| LibraryPolicyTreeNode {
+                    id: rule.id.clone(),
+                    kind: PolicyNodeKind::Rule,
+                    label: rule
+                        .relative_path
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(&rule.relative_path)
+                        .to_owned(),
+                    path: rule.relative_path.clone(),
+                    policy: rule.policy,
+                    inherited_from_id: Some(rule.id.clone()),
+                    available: root_path.join(&rule.relative_path).exists(),
+                    indexed_file_count: None,
+                    on_disk_file_count: None,
+                    children: Vec::new(),
+                })
+                .collect();
+            LibraryPolicyTreeNode {
+                id: root.id.clone(),
+                kind: PolicyNodeKind::Root,
+                label: root.label.clone(),
+                path: root.path.clone(),
+                policy: root.policy,
+                inherited_from_id: Some(root.id.clone()),
+                available: root_path.exists(),
+                indexed_file_count: None,
+                on_disk_file_count: None,
+                children,
+            }
+        })
+        .collect();
+    LibraryPolicyTreeResponse {
         policy_revision: resolved.policy_revision.clone(),
         roots,
         warnings: resolved.warnings.clone(),
-    })
+    }
 }
 
-/// Preview the impact of candidate settings against the stored ones.
-/// Without the pending-policy machinery (a library-engine follow-up),
-/// reconciliation projects the applied state; the revision diff, scope
-/// ids, and warnings are exact.
-pub async fn preview_impact(
-    current: &ResolvedLibraryPolicy,
-    candidate: &TypedLibrary,
-    expected_policy_revision: Option<&str>,
-    catalog: &dyn LibraryPolicyCatalog,
-    ids: &dyn IdGenerator,
-) -> Result<LibraryPolicyImpactResponse, SettingsError> {
-    let proposed = resolve(candidate)?;
-    let scopes = transition_scopes(current, &proposed);
-    let mut affected: Vec<String> = scopes.iter().map(|scope| scope.scope_id.clone()).collect();
-    affected.sort();
-    affected.dedup();
-    let pairs: Vec<(String, String)> = scopes
+/// The (root id, relative path) scope behind a tree node: `.` for a
+/// root, the rule path for a rule.
+fn node_scope(root_id: &str, node: &LibraryPolicyTreeNode) -> (String, String) {
+    match node.kind {
+        PolicyNodeKind::Root => (root_id.to_owned(), ".".to_owned()),
+        PolicyNodeKind::Rule => (root_id.to_owned(), node.path.clone()),
+    }
+}
+
+/// Every scope the tree shows.
+pub fn tree_scopes(tree: &LibraryPolicyTreeResponse) -> Vec<(String, String)> {
+    tree.roots
         .iter()
-        .map(|scope| (scope.root_id.clone(), scope.relative_path.clone()))
-        .collect();
-    let counts = catalog
-        .scope_counts(&pairs)
-        .await
-        .map_err(|cause| SettingsError::internal(&cause, ids))?;
-    let (mut indexed, mut on_disk) = (0_i64, 0_i64);
-    for pair in &pairs {
-        if let Some((index, disk)) = counts.get(pair) {
-            indexed += index;
-            on_disk += disk;
+        .flat_map(|root| {
+            std::iter::once(node_scope(&root.id, root)).chain(
+                root.children
+                    .iter()
+                    .map(|child| node_scope(&root.id, child)),
+            )
+        })
+        .collect()
+}
+
+/// Fill the tree's file counts from the catalog.
+pub fn fill_tree_counts(tree: &mut LibraryPolicyTreeResponse, counts: &ScopeCounts) {
+    fn fill(node: &mut LibraryPolicyTreeNode, root_id: &str, counts: &ScopeCounts) {
+        let (indexed, on_disk) = counts
+            .get(&node_scope(root_id, node))
+            .copied()
+            .unwrap_or((0, 0));
+        node.indexed_file_count = Some(indexed);
+        node.on_disk_file_count = Some(on_disk);
+    }
+    for root in &mut tree.roots {
+        let root_id = root.id.clone();
+        fill(root, &root_id, counts);
+        for child in &mut root.children {
+            fill(child, &root_id, counts);
         }
     }
-    Ok(LibraryPolicyImpactResponse {
+}
+
+/// Preview the impact of candidate settings against the saved ones.
+/// Returns the response with counts left empty plus the affected scopes
+/// to count.
+pub fn preview_impact(
+    current: &ResolvedLibraryPolicy,
+    proposed: ResolvedLibraryPolicy,
+    expected_policy_revision: Option<&str>,
+) -> (LibraryPolicyImpactResponse, Vec<(String, String)>) {
+    let scopes = transition_scopes(current, &proposed);
+    let affected: Vec<String> = scopes
+        .iter()
+        .map(|scope| scope.scope_id.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let response = LibraryPolicyImpactResponse {
         current_policy_revision: current.policy_revision.clone(),
-        proposed_policy_revision: proposed.policy_revision.clone(),
+        proposed_policy_revision: proposed.policy_revision,
         stale: expected_policy_revision.is_some_and(|expected| expected != current.policy_revision),
         reconciliation_required: !affected.is_empty(),
         affected_scope_ids: affected,
-        indexed_file_count: Some(indexed),
-        on_disk_file_count: Some(on_disk),
-        content_will_become_unavailable: scopes
-            .iter()
-            .any(|scope| scope.effective_policy == IdentificationPolicy::Excluded),
+        indexed_file_count: None,
+        on_disk_file_count: None,
+        content_will_become_unavailable: any_excluded(&scopes),
         queued_work_will_be_cancelled: scopes
             .iter()
             .any(|scope| scope.effective_policy != IdentificationPolicy::Automatic),
         warnings: proposed.warnings,
-    })
+    };
+    (response, scope_pairs(&scopes))
+}
+
+fn any_excluded(scopes: &[TransitionScope]) -> bool {
+    scopes
+        .iter()
+        .any(|scope| scope.effective_policy == IdentificationPolicy::Excluded)
+}
+
+/// (root id, relative path) pairs for counting.
+pub fn scope_pairs(scopes: &[TransitionScope]) -> Vec<(String, String)> {
+    scopes
+        .iter()
+        .map(|scope| (scope.root_id.clone(), scope.relative_path.clone()))
+        .collect()
+}
+
+/// The saved scopes a reconcile would cover: the named roots and rules,
+/// or every root when none are named. A named root covers its rules.
+/// Unknown ids are a 400.
+pub fn apply_scopes(
+    resolved: &ResolvedLibraryPolicy,
+    scope_ids: &[String],
+) -> Result<Vec<TransitionScope>, SettingsError> {
+    let selected: BTreeSet<&str> = scope_ids.iter().map(String::as_str).collect();
+    let mut scopes = Vec::new();
+    for root in &resolved.settings.library_roots {
+        if selected.is_empty() || selected.contains(root.id.as_str()) {
+            scopes.push(TransitionScope {
+                root_id: root.id.clone(),
+                scope_id: root.id.clone(),
+                relative_path: ".".to_owned(),
+                effective_policy: root.policy,
+            });
+            continue;
+        }
+        for rule in &root.rules {
+            if selected.contains(rule.id.as_str()) {
+                scopes.push(TransitionScope {
+                    root_id: root.id.clone(),
+                    scope_id: rule.id.clone(),
+                    relative_path: rule.relative_path.clone(),
+                    effective_policy: rule.policy,
+                });
+            }
+        }
+    }
+    if !selected.is_empty() && scopes.len() != selected.len() {
+        return Err(SettingsError::InvalidInput {
+            message: "One or more library policy scopes no longer exist.".to_owned(),
+        });
+    }
+    Ok(scopes)
+}
+
+/// Build the apply preview for scopes picked by [`apply_scopes`]. Saves
+/// never cancel queued work on v3, so that flag is always false.
+pub fn apply_preview(
+    resolved: &ResolvedLibraryPolicy,
+    scope_ids: Vec<String>,
+    scopes: &[TransitionScope],
+    estimated_file_count: i64,
+) -> LibraryPolicyApplyPreviewResponse {
+    LibraryPolicyApplyPreviewResponse {
+        policy_revision: resolved.policy_revision.clone(),
+        scope_ids,
+        estimated_file_count,
+        content_will_become_unavailable: any_excluded(scopes),
+        queued_work_was_cancelled_on_save: false,
+    }
+}
+
+/// Recover a root's path from one of its rows: the file path minus the
+/// root-relative path. A row whose two paths disagree falls back to the
+/// file's directory, which the restore dialog lets the user correct.
+fn recovered_root_path(root: &CatalogRoot) -> String {
+    let file = Path::new(&root.sample_file_path);
+    let relative = Path::new(&root.sample_relative_path);
+    let mut path = file.to_path_buf();
+    if !root.sample_relative_path.is_empty() && file.ends_with(relative) {
+        for _ in relative.components() {
+            path.pop();
+        }
+    } else {
+        path.pop();
+    }
+    path.to_string_lossy().into_owned()
+}
+
+/// Roots the catalog holds rows for that the saved settings no longer
+/// list, with their recovered paths.
+pub fn restorable_roots(
+    settings: &TypedLibrary,
+    catalog: &[CatalogRoot],
+) -> Vec<LibraryRestorableRoot> {
+    let configured: BTreeSet<&str> = settings
+        .library_roots
+        .iter()
+        .map(|root| root.id.as_str())
+        .collect();
+    catalog
+        .iter()
+        .filter(|root| !configured.contains(root.root_id.as_str()))
+        .map(|root| LibraryRestorableRoot {
+            root_id: root.root_id.clone(),
+            path: recovered_root_path(root),
+            indexed_file_count: root.track_count,
+        })
+        .collect()
+}
+
+/// A label for a restored root: the directory name, numbered when a
+/// root already uses it (casefolded, like the resolver's uniqueness
+/// check).
+fn restored_root_label(path: &str, used: &mut BTreeSet<String>) -> String {
+    let base = Path::new(path)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "Library".to_owned());
+    let mut label = base.clone();
+    let mut number = 2;
+    while used.contains(&label.to_lowercase()) {
+        label = format!("{base} ({number})");
+        number += 1;
+    }
+    used.insert(label.to_lowercase());
+    label
+}
+
+/// The settings with every removed root put back as an automatic root
+/// with no rules. `paths` overrides a recovered path by root id.
+pub fn with_restored_roots(
+    mut settings: TypedLibrary,
+    restorable: &[LibraryRestorableRoot],
+    paths: &BTreeMap<String, String>,
+) -> Result<TypedLibrary, SettingsError> {
+    if restorable.is_empty() {
+        return Err(SettingsError::InvalidInput {
+            message: "There are no removed library roots to restore.".to_owned(),
+        });
+    }
+    let mut used: BTreeSet<String> = settings
+        .library_roots
+        .iter()
+        .map(|root| root.label.to_lowercase())
+        .collect();
+    for root in restorable {
+        let path = paths
+            .get(&root.root_id)
+            .map(|path| path.trim())
+            .filter(|path| !path.is_empty())
+            .unwrap_or(&root.path)
+            .to_owned();
+        let label = restored_root_label(&path, &mut used);
+        settings.library_roots.push(LibraryRoot {
+            id: root.root_id.clone(),
+            path,
+            label,
+            policy: IdentificationPolicy::Automatic,
+            rules: Vec::new(),
+        });
+    }
+    Ok(settings)
+}
+
+/// Dry run: map every catalog path to a saved root. Paths are cleaned
+/// lexically, not resolved on disk, so the run stays one pass over the
+/// rows.
+pub fn path_mapping(
+    resolved: &ResolvedLibraryPolicy,
+    sources: Vec<CatalogPath>,
+) -> LibraryPathMappingReport {
+    let roots: Vec<PathBuf> = resolved
+        .settings
+        .library_roots
+        .iter()
+        .map(|root| PathBuf::from(&root.path))
+        .collect();
+    let (mut mapped, mut ambiguous, mut out_of_root) = (0_i64, 0_i64, 0_i64);
+    let source_count = i64::try_from(sources.len()).unwrap_or(i64::MAX);
+    let items = sources
+        .into_iter()
+        .map(|source| {
+            let candidate = clean_absolute(&source.file_path);
+            let matches = candidate.as_ref().map_or(0, |path| {
+                roots.iter().filter(|root| path.starts_with(root)).count()
+            });
+            let mapping = match (&candidate, matches) {
+                (Some(path), 1) => resolve_path(&resolved.settings, path),
+                _ => None,
+            };
+            let mut item = LibraryPathMappingItem {
+                source_kind: PathMappingSource::LibraryFile,
+                source_id: source.track_id,
+                absolute_path: source.file_path,
+                root_id: None,
+                relative_path: None,
+                error: None,
+            };
+            match mapping {
+                Some((root_id, relative_path, _)) => {
+                    mapped += 1;
+                    item.root_id = Some(root_id);
+                    item.relative_path = Some(relative_path);
+                }
+                None if matches > 1 => {
+                    ambiguous += 1;
+                    item.error = Some(PathMappingError::Ambiguous);
+                }
+                None => {
+                    out_of_root += 1;
+                    item.error = Some(PathMappingError::OutOfRoot);
+                }
+            }
+            item
+        })
+        .collect();
+    LibraryPathMappingReport {
+        policy_revision: resolved.policy_revision.clone(),
+        source_count,
+        mapped_count: mapped,
+        ambiguous_count: ambiguous,
+        out_of_root_count: out_of_root,
+        blocking: ambiguous > 0 || out_of_root > 0,
+        items,
+    }
 }
 
 /// Build the GET view: normalized settings plus revision, the applied

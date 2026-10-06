@@ -6,7 +6,9 @@
 pub mod effects;
 pub mod error;
 pub mod handlers;
+pub mod library_catalog;
 pub mod library_policy;
+pub mod library_policy_service;
 pub mod management;
 pub mod models;
 pub mod musicbrainz;

@@ -414,28 +414,40 @@ pub struct LibraryPathQuery {
     pub path: String,
 }
 
+/// Which kind of scope a policy-tree node stands for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyNodeKind {
+    /// A whole library root.
+    Root,
+    /// A path rule inside a root.
+    Rule,
+}
+
 /// One policy-tree node.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct LibraryPolicyTreeNode {
     /// Node id (root or rule id).
     pub id: String,
-    /// `root` or `rule`.
-    pub kind: String,
+    /// Root or rule.
+    pub kind: PolicyNodeKind,
     /// Display label.
     pub label: String,
-    /// Absolute path.
+    /// Absolute path for a root, the root-relative path for a rule.
     pub path: String,
-    /// Effective policy.
+    /// Policy set on this node.
     pub policy: IdentificationPolicy,
-    /// Id the policy inherits from, when any.
+    /// Id the policy comes from.
     pub inherited_from_id: Option<String>,
-    /// Whether the path is currently available.
+    /// Whether the path exists on disk right now.
     pub available: bool,
-    /// Indexed file count, when the catalog port is wired.
+    /// Indexed catalog files under the node, when the catalog is wired.
     pub indexed_file_count: Option<i64>,
-    /// On-disk file count, when the catalog port is wired.
+    /// Indexed plus excluded catalog files under the node, when the
+    /// catalog is wired.
     pub on_disk_file_count: Option<i64>,
     /// Child rule nodes.
+    #[schema(no_recursion)]
     pub children: Vec<LibraryPolicyTreeNode>,
 }
 
@@ -456,35 +468,148 @@ pub struct LibraryPolicyImpactRequest {
     /// Full candidate settings.
     #[schema(value_type = TypedLibrary)]
     pub settings: Masked<TypedLibrary>,
-    /// Compare-and-swap token from the last GET, if any.
+    /// Revision the page loaded, if any. A mismatch sets `stale`.
+    #[serde(default)]
     pub expected_policy_revision: Option<String>,
 }
 
-/// Impact preview: revision change plus affected scopes and counts.
-/// Without the pending-policy machinery (library-engine follow-up),
-/// reconciliation fields project the applied state.
+/// Impact preview: how the candidate settings differ from the saved ones
+/// and how much of the catalog the change touches.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct LibraryPolicyImpactResponse {
-    /// Current stored revision.
+    /// Saved revision.
     pub current_policy_revision: String,
-    /// Normalized candidate revision.
+    /// Revision of the normalized candidate.
     pub proposed_policy_revision: String,
-    /// The caller's revision was already stale.
+    /// The caller's expected revision no longer matches the saved one.
     pub stale: bool,
-    /// Whether the change needs reconciliation.
+    /// Whether any root or rule changes its effective policy.
     pub reconciliation_required: bool,
-    /// Affected scope ids.
+    /// Root and rule ids whose effective policy changes.
     pub affected_scope_ids: Vec<String>,
-    /// Indexed file count under the affected scopes, when wired.
+    /// Indexed catalog files under the affected scopes, when wired.
     pub indexed_file_count: Option<i64>,
-    /// On-disk file count under the affected scopes, when wired.
+    /// Indexed plus excluded catalog files under the affected scopes,
+    /// when wired.
     pub on_disk_file_count: Option<i64>,
-    /// Whether catalog content becomes unavailable.
+    /// Some affected scope becomes excluded.
     pub content_will_become_unavailable: bool,
-    /// Whether queued work is cancelled.
+    /// Some affected scope stops being automatic, so queued
+    /// identification there no longer applies.
     pub queued_work_will_be_cancelled: bool,
-    /// Non-blocking warnings.
+    /// Non-blocking warnings about the candidate.
     pub warnings: Vec<String>,
+}
+
+/// Apply-preview request: which saved scopes to reconcile.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct LibraryPolicyApplyRequest {
+    /// Root or rule ids; empty means every root.
+    pub scope_ids: Vec<String>,
+    /// Revision the page loaded; a mismatch is a 409.
+    pub expected_policy_revision: String,
+}
+
+/// Apply preview: how many catalog files a reconcile of the chosen
+/// scopes would revisit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct LibraryPolicyApplyPreviewResponse {
+    /// Saved revision the preview was built from.
+    pub policy_revision: String,
+    /// The scope ids as requested.
+    pub scope_ids: Vec<String>,
+    /// Catalog files under the chosen scopes.
+    pub estimated_file_count: i64,
+    /// Some chosen scope is excluded.
+    pub content_will_become_unavailable: bool,
+    /// Whether the last save cancelled queued work. Saves never cancel
+    /// queued work on this server, so this is always false.
+    pub queued_work_was_cancelled_on_save: bool,
+}
+
+/// A root the catalog still holds tracks for but the settings no
+/// longer list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct LibraryRestorableRoot {
+    /// Root id the catalog rows carry.
+    pub root_id: String,
+    /// Root path recovered from the catalog rows.
+    pub path: String,
+    /// Catalog files under the root.
+    pub indexed_file_count: i64,
+}
+
+/// Removed roots that can be put back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct LibraryRestorableRootsResponse {
+    /// Saved revision (the token a restore must send).
+    pub policy_revision: String,
+    /// Restorable roots, sorted by id.
+    pub restorable_roots: Vec<LibraryRestorableRoot>,
+}
+
+/// Restore request: put every removed root back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct LibraryRestoreRootsRequest {
+    /// Revision the page loaded; a mismatch is a 409.
+    pub expected_policy_revision: String,
+    /// Path overrides by root id, for roots whose files moved.
+    #[serde(default)]
+    pub paths: Option<BTreeMap<String, String>>,
+}
+
+/// Where a mapped path came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PathMappingSource {
+    /// A catalog track file.
+    LibraryFile,
+}
+
+/// Why a path did not map to a root.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PathMappingError {
+    /// The path sits under more than one root.
+    Ambiguous,
+    /// The path sits under no root.
+    OutOfRoot,
+}
+
+/// One catalog path and the root it maps to under the saved settings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct LibraryPathMappingItem {
+    /// Source kind.
+    pub source_kind: PathMappingSource,
+    /// Track id.
+    pub source_id: String,
+    /// Absolute file path the catalog holds.
+    pub absolute_path: String,
+    /// Root the path maps to, when it maps.
+    pub root_id: Option<String>,
+    /// Path relative to that root, when it maps.
+    pub relative_path: Option<String>,
+    /// Why it did not map.
+    pub error: Option<PathMappingError>,
+}
+
+/// Dry run: does every catalog path map to exactly one saved root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct LibraryPathMappingReport {
+    /// Saved revision the report was built from.
+    pub policy_revision: String,
+    /// Paths checked.
+    pub source_count: i64,
+    /// Paths that map to one root.
+    pub mapped_count: i64,
+    /// Paths under more than one root.
+    pub ambiguous_count: i64,
+    /// Paths under no root.
+    pub out_of_root_count: i64,
+    /// Some path does not map.
+    pub blocking: bool,
+    /// Every checked path, ordered by track id.
+    pub items: Vec<LibraryPathMappingItem>,
 }
 
 // --- advanced settings ------------------------------------------------------------
