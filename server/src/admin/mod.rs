@@ -1,10 +1,12 @@
-//! Admin UX: backups, caches, queues, providers, quotas.
+//! Admin UX: backups, caches, queues, providers, quotas, plus the system
+//! health read every user's header polls.
 //!
-//! Every route here is admin-only. [`require_admin`] re-reads the caller's
-//! user row on each request (role changes land immediately) and answers 401
-//! for missing or stale sessions, 403 for signed-in non-admins: the same
-//! posture as the users routes, minus their extractor (this router
-//! carries [`AdminSetup`] state, not `UsersDeps`).
+//! Every `/admin` route is admin-only. [`require_admin`] re-reads the
+//! caller's user row on each request (role changes land immediately) and
+//! answers 401 for missing or stale sessions, 403 for signed-in non-admins:
+//! the same posture as the users routes, minus their extractor (this router
+//! carries [`AdminSetup`] state, not `UsersDeps`). `/system/health` takes
+//! any signed-in user through [`require_user`], as in v2.
 //!
 //! Optional backends ([`AdminDb`], backups, checkpoint, precache) are
 //! `None` on unwired test states; handlers answer 503 there instead of
@@ -17,6 +19,7 @@ pub mod handlers;
 pub mod models;
 pub mod queues;
 pub mod quota;
+pub mod system;
 
 use std::sync::Arc;
 
@@ -32,7 +35,7 @@ use sqlx::SqlitePool;
 use crate::{
     auth::{
         session::middleware::CurrentSession,
-        users::{UsersDeps, roles::Role},
+        users::{UsersDeps, models::UserRecord, roles::Role},
     },
     db::{BackupService, CheckpointService, DurableWorkWakeups, WriteLane},
     providers::{InMemoryProviderCache, Providers},
@@ -46,6 +49,7 @@ pub use models::{
     ProviderStatsResponse, QueueStatsResponse, QuotaOverrideBody, QuotaOverrideView, QuotaResponse,
     RestoreCheck, RestoreReport, SlotView, WakeupChannelView,
 };
+pub use system::{ServiceHealthItem, SystemHealthResponse};
 
 /// Database handles the admin routes read and write through.
 #[derive(Clone)]
@@ -152,10 +156,18 @@ impl AdminSetup {
         Self::new(users, quota, cache, providers)
     }
 
-    /// Mount the admin routes. Layers are applied by `create_app`, plus the
-    /// [`require_admin`] gate below; handlers take `State<AdminSetup>`.
+    /// Mount the admin routes and the system health read. Layers are
+    /// applied by `create_app`, plus the [`require_admin`] or
+    /// [`require_user`] gate below; handlers take `State<AdminSetup>`.
     pub fn gated_router(&self) -> Router {
-        Router::new()
+        let system = Router::new()
+            .route("/system/health", get(system::system_health))
+            .layer(axum::middleware::from_fn_with_state(
+                self.clone(),
+                require_user,
+            ))
+            .with_state(self.clone());
+        let admin = Router::new()
             .route(
                 "/admin/backups",
                 get(handlers::list_backups).post(handlers::run_backup),
@@ -177,31 +189,56 @@ impl AdminSetup {
                 self.clone(),
                 require_admin,
             ))
-            .with_state(self.clone())
+            .with_state(self.clone());
+        admin.merge(system)
     }
 }
 
-/// Admin gate: 401 when no session is stashed or the account is gone, 403
-/// when the account is not an admin. The role rereads the user row every
-/// request, so promotions and demotions land on the next call.
-async fn require_admin(State(admin): State<AdminSetup>, request: Request, next: Next) -> Response {
+/// The caller's live user row: 401 when no session is stashed or the
+/// account is gone. Read on every request, so role changes land on the
+/// next call. Takes the session's user id rather than the request, which
+/// is not `Sync` and so cannot be borrowed across the lookup.
+async fn signed_in_user(
+    admin: &AdminSetup,
+    session_user: Option<String>,
+) -> Result<UserRecord, AdminHttpError> {
     let missing = || {
         AdminHttpError(AdminError::Unauthorized {
             message: "Authentication required".to_owned(),
         })
     };
-    let Some(session) = request.extensions().get::<CurrentSession>().cloned() else {
-        return missing().into_response();
-    };
-    let user = match admin.users.users.get_by_id(&session.user_id).await {
-        Ok(Some(user)) => user,
-        Ok(None) => return missing().into_response(),
-        Err(error) => {
-            return AdminHttpError(AdminError::internal(&format_args!(
-                "admin gate lookup failed: {error}"
-            )))
-            .into_response();
-        }
+    let user_id = session_user.ok_or_else(missing)?;
+    match admin.users.users.get_by_id(&user_id).await {
+        Ok(Some(user)) => Ok(user),
+        Ok(None) => Err(missing()),
+        Err(error) => Err(AdminHttpError(AdminError::internal(&format_args!(
+            "admin gate lookup failed: {error}"
+        )))),
+    }
+}
+
+/// The user id the session gate stashed, if any.
+fn session_user(request: &Request) -> Option<String> {
+    request
+        .extensions()
+        .get::<CurrentSession>()
+        .map(|session| session.user_id.clone())
+}
+
+/// Signed-in gate: any live account passes.
+async fn require_user(State(admin): State<AdminSetup>, request: Request, next: Next) -> Response {
+    match signed_in_user(&admin, session_user(&request)).await {
+        Ok(_) => next.run(request).await,
+        Err(error) => error.into_response(),
+    }
+}
+
+/// Admin gate: [`signed_in_user`], then 403 when the account is not an
+/// admin.
+async fn require_admin(State(admin): State<AdminSetup>, request: Request, next: Next) -> Response {
+    let user = match signed_in_user(&admin, session_user(&request)).await {
+        Ok(user) => user,
+        Err(error) => return error.into_response(),
     };
     if user.role != Role::Admin {
         return AdminHttpError(AdminError::Forbidden {

@@ -6095,6 +6095,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/system/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Which external services are degraded right now. */
+        get: operations["system_health"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/users/{id}/avatar": {
         parameters: {
             query?: never;
@@ -14452,6 +14469,24 @@ export interface components {
              */
             year: number;
         };
+        /** @description One degraded service capability (v2 `ServiceHealthItem`). */
+        ServiceHealthItem: {
+            /** @description What is affected, e.g. `metadata`. */
+            capability: string;
+            /**
+             * Format: int64
+             * @description Seconds since the service was first seen degraded.
+             */
+            degraded_seconds: number;
+            /** @description Service used instead, when there is one. */
+            fallback?: string | null;
+            /** @description One user-facing line. */
+            message: string;
+            /** @description Lowercase service key, e.g. `musicbrainz`. */
+            service: string;
+            /** @description `degraded` or `down`. */
+            severity: string;
+        };
         /** @description A card nudging the user to connect a service. */
         ServicePrompt: {
             /** @description Accent color token. */
@@ -14970,6 +15005,14 @@ export interface components {
              * @description Rows reconciled.
              */
             reconciled: number;
+        };
+        /**
+         * @description Degraded services, empty when everything is healthy (v2
+         *     `SystemHealthResponse`).
+         */
+        SystemHealthResponse: {
+            /** @description Live degraded entries, sorted by service then capability. */
+            degraded: components["schemas"]["ServiceHealthItem"][];
         };
         /** @description One tagging script. */
         TaggingScript: {
@@ -28634,6 +28677,33 @@ export interface operations {
             };
             /** @description Remote source failed the read */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    system_health: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Degraded services */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemHealthResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

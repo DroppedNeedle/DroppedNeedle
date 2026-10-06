@@ -14632,6 +14632,30 @@
         }
       }
     },
+    "/api/v3/system/health": {
+      "get": {
+        "tags": [
+          "crate::admin::system"
+        ],
+        "summary": "Which external services are degraded right now.",
+        "operationId": "system_health",
+        "responses": {
+          "200": {
+            "description": "Degraded services",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemHealthResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
     "/api/v3/users/{id}/avatar": {
       "get": {
         "tags": [
@@ -31355,6 +31379,48 @@
           }
         }
       },
+      "ServiceHealthItem": {
+        "type": "object",
+        "description": "One degraded service capability (v2 `ServiceHealthItem`).",
+        "required": [
+          "service",
+          "capability",
+          "severity",
+          "message",
+          "degraded_seconds"
+        ],
+        "properties": {
+          "capability": {
+            "type": "string",
+            "description": "What is affected, e.g. `metadata`."
+          },
+          "degraded_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds since the service was first seen degraded.",
+            "minimum": 0
+          },
+          "fallback": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Service used instead, when there is one."
+          },
+          "message": {
+            "type": "string",
+            "description": "One user-facing line."
+          },
+          "service": {
+            "type": "string",
+            "description": "Lowercase service key, e.g. `musicbrainz`."
+          },
+          "severity": {
+            "type": "string",
+            "description": "`degraded` or `down`."
+          }
+        }
+      },
       "ServicePrompt": {
         "type": "object",
         "description": "A card nudging the user to connect a service.",
@@ -32372,6 +32438,22 @@
             "format": "int32",
             "description": "Rows reconciled.",
             "minimum": 0
+          }
+        }
+      },
+      "SystemHealthResponse": {
+        "type": "object",
+        "description": "Degraded services, empty when everything is healthy (v2\n`SystemHealthResponse`).",
+        "required": [
+          "degraded"
+        ],
+        "properties": {
+          "degraded": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServiceHealthItem"
+            },
+            "description": "Live degraded entries, sorted by service then capability."
           }
         }
       },

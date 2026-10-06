@@ -463,9 +463,6 @@ export const API = {
 		previewArtwork: (jobId: string, ordinal: number, sha256: string) =>
 			`/api/v1/library/management/previews/${encodeURIComponent(jobId)}/items/${ordinal}/artwork/${encodeURIComponent(sha256)}`
 	},
-	system: {
-		health: () => '/api/v1/system/health'
-	},
 	cacheSync: {
 		status: () => '/api/v1/cache/sync/status',
 		cancel: () => '/api/v1/cache/sync/cancel'

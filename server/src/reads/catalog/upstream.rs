@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use crate::auth::users::UsersDeps;
 use crate::auth::users::stores::LastFmSwitch;
-use crate::providers::adapters::{CorePacer, CoreSink, ReqwestGet};
+use crate::providers::adapters::{CorePacer, HealthSink, ReqwestGet};
 use crate::providers::audiodb::{self, AudioDbClient};
 use crate::providers::lastfm::{self, LastFmClient, LastFmCredentials};
 use crate::providers::listenbrainz::{self, ListenBrainzClient, ListenBrainzCredentials};
@@ -115,13 +115,13 @@ impl Default for Endpoints {
 }
 
 /// The MusicBrainz client type the catalog uses.
-pub type CatalogMusicBrainz = MusicBrainzClient<ReqwestMbTransport, CoreSink>;
+pub type CatalogMusicBrainz = MusicBrainzClient<ReqwestMbTransport, HealthSink>;
 /// The ListenBrainz client type the catalog uses.
-pub type CatalogListenBrainz = ListenBrainzClient<CorePacer, CoreSink>;
+pub type CatalogListenBrainz = ListenBrainzClient<CorePacer, HealthSink>;
 /// The Last.fm client type the catalog uses.
-pub type CatalogLastFm = LastFmClient<CorePacer, CoreSink>;
+pub type CatalogLastFm = LastFmClient<CorePacer, HealthSink>;
 /// The AudioDB client type the catalog uses.
-pub type CatalogAudioDb = AudioDbClient<CorePacer, CoreSink>;
+pub type CatalogAudioDb = AudioDbClient<CorePacer, HealthSink>;
 
 /// Everything needed to reach the catalog's upstreams.
 #[derive(Clone)]
@@ -246,7 +246,7 @@ impl Upstream {
             source,
             MbPacing::new(self.providers.clone()),
         )
-        .with_sink(CoreSink)
+        .with_sink(HealthSink::new(&self.providers))
         .with_priority(priority);
         (client, namespace)
     }
@@ -263,7 +263,7 @@ impl Upstream {
                 self.http.clone(),
                 &self.endpoints.listenbrainz,
                 pacer,
-                CoreSink,
+                HealthSink::new(&self.providers),
             ),
             ListenBrainzCredentials::default(),
         ))
@@ -282,7 +282,12 @@ impl Upstream {
         };
         let pacer = CorePacer::for_source(self.providers.clone(), lastfm::SOURCE)?;
         Some((
-            LastFmClient::new(self.http.clone(), &self.endpoints.lastfm, pacer, CoreSink),
+            LastFmClient::new(
+                self.http.clone(),
+                &self.endpoints.lastfm,
+                pacer,
+                HealthSink::new(&self.providers),
+            ),
             LastFmCredentials {
                 api_key,
                 ..LastFmCredentials::default()
@@ -302,8 +307,13 @@ impl Upstream {
         }
         let pacer = CorePacer::for_source(self.providers.clone(), audiodb::SOURCE)?;
         Some(
-            AudioDbClient::new(self.http.clone(), &self.endpoints.audiodb, pacer, CoreSink)
-                .with_api_key(advanced.audiodb_api_key.expose()),
+            AudioDbClient::new(
+                self.http.clone(),
+                &self.endpoints.audiodb,
+                pacer,
+                HealthSink::new(&self.providers),
+            )
+            .with_api_key(advanced.audiodb_api_key.expose()),
         )
     }
 

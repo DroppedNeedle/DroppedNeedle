@@ -30,7 +30,8 @@ use crate::{
         BackupListResponse, BackupRunResponse, BackupView, CacheClearBody, CacheClearResponse,
         CacheStatsResponse, CheckpointView, JobView, PrecacheRunResponse, ProviderLimiterView,
         ProviderStatsResponse, QueueStatsResponse, QuotaOverrideBody, QuotaOverrideView,
-        QuotaResponse, RestoreCheck, RestoreReport, SlotView, WakeupChannelView,
+        QuotaResponse, RestoreCheck, RestoreReport, ServiceHealthItem, SlotView,
+        SystemHealthResponse, WakeupChannelView,
     },
     auth::{
         routes::models::{
@@ -467,6 +468,7 @@ use crate::{
         crate::admin::handlers::get_quota,
         crate::admin::handlers::set_quota,
         crate::admin::handlers::run_precache,
+        crate::admin::system::system_health,
         crate::plugins::handlers::list_plugins,
         crate::plugins::handlers::install_plugin,
         crate::plugins::handlers::preview_plugin_install,
@@ -984,6 +986,8 @@ use crate::{
         QuotaOverrideView,
         CheckpointView,
         PrecacheRunResponse,
+        ServiceHealthItem,
+        SystemHealthResponse,
         PluginSettingFieldInfo,
         PluginInfo,
         PluginListResponse,

@@ -63,6 +63,7 @@ pub mod discogs;
 pub mod error;
 pub mod geocoding;
 pub mod github;
+pub mod health;
 pub mod itunes;
 pub mod lastfm;
 pub mod limiter;
@@ -81,7 +82,7 @@ pub mod youtube;
 
 use std::sync::Arc;
 
-pub use adapters::{CorePacer, CoreSink, ReqwestGet};
+pub use adapters::{CorePacer, CoreSink, HealthSink, ReqwestGet};
 pub use cache::{
     InMemoryProviderCache, ProviderCache, cache_aside_bytes, cache_aside_json, digest_key,
     invalidate_source, namespaced_key, prefixes_for,
@@ -104,7 +105,8 @@ pub use slots::{RequestPriority, SlotError, SlotManager, SlotStats, USER_QUIET_W
 
 /// The shared provider dependencies, built once at boot and cloned into
 /// every provider client: the verified limiters, the three slot lanes, the
-/// byte cache, and the MusicBrainz pacing state.
+/// byte cache, the MusicBrainz pacing state, and the service health
+/// registry the clients' failures feed.
 #[derive(Debug)]
 pub struct Providers {
     /// One token bucket per verified policy row.
@@ -116,6 +118,8 @@ pub struct Providers {
     /// MusicBrainz pacing state (BrainzMash cooldown, mirror limiter),
     /// shared by every MusicBrainz client.
     pub musicbrainz: musicbrainz::MbPacingState,
+    /// Which services are degraded right now, for `GET /system/health`.
+    pub health: Arc<health::ServiceHealth>,
 }
 
 impl Providers {
@@ -127,6 +131,7 @@ impl Providers {
             slots: SlotManager::new(),
             cache,
             musicbrainz: musicbrainz::MbPacingState::default(),
+            health: Arc::new(health::ServiceHealth::new()),
         }
     }
 

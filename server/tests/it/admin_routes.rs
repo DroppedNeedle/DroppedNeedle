@@ -185,6 +185,32 @@ async fn admin_gate_posts_its_posture_on_every_route() {
     assert_eq!(payload["error"]["code"], Value::from("UNAUTHORIZED"));
 }
 
+/// Any signed-in user reads system health (every user sees the header dot),
+/// in v2's wire shape, once a run of provider failures marks a service.
+#[tokio::test]
+async fn system_health_lists_degraded_services_for_any_user() {
+    let rig = Rig::open("system-health").await;
+    let (status, _) = call(rig.app(None), "GET", "/system/health", None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, payload) = call(rig.user_app(), "GET", "/system/health", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload, json!({"degraded": []}));
+
+    let now = std::time::Instant::now();
+    for _ in 0..5 {
+        rig.admin.providers.health.record_failure("lastfm", now);
+    }
+    let (status, payload) = call(rig.user_app(), "GET", "/system/health", None).await;
+    assert_eq!(status, StatusCode::OK);
+    let entry = &payload["degraded"][0];
+    assert_eq!(entry["service"], "lastfm");
+    assert_eq!(entry["capability"], "music data");
+    assert_eq!(entry["severity"], "degraded");
+    assert_eq!(entry["fallback"], Value::Null);
+    assert!(entry["message"].as_str().is_some_and(|m| !m.is_empty()));
+    assert!(entry["degraded_seconds"].is_u64());
+}
+
 #[tokio::test]
 async fn cache_clear_all_and_per_source() {
     let rig = Rig::open("cache-clear").await;

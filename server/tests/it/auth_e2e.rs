@@ -1814,6 +1814,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ),
     ("GET", "/api/v3/acquire/spotify/jobs/{id}", Posture::User),
     ("DELETE", "/api/v3/me/connections/spotify", Posture::User),
+    ("GET", "/api/v3/system/health", Posture::User),
     ("GET", "/api/v3/acquire/health", Posture::User),
     ("GET", "/api/v3/acquire/slskd/status", Posture::User),
     ("GET", "/api/v3/acquire/sabnzbd/status", Posture::Admin),

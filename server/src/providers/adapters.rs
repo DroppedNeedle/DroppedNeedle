@@ -9,6 +9,8 @@
 //!   [`RateLimiter`](super::limiter::RateLimiter).
 //! - [`CoreSink`] records degradation notes into the request-scoped
 //!   [`DegradationContext`](super::degradation::DegradationContext).
+//!   [`HealthSink`] does the same and also counts each failure toward the
+//!   process [`ServiceHealth`](super::health::ServiceHealth) registry.
 //! - [`ReqwestGet`] serves the catalog [`HttpPort`](super::client::HttpPort)
 //!   from one shared reqwest client.
 //!
@@ -25,12 +27,13 @@
 //!   Ticketmaster): pacing one invents policy, so [`CorePacer::for_source`]
 //!   declines them until their rows are verified.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use super::{
     Providers,
     client::{HttpFault, HttpPort, HttpReply},
     degradation::{DegradationSink, IntegrationStatus as CoreStatus, record_current},
+    health::ServiceHealth,
     limiter::Pacer,
 };
 use crate::http_client::HttpClientFactory;
@@ -94,6 +97,31 @@ impl DegradationSink for CoreSink {
     fn record(&self, source: &'static str, message: String) {
         tracing::debug!(source, cause = message, "provider leg degraded");
         record_current(source, CoreStatus::Error, false);
+    }
+}
+
+/// [`CoreSink`] plus the process health registry: every failure is also
+/// counted toward its source's sustained-failure rule, so an outage shows
+/// on `GET /system/health` whether or not a request scope is open.
+#[derive(Debug, Clone)]
+pub struct HealthSink {
+    health: Arc<ServiceHealth>,
+}
+
+impl HealthSink {
+    /// Report into the registry the shared deps hold.
+    #[must_use]
+    pub fn new(providers: &Providers) -> Self {
+        Self {
+            health: providers.health.clone(),
+        }
+    }
+}
+
+impl DegradationSink for HealthSink {
+    fn record(&self, source: &'static str, message: String) {
+        CoreSink.record(source, message);
+        self.health.record_failure(source, Instant::now());
     }
 }
 

@@ -295,18 +295,9 @@ export type ServicePrompt = {
 	features: string[];
 };
 
-export type ServiceHealthItem = {
-	service: string;
-	capability: string;
-	severity: string;
-	message: string;
-	fallback?: string | null;
-	degraded_seconds?: number;
-};
+export type ServiceHealthItem = components['schemas']['ServiceHealthItem'];
 
-export type SystemHealthResponse = {
-	degraded: ServiceHealthItem[];
-};
+export type SystemHealthResponse = components['schemas']['SystemHealthResponse'];
 
 export type HomeResponse = {
 	refreshing?: boolean;
