@@ -19,6 +19,8 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use tokio::sync::Notify;
+
 use super::registry::{BoxFuture, JobCtx, JobExit, JobKind, JobRegistry, RegistryStore};
 use super::schedule::sleep_or_stop;
 
@@ -37,11 +39,41 @@ pub const CATCHUP_SKIP_RECENT_HOURS: f64 = 20.0;
 /// Fallback poll time when the saved value is garbage, from v2.
 const FALLBACK_POLL_MINUTES: u16 = 6 * 60;
 
+/// How a sweep ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SweepEnd {
+    /// Walked every artist it meant to.
+    Finished,
+    /// Saw the stop signal and quit between artists.
+    Stopped,
+}
+
 /// Sweep the live-event sources behind a seam.
 pub trait EventsWatcher: Send + Sync + 'static {
     /// Run one full sweep. `skip_recent_hours` narrows the catch-up sweep to
-    /// artists not swept within the window; daily sweeps pass nothing.
-    fn run_sweep(&self, skip_recent_hours: Option<f64>) -> BoxFuture<'_, Result<(), String>>;
+    /// artists not swept within the window; daily sweeps pass nothing. A
+    /// sweep walks artists for up to an hour, so it watches `stop` between
+    /// artists and returns [`SweepEnd::Stopped`] when it fires.
+    fn run_sweep(
+        &self,
+        skip_recent_hours: Option<f64>,
+        stop: Arc<Notify>,
+    ) -> BoxFuture<'_, Result<SweepEnd, String>>;
+}
+
+/// No sweep wired (states without a database): every sweep finishes at
+/// once without walking anything.
+impl<W: EventsWatcher> EventsWatcher for Option<W> {
+    fn run_sweep(
+        &self,
+        skip_recent_hours: Option<f64>,
+        stop: Arc<Notify>,
+    ) -> BoxFuture<'_, Result<SweepEnd, String>> {
+        match self {
+            Some(watcher) => watcher.run_sweep(skip_recent_hours, stop),
+            None => Box::pin(async { Ok(SweepEnd::Finished) }),
+        }
+    }
 }
 
 /// The admin's `poll_time` (`HH:MM`), re-read every tick.
@@ -205,25 +237,24 @@ where
     let mut last_sweep: Option<WallTime> = None;
     loop {
         let now = clock.now();
-        match last_sweep {
-            None => {
-                if let Err(cause) = watcher.run_sweep(Some(CATCHUP_SKIP_RECENT_HOURS)).await {
-                    tracing::error!(%cause, "events watcher catch-up sweep failed");
-                }
-                last_sweep = Some(now);
-                ctx.heartbeat().await;
-            }
+        let due = match last_sweep {
+            None => Some(Some(CATCHUP_SKIP_RECENT_HOURS)),
             Some(previous) => {
-                let slot = next_daily_occurrence(&poll_source.poll_time(), previous);
-                if now >= slot {
-                    if let Err(cause) = watcher.run_sweep(None).await {
-                        tracing::error!(%cause, "events watcher sweep failed");
-                    }
-                    // A failing sweep still waits for the next slot.
-                    last_sweep = Some(now);
-                    ctx.heartbeat().await;
-                }
+                (now >= next_daily_occurrence(&poll_source.poll_time(), previous)).then_some(None)
             }
+        };
+        if let Some(skip_recent_hours) = due {
+            match watcher
+                .run_sweep(skip_recent_hours, Arc::clone(ctx.stop()))
+                .await
+            {
+                Ok(SweepEnd::Stopped) => return JobExit::Stopped,
+                Ok(SweepEnd::Finished) => {}
+                Err(cause) => tracing::error!(%cause, "events watcher sweep failed"),
+            }
+            // A failing sweep still waits for the next slot.
+            last_sweep = Some(now);
+            ctx.heartbeat().await;
         }
         let tick = config
             .tick

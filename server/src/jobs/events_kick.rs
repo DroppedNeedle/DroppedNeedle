@@ -72,7 +72,7 @@ where
         .spawn(JOB_NAME, JobKind::Ephemeral, None, move |ctx| {
             let watcher = Arc::clone(&watcher);
             async move {
-                if let Err(cause) = watcher.run_sweep(None).await {
+                if let Err(cause) = watcher.run_sweep(None, Arc::clone(ctx.stop())).await {
                     tracing::error!(%cause, "kicked events sweep failed");
                 }
                 ctx.heartbeat().await;

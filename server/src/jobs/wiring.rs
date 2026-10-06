@@ -25,7 +25,9 @@ use crate::auth::users::{UsersDeps, roles::Role};
 use crate::db::{CheckpointService, DurableWorkWakeups, WriteLane};
 use crate::jobs::checkpoint::{self, CheckpointRunner};
 use crate::jobs::events_kick::{self, EventsKick, FnKick, KickOutcome};
-use crate::jobs::events_watcher::{self, EventsWatcher, PollTimeSource, SystemWatchClock};
+use crate::jobs::events_watcher::{
+    self, EventsWatcher, PollTimeSource, SweepEnd, SystemWatchClock,
+};
 use crate::jobs::media::{MediaJobs, RegistryFeed, RemoteSessionPollers};
 use crate::jobs::personal_mix::{self, PersonalMixer};
 use crate::jobs::playlist_export::M3uPlaylistExporter;
@@ -194,8 +196,12 @@ impl SyncRoles for StoreSyncRoles {
 pub struct UnwiredEventsWatcher;
 
 impl EventsWatcher for UnwiredEventsWatcher {
-    fn run_sweep(&self, _skip_recent_hours: Option<f64>) -> BoxFuture<'_, Result<(), String>> {
-        Box::pin(async { Ok(()) })
+    fn run_sweep(
+        &self,
+        _skip_recent_hours: Option<f64>,
+        _stop: Arc<tokio::sync::Notify>,
+    ) -> BoxFuture<'_, Result<SweepEnd, String>> {
+        Box::pin(async { Ok(SweepEnd::Finished) })
     }
 }
 

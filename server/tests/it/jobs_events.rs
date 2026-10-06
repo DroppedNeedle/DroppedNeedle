@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use droppedneedle::jobs::events_kick::{self, KickOutcome};
 use droppedneedle::jobs::events_watcher::{
-    self, EventsWatcher, PollTimeSource, WallTime, WatchClock,
+    self, EventsWatcher, PollTimeSource, SweepEnd, WallTime, WatchClock,
 };
 use droppedneedle::jobs::registry::{BoxFuture, JobRegistry, MemoryRegistryStore};
 
@@ -34,7 +34,11 @@ struct FakeWatcher {
 }
 
 impl EventsWatcher for FakeWatcher {
-    fn run_sweep(&self, skip_recent_hours: Option<f64>) -> BoxFuture<'_, Result<(), String>> {
+    fn run_sweep(
+        &self,
+        skip_recent_hours: Option<f64>,
+        _stop: Arc<tokio::sync::Notify>,
+    ) -> BoxFuture<'_, Result<SweepEnd, String>> {
         let sweeps = Arc::clone(&self.sweeps);
         let windows = Arc::clone(&self.windows);
         let failures_left = Arc::clone(&self.failures_left);
@@ -45,7 +49,7 @@ impl EventsWatcher for FakeWatcher {
                 failures_left.fetch_sub(1, Ordering::SeqCst);
                 Err("sources down".to_owned())
             } else {
-                Ok(())
+                Ok(SweepEnd::Finished)
             }
         })
     }
@@ -174,8 +178,11 @@ async fn kick_while_running_is_skipped() {
         gate: Arc<Mutex<Option<tokio::sync::oneshot::Receiver<()>>>>,
     }
     impl EventsWatcher for Gate {
-        fn run_sweep(&self, skip: Option<f64>) -> BoxFuture<'_, Result<(), String>> {
-            let _ = skip;
+        fn run_sweep(
+            &self,
+            _skip: Option<f64>,
+            _stop: Arc<tokio::sync::Notify>,
+        ) -> BoxFuture<'_, Result<SweepEnd, String>> {
             let sweeps = Arc::clone(&self.sweeps);
             let gate = Arc::clone(&self.gate);
             Box::pin(async move {
@@ -184,7 +191,7 @@ async fn kick_while_running_is_skipped() {
                 if let Some(rx) = rx {
                     let _ = rx.await;
                 }
-                Ok(())
+                Ok(SweepEnd::Finished)
             })
         }
     }
@@ -203,7 +210,11 @@ async fn kick_while_running_is_skipped() {
     // A second kick while the first is live is skipped, not queued.
     struct Never;
     impl EventsWatcher for Never {
-        fn run_sweep(&self, _skip: Option<f64>) -> BoxFuture<'_, Result<(), String>> {
+        fn run_sweep(
+            &self,
+            _skip: Option<f64>,
+            _stop: Arc<tokio::sync::Notify>,
+        ) -> BoxFuture<'_, Result<SweepEnd, String>> {
             Box::pin(async move {
                 panic!("skipped kick must not sweep");
             })
