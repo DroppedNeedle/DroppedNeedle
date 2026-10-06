@@ -61,17 +61,37 @@ fn request_error(error: ScanRequestError) -> ServiceError {
     }
 }
 
-fn unknown_scopes(_: UnknownScopes) -> ServiceError {
-    ServiceError::InvalidInput {
-        message: "One or more selected library scopes no longer exist.".to_owned(),
-    }
+/// Refusal for ids the engine cannot scan. Ids the saved settings hold
+/// belong to a root the engine had to leave out (its path is not
+/// absolute, or it overlaps another root), so the message says that
+/// instead of claiming they are gone.
+fn unknown_scopes(settings: &TypedLibrary, UnknownScopes(ids): UnknownScopes) -> ServiceError {
+    let saved = |id: &String| {
+        settings
+            .library_roots
+            .iter()
+            .any(|root| &root.id == id || root.rules.iter().any(|rule| &rule.id == id))
+    };
+    let message = if !ids.is_empty() && ids.iter().all(saved) {
+        format!(
+            "These library scopes are saved but cannot be scanned: {}. Check their folders \
+             in Settings > Library.",
+            ids.join(", ")
+        )
+    } else {
+        "One or more selected library scopes no longer exist.".to_owned()
+    };
+    ServiceError::InvalidInput { message }
 }
 
 impl LibrarySetup {
-    /// The registry matching the saved settings, plus the settings'
-    /// policy revision (the one `GET /settings/library` shows). Refuses
-    /// with a conflict when `expected` is given and no longer matches.
-    fn guarded_registry(&self, expected: Option<&str>) -> Result<RootRegistry, ServiceError> {
+    /// The saved settings and the registry matching them. Refuses with a
+    /// conflict when `expected` is given and no longer matches the
+    /// settings' policy revision (the one `GET /settings/library` shows).
+    fn guarded_registry(
+        &self,
+        expected: Option<&str>,
+    ) -> Result<(TypedLibrary, RootRegistry), ServiceError> {
         let settings = self
             .config
             .get_masked::<TypedLibrary>()
@@ -90,7 +110,7 @@ impl LibrarySetup {
         if live.policy_revision() != wanted.policy_revision() {
             return Err(stale());
         }
-        Ok(live)
+        Ok((settings, live))
     }
 
     /// Request a scan by kind over the selected roots and rules (all
@@ -104,8 +124,9 @@ impl LibrarySetup {
         expected_policy_revision: &str,
         user_id: &str,
     ) -> Result<ScanRequestResult, ServiceError> {
-        let registry = self.guarded_registry(Some(expected_policy_revision))?;
-        let scopes = select_scopes(&registry, scope_ids).map_err(unknown_scopes)?;
+        let (settings, registry) = self.guarded_registry(Some(expected_policy_revision))?;
+        let scopes = select_scopes(&registry, scope_ids)
+            .map_err(|unknown| unknown_scopes(&settings, unknown))?;
         let trigger = if kind == ScanKind::PolicyReconcile {
             ScanTrigger::PolicyApply
         } else {
@@ -125,8 +146,9 @@ impl LibrarySetup {
     /// Approximate file count for a scan over the selected scopes, and
     /// when it was taken. Blocking.
     pub fn estimate_scan(&self, scope_ids: &[String]) -> Result<(u64, f64), ServiceError> {
-        let registry = self.guarded_registry(None)?;
-        let scopes = select_scopes(&registry, scope_ids).map_err(unknown_scopes)?;
+        let (settings, registry) = self.guarded_registry(None)?;
+        let scopes = select_scopes(&registry, scope_ids)
+            .map_err(|unknown| unknown_scopes(&settings, unknown))?;
         self.coordinator.estimate(&scopes).map_err(store_error)
     }
 

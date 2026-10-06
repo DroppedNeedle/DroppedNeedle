@@ -10,9 +10,10 @@ use std::collections::BTreeSet;
 use super::models::{ScanScope, scope_covers_path};
 use super::roots::RootRegistry;
 
-/// Some selected ids name no root or rule in the current settings.
+/// Some selected ids name no root or rule the scan engine knows. Holds
+/// those ids, sorted.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnknownScopes;
+pub struct UnknownScopes(pub Vec<String>);
 
 /// Scopes for `scope_ids` over `registry`, ordered by root then depth,
 /// with covered scopes dropped. Every scope carries the registry's
@@ -49,7 +50,12 @@ pub fn select_scopes(
         }
     }
     if !selected.is_empty() && matched != selected {
-        return Err(UnknownScopes);
+        return Err(UnknownScopes(
+            selected
+                .difference(&matched)
+                .map(|id| (*id).to_owned())
+                .collect(),
+        ));
     }
     candidates.sort_by(|left, right| {
         (
@@ -146,6 +152,9 @@ mod tests {
                 ("b".to_owned(), ".".to_owned())
             ])
         );
-        assert_eq!(picked(&["a-live", "gone"]), Err(UnknownScopes));
+        assert_eq!(
+            picked(&["a-live", "gone"]),
+            Err(UnknownScopes(vec!["gone".to_owned()]))
+        );
     }
 }
