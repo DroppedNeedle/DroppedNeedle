@@ -19,30 +19,38 @@ use crate::export::sections::{Column, TableSection};
 /// The bundle column holding the file's bytes.
 const FILE_COLUMN: &str = "file";
 
+/// Why a held file has nowhere to land, as the plain text the report shows.
+const NO_USABLE_NAME: &str = "the held file has no usable name; import it by hand from \
+                              V2_ROOT/cache/held";
+const BOTH_NAMES_TAKEN: &str = "V3_ROOT/cache/held already has different files under both \
+                                the v2 name and the v2-held-<id> name, so this one was not \
+                                copied; move those files aside and run the import again, or \
+                                import it by hand from V2_ROOT/cache/held";
+
 /// Where one held file lands, or why it cannot.
 fn destination(
     dir: &Path,
     id: i64,
     stored: &str,
     bytes: &[u8],
-) -> std::io::Result<Option<PathBuf>> {
+) -> std::io::Result<Result<PathBuf, &'static str>> {
     let Some(name) = Path::new(stored)
         .file_name()
         .and_then(|name| name.to_str())
         .filter(|name| !name.is_empty() && !name.starts_with('.'))
     else {
-        return Ok(None);
+        return Ok(Err(NO_USABLE_NAME));
     };
     for candidate in [name.to_owned(), format!("v2-held-{id}-{name}")] {
         let path = dir.join(&candidate);
         match std::fs::read(&path) {
-            Ok(existing) if existing == bytes => return Ok(Some(path)),
+            Ok(existing) if existing == bytes => return Ok(Ok(path)),
             Ok(_) => continue,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Some(path)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Ok(path)),
             Err(error) => return Err(error),
         }
     }
-    Ok(None)
+    Ok(Err(BOTH_NAMES_TAKEN))
 }
 
 fn io(error: impl std::fmt::Display) -> CarryError {
@@ -63,11 +71,9 @@ pub(crate) async fn apply(
             .persistent(false)
             .fetch_all(&mut *conn)
             .await?;
-    let mut result = SectionResult {
-        rows: ids.len() as u64,
-        ..SectionResult::default()
-    };
+    let mut result = SectionResult::default();
     let Some(cache_dir) = cache_dir else {
+        // Nothing is read or written without a cache folder, so no rows count.
         if !ids.is_empty() {
             result.counts.dropped_invalid += ids.len() as u64;
             result.note(
@@ -79,6 +85,7 @@ pub(crate) async fn apply(
         }
         return Ok(result);
     };
+    result.rows = ids.len() as u64;
     let dir = cache_dir.join("held");
     let columns: Vec<&str> = present
         .iter()
@@ -137,15 +144,13 @@ pub(crate) async fn apply(
         .await
         .map_err(io)?
         .map_err(io)?;
-        let Some(target) = target else {
-            result.counts.dropped_invalid += 1;
-            result.note(
-                id.to_string(),
-                "dropped_invalid",
-                "the held file has no usable name; import it by hand from \
-                 V2_ROOT/cache/held",
-            );
-            continue;
+        let target = match target {
+            Ok(target) => target,
+            Err(reason) => {
+                result.counts.dropped_invalid += 1;
+                result.note(id.to_string(), "dropped_invalid", reason);
+                continue;
+            }
         };
         result.counts.imported += 1;
         if dry_run {

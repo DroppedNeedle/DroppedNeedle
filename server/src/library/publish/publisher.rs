@@ -363,8 +363,9 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             self.gate.check(item)?;
             if baselines.v2_original_missing(&item.track_id)? {
                 return Err(PublishError::Snapshot(format!(
-                    "track {} has an original-file baseline from v2 that was not imported; \
-                     run the v2 import again before managing it",
+                    "track {} has an original-file baseline from v2 that did not come across; \
+                     restore V2_ROOT/cache/library-management from your backup, export from v2 \
+                     again, and import into an empty V3_ROOT before managing it",
                     item.track_id
                 )));
             }
