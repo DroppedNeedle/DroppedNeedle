@@ -21,7 +21,9 @@ use serde_json::Value;
 use super::envelope::{ENVELOPE_NONCE_LEN, ENVELOPE_SALT_LEN, SEALED_KEY, is_sealed};
 use crate::auth::times::parse_iso;
 use crate::config::deployment::DROPPED_ENV_VARS;
-use crate::export::envelope::{EXPORT_FORMAT, FORMAT_VERSION, REQUIRED_KEYS, RESERVED_SECTIONS};
+use crate::export::envelope::{
+    EXPORT_FORMAT, FORMAT_VERSION, OPTIONAL_KEYS, REQUIRED_KEYS, RESERVED_SECTIONS,
+};
 use crate::export::seal::{KDF_ALGO, M_COST_KIB, P_COST, SCHEME, T_COST};
 use crate::runtime_config::DROPPED_SECTION_KEYS;
 
@@ -168,6 +170,8 @@ pub fn validate_export(root: &Value) -> ValidationReport {
     validate_settings(object.get("settings"), &mut report);
     validate_follows(object.get("follows"), &user_ids, &mut report);
     validate_approvals(object.get("approvals"), &user_ids, &mut report);
+    validate_event_cities(object.get("event_cities"), &user_ids, &mut report);
+    validate_event_seen(object.get("event_seen"), &user_ids, &mut report);
     report
 }
 
@@ -313,7 +317,7 @@ fn validate_top_level_keys(object: &serde_json::Map<String, Value>, report: &mut
     }
     for key in object.keys() {
         if REQUIRED_KEYS.contains(&key.as_str())
-            || key == "v2_commit"
+            || OPTIONAL_KEYS.contains(&key.as_str())
             || key == crate::export::seal::DIGEST_KEY
         {
             continue;
@@ -875,6 +879,27 @@ fn validate_member_ref(
     user_ids: &HashSet<String>,
     report: &mut ValidationReport,
 ) {
+    validate_user_ref(record, path, user_ids, report);
+    let mbid = record
+        .get("artist_mbid")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !is_mbid(mbid) {
+        report.errors.push(ValidationIssue::new(
+            "BAD_MBID",
+            format!("{path}.artist_mbid"),
+            "artist_mbid must be 36 hex-or-dash characters".to_owned(),
+        ));
+    }
+}
+
+/// The record names an exported user.
+fn validate_user_ref(
+    record: &serde_json::Map<String, Value>,
+    path: &str,
+    user_ids: &HashSet<String>,
+    report: &mut ValidationReport,
+) {
     match record.get("user_id").and_then(Value::as_str) {
         Some(user_id) if !user_id.is_empty() => {
             if !user_ids.contains(user_id) {
@@ -891,16 +916,126 @@ fn validate_member_ref(
             "record must carry a non-empty user_id".to_owned(),
         )),
     }
-    let mbid = record
-        .get("artist_mbid")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if !is_mbid(mbid) {
+}
+
+/// The section, when present, as a list of objects; shape errors recorded.
+fn record_list<'a>(
+    section: Option<&'a Value>,
+    name: &str,
+    report: &mut ValidationReport,
+) -> Vec<(String, &'a serde_json::Map<String, Value>)> {
+    let Some(list) = section else {
+        return Vec::new();
+    };
+    let Some(items) = list.as_array() else {
         report.errors.push(ValidationIssue::new(
-            "BAD_MBID",
-            format!("{path}.artist_mbid"),
-            "artist_mbid must be 36 hex-or-dash characters".to_owned(),
+            "SECTION_NOT_ARRAY",
+            name.to_owned(),
+            format!("{name} must be a JSON array"),
         ));
+        return Vec::new();
+    };
+    let mut records = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        let path = format!("{name}[{index}]");
+        match item.as_object() {
+            Some(record) => records.push((path, record)),
+            None => report.errors.push(ValidationIssue::new(
+                "RECORD_NOT_OBJECT",
+                path,
+                "record must be a JSON object".to_owned(),
+            )),
+        }
+    }
+    records
+}
+
+/// A finite number within `range`, else an error at `path.field`.
+fn check_number(
+    record: &serde_json::Map<String, Value>,
+    path: &str,
+    field: &str,
+    range: std::ops::RangeInclusive<f64>,
+    report: &mut ValidationReport,
+) -> Option<f64> {
+    let value = record.get(field).and_then(Value::as_f64);
+    match value {
+        Some(number) if range.contains(&number) => Some(number),
+        _ => {
+            report.errors.push(ValidationIssue::new(
+                "BAD_NUMBER",
+                format!("{path}.{field}"),
+                format!(
+                    "{field} must be a number from {} to {}",
+                    range.start(),
+                    range.end()
+                ),
+            ));
+            None
+        }
+    }
+}
+
+/// Concerts cities: a real user, a name, coordinates in range, and one row
+/// per user and coordinate pair (the table key).
+fn validate_event_cities(
+    section: Option<&Value>,
+    user_ids: &HashSet<String>,
+    report: &mut ValidationReport,
+) {
+    let mut seen = HashSet::new();
+    for (path, record) in record_list(section, "event_cities", report) {
+        validate_user_ref(record, &path, user_ids, report);
+        if record
+            .get("city_name")
+            .and_then(Value::as_str)
+            .is_none_or(|name| name.trim().is_empty())
+        {
+            report.errors.push(ValidationIssue::new(
+                "MISSING_CITY_NAME",
+                format!("{path}.city_name"),
+                "city_name must be a non-empty string".to_owned(),
+            ));
+        }
+        let latitude = check_number(record, &path, "latitude", -90.0..=90.0, report);
+        let longitude = check_number(record, &path, "longitude", -180.0..=180.0, report);
+        check_number(record, &path, "radius_km", 0.0..=f64::MAX, report);
+        let user_id = record.get("user_id").and_then(Value::as_str);
+        if let (Some(user_id), Some(latitude), Some(longitude)) = (user_id, latitude, longitude)
+            && !seen.insert((
+                user_id.to_owned(),
+                (latitude + 0.0).to_bits(),
+                (longitude + 0.0).to_bits(),
+            ))
+        {
+            report.errors.push(ValidationIssue::new(
+                "DUPLICATE_EVENT_CITY",
+                path,
+                "the same user and coordinates appear more than once".to_owned(),
+            ));
+        }
+    }
+}
+
+/// Concerts seen markers: a real user, a timestamp, one row per user.
+fn validate_event_seen(
+    section: Option<&Value>,
+    user_ids: &HashSet<String>,
+    report: &mut ValidationReport,
+) {
+    let mut seen = HashSet::new();
+    for (path, record) in record_list(section, "event_seen", report) {
+        validate_user_ref(record, &path, user_ids, report);
+        check_number(record, &path, "seen_at", 0.0..=f64::MAX, report);
+        if let Some(user_id) = record.get("user_id").and_then(Value::as_str)
+            && !seen.insert(user_id.to_owned())
+        {
+            report.errors.push(ValidationIssue::new(
+                "DUPLICATE_EVENT_SEEN",
+                path,
+                "the same user appears more than once".to_owned(),
+            ));
+        }
     }
 }
 

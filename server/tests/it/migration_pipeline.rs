@@ -175,6 +175,8 @@ async fn imported_counts_match_the_fixture() {
     assert_eq!(count("follow").imported, 3);
     assert_eq!(count("approval").imported, 3);
     assert_eq!(count("approval").nulled_field, 1);
+    assert_eq!(count("event_city").imported, 2);
+    assert_eq!(count("event_seen").imported, 1);
     // Eight settings seals (slskd, sabnzbd, two indexers, AudioDB, one
     // plugin token, the Last.fm key pair) plus three app passwords; v2's
     // global Last.fm session key is dropped and counts none.

@@ -20,7 +20,8 @@ use rusqlite::{Connection, OpenFlags};
 use serde_json::{Map, Value, json};
 
 use crate::export::envelope::{
-    ApprovalRecord, ExportDoc, FollowRecord, SealedValue, UserRecord, derive_hash_scheme,
+    ApprovalRecord, EventCityRecord, EventSeenRecord, ExportDoc, FollowRecord, SealedValue,
+    UserRecord, derive_hash_scheme,
 };
 use crate::export::error::ExportError;
 use crate::export::fernet::FernetKey;
@@ -217,6 +218,8 @@ pub fn export_v2(request: &ExportRequest) -> Result<ExportDoc, ExportError> {
     attach_user_rows(&db, &mut users, &key, &sealer)?;
     let follows = read_follows(&db)?;
     let approvals = read_approvals(&db)?;
+    let event_cities = read_event_cities(&db)?;
+    let event_seen = read_event_seen(&db)?;
     let plugin_flags = crate::export::v2dir::plugin_setting_flags(&request.v2_root);
     let settings = build_settings(&config, &key, &sealer, &plugin_flags)?;
     let exported_at = request
@@ -234,6 +237,8 @@ pub fn export_v2(request: &ExportRequest) -> Result<ExportDoc, ExportError> {
         settings,
         follows,
         approvals,
+        event_cities,
+        event_seen,
         content_hmac: String::new(),
     };
     let value = serde_json::to_value(&doc).map_err(|error| ExportError::InvalidEnvelope {
@@ -563,6 +568,65 @@ fn read_approvals(db: &Connection) -> Result<Vec<ApprovalRecord>, ExportError> {
         approvals.push(row.map_err(|error| db_error("auto_download_approvals", error))?);
     }
     Ok(approvals)
+}
+
+/// Whether the v2 database has `table`. The concerts tables only exist once
+/// a v2 server with the feature has started, so their absence is empty.
+fn has_table(db: &Connection, table: &str) -> Result<bool, ExportError> {
+    db.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+        [table],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|count| count > 0)
+    .map_err(|error| db_error(table, error))
+}
+
+fn read_event_cities(db: &Connection) -> Result<Vec<EventCityRecord>, ExportError> {
+    if !has_table(db, "user_event_cities")? {
+        return Ok(Vec::new());
+    }
+    let mut stmt = db
+        .prepare(
+            "SELECT user_id, city_name, country_code, latitude, longitude, radius_km,
+                    position
+             FROM user_event_cities ORDER BY user_id, position",
+        )
+        .map_err(|error| db_error("user_event_cities", error))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(EventCityRecord {
+                user_id: row.get(0)?,
+                city_name: row.get(1)?,
+                country_code: row.get(2)?,
+                latitude: row.get(3)?,
+                longitude: row.get(4)?,
+                radius_km: row.get(5)?,
+                position: row.get(6)?,
+            })
+        })
+        .map_err(|error| db_error("user_event_cities", error))?;
+    rows.collect::<Result<_, _>>()
+        .map_err(|error| db_error("user_event_cities", error))
+}
+
+fn read_event_seen(db: &Connection) -> Result<Vec<EventSeenRecord>, ExportError> {
+    if !has_table(db, "user_event_seen")? {
+        return Ok(Vec::new());
+    }
+    let mut stmt = db
+        .prepare("SELECT user_id, seen_at FROM user_event_seen ORDER BY user_id")
+        .map_err(|error| db_error("user_event_seen", error))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(EventSeenRecord {
+                user_id: row.get(0)?,
+                seen_at: row.get(1)?,
+            })
+        })
+        .map_err(|error| db_error("user_event_seen", error))?;
+    rows.collect::<Result<_, _>>()
+        .map_err(|error| db_error("user_event_seen", error))
 }
 
 /// Replace one stored string with its sealed object, resolving through v2

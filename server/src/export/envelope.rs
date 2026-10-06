@@ -1,7 +1,8 @@
 //! The versioned v2-to-v3 export envelope.
 //!
-//! The envelope carries exactly the migrated set: user accounts, settings, and
-//! follows (plus auto-download approvals). Scan state, history, queues, and
+//! The envelope carries exactly the migrated set: user accounts, settings,
+//! follows (plus auto-download approvals), and each user's concerts cities
+//! and seen marker. Scan state, history, queues, and
 //! jobs stay behind. [`parse_export`] enforces the envelope contract: known
 //! format at version 1, every required key present, reserved sections
 //! ignored with a warning. Deeper semantic checks (section shapes, secret
@@ -30,6 +31,11 @@ pub const REQUIRED_KEYS: &[&str] = &[
     "follows",
     "approvals",
 ];
+
+/// Optional top-level keys a v1 file may carry. The concerts sections came
+/// after the first v1 files, so a file without them is still a whole v1
+/// file (its digest covers only the keys it has).
+pub const OPTIONAL_KEYS: &[&str] = &["v2_commit", "event_cities", "event_seen"];
 
 /// Entity sections a later product decision may adopt. A v1 reader ignores
 /// them with a warning instead of failing, so adding one needs no bump.
@@ -267,6 +273,34 @@ pub struct ApprovalRecord {
     pub source: Option<String>,
 }
 
+/// One saved concerts city.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EventCityRecord {
+    /// Owning user id.
+    pub user_id: String,
+    /// Display name.
+    pub city_name: String,
+    /// Country code, when known.
+    pub country_code: Option<String>,
+    /// Latitude in degrees.
+    pub latitude: f64,
+    /// Longitude in degrees.
+    pub longitude: f64,
+    /// Match radius in km.
+    pub radius_km: f64,
+    /// Picker order.
+    pub position: i64,
+}
+
+/// When one user last opened the concerts page.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EventSeenRecord {
+    /// Owning user id.
+    pub user_id: String,
+    /// Seen time as a Unix timestamp.
+    pub seen_at: f64,
+}
+
 /// The full parsed export document. Settings stay schemaless JSON: v2
 /// section keys verbatim, secret positions replaced by sealed objects. The
 /// importer maps them onto the clean-slate v3 sections.
@@ -293,6 +327,12 @@ pub struct ExportDoc {
     pub follows: Vec<FollowRecord>,
     /// Auto-download approvals.
     pub approvals: Vec<ApprovalRecord>,
+    /// Saved concerts cities; omitted when there are none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub event_cities: Vec<EventCityRecord>,
+    /// Concerts seen markers; omitted when there are none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub event_seen: Vec<EventSeenRecord>,
     /// HMAC over every other top-level key (see `export::seal`). Empty
     /// only while the exporter assembles the document.
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -357,7 +397,7 @@ pub fn parse_export(text: &str) -> Result<ParsedExport, ExportError> {
         if RESERVED_SECTIONS.contains(&key.as_str()) {
             warnings.push(EnvelopeWarning::ignored_reserved_section(key));
         } else if !REQUIRED_KEYS.contains(&key.as_str())
-            && key != "v2_commit"
+            && !OPTIONAL_KEYS.contains(&key.as_str())
             && key != crate::export::seal::DIGEST_KEY
         {
             warnings.push(EnvelopeWarning::unknown_top_level_key(key));

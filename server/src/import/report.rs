@@ -27,6 +27,8 @@ pub const ENTITIES: &[&str] = &[
     "recovery_code",
     "follow",
     "approval",
+    "event_city",
+    "event_seen",
 ];
 
 /// Import exit code.

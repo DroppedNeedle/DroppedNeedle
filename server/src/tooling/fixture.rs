@@ -346,7 +346,16 @@ fn build_v2_db(
              artist_name TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending',
              requested_at REAL NOT NULL, reviewed_by_id TEXT,
              reviewed_by_name TEXT, reviewed_at REAL, batch_id TEXT, source TEXT,
-             PRIMARY KEY (user_id, artist_mbid_lower));",
+             PRIMARY KEY (user_id, artist_mbid_lower));
+         CREATE TABLE user_event_cities (
+             user_id TEXT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+             city_name TEXT NOT NULL, country_code TEXT,
+             latitude REAL NOT NULL, longitude REAL NOT NULL,
+             radius_km REAL NOT NULL, position INTEGER NOT NULL,
+             PRIMARY KEY (user_id, latitude, longitude));
+         CREATE TABLE user_event_seen (
+             user_id TEXT PRIMARY KEY REFERENCES auth_users(id) ON DELETE CASCADE,
+             seen_at REAL NOT NULL);",
     )
     .map_err(|error| FixtureError::Db(error.to_string()))?;
 
@@ -602,6 +611,17 @@ fn build_v2_db(
         )
         .map_err(|error| FixtureError::Db(error.to_string()))?;
     }
+    // Concerts: Alice's two cities and Bob's seen marker.
+    db.execute_batch(&format!(
+        "INSERT INTO user_event_cities (user_id, city_name, country_code, latitude,
+             longitude, radius_km, position)
+         VALUES ('{alice}', 'Liverpool', 'GB', 53.41, -2.98, 30.0, 0),
+                ('{alice}', 'Leeds', 'GB', 53.8, -1.55, 50.0, 1);
+         INSERT INTO user_event_seen (user_id, seen_at) VALUES ('{bob}', 1760000500.0);",
+        alice = ids.alice_id,
+        bob = ids.bob_id,
+    ))
+    .map_err(|error| FixtureError::Db(error.to_string()))?;
     db.execute_batch("PRAGMA foreign_keys=ON;")
         .map_err(|error| FixtureError::Db(error.to_string()))?;
     Ok(())

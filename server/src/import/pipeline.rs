@@ -1,5 +1,6 @@
 //! v2 → v3 importer: parse → unlock → settings → users → secrets →
-//! follows/approvals → atomic commit → post-import rebuild.
+//! follows/approvals → concerts cities and seen markers → atomic commit →
+//! post-import rebuild.
 //!
 //! Every run, including dry-run,
 //! produces exactly one [`ImportReport`]; failures are exit codes, never
@@ -714,6 +715,26 @@ struct FollowRow {
 }
 
 #[derive(Debug, Clone, sqlx::FromRow)]
+struct EventCityRow {
+    user_id: String,
+    city_name: String,
+    country_code: Option<String>,
+    latitude: f64,
+    longitude: f64,
+    radius_km: f64,
+    position: i64,
+}
+
+/// Concerts city key: the table's (user, latitude, longitude) primary key.
+type CityKey = (String, u64, u64);
+
+/// A coordinate as a key part. SQLite compares REAL keys by value, so
+/// -0.0 folds into 0.0 here as it does there.
+fn coord_bits(value: f64) -> u64 {
+    (value + 0.0).to_bits()
+}
+
+#[derive(Debug, Clone, sqlx::FromRow)]
 struct ApprovalRow {
     user_id: String,
     artist_mbid_lower: String,
@@ -737,6 +758,8 @@ struct DatabaseSnapshot {
     recoveries: HashMap<String, RecoveryRow>,
     follows: HashMap<(String, String), FollowRow>,
     approvals: HashMap<(String, String), ApprovalRow>,
+    event_cities: HashMap<CityKey, EventCityRow>,
+    event_seen: HashMap<String, f64>,
 }
 
 impl DatabaseSnapshot {
@@ -778,6 +801,16 @@ impl DatabaseSnapshot {
         )
         .fetch_all(&mut *conn)
         .await?;
+        let event_cities: Vec<EventCityRow> = sqlx::query_as(
+            "SELECT user_id, city_name, country_code, latitude, longitude, radius_km, \
+             position FROM user_event_cities",
+        )
+        .fetch_all(&mut *conn)
+        .await?;
+        let event_seen: Vec<(String, f64)> =
+            sqlx::query_as("SELECT user_id, seen_at FROM user_event_seen")
+                .fetch_all(&mut *conn)
+                .await?;
 
         let mut snapshot = Self {
             users: HashMap::new(),
@@ -789,7 +822,19 @@ impl DatabaseSnapshot {
             recoveries: HashMap::new(),
             follows: HashMap::new(),
             approvals: HashMap::new(),
+            event_cities: HashMap::new(),
+            event_seen: event_seen.into_iter().collect(),
         };
+        for city in event_cities {
+            snapshot.event_cities.insert(
+                (
+                    city.user_id.clone(),
+                    coord_bits(city.latitude),
+                    coord_bits(city.longitude),
+                ),
+                city,
+            );
+        }
         for user in users {
             if let Some(email) = user.email.clone() {
                 snapshot.emails.insert(email, user.id.clone());
@@ -882,6 +927,13 @@ enum Planned {
         batch_id: Option<String>,
         source: Option<String>,
     },
+    InsertEventCity {
+        record: Value,
+    },
+    SetEventSeen {
+        user_id: String,
+        seen_at: f64,
+    },
 }
 
 /// The decided import: writes for real runs, rebuild notes for both.
@@ -953,6 +1005,20 @@ impl Plan {
             .unwrap_or(&empty_list);
         for approval in approvals {
             plan.decide_approval(approval, snapshot, &known_users, report);
+        }
+        let event_cities = root
+            .get("event_cities")
+            .and_then(Value::as_array)
+            .unwrap_or(&empty_list);
+        for city in event_cities {
+            plan.decide_event_city(city, snapshot, &known_users, report);
+        }
+        let event_seen = root
+            .get("event_seen")
+            .and_then(Value::as_array)
+            .unwrap_or(&empty_list);
+        for seen in event_seen {
+            plan.decide_event_seen(seen, snapshot, &known_users, report);
         }
 
         let follow_keys: Vec<String> = plan
@@ -1378,6 +1444,104 @@ impl Plan {
         }
     }
 
+    /// A city the user already has (same coordinates) keeps its saved
+    /// name, radius and order; a new one is added.
+    fn decide_event_city(
+        &mut self,
+        city: &Value,
+        snapshot: &DatabaseSnapshot,
+        known_users: &HashSet<String>,
+        report: &mut ReportBuilder,
+    ) {
+        let user_id = str_or(city, "user_id", "");
+        let latitude = num_or(city, "latitude", 0.0);
+        let longitude = num_or(city, "longitude", 0.0);
+        let key = format!("{user_id}|{latitude},{longitude}");
+        if !known_users.contains(&user_id) {
+            report.record(
+                "event_city",
+                key,
+                "dropped_unknown_user",
+                "user is not imported; never invented".to_owned(),
+            );
+            return;
+        }
+        match snapshot
+            .event_cities
+            .get(&(user_id, coord_bits(latitude), coord_bits(longitude)))
+        {
+            None => {
+                report.record("event_city", key, "imported", String::new());
+                self.writes.push(Planned::InsertEventCity {
+                    record: city.clone(),
+                });
+            }
+            Some(existing) => {
+                let identical = existing.city_name == str_or(city, "city_name", "")
+                    && existing.country_code == opt_str(city, "country_code")
+                    && existing.radius_km == num_or(city, "radius_km", 0.0)
+                    && existing.position
+                        == city.get("position").and_then(Value::as_i64).unwrap_or(0);
+                if identical {
+                    report.record("event_city", key, "skipped_identical", String::new());
+                } else {
+                    report.record(
+                        "event_city",
+                        key,
+                        "conflict_kept_existing",
+                        "same coordinates already saved; existing row kept".to_owned(),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Seen markers merge to the later time, so the badge never counts
+    /// gigs the user already saw on either side.
+    fn decide_event_seen(
+        &mut self,
+        seen: &Value,
+        snapshot: &DatabaseSnapshot,
+        known_users: &HashSet<String>,
+        report: &mut ReportBuilder,
+    ) {
+        let user_id = str_or(seen, "user_id", "");
+        if !known_users.contains(&user_id) {
+            report.record(
+                "event_seen",
+                user_id,
+                "dropped_unknown_user",
+                "user is not imported; never invented".to_owned(),
+            );
+            return;
+        }
+        let imported = num_or(seen, "seen_at", 0.0);
+        match snapshot.event_seen.get(&user_id) {
+            None => {
+                report.record("event_seen", user_id.clone(), "imported", String::new());
+                self.writes.push(Planned::SetEventSeen {
+                    user_id,
+                    seen_at: imported,
+                });
+            }
+            Some(&existing) if existing >= imported => {
+                report.record("event_seen", user_id, "skipped_identical", String::new());
+            }
+            Some(_) => {
+                report.record(
+                    "event_seen",
+                    user_id.clone(),
+                    "conflict_kept_existing",
+                    "merged: seen_at max".to_owned(),
+                );
+                self.writes.push(Planned::SetEventSeen {
+                    user_id,
+                    seen_at: imported,
+                });
+            }
+        }
+    }
+
     fn decide_approval(
         &mut self,
         approval: &Value,
@@ -1560,6 +1724,10 @@ impl Plan {
                         source.clone(),
                     )
                     .await?;
+                }
+                Planned::InsertEventCity { record } => insert_event_city(tx, record).await?,
+                Planned::SetEventSeen { user_id, seen_at } => {
+                    set_event_seen(tx, user_id, *seen_at).await?;
                 }
             }
         }
@@ -1773,6 +1941,42 @@ async fn merge_follow(
     Ok(())
 }
 
+async fn insert_event_city(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    record: &Value,
+) -> Result<(), ImportError> {
+    sqlx::query(
+        "INSERT INTO user_event_cities (user_id, city_name, country_code, latitude, \
+         longitude, radius_km, position) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(str_or(record, "user_id", ""))
+    .bind(str_or(record, "city_name", "").trim().to_owned())
+    .bind(opt_str(record, "country_code"))
+    .bind(num_or(record, "latitude", 0.0))
+    .bind(num_or(record, "longitude", 0.0))
+    .bind(num_or(record, "radius_km", 30.0))
+    .bind(record.get("position").and_then(Value::as_i64).unwrap_or(0))
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+async fn set_event_seen(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    user_id: &str,
+    seen_at: f64,
+) -> Result<(), ImportError> {
+    sqlx::query(
+        "INSERT INTO user_event_seen (user_id, seen_at) VALUES (?, ?) \
+         ON CONFLICT(user_id) DO UPDATE SET seen_at = excluded.seen_at",
+    )
+    .bind(user_id)
+    .bind(seen_at)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 async fn insert_approval(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     record: &Value,
@@ -1963,6 +2167,8 @@ mod tests {
             recoveries: HashMap::new(),
             follows: HashMap::new(),
             approvals: HashMap::new(),
+            event_cities: HashMap::new(),
+            event_seen: HashMap::new(),
         }
     }
 
