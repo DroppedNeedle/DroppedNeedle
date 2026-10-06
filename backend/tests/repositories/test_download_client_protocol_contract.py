@@ -70,6 +70,17 @@ def _make_sabnzbd_client():
     return SabnzbdDownloadClient(client, "http://sab:8080", "key", Path("/sabnzbd-downloads"))
 
 
+def _make_nzbget_client():
+    from repositories.nzbget.nzbget_client import NzbgetClient
+    from repositories.nzbget.nzbget_download_client import NzbgetDownloadClient
+
+    http = httpx.AsyncClient()
+    client = NzbgetClient(http, "http://nzbget:6789", "nzbget", "tegbzn6789")
+    return NzbgetDownloadClient(
+        client, "http://nzbget:6789", "nzbget", "tegbzn6789", Path("/nzbget-downloads")
+    )
+
+
 def _make_slskd_indexer() -> SlskdIndexer:
     return SlskdIndexer(_make_slskd_repo())
 
@@ -91,7 +102,8 @@ def _make_prowlarr_indexer():
 
 
 @pytest.mark.parametrize(
-    "factory", [_make_slskd_repo, _make_fake_client, _make_sabnzbd_client]
+    "factory",
+    [_make_slskd_repo, _make_fake_client, _make_sabnzbd_client, _make_nzbget_client],
 )
 def test_impl_conforms_to_protocol(factory):
     impl = factory()
