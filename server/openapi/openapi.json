@@ -24223,7 +24223,7 @@
           },
           "managed_updates": {
             "type": "object",
-            "description": "Managed-field updates: `title`, `artist`, `album`,\n`album_artist`, `genre`.",
+            "description": "Managed-field updates by Picard tag-set name: `title`, `artist`,\n`artists`, `album`, `album_artist`, `album_artist_sort`,\n`artist_sort`, `genre`, `track_number`, `total_tracks`,\n`disc_number`, `total_discs`, `date`, `original_date`,\n`release_status`, `release_country`, `release_type`, `media`,\n`label`, `catalog_number`, `barcode`, `asin`, and the\n`musicbrainz_*` ids (`recording`, `release_track`, `release`,\n`release_group`, `artist`, `album_artist`). A retag also writes\nthe full set from the album's identified release; these win.",
             "additionalProperties": {
               "type": "array",
               "items": {

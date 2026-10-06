@@ -141,13 +141,10 @@ fn parse_identify_kind(raw: Option<&str>) -> Result<IdentifyKind, LibraryError> 
 fn check_managed_names(items: &[ManageItemBody]) -> Result<(), LibraryError> {
     for item in items {
         for (name, values) in &item.managed_updates {
-            match name.as_str() {
-                "title" | "artist" | "album" | "album_artist" | "genre" => {}
-                other => {
-                    return Err(LibraryError::InvalidInput {
-                        message: format!("Unknown managed field '{other}'"),
-                    });
-                }
+            if crate::library::tags::TagField::from_name(name).is_none() {
+                return Err(LibraryError::InvalidInput {
+                    message: format!("Unknown managed field '{name}'"),
+                });
             }
             if values.is_empty() || values.iter().any(|value| value.is_empty()) {
                 return Err(LibraryError::InvalidInput {

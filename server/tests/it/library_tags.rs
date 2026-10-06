@@ -15,7 +15,7 @@ use lofty::tag::TagType;
 use tags::save::{Refusal, inspect_id3_bytes, mixed_v23_detail};
 use tags::{
     AudioArtistCredit, AudioFormat, AudioInfo, AudioTag, Fingerprint, SaveReport, TagEdit,
-    TagsError, format_for_path,
+    TagField, TagsError, format_for_path,
 };
 
 // ---------------------------------------------------------------------------
@@ -886,6 +886,23 @@ fn save_pure_v23_stays_v23() {
     assert_eq!(byte_report.version_major, 3);
     assert!(byte_report.frame_ids.contains(&"TYER".to_owned()));
     assert_eq!(mp3_audio_tail(&bytes), audio);
+
+    // The full tag set keeps it a clean v2.3 tag: years in TYER/TORY,
+    // sort names in TXXX, multiple values joined with '/'.
+    let report = tags::save_tags(&path, &picard_edits()).unwrap();
+    assert_eq!(report.id3_version.as_deref(), Some("2.3"));
+    let bytes = std::fs::read(&path).unwrap();
+    let byte_report = inspect_id3_bytes(&bytes).unwrap();
+    assert_eq!(mixed_v23_detail(&byte_report), None);
+    let fields = tags::read_fields(&path).unwrap();
+    assert_eq!(fields[&TagField::Date], vec!["2024".to_owned()]);
+    assert_eq!(fields[&TagField::OriginalDate], vec!["2019".to_owned()]);
+    assert_eq!(
+        fields[&TagField::Artists],
+        vec!["The Lanterns/Guest".to_owned()]
+    );
+    assert_eq!(fields[&TagField::TrackTotal], vec!["12".to_owned()]);
+    assert_eq!(mp3_audio_tail(&bytes), audio);
 }
 
 #[test]
@@ -929,81 +946,157 @@ fn save_refused(name: &str, test: &str, edits: &[TagEdit]) -> (Refusal, Vec<u8>,
 }
 
 #[test]
-fn save_refuses_unencodable_catalog() {
-    // Work on ID3v2: upstream lofty-rs#732.
-    let (refusal, before, after) = save_refused(
-        "management_full.mp3",
-        "work",
-        &[TagEdit::new(
-            lofty::tag::ItemKey::Work,
-            vec!["Example Work".to_owned()],
-        )],
-    );
-    assert!(
-        matches!(refusal, Refusal::UnencodableItem { .. }),
-        "{refusal:?}"
-    );
-    assert_eq!(before, after);
+fn save_refuses_values_a_field_cannot_hold() {
+    let cases = [
+        (
+            "timestamp",
+            TagEdit::new(TagField::Date, vec!["FUZZ".to_owned()]),
+        ),
+        (
+            "count",
+            TagEdit::new(TagField::TrackNumber, vec!["abc".to_owned()]),
+        ),
+        (
+            "single",
+            TagEdit::new(
+                TagField::MusicBrainzReleaseId,
+                vec!["one".to_owned(), "two".to_owned()],
+            ),
+        ),
+        ("blank", TagEdit::new(TagField::Title, vec![String::new()])),
+    ];
+    for (test, edit) in cases {
+        let (refusal, before, after) = save_refused("management_full.mp3", test, &[edit]);
+        assert!(
+            matches!(refusal, Refusal::UnencodableItem { .. }),
+            "{test}: {refusal:?}"
+        );
+        assert_eq!(before, after, "{test}");
+    }
+}
 
-    // FlagPodcast on ID3v2: abort-or-vanish.
-    let (refusal, before, after) = save_refused(
-        "management_full.mp3",
-        "podcast",
-        &[TagEdit::new(
-            lofty::tag::ItemKey::FlagPodcast,
-            vec!["1".to_owned()],
-        )],
-    );
-    assert!(
-        matches!(refusal, Refusal::UnencodableItem { .. }),
-        "{refusal:?}"
-    );
-    assert_eq!(before, after);
+/// Picard's tag set as the publisher writes it for one release track.
+fn picard_edits() -> Vec<TagEdit> {
+    let one = |field: TagField, value: &str| TagEdit::new(field, vec![value.to_owned()]);
+    vec![
+        one(TagField::Title, "Blue Hour"),
+        one(TagField::Artist, "The Lanterns & Guest"),
+        TagEdit::new(
+            TagField::Artists,
+            vec!["The Lanterns".to_owned(), "Guest".to_owned()],
+        ),
+        one(TagField::ArtistSort, "Lanterns, The & Guest"),
+        one(TagField::Album, "Night Shift"),
+        one(TagField::AlbumArtist, "The Lanterns"),
+        one(TagField::AlbumArtistSort, "Lanterns, The"),
+        one(TagField::Genre, "Indie"),
+        one(TagField::TrackNumber, "3"),
+        one(TagField::TrackTotal, "12"),
+        one(TagField::DiscNumber, "2"),
+        one(TagField::DiscTotal, "2"),
+        one(TagField::Date, "2024-05-10"),
+        one(TagField::OriginalDate, "2019-03-08"),
+        one(TagField::ReleaseStatus, "official"),
+        one(TagField::ReleaseCountry, "XW"),
+        TagEdit::new(
+            TagField::ReleaseType,
+            vec!["album".to_owned(), "compilation".to_owned()],
+        ),
+        one(TagField::Media, "Digital Media"),
+        TagEdit::new(
+            TagField::Label,
+            vec!["Harbour Lights".to_owned(), "Night Bus".to_owned()],
+        ),
+        one(TagField::CatalogNumber, "LNT001"),
+        one(TagField::Barcode, "5051083139822"),
+        one(TagField::Asin, "B07NQ6ZJ4X"),
+        one(
+            TagField::MusicBrainzRecordingId,
+            "c0ffee00-0000-4000-8000-00000000d005",
+        ),
+        one(
+            TagField::MusicBrainzReleaseTrackId,
+            "c0ffee00-0000-4000-8000-00000000e102",
+        ),
+        one(
+            TagField::MusicBrainzReleaseId,
+            "c0ffee00-0000-4000-8000-00000000c002",
+        ),
+        one(
+            TagField::MusicBrainzReleaseGroupId,
+            "c0ffee00-0000-4000-8000-00000000b001",
+        ),
+        TagEdit::new(
+            TagField::MusicBrainzArtistId,
+            vec![
+                "c0ffee00-0000-4000-8000-00000000a001".to_owned(),
+                "c0ffee00-0000-4000-8000-00000000a002".to_owned(),
+            ],
+        ),
+        one(
+            TagField::MusicBrainzAlbumArtistId,
+            "c0ffee00-0000-4000-8000-00000000a001",
+        ),
+    ]
+}
 
-    // Unparseable timestamps poison ID3v2 reads.
-    let (refusal, before, after) = save_refused(
+/// The full tag set lands in every writable format through the safe
+/// save, reads back field for field (and through the scan's reader),
+/// and a field with no values is removed.
+#[test]
+fn picard_tag_set_round_trips_per_format() {
+    let edits = picard_edits();
+    assert_eq!(edits.len(), TagField::ALL.len());
+    for name in [
+        "management_full.flac",
         "management_full.mp3",
-        "timestamp",
-        &[TagEdit::new(
-            lofty::tag::ItemKey::RecordingDate,
-            vec!["FUZZ".to_owned()],
-        )],
-    );
-    assert!(
-        matches!(refusal, Refusal::UnencodableItem { .. }),
-        "{refusal:?}"
-    );
-    assert_eq!(before, after);
+        "management_full.ogg",
+        "management_full.opus",
+        "management_full.m4a",
+    ] {
+        let (_scratch, path) = temp_copy(name, "picard");
+        tags::save_tags(&path, &edits).unwrap_or_else(|error| panic!("{name}: {error}"));
+        let fields = tags::read_fields(&path).unwrap();
+        for edit in &edits {
+            assert_eq!(
+                fields.get(&edit.field),
+                Some(&edit.values),
+                "{name}: {:?}",
+                edit.field
+            );
+        }
+        let (tag, _) = tags::read_tags(&path).unwrap();
+        assert_eq!((tag.track_number, tag.disc_number), (3, 2), "{name}");
+        assert_eq!(tag.album_artist.as_deref(), Some("The Lanterns"), "{name}");
+        assert_eq!(
+            tag.musicbrainz_recording_id.as_deref(),
+            Some("c0ffee00-0000-4000-8000-00000000d005"),
+            "{name}"
+        );
+        assert_eq!(
+            tag.musicbrainz_release_id.as_deref(),
+            Some("c0ffee00-0000-4000-8000-00000000c002"),
+            "{name}"
+        );
+        assert_eq!(
+            tag.musicbrainz_release_track_id.as_deref(),
+            Some("c0ffee00-0000-4000-8000-00000000e102"),
+            "{name}"
+        );
 
-    // Non-numeric counts are dropped.
-    let (refusal, before, after) = save_refused(
-        "management_full.mp3",
-        "count",
-        &[TagEdit::new(
-            lofty::tag::ItemKey::TrackNumber,
-            vec!["abc".to_owned()],
-        )],
-    );
-    assert!(
-        matches!(refusal, Refusal::UnencodableItem { .. }),
-        "{refusal:?}"
-    );
-    assert_eq!(before, after);
-
-    // Outside the slice's edit surface.
-    let (refusal, before, after) = save_refused(
-        "management_full.mp3",
-        "unsupported",
-        &[TagEdit::new(
-            lofty::tag::ItemKey::Composer,
-            vec!["Example Composer".to_owned()],
-        )],
-    );
-    assert!(
-        matches!(refusal, Refusal::UnsupportedEdit { .. }),
-        "{refusal:?}"
-    );
-    assert_eq!(before, after);
+        tags::save_tags(&path, &[TagEdit::new(TagField::Barcode, Vec::new())])
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        let fields = tags::read_fields(&path).unwrap();
+        assert!(!fields.contains_key(&TagField::Barcode), "{name}");
+        assert_eq!(fields.len(), edits.len() - 1, "{name}");
+    }
+    // WAV and AAC stay read-only: nothing there for a publish to write.
+    for name in ["management_full.wav", "management_full.aac"] {
+        assert!(
+            tags::read_fields(&fixture(name)).unwrap().is_empty(),
+            "{name}"
+        );
+    }
 }
 
 #[test]

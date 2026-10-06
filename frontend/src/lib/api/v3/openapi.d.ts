@@ -11047,8 +11047,15 @@ export interface components {
              */
             dest_rel?: string | null;
             /**
-             * @description Managed-field updates: `title`, `artist`, `album`,
-             *     `album_artist`, `genre`.
+             * @description Managed-field updates by Picard tag-set name: `title`, `artist`,
+             *     `artists`, `album`, `album_artist`, `album_artist_sort`,
+             *     `artist_sort`, `genre`, `track_number`, `total_tracks`,
+             *     `disc_number`, `total_discs`, `date`, `original_date`,
+             *     `release_status`, `release_country`, `release_type`, `media`,
+             *     `label`, `catalog_number`, `barcode`, `asin`, and the
+             *     `musicbrainz_*` ids (`recording`, `release_track`, `release`,
+             *     `release_group`, `artist`, `album_artist`). A retag also writes
+             *     the full set from the album's identified release; these win.
              */
             managed_updates: {
                 [key: string]: string[];

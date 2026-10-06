@@ -5,20 +5,25 @@
 //! and AcoustID-style fingerprints through rusty-chromaprint with the
 //! measured pipeline (f64 downmix, rubato cubic-256 to 11025 Hz, test2
 //! preset, URL-safe unpadded base64). Every mutation goes through the
-//! save wrapper, which refuses loudly rather than silently dropping data.
+//! save wrapper, which refuses loudly rather than silently dropping data;
+//! `fields` lists what it writes (Picard's tag set) and `picard` fills
+//! that set from an identified release.
 //!
 //! WMA is unrecognized everywhere here: there is no ASF code,
 //! and every entry point rejects `.wma` before touching the file.
 
+pub mod fields;
 pub mod fingerprint;
+pub mod picard;
 pub mod probe;
 pub mod read;
 pub mod save;
 
+pub use fields::TagField;
 pub use fingerprint::{Fingerprint, generate_fingerprint};
 pub use probe::{AudioInfo, probe};
 pub use read::{AudioArtistCredit, AudioTag, read_cover_art, read_tags};
-pub use save::{Refusal, SaveReport, TagEdit, save_tags};
+pub use save::{Refusal, SaveReport, TagEdit, read_fields, save_tags};
 
 use std::path::Path;
 

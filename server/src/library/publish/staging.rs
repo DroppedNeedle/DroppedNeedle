@@ -10,9 +10,9 @@
 //!
 //! Two loudness rules:
 //!
-//! * Managed-field names outside the save wrapper's five text keys
-//!   block at preview time ([`check_managed_updates`]), never
-//!   mid-publish.
+//! * Managed-field names outside the save wrapper's fields (Picard's
+//!   tag set, see `tags::fields`) block at preview time
+//!   ([`check_managed_updates`]), never mid-publish.
 //! * Items with no managed updates stage byte-identical without
 //!   touching the tag stack, so pure moves never trip tag refusals
 //!   (read-only formats, mixed ID3) on files whose tags they keep.
@@ -20,35 +20,21 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use lofty::tag::ItemKey;
-
-use super::super::tags::{Refusal, TagEdit, TagsError, save_tags};
+use super::super::tags::{Refusal, TagEdit, TagField, TagsError, read_fields, save_tags};
 use super::PublishError;
 use super::tags_seam::TagDocument;
 
-/// Managed-field name to save-wrapper key. The wrapper supports five
-/// text keys; everything else is outside the writable surface.
-fn key_for_name(name: &str) -> Option<ItemKey> {
-    match name {
-        "title" => Some(ItemKey::TrackTitle),
-        "artist" => Some(ItemKey::TrackArtist),
-        "album" => Some(ItemKey::AlbumTitle),
-        "album_artist" => Some(ItemKey::AlbumArtist),
-        "genre" => Some(ItemKey::Genre),
-        _ => None,
-    }
-}
-
-/// Map managed updates onto save-wrapper edits. Unknown names block
-/// loudly: the caller runs this at preview time so Apply never meets
-/// a name the writer cannot express.
+/// Map managed updates onto save-wrapper edits. An empty value list
+/// removes the field (undo uses that for fields an edit added). Unknown
+/// names block loudly: the caller runs this at preview time so Apply
+/// never meets a name the writer cannot express.
 pub fn check_managed_updates(
     managed_updates: &BTreeMap<String, Vec<String>>,
 ) -> Result<Vec<TagEdit>, PublishError> {
     let mut edits = Vec::with_capacity(managed_updates.len());
     for (name, values) in managed_updates {
-        match key_for_name(name) {
-            Some(key) => edits.push(TagEdit::new(key, values.clone())),
+        match TagField::from_name(name) {
+            Some(field) => edits.push(TagEdit::new(field, values.clone())),
             None => {
                 return Err(PublishError::Capability(format!(
                     "field {name} is outside the staged writer's surface"
@@ -120,48 +106,41 @@ pub fn render_staged_bytes(
     staged
 }
 
-/// Read the current semantic tag document for one audio file, keeping
-/// only fields the staged writer can write back. Undo and baseline
-/// restore replay `managed` through staging, so anything stored here
-/// must round-trip; unknown frames and custom tags stay preserved by
-/// the save wrapper's byte-level handling, not by this document.
+/// Read the current semantic tag document for one audio file: every
+/// field the staged writer can write back. Undo and baseline restore
+/// replay `managed` through staging, so anything stored here must
+/// round-trip; unknown frames and custom tags stay preserved by the
+/// save wrapper's byte-level handling, not by this document.
 pub fn document_from_file(path: &Path) -> Result<TagDocument, PublishError> {
     let name = message_name_path(path);
-    let format = super::super::tags::format_for_path(path).map_err(|error| match error {
+    let fields = read_fields(path).map_err(|error| match error {
         TagsError::UnrecognizedExtension { extension } => {
             PublishError::Capability(format!("format {extension} has no staged writer"))
         }
         other => PublishError::Validation(sanitize_tags_message(&name, other)),
     })?;
-    let tag = super::super::tags::read::read_tag_only(path, format)
-        .map_err(|error| PublishError::Validation(sanitize_tags_message(&name, error)))?;
-    let mut managed = BTreeMap::new();
-    if !tag.title.is_empty() {
-        managed.insert("title".to_owned(), vec![tag.title]);
-    }
-    if !tag.artist.is_empty() {
-        managed.insert("artist".to_owned(), vec![tag.artist]);
-    }
-    if !tag.album.is_empty() {
-        managed.insert("album".to_owned(), vec![tag.album]);
-    }
-    if let Some(album_artist) = tag.album_artist
-        && !album_artist.is_empty()
-    {
-        managed.insert("album_artist".to_owned(), vec![album_artist]);
-    }
-    if !tag.genres.is_empty() {
-        managed.insert("genre".to_owned(), tag.genres);
-    } else if let Some(genre) = tag.genre
-        && !genre.is_empty()
-    {
-        managed.insert("genre".to_owned(), vec![genre]);
-    }
     Ok(TagDocument {
-        managed,
+        managed: fields
+            .into_iter()
+            .map(|(field, values)| (field.name().to_owned(), values))
+            .collect(),
         custom: BTreeMap::new(),
         unknown_frames: BTreeMap::new(),
     })
+}
+
+/// The before-state document for a write of `managed_updates`: the
+/// file's fields, plus an empty entry for each field the write adds, so
+/// undo removes what the write put there.
+pub fn document_for_write(
+    path: &Path,
+    managed_updates: &BTreeMap<String, Vec<String>>,
+) -> Result<TagDocument, PublishError> {
+    let mut document = document_from_file(path)?;
+    for name in managed_updates.keys() {
+        document.managed.entry(name.clone()).or_default();
+    }
+    Ok(document)
 }
 
 /// Map a tag failure onto the publisher gates. Deterministic

@@ -12,13 +12,18 @@
 //! against the snapshot. Anything it cannot preserve it refuses loudly,
 //! leaving the original untouched.
 //!
+//! The writable fields are Picard's tag set ([`TagField`]): titles and
+//! credits, track and disc numbers with totals, dates, release facts, and
+//! the MusicBrainz ids, each under Picard's native name for the format.
+//! An edit with no values removes the field.
+//!
 //! Preserved across one unrelated title edit: `TXXX:WORK`, unknown ID3
 //! frames, multi-valued tags, `TXXX` description case, unknown Vorbis
 //! fields, `TOTALTRACKS`/`TOTALDISCS` spelling, the vendor string, MP4
 //! freeforms, pictures, `CUSTOM_KEEP` everywhere, and byte-identical audio.
-//! Refused: mixed v2.3 tags, present empty Vorbis values, unencodable
-//! items (see [`Refusal`]), unparseable tag bytes, and any post-save delta
-//! outside the edit.
+//! Refused: mixed v2.3 tags, present empty Vorbis values, values a field
+//! cannot hold (see [`Refusal`]), unparseable tag bytes, and any
+//! post-save delta outside the edit.
 //!
 //! `WAV` and `AAC` are read-only (the ID3-chunk fork and the never-persist
 //! APE tag, per the measured format matrix), and WMA is unrecognized like everywhere.
@@ -35,32 +40,35 @@ use lofty::config::WriteOptions;
 use lofty::file::TaggedFileExt as _;
 use lofty::id3::v2::{
     ExtendedTextFrame, Frame, FrameId, Id3v2Tag, Id3v2Version, TextInformationFrame,
+    UniqueFileIdentifierFrame,
 };
 use lofty::mp4::{Atom, AtomData, AtomIdent, Ilst};
 use lofty::ogg::tag::VorbisComments;
 use lofty::tag::items::Timestamp;
-use lofty::tag::{ItemKey, TagExt as _, TagType};
+use lofty::tag::{Accessor as _, TagExt as _, TagType};
 use thiserror::Error;
 
+use super::fields::{FieldKind, Id3Target, MP4_MEAN, Mp4Target, Slot, TagField};
 use super::{AudioFormat, TagsError, format_for_path};
 
-/// One requested mutation: an [`ItemKey`] with its replacement values.
+/// One requested mutation: a field with its replacement values. No
+/// values removes the field.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TagEdit {
-    pub key: ItemKey,
+    pub field: TagField,
     pub values: Vec<String>,
 }
 
 impl TagEdit {
     #[must_use]
-    pub fn new(key: ItemKey, values: Vec<String>) -> Self {
-        Self { key, values }
+    pub fn new(field: TagField, values: Vec<String>) -> Self {
+        Self { field, values }
     }
 
     #[must_use]
     pub fn set_title(title: impl Into<String>) -> Self {
         Self {
-            key: ItemKey::TrackTitle,
+            field: TagField::Title,
             values: vec![title.into()],
         }
     }
@@ -71,14 +79,12 @@ impl TagEdit {
 pub enum Refusal {
     #[error("refusing to write {format}: {reason}")]
     ReadOnlyFormat { format: String, reason: String },
-    #[error("unencodable {key:?}: {reason}")]
-    UnencodableItem { key: ItemKey, reason: String },
+    #[error("unencodable {field:?}: {reason}")]
+    UnencodableItem { field: TagField, reason: String },
     #[error("empty Vorbis value present under '{key}'; lofty drops empties on save")]
     EmptyVorbisValue { key: String },
     #[error("mixed ID3v2.3 tag: {detail}")]
     MixedId3v23 { detail: String },
-    #[error("edit key {key:?} is outside the editable tag set")]
-    UnsupportedEdit { key: ItemKey },
     #[error("post-save verify found an out-of-edit delta: {detail}")]
     VerifyMismatch { detail: String },
     #[error("no byte inventory possible: {detail}")]
@@ -114,35 +120,35 @@ fn error_chain(error: &impl std::error::Error) -> String {
     parts.join(": caused by: ")
 }
 
-/// Apply `edits` to `path` through the full wrapper pipeline.
-pub fn save_tags(path: &Path, edits: &[TagEdit]) -> Result<SaveReport, TagsError> {
-    let format = format_for_path(path)?;
-    match format {
-        AudioFormat::Aac => {
-            return Err(refused(
-                path,
-                Refusal::ReadOnlyFormat {
-                    format: format.as_str().to_owned(),
-                    reason: "APE tags on ADTS never persist; read-only".to_owned(),
-                },
-            ));
-        }
+fn read_only(format: AudioFormat) -> Option<Refusal> {
+    let reason = match format {
+        AudioFormat::Aac => "APE tags on ADTS never persist; read-only",
         AudioFormat::Wav => {
-            return Err(refused(
-                path,
-                Refusal::ReadOnlyFormat {
-                    format: format.as_str().to_owned(),
-                    reason:
-                        "WAV writes fork a second ID3 chunk and RIFF INFO is unwritten; read-only"
-                            .to_owned(),
-                },
-            ));
+            "WAV writes fork a second ID3 chunk and RIFF INFO is unwritten; read-only"
         }
         AudioFormat::Flac
         | AudioFormat::Mp3
         | AudioFormat::Ogg
         | AudioFormat::Opus
-        | AudioFormat::M4a => {}
+        | AudioFormat::M4a => return None,
+    };
+    Some(Refusal::ReadOnlyFormat {
+        format: format.as_str().to_owned(),
+        reason: reason.to_owned(),
+    })
+}
+
+/// True when the save wrapper can write this container at all.
+#[must_use]
+pub fn writable(format: AudioFormat) -> bool {
+    read_only(format).is_none()
+}
+
+/// Apply `edits` to `path` through the full wrapper pipeline.
+pub fn save_tags(path: &Path, edits: &[TagEdit]) -> Result<SaveReport, TagsError> {
+    let format = format_for_path(path)?;
+    if let Some(refusal) = read_only(format) {
+        return Err(refused(path, refusal));
     }
     if edits.is_empty() {
         return Ok(SaveReport {
@@ -162,10 +168,16 @@ pub fn save_tags(path: &Path, edits: &[TagEdit]) -> Result<SaveReport, TagsError
     })?;
     let snapshot = Snapshot::capture(format, &original_bytes, &tagged)
         .map_err(|refusal| refused(path, refusal))?;
-    presave_scan(format, &snapshot, edits).map_err(|refusal| refused(path, refusal))?;
+    snapshot
+        .check_file_state()
+        .map_err(|refusal| refused(path, refusal))?;
+    for edit in edits {
+        check_edit(edit).map_err(|refusal| refused(path, refusal))?;
+    }
+    let native = resolve_edits(&snapshot, edits);
 
     let temp = TempCopy::create(path)?;
-    apply_edits(format, &snapshot, &tagged, edits, temp.path())
+    apply_edits(format, &snapshot, &tagged, &native, temp.path())
         .map_err(|refusal| refused(temp.path(), refusal))?;
     let temp_bytes = fs::read(temp.path()).map_err(|source| TagsError::Io {
         path: temp.path().display().to_string(),
@@ -178,7 +190,7 @@ pub fn save_tags(path: &Path, edits: &[TagEdit]) -> Result<SaveReport, TagsError
     let after = Snapshot::capture(format, &temp_bytes, &temp_tagged)
         .map_err(|refusal| refused(temp.path(), refusal))?;
     snapshot
-        .verify_against(&after, edits)
+        .verify_against(&after, &native)
         .map_err(|refusal| refused(path, refusal))?;
     temp.commit()?;
     Ok(SaveReport {
@@ -188,8 +200,72 @@ pub fn save_tags(path: &Path, edits: &[TagEdit]) -> Result<SaveReport, TagsError
     })
 }
 
+/// Every writable field the file carries, read from the same native
+/// homes the writer uses, so writing the result back changes nothing.
+/// Read-only containers report nothing: there is nothing to write back.
+pub fn read_fields(path: &Path) -> Result<BTreeMap<TagField, Vec<String>>, TagsError> {
+    let format = format_for_path(path)?;
+    if !writable(format) {
+        return Ok(BTreeMap::new());
+    }
+    let bytes = fs::read(path).map_err(|source| TagsError::Io {
+        path: path.display().to_string(),
+        source,
+    })?;
+    let unreadable = |refusal: Refusal| TagsError::TagRead {
+        path: path.display().to_string(),
+        reason: refusal.to_string(),
+    };
+    let mut fields = BTreeMap::new();
+    match format {
+        AudioFormat::Mp3 => {
+            let Some(tag) = parse_id3_deep(&bytes).map_err(unreadable)? else {
+                return Ok(fields);
+            };
+            for field in TagField::ALL {
+                let values = id3_values(&tag, field);
+                if !values.is_empty() {
+                    fields.insert(field, values);
+                }
+            }
+        }
+        AudioFormat::Flac | AudioFormat::Ogg | AudioFormat::Opus => {
+            let Some(truth) = parse_vorbis_truth(format, &bytes).map_err(unreadable)? else {
+                return Ok(fields);
+            };
+            for field in TagField::ALL {
+                let key = vorbis_key_for(field, Some(&truth));
+                let values: Vec<String> = truth
+                    .pairs
+                    .iter()
+                    .filter(|(name, _)| name.eq_ignore_ascii_case(&key))
+                    .map(|(_, value)| value.clone())
+                    .collect();
+                if !values.is_empty() {
+                    fields.insert(field, values);
+                }
+            }
+        }
+        AudioFormat::M4a => {
+            let Some(atoms) = parse_mp4_atoms(&bytes).map_err(unreadable)? else {
+                return Ok(fields);
+            };
+            for field in TagField::ALL {
+                let values = mp4_values(&atoms, field);
+                if !values.is_empty() {
+                    fields.insert(field, values);
+                }
+            }
+        }
+        AudioFormat::Aac | AudioFormat::Wav => {}
+    }
+    // Only values the writer accepts are worth replaying.
+    fields.retain(|field, values| check_edit(&TagEdit::new(*field, values.clone())).is_ok());
+    Ok(fields)
+}
+
 // ---------------------------------------------------------------------------
-// Pre-save scan: the measured unencodable catalog.
+// Pre-save scan: values each field can hold.
 // ---------------------------------------------------------------------------
 
 /// Frame ids that only exist in ID3v2.4. Any of them inside a v2.3 tag
@@ -199,112 +275,41 @@ const V24_ONLY_IDS: &[&str] = &[
     "TPRO", "TRSN", "TSO2", "TSOA", "TSOP", "TSOT", "TSST",
 ];
 
-fn presave_scan(
-    format: AudioFormat,
-    snapshot: &Snapshot,
-    edits: &[TagEdit],
-) -> Result<(), Refusal> {
-    snapshot.check_file_state()?;
-    let id3_major = match snapshot {
-        Snapshot::Id3 { tag, .. } => tag.as_ref().map(|tag| tag.major),
-        _ => None,
+/// True when the field can hold these values (dates parse, counts are
+/// numbers, single-valued fields have one value, nothing is blank).
+#[must_use]
+pub fn accepts(edit: &TagEdit) -> bool {
+    check_edit(edit).is_ok()
+}
+
+fn check_edit(edit: &TagEdit) -> Result<(), Refusal> {
+    let unencodable = |reason: String| Refusal::UnencodableItem {
+        field: edit.field,
+        reason,
     };
-    for edit in edits {
-        check_edit(format, id3_major, edit)?;
+    if edit.values.iter().any(|value| value.is_empty()) {
+        return Err(unencodable("empty values are not expressible".to_owned()));
+    }
+    let kind = edit.field.kind();
+    if kind != FieldKind::Text && edit.values.len() > 1 {
+        return Err(unencodable("the field holds one value".to_owned()));
+    }
+    for value in &edit.values {
+        match kind {
+            FieldKind::Count if value.trim().parse::<u32>().is_err() => {
+                return Err(unencodable(format!(
+                    "non-numeric count '{value}' would be dropped"
+                )));
+            }
+            FieldKind::Date if value.parse::<Timestamp>().is_err() => {
+                return Err(unencodable(format!(
+                    "unparseable timestamp '{value}' would poison ID3v2 reads"
+                )));
+            }
+            _ => {}
+        }
     }
     Ok(())
-}
-
-fn check_edit(format: AudioFormat, id3_major: Option<u8>, edit: &TagEdit) -> Result<(), Refusal> {
-    if matches!(
-        edit.key,
-        ItemKey::TrackTitle
-            | ItemKey::TrackArtist
-            | ItemKey::AlbumTitle
-            | ItemKey::AlbumArtist
-            | ItemKey::Genre
-    ) {
-        if edit.values.iter().any(|value| value.is_empty()) {
-            return Err(Refusal::UnencodableItem {
-                key: edit.key,
-                reason: "empty values are not expressible".to_owned(),
-            });
-        }
-        // v2.3 joins multi-values with `/`, which does not round-trip
-        // through a NUL-based verify; refuse rather than corrupt.
-        if format == AudioFormat::Mp3 && id3_major == Some(3) && edit.values.len() > 1 {
-            return Err(Refusal::UnencodableItem {
-                key: edit.key,
-                reason: "v2.3 cannot express multi-valued edits".to_owned(),
-            });
-        }
-        return Ok(());
-    }
-    let is_id3 = format == AudioFormat::Mp3;
-    match edit.key {
-        // Upstream lofty-rs#732: `Work` maps to an invalid `WORK` frame and
-        // aborts the whole save on ID3v2.
-        ItemKey::Work if is_id3 => Err(Refusal::UnencodableItem {
-            key: edit.key,
-            reason: "Work maps to invalid frame WORK on ID3v2 (lofty-rs#732)".to_owned(),
-        }),
-        // Same class: PCST aborts on 0/1 and vanishes otherwise.
-        ItemKey::FlagPodcast if is_id3 => Err(Refusal::UnencodableItem {
-            key: edit.key,
-            reason: "FlagPodcast aborts or vanishes on ID3v2".to_owned(),
-        }),
-        ItemKey::RecordingDate
-        | ItemKey::ReleaseDate
-        | ItemKey::OriginalReleaseDate
-        | ItemKey::TaggingTime
-        | ItemKey::EncodingTime => {
-            for value in &edit.values {
-                if value.parse::<Timestamp>().is_err() {
-                    return Err(Refusal::UnencodableItem {
-                        key: edit.key,
-                        reason: format!("unparseable timestamp '{value}' would poison ID3v2 reads"),
-                    });
-                }
-            }
-            Err(Refusal::UnsupportedEdit { key: edit.key })
-        }
-        ItemKey::TrackNumber | ItemKey::TrackTotal | ItemKey::DiscNumber | ItemKey::DiscTotal => {
-            for value in &edit.values {
-                if !is_track_count(value) {
-                    return Err(Refusal::UnencodableItem {
-                        key: edit.key,
-                        reason: format!("non-numeric count '{value}' would be dropped"),
-                    });
-                }
-            }
-            Err(Refusal::UnsupportedEdit { key: edit.key })
-        }
-        ItemKey::MovementNumber => {
-            for value in &edit.values {
-                if !is_track_count(value) {
-                    return Err(Refusal::UnencodableItem {
-                        key: edit.key,
-                        reason: format!(
-                            "movement '{value}' is not n or n/m and would read back wrong"
-                        ),
-                    });
-                }
-            }
-            Err(Refusal::UnsupportedEdit { key: edit.key })
-        }
-        _ => Err(Refusal::UnsupportedEdit { key: edit.key }),
-    }
-}
-
-fn is_track_count(value: &str) -> bool {
-    let (head, tail) = match value.split_once('/') {
-        Some((number, total)) => (number, Some(total)),
-        None => (value, None),
-    };
-    if head.trim().parse::<u32>().is_err() {
-        return false;
-    }
-    tail.is_none_or(|total| total.trim().parse::<u32>().is_ok())
 }
 
 // ---------------------------------------------------------------------------
@@ -1104,7 +1109,7 @@ impl Snapshot {
         }
     }
 
-    fn verify_against(&self, after: &Snapshot, edits: &[TagEdit]) -> Result<(), Refusal> {
+    fn verify_against(&self, after: &Snapshot, edits: &[NativeEdit]) -> Result<(), Refusal> {
         match (self, after) {
             (
                 Snapshot::Id3 {
@@ -1176,35 +1181,407 @@ fn mismatch(detail: String) -> Result<(), Refusal> {
     Err(Refusal::VerifyMismatch { detail })
 }
 
-/// The last requested values per edited native key.
-fn expected_edits(
-    edits: &[TagEdit],
-    key_of: impl Fn(ItemKey) -> Option<String>,
-) -> Vec<(String, Vec<String>)> {
-    let mut expected: Vec<(String, Vec<String>)> = Vec::new();
-    for edit in edits {
-        if let Some(key) = key_of(edit.key) {
-            if let Some(slot) = expected.iter_mut().find(|(slot_key, _)| slot_key == &key) {
-                slot.1 = edit.values.clone();
-            } else {
-                expected.push((key, edit.values.clone()));
+// ---------------------------------------------------------------------------
+// Edits resolved to their native homes in this file's tag.
+// ---------------------------------------------------------------------------
+
+/// One edit at its native home. No values (or a zero pair) removes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NativeEdit {
+    Id3Text {
+        id: String,
+        values: Vec<String>,
+    },
+    Id3User {
+        desc: String,
+        values: Vec<String>,
+    },
+    Id3Ufid {
+        owner: String,
+        value: Option<String>,
+    },
+    Vorbis {
+        key: String,
+        values: Vec<String>,
+    },
+    Mp4Text {
+        code: [u8; 4],
+        values: Vec<String>,
+    },
+    Mp4Freeform {
+        name: String,
+        values: Vec<String>,
+    },
+    Mp4Pair {
+        code: [u8; 4],
+        number: u32,
+        total: u32,
+    },
+}
+
+impl NativeEdit {
+    /// The frame key verification excludes from the untouched set.
+    fn id3_key(&self) -> Option<String> {
+        match self {
+            NativeEdit::Id3Text { id, .. } => Some(id.clone()),
+            NativeEdit::Id3User { desc, .. } => Some(format!("TXXX:{desc}")),
+            NativeEdit::Id3Ufid { owner, .. } => Some(format!("UFID:{owner}")),
+            _ => None,
+        }
+    }
+
+    fn same_target(&self, other: &NativeEdit) -> bool {
+        match (self, other) {
+            (NativeEdit::Vorbis { key: a, .. }, NativeEdit::Vorbis { key: b, .. }) => a == b,
+            (NativeEdit::Mp4Text { code: a, .. }, NativeEdit::Mp4Text { code: b, .. })
+            | (NativeEdit::Mp4Pair { code: a, .. }, NativeEdit::Mp4Pair { code: b, .. }) => a == b,
+            (NativeEdit::Mp4Freeform { name: a, .. }, NativeEdit::Mp4Freeform { name: b, .. }) => {
+                a == b
+            }
+            _ => self.id3_key().is_some() && self.id3_key() == other.id3_key(),
+        }
+    }
+}
+
+/// Resolve edits against the file's own spellings (an existing `TXXX`
+/// description or Vorbis total key keeps its spelling), fold track and
+/// disc halves into one pair with the half that was not edited, and let
+/// a later edit of the same target win.
+fn resolve_edits(snapshot: &Snapshot, edits: &[TagEdit]) -> Vec<NativeEdit> {
+    let mut resolved: Vec<NativeEdit> = Vec::new();
+    let mut push = |edit: NativeEdit| {
+        resolved.retain(|known| !known.same_target(&edit));
+        resolved.push(edit);
+    };
+    match snapshot {
+        Snapshot::Id3 { tag, .. } => {
+            let tag = tag.as_ref();
+            let v23 = tag.is_some_and(|tag| tag.major == 3);
+            let mut pairs: Vec<(&'static str, Option<u32>, Option<u32>)> = Vec::new();
+            for edit in edits {
+                // v2.3 has no multi-value separator lofty round-trips.
+                let values = if v23 && edit.values.len() > 1 {
+                    vec![edit.values.join("/")]
+                } else {
+                    edit.values.clone()
+                };
+                match edit.field.id3(v23) {
+                    Id3Target::Text(id) => {
+                        let values = if id == "TYER" || id == "TORY" {
+                            values.iter().map(|value| year_part(value)).collect()
+                        } else {
+                            values
+                        };
+                        push(NativeEdit::Id3Text {
+                            id: id.to_owned(),
+                            values,
+                        });
+                    }
+                    Id3Target::User(desc) => push(NativeEdit::Id3User {
+                        desc: tag
+                            .and_then(|tag| existing_txxx(tag, desc))
+                            .unwrap_or_else(|| desc.to_owned()),
+                        values,
+                    }),
+                    Id3Target::Ufid(owner) => push(NativeEdit::Id3Ufid {
+                        owner: owner.to_owned(),
+                        value: values.into_iter().next(),
+                    }),
+                    Id3Target::Pair(id, slot) => {
+                        let index = match pairs.iter().position(|(known, _, _)| *known == id) {
+                            Some(index) => index,
+                            None => {
+                                let (number, total) =
+                                    tag.map_or((None, None), |tag| id3_pair(tag, id));
+                                pairs.push((id, number, total));
+                                pairs.len() - 1
+                            }
+                        };
+                        let value = values.first().and_then(|value| value.trim().parse().ok());
+                        match slot {
+                            Slot::Number => pairs[index].1 = value,
+                            Slot::Total => pairs[index].2 = value,
+                        }
+                    }
+                }
+            }
+            for (id, number, total) in pairs {
+                let values = match (number, total) {
+                    (None, None) => Vec::new(),
+                    (number, None) => vec![number.unwrap_or(0).to_string()],
+                    (number, Some(total)) => vec![format!("{}/{total}", number.unwrap_or(0))],
+                };
+                push(NativeEdit::Id3Text {
+                    id: id.to_owned(),
+                    values,
+                });
+            }
+        }
+        Snapshot::Vorbis { truth, .. } => {
+            for edit in edits {
+                push(NativeEdit::Vorbis {
+                    key: vorbis_key_for(edit.field, truth.as_ref()),
+                    values: edit.values.clone(),
+                });
+            }
+        }
+        Snapshot::Mp4 { atoms, .. } => {
+            let mut pairs: Vec<([u8; 4], u32, u32)> = Vec::new();
+            for edit in edits {
+                match edit.field.mp4() {
+                    Mp4Target::Text(code) => push(NativeEdit::Mp4Text {
+                        code,
+                        values: edit.values.clone(),
+                    }),
+                    Mp4Target::Freeform(name) => push(NativeEdit::Mp4Freeform {
+                        name: atoms
+                            .as_deref()
+                            .and_then(|atoms| existing_freeform(atoms, name))
+                            .unwrap_or_else(|| name.to_owned()),
+                        values: edit.values.clone(),
+                    }),
+                    Mp4Target::Pair(code, slot) => {
+                        let index = match pairs.iter().position(|(known, _, _)| *known == code) {
+                            Some(index) => index,
+                            None => {
+                                let (number, total) = atoms
+                                    .as_deref()
+                                    .and_then(|atoms| mp4_pair(atoms, code))
+                                    .unwrap_or((0, 0));
+                                pairs.push((code, number, total));
+                                pairs.len() - 1
+                            }
+                        };
+                        let value = edit
+                            .values
+                            .first()
+                            .and_then(|value| value.trim().parse().ok())
+                            .unwrap_or(0);
+                        match slot {
+                            Slot::Number => pairs[index].1 = value,
+                            Slot::Total => pairs[index].2 = value,
+                        }
+                    }
+                }
+            }
+            for (code, number, total) in pairs {
+                push(NativeEdit::Mp4Pair {
+                    code,
+                    number,
+                    total,
+                });
             }
         }
     }
-    expected
+    resolved
+}
+
+fn year_part(value: &str) -> String {
+    value.trim().chars().take(4).collect()
+}
+
+fn existing_txxx(tag: &DeepId3, desc: &str) -> Option<String> {
+    tag.frames.iter().find_map(|frame| {
+        let existing = frame.text.as_ref()?.desc.as_ref()?;
+        existing
+            .eq_ignore_ascii_case(desc)
+            .then(|| existing.clone())
+    })
+}
+
+fn existing_freeform(atoms: &[Mp4AtomTruth], name: &str) -> Option<String> {
+    atoms
+        .iter()
+        .flat_map(|atom| atom.items.iter())
+        .find_map(|item| match item {
+            Mp4Item::Freeform {
+                mean,
+                name: existing,
+                ..
+            } if mean == MP4_MEAN && existing.eq_ignore_ascii_case(name) => Some(existing.clone()),
+            _ => None,
+        })
+}
+
+/// The `n/m` halves of an ID3 pair frame.
+fn id3_pair(tag: &DeepId3, id: &str) -> (Option<u32>, Option<u32>) {
+    let Some(text) = tag
+        .frames
+        .iter()
+        .find(|frame| frame.id == id)
+        .and_then(|frame| frame.text.as_ref())
+        .and_then(|text| text.values.first())
+    else {
+        return (None, None);
+    };
+    let (number, total) = match text.split_once('/') {
+        Some((number, total)) => (number, Some(total)),
+        None => (text.as_str(), None),
+    };
+    (
+        number.trim().parse().ok(),
+        total.and_then(|total| total.trim().parse().ok()),
+    )
+}
+
+fn mp4_pair(atoms: &[Mp4AtomTruth], code: [u8; 4]) -> Option<(u32, u32)> {
+    atoms
+        .iter()
+        .filter(|atom| atom.kind == code)
+        .flat_map(|atom| atom.items.iter())
+        .find_map(|item| match item {
+            Mp4Item::Pair(number, total) => Some((*number, *total)),
+            _ => None,
+        })
+}
+
+/// The Vorbis key for a field: the file's own spelling of a total when
+/// it uses `TRACKTOTAL`/`DISCTOTAL`, else Picard's.
+fn vorbis_key_for(field: TagField, truth: Option<&VorbisTruth>) -> String {
+    let canonical = field.vorbis_key();
+    let present = |key: &str| {
+        truth.is_some_and(|truth| {
+            truth
+                .pairs
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case(key))
+        })
+    };
+    if !present(canonical)
+        && let Some(alias) = field.vorbis_aliases().iter().find(|alias| present(alias))
+    {
+        return (*alias).to_owned();
+    }
+    canonical.to_owned()
+}
+
+/// A field's values as the file's ID3 tag holds them.
+fn id3_values(tag: &DeepId3, field: TagField) -> Vec<String> {
+    let v23 = tag.major == 3;
+    match field.id3(v23) {
+        Id3Target::Text(id) => tag
+            .frames
+            .iter()
+            .find(|frame| frame.id == id)
+            .and_then(|frame| frame.text.as_ref())
+            .map(|text| text.values.clone())
+            .unwrap_or_default(),
+        Id3Target::User(desc) => tag
+            .frames
+            .iter()
+            .find_map(|frame| {
+                let text = frame.text.as_ref()?;
+                text.desc
+                    .as_ref()?
+                    .eq_ignore_ascii_case(desc)
+                    .then(|| text.values.clone())
+            })
+            .unwrap_or_default(),
+        Id3Target::Ufid(owner) => tag
+            .frames
+            .iter()
+            .filter(|frame| frame.id == "UFID")
+            .find_map(|frame| {
+                let (frame_owner, identifier) = split_ufid(&frame.payload);
+                (frame_owner == owner).then(|| String::from_utf8_lossy(identifier).into_owned())
+            })
+            .into_iter()
+            .collect(),
+        Id3Target::Pair(id, slot) => {
+            let (number, total) = id3_pair(tag, id);
+            match slot {
+                Slot::Number => number,
+                Slot::Total => total,
+            }
+            .map(|value| vec![value.to_string()])
+            .unwrap_or_default()
+        }
+    }
+}
+
+/// A field's values as the file's MP4 atoms hold them.
+fn mp4_values(atoms: &[Mp4AtomTruth], field: TagField) -> Vec<String> {
+    match field.mp4() {
+        Mp4Target::Text(code) => atoms
+            .iter()
+            .filter(|atom| atom.kind == code)
+            .flat_map(|atom| atom.items.iter())
+            .filter_map(|item| match item {
+                Mp4Item::Text(text) => Some(text.clone()),
+                _ => None,
+            })
+            .collect(),
+        Mp4Target::Freeform(name) => atoms
+            .iter()
+            .flat_map(|atom| atom.items.iter())
+            .filter_map(|item| match item {
+                Mp4Item::Freeform {
+                    mean,
+                    name: existing,
+                    data,
+                } if mean == MP4_MEAN && existing.eq_ignore_ascii_case(name) => {
+                    std::str::from_utf8(data).ok().map(str::to_owned)
+                }
+                _ => None,
+            })
+            .collect(),
+        Mp4Target::Pair(code, slot) => mp4_pair(atoms, code)
+            .map(|(number, total)| match slot {
+                Slot::Number => number,
+                Slot::Total => total,
+            })
+            .filter(|value| *value > 0)
+            .map(|value| vec![value.to_string()])
+            .unwrap_or_default(),
+    }
+}
+
+/// UFID payload: owner, NUL, identifier bytes.
+fn split_ufid(payload: &[u8]) -> (&str, &[u8]) {
+    match payload.iter().position(|byte| *byte == 0) {
+        Some(end) => (
+            std::str::from_utf8(&payload[..end]).unwrap_or(""),
+            &payload[end + 1..],
+        ),
+        None => ("", payload),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Verify: untouched stays byte-identical, edits land exactly.
+// ---------------------------------------------------------------------------
+
+/// A frame's identity for comparison: `TXXX:<description>`,
+/// `UFID:<owner>`, or the frame id.
+fn frame_key(frame: &Id3FrameTruth) -> String {
+    if let Some(Id3TextTruth {
+        desc: Some(desc), ..
+    }) = &frame.text
+    {
+        return format!("TXXX:{desc}");
+    }
+    if frame.id == "UFID" {
+        return format!("UFID:{}", split_ufid(&frame.payload).0);
+    }
+    frame.id.clone()
 }
 
 fn verify_id3(
     had_tag: bool,
     before: Option<&DeepId3>,
     after: Option<&DeepId3>,
-    edits: &[TagEdit],
+    edits: &[NativeEdit],
 ) -> Result<(), Refusal> {
-    let edited: Vec<String> = edits
-        .iter()
-        .filter_map(|edit| id3_frame_id(edit.key))
-        .collect();
+    let edited: Vec<String> = edits.iter().filter_map(NativeEdit::id3_key).collect();
+    let removal_only = edits.iter().all(|edit| match edit {
+        NativeEdit::Id3Text { values, .. } | NativeEdit::Id3User { values, .. } => {
+            values.is_empty()
+        }
+        NativeEdit::Id3Ufid { value, .. } => value.is_none(),
+        _ => true,
+    });
     match (had_tag, before, after) {
+        (false, _, None) if removal_only => return Ok(()),
         (false, _, after) => {
             // A brand-new tag: every frame present must be an edited one
             // carrying its requested values.
@@ -1212,8 +1589,9 @@ fn verify_id3(
                 detail: "edited tag missing after save".to_owned(),
             })?;
             for frame in &after.frames {
-                if !edited.contains(&frame.id) {
-                    return mismatch(format!("unexpected new frame {}", frame.id));
+                let key = frame_key(frame);
+                if !edited.contains(&key) {
+                    return mismatch(format!("unexpected new frame {key}"));
                 }
             }
         }
@@ -1224,77 +1602,88 @@ fn verify_id3(
                     before.major, after.major
                 ));
             }
-            let mut before_ids = id_multiset(&before.frames);
-            let mut after_ids = id_multiset(&after.frames);
-            for id in &edited {
-                before_ids.remove(id);
-                after_ids.remove(id);
+            let strip = |mut map: BTreeMap<String, Vec<Vec<u8>>>| {
+                for key in &edited {
+                    map.remove(key);
+                }
+                map
+            };
+            let mut before_ids = key_multiset(&before.frames);
+            let mut after_ids = key_multiset(&after.frames);
+            for key in &edited {
+                before_ids.remove(key);
+                after_ids.remove(key);
             }
             if before_ids != after_ids {
-                return mismatch(format!("frame ids changed outside {edited:?}"));
+                return mismatch(format!("frames changed outside {edited:?}"));
             }
-            // Text truth, compared per (id, description).
             let mut before_text = text_map(&before.frames);
             let mut after_text = text_map(&after.frames);
-            for id in &edited {
-                before_text.remove(id);
-                after_text.remove(id);
+            for key in &edited {
+                before_text.remove(key);
+                after_text.remove(key);
             }
             if before_text != after_text {
                 return mismatch("untouched text changed".to_owned());
             }
             // Every other payload byte-identical.
-            let mut before_raw = raw_map(&before.frames);
-            let mut after_raw = raw_map(&after.frames);
-            for id in &edited {
-                before_raw.remove(id);
-                after_raw.remove(id);
-            }
-            if before_raw != after_raw {
+            if strip(raw_map(&before.frames)) != strip(raw_map(&after.frames)) {
                 return mismatch("untouched frame payload changed".to_owned());
             }
         }
+        (true, _, None) if removal_only => return Ok(()),
         (true, _, _) => {
             return mismatch("tag appeared or vanished under the save".to_owned());
         }
     }
-    // Edited frames carry exactly the requested values.
-    if let Some(after) = after {
-        let expected = expected_edits(edits, id3_frame_id);
-        for (id, values) in &expected {
-            let seen: Vec<&Vec<String>> = after
-                .frames
-                .iter()
-                .filter(|frame| &frame.id == id)
-                .filter_map(|frame| frame.text.as_ref().map(|text| &text.values))
-                .collect();
-            if seen.as_slice() != [values] {
-                return mismatch(format!("edited frame '{id}' did not land"));
+    let frames: &[Id3FrameTruth] = after.map_or(&[], |after| after.frames.as_slice());
+    for edit in edits {
+        let Some(key) = edit.id3_key() else {
+            continue;
+        };
+        let landed: Vec<&Id3FrameTruth> = frames
+            .iter()
+            .filter(|frame| frame_key(frame) == key)
+            .collect();
+        let ok = match edit {
+            NativeEdit::Id3Text { values, .. } | NativeEdit::Id3User { values, .. } => {
+                if values.is_empty() {
+                    landed.is_empty()
+                } else {
+                    let seen: Vec<&Vec<String>> = landed
+                        .iter()
+                        .filter_map(|frame| frame.text.as_ref().map(|text| &text.values))
+                        .collect();
+                    seen.as_slice() == [values]
+                }
             }
+            NativeEdit::Id3Ufid { owner, value } => match value {
+                None => landed.is_empty(),
+                Some(value) => {
+                    let mut payload = owner.as_bytes().to_vec();
+                    payload.push(0);
+                    payload.extend_from_slice(value.as_bytes());
+                    landed.len() == 1 && landed[0].payload == payload
+                }
+            },
+            _ => true,
+        };
+        if !ok {
+            return mismatch(format!("edited frame '{key}' did not land"));
         }
     }
     Ok(())
 }
 
 fn text_map(frames: &[Id3FrameTruth]) -> BTreeMap<String, Vec<String>> {
-    let mut map = BTreeMap::new();
-    for frame in frames {
-        if frame.text.is_none() {
-            continue;
-        }
-        // The deep parse refuses duplicates, so each key is unique.
-        let text = frame.text.as_ref().map(|text| text.values.clone());
-        if let Some(values) = text {
-            let key = match &frame.text {
-                Some(Id3TextTruth {
-                    desc: Some(desc), ..
-                }) => format!("TXXX:{desc}"),
-                _ => frame.id.clone(),
-            };
-            map.insert(key, values);
-        }
-    }
-    map
+    // The deep parse refuses duplicate text keys, so each key is unique.
+    frames
+        .iter()
+        .filter_map(|frame| {
+            let text = frame.text.as_ref()?;
+            Some((frame_key(frame), text.values.clone()))
+        })
+        .collect()
 }
 
 fn raw_map(frames: &[Id3FrameTruth]) -> BTreeMap<String, Vec<Vec<u8>>> {
@@ -1303,7 +1692,7 @@ fn raw_map(frames: &[Id3FrameTruth]) -> BTreeMap<String, Vec<Vec<u8>>> {
         if frame.text.is_some() {
             continue;
         }
-        map.entry(frame.id.clone())
+        map.entry(frame_key(frame))
             .or_default()
             .push(frame.payload.clone());
     }
@@ -1313,10 +1702,10 @@ fn raw_map(frames: &[Id3FrameTruth]) -> BTreeMap<String, Vec<Vec<u8>>> {
     map
 }
 
-fn id_multiset(frames: &[Id3FrameTruth]) -> BTreeMap<String, usize> {
+fn key_multiset(frames: &[Id3FrameTruth]) -> BTreeMap<String, usize> {
     let mut counts = BTreeMap::new();
     for frame in frames {
-        *counts.entry(frame.id.clone()).or_insert(0) += 1;
+        *counts.entry(frame_key(frame)).or_insert(0) += 1;
     }
     counts
 }
@@ -1325,11 +1714,20 @@ fn verify_vorbis(
     had_tag: bool,
     before: Option<&VorbisTruth>,
     after: Option<&VorbisTruth>,
-    edits: &[TagEdit],
+    edits: &[NativeEdit],
 ) -> Result<(), Refusal> {
-    let expected = expected_edits(edits, vorbis_entry_key);
-    let edited_keys: Vec<&str> = expected.iter().map(|(key, _)| key.as_str()).collect();
+    let expected: Vec<(&str, &Vec<String>)> = edits
+        .iter()
+        .filter_map(|edit| match edit {
+            NativeEdit::Vorbis { key, values } => Some((key.as_str(), values)),
+            _ => None,
+        })
+        .collect();
+    let edited_keys: Vec<&str> = expected.iter().map(|(key, _)| *key).collect();
     match (had_tag, before, after) {
+        (false, _, None) if expected.iter().all(|(_, values)| values.is_empty()) => {
+            return Ok(());
+        }
         (false, _, after) => {
             let after = after.ok_or_else(|| Refusal::VerifyMismatch {
                 detail: "edited tag missing after save".to_owned(),
@@ -1350,19 +1748,30 @@ fn verify_vorbis(
             let rest_before = grouped_pairs(&before.pairs, &edited_keys);
             let rest_after = grouped_pairs(&after.pairs, &edited_keys);
             if rest_before != rest_after {
-                return mismatch("untouched fields changed".to_owned());
+                let mut changed: Vec<&String> = rest_before
+                    .keys()
+                    .chain(rest_after.keys())
+                    .filter(|key| rest_before.get(*key) != rest_after.get(*key))
+                    .collect();
+                changed.sort();
+                changed.dedup();
+                return mismatch(format!("untouched fields changed: {changed:?}"));
             }
         }
         (true, _, _) => {
             return mismatch("tag appeared or vanished under the save".to_owned());
         }
     }
-    if let Some(after) = after {
-        let grouped = grouped_pairs_all(&after.pairs);
-        for (key, values) in &expected {
-            if grouped.get(key) != Some(values) {
-                return mismatch(format!("edited field '{key}' did not land"));
-            }
+    let grouped = after
+        .map(|after| grouped_pairs_all(&after.pairs))
+        .unwrap_or_default();
+    for (key, values) in &expected {
+        let landed = match grouped.get(*key) {
+            Some(seen) => seen == *values,
+            None => values.is_empty(),
+        };
+        if !landed {
+            return mismatch(format!("edited field '{key}' did not land"));
         }
     }
     Ok(())
@@ -1398,22 +1807,44 @@ fn grouped_pairs_all(pairs: &[(String, String)]) -> BTreeMap<String, Vec<String>
 fn verify_mp4(
     before: Option<&[Mp4AtomTruth]>,
     after: Option<&[Mp4AtomTruth]>,
-    edits: &[TagEdit],
+    edits: &[NativeEdit],
 ) -> Result<(), Refusal> {
-    let edited: Vec<[u8; 4]> = edits
+    let edited_codes: Vec<[u8; 4]> = edits
         .iter()
-        .filter_map(|edit| mp4_fourcc(edit.key))
+        .filter_map(|edit| match edit {
+            NativeEdit::Mp4Text { code, .. } | NativeEdit::Mp4Pair { code, .. } => Some(*code),
+            _ => None,
+        })
         .collect();
+    let edited_names: Vec<&str> = edits
+        .iter()
+        .filter_map(|edit| match edit {
+            NativeEdit::Mp4Freeform { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    let untouched = |atoms: &[Mp4AtomTruth]| {
+        let mut items = atom_items(atoms);
+        for code in &edited_codes {
+            items.remove(code);
+        }
+        if let Some(freeforms) = items.get_mut(b"----") {
+            freeforms.retain(|item| {
+                !matches!(item, Mp4Item::Freeform { mean, name, .. }
+                    if mean == MP4_MEAN && edited_names.contains(&name.as_str()))
+            });
+            if freeforms.is_empty() {
+                items.remove(b"----");
+            }
+        }
+        items
+    };
     if let Some(before) = before {
         let after = after.ok_or_else(|| Refusal::VerifyMismatch {
             detail: "edited tag missing after save".to_owned(),
         })?;
-        let mut before_items = atom_items(before);
-        let mut after_items = atom_items(after);
-        for code in &edited {
-            before_items.remove(code);
-            after_items.remove(code);
-        }
+        let before_items = untouched(before);
+        let after_items = untouched(after);
         if before_items != after_items {
             let mut kinds: Vec<[u8; 4]> = before_items
                 .keys()
@@ -1436,25 +1867,55 @@ fn verify_mp4(
             return mismatch(format!("untouched atoms changed: {}", diffs.join(", ")));
         }
     }
-    if let Some(after) = after {
-        let expected = expected_edits(edits, mp4_entry_key);
-        for (key, values) in &expected {
-            let Some(code) = mp4_entry_code(key) else {
-                continue;
-            };
-            let seen: Vec<String> = after
-                .iter()
-                .filter(|atom| atom.kind == code)
-                .flat_map(|atom| {
-                    atom.items.iter().filter_map(|item| match item {
+    let atoms: &[Mp4AtomTruth] = after.unwrap_or(&[]);
+    for edit in edits {
+        let (label, landed) = match edit {
+            NativeEdit::Mp4Text { code, values } => {
+                let seen: Vec<String> = atoms
+                    .iter()
+                    .filter(|atom| atom.kind == *code)
+                    .flat_map(|atom| atom.items.iter())
+                    .filter_map(|item| match item {
                         Mp4Item::Text(text) => Some(text.clone()),
                         _ => None,
                     })
-                })
-                .collect();
-            if seen != *values {
-                return mismatch(format!("edited atom '{key}' did not land"));
+                    .collect();
+                (String::from_utf8_lossy(code).into_owned(), seen == *values)
             }
+            NativeEdit::Mp4Freeform { name, values } => {
+                let seen: Vec<String> = atoms
+                    .iter()
+                    .flat_map(|atom| atom.items.iter())
+                    .filter_map(|item| match item {
+                        Mp4Item::Freeform {
+                            mean,
+                            name: landed,
+                            data,
+                        } if mean == MP4_MEAN && landed == name => {
+                            Some(String::from_utf8_lossy(data).into_owned())
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                (name.clone(), seen == *values)
+            }
+            NativeEdit::Mp4Pair {
+                code,
+                number,
+                total,
+            } => {
+                let seen = mp4_pair(atoms, *code);
+                let landed = if *number == 0 && *total == 0 {
+                    seen.is_none()
+                } else {
+                    seen == Some((*number, *total))
+                };
+                (String::from_utf8_lossy(code).into_owned(), landed)
+            }
+            _ => continue,
+        };
+        if !landed {
+            return mismatch(format!("edited atom '{label}' did not land"));
         }
     }
     Ok(())
@@ -1545,63 +2006,6 @@ fn atom_items(atoms: &[Mp4AtomTruth]) -> BTreeMap<[u8; 4], Vec<Mp4Item>> {
 }
 
 // ---------------------------------------------------------------------------
-// Edit targets per format.
-// ---------------------------------------------------------------------------
-
-fn id3_frame_id(key: ItemKey) -> Option<String> {
-    match key {
-        ItemKey::TrackTitle => Some("TIT2".to_owned()),
-        ItemKey::TrackArtist => Some("TPE1".to_owned()),
-        ItemKey::AlbumTitle => Some("TALB".to_owned()),
-        ItemKey::AlbumArtist => Some("TPE2".to_owned()),
-        ItemKey::Genre => Some("TCON".to_owned()),
-        _ => None,
-    }
-}
-
-fn vorbis_entry_key(key: ItemKey) -> Option<String> {
-    match key {
-        ItemKey::TrackTitle => Some("TITLE".to_owned()),
-        ItemKey::TrackArtist => Some("ARTIST".to_owned()),
-        ItemKey::AlbumTitle => Some("ALBUM".to_owned()),
-        ItemKey::AlbumArtist => Some("ALBUMARTIST".to_owned()),
-        ItemKey::Genre => Some("GENRE".to_owned()),
-        _ => None,
-    }
-}
-
-fn mp4_fourcc(key: ItemKey) -> Option<[u8; 4]> {
-    match key {
-        ItemKey::TrackTitle => Some(*b"\xa9nam"),
-        ItemKey::TrackArtist => Some(*b"\xa9ART"),
-        ItemKey::AlbumTitle => Some(*b"\xa9alb"),
-        ItemKey::AlbumArtist => Some(*b"aART"),
-        ItemKey::Genre => Some(*b"\xa9gen"),
-        _ => None,
-    }
-}
-
-fn mp4_entry_key(key: ItemKey) -> Option<String> {
-    mp4_fourcc(key).map(|code| {
-        format!(
-            "{:02x}{:02x}{:02x}{:02x}",
-            code[0], code[1], code[2], code[3]
-        )
-    })
-}
-
-fn mp4_entry_code(key: &str) -> Option<[u8; 4]> {
-    if key.len() != 8 {
-        return None;
-    }
-    let mut code = [0u8; 4];
-    for (index, cell) in code.iter_mut().enumerate() {
-        *cell = u8::from_str_radix(&key[index * 2..index * 2 + 2], 16).ok()?;
-    }
-    Some(code)
-}
-
-// ---------------------------------------------------------------------------
 // Native application on the temp copy, repaired from byte truth.
 // ---------------------------------------------------------------------------
 
@@ -1609,7 +2013,7 @@ fn apply_edits(
     format: AudioFormat,
     snapshot: &Snapshot,
     tagged: &lofty::file::TaggedFile,
-    edits: &[TagEdit],
+    edits: &[NativeEdit],
     temp: &Path,
 ) -> Result<(), Refusal> {
     match format {
@@ -1625,27 +2029,53 @@ fn apply_edits(
                 .unwrap_or_default();
             repair_id3_text(&mut native, truth);
             for edit in edits {
-                let Some(id) = id3_frame_id(edit.key) else {
-                    continue;
-                };
-                let _ = native.remove(&FrameId::Valid(std::borrow::Cow::Borrowed(id3_static_id(
-                    edit.key,
-                ))));
-                native.insert(Frame::Text(TextInformationFrame::new(
-                    FrameId::Valid(std::borrow::Cow::Borrowed(id3_static_id(edit.key))),
-                    TextEncoding::UTF8,
-                    edit.values.join("\0"),
-                )));
-                let _ = id;
+                match edit {
+                    NativeEdit::Id3Text { id, values } => {
+                        let frame_id = FrameId::Valid(std::borrow::Cow::Owned(id.clone()));
+                        let _ = native.remove(&frame_id);
+                        if !values.is_empty() {
+                            native.insert(Frame::Text(TextInformationFrame::new(
+                                frame_id,
+                                TextEncoding::UTF8,
+                                values.join("\0"),
+                            )));
+                        }
+                    }
+                    NativeEdit::Id3User { desc, values } => {
+                        native.retain(|frame| {
+                            !matches!(frame, Frame::UserText(text)
+                                if text.description.eq_ignore_ascii_case(desc))
+                        });
+                        if !values.is_empty() {
+                            native.insert(Frame::UserText(ExtendedTextFrame::new(
+                                TextEncoding::UTF8,
+                                desc.clone(),
+                                values.join("\0"),
+                            )));
+                        }
+                    }
+                    NativeEdit::Id3Ufid { owner, value } => {
+                        native.retain(|frame| {
+                            !matches!(frame, Frame::UniqueFileIdentifier(ufid)
+                                if ufid.owner == owner.as_str())
+                        });
+                        if let Some(value) = value {
+                            native.insert(Frame::UniqueFileIdentifier(
+                                UniqueFileIdentifierFrame::new(
+                                    owner.clone(),
+                                    value.as_bytes().to_vec(),
+                                ),
+                            ));
+                        }
+                    }
+                    _ => {}
+                }
             }
             let pin_v23 = truth.is_some_and(|tag| tag.major == 3)
                 || matches!(native.original_version(), Id3v2Version::V3);
             native
                 .save_to_path(temp, WriteOptions::new().use_id3v23(pin_v23))
-                .map_err(|error| Refusal::SaveFailed {
-                    reason: error_chain(&error),
-                })?;
-            Ok(())
+                .map_err(save_failed)
         }
         AudioFormat::Flac | AudioFormat::Ogg | AudioFormat::Opus => {
             let truth = match snapshot {
@@ -1658,35 +2088,40 @@ fn apply_edits(
                 .map(VorbisComments::from)
                 .unwrap_or_default();
             // Empty every pair (pictures stay in the pictures vec), then
-            // re-push the raw truth in file order so unknown fields that
-            // the generic round-trip dropped come back.
+            // push the raw truth in file order, minus the edited keys, so
+            // unknown fields the generic round-trip dropped come back,
+            // then the edits. Nothing is removed after a push: removal
+            // reorders what is left.
             let keys: Vec<String> = native.items().map(|(key, _)| key.to_owned()).collect();
             for key in &keys {
                 native.remove(key).for_each(drop);
             }
+            let edited: Vec<(&String, &Vec<String>)> = edits
+                .iter()
+                .filter_map(|edit| match edit {
+                    NativeEdit::Vorbis { key, values } => Some((key, values)),
+                    _ => None,
+                })
+                .collect();
             if let Some(truth) = truth {
                 for (key, value) in &truth.pairs {
-                    if !is_picture_field(key) {
+                    let replaced = edited
+                        .iter()
+                        .any(|(edited_key, _)| edited_key.eq_ignore_ascii_case(key));
+                    if !is_picture_field(key) && !replaced {
                         native.push(key.clone(), value.clone());
                     }
                 }
                 native.set_vendor(truth.vendor.clone());
             }
-            for edit in edits {
-                let Some(field) = vorbis_entry_key(edit.key) else {
-                    continue;
-                };
-                native.remove(&field).for_each(drop);
-                for value in &edit.values {
-                    native.push(field.clone(), value.clone());
+            for (key, values) in edited {
+                for value in values {
+                    native.push(key.clone(), value.clone());
                 }
             }
             native
                 .save_to_path(temp, WriteOptions::new())
-                .map_err(|error| Refusal::SaveFailed {
-                    reason: error_chain(&error),
-                })?;
-            Ok(())
+                .map_err(save_failed)
         }
         AudioFormat::M4a => {
             let mut native = tagged
@@ -1695,31 +2130,77 @@ fn apply_edits(
                 .map(Ilst::from)
                 .unwrap_or_default();
             for edit in edits {
-                let Some(code) = mp4_fourcc(edit.key) else {
-                    continue;
-                };
-                let mut values = edit.values.iter();
-                let Some(first) = values.next() else {
-                    continue;
-                };
-                let mut atom = Atom::new(AtomIdent::Fourcc(code), AtomData::UTF8(first.clone()));
-                for value in values {
-                    atom.push_data(AtomData::UTF8(value.clone()));
+                match edit {
+                    NativeEdit::Mp4Text { code, values } => {
+                        replace_mp4(&mut native, AtomIdent::Fourcc(*code), values);
+                    }
+                    NativeEdit::Mp4Freeform { name, values } => {
+                        let ident = AtomIdent::Freeform {
+                            mean: std::borrow::Cow::Borrowed(MP4_MEAN),
+                            name: std::borrow::Cow::Owned(name.clone()),
+                        };
+                        replace_mp4(&mut native, ident, values);
+                    }
+                    NativeEdit::Mp4Pair {
+                        code,
+                        number,
+                        total,
+                    } => {
+                        let disk = code == b"disk";
+                        if disk {
+                            native.remove_disk();
+                            native.remove_disk_total();
+                        } else {
+                            native.remove_track();
+                            native.remove_track_total();
+                        }
+                        if *number > 0 || *total > 0 {
+                            match (disk, *total > 0) {
+                                (true, true) => {
+                                    native.set_disk(*number);
+                                    native.set_disk_total(*total);
+                                }
+                                (true, false) => native.set_disk(*number),
+                                (false, true) => {
+                                    native.set_track(*number);
+                                    native.set_track_total(*total);
+                                }
+                                (false, false) => native.set_track(*number),
+                            }
+                        }
+                    }
+                    _ => {}
                 }
-                native.replace_atom(atom);
             }
             native
                 .save_to_path(temp, WriteOptions::new())
-                .map_err(|error| Refusal::SaveFailed {
-                    reason: error_chain(&error),
-                })?;
-            Ok(())
+                .map_err(save_failed)
         }
         AudioFormat::Aac | AudioFormat::Wav => Err(Refusal::ReadOnlyFormat {
             format: format.as_str().to_owned(),
             reason: "read-only container".to_owned(),
         }),
     }
+}
+
+fn save_failed<E: std::error::Error>(error: E) -> Refusal {
+    Refusal::SaveFailed {
+        reason: error_chain(&error),
+    }
+}
+
+/// Swap one `ilst` item's values; no values removes it.
+fn replace_mp4(native: &mut Ilst, ident: AtomIdent<'static>, values: &[String]) {
+    let _ = native.remove(&ident).count();
+    let mut values = values.iter();
+    let Some(first) = values.next() else {
+        return;
+    };
+    let mut atom = Atom::new(ident, AtomData::UTF8(first.clone()));
+    for value in values {
+        atom.push_data(AtomData::UTF8(value.clone()));
+    }
+    native.insert(atom);
 }
 
 /// Timestamp ids that alias across ID3 versions: the merge emits v2.4
@@ -1798,17 +2279,6 @@ fn repair_id3_text(native: &mut Id3v2Tag, truth: Option<&DeepId3>) {
                 text.values.join("\0"),
             )));
         }
-    }
-}
-
-fn id3_static_id(key: ItemKey) -> &'static str {
-    match key {
-        ItemKey::TrackTitle => "TIT2",
-        ItemKey::TrackArtist => "TPE1",
-        ItemKey::AlbumTitle => "TALB",
-        ItemKey::AlbumArtist => "TPE2",
-        ItemKey::Genre => "TCON",
-        _ => "TXXX",
     }
 }
 

@@ -1113,8 +1113,8 @@ async fn copies_stay_apart_and_keep_ids_when_moved() {
 #[tokio::test]
 async fn long_missing_album_is_not_taken_over() {
     use droppedneedle::library::scan::CatalogStore as _;
+    use droppedneedle::library::tags::TagField;
     use droppedneedle::library::tags::save::{TagEdit, save_tags};
-    use lofty::tag::ItemKey;
 
     let (_scratch, library, music) = bare_library("lib-no-takeover");
     let green = plant(&music, "green/01.flac", "flac_full_02.flac");
@@ -1138,8 +1138,8 @@ async fn long_missing_album_is_not_taken_over() {
     save_tags(
         &red,
         &[
-            TagEdit::new(ItemKey::AlbumTitle, vec!["OK Computer".to_owned()]),
-            TagEdit::new(ItemKey::AlbumArtist, vec!["Radiohead".to_owned()]),
+            TagEdit::new(TagField::Album, vec!["OK Computer".to_owned()]),
+            TagEdit::new(TagField::AlbumArtist, vec!["Radiohead".to_owned()]),
         ],
     )
     .expect("renamed");
@@ -1230,8 +1230,8 @@ async fn unmounted_share_keeps_its_tracks() {
 #[tokio::test]
 async fn retagged_album_keeps_its_identity() {
     use droppedneedle::library::scan::CatalogStore as _;
+    use droppedneedle::library::tags::TagField;
     use droppedneedle::library::tags::save::{TagEdit, save_tags};
-    use lofty::tag::ItemKey;
 
     let (_scratch, library, music) = bare_library("lib-retag-album");
     // No release MBID here: the album is known by its tagged names.
@@ -1257,10 +1257,7 @@ async fn retagged_album_keeps_its_identity() {
     for file in &files {
         save_tags(
             file,
-            &[TagEdit::new(
-                ItemKey::AlbumTitle,
-                vec!["Renamed".to_owned()],
-            )],
+            &[TagEdit::new(TagField::Album, vec!["Renamed".to_owned()])],
         )
         .expect("album retagged");
     }
