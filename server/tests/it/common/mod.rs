@@ -277,7 +277,8 @@ impl Drop for ScratchDir {
 }
 
 /// Reads inputs for production-shaped rigs: covers and the YouTube quota
-/// under `dir`, settings from `config`, no linked ListenBrainz accounts.
+/// under `dir`, settings from `config`, no linked ListenBrainz accounts and
+/// no instance Last.fm key.
 /// Nothing dials out unless a test asks for a cover or a chart.
 pub fn reads_inputs(
     config: Arc<droppedneedle::runtime_config::ConfigStore>,
@@ -298,6 +299,7 @@ pub fn reads_inputs(
             )),
         ),
         youtube_quota_path: dir.join("youtube_quota.json"),
+        lastfm_key: Arc::new(|| None),
     }
 }
 

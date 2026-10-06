@@ -227,18 +227,21 @@ pub struct SimilarArtist {
     pub url: String,
 }
 
-/// One row of an artist's top tracks or top albums (v2 `LastFmTrack` /
-/// `LastFmAlbum`). The name is required; counts are lenient.
+/// One row of a top list: an artist's top tracks or albums, a user's top
+/// albums, or the sitewide artist chart (v2 `LastFmTrack` / `LastFmAlbum` /
+/// `LastFmArtist`). The name is required; counts are lenient.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TopItem {
-    /// Track or album title.
+    /// Track, album or (on the artist chart) artist name.
     pub name: String,
-    /// Credited artist name.
+    /// Credited artist name; empty on the artist chart.
     pub artist_name: String,
-    /// MusicBrainz id (recording or release), when Last.fm knows one.
+    /// MusicBrainz id (recording, release or artist), when Last.fm knows one.
     pub mbid: Option<String>,
     /// Play count.
     pub playcount: i64,
+    /// Artwork URL (extralarge preferred), empty when none was sent.
+    pub image_url: String,
 }
 
 /// Last.fm client. Holds no credentials; every method takes the calling
@@ -458,6 +461,49 @@ impl<P: Pacer, S: DegradationSink> LastFmClient<P, S> {
         .await
     }
 
+    /// `chart.getTopArtists`: the sitewide artist chart, most played first
+    /// (v2 `get_global_top_artists`). Each row's `name` is the artist.
+    pub async fn chart_top_artists(
+        &self,
+        creds: &LastFmCredentials,
+        limit: u32,
+    ) -> Outcome<Vec<TopItem>> {
+        let limit_text = limit.to_string();
+        self.list_items(
+            "chart.getTopArtists",
+            "artists",
+            "artist",
+            creds,
+            &[("limit", &limit_text)],
+        )
+        .await
+    }
+
+    /// `user.getTopAlbums` for one Last.fm user over `period` (`7day`,
+    /// `1month`, `12month` or `overall`), most played first (v2
+    /// `get_user_top_albums`).
+    pub async fn user_top_albums(
+        &self,
+        creds: &LastFmCredentials,
+        username: &str,
+        period: &str,
+        limit: u32,
+    ) -> Outcome<Vec<TopItem>> {
+        let limit_text = limit.to_string();
+        self.list_items(
+            "user.getTopAlbums",
+            "topalbums",
+            "album",
+            creds,
+            &[
+                ("user", username),
+                ("period", period),
+                ("limit", &limit_text),
+            ],
+        )
+        .await
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn top_items(
         &self,
@@ -474,7 +520,20 @@ impl<P: Pacer, S: DegradationSink> LastFmClient<P, S> {
             Some(mbid) => vec![("mbid", mbid), ("limit", &limit_text)],
             None => vec![("artist", artist), ("limit", &limit_text)],
         };
-        let payload = match self.request(method, creds, &params, false, false).await {
+        self.list_items(method, envelope, key, creds, &params).await
+    }
+
+    /// One unsigned list read: the rows under `envelope.key`, blank names
+    /// dropped. A missing list reads as empty.
+    async fn list_items(
+        &self,
+        method: &str,
+        envelope: &str,
+        key: &str,
+        creds: &LastFmCredentials,
+        params: &[(&str, &str)],
+    ) -> Outcome<Vec<TopItem>> {
+        let payload = match self.request(method, creds, params, false, false).await {
             Ok(payload) => payload,
             Err(outcome) => return outcome,
         };
@@ -1001,6 +1060,7 @@ fn parse_top_item(item: &serde_json::Value) -> Option<TopItem> {
         artist_name: artist_name.to_owned(),
         mbid: mbid_or_none(item.get("mbid")),
         playcount: lenient_int(item.get("playcount")),
+        image_url: pick_image(item.get("image")),
     })
 }
 

@@ -186,6 +186,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
                 crypto.clone(),
             )),
             youtube_quota_path: config.cache_dir.join(QUOTA_FILE_NAME),
+            lastfm_key: instance_lastfm_key(auth.users.lastfm_switch.clone()),
         },
         Some(enrichment),
     )

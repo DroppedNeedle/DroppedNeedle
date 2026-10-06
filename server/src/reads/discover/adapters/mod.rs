@@ -1,9 +1,10 @@
 //! Production adapters behind the discover ports.
 //!
-//! Live where a client exists today (ListenBrainz charts, Deezer/iTunes
-//! previews, YouTube search when a key is set), honest everywhere else:
-//! pages with no shelves instead of invented ones, and a typed "not
-//! available" (503) for actions whose builders are not ported yet.
+//! Live where a client exists today (ListenBrainz and Last.fm charts,
+//! Deezer/iTunes previews, YouTube search when a key is set), honest
+//! everywhere else: pages with no shelves instead of invented ones, and a
+//! typed "not available" (503) for actions whose builders are not ported
+//! yet.
 
 pub mod charts;
 pub mod content;
@@ -15,14 +16,17 @@ pub mod youtube;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::auth::users::UsersDeps;
 use crate::ids::IdGenerator;
 use crate::plugins::scrobble::ListenBrainzLinkStore;
 use crate::providers::{
     Providers,
     adapters::{CorePacer, CoreSink, ReqwestGet},
+    lastfm::{self, LastFmClient},
     listenbrainz::{DEFAULT_BASE_URL, ListenBrainzClient},
     youtube::{DEFAULT_DAILY_QUOTA_LIMIT, YouTubeClient, YouTubeSettings},
 };
+use crate::reads::catalog::upstream::InstanceLastFmKey;
 use crate::reads::discover::{
     ports::{ChartsSource, SystemClock, YouTubeSource},
     services::ReadsDeps,
@@ -43,15 +47,36 @@ pub struct DiscoverInputs {
     pub listenbrainz_links: Arc<dyn ListenBrainzLinkStore>,
     /// The YouTube quota file (`<cache_dir>/youtube_quota.json`).
     pub youtube_quota_path: PathBuf,
+    /// The Last.fm switch and the users' Last.fm links.
+    pub users: UsersDeps,
+    /// The instance Last.fm API key, read per call.
+    pub lastfm_key: InstanceLastFmKey,
 }
 
 /// Build the production discover deps.
 pub fn production_deps(inputs: DiscoverInputs, ids: Arc<dyn IdGenerator>) -> ReadsDeps {
+    let lastfm_charts = match CorePacer::for_source(inputs.providers.clone(), lastfm::SOURCE) {
+        Some(pacer) => Some(charts::LastFmCharts::new(
+            LastFmClient::new(
+                inputs.http.clone(),
+                lastfm::DEFAULT_BASE_URL,
+                pacer,
+                CoreSink,
+            ),
+            inputs.lastfm_key,
+            inputs.users,
+        )),
+        None => {
+            tracing::error!("no last.fm rate limit row; last.fm charts are unavailable");
+            None
+        }
+    };
     let charts: Arc<dyn ChartsSource> =
         match CorePacer::for_source(inputs.providers.clone(), "listenbrainz") {
-            Some(pacer) => Arc::new(charts::ListenBrainzCharts::new(
+            Some(pacer) => Arc::new(charts::LiveCharts::new(
                 ListenBrainzClient::new(inputs.http.clone(), DEFAULT_BASE_URL, pacer, CoreSink),
                 inputs.listenbrainz_links,
+                lastfm_charts,
                 inputs.pool.clone(),
             )),
             None => {

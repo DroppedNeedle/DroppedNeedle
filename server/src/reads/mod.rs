@@ -75,6 +75,8 @@ impl ReadsSetup {
                 providers: inputs.providers.clone(),
                 listenbrainz_links: inputs.listenbrainz_links.clone(),
                 youtube_quota_path: inputs.youtube_quota_path.clone(),
+                users: users.clone(),
+                lastfm_key: inputs.lastfm_key.clone(),
             },
             ids.clone(),
         );
@@ -246,6 +248,8 @@ pub struct ReadsInputs {
     pub listenbrainz_links: Arc<dyn crate::plugins::scrobble::ListenBrainzLinkStore>,
     /// The YouTube quota file (`<cache_dir>/youtube_quota.json`).
     pub youtube_quota_path: std::path::PathBuf,
+    /// The instance Last.fm API key, read per call (Last.fm charts).
+    pub lastfm_key: catalog::upstream::InstanceLastFmKey,
 }
 
 /// Production platform states: local and Cover Art Archive art through

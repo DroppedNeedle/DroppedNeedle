@@ -148,6 +148,42 @@ pub fn instance_lastfm_key(switch: Arc<dyn LastFmSwitch>) -> InstanceLastFmKey {
     Arc::new(move || switch.instance_keys().map(|keys| keys.api_key))
 }
 
+/// A user's Last.fm link as the reads use it.
+#[derive(Debug, Default)]
+pub struct UserLastFm {
+    /// The linked Last.fm username, when the user finished linking.
+    pub username: Option<String>,
+    /// The user's own API key, when they saved one that decrypts.
+    pub api_key: Option<String>,
+}
+
+/// Read one user's Last.fm link. A store or decrypt failure logs and reads
+/// as absent, so Last.fm reads fall back instead of failing the page.
+pub async fn user_lastfm(users: &UsersDeps, user_id: &str) -> UserLastFm {
+    let link = match users.lastfm.get(user_id).await {
+        Ok(Some(link)) => link,
+        Ok(None) => return UserLastFm::default(),
+        Err(error) => {
+            tracing::warn!(?error, "last.fm link read failed");
+            return UserLastFm::default();
+        }
+    };
+    let api_key = link
+        .api_key_encrypted
+        .and_then(|sealed| match users.crypto.decrypt(&sealed) {
+            Ok(key) if !key.trim().is_empty() => Some(key),
+            Ok(_) => None,
+            Err(error) => {
+                tracing::warn!(%error, "last.fm key does not decrypt");
+                None
+            }
+        });
+    UserLastFm {
+        username: link.username.filter(|name| !name.trim().is_empty()),
+        api_key,
+    }
+}
+
 impl Upstream {
     /// Assemble from the shared HTTP clients and provider deps.
     pub fn new(
@@ -256,22 +292,7 @@ impl Upstream {
 
     /// The user's own Last.fm API key, when they saved one that decrypts.
     async fn user_lastfm_key(&self, user_id: &str) -> Option<String> {
-        let link = match self.users.lastfm.get(user_id).await {
-            Ok(link) => link?,
-            Err(error) => {
-                tracing::warn!(?error, "last.fm link read failed");
-                return None;
-            }
-        };
-        let sealed = link.api_key_encrypted?;
-        match self.users.crypto.decrypt(&sealed) {
-            Ok(key) if !key.trim().is_empty() => Some(key),
-            Ok(_) => None,
-            Err(error) => {
-                tracing::warn!(%error, "last.fm key does not decrypt");
-                None
-            }
-        }
+        user_lastfm(&self.users, user_id).await.api_key
     }
 
     /// The AudioDB client with the configured key and switch.
