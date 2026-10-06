@@ -234,15 +234,17 @@ async fn tagged_album_identifies_through_a_merged_release_id() {
     assert_eq!(stored.labels, vec!["Harbour Lights Records".to_owned()]);
 }
 
-/// Untagged files with a misspelled title and a length far from every
-/// edition: close enough to show a curator, not close enough to seal.
+/// Untagged files, one a minute shorter than any edition's track (left
+/// unmatched) and one with a placeholder title: close enough to show a
+/// curator, not close enough to seal.
 #[tokio::test]
 async fn messy_album_goes_to_review_with_its_distances() {
     let rig = rig(false);
-    let files: [FileTags<'_>; 3] = [
+    let files: [FileTags<'_>; 4] = [
         ("Lamplight", 214, None),
         ("Blu Hours", 190, None),
         ("Night Shift", 198, None),
+        ("Untitled", 290, None),
     ];
 
     let report = identify(&rig, album(&files)).await;
@@ -261,8 +263,11 @@ async fn messy_album_goes_to_review_with_its_distances() {
         assert!(!candidate.penalties.is_empty());
         let tracks = &candidate.track_evidence;
         assert_eq!(tracks[0].classification, EvidenceClass::Supported);
-        // The bad pair is shown but never sealed.
+        // Neither the unmatched file nor the bad pair is ever sealed.
         assert_eq!(tracks[1].classification, EvidenceClass::Unknown);
+        assert_eq!(tracks[1].release_track_mbid, None);
+        assert_eq!(tracks[3].classification, EvidenceClass::Unknown);
+        assert!(tracks[3].release_track_mbid.is_some());
     }
     // A curator approving it finds the documents still on file.
     assert!(rig.releases.release(STANDARD, None).is_some());

@@ -88,16 +88,17 @@ impl Distance {
         if max > 0.0 { raw / max } else { 0.0 }
     }
 
-    /// Each non-zero penalty's share of the normalized distance, largest
-    /// first.
-    pub fn shares(&self) -> Vec<PenaltyShare> {
-        let (_, max) = self.sums(&[]);
+    /// Each non-zero penalty's share of `normalized_excluding(skip)`,
+    /// largest first, so the shares add up to the distance shown.
+    pub fn shares_excluding(&self, skip: &[&str]) -> Vec<PenaltyShare> {
+        let (_, max) = self.sums(skip);
         if max <= 0.0 {
             return Vec::new();
         }
         let mut shares: Vec<PenaltyShare> = self
             .penalties
             .iter()
+            .filter(|(key, _)| !skip.contains(key))
             .map(|(key, values)| PenaltyShare {
                 name: (*key).to_owned(),
                 share: weight(key) * values.iter().sum::<f64>() / max,
@@ -125,6 +126,9 @@ mod tests {
         assert!((distance.normalized() - all).abs() < 1e-9);
         let partial = (3.0 + 1.0) / (3.0 + 4.0);
         assert!((distance.normalized_excluding(&["missing_tracks"]) - partial).abs() < 1e-9);
-        assert_eq!(distance.shares()[0].name, "album");
+        let shares = distance.shares_excluding(&["missing_tracks"]);
+        assert_eq!(shares[0].name, "album");
+        let total: f64 = shares.iter().map(|share| share.share).sum();
+        assert!((total - partial).abs() < 1e-9);
     }
 }

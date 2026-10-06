@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use super::models::{CandidateEvidence, EvidenceClass, LocalAlbumFacts, TrackEvidence};
 use crate::library::matching::decide::{ACCEPT_ALBUM, ACCEPT_TRACK, REVIEW_CEILING};
+use crate::library::matching::score::LIBRARY_EXCLUDED;
 use crate::library::matching::{LocalAlbum, LocalTrack, Release, ReleaseMatch};
 
 /// The matcher's view of an album: its facts plus the AcoustID
@@ -101,7 +102,10 @@ pub fn candidate_evidence(
     let distance = matched.library_distance();
     let reason_code = if !matched.conflicts.is_empty() {
         "CONFLICTING_TRACK_EVIDENCE"
-    } else if distance <= ACCEPT_ALBUM && matched.worst_track() <= ACCEPT_TRACK {
+    } else if matched.names_agree
+        && distance <= ACCEPT_ALBUM
+        && matched.worst_track() <= ACCEPT_TRACK
+    {
         "CLOSE_MATCH"
     } else if distance <= REVIEW_CEILING {
         "WEAK_MATCH"
@@ -116,9 +120,8 @@ pub fn candidate_evidence(
         album_artist_name: release.artist_text(),
         track_evidence,
         score: (1.0 - distance).clamp(0.0, 1.0),
-        margin: 0.0,
         reason_code: reason_code.to_owned(),
         distance,
-        penalties: matched.distance.shares(),
+        penalties: matched.distance.shares_excluding(LIBRARY_EXCLUDED),
     }
 }

@@ -53,12 +53,13 @@ impl LocalAlbum {
         (count * 2 >= self.tracks.len().max(1)).then_some(mbid)
     }
 
-    /// Number of distinct discs the files claim.
-    pub fn disc_count(&self) -> usize {
-        let mut discs: Vec<u32> = self.tracks.iter().map(|t| t.disc_number.max(1)).collect();
-        discs.sort_unstable();
-        discs.dedup();
-        discs.len()
+    /// The highest disc number the files claim (1 when none do).
+    pub fn max_disc(&self) -> usize {
+        self.tracks
+            .iter()
+            .map(|track| track.disc_number.max(1) as usize)
+            .max()
+            .unwrap_or(1)
     }
 }
 

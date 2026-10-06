@@ -6,16 +6,30 @@
 //! album-level penalties plus one entry per paired, missing, and
 //! unmatched track. Embedded ids are proof: a local recording MBID that
 //! the release does not carry, or a release-track MBID that disagrees
-//! with the release the tags name, vetoes the release outright.
+//! with the release the tags name, vetoes the release outright. So does a
+//! length more than 40 s off when nothing but the description ties the
+//! pair (v2's duration conflict).
+//!
+//! The album title and artist also pass v2's 0.20 gate: a release whose
+//! title (edition words aside) or artist is further off than that never
+//! identifies on its own, unless the files' own ids prove every track (for
+//! the artist, only when one credit contains the other, so a tribute band
+//! never passes for the band it covers).
 
 use std::collections::HashMap;
 
 use super::assign::assign;
 use super::distance::Distance;
 use super::model::{LocalAlbum, LocalTrack, Release, ReleaseTrack, credit_text};
+use super::strings::{artist_subset, string_dist, strip_edition_words};
 
 /// A pair worse than this is better left unmatched (v2's dummy cost).
 pub const UNMATCHED_PAIR_COST: f64 = 0.65;
+/// Penalties left out of the library distance (and its shares): holding
+/// part of an album is normal for files already in the library.
+pub const LIBRARY_EXCLUDED: &[&str] = &["missing_tracks"];
+/// v2's album title and artist gate.
+pub const NAME_GATE: f64 = 0.20;
 /// Length differences inside this many seconds cost nothing...
 pub const LENGTH_GRACE_SECS: f64 = 10.0;
 /// ...and cost everything past this many more (beets and Lidarr).
@@ -86,6 +100,8 @@ pub struct ReleaseMatch {
     /// Release tracks no local track took.
     pub missing: Vec<usize>,
     pub conflicts: Vec<Conflict>,
+    /// The album title and artist pass the name gate (see the module).
+    pub names_agree: bool,
 }
 
 impl ReleaseMatch {
@@ -97,7 +113,7 @@ impl ReleaseMatch {
     /// The distance for files already in the library, where holding only
     /// part of an album is normal: missing tracks do not count.
     pub fn library_distance(&self) -> f64 {
-        self.distance.normalized_excluding(&["missing_tracks"])
+        self.distance.normalized_excluding(LIBRARY_EXCLUDED)
     }
 
     /// The worst paired track's distance.
@@ -213,8 +229,11 @@ pub fn match_release(
         let matches = Some(year) == release.year() || Some(year) == release.original_year();
         distance.add_bool("year", !matches);
     }
+    // The catalog keeps no disc total, so a partial set of a multi-disc
+    // release cannot be told from a single disc: only a disc number the
+    // release does not have counts against it.
     if !release.media.is_empty() {
-        distance.add_bool("media_count", local.disc_count() != release.media.len());
+        distance.add_bool("media_count", local.max_disc() > release.media.len());
     }
     if let Some(tagged) = local.tagged_release() {
         distance.add_bool("album_id", !release.answers_to(&tagged));
@@ -222,19 +241,43 @@ pub fn match_release(
     for pair in &pairs {
         distance.add("tracks", pair.distance);
     }
-    for _ in missing.iter().take(local.tracks.len()) {
+    for _ in &missing {
         distance.add("missing_tracks", 1.0);
     }
     for _ in &unmatched {
         distance.add("unmatched_tracks", 1.0);
     }
+    let names_agree = names_agree(local, release, various, &pairs);
     ReleaseMatch {
         distance,
         pairs,
         unmatched,
         missing,
         conflicts,
+        names_agree,
     }
+}
+
+/// v2's title and artist gate, with its proof escapes.
+fn names_agree(local: &LocalAlbum, release: &Release, various: bool, pairs: &[TrackPair]) -> bool {
+    let proven = !local.tracks.is_empty()
+        && (0..local.tracks.len()).all(|index| {
+            pairs
+                .iter()
+                .any(|pair| pair.local == index && pair.support == Support::EmbeddedId)
+        });
+    let title_ok = local.title.trim().is_empty()
+        || string_dist(
+            &strip_edition_words(&local.title),
+            &strip_edition_words(&release.title),
+        ) <= NAME_GATE
+        || proven;
+    let release_artist = release.artist_text();
+    let artist_ok = various
+        || local.artist.trim().is_empty()
+        || string_dist(&local.artist, &release_artist) <= NAME_GATE
+        || (proven && artist_subset(&local.artist, &release_artist));
+    title_ok && artist_ok
 }
 
 fn canonical_recording(track: &LocalTrack, aliases: &HashMap<String, String>) -> Option<String> {
@@ -294,8 +337,15 @@ fn track_distance(
         distance.add_bool("track_index", !(on_medium || absolute));
     }
     if let (Some(seconds), Some(length_ms)) = (local.duration_secs, candidate.length_ms) {
-        let difference = (seconds - length_ms as f64 / 1000.0).abs() - LENGTH_GRACE_SECS;
-        distance.add_ratio("track_length", difference.max(0.0), LENGTH_MAX_SECS);
+        let gap = (seconds - length_ms as f64 / 1000.0).abs();
+        if support == Support::Description && gap > LENGTH_GRACE_SECS + LENGTH_MAX_SECS {
+            return None;
+        }
+        distance.add_ratio(
+            "track_length",
+            (gap - LENGTH_GRACE_SECS).max(0.0),
+            LENGTH_MAX_SECS,
+        );
     }
     Some((distance.normalized(), support))
 }

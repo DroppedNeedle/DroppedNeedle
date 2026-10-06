@@ -16,6 +16,12 @@
 //!   prefers the release the tags name, then a release pin, then the
 //!   closest full tracklist (missing tracks count here), then v2's order:
 //!   Official status, earliest date, worldwide country, MBID.
+//! - A lone candidate (no other release group plausible) needs v2's
+//!   quorum: two tracks paired within 0.40, or a recording or
+//!   release-track MBID on any file. Without it there is too little to
+//!   go on and the verdict is insufficient evidence.
+//! - A release that fails the album title or artist gate (see `score`)
+//!   goes to review however close its tracks are.
 //! - Live releases, and compilations the tags do not call compilations,
 //!   need confirmation (v2): unless every file carries its release-track
 //!   id, only the release group is pinned.
@@ -133,8 +139,12 @@ pub fn decide(
         return Verdict::Review(ReviewReason::Ambiguous);
     }
     let matched = &matches[chosen];
+    if rival.is_infinite() && !quorum(local, matched) {
+        return Verdict::Insufficient;
+    }
     let unmatched_limit = if local.tracks.len() <= 20 { 1 } else { 2 };
     if matched.pairs.is_empty()
+        || !matched.names_agree
         || matched.library_distance() > ACCEPT_ALBUM
         || matched.worst_track() > ACCEPT_TRACK
         || matched.unmatched.len() > unmatched_limit
@@ -172,6 +182,20 @@ pub fn should_fingerprint(local: &LocalAlbum, matches: &[ReleaseMatch]) -> bool 
                 || best.worst_track() > ACCEPT_TRACK
         }
     }
+}
+
+/// v2's lone-candidate quorum (`_lone_eligible_supported`).
+fn quorum(local: &LocalAlbum, matched: &ReleaseMatch) -> bool {
+    let close = matched
+        .pairs
+        .iter()
+        .filter(|pair| pair.distance <= ACCEPT_TRACK)
+        .count();
+    close >= 2
+        || local
+            .tracks
+            .iter()
+            .any(|track| track.recording_mbid.is_some() || track.release_track_mbid.is_some())
 }
 
 fn needs_type_confirmation(local: &LocalAlbum, release: &Release) -> bool {
@@ -262,4 +286,141 @@ fn date_key(date: Option<&str>) -> (u32, u32, u32) {
     let month = number(parts.next(), 2).unwrap_or(UNKNOWN);
     let day = number(parts.next(), 2).unwrap_or(UNKNOWN);
     (year, month, day)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+    use crate::library::matching::model::{CreditedArtist, LocalTrack, ReleaseTrack};
+    use crate::library::matching::score::match_release;
+
+    const TITLES: [&str; 4] = ["Lamplight", "Blue Hour", "Night Shift", "Last Train Home"];
+
+    fn release(group: &str, title: &str, count: usize) -> Release {
+        Release {
+            id: format!("{group}-release"),
+            release_group_id: group.to_owned(),
+            title: title.to_owned(),
+            artists: vec![CreditedArtist {
+                id: "artist".to_owned(),
+                name: "The Lanterns".to_owned(),
+                sort_name: None,
+                join: String::new(),
+            }],
+            tracks: (0..count)
+                .map(|index| ReleaseTrack {
+                    id: format!("{group}-track-{index}"),
+                    recording_id: format!("recording-{index}"),
+                    title: TITLES[index].to_owned(),
+                    artists: Vec::new(),
+                    disc: 1,
+                    position: index as u32 + 1,
+                    absolute_position: index as u32 + 1,
+                    length_ms: Some(200_000),
+                })
+                .collect(),
+            ..Release::default()
+        }
+    }
+
+    /// Files titled like the release, at 200 s, plus `garbage` ones
+    /// (wrong title, length a minute and a half off), with recording
+    /// MBIDs when `ids` is set.
+    fn local(count: usize, garbage: usize, ids: bool) -> LocalAlbum {
+        LocalAlbum {
+            title: "Night Shift".to_owned(),
+            artist: "The Lanterns".to_owned(),
+            tracks: (0..count + garbage)
+                .map(|index| LocalTrack {
+                    id: format!("t{index}"),
+                    title: if index < count {
+                        TITLES[index].to_owned()
+                    } else {
+                        "zzzz".to_owned()
+                    },
+                    track_number: index as u32 + 1,
+                    disc_number: 1,
+                    duration_secs: Some(if index < count { 200.0 } else { 290.0 }),
+                    recording_mbid: ids.then(|| format!("recording-{index}")),
+                    ..LocalTrack::default()
+                })
+                .collect(),
+            ..LocalAlbum::default()
+        }
+    }
+
+    fn verdict(local: &LocalAlbum, releases: &[Release]) -> Verdict {
+        let matches: Vec<_> = releases
+            .iter()
+            .map(|release| match_release(local, release, &HashMap::new()))
+            .collect();
+        decide(local, releases, &matches, EditionPrefs::default())
+    }
+
+    #[test]
+    fn thresholds_and_gates() {
+        let night = |count| release("group-a", "Night Shift", count);
+        let weak = Verdict::Review(ReviewReason::WeakMatch);
+        let cases: Vec<(&str, LocalAlbum, Vec<Release>, Verdict)> = vec![
+            (
+                "lone candidate, one plain track",
+                local(1, 0, false),
+                vec![night(1)],
+                Verdict::Insufficient,
+            ),
+            (
+                "lone candidate, one tagged track",
+                local(1, 0, true),
+                vec![night(1)],
+                Verdict::Identified(0),
+            ),
+            (
+                "lone candidate, two plain tracks",
+                local(2, 0, false),
+                vec![night(2)],
+                Verdict::Identified(0),
+            ),
+            (
+                "one unmatched file is allowed",
+                local(3, 1, false),
+                vec![night(4)],
+                Verdict::Identified(0),
+            ),
+            (
+                "two unmatched files are not",
+                local(2, 2, false),
+                vec![night(4)],
+                weak,
+            ),
+            (
+                "two groups within the margin",
+                local(2, 0, false),
+                vec![night(2), release("group-b", "Night Shift", 2)],
+                Verdict::Review(ReviewReason::Ambiguous),
+            ),
+            (
+                "edition words do not fail the title gate",
+                local(2, 0, false),
+                vec![release("group-a", "Night Shift (Deluxe Edition)", 2)],
+                Verdict::Identified(0),
+            ),
+            (
+                "another title fails the gate",
+                local(4, 0, false),
+                vec![release("group-a", "Night Shift Sessions", 4)],
+                weak,
+            ),
+            (
+                "embedded ids prove a retitled album",
+                local(4, 0, true),
+                vec![release("group-a", "Night Shift Sessions", 4)],
+                Verdict::Identified(0),
+            ),
+        ];
+        for (name, local, releases, expected) in cases {
+            assert_eq!(verdict(&local, &releases), expected, "{name}");
+        }
+    }
 }

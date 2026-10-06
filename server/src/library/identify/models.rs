@@ -67,7 +67,6 @@ pub struct CandidateEvidence {
     pub track_evidence: Vec<TrackEvidence>,
     /// `1 - distance`, for sorting and display.
     pub score: f64,
-    pub margin: f64,
     pub reason_code: String,
     /// Library distance from the matcher: 0 is a perfect match.
     #[serde(default)]

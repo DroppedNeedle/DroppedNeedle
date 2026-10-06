@@ -978,11 +978,11 @@ async fn review_reject_keeps_tagged() {
 #[tokio::test]
 async fn edition_uncertain_pins_group_only() {
     let rig = rig_with_recall(recall(vec![
-        live(release(GROUP_A, RELEASE_A1, &[RECORDING_1])),
-        live(release(GROUP_A, RELEASE_A2, &[RECORDING_1])),
+        live(release(GROUP_A, RELEASE_A1, &[RECORDING_1, RECORDING_2])),
+        live(release(GROUP_A, RELEASE_A2, &[RECORDING_1, RECORDING_2])),
     ]));
     rig.identities
-        .save_album_facts(album_facts("album-1", &[("t1", None)]));
+        .save_album_facts(album_facts("album-1", &[("t1", None), ("t2", None)]));
     rig.service.enqueue_album(
         "job-1",
         "album-1",
@@ -1006,11 +1006,11 @@ async fn edition_uncertain_pins_group_only() {
 #[tokio::test]
 async fn held_exact_survives_weaker_tier() {
     let rig = rig_with_recall(recall(vec![
-        live(release(GROUP_A, RELEASE_A1, &[RECORDING_1])),
-        live(release(GROUP_A, RELEASE_A2, &[RECORDING_1])),
+        live(release(GROUP_A, RELEASE_A1, &[RECORDING_1, RECORDING_2])),
+        live(release(GROUP_A, RELEASE_A2, &[RECORDING_1, RECORDING_2])),
     ]));
     rig.identities
-        .save_album_facts(album_facts("album-1", &[("t1", None)]));
+        .save_album_facts(album_facts("album-1", &[("t1", None), ("t2", None)]));
     rig.identities.save_album_identity(AlbumIdentity {
         local_album_id: "album-1".to_owned(),
         provider: "musicbrainz".to_owned(),

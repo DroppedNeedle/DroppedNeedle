@@ -178,6 +178,93 @@ fn strip_part(value: &str) -> String {
     value.to_owned()
 }
 
+/// Words that name an edition rather than an album (v2's
+/// `EDITION_SUFFIXES`); album titles drop them before the title gate.
+const EDITION_WORDS: [&str; 22] = [
+    "deluxe",
+    "remastered",
+    "remaster",
+    "edition",
+    "anniversary",
+    "special",
+    "expanded",
+    "complete",
+    "bonus",
+    "acoustic",
+    "live",
+    "demo",
+    "extended",
+    "instrumental",
+    "mono",
+    "stereo",
+    "explicit",
+    "clean",
+    "version",
+    "single",
+    "promo",
+    "radio edit",
+];
+
+/// An album title without its edition words and brackets ("Night Shift
+/// (Deluxe Edition)" becomes "Night Shift"), as v2's
+/// `strip_edition_suffix` does.
+pub fn strip_edition_words(title: &str) -> String {
+    let mut lowered = format!(" {} ", title.to_lowercase());
+    for bracket in ['(', ')', '[', ']', '{', '}'] {
+        lowered = lowered.replace(bracket, " ");
+    }
+    lowered = lowered.replace(" radio edit ", " ");
+    lowered
+        .split_whitespace()
+        .filter(|word| {
+            let bare = word.trim_matches(|c: char| !c.is_alphanumeric());
+            !EDITION_WORDS.contains(&bare)
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The folded artists in a credit string, split on collaboration
+/// separators (`;`, `&`, `,`, `/`, `+`, `×`, and the words feat, ft,
+/// featuring, with, vs).
+fn artist_tokens(credit: &str) -> std::collections::BTreeSet<String> {
+    let mut parts = vec![String::new()];
+    for word in credit.split_whitespace() {
+        let bare = word
+            .trim_end_matches('.')
+            .trim_matches(|c| c == '(' || c == ')')
+            .to_lowercase();
+        if matches!(bare.as_str(), "feat" | "ft" | "featuring" | "with" | "vs") {
+            parts.push(String::new());
+            continue;
+        }
+        for character in word.chars() {
+            if matches!(character, ';' | '×' | '&' | '+' | ',' | '/') {
+                parts.push(String::new());
+            } else if let Some(last) = parts.last_mut() {
+                last.push(character);
+            }
+        }
+        if let Some(last) = parts.last_mut() {
+            last.push(' ');
+        }
+    }
+    parts
+        .iter()
+        .map(|part| fold(part))
+        .filter(|part| !part.is_empty())
+        .collect()
+}
+
+/// True when one credit's artists contain the other's ("Bad Omens;
+/// Poppy" and "Bad Omens"), never for disjoint credits (a tribute band
+/// and the band it covers). v2's `_artist_subset_match`.
+pub fn artist_subset(left: &str, right: &str) -> bool {
+    let left = artist_tokens(left);
+    let right = artist_tokens(right);
+    !left.is_empty() && !right.is_empty() && (left.is_subset(&right) || right.is_subset(&left))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,5 +283,11 @@ mod tests {
         // CJK stays as written and still compares.
         assert_eq!(string_dist("東京", "東京"), 0.0);
         assert_eq!(string_dist("東京", "大阪"), 1.0);
+        assert_eq!(
+            strip_edition_words("Night Shift (Deluxe Edition) [Radio Edit]"),
+            "night shift"
+        );
+        assert!(artist_subset("Bad Omens feat. Poppy", "Bad Omens"));
+        assert!(!artist_subset("The Tribute Band", "Michael Jackson"));
     }
 }
