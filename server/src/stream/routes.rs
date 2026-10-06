@@ -741,9 +741,18 @@ async fn serve<E: StreamEngine>(
         .await
         .map_err(|fault| map_fault(fault, source, state.ids.as_ref()))?;
 
+    // The direct lease the open took rides inside the body, so the slot
+    // stays held until the last byte is sent or the client goes away.
+    let mut media = media;
+    let lease = media.lease.take();
+    let hold = move |chunks: ChunkStream| match lease {
+        Some(lease) => lease.hold(chunks),
+        None => chunks,
+    };
     if media.transcoded {
         return transcode_response(
             media,
+            hold,
             query.estimate_content_length,
             head_only,
             state.ids.as_ref(),
@@ -801,7 +810,7 @@ async fn serve<E: StreamEngine>(
     let body = if head_only {
         Body::empty()
     } else {
-        direct_body(media.body, start, len, state.ids.as_ref())?
+        direct_body(media.body, start, len, hold, state.ids.as_ref())?
     };
 
     let mut response = (status, body).into_response();
@@ -822,6 +831,7 @@ fn direct_body(
     body: MediaBody,
     start: u64,
     len: u64,
+    hold: impl FnOnce(ChunkStream) -> ChunkStream,
     ids: &dyn IdGenerator,
 ) -> Result<Body, StreamError> {
     match body {
@@ -839,7 +849,7 @@ fn direct_body(
             })?;
             Ok(Body::from(slice.to_vec()))
         }
-        MediaBody::File(path) => Ok(Body::from_stream(file_range(path, start, len))),
+        MediaBody::File(path) => Ok(Body::from_stream(hold(file_range(path, start, len)))),
         MediaBody::Chunks(_) | MediaBody::Empty => Err(StreamError::internal(
             &"engine returned no direct body",
             ids,
@@ -913,6 +923,7 @@ pub fn file_range(path: PathBuf, start: u64, len: u64) -> ChunkStream {
 /// estimated length only when the client asked for it (v2 headers).
 fn transcode_response(
     media: StreamMedia,
+    hold: impl FnOnce(ChunkStream) -> ChunkStream,
     want_estimate: bool,
     head_only: bool,
     ids: &dyn IdGenerator,
@@ -948,8 +959,8 @@ fn transcode_response(
     } else {
         match media.body {
             MediaBody::Bytes(bytes) => Body::from(bytes),
-            MediaBody::Chunks(chunks) => Body::from_stream(chunks),
-            MediaBody::File(path) => Body::from_stream(file_range(path, 0, media.total_len)),
+            MediaBody::Chunks(chunks) => Body::from_stream(hold(chunks)),
+            MediaBody::File(path) => Body::from_stream(hold(file_range(path, 0, media.total_len))),
             MediaBody::Empty => Body::empty(),
         }
     };
@@ -1024,13 +1035,15 @@ mod tests {
     fn transcode_response_sets_length_only_with_estimate() {
         let ids = TestIds;
 
-        let estimated = transcode_response(transcode_media(), true, false, &ids).expect("renders");
+        let estimated =
+            transcode_response(transcode_media(), |c| c, true, false, &ids).expect("renders");
         assert_eq!(
             estimated.headers().get(header::CONTENT_LENGTH),
             Some(&HeaderValue::from_static("25"))
         );
 
-        let plain = transcode_response(transcode_media(), false, false, &ids).expect("renders");
+        let plain =
+            transcode_response(transcode_media(), |c| c, false, false, &ids).expect("renders");
         assert_eq!(plain.headers().get(header::CONTENT_LENGTH), None);
         assert_eq!(
             plain.headers().get(header::ACCEPT_RANGES),

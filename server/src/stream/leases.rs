@@ -256,6 +256,20 @@ pub struct OwnedDirectLease {
     principal: String,
 }
 
+impl OwnedDirectLease {
+    /// Keep this slot held until `chunks` ends or is dropped, so the gate
+    /// bounds response bodies in flight, not only opens.
+    pub fn hold(self, chunks: super::routes::ChunkStream) -> super::routes::ChunkStream {
+        use futures_util::StreamExt as _;
+        chunks
+            .map(move |chunk| {
+                let _held = &self;
+                chunk
+            })
+            .boxed()
+    }
+}
+
 impl Drop for OwnedDirectLease {
     fn drop(&mut self) {
         self.gate.release(&self.principal);

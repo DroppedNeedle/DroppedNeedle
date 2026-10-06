@@ -21,12 +21,7 @@ impl LiveBody {
     /// Wrap a stream, holding `lease` until the stream ends or drops.
     pub fn new(chunks: ChunkStream, lease: Option<OwnedDirectLease>) -> Self {
         let chunks = match lease {
-            Some(lease) => chunks
-                .map(move |chunk| {
-                    let _held = &lease;
-                    chunk
-                })
-                .boxed(),
+            Some(lease) => lease.hold(chunks),
             None => chunks,
         };
         Self(Arc::new(Mutex::new(Some(chunks))))
