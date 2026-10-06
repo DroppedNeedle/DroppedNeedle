@@ -1,12 +1,12 @@
 <script lang="ts">
-	import { API } from '$lib/constants';
 	import { api } from '$lib/api/client';
+	import type { components } from '$lib/api/v3/openapi';
 	import { REMOTE_ENDPOINTS } from '$lib/queries/remotes/endpoints';
 	import PlexIcon from '$lib/components/PlexIcon.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
-	import type { PlexAnalyticsResponse, PlexHistoryEntry } from '$lib/types';
+	import type { PlexHistoryEntry } from '$lib/types';
 
-	let analytics = $state<PlexAnalyticsResponse | null>(null);
+	let analytics = $state<components['schemas']['AnalyticsView'] | null>(null);
 	let analyticsLoading = $state(true);
 
 	let history = $state<PlexHistoryEntry[]>([]);
@@ -18,7 +18,7 @@
 	async function loadAnalytics() {
 		analyticsLoading = true;
 		try {
-			analytics = await api.get<PlexAnalyticsResponse>(API.plexLibrary.analytics());
+			analytics = await api.v3.GET(REMOTE_ENDPOINTS.analytics('plex'));
 		} catch {
 			analytics = null;
 		} finally {

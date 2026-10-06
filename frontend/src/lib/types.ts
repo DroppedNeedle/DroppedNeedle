@@ -1421,25 +1421,6 @@ export type PlexHistoryResponse = {
 	available: boolean;
 };
 
-export type PlexAnalyticsItem = {
-	name: string;
-	subtitle: string;
-	play_count: number;
-	cover_url: string | null;
-};
-
-export type PlexAnalyticsResponse = {
-	top_artists: PlexAnalyticsItem[];
-	top_albums: PlexAnalyticsItem[];
-	top_tracks: PlexAnalyticsItem[];
-	total_listens: number;
-	listens_last_7_days: number;
-	listens_last_30_days: number;
-	total_hours: number;
-	is_complete: boolean;
-	entries_analyzed: number;
-};
-
 export type LyricLine = {
 	text: string;
 	start_seconds: number | null;

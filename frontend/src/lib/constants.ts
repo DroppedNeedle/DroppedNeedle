@@ -598,8 +598,5 @@ export const API = {
 		cutoffUnmet: () => '/api/v1/downloads/cutoff-unmet',
 		upgradeAlbum: () => '/api/v1/downloads/upgrade/album',
 		upgradeTrack: () => '/api/v1/downloads/upgrade/track'
-	},
-	plexLibrary: {
-		analytics: () => '/api/v1/plex/analytics'
 	}
 } as const;

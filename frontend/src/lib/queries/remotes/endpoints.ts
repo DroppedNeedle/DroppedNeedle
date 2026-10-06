@@ -91,6 +91,8 @@ export const REMOTE_ENDPOINTS = {
 	history: (source: RemoteSource, params: RemotePageParams = {}) =>
 		v3('/api/v3/remotes/{source}/history', { path: { source }, query: query(params) }),
 	stats: (source: RemoteSource) => v3('/api/v3/remotes/{source}/stats', { path: { source } }),
+	analytics: (source: RemoteSource) =>
+		v3('/api/v3/remotes/{source}/analytics', { path: { source } }),
 	genres: (source: RemoteSource) => v3('/api/v3/remotes/{source}/genres', { path: { source } }),
 	genreSongs: (source: RemoteSource, genre: string, params: RemotePageParams = {}) =>
 		v3('/api/v3/remotes/{source}/genres/songs', {
