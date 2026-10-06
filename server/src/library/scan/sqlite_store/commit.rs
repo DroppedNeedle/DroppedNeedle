@@ -13,8 +13,9 @@
 //! so when its files move or are organized the album row follows them
 //! with its identity and reviews. Copies of one album in different
 //! folders still stay separate albums, as in v2. A file that appears where a
-//! track's file just went away continues that track (same recording MBID,
-//! or same album key, disc, track number, title and duration), so
+//! track's file just went away continues that track (same album names,
+//! disc and track number, plus the same recording MBID or the same title
+//! and duration), so
 //! favorites, history and playlists follow a moved file. When every track
 //! of an album is retagged into a new album in one run, the old row takes
 //! the new name instead of being left behind.
@@ -351,9 +352,10 @@ fn find_moved_track(
             same_place: row.get(2)?,
         });
     }
-    if candidates.len() > 1 {
-        candidates.retain(|candidate| candidate.same_place);
-    }
+    // The same recording on another album (or disc, or track number) is
+    // another release's track: its release-specific identity must not
+    // follow, so it never matches.
+    candidates.retain(|candidate| candidate.same_place);
     Ok(match candidates.as_slice() {
         [only] => Some((only.id.clone(), only.album_id.clone())),
         _ => None,
