@@ -3,9 +3,11 @@
 //! The exporter reads a v2 instance read-only (key file, config, database,
 //! plugin manifests), resolves every secret through v2 `decrypt()` semantics
 //! (Fernet or legacy-plaintext passthrough), seals each secret under the
-//! operator passphrase, and assembles the envelope. Only the migrated set leaves
-//! v2: accounts, settings, follows. Tokens, sessions, derived follow
-//! tables, scan state, history, queues, and jobs stay behind.
+//! operator passphrase, and assembles the envelope. The JSON carries
+//! accounts, settings, follows and sealed per-user connections; the rest of
+//! the carried user data goes in the bundle beside it
+//! ([`crate::export::bundle`]). Everything else stays behind and is listed,
+//! with row counts, in the document's `left_behind`.
 //!
 //! Two v2 plaintext-at-rest bugs close here: the AudioDB key and
 //! secret-flagged plugin settings were stored unencrypted in v2, so they
@@ -13,15 +15,15 @@
 //! could mangle a value that happens to parse as a token). Dropped sections
 //! and fields never enter the file at all.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{Map, Value, json};
 
 use crate::export::envelope::{
-    ApprovalRecord, EventCityRecord, EventSeenRecord, ExportDoc, FollowRecord, SealedValue,
-    UserRecord, derive_hash_scheme,
+    ApprovalRecord, Attachment, BUNDLE_ROLE, ConnectionRecord, EventCityRecord, EventSeenRecord,
+    ExportDoc, FollowRecord, SealedValue, UserRecord, derive_hash_scheme,
 };
 use crate::export::error::ExportError;
 use crate::export::fernet::FernetKey;
@@ -166,6 +168,11 @@ const MUSICBRAINZ_KEPT: &[&str] = &[
     "active_brainzmash",
 ];
 
+/// Marker key on a sealed plugin setting whose v2 manifest was missing.
+pub const UNKNOWN_FLAG_KEY: &str = "flag";
+/// Marker value: nobody knew whether the setting is a secret.
+pub const UNKNOWN_FLAG: &str = "unknown";
+
 /// `_internal` keep-list (device and consent identity only).
 const INTERNAL_KEPT: &[&str] = &[
     "plex_client_id",
@@ -196,13 +203,31 @@ pub fn utc_now_rfc3339() -> Result<String, ExportError> {
         .map_err(|_| ExportError::Timestamp)
 }
 
-/// Export one v2 instance into a sealed envelope document.
+/// Export one v2 instance into a sealed envelope document, writing its
+/// data bundle to `bundle_path` (which must not exist yet). The document
+/// names the bundle by its file name, so keep the two side by side.
 ///
 /// Order matters: the v2 key check refuses first (a missing key must
-/// never silently re-key ciphertext), then config, users, follows, and
-/// settings assemble in that order. Nothing is written anywhere; see
-/// [`export_v2_to_file`] for the atomic file form.
-pub fn export_v2(request: &ExportRequest) -> Result<ExportDoc, ExportError> {
+/// never silently re-key ciphertext), then config, users, connections,
+/// follows and settings assemble, and only then is the bundle built, so a
+/// refusal leaves no bundle behind. See [`export_v2_to_file`] for the
+/// atomic file form.
+pub fn export_v2(request: &ExportRequest, bundle_path: &Path) -> Result<ExportDoc, ExportError> {
+    let name = bundle_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| ExportError::ExportWrite {
+            reason: format!("{} has no file name", bundle_path.display()),
+        })?
+        .to_owned();
+    build_doc(request, bundle_path, &name)
+}
+
+fn build_doc(
+    request: &ExportRequest,
+    bundle_path: &Path,
+    bundle_name: &str,
+) -> Result<ExportDoc, ExportError> {
     let key = crate::export::v2dir::read_data_enc_key(&request.v2_root)?;
     let config = crate::export::v2dir::read_config(&request.v2_root)?;
     let instance_id = config
@@ -216,6 +241,7 @@ pub fn export_v2(request: &ExportRequest) -> Result<ExportDoc, ExportError> {
     let db = open_v2_db(&db_path)?;
     let mut users = read_users(&db)?;
     attach_user_rows(&db, &mut users, &key, &sealer)?;
+    let user_connections = read_connections(&db, &key, &sealer)?;
     let follows = read_follows(&db)?;
     let approvals = read_approvals(&db)?;
     let event_cities = read_event_cities(&db)?;
@@ -226,6 +252,22 @@ pub fn export_v2(request: &ExportRequest) -> Result<ExportDoc, ExportError> {
         .exported_at
         .clone()
         .map_or_else(utc_now_rfc3339, Ok)?;
+
+    let built = bundle_with_inventory(
+        &db,
+        &db_path,
+        &crate::export::v2dir::cache_dir(&request.v2_root),
+        bundle_path,
+        bundle_name,
+    );
+    let (attachment, left_behind) = match built {
+        Ok(built) => built,
+        Err(error) => {
+            let _ = std::fs::remove_file(bundle_path);
+            return Err(error);
+        }
+    };
+
     let mut doc = ExportDoc {
         format: EXPORT_FORMAT.to_owned(),
         format_version: FORMAT_VERSION,
@@ -239,6 +281,9 @@ pub fn export_v2(request: &ExportRequest) -> Result<ExportDoc, ExportError> {
         approvals,
         event_cities,
         event_seen,
+        user_connections,
+        attachments: vec![attachment],
+        left_behind,
         content_hmac: String::new(),
     };
     let value = serde_json::to_value(&doc).map_err(|error| ExportError::InvalidEnvelope {
@@ -248,38 +293,96 @@ pub fn export_v2(request: &ExportRequest) -> Result<ExportDoc, ExportError> {
     Ok(doc)
 }
 
-/// Export one v2 instance straight to a file. The document fully builds
-/// before anything is written, so a refusal leaves no file behind; the
-/// write itself lands via temp-file-plus-rename.
-pub fn export_v2_to_file(request: &ExportRequest, out_path: &Path) -> Result<(), ExportError> {
-    let doc = export_v2(request)?;
-    let text = doc.to_json_string()?;
-    let parent = out_path.parent().filter(|dir| !dir.as_os_str().is_empty());
-    if let Some(dir) = parent {
-        std::fs::create_dir_all(dir).map_err(|error| ExportError::ExportWrite {
+/// Build the bundle, hash it, and list everything the export leaves
+/// behind (rows the sections skipped plus every other non-empty table).
+fn bundle_with_inventory(
+    db: &Connection,
+    db_path: &Path,
+    v2_cache: &Path,
+    bundle_path: &Path,
+    bundle_name: &str,
+) -> Result<(Attachment, Vec<crate::export::envelope::LeftBehind>), ExportError> {
+    let bundle = crate::export::bundle::write_bundle(db_path, v2_cache, bundle_path)?;
+    let (sha256, bytes) =
+        crate::export::bundle::file_sha256(bundle_path).map_err(|error| ExportError::Bundle {
             reason: error.to_string(),
         })?;
+    let mut carried: HashSet<&str> = JSON_TABLES.iter().copied().collect();
+    carried.extend(bundle.read_tables.iter().copied());
+    let mut left_behind = bundle.left_behind;
+    left_behind.extend(crate::export::inventory::left_behind_tables(db, &carried)?);
+    let attachment = Attachment {
+        role: BUNDLE_ROLE.to_owned(),
+        name: bundle_name.to_owned(),
+        sha256,
+        bytes,
+        sections: bundle.sections,
+    };
+    Ok((attachment, left_behind))
+}
+
+/// v2 tables the export JSON carries (the bundle reports its own).
+const JSON_TABLES: &[&str] = &[
+    "auth_users",
+    "auth_providers",
+    "connect_app_passwords",
+    "auth_password_recovery_codes",
+    "user_followed_artists",
+    "auto_download_approvals",
+    "user_connections",
+    "user_event_cities",
+    "user_event_seen",
+];
+
+/// The bundle file written beside an export file: `export.json` gets
+/// `export.bundle.sqlite`.
+#[must_use]
+pub fn bundle_path_for(out_path: &Path) -> PathBuf {
+    let stem = out_path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "export".to_owned());
+    out_path.with_file_name(format!("{stem}.bundle.sqlite"))
+}
+
+/// Export one v2 instance straight to a file plus its bundle beside it
+/// ([`bundle_path_for`]). Both are built under temporary names and renamed
+/// into place once complete, the bundle first, so a refusal or crash never
+/// leaves an export file pointing at a missing bundle.
+pub fn export_v2_to_file(request: &ExportRequest, out_path: &Path) -> Result<(), ExportError> {
+    let write_error = |error: std::io::Error| ExportError::ExportWrite {
+        reason: error.to_string(),
+    };
+    let parent = out_path.parent().filter(|dir| !dir.as_os_str().is_empty());
+    if let Some(dir) = parent {
+        std::fs::create_dir_all(dir).map_err(write_error)?;
     }
-    let tmp_path = out_path.with_extension(format!(
-        "tmp-{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_nanos())
-            .unwrap_or(0)
-    ));
-    write_private(&tmp_path, text.as_bytes()).map_err(|error| {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or(0);
+    let bundle_path = bundle_path_for(out_path);
+    let bundle_name = bundle_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let bundle_tmp = bundle_path.with_extension(format!("sqlite.tmp-{stamp}"));
+    let tmp_path = out_path.with_extension(format!("tmp-{stamp}"));
+    let cleanup = || {
+        let _ = std::fs::remove_file(&bundle_tmp);
         let _ = std::fs::remove_file(&tmp_path);
-        ExportError::ExportWrite {
-            reason: error.to_string(),
-        }
-    })?;
-    std::fs::rename(&tmp_path, out_path).map_err(|error| {
-        let _ = std::fs::remove_file(&tmp_path);
-        ExportError::ExportWrite {
-            reason: error.to_string(),
-        }
-    })?;
-    Ok(())
+    };
+    let outcome = (|| {
+        let doc = build_doc(request, &bundle_tmp, &bundle_name)?;
+        let text = doc.to_json_string()?;
+        write_private(&tmp_path, text.as_bytes()).map_err(write_error)?;
+        std::fs::rename(&bundle_tmp, &bundle_path).map_err(write_error)?;
+        std::fs::rename(&tmp_path, out_path).map_err(write_error)
+    })();
+    if outcome.is_err() {
+        cleanup();
+    }
+    outcome
 }
 
 /// Write `bytes` to a new owner-only file and flush it to disk. The export
@@ -315,7 +418,10 @@ fn open_v2_db(path: &Path) -> Result<Connection, ExportError> {
     if std::fs::metadata(&wal).is_ok_and(|meta| meta.len() > 0) {
         return Err(ExportError::V2WalPresent { path: wal });
     }
-    let uri = format!("file:{}?immutable=1", uri_path(path));
+    let uri = format!(
+        "file:{}?immutable=1",
+        crate::export::v2dir::sqlite_uri_path(path)
+    );
     Connection::open_with_flags(
         uri,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
@@ -326,18 +432,15 @@ fn open_v2_db(path: &Path) -> Result<Connection, ExportError> {
     })
 }
 
-/// Percent-encode the characters a SQLite URI path cannot carry raw.
-fn uri_path(path: &Path) -> String {
-    let mut out = String::new();
-    for ch in path.to_string_lossy().chars() {
-        match ch {
-            '%' => out.push_str("%25"),
-            '?' => out.push_str("%3f"),
-            '#' => out.push_str("%23"),
-            other => out.push(other),
-        }
-    }
-    out
+/// True when the v2 database holds `table`. Older instances may lack the
+/// newer user tables; those sections are simply empty.
+fn table_exists(db: &Connection, table: &str) -> Result<bool, ExportError> {
+    db.query_row(
+        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+        [table],
+        |row| row.get::<_, bool>(0),
+    )
+    .map_err(|error| db_error(table, error))
 }
 
 /// Resolve one stored v2 secret, refusing a token the key cannot open.
@@ -509,6 +612,55 @@ fn attach_user_rows(
         }
     }
     Ok(())
+}
+
+/// Per-user service links. v2 stored each as Fernet-encrypted JSON; the
+/// plaintext is sealed whole and reshaped for v3 at import. A row the v2
+/// key cannot open refuses the export like any other v2 secret.
+fn read_connections(
+    db: &Connection,
+    key: &FernetKey,
+    sealer: &Sealer,
+) -> Result<Vec<ConnectionRecord>, ExportError> {
+    if !table_exists(db, "user_connections")? {
+        return Ok(Vec::new());
+    }
+    let mut stmt = db
+        .prepare(
+            "SELECT user_id, service, connection_data, enabled, created_at, updated_at
+             FROM user_connections WHERE user_id IN (SELECT id FROM auth_users)
+             ORDER BY user_id, service",
+        )
+        .map_err(|error| db_error("user_connections", error))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+            ))
+        })
+        .map_err(|error| db_error("user_connections", error))?;
+    let mut connections = Vec::new();
+    for row in rows {
+        let (user_id, service, stored, enabled, created_at, updated_at) =
+            row.map_err(|error| db_error("user_connections", error))?;
+        let plaintext = decrypt_v2(key, &stored, "user_connections")?;
+        connections.push(ConnectionRecord {
+            user_id,
+            service,
+            enabled: enabled != 0,
+            created_at,
+            updated_at,
+            data: SealedValue {
+                sealed: sealer.seal(&plaintext)?,
+            },
+        });
+    }
+    Ok(connections)
 }
 
 fn read_follows(db: &Connection) -> Result<Vec<FollowRecord>, ExportError> {
@@ -705,14 +857,25 @@ fn export_plugins(
                     sealed_settings.insert(setting_key.clone(), setting_value.clone());
                     continue;
                 };
-                let known_plain = declared
-                    .and_then(|flags| flags.get(setting_key))
-                    .is_some_and(|secret| !secret);
-                if known_plain {
-                    sealed_settings.insert(setting_key.clone(), setting_value.clone());
-                } else {
-                    let sealed = sealer.seal(stored)?;
-                    sealed_settings.insert(setting_key.clone(), json!({ "$sealed": sealed }));
+                let flag = declared.and_then(|flags| flags.get(setting_key));
+                match flag {
+                    Some(false) => {
+                        sealed_settings.insert(setting_key.clone(), setting_value.clone());
+                    }
+                    Some(true) => {
+                        let sealed = sealer.seal(stored)?;
+                        sealed_settings.insert(setting_key.clone(), json!({ "$sealed": sealed }));
+                    }
+                    // No manifest says whether this is a secret: seal it to
+                    // be safe and mark it, so the import can say so and v3
+                    // can still read it if its manifest calls it plain.
+                    None => {
+                        let sealed = sealer.seal(stored)?;
+                        sealed_settings.insert(
+                            setting_key.clone(),
+                            json!({ "$sealed": sealed, (UNKNOWN_FLAG_KEY): UNKNOWN_FLAG }),
+                        );
+                    }
                 }
             }
             kept.insert("settings".to_owned(), Value::Object(sealed_settings));

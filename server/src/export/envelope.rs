@@ -1,13 +1,19 @@
 //! The versioned v2-to-v3 export envelope.
 //!
-//! The envelope carries exactly the migrated set: user accounts, settings,
-//! follows (plus auto-download approvals), and each user's concerts cities
-//! and seen marker. Scan state, history, queues, and
-//! jobs stay behind. [`parse_export`] enforces the envelope contract: known
-//! format at version 1, every required key present, reserved sections
-//! ignored with a warning. Deeper semantic checks (section shapes, secret
-//! positions, dangling references) belong to the import validator, which
-//! builds on these parsed types.
+//! Version 1 carries accounts, settings, follows and auto-download
+//! approvals. Version 2 adds per-user connections (sealed like every other
+//! secret), an attached SQLite bundle with the rest of the carried user
+//! data (see [`crate::export::sections`]), and a list of what stayed behind
+//! in v2 with row counts. The bundle's SHA-256 sits in the document, so the
+//! content digest covers it too. Readers accept both versions. Each user's
+//! concerts cities and seen marker travel as optional sections at either
+//! version.
+//!
+//! [`parse_export`] enforces the envelope contract: known format and
+//! version, every required key present, reserved sections ignored with a
+//! warning. Deeper semantic checks (section shapes, secret positions,
+//! dangling references) belong to the import validator, which builds on
+//! these parsed types.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -16,10 +22,13 @@ use crate::export::error::ExportError;
 
 /// The only accepted `format` marker.
 pub const EXPORT_FORMAT: &str = "droppedneedle-export";
-/// The only accepted `format_version`.
-pub const FORMAT_VERSION: u32 = 1;
+/// The `format_version` the exporter writes, and the newest one readers
+/// accept.
+pub const FORMAT_VERSION: u32 = 2;
+/// The oldest `format_version` readers still accept.
+pub const MIN_FORMAT_VERSION: u32 = 1;
 
-/// Top-level keys every v1 file must carry.
+/// Top-level keys every file must carry.
 pub const REQUIRED_KEYS: &[&str] = &[
     "format",
     "format_version",
@@ -32,21 +41,36 @@ pub const REQUIRED_KEYS: &[&str] = &[
     "approvals",
 ];
 
-/// Optional top-level keys a v1 file may carry. The concerts sections came
-/// after the first v1 files, so a file without them is still a whole v1
-/// file (its digest covers only the keys it has).
+/// Optional top-level keys a file of any version may carry. The concerts
+/// sections came after the first v1 files, so a file without them is still
+/// whole (its digest covers only the keys it has).
 pub const OPTIONAL_KEYS: &[&str] = &["v2_commit", "event_cities", "event_seen"];
 
-/// Entity sections a later product decision may adopt. A v1 reader ignores
-/// them with a warning instead of failing, so adding one needs no bump.
+/// Top-level keys a version 2 file carries on top of [`REQUIRED_KEYS`].
+pub const REQUIRED_KEYS_V2: &[&str] = &["user_connections", "attachments", "left_behind"];
+
+/// Top-level names kept free for JSON sections. Readers ignore them with a
+/// warning instead of failing. The data they name travels in the bundle.
 pub const RESERVED_SECTIONS: &[&str] = &[
     "playlists",
     "favorites",
     "quotas",
     "user_prefs",
     "wanted_watches",
-    "user_connections",
 ];
+
+/// The `role` of the attached SQLite bundle.
+pub const BUNDLE_ROLE: &str = "bundle";
+
+/// Required top-level keys for one format version.
+#[must_use]
+pub fn required_keys(version: u64) -> Vec<&'static str> {
+    let mut keys = REQUIRED_KEYS.to_vec();
+    if version >= 2 {
+        keys.extend_from_slice(REQUIRED_KEYS_V2);
+    }
+    keys
+}
 
 /// Warning codes emitted while parsing.
 pub const IGNORED_RESERVED_SECTION: &str = "ignored_reserved_section";
@@ -301,6 +325,55 @@ pub struct EventSeenRecord {
     pub seen_at: f64,
 }
 
+/// One per-user service link (Last.fm, ListenBrainz, Spotify, Navidrome,
+/// Jellyfin, Plex). v2 stored the link as encrypted JSON; the exporter
+/// opens it with the v2 key and seals the plaintext JSON whole. The
+/// importer reshapes it into the v3 record for that service.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectionRecord {
+    /// Owning user id.
+    pub user_id: String,
+    /// Service tag, verbatim from v2.
+    pub service: String,
+    /// v2 enabled switch.
+    pub enabled: bool,
+    /// Verbatim creation timestamp.
+    pub created_at: String,
+    /// Verbatim last-change timestamp.
+    pub updated_at: String,
+    /// The sealed plaintext JSON document.
+    pub data: SealedValue,
+}
+
+/// One file shipped beside the export JSON, named relative to the export
+/// file's directory. The digest covers its hash, so a swapped or changed
+/// file fails the import.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Attachment {
+    /// What the file is ([`BUNDLE_ROLE`] for the SQLite bundle).
+    pub role: String,
+    /// File name, no directory part.
+    pub name: String,
+    /// Lowercase hex SHA-256 of the file.
+    pub sha256: String,
+    /// File size in bytes.
+    pub bytes: u64,
+    /// Rows per bundle section, for operators and cross-checks.
+    #[serde(default)]
+    pub sections: std::collections::BTreeMap<String, u64>,
+}
+
+/// v2 data that did not travel, with a count and the reason.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LeftBehind {
+    /// v2 table (or file set) name.
+    pub table: String,
+    /// Rows (or files) left behind.
+    pub rows: u64,
+    /// Why, in plain words.
+    pub reason: String,
+}
+
 /// The full parsed export document. Settings stay schemaless JSON: v2
 /// section keys verbatim, secret positions replaced by sealed objects. The
 /// importer maps them onto the clean-slate v3 sections.
@@ -308,7 +381,7 @@ pub struct EventSeenRecord {
 pub struct ExportDoc {
     /// Format marker.
     pub format: String,
-    /// Format version (1).
+    /// Format version (1 or 2).
     pub format_version: u32,
     /// Export time, RFC 3339 UTC.
     pub exported_at: String,
@@ -333,6 +406,15 @@ pub struct ExportDoc {
     /// Concerts seen markers; omitted when there are none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub event_seen: Vec<EventSeenRecord>,
+    /// Per-user service links (version 2).
+    #[serde(default)]
+    pub user_connections: Vec<ConnectionRecord>,
+    /// Files shipped beside the JSON (version 2).
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
+    /// What stayed behind in v2 (version 2).
+    #[serde(default)]
+    pub left_behind: Vec<LeftBehind>,
     /// HMAC over every other top-level key (see `export::seal`). Empty
     /// only while the exporter assembles the document.
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -360,8 +442,8 @@ pub struct ParsedExport {
 /// Parse and envelope-check one export file.
 ///
 /// Order matters: the format marker first (nothing else is
-/// interpretable without it), then the version (fail closed on anything but
-/// 1), then required keys, then typed section shapes. Reserved sections and
+/// interpretable without it), then the version (fail closed outside the
+/// supported range), then required keys, then typed section shapes. Reserved sections and
 /// unknown top-level keys collect warnings and parse on.
 ///
 /// Typed convenience for tests and tooling, not the import path: the
@@ -381,10 +463,15 @@ pub fn parse_export(text: &str) -> Result<ParsedExport, ExportError> {
     if object.get("format").and_then(Value::as_str) != Some(EXPORT_FORMAT) {
         return Err(ExportError::UnsupportedFormat);
     }
-    if object.get("format_version").and_then(Value::as_u64) != Some(u64::from(FORMAT_VERSION)) {
-        return Err(ExportError::UnsupportedFormatVersion);
-    }
-    for key in REQUIRED_KEYS {
+    let version = object
+        .get("format_version")
+        .and_then(Value::as_u64)
+        .filter(|version| {
+            (u64::from(MIN_FORMAT_VERSION)..=u64::from(FORMAT_VERSION)).contains(version)
+        })
+        .ok_or(ExportError::UnsupportedFormatVersion)?;
+    let required = required_keys(version);
+    for key in &required {
         if !object.contains_key(*key) {
             return Err(ExportError::MissingRequiredKey {
                 key: (*key).to_owned(),
@@ -396,7 +483,7 @@ pub fn parse_export(text: &str) -> Result<ParsedExport, ExportError> {
     for key in object.keys() {
         if RESERVED_SECTIONS.contains(&key.as_str()) {
             warnings.push(EnvelopeWarning::ignored_reserved_section(key));
-        } else if !REQUIRED_KEYS.contains(&key.as_str())
+        } else if !required.contains(&key.as_str())
             && !OPTIONAL_KEYS.contains(&key.as_str())
             && key != crate::export::seal::DIGEST_KEY
         {

@@ -40,7 +40,7 @@ fn missing_key_file_refuses_with_no_output() {
     std::fs::write(dir.join("config/config.json"), "{}").unwrap();
     let out = dir.join("export.json");
 
-    let error = export_v2(&request(&dir)).unwrap_err();
+    let error = export_v2(&request(&dir), &dir.join("export.bundle.sqlite")).unwrap_err();
     assert_eq!(error.code(), "V2_KEY_NOT_FOUND");
     assert!(matches!(error, ExportError::V2KeyNotFound { .. }));
 
@@ -56,7 +56,7 @@ fn key_file_without_a_key_refuses() {
     std::fs::write(dir.join("config/config.json"), "{}").unwrap();
     let out = dir.join("export.json");
 
-    let error = export_v2(&request(&dir)).unwrap_err();
+    let error = export_v2(&request(&dir), &dir.join("export.bundle.sqlite")).unwrap_err();
     assert_eq!(error.code(), "V2_KEY_INVALID");
     let error = export_v2_to_file(&request(&dir), &out).unwrap_err();
     assert_eq!(error.code(), "V2_KEY_INVALID");
@@ -70,7 +70,7 @@ fn unparseable_key_refuses() {
     std::fs::write(dir.join("config/config.json"), "{}").unwrap();
     let out = dir.join("export.json");
 
-    let error = export_v2(&request(&dir)).unwrap_err();
+    let error = export_v2(&request(&dir), &dir.join("export.bundle.sqlite")).unwrap_err();
     assert_eq!(error.code(), "V2_KEY_INVALID");
     let error = export_v2_to_file(&request(&dir), &out).unwrap_err();
     assert_eq!(error.code(), "V2_KEY_INVALID");
@@ -341,7 +341,7 @@ fn sealed(value: &Value) -> &str {
 /// A full export, serialized and re-parsed the way the importer sees it.
 fn exported() -> (String, droppedneedle::export::ParsedExport) {
     let (dir, _key) = fixture_v2_root();
-    let doc = export_v2(&request(&dir)).unwrap();
+    let doc = export_v2(&request(&dir), &dir.join("export.bundle.sqlite")).unwrap();
     let text = doc.to_json_string().unwrap();
     let parsed = parse_export(&text).unwrap();
     assert!(parsed.warnings.is_empty());
@@ -542,6 +542,9 @@ fn export_to_file_writes_a_parseable_envelope() {
         use std::os::unix::fs::PermissionsExt as _;
         let mode = std::fs::metadata(&out).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600, "the export holds password hashes");
+        let bundle = droppedneedle::export::bundle_path_for(&out);
+        let mode = std::fs::metadata(&bundle).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "the bundle holds listening history");
     }
 }
 
@@ -587,11 +590,11 @@ fn export_reads_the_database_immutable() {
     drop(conn);
     let shm = dir.join("cache/library.db-shm");
     assert!(!shm.exists());
-    export_v2(&request(&dir)).unwrap();
+    export_v2(&request(&dir), &dir.join("export.bundle.sqlite")).unwrap();
     assert!(!shm.exists(), "an immutable open touches no side files");
 
     // Unmerged writes in the log would be skipped: refuse instead.
     std::fs::write(dir.join("cache/library.db-wal"), b"pending").unwrap();
-    let error = export_v2(&request(&dir)).unwrap_err();
+    let error = export_v2(&request(&dir), &dir.join("export.bundle.sqlite")).unwrap_err();
     assert_eq!(error.code(), "V2_WAL_PRESENT");
 }

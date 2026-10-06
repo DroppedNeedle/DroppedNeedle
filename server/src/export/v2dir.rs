@@ -46,6 +46,27 @@ pub fn resolve_db_path(v2_root: &Path, override_path: Option<&Path>) -> PathBuf 
     )
 }
 
+/// Percent-encode the characters a SQLite URI path cannot carry raw.
+#[must_use]
+pub(crate) fn sqlite_uri_path(path: &Path) -> String {
+    let mut out = String::new();
+    for ch in path.to_string_lossy().chars() {
+        match ch {
+            '%' => out.push_str("%25"),
+            '?' => out.push_str("%3f"),
+            '#' => out.push_str("%23"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// v2 cache dir (`<root>/cache`): avatars and playlist covers live here.
+#[must_use]
+pub fn cache_dir(v2_root: &Path) -> PathBuf {
+    v2_root.join("cache")
+}
+
 /// Parse dotenv text into variables. Enough for the v2 key file: blank
 /// lines and `#` comments skipped, an optional `export` prefix tolerated,
 /// and matching single or double quotes stripped from values.

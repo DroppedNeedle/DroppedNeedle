@@ -27,4 +27,4 @@ pub mod validate;
 pub use envelope::{ExportFile, Opener, unseal_value, verify_content_digest};
 pub use pipeline::{ImportRequest, run_import};
 pub use report::{ExitCode, ImportReport};
-pub use validate::{ValidationIssue, ValidationReport, validate_export};
+pub use validate::{ValidationIssue, ValidationReport, check_attachments, validate_export};

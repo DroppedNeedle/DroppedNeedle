@@ -14,8 +14,8 @@ pub enum ExportError {
     /// `format` is not `droppedneedle-export`.
     #[error("unknown export format: expected 'droppedneedle-export'")]
     UnsupportedFormat,
-    /// `format_version` is anything but 1.
-    #[error("unsupported export format version: expected 1")]
+    /// `format_version` is outside the supported range.
+    #[error("unsupported export format version: expected 1 or 2")]
     UnsupportedFormatVersion,
     /// A required top-level key is absent.
     #[error("export is missing required key '{key}'")]
@@ -90,6 +90,12 @@ pub enum ExportError {
     /// The export timestamp cannot be rendered.
     #[error("cannot render export timestamp")]
     Timestamp,
+    /// The attached data bundle cannot be built.
+    #[error("cannot build the export bundle: {reason}")]
+    Bundle {
+        /// What failed, without row contents.
+        reason: String,
+    },
 }
 
 impl ExportError {
@@ -112,6 +118,7 @@ impl ExportError {
             Self::Seal(inner) => inner.code(),
             Self::ExportWrite { .. } => "EXPORT_WRITE_FAILED",
             Self::Timestamp => "TIMESTAMP_FAILED",
+            Self::Bundle { .. } => "EXPORT_BUNDLE_FAILED",
         }
     }
 }

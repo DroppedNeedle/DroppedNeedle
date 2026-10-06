@@ -177,10 +177,11 @@ async fn imported_counts_match_the_fixture() {
     assert_eq!(count("approval").nulled_field, 1);
     assert_eq!(count("event_city").imported, 2);
     assert_eq!(count("event_seen").imported, 1);
-    // Eight settings seals (slskd, sabnzbd, two indexers, AudioDB, one
-    // plugin token, the Last.fm key pair) plus three app passwords; v2's
-    // global Last.fm session key is dropped and counts none.
-    assert_eq!(report.secrets_reencrypted, 11);
+    // Nine settings seals (slskd, sabnzbd, two indexers, AudioDB, one
+    // plugin token, one plugin setting with no manifest, the Last.fm key
+    // pair) plus three app passwords; v2's global Last.fm session key is
+    // dropped and counts none.
+    assert_eq!(report.secrets_reencrypted, 12);
     // The v2 instance Last.fm key pair opens under the v3 key, so linking
     // and scrobbling keep working after the move.
     let config_dir = v3_root.join("config");

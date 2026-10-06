@@ -137,7 +137,7 @@ fn validate_accepts_rejects_and_cross_checks() {
     let bad_version = root.join("bad-version.json");
     std::fs::write(
         &bad_version,
-        text.replace("\"format_version\": 1", "\"format_version\": 99"),
+        text.replace("\"format_version\": 2", "\"format_version\": 99"),
     )
     .expect("mutant writes");
     let status = Command::new(tool())

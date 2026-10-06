@@ -206,13 +206,23 @@ fn run_validate(args: &[String]) -> Result<(), String> {
             )
         })?;
     }
-    let report = droppedneedle::r#import::validate_export(&parsed.root);
+    let mut report = droppedneedle::r#import::validate_export(&parsed.root);
+    if report.valid() {
+        let folder = folder_of(std::path::Path::new(&file));
+        report
+            .errors
+            .extend(droppedneedle::r#import::check_attachments(
+                &parsed.root,
+                &folder,
+            ));
+    }
     for issue in &report.warnings {
         println!(
             "warning {} at {}: {}",
             issue.code, issue.path, issue.message
         );
     }
+    print_left_behind(&parsed.root);
     if let Some(v2_root) = flag_value(args, "--v2-root")? {
         let instance_id = parsed
             .root
@@ -229,6 +239,35 @@ fn run_validate(args: &[String]) -> Result<(), String> {
             println!("error {} at {}: {}", issue.code, issue.path, issue.message);
         }
         Err(format!("invalid: {} error(s)", report.errors.len()))
+    }
+}
+
+/// Print what the export leaves behind in v2, one line per table.
+fn print_left_behind(root: &serde_json::Value) {
+    let Some(items) = root
+        .get("left_behind")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return;
+    };
+    if items.is_empty() {
+        return;
+    }
+    println!("left behind in v2 (not carried to v3):");
+    for item in items {
+        let table = item
+            .get("table")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let rows = item
+            .get("rows")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or_default();
+        let reason = item
+            .get("reason")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        println!("  {table}: {rows} ({reason})");
     }
 }
 
@@ -328,6 +367,13 @@ fn run_import_cmd(args: &[String], dry_run: bool) -> Result<(), String> {
         ExitCode::Ok | ExitCode::OkWithDrops => Ok(()),
         _ => Err(format!("{verb} failed (see report above)")),
     }
+}
+
+/// The folder holding `path`; `.` for a bare file name.
+fn folder_of(path: &std::path::Path) -> PathBuf {
+    path.parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .map_or_else(|| PathBuf::from("."), std::path::Path::to_path_buf)
 }
 
 /// Refuse a database another writer holds: one connection takes an

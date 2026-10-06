@@ -1,0 +1,150 @@
+//! What stays behind in v2: every table the export does not read that
+//! still holds rows, with its row count and a plain reason.
+//!
+//! The list rides in the export file, `validate` prints it and the import
+//! report repeats it, so nothing is lost silently: the operator sees what
+//! v3 will not have before anything is imported.
+
+use std::collections::HashSet;
+
+use rusqlite::Connection;
+
+use crate::export::envelope::LeftBehind;
+use crate::export::error::ExportError;
+
+/// Older copies v2 kept from before its own library upgrade. v2 itself
+/// reads the `library_*` tables the export carries instead.
+const PRE_UPGRADE_COPIES: &[&str] = &[
+    "album_release_pins",
+    "cache_meta",
+    "compat_bookmarks",
+    "compat_id_map",
+    "compat_play_queue_items",
+    "compat_play_queues",
+    "library_album_meta",
+    "library_albums",
+    "library_artists",
+    "library_files",
+    "manual_review_queue",
+    "play_history",
+    "playlist_tracks",
+    "playlists",
+    "user_favorites",
+];
+
+/// Tables v3 rebuilds from carried rows on its own, so nothing is lost:
+/// the landed-release index follows the carried downloads by trigger.
+const REBUILT_FROM_CARRIED: &[&str] = &["download_landed_groups"];
+
+/// Data v3 has no place to keep yet.
+const NO_V3_STORE: &[&str] = &["ignored_releases", "youtube_links", "youtube_track_links"];
+
+/// Sign-in state: everyone signs in again on v3.
+const SIGN_IN_STATE: &[&str] = &["auth_oidc_states", "auth_tokens", "spotify_oauth_states"];
+
+/// Download and import job state; v3 starts with an empty queue.
+const JOB_STATE: &[&str] = &[
+    "acquisition_snapshot_backfill",
+    "download_attempts",
+    "download_attempts_new",
+    "download_cleanup_reconciliation",
+    "drop_import_items",
+    "drop_import_jobs",
+    "free_music_tasks",
+    "search_jobs",
+];
+
+/// Lookups v3 fills again from the providers as it needs them.
+const CACHES: &[&str] = &[
+    "artist_event_check",
+    "artist_genre_lookup",
+    "artist_genres",
+    "artist_release_check",
+    "artist_skiddle_ids",
+    "artist_skiddle_resolution",
+    "artist_tm_attraction",
+    "audio_fingerprint_outcomes",
+    "canonical_redirect",
+    "follow_due",
+    "follow_inventory",
+    "follow_inventory_pages",
+    "follow_inventory_rows",
+    "live_event_feed",
+    "mbid_resolution_map",
+    "processed_items",
+    "recording_isrc",
+    "release_to_rg",
+    "sync_state",
+];
+
+/// Why one v2 table stays behind.
+#[must_use]
+pub fn reason_for(table: &str) -> &'static str {
+    if PRE_UPGRADE_COPIES.contains(&table) || table.contains("__") {
+        "older copy from before v2's own library upgrade; v2 no longer reads it"
+    } else if NO_V3_STORE.contains(&table) || table.starts_with("library_contribution_") {
+        "v3 has nowhere to keep this yet"
+    } else if SIGN_IN_STATE.contains(&table) {
+        "sign-in sessions; everyone signs in again"
+    } else if JOB_STATE.contains(&table) || table.starts_with("download_activity_") {
+        "download and import job state; v3 starts with an empty queue"
+    } else if table == "held_imports" {
+        "held imports and their files; a later upgrade step carries these"
+    } else if CACHES.contains(&table)
+        || table.starts_with("mb_")
+        || table.starts_with("discovery_")
+        || table.ends_with("_mbid_index")
+    {
+        "cache; v3 fills it again"
+    } else if table.starts_with("local_") || table.starts_with("library_") {
+        "library catalog and Library Management history; v3 rescans your files, \
+         and a later upgrade step carries these"
+    } else {
+        "not carried"
+    }
+}
+
+/// Count the rows of every v2 table outside `carried`, keeping the ones
+/// that hold any. Sorted by table name.
+pub fn left_behind_tables(
+    db: &Connection,
+    carried: &HashSet<&str>,
+) -> Result<Vec<LeftBehind>, ExportError> {
+    let read_error = |error: rusqlite::Error| ExportError::V2Database {
+        table: "sqlite_master".to_owned(),
+        detail: error.to_string(),
+    };
+    let mut stmt = db
+        .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' \
+             AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        )
+        .map_err(read_error)?;
+    let tables = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(read_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(read_error)?;
+    let mut out = Vec::new();
+    for table in tables {
+        if carried.contains(table.as_str()) || REBUILT_FROM_CARRIED.contains(&table.as_str()) {
+            continue;
+        }
+        let rows: i64 = db
+            .query_row(&format!("SELECT COUNT(*) FROM \"{table}\""), [], |row| {
+                row.get(0)
+            })
+            .map_err(|error| ExportError::V2Database {
+                table: table.clone(),
+                detail: error.to_string(),
+            })?;
+        if rows > 0 {
+            out.push(LeftBehind {
+                reason: reason_for(&table).to_owned(),
+                table,
+                rows: u64::try_from(rows).unwrap_or(0),
+            });
+        }
+    }
+    Ok(out)
+}

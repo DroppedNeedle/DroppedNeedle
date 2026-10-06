@@ -45,7 +45,7 @@ fn rejects_unknown_format() {
 
 #[test]
 fn rejects_unsupported_format_versions() {
-    for version in [json!(0), json!(2), json!(99), json!("1"), json!(null)] {
+    for version in [json!(0), json!(3), json!(99), json!("1"), json!(null)] {
         let mut envelope = minimal_envelope();
         envelope["format_version"] = version;
         let error = parse(&envelope).unwrap_err();
@@ -91,7 +91,6 @@ fn reserved_sections_are_ignored_with_warning() {
         "quotas",
         "user_prefs",
         "wanted_watches",
-        "user_connections",
     ] {
         let mut envelope = minimal_envelope();
         envelope[section] = json!([{"whatever": true}]);

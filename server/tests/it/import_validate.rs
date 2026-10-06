@@ -40,7 +40,7 @@ fn bad_format_rejected() {
 fn future_format_version_rejected() {
     let fixture = Fixture::shared();
     let mut export = fixture.shell();
-    export["format_version"] = json!(2);
+    export["format_version"] = json!(3);
     let report = validate_export(&export);
     assert!(codes(&report).contains(&"UNSUPPORTED_FORMAT_VERSION"));
 }
@@ -146,7 +146,6 @@ fn reserved_section_warns() {
         "quotas",
         "user_prefs",
         "wanted_watches",
-        "user_connections",
     ] {
         let mut export = fixture.shell();
         export[section] = json!([]);

@@ -22,7 +22,8 @@ use super::envelope::{ENVELOPE_NONCE_LEN, ENVELOPE_SALT_LEN, SEALED_KEY, is_seal
 use crate::auth::times::parse_iso;
 use crate::config::deployment::DROPPED_ENV_VARS;
 use crate::export::envelope::{
-    EXPORT_FORMAT, FORMAT_VERSION, OPTIONAL_KEYS, REQUIRED_KEYS, RESERVED_SECTIONS,
+    BUNDLE_ROLE, EXPORT_FORMAT, FORMAT_VERSION, MIN_FORMAT_VERSION, OPTIONAL_KEYS,
+    RESERVED_SECTIONS, required_keys,
 };
 use crate::export::seal::{KDF_ALGO, M_COST_KIB, P_COST, SCHEME, T_COST};
 use crate::runtime_config::DROPPED_SECTION_KEYS;
@@ -172,7 +173,199 @@ pub fn validate_export(root: &Value) -> ValidationReport {
     validate_approvals(object.get("approvals"), &user_ids, &mut report);
     validate_event_cities(object.get("event_cities"), &user_ids, &mut report);
     validate_event_seen(object.get("event_seen"), &user_ids, &mut report);
+    if object.get("format_version").and_then(Value::as_u64) >= Some(2) {
+        validate_connections(object.get("user_connections"), &user_ids, &mut report);
+        validate_attachments(object.get("attachments"), &mut report);
+        validate_left_behind(object.get("left_behind"), &mut report);
+    }
     report
+}
+
+/// Per-user service links: an owner the file carries, a service name, a
+/// sealed document, and one link per user and service.
+fn validate_connections(
+    connections: Option<&Value>,
+    user_ids: &HashSet<String>,
+    report: &mut ValidationReport,
+) {
+    let Some(list) = connections else { return };
+    let Some(items) = list.as_array() else {
+        report.errors.push(ValidationIssue::new(
+            "CONNECTIONS_NOT_ARRAY",
+            "user_connections".to_owned(),
+            "user_connections must be a JSON array".to_owned(),
+        ));
+        return;
+    };
+    let mut seen = HashSet::new();
+    for (index, item) in items.iter().enumerate() {
+        let path = format!("user_connections[{index}]");
+        let Some(record) = item.as_object() else {
+            report.errors.push(ValidationIssue::new(
+                "CONNECTION_NOT_OBJECT",
+                path,
+                "connection record must be a JSON object".to_owned(),
+            ));
+            continue;
+        };
+        let user_id = record
+            .get("user_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !user_ids.contains(user_id) {
+            report.errors.push(ValidationIssue::new(
+                "DANGLING_USER_REF",
+                format!("{path}.user_id"),
+                format!("user_id {user_id:?} has no matching users[].id"),
+            ));
+        }
+        let service = record
+            .get("service")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if service.is_empty() {
+            report.errors.push(ValidationIssue::new(
+                "CONNECTION_MISSING_SERVICE",
+                format!("{path}.service"),
+                "connection record needs a service name".to_owned(),
+            ));
+        } else if !seen.insert((user_id.to_owned(), service.to_owned())) {
+            report.errors.push(ValidationIssue::new(
+                "DUPLICATE_CONNECTION",
+                path.clone(),
+                "the same user and service appear more than once".to_owned(),
+            ));
+        }
+        match record.get("data") {
+            Some(data) if is_sealed(data) => {
+                check_sealed_blob(data, &format!("{path}.data"), report);
+            }
+            _ => report.errors.push(ValidationIssue::new(
+                "SECRET_NOT_SEALED",
+                format!("{path}.data"),
+                "connection data must be a sealed object".to_owned(),
+            )),
+        }
+    }
+}
+
+/// Files beside the export: a plain file name (never a path), a known
+/// role, a SHA-256 and a size. Their content is checked by the importer,
+/// which can read them.
+fn validate_attachments(attachments: Option<&Value>, report: &mut ValidationReport) {
+    let Some(list) = attachments else { return };
+    let Some(items) = list.as_array() else {
+        report.errors.push(ValidationIssue::new(
+            "ATTACHMENTS_NOT_ARRAY",
+            "attachments".to_owned(),
+            "attachments must be a JSON array".to_owned(),
+        ));
+        return;
+    };
+    let mut bundles = 0;
+    for (index, item) in items.iter().enumerate() {
+        let path = format!("attachments[{index}]");
+        let role = item.get("role").and_then(Value::as_str).unwrap_or_default();
+        if role == BUNDLE_ROLE {
+            bundles += 1;
+        } else {
+            report.errors.push(ValidationIssue::new(
+                "UNKNOWN_ATTACHMENT",
+                format!("{path}.role"),
+                format!("attachment role {role:?} is not known"),
+            ));
+        }
+        let name = item.get("name").and_then(Value::as_str).unwrap_or_default();
+        let plain_name = !name.is_empty()
+            && name != "."
+            && name != ".."
+            && !name.contains(['/', '\\'])
+            && !name.contains('\0');
+        if !plain_name {
+            report.errors.push(ValidationIssue::new(
+                "BAD_ATTACHMENT_NAME",
+                format!("{path}.name"),
+                "attachment name must be a plain file name".to_owned(),
+            ));
+        }
+        let sha = item
+            .get("sha256")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let sha_ok = sha.len() == 64 && sha.bytes().all(|byte| byte.is_ascii_hexdigit());
+        if !sha_ok || item.get("bytes").and_then(Value::as_u64).is_none() {
+            report.errors.push(ValidationIssue::new(
+                "BAD_ATTACHMENT_HASH",
+                path,
+                "attachment needs a hex sha256 and a byte size".to_owned(),
+            ));
+        }
+    }
+    if bundles > 1 {
+        report.errors.push(ValidationIssue::new(
+            "UNKNOWN_ATTACHMENT",
+            "attachments".to_owned(),
+            "more than one bundle attached".to_owned(),
+        ));
+    }
+}
+
+/// Check every attached file beside the export in `folder`: present, and
+/// the very file the export names (same SHA-256 and size). For the CLI's
+/// `validate`; the importer runs the same check before it writes.
+#[must_use]
+pub fn check_attachments(root: &Value, folder: &std::path::Path) -> Vec<ValidationIssue> {
+    let mut issues = Vec::new();
+    let Some(items) = root.get("attachments").and_then(Value::as_array) else {
+        return issues;
+    };
+    for (index, item) in items.iter().enumerate() {
+        let name = item.get("name").and_then(Value::as_str).unwrap_or_default();
+        let path = folder.join(name);
+        let expected = (
+            item.get("sha256")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_ascii_lowercase(),
+            item.get("bytes").and_then(Value::as_u64),
+        );
+        match crate::export::bundle::file_sha256(&path) {
+            Ok((sha, bytes)) if sha == expected.0 && Some(bytes) == expected.1 => {}
+            Ok(_) => issues.push(ValidationIssue::new(
+                "BUNDLE_MISMATCH",
+                format!("attachments[{index}]"),
+                format!(
+                    "{} is not the file this export was made with",
+                    path.display()
+                ),
+            )),
+            Err(error) => issues.push(ValidationIssue::new(
+                "BUNDLE_MISSING",
+                format!("attachments[{index}]"),
+                format!("cannot read {}: {error}", path.display()),
+            )),
+        }
+    }
+    issues
+}
+
+/// The left-behind list is informational; only its shape is checked.
+fn validate_left_behind(left_behind: Option<&Value>, report: &mut ValidationReport) {
+    let Some(list) = left_behind else { return };
+    let well_formed = list.as_array().is_some_and(|items| {
+        items.iter().all(|item| {
+            item.get("table").and_then(Value::as_str).is_some()
+                && item.get("rows").and_then(Value::as_u64).is_some()
+                && item.get("reason").and_then(Value::as_str).is_some()
+        })
+    });
+    if !well_formed {
+        report.errors.push(ValidationIssue::new(
+            "BAD_LEFT_BEHIND",
+            "left_behind".to_owned(),
+            "left_behind must list {table, rows, reason} objects".to_owned(),
+        ));
+    }
 }
 
 fn validate_envelope_header(
@@ -188,7 +381,8 @@ fn validate_envelope_header(
         )),
     }
     match object.get("format_version").and_then(Value::as_u64) {
-        Some(version) if version == u64::from(FORMAT_VERSION) => {}
+        Some(version)
+            if (u64::from(MIN_FORMAT_VERSION)..=u64::from(FORMAT_VERSION)).contains(&version) => {}
         Some(version) if version > u64::from(FORMAT_VERSION) => {
             report.errors.push(ValidationIssue::new(
                 "UNSUPPORTED_FORMAT_VERSION",
@@ -202,7 +396,7 @@ fn validate_envelope_header(
         _ => report.errors.push(ValidationIssue::new(
             "BAD_FORMAT_VERSION",
             "format_version".to_owned(),
-            format!("format_version must equal {}", FORMAT_VERSION),
+            format!("format_version must be between {MIN_FORMAT_VERSION} and {FORMAT_VERSION}"),
         )),
     }
     match object.get("exported_at").and_then(Value::as_str) {
@@ -299,7 +493,12 @@ fn is_utc_stamp(stamp: &str) -> bool {
 }
 
 fn validate_top_level_keys(object: &serde_json::Map<String, Value>, report: &mut ValidationReport) {
-    for key in REQUIRED_KEYS {
+    let version = object
+        .get("format_version")
+        .and_then(Value::as_u64)
+        .unwrap_or(u64::from(MIN_FORMAT_VERSION));
+    let required = required_keys(version);
+    for key in &required {
         if !object.contains_key(*key) {
             report.errors.push(ValidationIssue::new(
                 "MISSING_KEY",
@@ -316,7 +515,7 @@ fn validate_top_level_keys(object: &serde_json::Map<String, Value>, report: &mut
         ));
     }
     for key in object.keys() {
-        if REQUIRED_KEYS.contains(&key.as_str())
+        if required.contains(&key.as_str())
             || OPTIONAL_KEYS.contains(&key.as_str())
             || key == crate::export::seal::DIGEST_KEY
         {
