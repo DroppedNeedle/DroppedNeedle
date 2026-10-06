@@ -75,15 +75,33 @@ impl MatchSummary {
 
 impl FoundRelease {
     /// For a track download, the pair that is the requested track: by
-    /// recording MBID, else by title, else the only pair there is.
+    /// recording MBID, else (on the release acquisition resolved the track
+    /// to) by its position there, else by title, else the only pair there
+    /// is.
     pub fn requested_pair(&self, target: &Target) -> Option<&TrackPair> {
         let track_of = |pair: &&TrackPair| &self.release.tracks[pair.track];
+        let by_position = || {
+            let (release, wanted) = target.album_positions.as_ref()?;
+            if !self.release.answers_to(release) {
+                return None;
+            }
+            self.scored.pairs.iter().find(|pair| {
+                let track = track_of(pair);
+                wanted
+                    .iter()
+                    .any(|at| at.disc == track.disc && at.track == track.position)
+            })
+        };
         if let Some(recording) = target.recording_mbid.as_deref() {
             return self
                 .scored
                 .pairs
                 .iter()
-                .find(|pair| track_of(pair).recording_id.eq_ignore_ascii_case(recording));
+                .find(|pair| track_of(pair).recording_id.eq_ignore_ascii_case(recording))
+                .or_else(by_position);
+        }
+        if let Some(pair) = by_position() {
+            return Some(pair);
         }
         if let Some(title) = target.track_title.as_deref() {
             return self

@@ -237,18 +237,19 @@ impl LandingService {
         let mut target = target_for(task, &details, manifest);
         target.wait_for_files = patient;
         let library = self.library.get().cloned();
-        // The album's edition pin is the only acceptable release: matching,
-        // the missing positions and the pinned-edition check all use it.
+        // The album's chosen edition (manual identity, pin, best fit) is
+        // the only acceptable release: matching, the missing positions and
+        // the pinned-edition check all use it.
         if let Some(library) = &library
             && !target.release_group_mbid.is_empty()
-            && let Some(pin) = library.edition_pin(&target.release_group_mbid).await
+            && let Some(pin) = library.chosen_edition(&target.release_group_mbid).await
         {
             if target
                 .release_mbid
                 .as_deref()
                 .is_some_and(|asked| asked != pin)
             {
-                tracing::info!(task_id = %task.id, %pin, "landing follows the album's edition pin");
+                tracing::info!(task_id = %task.id, %pin, "landing follows the album's chosen edition");
             }
             target.release_mbid = Some(pin);
         }
@@ -905,6 +906,14 @@ pub fn target_for(
         track_title: details.track_title.clone(),
         origin: task.origin.clone(),
         hold_on_wrong_track: manifest.is_some_and(|manifest| manifest.hold_on_wrong_track),
+        album_positions: manifest
+            .and_then(|manifest| manifest.track_album.as_ref())
+            .map(|album| {
+                (
+                    album.release_mbid.to_ascii_lowercase(),
+                    album.wanted.clone(),
+                )
+            }),
         expected_sizes: HashMap::new(),
         wait_for_files: false,
     }

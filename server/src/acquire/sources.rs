@@ -20,11 +20,11 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use super::dispatch::Journal;
+use super::downloads::TrackPosition;
 use super::downloads::quarantine::{QUARANTINE_TTL_SECONDS, soulseek_hit_quarantined};
 use super::downloads::sources::{
     DownloadSource, Materialization, OrphanOwnership, SourceError, SourceHandle, TransferProgress,
 };
-use super::downloads::TrackPosition;
 use super::downloads::store::TaskRow;
 use super::slskd::{EnqueueFile, ReqwestSlskdHttp, SlskdError, SlskdRepository};
 use super::target::reasons::TrackReason;

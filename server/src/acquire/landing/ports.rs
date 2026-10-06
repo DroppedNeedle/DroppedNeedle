@@ -86,10 +86,12 @@ pub trait LandingLibrary: Send + Sync {
     /// One release with its tracklist.
     fn release<'a>(&'a self, mbid: &'a str) -> BoxFuture<'a, Result<Option<Release>, SourceError>>;
 
-    /// The edition the owner pinned for the library's copy of a release
-    /// group, if any. The landing honours it over the edition the request
-    /// carried: the pin is the album's remembered choice.
-    fn edition_pin<'a>(&'a self, release_group_mbid: &'a str) -> BoxFuture<'a, Option<String>>;
+    /// The edition chosen for the library's copy of a release group, if
+    /// any: a manual identity, else the edition pin, else the best fit
+    /// ([`crate::acquire::edition::chosen_edition`], the same answer
+    /// acquisition fetched by). The landing honours it over the edition
+    /// the request carried.
+    fn chosen_edition<'a>(&'a self, release_group_mbid: &'a str) -> BoxFuture<'a, Option<String>>;
 
     /// Tracks the library already holds for a release group.
     fn owned<'a>(&'a self, release_group_mbid: &'a str) -> BoxFuture<'a, OwnedTracks>;

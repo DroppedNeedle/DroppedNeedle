@@ -120,6 +120,9 @@ pub struct Target {
     pub origin: String,
     /// The last-resort re-pull: hold a wrong track instead of failing over.
     pub hold_on_wrong_track: bool,
+    /// For a track download: the album release acquisition resolved the
+    /// track to and the track's (disc, track) position on it.
+    pub album_positions: Option<(String, Vec<crate::acquire::downloads::TrackPosition>)>,
     /// Byte sizes the client advertised, by the exact reported path.
     pub expected_sizes: HashMap<PathBuf, u64>,
     /// Files may still appear: a missing file is worth another pass.
