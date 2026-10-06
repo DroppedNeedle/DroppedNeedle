@@ -91,12 +91,14 @@ impl std::error::Error for ScanStoreError {}
 /// Durable scan-state seam. Synchronous: the memory implementation answers
 /// inline, and a future SQLite implementation serializes on its own writer.
 pub trait ScanStore: Send + Sync {
+    /// Record a scan request. A store failure is `Err`, never a
+    /// conflict answer naming a run that was never written.
     fn request_run(
         &self,
         request: &ScanRequest,
         run_id: &str,
         requested_at: f64,
-    ) -> ScanRequestResult;
+    ) -> Result<ScanRequestResult, ScanStoreError>;
 
     fn get_run(&self, run_id: &str) -> Result<(ScanRun, Vec<ScanScope>, Counters), ScanStoreError>;
 
@@ -348,63 +350,7 @@ pub struct MemoryScanStore {
 
 #[cfg(any(test, feature = "test-support"))]
 impl MemoryScanStore {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, MemoryState> {
-        self.state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-fn empty_counters() -> Counters {
-    [
-        counter_names::TOTAL,
-        counter_names::DISCOVERED,
-        counter_names::INSPECTED,
-        counter_names::NEW,
-        counter_names::CHANGED,
-        counter_names::INDEXED,
-        counter_names::UNCHANGED,
-        counter_names::EXCLUDED,
-        counter_names::MISSING,
-        counter_names::ERRORED,
-        counter_names::IDENTIFICATION_ENQUEUED,
-    ]
-    .into_iter()
-    .map(|name| (name.to_owned(), 0))
-    .collect()
-}
-
-/// True when a stored scope covers a requested one: same root, same policy
-/// revision, and the stored path is the requested path or an ancestor of it
-/// (v2 `_scan_scope_covers` plus the revision check in `covers`).
-#[cfg(any(test, feature = "test-support"))]
-fn scope_covers(existing: &ScanScope, requested_root: &str, requested: &ScanScope) -> bool {
-    existing.root_id == requested_root
-        && existing.policy_revision == requested.policy_revision
-        && scope_covers_path(&existing.relative_path, &requested.relative_path)
-}
-
-#[cfg(any(test, feature = "test-support"))]
-fn bump_counters(run: &mut ScanRun, name: &str, delta: i64) {
-    *run.counters.entry(name.to_owned()).or_insert(0) += delta;
-}
-
-#[cfg(any(test, feature = "test-support"))]
-fn normalize_key(raw: &str) -> String {
-    // Belt and braces: NFC-normalize incoming keys so the
-    // catalog join matches the walker's normalized keys.
-    use unicode_normalization::UnicodeNormalization;
-    raw.nfc().collect()
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl ScanStore for MemoryScanStore {
-    fn request_run(
+    fn request_run_in_memory(
         &self,
         request: &ScanRequest,
         run_id: &str,
@@ -663,6 +609,71 @@ impl ScanStore for MemoryScanStore {
             },
             conflicting_kind: None,
         }
+    }
+
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, MemoryState> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn empty_counters() -> Counters {
+    [
+        counter_names::TOTAL,
+        counter_names::DISCOVERED,
+        counter_names::INSPECTED,
+        counter_names::NEW,
+        counter_names::CHANGED,
+        counter_names::INDEXED,
+        counter_names::UNCHANGED,
+        counter_names::EXCLUDED,
+        counter_names::MISSING,
+        counter_names::ERRORED,
+        counter_names::IDENTIFICATION_ENQUEUED,
+    ]
+    .into_iter()
+    .map(|name| (name.to_owned(), 0))
+    .collect()
+}
+
+/// True when a stored scope covers a requested one: same root, same policy
+/// revision, and the stored path is the requested path or an ancestor of it
+/// (v2 `_scan_scope_covers` plus the revision check in `covers`).
+#[cfg(any(test, feature = "test-support"))]
+fn scope_covers(existing: &ScanScope, requested_root: &str, requested: &ScanScope) -> bool {
+    existing.root_id == requested_root
+        && existing.policy_revision == requested.policy_revision
+        && scope_covers_path(&existing.relative_path, &requested.relative_path)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn bump_counters(run: &mut ScanRun, name: &str, delta: i64) {
+    *run.counters.entry(name.to_owned()).or_insert(0) += delta;
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn normalize_key(raw: &str) -> String {
+    // Belt and braces: NFC-normalize incoming keys so the
+    // catalog join matches the walker's normalized keys.
+    use unicode_normalization::UnicodeNormalization;
+    raw.nfc().collect()
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl ScanStore for MemoryScanStore {
+    fn request_run(
+        &self,
+        request: &ScanRequest,
+        run_id: &str,
+        requested_at: f64,
+    ) -> Result<ScanRequestResult, ScanStoreError> {
+        Ok(self.request_run_in_memory(request, run_id, requested_at))
     }
 
     fn get_run(&self, run_id: &str) -> Result<(ScanRun, Vec<ScanScope>, Counters), ScanStoreError> {
@@ -1620,9 +1631,13 @@ mod tests {
     #[test]
     fn request_coalesce_expand_conflict_flow() {
         let store = MemoryScanStore::new();
-        let first = store.request_run(&request(ScanKind::Incremental), "run-1", 1.0);
+        let first = store
+            .request_run(&request(ScanKind::Incremental), "run-1", 1.0)
+            .expect("request recorded");
         assert_eq!(first.disposition, Disposition::Started);
-        let second = store.request_run(&request(ScanKind::Incremental), "run-2", 2.0);
+        let second = store
+            .request_run(&request(ScanKind::Incremental), "run-2", 2.0)
+            .expect("request recorded");
         assert_eq!(second.disposition, Disposition::Coalesced);
         assert_eq!(second.run_id, "run-1");
 
@@ -1637,12 +1652,16 @@ mod tests {
             policy_revision: "rev-1".to_owned(),
             estimated_count: None,
         }];
-        let expanded = store.request_run(&sub, "run-3", 3.0);
+        let expanded = store
+            .request_run(&sub, "run-3", 3.0)
+            .expect("request recorded");
         assert_eq!(expanded.disposition, Disposition::Expanded);
         assert_eq!(expanded.run_id, "run-1");
 
         // A different kind against the queued follow-up conflicts.
-        let conflict = store.request_run(&request(ScanKind::RescanFiles), "run-4", 4.0);
+        let conflict = store
+            .request_run(&request(ScanKind::RescanFiles), "run-4", 4.0)
+            .expect("request recorded");
         assert_eq!(conflict.disposition, Disposition::Conflict);
         assert_eq!(conflict.conflicting_kind, Some(ScanKind::Incremental));
     }
@@ -1652,13 +1671,17 @@ mod tests {
         let store = MemoryScanStore::new();
         let mut narrow = request(ScanKind::Incremental);
         narrow.scopes[0].relative_path = "a/b".to_owned();
-        let first = store.request_run(&narrow, "run-1", 1.0);
+        let first = store
+            .request_run(&narrow, "run-1", 1.0)
+            .expect("request recorded");
         assert_eq!(first.disposition, Disposition::Started);
         // Claim it so the next request lands on a fresh queued run... instead
         // assert on the union directly: requesting the ancestor expands.
         let mut wide = request(ScanKind::Incremental);
         wide.scopes[0].relative_path = "a".to_owned();
-        let expanded = store.request_run(&wide, "run-2", 2.0);
+        let expanded = store
+            .request_run(&wide, "run-2", 2.0)
+            .expect("request recorded");
         assert_eq!(expanded.disposition, Disposition::Expanded);
         let (_, scopes, _) = store.get_run(&expanded.run_id).expect("run");
         assert_eq!(scopes.len(), 1);
@@ -1757,7 +1780,9 @@ mod tests {
     #[test]
     fn control_pause_resume_stop_flow() {
         let store = MemoryScanStore::new();
-        store.request_run(&request(ScanKind::Incremental), "run-1", 1.0);
+        store
+            .request_run(&request(ScanKind::Incremental), "run-1", 1.0)
+            .expect("request recorded");
         let claimed = store.claim_next(2.0).expect("claimed");
         assert_eq!(claimed.state, ScanState::Discovering);
         let (pausing, _) = store

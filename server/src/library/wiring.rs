@@ -376,6 +376,29 @@ impl LibrarySetup {
         )
     }
 
+    /// Test bundle over scripted providers whose scan state lives in
+    /// the application database at `db_path`, exactly like production.
+    /// Journeys that run requests as real users need this: scan runs
+    /// reference `auth_users`, which only the application database has.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn for_tests_at(
+        users: UsersDeps,
+        ids: Arc<dyn IdGenerator>,
+        db_path: &Path,
+    ) -> Result<Self, String> {
+        let scripted = Arc::new(FakeProviders::default());
+        let scan_store = Arc::new(
+            SqliteScanStore::open(db_path).map_err(|error| format!("scan store: {error}"))?,
+        );
+        Self::assemble(
+            users,
+            ids,
+            scripted.clone() as Arc<dyn super::identify::providers::IdentifyProviders>,
+            Some(scripted),
+            scan_store,
+        )
+    }
+
     /// Test bundle over caller-supplied identify providers. Focused
     /// shutdown tests script provider timing here; the shared
     /// `for_tests` shape stays the default everywhere else.
@@ -1194,6 +1217,9 @@ impl LibrarySetup {
                     LibraryError::InvalidInput {
                         message: error.to_string(),
                     }
+                }
+                super::scan::coordinator::ScanRequestError::Store(cause) => {
+                    LibraryError::internal(&cause)
                 }
             })?;
         Ok(result)

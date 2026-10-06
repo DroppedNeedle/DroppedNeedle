@@ -602,28 +602,12 @@ impl ScanStore for SqliteScanStore {
         request: &ScanRequest,
         run_id: &str,
         requested_at: f64,
-    ) -> ScanRequestResult {
+    ) -> Result<ScanRequestResult, ScanStoreError> {
         let mut guard = self.lock();
-        let outcome = (|| -> rusqlite::Result<ScanRequestResult> {
-            let tx = guard.conn.transaction()?;
-            let result = request_run_inner(&tx, request, run_id, requested_at)?;
-            tx.commit()?;
-            Ok(result)
-        })();
-        match outcome {
-            Ok(result) => result,
-            Err(error) => {
-                tracing::error!(%error, "scan request_run failed");
-                ScanRequestResult {
-                    run_id: run_id.to_owned(),
-                    disposition: Disposition::Conflict,
-                    state: ScanState::Queued,
-                    row_revision: 0,
-                    queued_reason: Some("The scan store is unavailable.".to_owned()),
-                    conflicting_kind: None,
-                }
-            }
-        }
+        let tx = guard.conn.transaction().map_err(internal)?;
+        let result = request_run_inner(&tx, request, run_id, requested_at).map_err(internal)?;
+        tx.commit().map_err(internal)?;
+        Ok(result)
     }
 
     fn get_run(&self, run_id: &str) -> Result<(ScanRun, Vec<ScanScope>, Counters), ScanStoreError> {
@@ -2460,7 +2444,9 @@ mod tests {
         let (_runtime, db_path) = migrated_db("restart").await;
         let run_id = {
             let store = SqliteScanStore::open(&db_path).expect("store opens");
-            let created = store.request_run(&request(ScanKind::Incremental), "run-1", 1.0);
+            let created = store
+                .request_run(&request(ScanKind::Incremental), "run-1", 1.0)
+                .expect("request recorded");
             assert_eq!(created.disposition, Disposition::Started);
             let claimed = store.claim_next(2.0).expect("claimed");
             assert_eq!(claimed.state, ScanState::Discovering);
@@ -2515,7 +2501,9 @@ mod tests {
     #[tokio::test]
     async fn rescan_verdicts_match_memory_semantics() {
         let store = SqliteScanStore::open_ephemeral().expect("ephemeral opens");
-        let created = store.request_run(&request(ScanKind::Incremental), "run-9", 1.0);
+        let created = store
+            .request_run(&request(ScanKind::Incremental), "run-9", 1.0)
+            .expect("request recorded");
         assert_eq!(created.disposition, Disposition::Started);
         store.commit_indexed(
             "r1",
@@ -2663,7 +2651,9 @@ mod tests {
     #[tokio::test]
     async fn missing_paths_match_scope_rule() {
         let store = SqliteScanStore::open_ephemeral().expect("ephemeral opens");
-        let created = store.request_run(&request(ScanKind::Incremental), "run-1", 1.0);
+        let created = store
+            .request_run(&request(ScanKind::Incremental), "run-1", 1.0)
+            .expect("request recorded");
         assert_eq!(created.disposition, Disposition::Started);
         store.claim_next(2.0).expect("claimed");
         for (path, track) in [
@@ -2703,7 +2693,9 @@ mod tests {
     #[tokio::test]
     async fn inventory_pages_cover_run_in_order() {
         let store = SqliteScanStore::open_ephemeral().expect("ephemeral opens");
-        let created = store.request_run(&request(ScanKind::Incremental), "run-1", 1.0);
+        let created = store
+            .request_run(&request(ScanKind::Incremental), "run-1", 1.0)
+            .expect("request recorded");
         assert_eq!(created.disposition, Disposition::Started);
         store.claim_next(2.0).expect("claimed");
         let revision = store

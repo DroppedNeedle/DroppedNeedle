@@ -174,6 +174,8 @@ pub enum ScanRequestError {
     StalePolicy,
     UnknownRoots,
     BadCursor,
+    /// The store could not record the request.
+    Store(ScanStoreError),
 }
 
 impl std::fmt::Display for ScanRequestError {
@@ -193,6 +195,7 @@ impl std::fmt::Display for ScanRequestError {
             ScanRequestError::BadCursor => {
                 write!(f, "The scan history cursor is invalid.")
             }
+            ScanRequestError::Store(error) => write!(f, "The scan store failed: {error}"),
         }
     }
 }
@@ -447,7 +450,10 @@ impl<S: ScanStore, T: TagReader + 'static, Q: IdentifyQueue> LibraryScanCoordina
             }
         }
         let run_id = (self.idgen)();
-        let result = self.store.request_run(request, &run_id, self.now());
+        let result = self
+            .store
+            .request_run(request, &run_id, self.now())
+            .map_err(ScanRequestError::Store)?;
         if result.disposition != Disposition::Conflict {
             // v2 request_scan_run wakes the supervisor for every accepted
             // disposition; the store here has no wakeups, so the

@@ -123,8 +123,9 @@ impl Lib {
         )
         .expect("prod auth bundle builds")
         .users;
-        let library = LibrarySetup::for_tests(users, Arc::clone(&ids) as Arc<dyn IdGenerator>)
-            .expect("library bundle builds");
+        let library =
+            LibrarySetup::for_tests_at(users, Arc::clone(&ids) as Arc<dyn IdGenerator>, &db_path)
+                .expect("library bundle builds");
         Self {
             runtime,
             bundle,

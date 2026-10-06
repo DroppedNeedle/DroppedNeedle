@@ -509,7 +509,8 @@ async fn failure_accounting_brief() {
     let result = rig
         .coordinator
         .store()
-        .request_run(&mixed, "run-mixed", 1.0);
+        .request_run(&mixed, "run-mixed", 1.0)
+        .expect("request recorded");
     assert_eq!(result.disposition, Disposition::Started);
     let run = rig
         .coordinator
@@ -544,7 +545,8 @@ async fn failure_accounting_brief() {
     let result = rig
         .coordinator
         .store()
-        .request_run(&ghost_only, "run-ghost", 2.0);
+        .request_run(&ghost_only, "run-ghost", 2.0)
+        .expect("request recorded");
     assert_eq!(result.disposition, Disposition::Started);
     let run = rig
         .coordinator
@@ -1107,7 +1109,9 @@ fn inventory_batch_twin_rows_store_relative_paths() {
         requested_by_user_id: None,
         policy_revision: "rev-1".to_owned(),
     };
-    store.request_run(&request, "run-1", 0.0);
+    store
+        .request_run(&request, "run-1", 0.0)
+        .expect("request recorded");
     let item = |absolute: &str| ScanInventoryItem {
         root_id: "music".to_owned(),
         relative_path: "sub/twin.flac".to_owned(),
@@ -1193,5 +1197,30 @@ async fn fatal_tag_read_is_human_and_counted() {
         fatal.failure_detail,
         "The tag read failed; the file was skipped for this run."
     );
+    cleanup(&root);
+}
+
+/// A scan request the store cannot record is an error. It used to answer
+/// a "conflict" naming a run id that was never written, so the follow-up
+/// run lookup 404ed.
+#[tokio::test]
+async fn unrecorded_scan_request_is_an_error() {
+    use droppedneedle::library::wiring::LibrarySetup;
+    let root = sandbox_root("unrecorded");
+    let users = droppedneedle::auth::wiring::AuthSetup::for_tests()
+        .expect("test auth bundle builds")
+        .users;
+    let library = LibrarySetup::for_tests(users, Arc::new(droppedneedle::ids::UuidGenerator))
+        .expect("library bundle builds");
+    library
+        .add_root(
+            Some("r1".to_owned()),
+            root.to_string_lossy().into_owned(),
+            EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+    // The requesting user does not exist in this database, so the
+    // auth_users reference cannot hold and nothing is recorded.
+    assert!(library.request_scan(None, "no-such-user").is_err());
     cleanup(&root);
 }

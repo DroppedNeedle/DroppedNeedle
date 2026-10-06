@@ -1387,7 +1387,7 @@ mod tests {
             request: &super::super::models::ScanRequest,
             run_id: &str,
             requested_at: f64,
-        ) -> super::super::models::ScanRequestResult {
+        ) -> Result<super::super::models::ScanRequestResult, ScanStoreError> {
             self.inner.request_run(request, run_id, requested_at)
         }
 
@@ -1670,17 +1670,20 @@ mod tests {
             "rev-1",
         );
         let resolver = PolicyResolver::new(registry);
-        store.inner.request_run(
-            &ScanRequest {
-                kind: ScanKind::Incremental,
-                trigger: ScanTrigger::Manual,
-                scopes: vec![ScanScope::root("music", "/music", "rev-1")],
-                requested_by_user_id: None,
-                policy_revision: "rev-1".to_owned(),
-            },
-            "run-1",
-            1.0,
-        );
+        store
+            .inner
+            .request_run(
+                &ScanRequest {
+                    kind: ScanKind::Incremental,
+                    trigger: ScanTrigger::Manual,
+                    scopes: vec![ScanScope::root("music", "/music", "rev-1")],
+                    requested_by_user_id: None,
+                    policy_revision: "rev-1".to_owned(),
+                },
+                "run-1",
+                1.0,
+            )
+            .expect("request recorded");
         let scope = ScanScope::root("music", "/music", "rev-1");
         let batch = vec![(
             PathBuf::from("/music/a.flac"),
