@@ -10,10 +10,6 @@ const testMutate = vi.fn().mockResolvedValue({
 	categories: ['music', 'droppedneedle'],
 	complete_dir: '/downloads/dst'
 });
-// SABnzbd disabled by default, so the "SABnzbd takes precedence" warning stays hidden
-// until the test that turns it on.
-const sabnzbdEnabled = { value: false };
-
 vi.mock('$lib/queries/downloads/DownloadClientsQueries.svelte', () => ({
 	getNzbgetConfigQuery: () => ({
 		data: {
@@ -33,11 +29,6 @@ vi.mock('$lib/queries/downloads/DownloadClientsQueries.svelte', () => ({
 		data: { valid: true, version: '24.3', message: 'NZBGet 24.3' },
 		isLoading: false
 	}),
-	getSabnzbdConfigQuery: () => ({
-		data: { enabled: sabnzbdEnabled.value },
-		isLoading: false,
-		isError: false
-	}),
 	saveNzbgetConfig: () => ({ mutateAsync: saveMutate, isPending: false }),
 	testNzbget: () => ({ mutateAsync: testMutate, isPending: false })
 }));
@@ -47,7 +38,9 @@ vi.mock('$lib/queries/downloads/IndexerQueries.svelte', () => ({
 	getIndexersQuery: () => ({ data: [], isLoading: false })
 }));
 
-vi.mock('$lib/stores/toast', () => ({ toastStore: { show: vi.fn() } }));
+// vi.hoisted: vi.mock is hoisted above plain top-level consts, so the spy has to be too.
+const { toastShow } = vi.hoisted(() => ({ toastShow: vi.fn() }));
+vi.mock('$lib/stores/toast', () => ({ toastStore: { show: toastShow } }));
 
 import SettingsNzbget from './SettingsNzbget.svelte';
 
@@ -87,20 +80,11 @@ describe('SettingsNzbget.svelte', () => {
 		);
 		// With no indexers, an enabled NZBGet is inert - the card must say so.
 		await expect.element(page.getByText('No indexers configured.')).toBeInTheDocument();
-	});
-
-	it('warns that SABnzbd takes precedence when both clients are enabled', async () => {
-		sabnzbdEnabled.value = true;
-		try {
-			await render(SettingsNzbget);
-			await page.getByRole('button', { name: 'Expand' }).click();
-			await page.getByLabelText('Enable NZBGet download client').click();
-			// Only one Usenet client receives downloads, so an enabled pair must not read as
-			// though both are active.
-			await expect.element(page.getByText('SABnzbd is also enabled.')).toBeInTheDocument();
-		} finally {
-			sabnzbdEnabled.value = false;
-		}
+		// Enabling one Usenet client stands the other down, so the toast has to say it
+		// rather than leaving the user to notice SABnzbd flip off by itself.
+		expect(toastShow).toHaveBeenCalledWith(
+			expect.objectContaining({ message: expect.stringContaining('SABnzbd disabled') })
+		);
 	});
 
 	it('shows live Connected status from the status query without running Test', async () => {

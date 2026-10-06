@@ -224,12 +224,19 @@ async def test_nzbget(
             )
         cats = await client.get_categories()
         complete_dir = await client.get_complete_dir()
+        # Catch a misconfigured downloads mount at config time: the submitted mount -
+        # not the stored one - is diagnosed, so an unsaved correction already shows the
+        # fixed verdict.
+        diagnosis = await client.diagnose_downloads_mount()
     except ExternalServiceError as exc:
         return NzbgetTestResponse(valid=False, message=str(exc))
-    # Catch a misconfigured downloads mount at config time: the submitted mount - not
-    # the stored one - is diagnosed, so an unsaved correction already shows the fixed
-    # verdict.
-    diagnosis = await client.diagnose_downloads_mount()
+    except Exception as exc:  # noqa: BLE001 - a failed test must report, not 500
+        # Anything unexpected (an NZBGet build answering a shape we don't model, a
+        # mount that raises) is the user's answer, not a server error: a 500 reaches
+        # the card as a generic "couldn't reach", which sends people hunting a network
+        # fault that isn't there.
+        logger.exception("nzbget.test_failed")
+        return NzbgetTestResponse(valid=False, message=f"NZBGet test failed: {exc}")
     mount_message = None
     if (
         diagnosis.sampled_downloads > 0

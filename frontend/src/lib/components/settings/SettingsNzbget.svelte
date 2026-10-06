@@ -4,7 +4,6 @@
 	import {
 		getNzbgetConfigQuery,
 		getNzbgetStatusQuery,
-		getSabnzbdConfigQuery,
 		saveNzbgetConfig,
 		testNzbget
 	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
@@ -17,16 +16,12 @@
 
 	const configQuery = getNzbgetConfigQuery();
 	const statusQuery = getNzbgetStatusQuery();
-	const sabnzbdQuery = getSabnzbdConfigQuery();
 	const indexersQuery = getIndexersQuery();
 	const save = saveNzbgetConfig();
 	const test = testNzbget();
 
 	// NZBGet only downloads what an indexer finds - a Usenet source with no indexer is inert.
 	const hasIndexer = $derived((indexersQuery.data?.length ?? 0) > 0);
-	// One Usenet client runs at a time and SABnzbd wins a tie, so say so rather than
-	// letting both cards read as enabled while only one receives downloads.
-	const sabnzbdWins = $derived(sabnzbdQuery.data?.enabled === true);
 
 	let enabled = $state(false);
 	let url = $state('');
@@ -103,7 +98,12 @@
 	async function onToggle() {
 		try {
 			await save.mutateAsync(current());
-			toastStore.show({ message: `NZBGet ${enabled ? 'enabled' : 'disabled'}`, type: 'success' });
+			toastStore.show({
+				message: enabled
+					? 'NZBGet enabled - SABnzbd disabled, one Usenet client at a time'
+					: 'NZBGet disabled',
+				type: 'success'
+			});
 		} catch {
 			enabled = !enabled;
 			toastStore.show({ message: 'Could not update NZBGet', type: 'error' });
@@ -113,8 +113,12 @@
 	async function onTest() {
 		try {
 			testResult = await test.mutateAsync(current());
-		} catch {
-			testResult = { valid: false, message: "Couldn't reach NZBGet", categories: [] };
+		} catch (error) {
+			testResult = {
+				valid: false,
+				message: error instanceof Error && error.message ? error.message : "Couldn't reach NZBGet",
+				categories: []
+			};
 		}
 	}
 
@@ -142,18 +146,6 @@
 		{onToggle}
 		enableAriaLabel="Enable NZBGet download client"
 	>
-		{#if enabled && sabnzbdWins}
-			<div class="alert alert-warning items-start text-sm">
-				<TriangleAlert class="size-5 shrink-0" aria-hidden="true" />
-				<div class="space-y-1">
-					<p>
-						<span class="font-semibold">SABnzbd is also enabled.</span> One Usenet client handles downloads
-						at a time, and SABnzbd takes precedence. Disable it to send Usenet downloads here.
-					</p>
-				</div>
-			</div>
-		{/if}
-
 		{#if enabled && !indexersQuery.isLoading && !hasIndexer}
 			<div class="alert alert-warning items-start text-sm">
 				<TriangleAlert class="size-5 shrink-0" aria-hidden="true" />

@@ -703,6 +703,11 @@ class PreferencesService:
                 password = current.get("password", "")  # preserve on masked sentinel
             elif password:
                 password = encrypt(password)
+            if settings.enabled and clients.get("sabnzbd", {}).get("enabled"):
+                # Exactly one Usenet client owns the source, so enabling this one stands
+                # the other down rather than leaving a saved state the engine won't
+                # honour. Credentials are untouched, so flipping back is one click.
+                clients["sabnzbd"] = {**clients["sabnzbd"], "enabled": False}
             clients["nzbget"] = {
                 "enabled": settings.enabled,
                 "client_type": "nzbget",
@@ -757,6 +762,9 @@ class PreferencesService:
                 api_key = current.get("api_key", "")  # preserve on masked sentinel
             elif api_key:
                 api_key = encrypt(api_key)
+            if settings.enabled and clients.get("nzbget", {}).get("enabled"):
+                # Symmetric with save_nzbget_connection: one Usenet client at a time.
+                clients["nzbget"] = {**clients["nzbget"], "enabled": False}
             clients["sabnzbd"] = {
                 "enabled": settings.enabled,
                 "client_type": "sabnzbd",
