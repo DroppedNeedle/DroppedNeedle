@@ -42,6 +42,7 @@ use crate::runtime_config::crypto::Crypto;
 use crate::runtime_config::sections::{AudioFormat, ConnectApps};
 use crate::stream::download::{DownloadState, access_from_config, download_routes};
 use crate::stream::gateway::Gateway;
+use crate::stream::local_files::LibraryFiles;
 use crate::stream::routes::{StreamState, stream_routes};
 use crate::stream::transcode::{
     FfmpegTranscoder, LocalTranscodeGate, OutFormat, StdFfmpegSpawner, TranscodeSettings,
@@ -92,9 +93,11 @@ impl MediaSetup {
     /// `pool` and `lane` back the connection and folder rows; `config`
     /// holds the admin's server settings; `connect_apps` carries the
     /// transcode policy; `crypto` seals linked credentials;
-    /// `library_roots` resolves local stream reads against the live
-    /// library registry (`None` keeps the constructor fallback for unwired
-    /// builds); `imports` is where remote playlist imports land.
+    /// `library_roots` plus the catalog in `pool` turn local stream keys
+    /// and download ids (track ids) into files under the live library
+    /// roots (`None` keeps the constructor fallback for unwired builds and
+    /// serves no downloads); `imports` is where remote playlist imports
+    /// land.
     #[allow(clippy::too_many_arguments)]
     pub fn build(
         db_path: &Path,
@@ -110,9 +113,9 @@ impl MediaSetup {
         config: Arc<ConfigStore>,
         imports: Arc<dyn ImportSink>,
     ) -> Result<(Self, MediaWorkers), String> {
+        let library = library_roots.map(|roots| LibraryFiles::new(pool.clone(), roots));
         let download = DownloadState::new(
-            pool.clone(),
-            library_roots.clone(),
+            library.clone(),
             access_from_config(config.clone()),
             users.clone(),
             ids.clone(),
@@ -157,8 +160,8 @@ impl MediaSetup {
             transcode_settings(&connect_apps),
             ffmpeg_available(),
         );
-        let engine = match library_roots {
-            Some(roots) => gateway.with_library_roots(roots),
+        let engine = match library {
+            Some(library) => gateway.with_library(library),
             None => gateway,
         };
         let stream = StreamState {
@@ -225,10 +228,8 @@ impl MediaSetup {
             Arc::new(CredentialCoder::new(crypto)),
             Arc::new(NoServers),
         ));
-        // No catalog tables and no roots: downloads answer 404 or 500.
+        // No library wired: downloads answer 404.
         let download = DownloadState::new(
-            sqlx::SqlitePool::connect_lazy("sqlite::memory:")
-                .map_err(|error| format!("test download pool: {error}"))?,
             None,
             Arc::new(|| Ok(crate::runtime_config::sections::SecuritySettings::default())),
             users.clone(),

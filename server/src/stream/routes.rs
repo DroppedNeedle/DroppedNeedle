@@ -761,63 +761,94 @@ async fn serve<E: StreamEngine>(
         );
     }
 
-    let range = match headers.get(header::RANGE) {
-        None => None,
-        Some(value) => {
-            let text = value.to_str().unwrap_or("");
-            if is_multi_range(text) {
-                None
-            } else {
-                match parse_range(text, media.total_len) {
-                    Some(resolved) => Some(resolved),
-                    None => {
-                        return Err(StreamError::Unsatisfiable {
-                            total_len: media.total_len,
-                        });
-                    }
-                }
-            }
-        }
-    };
+    let span = DirectSpan::for_request(headers.get(header::RANGE), media.total_len).ok_or(
+        StreamError::Unsatisfiable {
+            total_len: media.total_len,
+        },
+    )?;
 
     let content_type: HeaderValue = upstream_content_type(&media.content_type);
     let mut response_headers = HeaderMap::new();
     response_headers.insert(header::CONTENT_TYPE, content_type);
-    response_headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
     response_headers.insert(
         header::CONTENT_ENCODING,
         HeaderValue::from_static("identity"),
     );
-
-    let (status, start, len) = match range {
-        None => (StatusCode::OK, 0, media.total_len),
-        Some(resolved) => {
-            response_headers.insert(
-                header::CONTENT_RANGE,
-                header_value(
-                    &format!(
-                        "bytes {}-{}/{}",
-                        resolved.start, resolved.end, media.total_len
-                    ),
-                    state.ids.as_ref(),
-                )?,
-            );
-            (StatusCode::PARTIAL_CONTENT, resolved.start, resolved.len())
-        }
-    };
-    response_headers.insert(
-        header::CONTENT_LENGTH,
-        header_value(&len.to_string(), state.ids.as_ref())?,
-    );
+    span.write_headers(&mut response_headers);
     let body = if head_only {
         Body::empty()
     } else {
-        direct_body(media.body, start, len, hold, state.ids.as_ref())?
+        direct_body(media.body, span.start, span.len, hold, state.ids.as_ref())?
     };
 
-    let mut response = (status, body).into_response();
+    let mut response = (span.status(), body).into_response();
     response.headers_mut().extend(response_headers);
     Ok(response)
+}
+
+/// The bytes a direct (untranscoded) response sends: the whole object, or
+/// the one span a `Range` header asked for. Streaming and local file
+/// downloads both frame their bodies with this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DirectSpan {
+    /// First byte sent.
+    pub start: u64,
+    /// Bytes sent.
+    pub len: u64,
+    /// Length of the whole object.
+    pub total_len: u64,
+    /// True when answering a satisfiable range (206).
+    pub partial: bool,
+}
+
+impl DirectSpan {
+    /// Apply the [`parse_range`] rules to an optional `Range` header. No
+    /// header, or a multi-range ask (answered whole, which RFC 9110
+    /// allows), sends everything. `None` means 416.
+    pub fn for_request(range: Option<&HeaderValue>, total_len: u64) -> Option<Self> {
+        let whole = Self {
+            start: 0,
+            len: total_len,
+            total_len,
+            partial: false,
+        };
+        let Some(value) = range else {
+            return Some(whole);
+        };
+        let text = value.to_str().unwrap_or("");
+        if is_multi_range(text) {
+            return Some(whole);
+        }
+        parse_range(text, total_len).map(|resolved| Self {
+            start: resolved.start,
+            len: resolved.len(),
+            total_len,
+            partial: true,
+        })
+    }
+
+    /// 206 for a range, else 200.
+    pub fn status(&self) -> StatusCode {
+        if self.partial {
+            StatusCode::PARTIAL_CONTENT
+        } else {
+            StatusCode::OK
+        }
+    }
+
+    /// `Accept-Ranges`, `Content-Length`, and `Content-Range` on a 206.
+    pub fn write_headers(&self, headers: &mut HeaderMap) {
+        headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
+        headers.insert(header::CONTENT_LENGTH, HeaderValue::from(self.len));
+        if self.partial {
+            let last = self.start + self.len.saturating_sub(1);
+            if let Ok(value) =
+                HeaderValue::from_str(&format!("bytes {}-{last}/{}", self.start, self.total_len))
+            {
+                headers.insert(header::CONTENT_RANGE, value);
+            }
+        }
+    }
 }
 
 /// True for a `bytes=` request naming more than one range.

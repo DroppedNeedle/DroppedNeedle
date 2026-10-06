@@ -2,7 +2,8 @@
 //! database and a real music root on disk: membership, album status with
 //! upgrade tiers, top-songs track resolution, the stats extras, track
 //! identity fields, the appearance sort, then track and album downloads
-//! with the access setting, path safety and a streamed ZIP read back.
+//! with the access setting, path safety, ranges and a streamed ZIP read
+//! back, and local playback by track id through the real stream gateway.
 
 use crate::common::ScratchDir;
 
@@ -29,10 +30,23 @@ use droppedneedle::reads::library::{
 };
 use droppedneedle::runtime_config::sections::{DownloadAccess, SecuritySettings};
 use droppedneedle::stream::download::{DownloadState, download_routes};
+use droppedneedle::stream::gateway::{Gateway, RemoteMedia, RemoteReader};
+use droppedneedle::stream::local_files::LibraryFiles;
+use droppedneedle::stream::routes::{AudioSource, StreamFault, StreamState, stream_routes};
+use droppedneedle::stream::transcode::{
+    FfmpegTranscoder, LocalTranscodeGate, StdFfmpegSpawner, TranscodeSettings,
+};
 use serde_json::{Value, json};
 use tower::ServiceExt as _;
 
-const OPENER: &[u8] = b"opener flac bytes";
+/// A real FLAC from the library fixtures.
+fn opener() -> Vec<u8> {
+    std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/library/flac_full_01.flac"),
+    )
+    .expect("flac fixture")
+}
 const CLOSER: &[u8] = b"closer mp3 bytes, a little longer";
 
 struct Fixture {
@@ -52,7 +66,7 @@ async fn fixture() -> Fixture {
         .expect("scratch runtime opens");
     let music = dir.join("music");
     std::fs::create_dir_all(music.join("Aurora/First Light")).expect("album dir");
-    std::fs::write(music.join("Aurora/First Light/01 Opener.flac"), OPENER).expect("opener");
+    std::fs::write(music.join("Aurora/First Light/01 Opener.flac"), opener()).expect("opener");
     std::fs::write(music.join("Aurora/First Light/02 Closer.mp3"), CLOSER).expect("closer");
     std::fs::write(dir.join("outside.flac"), b"not in the library").expect("outside");
     let music = music.canonicalize().expect("music root");
@@ -126,11 +140,42 @@ async fn fixture() -> Fixture {
     }
 }
 
+/// Remote reader for a local-only gateway.
+struct NoRemote;
+
+impl RemoteReader for NoRemote {
+    async fn fetch(
+        &self,
+        _source: AudioSource,
+        _key: &str,
+        _user_id: &str,
+    ) -> Result<RemoteMedia, StreamFault> {
+        Err(StreamFault::NotFound)
+    }
+}
+
 impl Fixture {
-    /// Library reads plus downloads, as `user_id` (anonymous when None).
+    /// Library reads, downloads and streaming, as `user_id` (anonymous
+    /// when None).
     fn app(&self, user_id: Option<&str>) -> Router {
         let db = LibraryDb::new(self.runtime.pool());
         let ids = Arc::new(UuidGenerator);
+        let music = self.music.clone();
+        let access = Arc::clone(&self.access);
+        let files = LibraryFiles::new(
+            self.runtime.pool().clone(),
+            Arc::new(move || {
+                RootRegistry::new(
+                    vec![LibraryRoot::new(
+                        "r1",
+                        music.clone(),
+                        EffectivePolicy::Automatic,
+                    )],
+                    true,
+                    "rev",
+                )
+            }),
+        );
         let library = LibraryDeps {
             catalog: Arc::new(SqliteCatalog::new(&db)),
             favorites: Arc::new(SqliteFavorites::new(&db)),
@@ -143,21 +188,24 @@ impl Fixture {
             auth: self.rig.deps.clone(),
             ids: ids.clone(),
         };
-        let music = self.music.clone();
-        let access = Arc::clone(&self.access);
+        // ffmpeg is reported absent, so every local read is served direct.
+        let gateway = Gateway::new(
+            std::path::PathBuf::from("unused-constructor-root"),
+            NoRemote,
+            FfmpegTranscoder::new(
+                StdFfmpegSpawner::with_path("ffmpeg".into()),
+                Arc::new(LocalTranscodeGate::new()),
+            ),
+            TranscodeSettings::default(),
+            false,
+        )
+        .with_library(files.clone());
+        let stream = StreamState {
+            engine: Arc::new(gateway),
+            ids: ids.clone(),
+        };
         let download = DownloadState::new(
-            self.runtime.pool().clone(),
-            Some(Arc::new(move || {
-                RootRegistry::new(
-                    vec![LibraryRoot::new(
-                        "r1",
-                        music.clone(),
-                        EffectivePolicy::Automatic,
-                    )],
-                    true,
-                    "rev",
-                )
-            })),
+            Some(files),
             Arc::new(move || {
                 Ok(SecuritySettings {
                     library_download_access: *access.lock().expect("access lock"),
@@ -167,7 +215,9 @@ impl Fixture {
             self.rig.deps.clone(),
             ids,
         );
-        let router = library_router(library).merge(download_routes(download));
+        let router = library_router(library)
+            .merge(download_routes(download))
+            .merge(stream_routes(stream));
         match user_id {
             Some(user_id) => {
                 let user_id = user_id.to_owned();
@@ -197,7 +247,20 @@ async fn send(
     path: &str,
     body: Option<Value>,
 ) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
-    let request = Request::builder().method(method).uri(path);
+    send_ranged(app, method, path, body, None).await
+}
+
+async fn send_ranged(
+    app: Router,
+    method: &str,
+    path: &str,
+    body: Option<Value>,
+    range: Option<&str>,
+) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
+    let mut request = Request::builder().method(method).uri(path);
+    if let Some(range) = range {
+        request = request.header(header::RANGE, range);
+    }
     let request = match body {
         Some(body) => request
             .header(header::CONTENT_TYPE, "application/json")
@@ -358,11 +421,11 @@ async fn local_downloads_journey() {
     // One track, byte for byte, as an attachment.
     let (status, headers, bytes) = send(app.clone(), "GET", "/download/local/track/t1", None).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(bytes, OPENER);
+    assert_eq!(bytes, opener());
     assert_eq!(headers[header::CONTENT_TYPE], "audio/flac");
     assert_eq!(
         headers[header::CONTENT_LENGTH],
-        OPENER.len().to_string().as_str()
+        opener().len().to_string().as_str()
     );
     let disposition = headers[header::CONTENT_DISPOSITION]
         .to_str()
@@ -371,6 +434,47 @@ async fn local_downloads_journey() {
         disposition.starts_with("attachment; filename=\"01 Opener.flac\""),
         "{disposition}"
     );
+
+    // A single range resumes a track download; one past the end is 416.
+    let (status, headers, bytes) = send_ranged(
+        app.clone(),
+        "GET",
+        "/download/local/track/t2",
+        None,
+        Some("bytes=7-11"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+    assert_eq!(bytes, &CLOSER[7..12]);
+    assert_eq!(
+        headers[header::CONTENT_RANGE],
+        format!("bytes 7-11/{}", CLOSER.len()).as_str()
+    );
+    assert!(headers.contains_key(header::CONTENT_DISPOSITION));
+    let (status, headers, _) = send_ranged(
+        app.clone(),
+        "GET",
+        "/download/local/track/t2",
+        None,
+        Some("bytes=999-"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
+    assert_eq!(
+        headers[header::CONTENT_RANGE],
+        format!("bytes */{}", CLOSER.len()).as_str()
+    );
+
+    // Playback resolves the same track ids through the same catalog
+    // lookup and root confinement.
+    let (status, headers, bytes) = send(app.clone(), "GET", "/stream/local/t1", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bytes, opener());
+    assert_eq!(headers[header::CONTENT_TYPE], "audio/flac");
+    let (status, _, _) = send(app.clone(), "GET", "/stream/local/t4", None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _, _) = send(app.clone(), "GET", "/stream/local/nope", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 
     // Path safety: a row pointing outside the root is refused, a file gone
     // from disk and an unknown id are 404.
@@ -383,7 +487,7 @@ async fn local_downloads_journey() {
 
     // The album as a streamed ZIP, by local id and by MusicBrainz id.
     let expected = vec![
-        ("01 Opener.flac".to_owned(), OPENER.to_vec()),
+        ("01 Opener.flac".to_owned(), opener()),
         ("02 Closer.mp3".to_owned(), CLOSER.to_vec()),
     ];
     for path in [

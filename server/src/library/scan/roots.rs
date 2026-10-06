@@ -1,10 +1,10 @@
 //! Library roots: the registry, policy resolution, and the stream seam.
 //!
-//! The root registry. The stream gateway takes the registry through
-//! `Gateway::with_library_roots` and resolves bare local keys under the
-//! [`StreamRootSeam`]'s primary music root; per-root
-//! [`StreamRootSeam::resolve_key`] is unused because playback keys carry no
-//! root id.
+//! The root registry. Playback and library downloads read it through
+//! `stream::local_files`, which turns a catalog track's root id and
+//! relative path into a file confined to the configured roots.
+//! [`StreamRootSeam`] joins a caller-supplied key under a root instead;
+//! production no longer calls it, since local stream keys are track ids.
 //!
 //! The policy surface: roots, their per-subpath rules, an enabled flag,
 //! and a revision string. A path takes the policy of the deepest rule
@@ -185,19 +185,13 @@ impl std::fmt::Display for RootSeamError {
 
 impl std::error::Error for RootSeamError {}
 
-/// Root-resolution seam for the stream gateway.
+/// Joins a caller-supplied key under one root, refusing escapes.
 ///
-/// With library roots wired (`Gateway::with_library_roots`), the gateway's
-/// `sandboxed_path(key)` joins a bare key under
-/// [`StreamRootSeam::primary_music_root`]. Per-root resolution through
-/// [`StreamRootSeam::resolve_key`] is unused: playback keys carry no root
-/// id yet, so the gateway cannot pick a root per key. Sandboxing mirrors `sandboxed_path` exactly: component
+/// Production resolves local files by catalog track id through
+/// `stream::local_files` and does not call this. Sandboxing: component
 /// screening first, then canonicalize both sides so a symlink inside the
 /// root cannot point outside it; unresolvable paths skip the prefix check
 /// and fall through to the read, which reports them.
-///
-/// Do not construct paths by joining untrusted keys anywhere else; every
-/// local-key join funnels through here.
 #[derive(Debug, Clone)]
 pub struct StreamRootSeam {
     registry: RootRegistry,

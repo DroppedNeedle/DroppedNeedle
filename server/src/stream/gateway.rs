@@ -1,8 +1,15 @@
 //! Stream-gateway engine: one source-keyed byte source behind the routes.
 //!
 //! [`Gateway`] implements the routes' [`StreamEngine`] seam: it takes a
-//! direct lease, resolves local files under a sandboxed root or proxied
-//! remote bytes, and runs the transcode [`decide()`] policy for local files.
+//! direct lease, resolves local files or proxied remote bytes, and runs the
+//! transcode [`decide()`] policy for local files.
+//!
+//! A local key is a catalog track id. It resolves through
+//! [`LibraryFiles::locate_track`], the same lookup and root confinement
+//! that library downloads use, so playback and downloads agree on which
+//! files exist. A gateway without the library wired (tests, unwired
+//! builds) joins the key onto its constructor root as a relative path
+//! instead, sandboxed to that root.
 //! The streaming open hands the routes a file body read by range, or the
 //! transcode output chunk by chunk; HEAD answers from file metadata and
 //! never starts ffmpeg. The whole-object open stays for the compat
@@ -22,6 +29,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::leases::DirectGate;
+use super::local_files::{LibraryFiles, LocateError, PathRefusal};
 use futures_util::StreamExt as _;
 
 use super::routes::{
@@ -58,7 +66,7 @@ pub trait RemoteReader: Send + Sync {
 /// and injected ffmpeg execution behind the routes' engine seam.
 pub struct Gateway<R, T> {
     local_root: PathBuf,
-    library_roots: Option<crate::library::wiring::RootSource>,
+    library: Option<LibraryFiles>,
     plugins: std::sync::OnceLock<(Arc<crate::plugins::host::PluginHost>, reqwest::Client)>,
     remote: R,
     transcoder: T,
@@ -80,7 +88,7 @@ impl<R, T> Gateway<R, T> {
     ) -> Self {
         Self {
             local_root,
-            library_roots: None,
+            library: None,
             plugins: std::sync::OnceLock::new(),
             remote,
             transcoder,
@@ -90,14 +98,11 @@ impl<R, T> Gateway<R, T> {
         }
     }
 
-    /// Resolve local reads against the live library root registry
-    /// instead of the constructor root. The registry re-reads on
-    /// every open, so root changes apply without a restart; with no
-    /// usable root configured, local reads 404. Root ids inside playback
-    /// keys stay a catalog concern: bare keys
-    /// resolve under the primary root.
-    pub fn with_library_roots(mut self, roots: crate::library::wiring::RootSource) -> Self {
-        self.library_roots = Some(roots);
+    /// Resolve local keys as catalog track ids against the live library
+    /// instead of paths under the constructor root. The root registry is
+    /// read again on every open, so root changes apply without a restart.
+    pub fn with_library(mut self, library: LibraryFiles) -> Self {
+        self.library = Some(library);
         self
     }
 
@@ -171,7 +176,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             path,
             content_type,
             plan,
-        } = self.local_read(request)?;
+        } = self.local_read(request).await?;
         match plan {
             StreamPlan::Direct { .. } => {
                 let bytes = tokio::task::spawn_blocking(move || std::fs::read(path))
@@ -219,7 +224,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
         request: &StreamOpen,
         head_only: bool,
     ) -> Result<StreamMedia, StreamFault> {
-        let read = self.local_read(request)?;
+        let read = self.local_read(request).await?;
         self.stream_read(read, request, head_only).await
     }
 
@@ -283,9 +288,12 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
         }
     }
 
-    /// Resolve the sandboxed path, its content type, and the plan.
-    fn local_read(&self, request: &StreamOpen) -> Result<LocalRead, StreamFault> {
-        let path = self.sandboxed_path(&request.key)?;
+    /// Resolve the file, its content type, and the plan.
+    async fn local_read(&self, request: &StreamOpen) -> Result<LocalRead, StreamFault> {
+        let path = match &self.library {
+            Some(library) => catalog_path(library, &request.key).await?,
+            None => self.sandboxed_path(&request.key)?,
+        };
         self.read_plan(path, request)
     }
 
@@ -345,8 +353,9 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
 
     /// Every library root a plugin path may point into.
     fn all_library_roots(&self) -> Vec<PathBuf> {
-        match &self.library_roots {
-            Some(source) => source()
+        match &self.library {
+            Some(library) => library
+                .registry()
                 .roots()
                 .iter()
                 .map(|root| root.path.clone())
@@ -445,30 +454,18 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
         })
     }
 
-    /// Join `key` under the music root, refusing anything that escapes it.
+    /// Join `key` under the constructor root, refusing anything that
+    /// escapes it. Only gateways without the library wired read this way.
     /// The refusal message is fixed: the key never reaches the wire.
     /// Component screening runs first; then both sides canonicalize so a
     /// symlink inside the root cannot point at a file outside it. Paths
     /// that do not resolve (missing files, missing root) skip the prefix
     /// check and fall through to the read, which reports them.
-    /// With library roots wired, the primary registry root replaces the
-    /// constructor root; an empty registry 404s instead of reading the
-    /// stale fallback.
     fn sandboxed_path(&self, key: &str) -> Result<PathBuf, StreamFault> {
         if key.is_empty() || Path::new(key).is_absolute() {
             return Err(forbidden());
         }
-        let root = match &self.library_roots {
-            Some(source) => {
-                match crate::library::scan::roots::StreamRootSeam::new(source())
-                    .primary_music_root()
-                {
-                    Some(primary) => primary,
-                    None => return Err(StreamFault::NotFound),
-                }
-            }
-            None => self.local_root.clone(),
-        };
+        let root = &self.local_root;
         let mut path = root.clone();
         for component in Path::new(key).components() {
             match component {
@@ -484,6 +481,28 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             return Err(forbidden());
         }
         Ok(path)
+    }
+}
+
+/// The file of catalog track `track_id`. Unknown tracks and files gone
+/// from disk are 404; a file that resolves outside the library roots is
+/// 403 with v2's message.
+async fn catalog_path(library: &LibraryFiles, track_id: &str) -> Result<PathBuf, StreamFault> {
+    match library.locate_track(track_id).await {
+        Ok((_, path)) => Ok(path),
+        Err(LocateError::Unknown | LocateError::Refused(PathRefusal::Missing)) => {
+            Err(StreamFault::NotFound)
+        }
+        Err(LocateError::Refused(PathRefusal::Outside)) => {
+            tracing::warn!(
+                track_id,
+                "stream refused: file resolves outside the library roots"
+            );
+            Err(StreamFault::Forbidden {
+                message: OUTSIDE_MESSAGE.to_owned(),
+            })
+        }
+        Err(LocateError::Internal(cause)) => Err(StreamFault::Internal { cause }),
     }
 }
 
@@ -582,6 +601,9 @@ async fn whole_media(media: StreamMedia) -> Result<OpenMedia, StreamFault> {
         bytes,
     })
 }
+
+/// v2's refusal for a library file that resolves outside every root.
+pub const OUTSIDE_MESSAGE: &str = "Access denied: path is outside the music directory";
 
 /// Fixed sandbox refusal: the key never reaches the wire.
 fn forbidden() -> StreamFault {

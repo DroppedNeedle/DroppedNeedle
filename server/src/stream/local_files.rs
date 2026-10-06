@@ -1,7 +1,9 @@
-//! Which files a download may serve, and where they live on disk.
+//! Which local files playback and downloads may serve, and where they live
+//! on disk.
 //!
-//! Downloads only ever serve files the library catalog knows: a track row
-//! that is currently streamable (`availability = 'indexed'`). The row's
+//! Local stream keys and download ids are catalog track ids. Only files the
+//! library catalog knows are ever served: a track row that is currently
+//! streamable (`availability = 'indexed'`). The row's
 //! root id and relative path are joined onto that root's configured
 //! directory, and the result must still sit inside a configured library
 //! root after symlinks resolve. Nothing a caller sends ever becomes part of
@@ -12,8 +14,9 @@ use std::path::{Component, Path, PathBuf};
 use sqlx::{Row as _, SqlitePool};
 
 use crate::library::scan::roots::RootRegistry;
+use crate::library::wiring::RootSource;
 
-/// One catalog file a download may serve.
+/// One catalog file playback or a download may serve.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogFile {
     /// Local track id.
@@ -188,6 +191,70 @@ pub fn resolve(registry: &RootRegistry, file: &CatalogFile) -> Result<PathBuf, P
         return Err(PathRefusal::Missing);
     }
     Ok(resolved)
+}
+
+/// Why a track id cannot be served from disk.
+#[derive(Debug)]
+pub enum LocateError {
+    /// No streamable catalog track has this id.
+    Unknown,
+    /// The catalog knows the track, but its file cannot be served.
+    Refused(PathRefusal),
+    /// The catalog read or the blocking task failed. Log-only text.
+    Internal(String),
+}
+
+/// The library catalog plus the live root registry: everything needed to
+/// turn a track id into a file on disk. Playback and downloads both go
+/// through here, so the two can never disagree about which files are
+/// reachable.
+#[derive(Clone)]
+pub struct LibraryFiles {
+    catalog: FileCatalog,
+    roots: RootSource,
+}
+
+impl LibraryFiles {
+    /// Catalog reads over `pool`, paths resolved against `roots`, which is
+    /// read again on every lookup so root changes apply without a restart.
+    pub fn new(pool: SqlitePool, roots: RootSource) -> Self {
+        Self {
+            catalog: FileCatalog::new(pool),
+            roots,
+        }
+    }
+
+    /// The catalog reads.
+    pub fn catalog(&self) -> &FileCatalog {
+        &self.catalog
+    }
+
+    /// The root registry as configured right now.
+    pub fn registry(&self) -> RootRegistry {
+        (self.roots)()
+    }
+
+    /// The file of one streamable catalog track, confined to the library
+    /// roots.
+    pub async fn locate_track(
+        &self,
+        track_id: &str,
+    ) -> Result<(CatalogFile, PathBuf), LocateError> {
+        let file = self
+            .catalog
+            .track(track_id)
+            .await
+            .map_err(|error| LocateError::Internal(error.to_string()))?
+            .ok_or(LocateError::Unknown)?;
+        let roots = std::sync::Arc::clone(&self.roots);
+        tokio::task::spawn_blocking(move || {
+            let registry = roots();
+            resolve(&registry, &file).map(|path| (file, path))
+        })
+        .await
+        .map_err(|error| LocateError::Internal(error.to_string()))?
+        .map_err(LocateError::Refused)
+    }
 }
 
 #[cfg(test)]

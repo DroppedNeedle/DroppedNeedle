@@ -14,16 +14,16 @@
 //! admins), read on every request so a change applies at once; refusals
 //! are 403 with v2's message.
 //!
-//! Only catalog files are served (see [`files`]): ids pick catalog rows,
-//! paths come from the row and must resolve inside a configured library
-//! root. Album archives are streamed (see [`archive`]): stored entries,
+//! Only catalog files are served (see [`super::local_files`], which
+//! playback shares): ids pick catalog rows, paths come from the row and
+//! must resolve inside a configured library root. A track download honours
+//! a single `Range`, framed by the same code as streaming. Album archives are streamed (see [`archive`]): stored entries,
 //! exact `Content-Length`, file bytes read from disk as the client reads,
 //! never buffered whole in memory or written to a temp file. Files that
 //! cannot be served are left out of an album with a warning, as v2 did;
 //! an album with nothing left to serve is 404.
 
 mod archive;
-mod files;
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -41,22 +41,22 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use utoipa::ToSchema;
 
-use super::routes::{ChunkStream, content_type_for_extension, file_range};
+use super::gateway::OUTSIDE_MESSAGE;
+use super::local_files::{AlbumFiles, CatalogFile, LibraryFiles, LocateError, PathRefusal};
+use super::routes::{ChunkStream, DirectSpan, content_type_for_extension, file_range};
 use crate::auth::session::middleware::CurrentSession;
 use crate::auth::users::UsersDeps;
 use crate::auth::users::roles::Role;
 use crate::error::{ErrorBody, ErrorEnvelope};
 use crate::ids::IdGenerator;
-use crate::library::wiring::RootSource;
 use crate::runtime_config::sections::SecuritySettings;
 
+use crate::library::scan::roots::RootRegistry;
+
 use archive::{Entry, Layout};
-use files::{AlbumFiles, CatalogFile, FileCatalog, PathRefusal};
 
 /// v2's refusal text when the access setting excludes the caller's role.
 const RESTRICTED_MESSAGE: &str = "Library downloads are restricted by the administrator";
-/// A path that resolves outside every library root.
-const OUTSIDE_MESSAGE: &str = "Access denied: path is outside the music directory";
 
 /// Reads the security section, per call.
 pub type AccessSource = Arc<dyn Fn() -> Result<SecuritySettings, String> + Send + Sync>;
@@ -71,26 +71,23 @@ pub struct LibraryDownloadAccess {
 /// Everything the download routes read.
 #[derive(Clone)]
 pub struct DownloadState {
-    files: FileCatalog,
-    roots: Option<RootSource>,
+    library: Option<LibraryFiles>,
     access: AccessSource,
     users: UsersDeps,
     ids: Arc<dyn IdGenerator>,
 }
 
 impl DownloadState {
-    /// Downloads over the catalog in `pool`, served from the live root
-    /// registry. `roots` of `None` (unwired builds) serves nothing.
+    /// Downloads from the library catalog and roots. `None` (unwired
+    /// builds) serves nothing.
     pub fn new(
-        pool: sqlx::SqlitePool,
-        roots: Option<RootSource>,
+        library: Option<LibraryFiles>,
         access: AccessSource,
         users: UsersDeps,
         ids: Arc<dyn IdGenerator>,
     ) -> Self {
         Self {
-            files: FileCatalog::new(pool),
-            roots,
+            library,
             access,
             users,
             ids,
@@ -133,6 +130,11 @@ pub enum DownloadError {
     Forbidden(&'static str),
     /// Unknown id, or nothing on disk to serve.
     NotFound(&'static str),
+    /// A `Range` the file cannot meet: 416 with `Content-Range: bytes */N`.
+    Unsatisfiable {
+        /// File length.
+        total_len: u64,
+    },
     /// Server fault; the cause is logged with this id.
     Internal {
         /// Ties the response to the log line.
@@ -150,6 +152,12 @@ impl DownloadError {
 
 impl IntoResponse for DownloadError {
     fn into_response(self) -> Response {
+        let content_range = match &self {
+            Self::Unsatisfiable { total_len } => {
+                HeaderValue::from_str(&format!("bytes */{total_len}")).ok()
+            }
+            _ => None,
+        };
         let (status, code, message, details) = match self {
             Self::Unauthorized => (
                 StatusCode::UNAUTHORIZED,
@@ -169,6 +177,12 @@ impl IntoResponse for DownloadError {
                 message.to_owned(),
                 None,
             ),
+            Self::Unsatisfiable { .. } => (
+                StatusCode::RANGE_NOT_SATISFIABLE,
+                super::routes::RANGE_NOT_SATISFIABLE,
+                "Range not satisfiable".to_owned(),
+                None,
+            ),
             Self::Internal { error_id } => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 crate::error::INTERNAL_ERROR,
@@ -184,6 +198,9 @@ impl IntoResponse for DownloadError {
             },
         };
         let mut response = (status, Json(envelope)).into_response();
+        if let Some(value) = content_range {
+            response.headers_mut().insert(header::CONTENT_RANGE, value);
+        }
         if status == StatusCode::UNAUTHORIZED {
             response.headers_mut().insert(
                 header::WWW_AUTHENTICATE,
@@ -262,41 +279,55 @@ pub async fn download_access(
     }))
 }
 
-/// One track file, unchanged, as an attachment.
+/// One track file, unchanged, as an attachment. A single `Range` is
+/// answered with 206, as v2's file response did, so download managers can
+/// resume.
 #[utoipa::path(
     get,
     path = "/api/v3/download/local/track/{id}",
     params(("id" = String, Path, description = "Local track id")),
     responses(
         (status = 200, description = "Track file", content_type = "application/octet-stream"),
+        (status = 206, description = "The asked byte range of the track file", content_type = "application/octet-stream"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Downloads restricted, or the file left the library roots"),
         (status = 404, description = "Unknown track, or the file is gone"),
+        (status = 416, description = "Range not satisfiable"),
     )
 )]
 pub async fn download_track(
     State(state): State<DownloadState>,
     DownloadUser(role): DownloadUser,
     UrlPath(id): UrlPath<String>,
+    request_headers: HeaderMap,
 ) -> Result<Response, DownloadError> {
     require_allowed(&state, role)?;
-    let file = state
-        .files
-        .track(&id)
-        .await
-        .map_err(|cause| DownloadError::internal(&cause, state.ids.as_ref()))?
+    let library = state
+        .library
+        .as_ref()
         .ok_or(DownloadError::NotFound("Track file not found"))?;
-    let roots = state.roots.clone();
-    let (path, size, _) = tokio::task::spawn_blocking(move || locate(roots.as_ref(), &file))
+    let (_, path) = library
+        .locate_track(&id)
         .await
-        .map_err(|cause| DownloadError::internal(&cause, state.ids.as_ref()))?
-        .map_err(|refusal| match refusal {
-            PathRefusal::Missing => DownloadError::NotFound("Track file not found on disk"),
-            PathRefusal::Outside => {
+        .map_err(|error| match error {
+            LocateError::Unknown => DownloadError::NotFound("Track file not found"),
+            LocateError::Refused(PathRefusal::Missing) => {
+                DownloadError::NotFound("Track file not found on disk")
+            }
+            LocateError::Refused(PathRefusal::Outside) => {
                 tracing::warn!(track_id = %id, "download refused: file resolves outside the library roots");
                 DownloadError::Forbidden(OUTSIDE_MESSAGE)
             }
+            LocateError::Internal(cause) => DownloadError::internal(&cause, state.ids.as_ref()),
         })?;
+    let probe = path.clone();
+    let size = tokio::task::spawn_blocking(move || std::fs::metadata(probe))
+        .await
+        .map_err(|cause| DownloadError::internal(&cause, state.ids.as_ref()))?
+        .map_err(|_| DownloadError::NotFound("Track file not found on disk"))?
+        .len();
+    let span = DirectSpan::for_request(request_headers.get(header::RANGE), size)
+        .ok_or(DownloadError::Unsatisfiable { total_len: size })?;
     let content_type = path
         .extension()
         .and_then(|ext| ext.to_str())
@@ -308,11 +339,12 @@ pub async fn download_track(
         .unwrap_or_else(|| "track".to_owned());
     let mut headers = HeaderMap::new();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-    attachment_headers(&mut headers, &filename, size);
+    attachment_headers(&mut headers, &filename);
+    span.write_headers(&mut headers);
     Ok((
-        StatusCode::OK,
+        span.status(),
         headers,
-        Body::from_stream(file_range(path, 0, size)),
+        Body::from_stream(file_range(path, span.start, span.len)),
     )
         .into_response())
 }
@@ -335,7 +367,11 @@ pub async fn download_album(
     UrlPath(id): UrlPath<String>,
 ) -> Result<Response, DownloadError> {
     require_allowed(&state, role)?;
-    album_archive(&state, &id).await
+    let library = state
+        .library
+        .as_ref()
+        .ok_or(DownloadError::NotFound("Album or track files not found"))?;
+    album_archive(&state, library, &id).await
 }
 
 /// An album's streamable files as a ZIP, by MusicBrainz release-group (or
@@ -357,13 +393,17 @@ pub async fn download_album_by_mbid(
     UrlPath(mbid): UrlPath<String>,
 ) -> Result<Response, DownloadError> {
     require_allowed(&state, role)?;
-    let album_id = state
-        .files
+    let library = state
+        .library
+        .as_ref()
+        .ok_or(DownloadError::NotFound("Album or track files not found"))?;
+    let album_id = library
+        .catalog()
         .album_by_mbid(&mbid)
         .await
         .map_err(|cause| DownloadError::internal(&cause, state.ids.as_ref()))?
         .ok_or(DownloadError::NotFound("Album or track files not found"))?;
-    album_archive(&state, &album_id).await
+    album_archive(&state, library, &album_id).await
 }
 
 // ---------------------------------------------------------------------------
@@ -372,12 +412,8 @@ pub async fn download_album_by_mbid(
 
 /// Canonical path, size and modification time of one catalog file.
 /// Blocking.
-fn locate(
-    roots: Option<&RootSource>,
-    file: &CatalogFile,
-) -> Result<(PathBuf, u64, i64), PathRefusal> {
-    let registry = (roots.ok_or(PathRefusal::Missing)?)();
-    let path = files::resolve(&registry, file)?;
+fn locate(registry: &RootRegistry, file: &CatalogFile) -> Result<(PathBuf, u64, i64), PathRefusal> {
+    let path = super::local_files::resolve(registry, file)?;
     let metadata = std::fs::metadata(&path).map_err(|_| PathRefusal::Missing)?;
     let modified = metadata
         .modified()
@@ -394,17 +430,21 @@ struct Member {
 }
 
 /// Plan, then stream, one album archive.
-async fn album_archive(state: &DownloadState, album_id: &str) -> Result<Response, DownloadError> {
-    let album = state
-        .files
+async fn album_archive(
+    state: &DownloadState,
+    library: &LibraryFiles,
+    album_id: &str,
+) -> Result<Response, DownloadError> {
+    let album = library
+        .catalog()
         .album(album_id)
         .await
         .map_err(|cause| DownloadError::internal(&cause, state.ids.as_ref()))?
         .ok_or(DownloadError::NotFound("Album or track files not found"))?;
-    let roots = state.roots.clone();
+    let library = library.clone();
     let album_id = album_id.to_owned();
     let (archive_name, members) =
-        tokio::task::spawn_blocking(move || plan_members(roots.as_ref(), &album_id, album))
+        tokio::task::spawn_blocking(move || plan_members(&library.registry(), &album_id, album))
             .await
             .map_err(|cause| DownloadError::internal(&cause, state.ids.as_ref()))?;
     if members.is_empty() {
@@ -421,7 +461,8 @@ async fn album_archive(state: &DownloadState, album_id: &str) -> Result<Response
         header::CONTENT_ENCODING,
         HeaderValue::from_static("identity"),
     );
-    attachment_headers(&mut headers, &archive_name, layout.total_len);
+    attachment_headers(&mut headers, &archive_name);
+    headers.insert(header::CONTENT_LENGTH, HeaderValue::from(layout.total_len));
     let body = Body::from_stream(archive_stream(members, entries, layout));
     Ok((StatusCode::OK, headers, body).into_response())
 }
@@ -431,14 +472,14 @@ async fn album_archive(state: &DownloadState, album_id: &str) -> Result<Response
 /// `NN Title.ext`, or `DD-NN Title.ext` when the album spans discs.
 /// Blocking.
 fn plan_members(
-    roots: Option<&RootSource>,
+    registry: &RootRegistry,
     album_id: &str,
     album: AlbumFiles,
 ) -> (String, Vec<Member>) {
     let archive_name = sanitize_filename(&format!("{} - {}.zip", album.artist_name, album.title));
     let mut located = Vec::new();
     for file in &album.files {
-        match locate(roots, file) {
+        match locate(registry, file) {
             Ok(found) => located.push((file, found)),
             Err(refusal) => tracing::warn!(
                 album_id,
@@ -598,8 +639,8 @@ fn sanitize_filename(name: &str) -> String {
 }
 
 /// `Content-Disposition: attachment` with a plain ASCII fallback name and
-/// the exact UTF-8 name (RFC 6266), plus the length.
-fn attachment_headers(headers: &mut HeaderMap, filename: &str, len: u64) {
+/// the exact UTF-8 name (RFC 6266).
+fn attachment_headers(headers: &mut HeaderMap, filename: &str) {
     let fallback: String = filename
         .chars()
         .map(|c| {
@@ -623,7 +664,6 @@ fn attachment_headers(headers: &mut HeaderMap, filename: &str, len: u64) {
     )) {
         headers.insert(header::CONTENT_DISPOSITION, value);
     }
-    headers.insert(header::CONTENT_LENGTH, HeaderValue::from(len));
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
 }
 
@@ -644,7 +684,7 @@ mod tests {
     #[test]
     fn disposition_carries_ascii_and_utf8_names() {
         let mut headers = HeaderMap::new();
-        attachment_headers(&mut headers, "Sigur Rós - ( ).zip", 10);
+        attachment_headers(&mut headers, "Sigur Rós - ( ).zip");
         let value = headers
             .get(header::CONTENT_DISPOSITION)
             .and_then(|value| value.to_str().ok())

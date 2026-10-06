@@ -15,10 +15,8 @@
 //!   `library::identify`. Scan reads tags only through [`seams::TagReader`]
 //!   (the null readers exist for tests only) and offers changed albums to
 //!   identification inside its catalog commit.
-//! * The stream gateway resolves bare local keys under the primary root of
-//!   [`roots::StreamRootSeam`] (via `Gateway::with_library_roots`). Per-root
-//!   `resolve_key` is unused because playback keys carry no root id; see
-//!   its docs.
+//! * Playback and library downloads resolve catalog track ids to files
+//!   through `stream::local_files`, against the live [`roots::RootRegistry`].
 //! * The runtime settings own roots and their path rules; the scheduler
 //!   resolves [`scheduler::InclusionRule`] values carried as parameters.
 //!
