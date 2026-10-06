@@ -5,7 +5,9 @@
 //! (see <https://acoustid.org/webservice>) and the response is folded into a
 //! recording match. Everything here fails soft: a dead or confused upstream
 //! records one degradation note and yields [`Outcome::Unavailable`], while a
-//! clean "no match" yields [`Outcome::Missing`].
+//! clean "no match" yields [`Outcome::Missing`]. Library identification uses
+//! [`AcoustIdClient::lookup_batch`], which sends up to twenty fingerprints
+//! per request.
 //!
 //! Pacing and degradation ride the shared core traits
 //! ([`Pacer`](super::limiter::Pacer), [`DegradationSink`](super::degradation::DegradationSink)):
@@ -183,6 +185,83 @@ impl<P: Pacer, S: DegradationSink> AcoustIdClient<P, S> {
         self.parse_lookup(payload)
     }
 
+    /// Look many fingerprints up, up to [`MAX_BATCH`] per request
+    /// (`batch=1`, AcoustID's limit). Every recording above
+    /// [`BATCH_MIN_SCORE`] is kept, with the releases AcoustID lists for
+    /// it, keyed by the query's index. One fingerprint often maps to
+    /// several duplicate MusicBrainz recordings (single and album
+    /// versions), so keeping only the best would read as "unsupported"
+    /// for the others (Lidarr keeps them all the same way). A request
+    /// that fails records a degradation and contributes nothing; the
+    /// other requests still count. An empty key never touches the wire.
+    pub async fn lookup_batch(
+        &self,
+        api_key: &str,
+        queries: &[BatchQuery<'_>],
+    ) -> std::collections::HashMap<usize, BatchMatch> {
+        let mut found = std::collections::HashMap::new();
+        if api_key.is_empty() {
+            return found;
+        }
+        for (chunk_index, chunk) in queries.chunks(MAX_BATCH).enumerate() {
+            let offset = chunk_index * MAX_BATCH;
+            let mut form: Vec<(String, String)> = vec![
+                ("client".to_owned(), api_key.to_owned()),
+                ("batch".to_owned(), "1".to_owned()),
+                ("meta".to_owned(), BATCH_META.to_owned()),
+            ];
+            for (index, query) in chunk.iter().enumerate() {
+                form.push((format!("duration.{index}"), query.duration_secs.to_string()));
+                form.push((format!("fingerprint.{index}"), query.fingerprint.to_owned()));
+            }
+            self.pacer.acquire().await;
+            let url = format!("{base}{LOOKUP_PATH}", base = self.base_url);
+            let response = match self
+                .http
+                .post(url)
+                .form(&form)
+                .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+                .send()
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    self.sink.record(
+                        SOURCE,
+                        format!("AcoustID batch lookup failed during transport: {error}"),
+                    );
+                    continue;
+                }
+            };
+            let status = response.status().as_u16();
+            if status != 200 {
+                self.sink
+                    .record(SOURCE, format!("AcoustID batch lookup answered {status}"));
+                continue;
+            }
+            let body = response.text().await.unwrap_or_default();
+            let payload = match serde_json::from_str::<serde_json::Value>(&body) {
+                Ok(payload) => payload,
+                Err(_) => {
+                    self.sink
+                        .record(SOURCE, "malformed AcoustID batch response".to_owned());
+                    continue;
+                }
+            };
+            if payload.get("status").and_then(serde_json::Value::as_str) != Some("ok") {
+                self.sink
+                    .record(SOURCE, "AcoustID batch lookup did not succeed".to_owned());
+                continue;
+            }
+            for (index, matched) in parse_batch(&payload) {
+                if index < chunk.len() {
+                    found.insert(offset + index, matched);
+                }
+            }
+        }
+        found
+    }
+
     /// Fold a lookup payload into an outcome, following v2 `_parse_response`
     /// branch for branch.
     fn parse_lookup(&self, payload: serde_json::Value) -> Outcome<FingerprintMatch> {
@@ -308,6 +387,98 @@ impl<P: Pacer, S: DegradationSink> AcoustIdClient<P, S> {
             message,
             recorded: false,
         }
+    }
+}
+
+/// Fingerprints per batch request: the AcoustID server's limit.
+pub const MAX_BATCH: usize = 20;
+/// Batch results keep every recording scoring above this (Lidarr).
+pub const BATCH_MIN_SCORE: f64 = 0.5;
+/// Batch lookups ask for recording and release ids only: small answers,
+/// and the release ids nominate candidates when the tags found none.
+pub const BATCH_META: &str = "recordingids releaseids";
+
+/// One fingerprint to look up.
+#[derive(Debug, Clone, Copy)]
+pub struct BatchQuery<'a> {
+    pub fingerprint: &'a str,
+    pub duration_secs: u64,
+}
+
+/// What AcoustID heard in one fingerprint.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BatchMatch {
+    /// Recording MBIDs, lowercase, deduplicated, best result first.
+    pub recording_ids: Vec<String>,
+    /// Release MBIDs those recordings appear on, lowercase, deduplicated.
+    pub release_ids: Vec<String>,
+}
+
+/// Read `fingerprints[].{index, results}`; unknown shapes are skipped.
+fn parse_batch(payload: &serde_json::Value) -> Vec<(usize, BatchMatch)> {
+    let Some(fingerprints) = payload
+        .get("fingerprints")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in fingerprints {
+        let Some(index) = entry.get("index").and_then(index_of) else {
+            continue;
+        };
+        let mut matched = BatchMatch::default();
+        let results = entry
+            .get("results")
+            .and_then(serde_json::Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        for result in results {
+            let score = result
+                .get("score")
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or(0.0);
+            if score <= BATCH_MIN_SCORE {
+                continue;
+            }
+            let recordings = result
+                .get("recordings")
+                .and_then(serde_json::Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            for recording in recordings {
+                push_id(&mut matched.recording_ids, recording.get("id"));
+                for release in recording
+                    .get("releases")
+                    .and_then(serde_json::Value::as_array)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default()
+                {
+                    push_id(&mut matched.release_ids, release.get("id"));
+                }
+            }
+        }
+        out.push((index, matched));
+    }
+    out
+}
+
+/// AcoustID echoes the index as a number or a numeric string.
+fn index_of(value: &serde_json::Value) -> Option<usize> {
+    match value {
+        serde_json::Value::Number(number) => number.as_u64().map(|index| index as usize),
+        serde_json::Value::String(text) => text.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+fn push_id(ids: &mut Vec<String>, value: Option<&serde_json::Value>) {
+    let Some(id) = value.and_then(serde_json::Value::as_str) else {
+        return;
+    };
+    let id = id.trim().to_ascii_lowercase();
+    if !id.is_empty() && !ids.contains(&id) {
+        ids.push(id);
     }
 }
 
