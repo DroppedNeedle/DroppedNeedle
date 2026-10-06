@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, type Mock } from 'vitest';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 
 vi.mock('@tanstack/svelte-query', () => ({
@@ -8,7 +8,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { get: vi.fn(), post: vi.fn() } }
+	api: { global: { get: vi.fn(), post: vi.fn(), v3: { GET: vi.fn(), POST: vi.fn() } } }
 }));
 
 vi.mock('../QueryClient', () => ({
@@ -19,7 +19,9 @@ import { api } from '$lib/api/client';
 import { getLibraryMembershipQueryOptions } from './LibraryQueries.svelte';
 
 const mockGet = vi.mocked(api.global.get);
-const mockPost = vi.mocked(api.global.post);
+const mockPost = vi.mocked(api.global.v3.POST) as unknown as Mock<
+	(...args: unknown[]) => Promise<unknown>
+>;
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -55,7 +57,7 @@ describe('library query endpoints', () => {
 		const opts = getLibraryMembershipQueryOptions('user-a', ['B', 'a', 'b']);
 		await callQueryFn(opts);
 		expect(mockPost).toHaveBeenCalledWith(
-			'/api/v1/library/membership',
+			'/api/v3/library/membership',
 			{ album_ids: ['a', 'b'] },
 			{ signal: expect.any(AbortSignal) }
 		);

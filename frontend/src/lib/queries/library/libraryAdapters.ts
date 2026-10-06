@@ -105,8 +105,6 @@ export function toArtistSummary(artist: ArtistView): LibraryArtistSummary {
 	};
 }
 
-// v3 stats count the catalog only; review and local-only totals and the
-// last scan time have no v3 source yet.
 export function toLibraryStats(stats: StatsView): LibraryStats {
 	return {
 		total_albums: stats.total_albums,
@@ -114,9 +112,9 @@ export function toLibraryStats(stats: StatsView): LibraryStats {
 		total_tracks: stats.total_tracks,
 		total_size_bytes: stats.total_size_bytes,
 		format_breakdown: stats.format_breakdown,
-		review_count: 0,
-		local_only_count: 0,
-		last_scan_at: null
+		review_count: stats.review_count,
+		local_only_count: stats.local_only_count,
+		last_scan_at: stats.last_scan_at ?? null
 	};
 }
 

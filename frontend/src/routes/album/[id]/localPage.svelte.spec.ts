@@ -227,6 +227,9 @@ vi.mock('$lib/queries/libraryContributions/LibraryContributionMutations.svelte',
 
 const blob = vi.hoisted(() => ({ download: vi.fn() }));
 vi.mock('$lib/utils/blobDownload', () => ({ downloadBlob: blob.download }));
+vi.mock('$lib/queries/local/DownloadAccessQuery.svelte', () => ({
+	getDownloadAccessQuery: () => ({ data: { allowed: true } })
+}));
 // AddToPlaylistModal always mounts (hidden) and creates its mutations at init;
 // keep them inert so no QueryClientProvider is needed.
 vi.mock('$lib/queries/playlists/PlaylistV3Mutations.svelte', () => ({

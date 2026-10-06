@@ -5,7 +5,7 @@ import {
 	queryOptions
 } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
-import { API, CACHE_TTL } from '$lib/constants';
+import { CACHE_TTL } from '$lib/constants';
 import { api } from '$lib/api/client';
 import {
 	LibraryQueryKeyFactory,
@@ -23,7 +23,7 @@ import {
 	toLibraryStats,
 	toNativeAlbums
 } from './libraryAdapters';
-import { toNativeTrack } from './libraryTracks';
+import { toAlbumStatus, toNativeTrack } from './libraryTracks';
 import type {
 	Album,
 	ArtistSort,
@@ -66,8 +66,8 @@ export const getLibraryMembershipQueryOptions = (
 			let ownedIds: string[] = [];
 			let requestedIds: string[] = [];
 			for (let offset = 0; offset < albumIds.length; offset += 500) {
-				const membership = await api.global.post<LibraryMembershipResponse>(
-					API.library.membership(),
+				const membership: LibraryMembershipResponse = await api.global.v3.POST(
+					LibraryV3Api.membership(),
 					{ album_ids: albumIds.slice(offset, offset + 500) },
 					{ signal }
 				);
@@ -109,12 +109,11 @@ export interface LibraryArtistsParams {
 
 const ARTISTS_PAGE_SIZE = 48;
 
-// v3 has no appearance-count order; that choice sorts by album count.
 function artistParams(params: LibraryArtistsParams, offset: number): LibraryV3ArtistsParams {
 	return {
 		limit: ARTISTS_PAGE_SIZE,
 		offset,
-		sort: params.sortBy === 'appearance_count' ? 'album_count' : params.sortBy,
+		sort: params.sortBy,
 		order: params.sortOrder,
 		q: params.q || undefined,
 		scope: params.scope === 'contributors' ? 'contributors' : 'album_artists'
@@ -360,12 +359,14 @@ export const getLibraryScanScheduleQuery = (enabled: () => boolean = () => true)
 		}
 	}));
 
-// The per-MusicBrainz-album library status has no v3 route yet.
+// What the library holds for one album, by MusicBrainz id or local id, with
+// each held track's quality tier against the upgrade cutoff.
 export const getLibraryAlbumStatusQueryOptions = (mbid: string) =>
 	queryOptions({
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
 		queryKey: LibraryQueryKeyFactory.album(mbid),
-		queryFn: ({ signal }) => api.global.get<LibraryAlbumStatus>(API.library.album(mbid), { signal })
+		queryFn: async ({ signal }): Promise<LibraryAlbumStatus> =>
+			toAlbumStatus(await api.global.v3.GET(LibraryV3Api.albumStatus(mbid), { signal }))
 	});
 
 export const getLibraryAlbumStatusQuery = (getMbid: Getter<string>) =>

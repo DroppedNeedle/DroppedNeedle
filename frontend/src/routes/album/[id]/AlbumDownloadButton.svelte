@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Download } from 'lucide-svelte';
-	import { API } from '$lib/constants';
+	import { LocalDownloadsApi } from '$lib/queries/local/LocalDownloadsApi';
 	import { downloadAlbumArchive } from '$lib/utils/downloadActions';
 	import { formatBytes } from '$lib/utils/formatting';
 
@@ -28,7 +28,7 @@
 	}: Props = $props();
 
 	const href = $derived(
-		albumId ? API.download.localAlbum(albumId) : mbid ? API.download.localAlbumByMbid(mbid) : null
+		albumId ? LocalDownloadsApi.album(albumId) : mbid ? LocalDownloadsApi.albumByMbid(mbid) : null
 	);
 	const caption = $derived(
 		totalSizeBytes && totalSizeBytes > 0 ? `ZIP · ${formatBytes(totalSizeBytes)}` : 'ZIP'

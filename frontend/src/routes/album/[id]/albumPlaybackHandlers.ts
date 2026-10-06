@@ -31,7 +31,7 @@ import { playerStore } from '$lib/stores/player.svelte';
 import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 import { ListPlus, ListStart, ListMusic, Download, Trash2 } from 'lucide-svelte';
 import { downloadAlbumArchive, downloadTrackFile } from '$lib/utils/downloadActions';
-import { API } from '$lib/constants';
+import { LocalDownloadsApi } from '$lib/queries/local/LocalDownloadsApi';
 import type { SourceCallbacks } from './albumPageState.svelte';
 
 function getPlaybackMeta(album: AlbumBasicInfo): PlaybackMeta {
@@ -230,7 +230,7 @@ export function getTrackContextMenuItems(
 			label: 'Download',
 			icon: Download,
 			onclick: () =>
-				void downloadTrackFile(API.download.localTrack(resolvedLocal.track_file_id), track.title)
+				void downloadTrackFile(LocalDownloadsApi.track(resolvedLocal.track_file_id), track.title)
 		});
 	}
 	if (resolvedLocal && onRemoveLocalFile) {
@@ -254,7 +254,7 @@ export function buildLocalAlbumDownloadCallback(
 	downloadAllowed: boolean
 ): (() => void) | undefined {
 	if (!mbid || !downloadAllowed) return undefined;
-	const url = API.download.localAlbumByMbid(mbid);
+	const url = LocalDownloadsApi.albumByMbid(mbid);
 	return () => void downloadAlbumArchive(url);
 }
 

@@ -15,7 +15,7 @@
 	import { downloadAlbumArchive } from '$lib/utils/downloadActions';
 	import { getDownloadAccessQuery } from '$lib/queries/local/DownloadAccessQuery.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { API } from '$lib/constants';
+	import { LocalDownloadsApi } from '$lib/queries/local/LocalDownloadsApi';
 
 	interface Props {
 		mbid: string;
@@ -68,7 +68,7 @@
 			items.push({
 				label: 'Download Album',
 				icon: Download,
-				onclick: () => void downloadAlbumArchive(API.download.localAlbumByMbid(mbid))
+				onclick: () => void downloadAlbumArchive(LocalDownloadsApi.albumByMbid(mbid))
 			});
 		}
 		return items;

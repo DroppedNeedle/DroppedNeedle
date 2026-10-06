@@ -6,7 +6,7 @@ import type { QueueItem } from '$lib/player/types';
 import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 import { ListPlus, ListStart, ListMusic, Download } from 'lucide-svelte';
 import { downloadAlbumArchive } from '$lib/utils/downloadActions';
-import { API } from '$lib/constants';
+import { LocalDownloadsApi } from '$lib/queries/local/LocalDownloadsApi';
 import type { LocalAlbumSummary } from '$lib/types';
 
 const PAGE_SIZE = 48;
@@ -369,7 +369,7 @@ export function createLibraryController<TAlbum>(
 					label: 'Download Album',
 					icon: Download,
 					onclick: () =>
-						void downloadAlbumArchive(API.download.localAlbumByMbid(localAlbum.musicbrainz_id))
+						void downloadAlbumArchive(LocalDownloadsApi.albumByMbid(localAlbum.musicbrainz_id))
 				});
 			}
 		}

@@ -136,8 +136,6 @@ export const YOUTUBE_PLAYER_ELEMENT_ID = 'yt-player-embed';
 // moves onto a typed v3 registry template.
 export const API = {
 	library: {
-		membership: () => '/api/v1/library/membership',
-		album: (mbid: string) => `/api/v1/library/albums/${mbid}/status`,
 		cachedAlbumArtwork: (albumId: string, coverVersion: number) =>
 			`/api/v1/library/albums/${encodeURIComponent(albumId)}/artwork/cached?v=${coverVersion}`,
 		rescanAlbum: (mbid: string) => `/api/v1/library/albums/${mbid}/rescan`,
@@ -287,8 +285,7 @@ export const API = {
 		discardIdentityPreparation: (jobId: string) =>
 			`/api/v1/library/management/identity-preparations/${encodeURIComponent(jobId)}/discard`,
 		scanDiagnostics: (runId: string) => `/api/v1/library/scan-runs/${runId}/diagnostics`,
-		removeAlbum: (mbid: string) => `/api/v1/library/album/${mbid}`,
-		resolveTracks: () => '/api/v1/library/resolve-tracks'
+		removeAlbum: (mbid: string) => `/api/v1/library/album/${mbid}`
 	},
 	libraryManagement: {
 		activationPreviews: () => '/api/v1/settings/library-management/activation-previews',
@@ -405,12 +402,6 @@ export const API = {
 	// profile + connections + spotify builders lived here until the profile
 	// seam migration moved them onto the v3 registry (their endpoints.ts
 	// files); only stragglers with out-of-scope consumers remain.
-	download: {
-		localTrack: (trackId: string) => `/api/v1/download/local/track/${trackId}`,
-		localAlbum: (albumId: string) => `/api/v1/download/local/album/${albumId}`,
-		localAlbumByMbid: (mbid: string) => `/api/v1/download/local/album/mbid/${mbid}`,
-		access: () => '/api/v1/download/access'
-	},
 	freeMusic: {
 		tasks: (all: boolean = false) => `/api/v1/free-music/tasks${all ? '?all=true' : ''}`,
 		remove: (id: string) => `/api/v1/free-music/tasks/${id}`,

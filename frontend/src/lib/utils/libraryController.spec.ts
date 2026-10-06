@@ -67,7 +67,7 @@ describe('library controller Download Album item', () => {
 		expect(download).toBeDefined();
 		download!.onclick();
 		expect(actions.downloadAlbum).toHaveBeenCalledTimes(1);
-		expect(actions.downloadAlbum).toHaveBeenCalledWith('/api/v1/download/local/album/mbid/mbid-1');
+		expect(actions.downloadAlbum).toHaveBeenCalledWith('/api/v3/download/local/album/mbid/mbid-1');
 	});
 
 	it('keeps the item when the permission bit is missing (fail-open)', () => {

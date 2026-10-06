@@ -16,7 +16,7 @@ export interface LibraryV3AlbumsParams {
 export interface LibraryV3ArtistsParams {
 	limit: number;
 	offset: number;
-	sort: 'name' | 'album_count' | 'date_added';
+	sort: 'name' | 'album_count' | 'appearance_count' | 'date_added';
 	order: 'asc' | 'desc';
 	q?: string;
 	scope?: 'all' | 'album_artists' | 'contributors';

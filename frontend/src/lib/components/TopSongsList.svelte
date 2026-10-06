@@ -1,8 +1,8 @@
 <script lang="ts">
 	import type { TopSong, ResolvedTrack } from '$lib/types';
 	import type { QueueItem, SourceType } from '$lib/player/types';
-	import { API } from '$lib/constants';
 	import { api } from '$lib/api/client';
+	import { LibraryV3Api } from '$lib/queries/library/LibraryV3Api';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { playerStore } from '$lib/stores/player.svelte';
 	import TrackRow from './TrackRow.svelte';
@@ -40,8 +40,8 @@
 
 		(async () => {
 			try {
-				const data = await api.global.post<{ items: ResolvedTrack[] }>(
-					API.library.resolveTracks(),
+				const data: { items: ResolvedTrack[] } = await api.global.v3.POST(
+					LibraryV3Api.resolveTracks(),
 					{
 						items: resolvable.map((s) => ({
 							release_group_mbid: s.release_group_mbid,

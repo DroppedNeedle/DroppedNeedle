@@ -9,7 +9,7 @@
 	import { fetchLocalAlbumMatch } from '$lib/queries/albumMatch';
 	import { Shuffle, Play, X, ListPlus, ListStart, ListMusic, Info, Download } from 'lucide-svelte';
 	import { goto } from '$app/navigation';
-	import { API } from '$lib/constants';
+	import { LocalDownloadsApi } from '$lib/queries/local/LocalDownloadsApi';
 	import { gatewayStreamUrl } from '$lib/player/playbackGateway';
 	import { downloadAlbumArchive, downloadTrackFile } from '$lib/utils/downloadActions';
 	import { playerStore } from '$lib/stores/player.svelte';
@@ -437,7 +437,7 @@
 					label: 'Download Album',
 					icon: Download,
 					onclick: () =>
-						void downloadAlbumArchive(API.download.localAlbumByMbid(localAlbum.musicbrainz_id))
+						void downloadAlbumArchive(LocalDownloadsApi.albumByMbid(localAlbum.musicbrainz_id))
 				});
 			}
 		}
@@ -478,7 +478,7 @@
 					label: 'Download',
 					icon: Download,
 					onclick: () =>
-						void downloadTrackFile(API.download.localTrack(track.track_file_id), track.title)
+						void downloadTrackFile(LocalDownloadsApi.track(track.track_file_id), track.title)
 				});
 			}
 		}

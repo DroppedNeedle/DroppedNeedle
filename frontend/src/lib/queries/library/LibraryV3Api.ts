@@ -35,6 +35,10 @@ export const LibraryV3Api = {
 			}
 		}),
 	albumDetail: (albumId: string) => v3('/api/v3/library/albums/{id}', { path: { id: albumId } }),
+	albumStatus: (albumId: string) =>
+		v3('/api/v3/library/albums/{id}/status', { path: { id: albumId } }),
+	membership: () => v3('/api/v3/library/membership'),
+	resolveTracks: () => v3('/api/v3/library/resolve-tracks'),
 	albumCopies: (albumId: string) =>
 		v3('/api/v3/library/albums/{id}/copies', { path: { id: albumId } }),
 	albumTracks: (albumId: string, params: LibraryV3PageParams) =>

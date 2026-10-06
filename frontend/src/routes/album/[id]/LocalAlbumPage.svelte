@@ -18,6 +18,7 @@
 	import AlbumOrganizationDialog from '$lib/components/library/AlbumOrganizationDialog.svelte';
 	import LocalAlbumTrackList from '$lib/components/library/LocalAlbumTrackList.svelte';
 	import AlbumDownloadButton from './AlbumDownloadButton.svelte';
+	import { getDownloadAccessQuery } from '$lib/queries/local/DownloadAccessQuery.svelte';
 	import AddToPlaylistModal from '$lib/components/AddToPlaylistModal.svelte';
 	import type { MenuItem } from '$lib/components/ContextMenu.svelte';
 	import { getTrackContextMenuItems } from './albumPlaybackHandlers';
@@ -56,6 +57,11 @@
 	const tracksQuery = getLibraryAlbumTracksQuery(() => albumId);
 	const album = $derived(albumQuery.data);
 	const tracks = $derived(tracksQuery.data?.items ?? []);
+	// The download buttons follow the admin's "Library downloads" setting.
+	const downloadAccessQuery = getDownloadAccessQuery(() => authStore.user?.id);
+	const downloadAllowed = $derived(
+		album?.download_allowed !== false && downloadAccessQuery.data?.allowed !== false
+	);
 	const editionsQuery = getAlbumEditionsQuery(
 		() => authStore.user?.id,
 		() => album?.musicbrainz_release_group_id ?? '',
@@ -164,7 +170,7 @@
 			null,
 			null,
 			playlistModal,
-			album?.download_allowed !== false
+			downloadAllowed
 		);
 	}
 
@@ -301,7 +307,7 @@
 						mbid={null}
 						totalSizeBytes={album.total_size_bytes}
 						trackCount={tracks.length}
-						downloadAllowed={album.download_allowed !== false}
+						{downloadAllowed}
 					/>
 					{#if authStore.isTrusted && album.album_identity_state === 'local_only'}
 						<button
