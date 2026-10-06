@@ -38,8 +38,11 @@ const queryClientRules = [
 // raw fetch anywhere else skips the contract check, so both are errors outside
 // the transport. A path literal is allowed only as the template argument of
 // v3() and as a type argument naming a contract path. Module specifiers such
-// as '$lib/api/client' are not paths and do not match.
-const API_PATH = '/(^|[^\\w$.])\\/api\\//';
+// as '$lib/api/client' are not paths and do not match; a full URL to a
+// versioned API path ('https://host/api/v3/...') does, while third-party
+// links such as 'https://www.last.fm/api/account' do not. Event streams, beacons and XHR are server
+// channels too, so they stay in the transport as well.
+const API_PATH = '/(^|[^\\w$.]|:\\/\\/[^/]*)\\/api\\/v\\d+\\//';
 const transportRules = [
 	{
 		selector: `Literal[value=${API_PATH}]:not(CallExpression[callee.name='v3'] > Literal.arguments):not(TSLiteralType > Literal)`,
@@ -52,13 +55,29 @@ const transportRules = [
 			'API paths belong in a v3() registry template, or on the waiting-on-backend list in eslint.config.js.'
 	},
 	{
-		selector: "CallExpression[callee.name='fetch']",
-		message: 'Use the api client from $lib/api/client instead of a raw fetch.'
+		// static attribute values in Svelte markup (href="/api/...")
+		selector: `SvelteLiteral[value=${API_PATH}]`,
+		message:
+			'API paths belong in a v3() registry template, or on the waiting-on-backend list in eslint.config.js.'
 	},
 	{
+		// fetch by any route: called, aliased, destructured or passed along
 		selector:
-			"CallExpression[callee.object.name=/^(window|globalThis|self)$/][callee.property.name='fetch']",
-		message: 'Use the api client from $lib/api/client instead of a raw fetch.'
+			"Identifier[name='fetch']:not(MemberExpression[computed=false] > Identifier.property):not(Property > Identifier.key):not(TSPropertySignature > Identifier.key):not(MethodDefinition > Identifier.key)",
+		message: 'Use the api client from $lib/api/client instead of fetch.'
+	},
+	{
+		// window.fetch, globalThis.fetch, a load event's event.fetch
+		selector: "MemberExpression[computed=false][property.name='fetch']",
+		message: 'Use the api client from $lib/api/client instead of fetch.'
+	},
+	{
+		selector: 'NewExpression[callee.name=/^(EventSource|XMLHttpRequest)$/]',
+		message: 'Open server channels through $lib/api (openEventStream) instead.'
+	},
+	{
+		selector: "MemberExpression[computed=false][property.name='sendBeacon']",
+		message: 'Send beacons through $lib/api/channels (sendJsonBeacon) instead.'
 	}
 ];
 

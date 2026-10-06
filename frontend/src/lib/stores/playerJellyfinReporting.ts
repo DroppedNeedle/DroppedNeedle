@@ -1,3 +1,4 @@
+import { beaconAvailable, sendJsonBeacon } from '$lib/api/channels';
 import type { QueueItem } from '$lib/player/types';
 import { isPlexScrobbleEnabled } from '$lib/player/plexPlaybackApi';
 
@@ -64,7 +65,7 @@ export function createProgressReporter(
 }
 
 function beacon(url: string, payload: Record<string, unknown>): void {
-	navigator.sendBeacon(url, new Blob([JSON.stringify(payload)], { type: 'application/json' }));
+	sendJsonBeacon(url, payload);
 }
 
 function scrobbleBodyFrom(item: QueueItem): Record<string, unknown> {
@@ -88,7 +89,7 @@ export function createBeforeUnloadHandler(
 	scrobbleUrl: string
 ): () => void {
 	return () => {
-		if (typeof navigator === 'undefined' || typeof navigator.sendBeacon !== 'function') return;
+		if (!beaconAvailable()) return;
 		const { jellyfinItem, currentItem, progress } = getState();
 
 		if (jellyfinItem?.playSessionId) {

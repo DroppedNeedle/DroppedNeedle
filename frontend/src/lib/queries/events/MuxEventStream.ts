@@ -1,4 +1,4 @@
-import { getApiUrl } from '$lib/api/api-utils';
+import { openEventStream } from '$lib/api/channels';
 import { API } from '$lib/constants';
 
 export type MuxEventListener = (event: Event) => void;
@@ -45,7 +45,7 @@ export function createMuxEventStream(streamUrl: string = API.events.stream()): M
 		if (!active) return;
 		if (typeof document !== 'undefined' && document.hidden) return;
 		closeSource();
-		const next = new EventSource(getApiUrl(streamUrl));
+		const next = openEventStream(streamUrl);
 		next.onopen = () => notifyConnect();
 		attachAll(next);
 		source = next;

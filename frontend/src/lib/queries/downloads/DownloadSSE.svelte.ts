@@ -1,4 +1,4 @@
-import { getApiUrl } from '$lib/api/api-utils';
+import { openEventStream } from '$lib/api/channels';
 import { API } from '$lib/constants';
 import type { DownloadProgress, DownloadSourceUpdate } from '$lib/types';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
@@ -212,7 +212,7 @@ export function createDownloadStream() {
 		state = { progress: null, status: null, source: null, done: false };
 		const scope = getDownloadScope();
 		streamScope = scope;
-		source = new EventSource(getApiUrl(API.downloads.stream(taskId)));
+		source = openEventStream(API.downloads.stream(taskId));
 		source.addEventListener('status', (e) => {
 			if (scope !== getDownloadScope()) return;
 			const d = parse(e);
