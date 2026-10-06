@@ -1758,6 +1758,8 @@ export interface LibraryContribution {
 	input_is_current: boolean;
 	validation: ContributionValidationIssue[];
 	next_actions: ContributionNextAction[];
+	/** Why a needs-review contribution stopped: code, sentence, next step. */
+	review_reason?: { code: string; message: string; action: string } | null;
 }
 
 export interface NativeAlbumsResponse {

@@ -2,7 +2,7 @@ import { createMutation } from '@tanstack/svelte-query';
 import { goto } from '$app/navigation';
 import { withBasePath } from '$lib/utils/basePath';
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
+import { LibraryContributionApi } from './LibraryContributionApi';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { toastStore } from '$lib/stores/toast';
 import type {
@@ -31,26 +31,43 @@ const saveContribution = async (contribution: LibraryContribution): Promise<void
 	});
 };
 
+// The server says what went wrong and what to do about it
+// (`details.action`); show both after the short summary.
+const failureMessage = (summary: string, error: unknown): string => {
+	if (!(error instanceof Error) || !error.message) return summary;
+	const details = (error as { details?: unknown }).details;
+	const action =
+		details && typeof details === 'object' && 'action' in details
+			? String((details as { action: unknown }).action)
+			: '';
+	return [`${summary}: ${error.message}`, action].filter(Boolean).join(' ');
+};
+
 const refreshAfterMutationError = async (
 	contributionId: string,
-	message: string
+	message: string,
+	error: unknown
 ): Promise<void> => {
 	await invalidateQueriesWithPersister({
 		queryKey: LibraryContributionQueryKeyFactory.detail(authStore.user?.id, contributionId)
 	});
-	toastStore.show({ message, type: 'error' });
+	toastStore.show({ message: failureMessage(message, error), type: 'error' });
 };
 
 export const createLibraryContributionMutation = () =>
 	createMutation(() => ({
 		mutationFn: (albumId: string) =>
-			api.global.post<LibraryContribution>(API.library.createContribution(albumId), {}),
+			api.global.post<LibraryContribution>(LibraryContributionApi.create(albumId), {}),
 		onSuccess: async (contribution) => {
 			await saveContribution(contribution);
 			toastStore.show({ message: 'Contribution draft ready', type: 'success' });
 			await goto(withBasePath(`/library/contributions/${contribution.id}`));
 		},
-		onError: () => toastStore.show({ message: "Couldn't start the contribution", type: 'error' })
+		onError: (error) =>
+			toastStore.show({
+				message: failureMessage("Couldn't start the contribution", error),
+				type: 'error'
+			})
 	}));
 
 export const updateLibraryContributionMutation = () =>
@@ -60,7 +77,7 @@ export const updateLibraryContributionMutation = () =>
 			expectedRowRevision: number;
 			draft: ReleaseDraft;
 		}) =>
-			api.global.put<LibraryContribution>(API.library.contributionDraft(input.contributionId), {
+			api.global.put<LibraryContribution>(LibraryContributionApi.draft(input.contributionId), {
 				expected_row_revision: input.expectedRowRevision,
 				draft: input.draft
 			}),
@@ -68,8 +85,8 @@ export const updateLibraryContributionMutation = () =>
 			await saveContribution(contribution);
 			toastStore.show({ message: 'Draft saved', type: 'success' });
 		},
-		onError: async (_error, input) =>
-			refreshAfterMutationError(input.contributionId, "Couldn't save the draft")
+		onError: async (error, input) =>
+			refreshAfterMutationError(input.contributionId, "Couldn't save the draft", error)
 	}));
 
 const revisionMutation = (
@@ -81,8 +98,8 @@ const revisionMutation = (
 		mutationFn: (input: { contributionId: string; expectedRowRevision: number }) => {
 			const url =
 				action === 'rebuild'
-					? API.library.rebuildContribution(input.contributionId)
-					: API.library.cancelContribution(input.contributionId);
+					? LibraryContributionApi.rebuild(input.contributionId)
+					: LibraryContributionApi.cancel(input.contributionId);
 			return api.global.post<LibraryContribution>(url, {
 				expected_row_revision: input.expectedRowRevision
 			});
@@ -99,7 +116,8 @@ const revisionMutation = (
 				});
 			}
 		},
-		onError: async (_error, input) => refreshAfterMutationError(input.contributionId, errorMessage)
+		onError: async (error, input) =>
+			refreshAfterMutationError(input.contributionId, errorMessage, error)
 	}));
 
 export const rebuildLibraryContributionMutation = () =>
@@ -112,10 +130,11 @@ export const searchDiscogsReleasesMutation = () =>
 	createMutation(() => ({
 		mutationFn: (input: { contributionId: string; query: string }) =>
 			api.global.post<{ results: DiscogsReleaseCandidate[] }>(
-				API.library.searchDiscogsReleases(input.contributionId),
+				LibraryContributionApi.searchDiscogs(input.contributionId),
 				{ query: input.query || null }
 			),
-		onError: () => toastStore.show({ message: "Couldn't search Discogs", type: 'error' })
+		onError: (error) =>
+			toastStore.show({ message: failureMessage("Couldn't search Discogs", error), type: 'error' })
 	}));
 
 export const selectDiscogsReleaseMutation = () =>
@@ -125,30 +144,36 @@ export const selectDiscogsReleaseMutation = () =>
 			expectedRowRevision: number;
 			releaseIdOrUrl: string;
 		}) =>
-			api.global.post<LibraryContribution>(API.library.selectDiscogsRelease(input.contributionId), {
-				expected_row_revision: input.expectedRowRevision,
-				release_id_or_url: input.releaseIdOrUrl
-			}),
+			api.global.post<LibraryContribution>(
+				LibraryContributionApi.selectDiscogs(input.contributionId),
+				{
+					expected_row_revision: input.expectedRowRevision,
+					release_id_or_url: input.releaseIdOrUrl
+				}
+			),
 		onSuccess: async (contribution) => {
 			await saveContribution(contribution);
 			toastStore.show({ message: 'Discogs release selected', type: 'success' });
 		},
-		onError: async (_error, input) =>
-			refreshAfterMutationError(input.contributionId, "Couldn't select that Discogs release")
+		onError: async (error, input) =>
+			refreshAfterMutationError(input.contributionId, "Couldn't select that Discogs release", error)
 	}));
 
 export const removeDiscogsReleaseMutation = () =>
 	createMutation(() => ({
 		mutationFn: (input: { contributionId: string; expectedRowRevision: number }) =>
-			api.global.post<LibraryContribution>(API.library.removeDiscogsRelease(input.contributionId), {
-				expected_row_revision: input.expectedRowRevision
-			}),
+			api.global.post<LibraryContribution>(
+				LibraryContributionApi.removeDiscogs(input.contributionId),
+				{
+					expected_row_revision: input.expectedRowRevision
+				}
+			),
 		onSuccess: async (contribution) => {
 			await saveContribution(contribution);
 			toastStore.show({ message: 'Discogs source removed', type: 'success' });
 		},
-		onError: async (_error, input) =>
-			refreshAfterMutationError(input.contributionId, "Couldn't remove the Discogs source")
+		onError: async (error, input) =>
+			refreshAfterMutationError(input.contributionId, "Couldn't remove the Discogs source", error)
 	}));
 
 export const checkMusicBrainzDuplicatesMutation = () =>
@@ -159,7 +184,7 @@ export const checkMusicBrainzDuplicatesMutation = () =>
 			differentEditionConfirmed: boolean;
 		}) =>
 			api.global.post<LibraryContribution>(
-				API.library.checkContributionDuplicates(input.contributionId),
+				LibraryContributionApi.checkDuplicates(input.contributionId),
 				{
 					expected_row_revision: input.expectedRowRevision,
 					different_edition_confirmed: input.differentEditionConfirmed
@@ -169,8 +194,12 @@ export const checkMusicBrainzDuplicatesMutation = () =>
 			await saveContribution(contribution);
 			toastStore.show({ message: 'MusicBrainz check complete', type: 'success' });
 		},
-		onError: async (_error, input) =>
-			refreshAfterMutationError(input.contributionId, "Couldn't check MusicBrainz for duplicates")
+		onError: async (error, input) =>
+			refreshAfterMutationError(
+				input.contributionId,
+				"Couldn't check MusicBrainz for duplicates",
+				error
+			)
 	}));
 
 export const attachExistingMusicBrainzReleaseMutation = () =>
@@ -181,7 +210,7 @@ export const attachExistingMusicBrainzReleaseMutation = () =>
 			releaseMbid: string;
 		}) =>
 			api.global.post<LibraryContribution>(
-				API.library.attachContributionRelease(input.contributionId),
+				LibraryContributionApi.attachRelease(input.contributionId),
 				{
 					expected_row_revision: input.expectedRowRevision,
 					release_mbid: input.releaseMbid
@@ -192,14 +221,18 @@ export const attachExistingMusicBrainzReleaseMutation = () =>
 			await invalidateLibraryCatalog();
 			toastStore.show({ message: 'Album linked to MusicBrainz', type: 'success' });
 		},
-		onError: async (_error, input) =>
-			refreshAfterMutationError(input.contributionId, "Couldn't link that MusicBrainz release")
+		onError: async (error, input) =>
+			refreshAfterMutationError(
+				input.contributionId,
+				"Couldn't link that MusicBrainz release",
+				error
+			)
 	}));
 
 export const createMusicBrainzSeedMutation = () =>
 	createMutation(() => ({
 		mutationFn: (input: { contributionId: string; expectedRowRevision: number }) =>
-			api.global.post<MusicBrainzSeed>(API.library.createContributionSeed(input.contributionId), {
+			api.global.post<MusicBrainzSeed>(LibraryContributionApi.seed(input.contributionId), {
 				expected_row_revision: input.expectedRowRevision
 			}),
 		onSuccess: async (seed, input) => {
@@ -210,8 +243,8 @@ export const createMusicBrainzSeedMutation = () =>
 				)
 			});
 		},
-		onError: async (_error, input) =>
-			refreshAfterMutationError(input.contributionId, "Couldn't open the MusicBrainz editor")
+		onError: async (error, input) =>
+			refreshAfterMutationError(input.contributionId, "Couldn't open the MusicBrainz editor", error)
 	}));
 
 export const recordMusicBrainzResultMutation = () =>
@@ -223,7 +256,7 @@ export const recordMusicBrainzResultMutation = () =>
 			replaceExistingResult: boolean;
 		}) =>
 			api.global.put<LibraryContribution>(
-				API.library.recordContributionResult(input.contributionId),
+				LibraryContributionApi.recordResult(input.contributionId),
 				{
 					expected_row_revision: input.expectedRowRevision,
 					release_id_or_url: input.releaseIdOrUrl,
@@ -234,21 +267,29 @@ export const recordMusicBrainzResultMutation = () =>
 			await saveContribution(contribution);
 			toastStore.show({ message: 'MusicBrainz result queued for verification', type: 'success' });
 		},
-		onError: async (_error, input) =>
-			refreshAfterMutationError(input.contributionId, "Couldn't record that MusicBrainz release")
+		onError: async (error, input) =>
+			refreshAfterMutationError(
+				input.contributionId,
+				"Couldn't record that MusicBrainz release",
+				error
+			)
 	}));
 
 export const retryMusicBrainzVerificationMutation = () =>
 	createMutation(() => ({
 		mutationFn: (input: { contributionId: string; expectedRowRevision: number }) =>
 			api.global.post<LibraryContribution>(
-				API.library.retryContributionVerification(input.contributionId),
+				LibraryContributionApi.retryVerification(input.contributionId),
 				{ expected_row_revision: input.expectedRowRevision }
 			),
 		onSuccess: async (contribution) => {
 			await saveContribution(contribution);
 			toastStore.show({ message: 'Verification queued again', type: 'success' });
 		},
-		onError: async (_error, input) =>
-			refreshAfterMutationError(input.contributionId, "Couldn't retry MusicBrainz verification")
+		onError: async (error, input) =>
+			refreshAfterMutationError(
+				input.contributionId,
+				"Couldn't retry MusicBrainz verification",
+				error
+			)
 	}));

@@ -1,7 +1,7 @@
 import { createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
+import { LibraryContributionApi } from './LibraryContributionApi';
 import { authStore } from '$lib/stores/authStore.svelte';
 import type { LibraryContribution } from '$lib/types';
 import { LibraryContributionQueryKeyFactory } from './LibraryContributionQueryKeyFactory';
@@ -14,7 +14,7 @@ export const getLibraryContributionQuery = (getContributionId: Getter<string>) =
 			queryKey: LibraryContributionQueryKeyFactory.detail(authStore.user?.id, contributionId),
 			queryFn: async ({ signal }) => {
 				const contribution = await api.global.get<LibraryContribution>(
-					API.library.contribution(contributionId),
+					LibraryContributionApi.detail(contributionId),
 					{
 						signal
 					}

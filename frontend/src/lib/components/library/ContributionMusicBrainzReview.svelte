@@ -260,10 +260,17 @@
 				<TriangleAlert class="mt-0.5 h-5 w-5 shrink-0 text-warning" />
 				<div class="min-w-0 flex-1">
 					<h3 class="font-bold">The returned release needs review</h3>
-					<p class="mt-1 text-sm text-base-content/65">
-						Nothing was attached. The release was unavailable for too long or did not pass the
-						current album evidence checks.
-					</p>
+					{#if contribution.review_reason}
+						<p class="mt-1 text-sm text-base-content/65">
+							Nothing was attached. {contribution.review_reason.message}
+						</p>
+						<p class="mt-1 text-sm text-base-content/65">{contribution.review_reason.action}</p>
+					{:else}
+						<p class="mt-1 text-sm text-base-content/65">
+							Nothing was attached. The release was unavailable for too long or did not pass the
+							current album evidence checks.
+						</p>
+					{/if}
 					<a
 						class="link link-primary mt-2 inline-flex items-center gap-1 text-sm font-semibold"
 						href={`https://musicbrainz.org/release/${contribution.result_release_mbid}`}

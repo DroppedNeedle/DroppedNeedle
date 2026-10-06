@@ -46,7 +46,7 @@ describe('library contribution queries', () => {
 		};
 		const signal = new AbortController().signal;
 		await query.queryFn({ signal });
-		expect(api.global.get).toHaveBeenCalledWith('/api/v1/library/contributions/draft-1', {
+		expect(api.global.get).toHaveBeenCalledWith('/api/v3/library/contributions/draft-1', {
 			signal
 		});
 		expect(query.refetchInterval({ state: { data: { state: 'seeded' } } })).toBe(2_000);
