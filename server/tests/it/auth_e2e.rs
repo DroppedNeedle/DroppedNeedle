@@ -1184,6 +1184,8 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     // scrobble settings admit any signed-in user.
     ("GET", "/api/v3/plugins", Posture::Admin),
     ("POST", "/api/v3/plugins/install", Posture::Admin),
+    ("POST", "/api/v3/plugins/install/preview", Posture::Admin),
+    ("POST", "/api/v3/plugins/{name}/update", Posture::Admin),
     ("PUT", "/api/v3/plugins/{name}", Posture::Admin),
     ("DELETE", "/api/v3/plugins/{name}", Posture::Admin),
     ("GET", "/api/v3/plugins/sources", Posture::User),
