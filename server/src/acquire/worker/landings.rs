@@ -20,8 +20,9 @@ use crate::acquire::downloads::quarantine::QuarantineReason;
 use crate::acquire::downloads::sources::SourceHandle;
 use crate::acquire::downloads::state::{AttemptState, TaskStatus};
 use crate::acquire::downloads::store::{AttemptRow, TaskRow};
+use crate::acquire::landing::reasons::explain;
 use crate::acquire::landing::specs::Disposition;
-use crate::acquire::landing::{LandingReport, LandingResult, UPGRADE_PENDING};
+use crate::acquire::landing::{LandingReport, LandingResult};
 
 /// Passes a landing may wait on files that are not ready before the task
 /// fails (about five minutes at the 30-second cadence).
@@ -148,10 +149,21 @@ impl DownloadWorker {
         let Some(slot) = self.claim(&task.id) else {
             return true;
         };
+        // With the slot held nothing else can land this task; only a task
+        // still `processing` is an interrupted landing (one that settled
+        // since the pass read it is left alone).
+        let task = match self.journal.read_task(&task.id).await {
+            Ok(Some(fresh)) if fresh.status == TaskStatus::Processing => fresh,
+            Ok(_) => return true,
+            Err(error) => {
+                tracing::warn!(task_id = %task.id, %error, "task re-read failed; resume skipped");
+                return true;
+            }
+        };
         tracing::info!(task_id = %task.id, "resuming an interrupted landing");
         self.spawn_landing(
             slot,
-            task.clone(),
+            task,
             attempt.row.clone(),
             source,
             handle,
@@ -201,11 +213,12 @@ impl DownloadWorker {
         let paths = match source.landed_paths(handle).await {
             Ok(paths) => paths,
             Err(error) => {
-                let detail = format!("the download client could not list the files: {error}");
+                tracing::warn!(task_id = %task.id, %error, "download client could not list the landed files");
+                let detail = explain("files_unlisted").message;
                 match origin {
-                    Origin::Poll => self.wait_or_fail(task, attempt, &detail, now).await,
+                    Origin::Poll => self.wait_or_fail(task, attempt, detail, now).await,
                     Origin::Reimport { was_partial } => {
-                        self.settle_failed(task, attempt, &detail, true, was_partial, now)
+                        self.settle_failed(task, attempt, detail, true, was_partial, now)
                             .await;
                     }
                 }
@@ -240,12 +253,14 @@ impl DownloadWorker {
                 self.settle(task, &attempt.id, TaskStatus::Completed, None, false, now)
                     .await;
             }
-            LandingResult::Held { code, detail } if code == UPGRADE_PENDING => {
-                // Better files for an album the library holds: kept for the
-                // replacement step, never a reason to download again.
-                let error = format!("Held for review: {detail}");
-                self.settle_failed(task, attempt, &error, false, was_partial, now)
-                    .await;
+            LandingResult::Imported { complete: false } | LandingResult::Held { .. }
+                if report.local_only =>
+            {
+                // Short only for reasons on our side (a destination already
+                // taken, an upgrade waiting): the source did its job, so it
+                // is neither blocklisted nor replaced (v2's local faults).
+                // A task that imported anything before stays partial.
+                self.settle_short(task, attempt, &report.result, now).await;
             }
             LandingResult::Imported { complete: false } | LandingResult::Held { .. } => {
                 if origin == Origin::Poll && self.can_fail_over(task).await {
@@ -282,14 +297,23 @@ impl DownloadWorker {
                     .await;
                 }
                 (Disposition::Temporary, Origin::Poll) => {
-                    self.wait_or_fail(task, attempt, &rejection.detail, now)
+                    tracing::info!(task_id = %task.id, code = rejection.code, detail = %rejection.detail, "landing deferred");
+                    self.wait_or_fail(task, attempt, explain(rejection.code).message, now)
                         .await;
                 }
                 _ => {
                     // Our own fault, or a reimport that cannot fail over:
                     // keep the files for another try.
-                    self.settle_failed(task, attempt, &rejection.detail, true, was_partial, now)
-                        .await;
+                    tracing::info!(task_id = %task.id, code = rejection.code, detail = %rejection.detail, "landing kept for retry");
+                    self.settle_failed(
+                        task,
+                        attempt,
+                        explain(rejection.code).message,
+                        true,
+                        was_partial,
+                        now,
+                    )
+                    .await;
                 }
             },
         }
@@ -313,7 +337,9 @@ impl DownloadWorker {
             .await
             .unwrap_or_default();
         let held = match result {
-            LandingResult::Held { detail, .. } => Some(format!("Held for review: {detail}")),
+            LandingResult::Held { code, .. } => {
+                Some(format!("Held for review: {}", explain(code).message))
+            }
             _ => None,
         };
         if history.files_imported > 0 {
@@ -327,7 +353,7 @@ impl DownloadWorker {
             )
             .await;
         } else {
-            let error = held.unwrap_or_else(|| "no track could be imported".to_owned());
+            let error = held.unwrap_or_else(|| explain("no_tracks").message.to_owned());
             self.settle(
                 task,
                 &attempt.id,

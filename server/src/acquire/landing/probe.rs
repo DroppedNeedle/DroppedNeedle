@@ -69,12 +69,14 @@ impl Landing {
     }
 }
 
-/// Walk and read the reported paths. Blocking.
-pub fn probe(paths: &[PathBuf]) -> Landing {
+/// Walk and read the reported paths, never entering `libraries` (the
+/// canonical library folders): a job folder that contains the library
+/// must not pull library files into an import. Blocking.
+pub fn probe(paths: &[PathBuf], libraries: &[PathBuf]) -> Landing {
     let mut files = Vec::new();
     let mut landing = Landing::default();
     for path in paths {
-        collect(path, 0, &mut files, &mut landing);
+        collect(path, 0, libraries, &mut files, &mut landing);
     }
     files.sort();
     files.dedup();
@@ -99,7 +101,17 @@ pub fn probe(paths: &[PathBuf]) -> Landing {
     landing
 }
 
-fn collect(path: &Path, depth: usize, files: &mut Vec<PathBuf>, landing: &mut Landing) {
+fn collect(
+    path: &Path,
+    depth: usize,
+    libraries: &[PathBuf],
+    files: &mut Vec<PathBuf>,
+    landing: &mut Landing,
+) {
+    if libraries.iter().any(|dir| path.starts_with(dir)) {
+        tracing::warn!(path = %path.display(), "landing probe skips a library folder");
+        return;
+    }
     let meta = match std::fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(_) => {
@@ -129,7 +141,7 @@ fn collect(path: &Path, depth: usize, files: &mut Vec<PathBuf>, landing: &mut La
         if name.to_string_lossy().starts_with('.') {
             continue;
         }
-        collect(&entry.path(), depth + 1, files, landing);
+        collect(&entry.path(), depth + 1, libraries, files, landing);
     }
 }
 

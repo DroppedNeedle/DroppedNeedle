@@ -12,6 +12,9 @@
 -- or a resumed landing adds a row instead of rewriting the old one.
 -- missing_positions lists the release's [disc, track] positions still
 -- missing after a landing, so a failover asks the next source only for those.
+-- reason_text and reason_action are the plain sentence and the suggested
+-- action for reason_code, on decisions and on held files alike, so the views
+-- never show internal error text.
 --
 -- No down migration. Rollback is restoring a pre-upgrade backup.
 
@@ -22,6 +25,8 @@ CREATE TABLE IF NOT EXISTS download_import_decisions (
     outcome TEXT NOT NULL
         CHECK(outcome IN ('imported','partial','held','rejected','deferred')),
     reason_code TEXT,
+    reason_text TEXT,
+    reason_action TEXT,
     detail TEXT,
     release_mbid TEXT,
     distance REAL,
@@ -34,6 +39,9 @@ CREATE TABLE IF NOT EXISTS download_import_decisions (
 );
 CREATE INDEX IF NOT EXISTS idx_download_import_decisions_task
     ON download_import_decisions(task_id, decided_at DESC);
+
+ALTER TABLE held_imports ADD COLUMN reason_text TEXT;
+ALTER TABLE held_imports ADD COLUMN reason_action TEXT;
 
 -- Migration high-water mark.
 PRAGMA user_version = 25;

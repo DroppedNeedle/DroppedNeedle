@@ -33,6 +33,7 @@ pub mod matching;
 pub mod ports;
 pub mod probe;
 pub mod quality;
+pub mod reasons;
 pub mod specs;
 
 use std::collections::{HashMap, HashSet};
@@ -56,6 +57,46 @@ pub type LibrarySlot = Arc<OnceLock<Arc<dyn LandingLibrary>>>;
 /// Hold code for better files of an album the library already holds:
 /// kept until the upgrade replaces the old files.
 pub const UPGRADE_PENDING: &str = "upgrade_pending";
+
+/// One file or folder a download client reported, with the byte size it
+/// advertised for that exact file when it did (Soulseek does).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reported {
+    pub path: PathBuf,
+    pub size: Option<u64>,
+}
+
+impl Reported {
+    /// A path with no advertised size.
+    pub fn path(path: PathBuf) -> Self {
+        Self { path, size: None }
+    }
+}
+
+/// `path` with `.` and `..` resolved by name alone, for paths that do not
+/// exist (yet) and so cannot be canonicalized. `None` for a relative path
+/// or one whose `..` climbs above the root.
+pub fn lexical_absolute(path: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+    if !path.is_absolute() {
+        return None;
+    }
+    let mut resolved = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                resolved.push(component.as_os_str());
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !resolved.pop() {
+                    return None;
+                }
+            }
+        }
+    }
+    Some(resolved)
+}
 
 /// Settings a landing reads, resolved per landing.
 #[derive(Debug, Clone)]
@@ -95,6 +136,16 @@ pub struct LandingReport {
     pub result: LandingResult,
     pub files_imported: usize,
     pub files_held: usize,
+    /// The landing fell short only for reasons on our side (a destination
+    /// already taken, an upgrade waiting): another source would not help,
+    /// so the task settles without blocklisting this one.
+    pub local_only: bool,
+}
+
+/// Hold codes that say nothing against the source: the files were fine,
+/// the library side could not take them yet.
+fn is_local_hold(code: &str) -> bool {
+    matches!(code, "target_occupied" | UPGRADE_PENDING)
 }
 
 /// The landing service the worker calls.
@@ -111,6 +162,8 @@ struct Acted {
     imported: usize,
     held: usize,
     missing: Vec<(u32, u32)>,
+    /// Short only for local reasons (see [`LandingReport::local_only`]).
+    local_only: bool,
     /// Imported source files, removed once the decision is recorded.
     imported_sources: Vec<PathBuf>,
 }
@@ -122,6 +175,7 @@ impl Acted {
             imported: 0,
             held,
             missing: Vec::new(),
+            local_only: false,
             imported_sources: Vec::new(),
         }
     }
@@ -165,7 +219,7 @@ impl LandingService {
         task: &TaskRow,
         attempt_id: Option<&str>,
         manifest: Option<&DownloadManifest>,
-        paths: Vec<PathBuf>,
+        reported: Vec<Reported>,
         patient: bool,
     ) -> LandingReport {
         let details = {
@@ -187,8 +241,16 @@ impl LandingService {
             .as_ref()
             .map(|library| library.library_dirs())
             .unwrap_or_default();
-        let probed =
-            tokio::task::spawn_blocking(move || probe::probe(&confine(paths, &library_dirs))).await;
+        let libraries = canonical_dirs(&library_dirs);
+        let reported = confine(reported, &libraries);
+        // Sizes key on the exact reported file, never on a bare name: two
+        // discs can each hold a `01 - Intro.flac`.
+        target.expected_sizes = reported
+            .iter()
+            .filter_map(|file| Some((file.path.clone(), file.size.filter(|size| *size > 0)?)))
+            .collect();
+        let paths: Vec<PathBuf> = reported.into_iter().map(|file| file.path).collect();
+        let probed = tokio::task::spawn_blocking(move || probe::probe(&paths, &libraries)).await;
         let landing = match probed {
             Ok(landing) => landing,
             Err(error) => {
@@ -321,6 +383,8 @@ impl LandingService {
             result: LandingResult::Imported { complete },
             files_imported: usize::try_from(last.files_imported).unwrap_or(0),
             files_held: usize::try_from(last.files_held).unwrap_or(0),
+            // Short with nothing left to ask a source for: local holds.
+            local_only: !complete && last.missing_positions.trim() == "[]",
         })
     }
 
@@ -427,6 +491,15 @@ impl LandingService {
             }
         }
         let first_hold = held.first().map(|item| (item.code, item.detail.clone()));
+        // Tracks held for a reason on our side: a new source would bring
+        // the same files to the same taken destination, so they are not
+        // asked for again.
+        let locally_held: HashSet<usize> = held
+            .iter()
+            .filter(|item| is_local_hold(item.code))
+            .filter_map(|item| item.track)
+            .collect();
+        let any_local = held.iter().any(|item| is_local_hold(item.code));
         self.record_wrong_product(task, target, &held, imported_tracks.len())
             .await;
         let held_count = self.hold(task, target, landing, Some(found), held).await;
@@ -434,7 +507,7 @@ impl LandingService {
         // What the release still lacks after this landing: the next
         // candidate is asked for these positions only.
         let covered: HashSet<usize> = imported_tracks.iter().copied().collect();
-        let missing: Vec<(u32, u32)> = if target.is_track {
+        let lacking: Vec<usize> = if target.is_track {
             Vec::new()
         } else {
             found
@@ -443,16 +516,35 @@ impl LandingService {
                 .iter()
                 .enumerate()
                 .filter(|(index, track)| !covered.contains(index) && !matched.owns(track))
-                .map(|(_, track)| (track.disc.max(1), track.position))
+                .map(|(index, _)| index)
                 .collect()
         };
+        let missing: Vec<(u32, u32)> = lacking
+            .iter()
+            .filter(|index| !locally_held.contains(index))
+            .map(|index| {
+                let track = &found.release.tracks[*index];
+                (track.disc.max(1), track.position)
+            })
+            .collect();
         let requested_landed = if target.is_track {
             found.requested_pair(target).is_some_and(|pair| {
                 covered.contains(&pair.track)
                     || (!upgrade && matched.owns(&found.release.tracks[pair.track]))
             })
         } else {
-            missing.is_empty()
+            lacking.is_empty()
+        };
+        // Short only for local reasons when nothing is left to ask a source
+        // for: every track still lacking sits behind a local hold, so
+        // another source would bring the same files to the same place.
+        let local_only = if target.is_track {
+            !requested_landed
+                && found
+                    .requested_pair(target)
+                    .is_some_and(|pair| locally_held.contains(&pair.track))
+        } else {
+            any_local && missing.is_empty()
         };
         let anything_landed = !imported_tracks.is_empty() || (!upgrade && !plan.owned.is_empty());
         decision.outcome = if anything_landed {
@@ -473,6 +565,7 @@ impl LandingService {
             imported: imported_tracks.len(),
             held: held_count,
             missing,
+            local_only,
             imported_sources,
         }
     }
@@ -635,6 +728,8 @@ impl LandingService {
                 held_path: String::new(),
                 original_filename: relative,
                 reason: code.to_owned(),
+                reason_text: Some(reasons::explain(code).message.to_owned()),
+                reason_action: Some(reasons::explain(code).action.to_owned()),
                 reason_detail: Some(detail.to_owned()),
                 source: task.source.clone(),
                 source_task_id: task.id.clone(),
@@ -686,6 +781,7 @@ impl LandingService {
             imported,
             held,
             missing,
+            local_only,
             imported_sources,
         } = acted;
         let result = match &decision.outcome {
@@ -700,7 +796,9 @@ impl LandingService {
         };
         let (outcome, reason_code, detail) = match &result {
             LandingResult::Imported { complete: true } => ("imported", None, None),
-            LandingResult::Imported { complete: false } => ("partial", None, None),
+            LandingResult::Imported { complete: false } => {
+                ("partial", Some("tracks_missing".to_owned()), None)
+            }
             LandingResult::Held { code, detail } => {
                 ("held", Some(code.clone()), Some(detail.clone()))
             }
@@ -714,10 +812,13 @@ impl LandingService {
                 Some(rejection.detail.clone()),
             ),
         };
+        let explained = reason_code.as_deref().map(reasons::explain);
         let row = ImportDecisionRow {
             task_id: task.id.clone(),
             attempt_id: attempt_id.map(str::to_owned),
             outcome: outcome.to_owned(),
+            reason_text: explained.map(|reason| reason.message.to_owned()),
+            reason_action: explained.map(|reason| reason.action.to_owned()),
             reason_code,
             detail,
             release_mbid: decision.release_mbid.clone(),
@@ -757,6 +858,7 @@ impl LandingService {
             result,
             files_imported: imported,
             files_held: held,
+            local_only,
         }
     }
 }
@@ -767,21 +869,6 @@ pub fn target_for(
     details: &TaskDetails,
     manifest: Option<&DownloadManifest>,
 ) -> Target {
-    let expected_sizes = manifest
-        .map(|manifest| {
-            manifest
-                .target_files
-                .iter()
-                .filter(|file| file.size > 0)
-                .map(|file| {
-                    (
-                        specs::base_name(&file.filename).to_lowercase(),
-                        file.size as u64,
-                    )
-                })
-                .collect()
-        })
-        .unwrap_or_default();
     Target {
         artist_name: task.artist_name.clone(),
         album_title: task.album_title.clone(),
@@ -803,7 +890,7 @@ pub fn target_for(
         track_title: details.track_title.clone(),
         origin: task.origin.clone(),
         hold_on_wrong_track: manifest.is_some_and(|manifest| manifest.hold_on_wrong_track),
-        expected_sizes,
+        expected_sizes: HashMap::new(),
         wait_for_files: false,
     }
 }
@@ -811,27 +898,40 @@ pub fn target_for(
 /// Reported paths, resolved, without anything inside the library: a
 /// download client (or plugin) naming library files must never have them
 /// imported, held, or removed as download sources.
-fn confine(paths: Vec<PathBuf>, library_dirs: &[PathBuf]) -> Vec<PathBuf> {
-    let libraries: Vec<PathBuf> = library_dirs
-        .iter()
-        .map(|dir| dir.canonicalize().unwrap_or_else(|_| dir.clone()))
-        .collect();
-    paths
+fn confine(reported: Vec<Reported>, libraries: &[PathBuf]) -> Vec<Reported> {
+    reported
         .into_iter()
-        .filter_map(|path| {
-            let resolved = match path.canonicalize() {
-                Ok(resolved) => resolved,
-                // A missing path stays as reported so the probe counts it.
-                Err(_) => return Some(path),
-            };
+        .filter_map(|file| {
+            // A missing path is resolved by name so the probe still counts
+            // it missing; one that cannot be is dropped.
+            let resolved = file
+                .path
+                .canonicalize()
+                .ok()
+                .or_else(|| lexical_absolute(&file.path))?;
             if libraries.iter().any(|dir| resolved.starts_with(dir)) {
                 tracing::warn!(
-                    path = %path.display(),
+                    path = %file.path.display(),
                     "download client reported a path inside the library; ignored"
                 );
                 return None;
             }
-            Some(resolved)
+            Some(Reported {
+                path: resolved,
+                size: file.size,
+            })
+        })
+        .collect()
+}
+
+/// Library folders as the filesystem resolves them.
+fn canonical_dirs(dirs: &[PathBuf]) -> Vec<PathBuf> {
+    dirs.iter()
+        .map(|dir| {
+            dir.canonicalize()
+                .ok()
+                .or_else(|| lexical_absolute(dir))
+                .unwrap_or_else(|| dir.clone())
         })
         .collect()
 }
@@ -862,8 +962,27 @@ fn local_fault(detail: String) -> Rejection {
     }
 }
 
+/// Every check's verdict as JSON; a hold or reject also carries its plain
+/// sentence (`message`) and suggested `action` from the reason catalog.
 fn checks_json(checks: &[Check]) -> String {
-    serde_json::to_string(checks).unwrap_or_else(|error| {
+    let explained: Vec<serde_json::Value> = checks
+        .iter()
+        .map(|check| {
+            let mut value = serde_json::to_value(check).unwrap_or_default();
+            let code = match &check.verdict {
+                Verdict::Hold { code, .. } => Some(*code),
+                Verdict::Reject(rejection) => Some(rejection.code),
+                Verdict::Accept { .. } => None,
+            };
+            if let (Some(code), Some(fields)) = (code, value.as_object_mut()) {
+                let reason = reasons::explain(code);
+                fields.insert("message".into(), reason.message.into());
+                fields.insert("action".into(), reason.action.into());
+            }
+            value
+        })
+        .collect();
+    serde_json::to_string(&explained).unwrap_or_else(|error| {
         tracing::warn!(%error, "import checks not serialized");
         "[]".to_owned()
     })

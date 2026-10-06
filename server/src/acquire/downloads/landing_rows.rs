@@ -19,6 +19,9 @@ pub struct HeldFile {
     pub original_filename: String,
     /// Machine reason (`tag_mismatch`, `weak_match`, ...).
     pub reason: String,
+    /// The reason as a plain sentence, and what to do about it.
+    pub reason_text: Option<String>,
+    pub reason_action: Option<String>,
     pub reason_detail: Option<String>,
     /// `soulseek`, `usenet`, or `plugin:<key>`.
     pub source: String,
@@ -52,6 +55,9 @@ pub struct ImportDecisionRow {
     /// `imported`, `partial`, `held`, `rejected`, or `deferred`.
     pub outcome: String,
     pub reason_code: Option<String>,
+    /// The reason as a plain sentence, and what to do about it.
+    pub reason_text: Option<String>,
+    pub reason_action: Option<String>,
     pub detail: Option<String>,
     pub release_mbid: Option<String>,
     pub distance: Option<f64>,
@@ -70,24 +76,38 @@ pub struct ImportDecisionRow {
 pub struct LandingHistory {
     /// Files imported over every landing of the task.
     pub files_imported: i64,
-    /// The newest hold's reason, when the newest landing held files.
+    /// The newest hold's reason as a plain sentence, when the newest
+    /// landing held files.
     pub held_detail: Option<String>,
 }
 
 impl DownloadStore<'_> {
-    /// Record one held file. `None` when the same file of the same task is
-    /// already held (a resumed landing), so the caller drops its copy.
-    pub fn record_held_file(&self, held: &HeldFile, now: f64) -> Result<Option<i64>, StoreError> {
-        let existing: Option<i64> = self
+    /// The task's held row for the same release track (v2: one held copy
+    /// per track, whichever candidate brought it) or, for a file paired to
+    /// no track, the same file.
+    pub fn held_row_for(&self, held: &HeldFile) -> Result<Option<i64>, StoreError> {
+        Ok(self
             .conn
             .query_row(
-                "SELECT id FROM held_imports WHERE source_task_id = ? \
-                 AND original_filename = ? AND status = 'held'",
-                params![held.source_task_id, held.original_filename],
+                "SELECT id FROM held_imports WHERE source_task_id = ?1 AND status = 'held' \
+                 AND CASE WHEN ?2 IS NOT NULL THEN release_track_mbid = ?2 \
+                 ELSE release_track_mbid IS NULL AND original_filename = ?3 END \
+                 LIMIT 1",
+                params![
+                    held.source_task_id,
+                    held.release_track_mbid,
+                    held.original_filename
+                ],
                 |row| row.get(0),
             )
-            .optional()?;
-        if existing.is_some() {
+            .optional()?)
+    }
+
+    /// Record one held file. `None` when the task already holds this track
+    /// or file (a resumed landing, or a later candidate), so the caller
+    /// drops its copy.
+    pub fn record_held_file(&self, held: &HeldFile, now: f64) -> Result<Option<i64>, StoreError> {
+        if self.held_row_for(held)?.is_some() {
             return Ok(None);
         }
         self.conn.execute(
@@ -96,9 +116,9 @@ impl DownloadStore<'_> {
              artist_name, artist_mbid, album_title, year, held_path, original_filename, \
              file_format, duration_seconds, expected_duration_seconds, reason, reason_detail, \
              evidence_title, evidence_artist, evidence_score, source, source_task_id, origin, \
-             status, created_at) \
+             reason_text, reason_action, status, created_at) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \
-             'held', ?)",
+             ?, ?, 'held', ?)",
             params![
                 held.user_id,
                 held.release_group_mbid,
@@ -125,6 +145,8 @@ impl DownloadStore<'_> {
                 held.source,
                 held.source_task_id,
                 held.origin,
+                held.reason_text,
+                held.reason_action,
                 now,
             ],
         )?;
@@ -135,14 +157,16 @@ impl DownloadStore<'_> {
     pub fn record_import_decision(&self, row: &ImportDecisionRow) -> Result<(), StoreError> {
         self.conn.execute(
             "INSERT INTO download_import_decisions (task_id, attempt_id, outcome, reason_code, \
-             detail, release_mbid, distance, files_total, files_imported, files_held, \
-             checks_json, missing_positions, decided_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             reason_text, reason_action, detail, release_mbid, distance, files_total, \
+             files_imported, files_held, checks_json, missing_positions, decided_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 row.task_id,
                 row.attempt_id,
                 row.outcome,
                 row.reason_code,
+                row.reason_text,
+                row.reason_action,
                 row.detail,
                 row.release_mbid,
                 row.distance,
@@ -168,7 +192,7 @@ impl DownloadStore<'_> {
         let held_detail = self
             .latest_import_decision(task_id)?
             .filter(|row| row.outcome == "held")
-            .map(|row| row.detail.unwrap_or_default());
+            .map(|row| row.reason_text.or(row.detail).unwrap_or_default());
         Ok(LandingHistory {
             files_imported,
             held_detail,
@@ -181,7 +205,7 @@ impl DownloadStore<'_> {
         let Some(row) = self.latest_import_decision(task_id)? else {
             return Ok(Vec::new());
         };
-        if row.outcome != "partial" {
+        if !matches!(row.outcome.as_str(), "partial" | "held") {
             return Ok(Vec::new());
         }
         Ok(serde_json::from_str(&row.missing_positions).unwrap_or_default())
@@ -212,7 +236,7 @@ impl DownloadStore<'_> {
             .query_row(
                 "SELECT task_id, attempt_id, outcome, reason_code, detail, release_mbid, \
                  distance, files_total, files_imported, files_held, checks_json, \
-                 missing_positions, decided_at \
+                 missing_positions, decided_at, reason_text, reason_action \
                  FROM download_import_decisions WHERE task_id = ? \
                  ORDER BY decided_at DESC, id DESC LIMIT 1",
                 params![task_id],
@@ -231,6 +255,8 @@ impl DownloadStore<'_> {
                         checks_json: row.get(10)?,
                         missing_positions: row.get(11)?,
                         decided_at: row.get(12)?,
+                        reason_text: row.get(13)?,
+                        reason_action: row.get(14)?,
                     })
                 },
             )

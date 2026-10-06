@@ -384,5 +384,16 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
             .expect("decisions");
     assert!(outcomes.len() > 1, "failed over: {outcomes:?}");
     assert!(outcomes.iter().all(|outcome| outcome == "held"));
+    // Every hold reads as a sentence with an action, never a bare code.
+    let unexplained: i64 = sqlx::query_scalar(
+        "SELECT (SELECT COUNT(*) FROM held_imports WHERE source_task_id = 't-bad' \
+           AND (reason_text IS NULL OR reason_action IS NULL)) \
+         + (SELECT COUNT(*) FROM download_import_decisions WHERE task_id = 't-bad' \
+           AND (reason_text IS NULL OR reason_action IS NULL))",
+    )
+    .fetch_one(acquire.db.pool())
+    .await
+    .expect("reason text");
+    assert_eq!(unexplained, 0);
     assert!(!acquire.flows.library.contains(BAD_GROUP).await);
 }

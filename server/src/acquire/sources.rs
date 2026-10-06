@@ -87,7 +87,10 @@ impl SlskdSource {
     /// the mount alone (no transfer records needed), so a reimport after
     /// the client forgot the transfers still finds them. Files that cannot
     /// be located are left out; the landing reports them missing.
-    pub async fn locate_files(&self, handle: &SourceHandle) -> Result<Vec<PathBuf>, SourceError> {
+    pub async fn locate_files(
+        &self,
+        handle: &SourceHandle,
+    ) -> Result<Vec<crate::acquire::landing::Reported>, SourceError> {
         let repo_handle =
             super::slskd::repository::TaskHandle::new(&handle.username, handle.filenames.clone());
         let mut paths = Vec::new();
@@ -99,7 +102,11 @@ impl SlskdSource {
                 .await
                 .map_err(slskd_error)?
             {
-                paths.push(path);
+                // Each located copy keeps the size advertised for it.
+                paths.push(crate::acquire::landing::Reported {
+                    path,
+                    size: size.and_then(|size| u64::try_from(size).ok()),
+                });
             }
         }
         Ok(paths)

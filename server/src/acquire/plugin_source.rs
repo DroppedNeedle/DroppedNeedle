@@ -325,7 +325,11 @@ impl PluginDownloadSource {
     /// are trusted code, but their paths are still confined: every file
     /// must resolve inside the workspace the plugin reports, and without a
     /// workspace nothing is imported.
-    pub async fn landed_paths(&self, handle: &SourceHandle) -> Result<Vec<PathBuf>, SourceError> {
+    pub async fn landed_paths(
+        &self,
+        handle: &SourceHandle,
+    ) -> Result<Vec<crate::acquire::landing::Reported>, SourceError> {
+        use crate::acquire::landing::{Reported, lexical_absolute};
         let seen = self
             .host
             .download_inspect(&Self::plugin_handle(handle))
@@ -340,23 +344,22 @@ impl PluginDownloadSource {
             return Ok(Vec::new());
         };
         if seen.file_paths.is_empty() {
-            return Ok(vec![workspace]);
+            return Ok(vec![Reported::path(workspace)]);
         }
         let mut paths = Vec::with_capacity(seen.file_paths.len());
         for reported in &seen.file_paths {
-            match PathBuf::from(reported).canonicalize() {
-                Ok(path) if path.starts_with(&workspace) => paths.push(path),
-                Ok(_) => tracing::warn!(
+            let reported = PathBuf::from(reported);
+            // Not there (yet): resolved by name, so `workspace/../x` is
+            // still outside.
+            let resolved = reported
+                .canonicalize()
+                .ok()
+                .or_else(|| lexical_absolute(&reported));
+            match resolved {
+                Some(path) if path.starts_with(&workspace) => paths.push(Reported::path(path)),
+                _ => tracing::warn!(
                     plugin = %self.key,
                     "plugin reported a file outside its workspace; ignored"
-                ),
-                // Not there (yet): kept only when it would sit inside.
-                Err(_) if PathBuf::from(reported).starts_with(&workspace) => {
-                    paths.push(PathBuf::from(reported));
-                }
-                Err(_) => tracing::warn!(
-                    plugin = %self.key,
-                    "plugin reported a missing file outside its workspace; ignored"
                 ),
             }
         }

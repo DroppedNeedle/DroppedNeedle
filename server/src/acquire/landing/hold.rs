@@ -1,8 +1,8 @@
 //! Hold files for a person: copy each into the held directory and record
 //! it in `held_imports` with the evidence that stopped it (v2
 //! `_hold_for_review`). The copy lands and syncs before its row, so a row
-//! never points at a missing file; a file the task already holds keeps
-//! its first copy.
+//! never points at a missing file; a track (or unpaired file) the task
+//! already holds keeps its first copy, whichever candidate brought it.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -29,6 +29,17 @@ pub async fn hold(
 ) -> usize {
     let mut held = 0;
     for item in items {
+        // Already held by an earlier candidate or pass: no second copy.
+        let probe = item.row.clone();
+        let known = journal
+            .run("downloads.held_known", move |store| {
+                store.held_row_for(&probe)
+            })
+            .await;
+        if matches!(known, Ok(Some(_))) {
+            held += 1;
+            continue;
+        }
         let dir = held_dir.to_path_buf();
         let source = item.source.clone();
         let copied = tokio::task::spawn_blocking(move || copy_into(&dir, &source)).await;

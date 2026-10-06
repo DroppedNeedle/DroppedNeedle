@@ -18,6 +18,7 @@
 //! the views can say why a download was held or failed over.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use serde::Serialize;
 
@@ -119,8 +120,8 @@ pub struct Target {
     pub origin: String,
     /// The last-resort re-pull: hold a wrong track instead of failing over.
     pub hold_on_wrong_track: bool,
-    /// Byte sizes the client advertised, by lowercase file name.
-    pub expected_sizes: HashMap<String, u64>,
+    /// Byte sizes the client advertised, by the exact reported path.
+    pub expected_sizes: HashMap<PathBuf, u64>,
     /// Files may still appear: a missing file is worth another pass.
     pub wait_for_files: bool,
 }
@@ -178,6 +179,7 @@ pub fn file_specs() -> Vec<Box<dyn ImportSpec>> {
 pub fn match_specs() -> Vec<Box<dyn ImportSpec>> {
     vec![
         Box::new(ReleaseFound),
+        Box::new(PinnedEdition),
         Box::new(IdsAgree),
         Box::new(CloseAlbumMatch),
         Box::new(CloseTrackMatch),
@@ -278,7 +280,7 @@ impl ImportSpec for SizesMatch {
         }
         let wrong = subject.landing.audio.iter().find(|file| {
             sizes
-                .get(&file.file_name().to_lowercase())
+                .get(&file.path)
                 .is_some_and(|expected| *expected != file.size_bytes)
         });
         match wrong {
@@ -290,10 +292,7 @@ impl ImportSpec for SizesMatch {
                     "{} has {} bytes on disk, not the {} advertised",
                     file.file_name(),
                     file.size_bytes,
-                    sizes
-                        .get(&file.file_name().to_lowercase())
-                        .copied()
-                        .unwrap_or_default()
+                    sizes.get(&file.path).copied().unwrap_or_default()
                 ),
             ),
             None => Verdict::accept(),
@@ -302,7 +301,9 @@ impl ImportSpec for SizesMatch {
 }
 
 /// The probe stops at a few thousand files; a landing that big is not one
-/// album, so it waits for a person instead of importing what was read.
+/// album. It is a local fault: the decision is recorded and the files stay
+/// where they are for a person (never copied into the held area), and the
+/// source is not blocklisted.
 struct WalkFinished;
 
 impl ImportSpec for WalkFinished {
@@ -312,9 +313,11 @@ impl ImportSpec for WalkFinished {
 
     fn check(&self, subject: &Subject<'_>) -> Verdict {
         if subject.landing.truncated {
-            return Verdict::hold(
+            return Verdict::reject(
                 "too_many_files",
-                "the download holds more files than one release can",
+                Disposition::LocalFault,
+                None,
+                "the download holds more files than one release can; left in place for review",
             );
         }
         Verdict::accept()
@@ -657,6 +660,52 @@ impl ImportSpec for ReleaseFound {
     }
 }
 
+/// With a pinned edition, files whose own tags name another release are
+/// another edition: rejected, so the next source is tried. Untagged files
+/// are judged by the pinned tracklist alone.
+struct PinnedEdition;
+
+impl ImportSpec for PinnedEdition {
+    fn name(&self) -> &'static str {
+        "pinned_edition"
+    }
+
+    fn check(&self, subject: &Subject<'_>) -> Verdict {
+        let Some(pin) = subject.target.release_mbid.as_deref() else {
+            return Verdict::accept();
+        };
+        let pinned = subject
+            .matched
+            .and_then(|matched| matched.best())
+            .map(|found| &found.release);
+        let is_pin = |id: &str| match pinned {
+            Some(release) => release.answers_to(id),
+            None => id.eq_ignore_ascii_case(pin),
+        };
+        let tagged: Vec<&str> = subject
+            .landing
+            .audio
+            .iter()
+            .filter_map(|file| file.tag.musicbrainz_release_id.as_deref())
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .collect();
+        let other: Vec<&str> = tagged.iter().copied().filter(|id| !is_pin(id)).collect();
+        if !tagged.is_empty() && other.len() * 2 > tagged.len() {
+            return Verdict::reject(
+                "not_pinned_edition",
+                Disposition::Permanent,
+                Some(QuarantineReason::VerifyFailed),
+                format!(
+                    "the files are tagged as release {}, not the pinned edition {pin}",
+                    other[0]
+                ),
+            );
+        }
+        Verdict::accept()
+    }
+}
+
 /// The files' own MusicBrainz ids must not contradict every candidate
 /// (v2 `tag_mismatch` on a recording MBID conflict).
 struct IdsAgree;
@@ -875,11 +924,6 @@ pub fn fingerprint_disagrees(
 // Text helpers.
 // ---------------------------------------------------------------------------
 
-/// The last part of a client file name, split on backslash or slash.
-pub fn base_name(filename: &str) -> &str {
-    filename.rsplit(['\\', '/']).next().unwrap_or(filename)
-}
-
 /// Lowercase words, splitting on anything that is not a letter or digit
 /// (underscores and dots included, so `Live_EP` and `Box.Set` read right).
 pub fn words(text: &str) -> Vec<String> {
@@ -934,7 +978,6 @@ mod tests {
         ));
         assert!(!fingerprint_disagrees(&["A".to_owned()], "a", None, None));
         assert!(!fingerprint_disagrees(&[], "a", Some(1.0), Some(260.0)));
-        assert_eq!(base_name(r"@@peer\Music\01.flac"), "01.flac");
     }
 
     #[test]

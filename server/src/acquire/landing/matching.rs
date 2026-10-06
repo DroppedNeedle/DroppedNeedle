@@ -108,7 +108,7 @@ pub fn local_album(files: &[LandedFile], target: &Target) -> LocalAlbum {
         .iter()
         .enumerate()
         .map(|(index, file)| {
-            let (number, name_title) = file_name_parts(file);
+            let (name_disc, number, name_title) = file_name_parts(file);
             let tag = &file.tag;
             LocalTrack {
                 id: index.to_string(),
@@ -126,7 +126,7 @@ pub fn local_album(files: &[LandedFile], target: &Target) -> LocalAlbum {
                 disc_number: if tag.disc_number > 0 {
                     tag.disc_number
                 } else {
-                    disc_folder(file).unwrap_or(1)
+                    name_disc.or_else(|| disc_folder(file)).unwrap_or(1)
                 },
                 duration_secs: file.header.duration_seconds,
                 recording_mbid: clean(tag.musicbrainz_recording_id.as_deref()),
@@ -184,8 +184,10 @@ pub async fn find(
     summary
 }
 
-/// Candidate releases of the requested group: the pin, the tagged
-/// release, then the group's editions from a search.
+/// Candidate releases of the requested group. A pinned edition is the
+/// only candidate: the files are judged against its tracklist and nothing
+/// else (owner rule, the pin is honoured end to end). Without a pin: the
+/// tagged release, then the group's editions from a search.
 async fn recall(
     library: &dyn LandingLibrary,
     target: &Target,
@@ -195,6 +197,7 @@ async fn recall(
     let error = |error: crate::library::identify::sources::SourceError| error.0;
     if let Some(pinned) = target.release_mbid.as_deref() {
         fetch(library.release(pinned).await.map_err(error)?, &mut releases);
+        return Ok(releases);
     }
     if let Some(tagged) = local.tagged_release()
         && !releases.iter().any(|known| known.answers_to(&tagged))
@@ -211,11 +214,7 @@ async fn recall(
                 .eq_ignore_ascii_case(&target.release_group_mbid)
     };
     releases.retain(in_group);
-    let has_pin = target
-        .release_mbid
-        .as_deref()
-        .is_some_and(|pin| releases.iter().any(|release| release.answers_to(pin)));
-    if !has_pin && !target.album_title.trim().is_empty() {
+    if !target.album_title.trim().is_empty() {
         let artist = if is_various(&target.artist_name) {
             ""
         } else {
@@ -433,9 +432,9 @@ pub fn plan(summary: &MatchSummary, target: &Target, files: usize) -> FilePlan {
     out
 }
 
-/// "03 - Title.flac" -> (3, "Title"); a name without a number keeps its
-/// whole stem as the title.
-fn file_name_parts(file: &LandedFile) -> (Option<u32>, String) {
+/// "03 - Title.flac" -> (None, 3, "Title"); "203 Title.flac" -> disc 2,
+/// track 3; a name without a number keeps its whole stem as the title.
+fn file_name_parts(file: &LandedFile) -> (Option<u32>, Option<u32>, String) {
     let stem = file
         .path
         .file_stem()
@@ -444,16 +443,28 @@ fn file_name_parts(file: &LandedFile) -> (Option<u32>, String) {
     number_and_title(&stem)
 }
 
-fn number_and_title(stem: &str) -> (Option<u32>, String) {
+/// The leading number of a file name as `(disc, track)` plus the title
+/// after it. Three digits are disc then track, as v2's naming wrote them
+/// ("101 Title" is disc 1, track 1); a leading zero disc means none.
+fn number_and_title(stem: &str) -> (Option<u32>, Option<u32>, String) {
     let trimmed = stem.trim_start();
     let digits: String = trimmed.chars().take_while(char::is_ascii_digit).collect();
     if digits.is_empty() || digits.len() > 3 {
-        return (None, stem.trim().to_owned());
+        return (None, None, stem.trim().to_owned());
     }
     let rest = trimmed[digits.len()..]
         .trim_start_matches(|ch: char| ch.is_whitespace() || matches!(ch, '.' | '-' | '_' | ')'))
-        .trim();
-    (digits.parse().ok(), rest.to_owned())
+        .trim()
+        .to_owned();
+    if digits.len() == 3 {
+        let disc = digits[..1].parse().ok().filter(|disc| *disc > 0);
+        let track = digits[1..].parse().ok().filter(|track| *track > 0);
+        // "100" names no track 0: read it as one plain number.
+        if track.is_some() {
+            return (disc, track, rest);
+        }
+    }
+    (None, digits.parse().ok(), rest)
 }
 
 /// A disc number from the containing folder ("CD2", "Disc 3").
@@ -484,11 +495,13 @@ fn disc_in_folder(folder: &str) -> Option<u32> {
 pub fn position_in_name(filename: &str) -> Option<(u32, u32)> {
     let normalized = filename.replace('\\', "/");
     let path = std::path::Path::new(&normalized);
-    let (track, _) = number_and_title(&path.file_stem()?.to_string_lossy());
-    let disc = path
-        .parent()
-        .and_then(std::path::Path::file_name)
-        .and_then(|name| disc_in_folder(&name.to_string_lossy()))
+    let (name_disc, track, _) = number_and_title(&path.file_stem()?.to_string_lossy());
+    let disc = name_disc
+        .or_else(|| {
+            path.parent()
+                .and_then(std::path::Path::file_name)
+                .and_then(|name| disc_in_folder(&name.to_string_lossy()))
+        })
         .unwrap_or(1);
     Some((disc, track?))
 }
@@ -531,5 +544,7 @@ mod tests {
         );
         assert_eq!(position_in_name("Album/07. Song.mp3"), Some((1, 7)));
         assert_eq!(position_in_name("Album/cover.jpg"), None);
+        assert_eq!(position_in_name("Album/101 Title.flac"), Some((1, 1)));
+        assert_eq!(position_in_name("Album/214 - Title.flac"), Some((2, 14)));
     }
 }

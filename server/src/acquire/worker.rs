@@ -290,13 +290,20 @@ impl Source {
     }
 
     /// The landed files (or job folder) for a finished handle.
-    async fn landed_paths(&self, handle: &SourceHandle) -> Result<Vec<PathBuf>, SourceError> {
+    async fn landed_paths(
+        &self,
+        handle: &SourceHandle,
+    ) -> Result<Vec<crate::acquire::landing::Reported>, SourceError> {
+        use crate::acquire::landing::Reported;
         match self {
             Self::Slskd(source) => source.locate_files(handle).await,
-            Self::Sab(source) => source.inspect(handle).await.map(|seen| seen.paths),
+            Self::Sab(source) => source
+                .inspect(handle)
+                .await
+                .map(|seen| seen.paths.into_iter().map(Reported::path).collect()),
             Self::Plugin(source) => source.landed_paths(handle).await,
             #[cfg(any(test, feature = "test-support"))]
-            Self::Fixed(source) => Ok(source.paths.clone()),
+            Self::Fixed(source) => Ok(source.paths.iter().cloned().map(Reported::path).collect()),
         }
     }
 
@@ -888,7 +895,7 @@ impl DownloadWorker {
         });
         manifest.attempt_id = Some(attempt_id.to_owned());
         // Each attempt's files, with the sizes the chosen candidate
-        // advertised: the import's size check reads them.
+        // advertised (the import's size check reads them from the handle).
         manifest.target_files = handle
             .filenames
             .iter()
@@ -948,6 +955,17 @@ impl DownloadWorker {
         if self.landing_in_flight(&task.id) {
             return;
         }
+        // The pass listed its tasks before any of them were polled; a
+        // landing that settled since then must not be seen as live again.
+        let task = match self.journal.read_task(&task.id).await {
+            Ok(Some(fresh)) if fresh.status == task.status => fresh,
+            Ok(_) => return,
+            Err(error) => {
+                tracing::warn!(task_id = %task.id, %error, "task re-read failed; poll skipped");
+                return;
+            }
+        };
+        let task = &task;
         let Some(attempts) = self.attempts(&task.id).await else {
             // A read failure is not "no attempt": leave the task alone.
             return;
@@ -1327,6 +1345,11 @@ impl DownloadWorker {
     /// Settle one claimed cleanup row.
     async fn cleanup_one(&self, pass: &Pass, attempt: &AttemptRow) {
         let now = pass.now;
+        if self.landing_in_flight(&attempt.task_id) {
+            // A landing (a reimport) is reading these files: try later.
+            self.defer_cleanup(attempt, "landing_in_flight", now).await;
+            return;
+        }
         let read = async {
             Ok::<_, String>((
                 self.journal.read_attempt_handle(&attempt.id).await?,
