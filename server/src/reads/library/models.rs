@@ -64,6 +64,7 @@ pub struct AlbumPage {
 
 /// Album list query. Unknown `sort` values fail with INVALID_INPUT.
 #[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct AlbumQuery {
     /// Page size, 1-200. Default 50.
     pub limit: Option<i64>,
@@ -86,6 +87,7 @@ pub struct AlbumQuery {
 
 /// Track list query for album and genre scopes.
 #[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct PageQuery {
     /// Page size, 1-1000. Default 200.
     pub limit: Option<i64>,
@@ -135,6 +137,7 @@ pub struct ArtistPage {
 
 /// Artist list query.
 #[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ArtistQuery {
     /// Page size, 1-200. Default 50.
     pub limit: Option<i64>,
@@ -209,6 +212,7 @@ pub struct TrackPage {
 
 /// Track list query.
 #[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct TrackQuery {
     /// Page size, 1-500. Default 50.
     pub limit: Option<i64>,
@@ -309,6 +313,7 @@ pub struct AlbumCardPage {
 
 /// Local-library browse query.
 #[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct BrowseQuery {
     /// Page size, 1-200. Default 50.
     pub limit: Option<i64>,
@@ -327,6 +332,7 @@ pub struct BrowseQuery {
 
 /// Local-library search query. `q` is required.
 #[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct SearchQuery {
     /// Substring query, case folded, at least one character.
     pub q: Option<String>,
@@ -377,6 +383,7 @@ pub struct SuggestionsResponse {
 
 /// Suggestion query.
 #[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct SuggestionsQuery {
     /// Track cap, 1-40. Default 12.
     pub limit: Option<i64>,
@@ -405,6 +412,7 @@ pub struct DecadesResponse {
 
 /// Recent-albums query.
 #[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct RecentQuery {
     /// Card cap, 1-50. Default 20.
     pub limit: Option<i64>,

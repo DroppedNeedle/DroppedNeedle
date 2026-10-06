@@ -633,7 +633,9 @@ impl IntoResponse for StreamError {
 
 /// Relative-path stream router for nesting under `/api/v3` inside the
 /// session gate. One route serves both GET and HEAD; the Plex-compatible
-/// wildcard key also matches single-segment ids.
+/// wildcard key also matches single-segment ids. The OpenAPI paths below
+/// spell the wildcard the same way, so the contract names the route as
+/// served.
 pub fn stream_routes<E>(state: StreamState<E>) -> Router
 where
     E: StreamEngine + Send + Sync + 'static,
@@ -649,10 +651,10 @@ where
 /// Full or ranged audio bytes.
 #[utoipa::path(
     get,
-    path = "/api/v3/stream/{source}/{key}",
+    path = "/api/v3/stream/{source}/{*key}",
     params(
         ("source" = String, Path, description = "Audio source: local, jellyfin, navidrome, plex, or plugin"),
-        ("key" = String, Path, description = "Local file id, remote item id, Plex part key, or recording MBID for plugin"),
+        ("*key" = String, Path, description = "Local file id, remote item id, Plex part key, or recording MBID for plugin. A wildcard: Plex part keys keep their slashes"),
         ("format" = Option<String>, Query, description = "Requested output codec: mp3, opus, or raw"),
         ("max_bitrate" = Option<i64>, Query, description = "Client bitrate cap in kbps (0 or unset means uncapped)"),
         ("estimate_content_length" = Option<bool>, Query, description = "Ask a transcode landing for its estimated Content-Length"),
@@ -682,10 +684,10 @@ pub(crate) async fn stream_get<E: StreamEngine>(
 /// Same headers as GET, no body.
 #[utoipa::path(
     head,
-    path = "/api/v3/stream/{source}/{key}",
+    path = "/api/v3/stream/{source}/{*key}",
     params(
         ("source" = String, Path, description = "Audio source: local, jellyfin, navidrome, plex, or plugin"),
-        ("key" = String, Path, description = "Local file id, remote item id, Plex part key, or recording MBID for plugin"),
+        ("*key" = String, Path, description = "Local file id, remote item id, Plex part key, or recording MBID for plugin. A wildcard: Plex part keys keep their slashes"),
     ),
     responses(
         (status = 200, description = "Stream headers, no body"),

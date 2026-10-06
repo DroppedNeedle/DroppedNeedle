@@ -612,6 +612,7 @@ pub struct MoreByArtistResponse {
 
 /// Query for `GET /artists/{artist_mbid}/releases`.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ReleasesQuery {
     /// Items to skip (default 0).
     pub offset: Option<u32>,
@@ -621,6 +622,7 @@ pub struct ReleasesQuery {
 
 /// Query for the artist discovery sections.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct DiscoveryQuery {
     /// How many to return, 1 to 50.
     pub count: Option<u32>,
@@ -630,6 +632,7 @@ pub struct DiscoveryQuery {
 
 /// Query for `GET /artists/{artist_mbid}/lastfm`.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ArtistLastFmQuery {
     /// Artist name, the Last.fm fallback key.
     pub artist_name: String,
@@ -637,6 +640,7 @@ pub struct ArtistLastFmQuery {
 
 /// Query for `GET /artists/{artist_mbid}/purchase-options`.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ArtistPurchaseQuery {
     /// Artist name for the Bandcamp search fallback.
     #[serde(default)]
@@ -645,6 +649,7 @@ pub struct ArtistPurchaseQuery {
 
 /// Query for the album discovery rows.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct AlbumArtistQuery {
     /// The album's artist MBID.
     pub artist_id: String,
@@ -654,6 +659,7 @@ pub struct AlbumArtistQuery {
 
 /// Query for `GET /albums/{album_id}/lastfm`.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct AlbumLastFmQuery {
     /// Artist name for the Last.fm lookup.
     pub artist_name: String,

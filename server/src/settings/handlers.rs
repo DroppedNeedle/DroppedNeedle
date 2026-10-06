@@ -254,6 +254,7 @@ pub async fn put_get_it(
 #[utoipa::path(
     get,
     path = "/api/v3/settings/home",
+    operation_id = "get_home_settings",
     responses((status = 200, description = "Home page settings", body = HomeSettings))
 )]
 pub async fn get_home(State(settings): State<SettingsSetup>) -> JsonResult<HomeSettings> {

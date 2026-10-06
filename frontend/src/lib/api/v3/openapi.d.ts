@@ -5043,7 +5043,7 @@ export interface paths {
             cookie?: never;
         };
         /** Read the home page settings. */
-        get: operations["get_home"];
+        get: operations["get_home_settings"];
         /** Save the home page settings. The save clears the cached home rows. */
         put: operations["put_home"];
         post?: never;
@@ -6077,7 +6077,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v3/stream/{source}/{key}": {
+    "/api/v3/stream/{source}/{*key}": {
         parameters: {
             query?: never;
             header?: never;
@@ -17006,15 +17006,16 @@ export interface operations {
     };
     album_lastfm: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Release-group MBID, or a library album id identified as one */
-                album_id: string;
+            query: {
                 /** @description Artist name for the Last.fm lookup. */
                 artist_name: string;
                 /** @description Album title for the Last.fm lookup. */
                 album_name: string;
+            };
+            header?: never;
+            path: {
+                /** @description Release-group MBID, or a library album id identified as one */
+                album_id: string;
             };
             cookie?: never;
         };
@@ -17047,15 +17048,16 @@ export interface operations {
     };
     more_by_artist: {
         parameters: {
-            query?: never;
+            query: {
+                /** @description The album's artist MBID. */
+                artist_id: string;
+                /** @description How many to return, 1 to 30 (default 10). */
+                count?: number;
+            };
             header?: never;
             path: {
                 /** @description Release-group MBID */
                 album_id: string;
-                /** @description The album's artist MBID. */
-                artist_id: string;
-                /** @description How many to return, 1 to 30 (default 10). */
-                count: number | null;
             };
             cookie?: never;
         };
@@ -17183,15 +17185,16 @@ export interface operations {
     };
     similar_albums: {
         parameters: {
-            query?: never;
+            query: {
+                /** @description The album's artist MBID. */
+                artist_id: string;
+                /** @description How many to return, 1 to 30 (default 10). */
+                count?: number;
+            };
             header?: never;
             path: {
                 /** @description Release-group MBID */
                 album_id: string;
-                /** @description The album's artist MBID. */
-                artist_id: string;
-                /** @description How many to return, 1 to 30 (default 10). */
-                count: number | null;
             };
             cookie?: never;
         };
@@ -17489,13 +17492,14 @@ export interface operations {
     };
     artist_lastfm: {
         parameters: {
-            query?: never;
+            query: {
+                /** @description Artist name, the Last.fm fallback key. */
+                artist_name: string;
+            };
             header?: never;
             path: {
                 /** @description Artist MBID */
                 artist_mbid: string;
-                /** @description Artist name, the Last.fm fallback key. */
-                artist_name: string;
             };
             cookie?: never;
         };
@@ -17528,13 +17532,14 @@ export interface operations {
     };
     artist_purchase_options: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Artist name for the Bandcamp search fallback. */
+                name?: string;
+            };
             header?: never;
             path: {
                 /** @description Artist MBID */
                 artist_mbid: string;
-                /** @description Artist name for the Bandcamp search fallback. */
-                name: string;
             };
             cookie?: never;
         };
@@ -17567,15 +17572,16 @@ export interface operations {
     };
     artist_releases: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Items to skip (default 0). */
+                offset?: number;
+                /** @description Page size, 1 to 200 (default 50). */
+                limit?: number;
+            };
             header?: never;
             path: {
                 /** @description Artist MBID */
                 artist_mbid: string;
-                /** @description Items to skip (default 0). */
-                offset: number | null;
-                /** @description Page size, 1 to 200 (default 50). */
-                limit: number | null;
             };
             cookie?: never;
         };
@@ -17615,15 +17621,16 @@ export interface operations {
     };
     similar_artists: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description How many to return, 1 to 50. */
+                count?: number;
+                /** @description Provider to ask; default is the primary music source setting. */
+                source?: components["schemas"]["DiscoverySource"];
+            };
             header?: never;
             path: {
                 /** @description Artist MBID */
                 artist_mbid: string;
-                /** @description How many to return, 1 to 50. */
-                count: number | null;
-                /** @description Provider to ask; default is the primary music source setting. */
-                source: null | components["schemas"]["DiscoverySource"];
             };
             cookie?: never;
         };
@@ -17656,15 +17663,16 @@ export interface operations {
     };
     top_albums: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description How many to return, 1 to 50. */
+                count?: number;
+                /** @description Provider to ask; default is the primary music source setting. */
+                source?: components["schemas"]["DiscoverySource"];
+            };
             header?: never;
             path: {
                 /** @description Artist MBID */
                 artist_mbid: string;
-                /** @description How many to return, 1 to 50. */
-                count: number | null;
-                /** @description Provider to ask; default is the primary music source setting. */
-                source: null | components["schemas"]["DiscoverySource"];
             };
             cookie?: never;
         };
@@ -17697,15 +17705,16 @@ export interface operations {
     };
     top_songs: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description How many to return, 1 to 50. */
+                count?: number;
+                /** @description Provider to ask; default is the primary music source setting. */
+                source?: components["schemas"]["DiscoverySource"];
+            };
             header?: never;
             path: {
                 /** @description Artist MBID */
                 artist_mbid: string;
-                /** @description How many to return, 1 to 50. */
-                count: number | null;
-                /** @description Provider to ask; default is the primary music source setting. */
-                source: null | components["schemas"]["DiscoverySource"];
             };
             cookie?: never;
         };
@@ -20049,29 +20058,29 @@ export interface operations {
     };
     list_albums: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query?: {
                 /** @description Page size, 1-200. Default 50. */
-                limit: number | null;
+                limit?: number;
                 /** @description Page start. Default 0. */
-                offset: number | null;
+                offset?: number;
                 /** @description `name`, `date_added`, `year`, or `artist`. Default `name`. */
-                sort: string | null;
+                sort?: string;
                 /** @description `asc` or `desc`. Default `asc`. */
-                order: string | null;
+                order?: string;
                 /** @description Title/artist substring filter, case folded. */
-                q: string | null;
+                q?: string;
                 /** @description Restrict to one album artist. */
-                artist_id: string | null;
+                artist_id?: string;
                 /** @description Restrict to one decade start year, e.g. 1990. */
-                decade: number | null;
+                decade?: number;
                 /**
                  * @description Restrict to one primary track format, e.g. `flac`. Blank reads as
                  *     absent; matching is case-insensitive.
                  */
-                format: string | null;
+                format?: string;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -20367,15 +20376,16 @@ export interface operations {
     };
     list_album_tracks: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Page size, 1-1000. Default 200. */
+                limit?: number;
+                /** @description Page start. Default 0. */
+                offset?: number;
+            };
             header?: never;
             path: {
                 /** @description Local album id */
                 id: string;
-                /** @description Page size, 1-1000. Default 200. */
-                limit: number | null;
-                /** @description Page start. Default 0. */
-                offset: number | null;
             };
             cookie?: never;
         };
@@ -20415,22 +20425,22 @@ export interface operations {
     };
     list_artists: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query?: {
                 /** @description Page size, 1-200. Default 50. */
-                limit: number | null;
+                limit?: number;
                 /** @description Page start. Default 0. */
-                offset: number | null;
+                offset?: number;
                 /** @description `name`, `album_count`, or `date_added`. Default `name`. */
-                sort: string | null;
+                sort?: string;
                 /** @description `asc` or `desc`. Default `asc`. */
-                order: string | null;
+                order?: string;
                 /** @description Name substring filter, case folded. */
-                q: string | null;
+                q?: string;
                 /** @description `all`, `album_artists`, or `contributors`. Default `all`. */
-                scope: string | null;
+                scope?: string;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -20499,15 +20509,16 @@ export interface operations {
     };
     list_artist_albums: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Page size, 1-1000. Default 200. */
+                limit?: number;
+                /** @description Page start. Default 0. */
+                offset?: number;
+            };
             header?: never;
             path: {
                 /** @description Local artist id */
                 id: string;
-                /** @description Page size, 1-1000. Default 200. */
-                limit: number | null;
-                /** @description Page start. Default 0. */
-                offset: number | null;
             };
             cookie?: never;
         };
@@ -20547,15 +20558,16 @@ export interface operations {
     };
     list_artist_appearances: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Page size, 1-1000. Default 200. */
+                limit?: number;
+                /** @description Page start. Default 0. */
+                offset?: number;
+            };
             header?: never;
             path: {
                 /** @description Local artist id */
                 id: string;
-                /** @description Page size, 1-1000. Default 200. */
-                limit: number | null;
-                /** @description Page start. Default 0. */
-                offset: number | null;
             };
             cookie?: never;
         };
@@ -20622,15 +20634,16 @@ export interface operations {
     };
     list_genre_tracks: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Page size, 1-1000. Default 200. */
+                limit?: number;
+                /** @description Page start. Default 0. */
+                offset?: number;
+            };
             header?: never;
             path: {
                 /** @description Genre name */
                 name: string;
-                /** @description Page size, 1-1000. Default 200. */
-                limit: number | null;
-                /** @description Page start. Default 0. */
-                offset: number | null;
             };
             cookie?: never;
         };
@@ -20937,12 +20950,12 @@ export interface operations {
     };
     list_recently_added: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query?: {
                 /** @description Card cap, 1-50. Default 20. */
-                limit: number | null;
+                limit?: number;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -21353,26 +21366,26 @@ export interface operations {
     };
     list_tracks: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query?: {
                 /** @description Page size, 1-500. Default 50. */
-                limit: number | null;
+                limit?: number;
                 /** @description Page start. Default 0. */
-                offset: number | null;
+                offset?: number;
                 /** @description `title` or `date_added`. Default `title`. */
-                sort: string | null;
+                sort?: string;
                 /** @description `asc` or `desc`. Default `asc`. */
-                order: string | null;
+                order?: string;
                 /** @description Title/artist/album substring filter, case folded. */
-                q: string | null;
+                q?: string;
                 /** @description Restrict to one album. */
-                album_id: string | null;
+                album_id?: string;
                 /** @description Restrict to one credited artist. */
-                artist_id: string | null;
+                artist_id?: string;
                 /** @description Restrict to one genre tag, case folded. */
-                genre: string | null;
+                genre?: string;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -21478,25 +21491,25 @@ export interface operations {
     };
     browse_albums: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query?: {
                 /** @description Page size, 1-200. Default 50. */
-                limit: number | null;
+                limit?: number;
                 /** @description Page start. Default 0. */
-                offset: number | null;
+                offset?: number;
                 /**
                  * @description `name`, `date_added`, `year`, `random`, or `rediscover`
                  *     (oldest first). Default `name`.
                  */
-                sort: string | null;
+                sort?: string;
                 /** @description `asc` or `desc`. Default `asc`. */
-                order: string | null;
+                order?: string;
                 /** @description Title/artist substring filter, case folded. */
-                q: string | null;
+                q?: string;
                 /** @description Restrict to one decade start year, e.g. 1990. */
-                decade: number | null;
+                decade?: number;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -21528,15 +21541,16 @@ export interface operations {
     };
     match_album: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Page size, 1-1000. Default 200. */
+                limit?: number;
+                /** @description Page start. Default 0. */
+                offset?: number;
+            };
             header?: never;
             path: {
                 /** @description Release-group mbid or local album id */
                 mbid: string;
-                /** @description Page size, 1-1000. Default 200. */
-                limit: number | null;
-                /** @description Page start. Default 0. */
-                offset: number | null;
             };
             cookie?: never;
         };
@@ -21603,12 +21617,12 @@ export interface operations {
     };
     recent_albums: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query?: {
                 /** @description Card cap, 1-50. Default 20. */
-                limit: number | null;
+                limit?: number;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -21640,14 +21654,14 @@ export interface operations {
     };
     search_library: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query?: {
                 /** @description Substring query, case folded, at least one character. */
-                q: string | null;
+                q?: string;
                 /** @description Cap applied per group, 1-50. Default 20. */
-                limit: number | null;
+                limit?: number;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -21679,14 +21693,14 @@ export interface operations {
     };
     list_suggestions: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query?: {
                 /** @description Track cap, 1-40. Default 12. */
-                limit: number | null;
+                limit?: number;
                 /** @description Era anchor for the `same_era` pool, e.g. 1990. */
-                decade: number | null;
+                decade?: number;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -25665,20 +25679,20 @@ export interface operations {
     };
     unified_search: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query: {
                 /** @description Search text. Required; blank is a 400. */
                 q: string;
                 /** @description Max artists (0-100, default 10). */
-                limit_artists: number | null;
+                limit_artists?: number;
                 /** @description Max albums (0-100, default 10). */
-                limit_albums: number | null;
+                limit_albums?: number;
                 /** @description Max tracks (0-100, default 10). */
-                limit_tracks: number | null;
+                limit_tracks?: number;
                 /** @description Comma-separated subset (`artists,albums,tracks`); absent means all. */
-                buckets: string | null;
+                buckets?: string;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -25748,17 +25762,17 @@ export interface operations {
     };
     suggest: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query: {
                 /**
                  * @description Search text. Queries shorter than two characters return an empty
                  *     200, kept from v2 so the typeahead never errors mid-typing.
                  */
                 q: string;
                 /** @description Max suggestions (1-10, default 5). */
-                limit: number | null;
+                limit?: number;
             };
+            header?: never;
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -25790,15 +25804,18 @@ export interface operations {
     };
     search_bucket: {
         parameters: {
-            query?: never;
-            header?: never;
-            path: {
+            query: {
                 /** @description Search text. Required; blank is a 400. */
                 q: string;
                 /** @description Page size (1-100, default 50). */
-                limit: number | null;
+                limit?: number;
                 /** @description Pagination offset (default 0). */
-                offset: number | null;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Bucket name: artists, albums or tracks */
+                bucket: string;
             };
             cookie?: never;
         };
@@ -26443,7 +26460,7 @@ export interface operations {
             };
         };
     };
-    get_home: {
+    get_home_settings: {
         parameters: {
             query?: never;
             header?: never;
@@ -28487,8 +28504,8 @@ export interface operations {
             path: {
                 /** @description Audio source: local, jellyfin, navidrome, plex, or plugin */
                 source: string;
-                /** @description Local file id, remote item id, Plex part key, or recording MBID for plugin */
-                key: string;
+                /** @description Local file id, remote item id, Plex part key, or recording MBID for plugin. A wildcard: Plex part keys keep their slashes */
+                "*key": string;
             };
             cookie?: never;
         };
@@ -28566,8 +28583,8 @@ export interface operations {
             path: {
                 /** @description Audio source: local, jellyfin, navidrome, plex, or plugin */
                 source: string;
-                /** @description Local file id, remote item id, Plex part key, or recording MBID for plugin */
-                key: string;
+                /** @description Local file id, remote item id, Plex part key, or recording MBID for plugin. A wildcard: Plex part keys keep their slashes */
+                "*key": string;
             };
             cookie?: never;
         };

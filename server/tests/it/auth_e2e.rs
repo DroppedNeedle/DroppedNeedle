@@ -1653,8 +1653,8 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("GET", "/api/v3/remotes/navidrome/folders", Posture::User),
     ("PUT", "/api/v3/remotes/navidrome/folders", Posture::User),
     // Stage-6 stream gateway.
-    ("GET", "/api/v3/stream/{source}/{key}", Posture::User),
-    ("HEAD", "/api/v3/stream/{source}/{key}", Posture::User),
+    ("GET", "/api/v3/stream/{source}/{*key}", Posture::User),
+    ("HEAD", "/api/v3/stream/{source}/{*key}", Posture::User),
     // Stage-6 playback reporting (GET /now-playing keeps its stage-4 row;
     // stage 6 serves it from the live registry now).
     ("POST", "/api/v3/playback/start", Posture::User),

@@ -141,7 +141,7 @@ describe('v3 DELETE and HEAD', () => {
 		const client = createV3Client(fetchMock);
 
 		const result: void = await client.HEAD(
-			v3('/api/v3/stream/{source}/{key}', { path: { source: 'local', key: 'k' } })
+			v3('/api/v3/stream/{source}/{*key}', { path: { source: 'local', '*key': 'k' } })
 		);
 
 		expect(result).toBeUndefined();

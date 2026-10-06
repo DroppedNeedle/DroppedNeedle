@@ -1312,7 +1312,7 @@
           },
           {
             "name": "artist_name",
-            "in": "path",
+            "in": "query",
             "description": "Artist name for the Last.fm lookup.",
             "required": true,
             "schema": {
@@ -1321,7 +1321,7 @@
           },
           {
             "name": "album_name",
-            "in": "path",
+            "in": "query",
             "description": "Album title for the Last.fm lookup.",
             "required": true,
             "schema": {
@@ -1368,7 +1368,7 @@
           },
           {
             "name": "artist_id",
-            "in": "path",
+            "in": "query",
             "description": "The album's artist MBID.",
             "required": true,
             "schema": {
@@ -1377,14 +1377,11 @@
           },
           {
             "name": "count",
-            "in": "path",
+            "in": "query",
             "description": "How many to return, 1 to 30 (default 10).",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int32",
               "minimum": 0
             }
@@ -1514,7 +1511,7 @@
           },
           {
             "name": "artist_id",
-            "in": "path",
+            "in": "query",
             "description": "The album's artist MBID.",
             "required": true,
             "schema": {
@@ -1523,14 +1520,11 @@
           },
           {
             "name": "count",
-            "in": "path",
+            "in": "query",
             "description": "How many to return, 1 to 30 (default 10).",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int32",
               "minimum": 0
             }
@@ -1838,7 +1832,7 @@
           },
           {
             "name": "artist_name",
-            "in": "path",
+            "in": "query",
             "description": "Artist name, the Last.fm fallback key.",
             "required": true,
             "schema": {
@@ -1885,9 +1879,9 @@
           },
           {
             "name": "name",
-            "in": "path",
+            "in": "query",
             "description": "Artist name for the Bandcamp search fallback.",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "string"
             }
@@ -1932,28 +1926,22 @@
           },
           {
             "name": "offset",
-            "in": "path",
+            "in": "query",
             "description": "Items to skip (default 0).",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int32",
               "minimum": 0
             }
           },
           {
             "name": "limit",
-            "in": "path",
+            "in": "query",
             "description": "Page size, 1 to 200 (default 50).",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int32",
               "minimum": 0
             }
@@ -2001,32 +1989,22 @@
           },
           {
             "name": "count",
-            "in": "path",
+            "in": "query",
             "description": "How many to return, 1 to 50.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int32",
               "minimum": 0
             }
           },
           {
             "name": "source",
-            "in": "path",
+            "in": "query",
             "description": "Provider to ask; default is the primary music source setting.",
-            "required": true,
+            "required": false,
             "schema": {
-              "oneOf": [
-                {
-                  "type": "null"
-                },
-                {
-                  "$ref": "#/components/schemas/DiscoverySource"
-                }
-              ]
+              "$ref": "#/components/schemas/DiscoverySource"
             }
           }
         ],
@@ -2069,32 +2047,22 @@
           },
           {
             "name": "count",
-            "in": "path",
+            "in": "query",
             "description": "How many to return, 1 to 50.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int32",
               "minimum": 0
             }
           },
           {
             "name": "source",
-            "in": "path",
+            "in": "query",
             "description": "Provider to ask; default is the primary music source setting.",
-            "required": true,
+            "required": false,
             "schema": {
-              "oneOf": [
-                {
-                  "type": "null"
-                },
-                {
-                  "$ref": "#/components/schemas/DiscoverySource"
-                }
-              ]
+              "$ref": "#/components/schemas/DiscoverySource"
             }
           }
         ],
@@ -2137,32 +2105,22 @@
           },
           {
             "name": "count",
-            "in": "path",
+            "in": "query",
             "description": "How many to return, 1 to 50.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int32",
               "minimum": 0
             }
           },
           {
             "name": "source",
-            "in": "path",
+            "in": "query",
             "description": "Provider to ask; default is the primary music source setting.",
-            "required": true,
+            "required": false,
             "schema": {
-              "oneOf": [
-                {
-                  "type": "null"
-                },
-                {
-                  "$ref": "#/components/schemas/DiscoverySource"
-                }
-              ]
+              "$ref": "#/components/schemas/DiscoverySource"
             }
           }
         ],
@@ -4604,101 +4562,77 @@
         "parameters": [
           {
             "name": "limit",
-            "in": "path",
+            "in": "query",
             "description": "Page size, 1-200. Default 50.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           },
           {
             "name": "offset",
-            "in": "path",
+            "in": "query",
             "description": "Page start. Default 0.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           },
           {
             "name": "sort",
-            "in": "path",
+            "in": "query",
             "description": "`name`, `date_added`, `year`, or `artist`. Default `name`.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "order",
-            "in": "path",
+            "in": "query",
             "description": "`asc` or `desc`. Default `asc`.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "q",
-            "in": "path",
+            "in": "query",
             "description": "Title/artist substring filter, case folded.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "artist_id",
-            "in": "path",
+            "in": "query",
             "description": "Restrict to one album artist.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "decade",
-            "in": "path",
+            "in": "query",
             "description": "Restrict to one decade start year, e.g. 1990.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           },
           {
             "name": "format",
-            "in": "path",
+            "in": "query",
             "description": "Restrict to one primary track format, e.g. `flac`. Blank reads as\nabsent; matching is case-insensitive.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -5002,27 +4936,21 @@
           },
           {
             "name": "limit",
-            "in": "path",
+            "in": "query",
             "description": "Page size, 1-1000. Default 200.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           },
           {
             "name": "offset",
-            "in": "path",
+            "in": "query",
             "description": "Page start. Default 0.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           }
@@ -5060,76 +4988,58 @@
         "parameters": [
           {
             "name": "limit",
-            "in": "path",
+            "in": "query",
             "description": "Page size, 1-200. Default 50.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           },
           {
             "name": "offset",
-            "in": "path",
+            "in": "query",
             "description": "Page start. Default 0.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           },
           {
             "name": "sort",
-            "in": "path",
+            "in": "query",
             "description": "`name`, `album_count`, or `date_added`. Default `name`.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "order",
-            "in": "path",
+            "in": "query",
             "description": "`asc` or `desc`. Default `asc`.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "q",
-            "in": "path",
+            "in": "query",
             "description": "Name substring filter, case folded.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "scope",
-            "in": "path",
+            "in": "query",
             "description": "`all`, `album_artists`, or `contributors`. Default `all`.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -5210,27 +5120,21 @@
           },
           {
             "name": "limit",
-            "in": "path",
+            "in": "query",
             "description": "Page size, 1-1000. Default 200.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           },
           {
             "name": "offset",
-            "in": "path",
+            "in": "query",
             "description": "Page start. Default 0.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           }
@@ -5277,27 +5181,21 @@
           },
           {
             "name": "limit",
-            "in": "path",
+            "in": "query",
             "description": "Page size, 1-1000. Default 200.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           },
           {
             "name": "offset",
-            "in": "path",
+            "in": "query",
             "description": "Page start. Default 0.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           }
@@ -5368,27 +5266,21 @@
           },
           {
             "name": "limit",
-            "in": "path",
+            "in": "query",
             "description": "Page size, 1-1000. Default 200.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           },
           {
             "name": "offset",
-            "in": "path",
+            "in": "query",
             "description": "Page start. Default 0.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           }
@@ -5644,14 +5536,11 @@
         "parameters": [
           {
             "name": "limit",
-            "in": "path",
+            "in": "query",
             "description": "Card cap, 1-50. Default 20.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           }
@@ -6022,100 +5911,76 @@
         "parameters": [
           {
             "name": "limit",
-            "in": "path",
+            "in": "query",
             "description": "Page size, 1-500. Default 50.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           },
           {
             "name": "offset",
-            "in": "path",
+            "in": "query",
             "description": "Page start. Default 0.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           },
           {
             "name": "sort",
-            "in": "path",
+            "in": "query",
             "description": "`title` or `date_added`. Default `title`.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "order",
-            "in": "path",
+            "in": "query",
             "description": "`asc` or `desc`. Default `asc`.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "q",
-            "in": "path",
+            "in": "query",
             "description": "Title/artist/album substring filter, case folded.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "album_id",
-            "in": "path",
+            "in": "query",
             "description": "Restrict to one album.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "artist_id",
-            "in": "path",
+            "in": "query",
             "description": "Restrict to one credited artist.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "genre",
-            "in": "path",
+            "in": "query",
             "description": "Restrict to one genre tag, case folded.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -6225,76 +6090,58 @@
         "parameters": [
           {
             "name": "limit",
-            "in": "path",
+            "in": "query",
             "description": "Page size, 1-200. Default 50.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           },
           {
             "name": "offset",
-            "in": "path",
+            "in": "query",
             "description": "Page start. Default 0.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           },
           {
             "name": "sort",
-            "in": "path",
+            "in": "query",
             "description": "`name`, `date_added`, `year`, `random`, or `rediscover`\n(oldest first). Default `name`.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "order",
-            "in": "path",
+            "in": "query",
             "description": "`asc` or `desc`. Default `asc`.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "q",
-            "in": "path",
+            "in": "query",
             "description": "Title/artist substring filter, case folded.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "decade",
-            "in": "path",
+            "in": "query",
             "description": "Restrict to one decade start year, e.g. 1990.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           }
@@ -6338,27 +6185,21 @@
           },
           {
             "name": "limit",
-            "in": "path",
+            "in": "query",
             "description": "Page size, 1-1000. Default 200.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           },
           {
             "name": "offset",
-            "in": "path",
+            "in": "query",
             "description": "Page start. Default 0.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           }
@@ -6420,14 +6261,11 @@
         "parameters": [
           {
             "name": "limit",
-            "in": "path",
+            "in": "query",
             "description": "Card cap, 1-50. Default 20.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           }
@@ -6465,26 +6303,20 @@
         "parameters": [
           {
             "name": "q",
-            "in": "path",
+            "in": "query",
             "description": "Substring query, case folded, at least one character.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           },
           {
             "name": "limit",
-            "in": "path",
+            "in": "query",
             "description": "Cap applied per group, 1-50. Default 20.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           }
@@ -6519,27 +6351,21 @@
         "parameters": [
           {
             "name": "limit",
-            "in": "path",
+            "in": "query",
             "description": "Track cap, 1-40. Default 12.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           },
           {
             "name": "decade",
-            "in": "path",
+            "in": "query",
             "description": "Era anchor for the `same_era` pool, e.g. 1990.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int64"
             }
           }
@@ -11426,7 +11252,7 @@
         "parameters": [
           {
             "name": "q",
-            "in": "path",
+            "in": "query",
             "description": "Search text. Required; blank is a 400.",
             "required": true,
             "schema": {
@@ -11435,56 +11261,44 @@
           },
           {
             "name": "limit_artists",
-            "in": "path",
+            "in": "query",
             "description": "Max artists (0-100, default 10).",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int32",
               "minimum": 0
             }
           },
           {
             "name": "limit_albums",
-            "in": "path",
+            "in": "query",
             "description": "Max albums (0-100, default 10).",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int32",
               "minimum": 0
             }
           },
           {
             "name": "limit_tracks",
-            "in": "path",
+            "in": "query",
             "description": "Max tracks (0-100, default 10).",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int32",
               "minimum": 0
             }
           },
           {
             "name": "buckets",
-            "in": "path",
+            "in": "query",
             "description": "Comma-separated subset (`artists,albums,tracks`); absent means all.",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+              "type": "string"
             }
           }
         ],
@@ -11555,7 +11369,7 @@
         "parameters": [
           {
             "name": "q",
-            "in": "path",
+            "in": "query",
             "description": "Search text. Queries shorter than two characters return an empty\n200, kept from v2 so the typeahead never errors mid-typing.",
             "required": true,
             "schema": {
@@ -11564,14 +11378,11 @@
           },
           {
             "name": "limit",
-            "in": "path",
+            "in": "query",
             "description": "Max suggestions (1-10, default 5).",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int32",
               "minimum": 0
             }
@@ -11606,8 +11417,17 @@
         "operationId": "search_bucket",
         "parameters": [
           {
-            "name": "q",
+            "name": "bucket",
             "in": "path",
+            "description": "Bucket name: artists, albums or tracks",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
             "description": "Search text. Required; blank is a 400.",
             "required": true,
             "schema": {
@@ -11616,28 +11436,22 @@
           },
           {
             "name": "limit",
-            "in": "path",
+            "in": "query",
             "description": "Page size (1-100, default 50).",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int32",
               "minimum": 0
             }
           },
           {
             "name": "offset",
-            "in": "path",
+            "in": "query",
             "description": "Pagination offset (default 0).",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": [
-                "integer",
-                "null"
-              ],
+              "type": "integer",
               "format": "int32",
               "minimum": 0
             }
@@ -12372,7 +12186,7 @@
           "crate::settings::handlers"
         ],
         "summary": "Read the home page settings.",
-        "operationId": "get_home",
+        "operationId": "get_home_settings",
         "responses": {
           "200": {
             "description": "Home page settings",
@@ -14682,7 +14496,7 @@
         }
       }
     },
-    "/api/v3/stream/{source}/{key}": {
+    "/api/v3/stream/{source}/{*key}": {
       "get": {
         "tags": [
           "crate::stream::routes"
@@ -14700,9 +14514,9 @@
             }
           },
           {
-            "name": "key",
+            "name": "*key",
             "in": "path",
-            "description": "Local file id, remote item id, Plex part key, or recording MBID for plugin",
+            "description": "Local file id, remote item id, Plex part key, or recording MBID for plugin. A wildcard: Plex part keys keep their slashes",
             "required": true,
             "schema": {
               "type": "string"
@@ -14784,9 +14598,9 @@
             }
           },
           {
-            "name": "key",
+            "name": "*key",
             "in": "path",
-            "description": "Local file id, remote item id, Plex part key, or recording MBID for plugin",
+            "description": "Local file id, remote item id, Plex part key, or recording MBID for plugin. A wildcard: Plex part keys keep their slashes",
             "required": true,
             "schema": {
               "type": "string"

@@ -93,7 +93,10 @@ pub async fn search(
 #[utoipa::path(
     get,
     path = "/api/v3/search/{bucket}",
-    params(BucketQuery),
+    params(
+        ("bucket" = String, Path, description = "Bucket name: artists, albums or tracks"),
+        BucketQuery,
+    ),
     responses(
         (status = 200, description = "One page of the bucket", body = super::models::SearchBucketResponse),
         (status = 400, description = "Blank query or bad limit"),

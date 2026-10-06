@@ -149,6 +149,7 @@ pub struct SuggestResponse {
 
 /// Query params for `GET /api/v3/search`.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct SearchQuery {
     /// Search text. Required; blank is a 400.
     pub q: String,
@@ -164,6 +165,7 @@ pub struct SearchQuery {
 
 /// Query params for `GET /api/v3/search/{bucket}`.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct BucketQuery {
     /// Search text. Required; blank is a 400.
     pub q: String,
@@ -175,6 +177,7 @@ pub struct BucketQuery {
 
 /// Query params for `GET /api/v3/search/suggest`.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct SuggestQuery {
     /// Search text. Queries shorter than two characters return an empty
     /// 200, kept from v2 so the typeahead never errors mid-typing.

@@ -1,6 +1,8 @@
 //! The committed OpenAPI snapshot matches the document the code builds.
 //! `server/openapi/check.sh` diffs the generated TypeScript in CI.
 
+use std::collections::BTreeSet;
+
 use droppedneedle::docs::ApiDoc;
 use utoipa::OpenApi as _;
 
@@ -33,4 +35,37 @@ fn openapi_covers_routes_mounted_outside_their_slices() {
             "{route} is mounted but missing from the snapshot; register its utoipa path"
         );
     }
+}
+
+/// Every operation declares exactly the `{name}` segments of its path as
+/// path parameters. A query struct without
+/// `#[into_params(parameter_in = Query)]` lands its fields here as path
+/// parameters, and a typed client then cannot build the URL.
+#[test]
+fn path_parameters_match_their_templates() {
+    let doc = serde_json::to_value(ApiDoc::openapi()).unwrap();
+    let mut wrong = Vec::new();
+    for (path, item) in doc["paths"].as_object().unwrap() {
+        let template: BTreeSet<&str> = path
+            .split('{')
+            .skip(1)
+            .filter_map(|rest| rest.split_once('}').map(|(name, _)| name))
+            .collect();
+        for (method, operation) in item.as_object().unwrap() {
+            let declared: BTreeSet<&str> = operation["parameters"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|parameter| parameter["in"] == "path")
+                .filter_map(|parameter| parameter["name"].as_str())
+                .collect();
+            if declared != template {
+                wrong.push(format!("{method} {path}: declares {declared:?}"));
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "path parameters off their template: {wrong:#?}"
+    );
 }
