@@ -10,7 +10,10 @@ impl RunStore for SqliteScanStore {
         requested_at: f64,
     ) -> Result<ScanRequestResult, ScanStoreError> {
         let mut guard = self.lock();
-        let tx = guard.conn.transaction().map_err(internal)?;
+        let tx = guard
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(internal)?;
         let result = request_run_inner(&tx, request, run_id, requested_at).map_err(internal)?;
         tx.commit().map_err(internal)?;
         Ok(result)
@@ -94,7 +97,9 @@ impl RunStore for SqliteScanStore {
     fn claim_next(&self, now: f64) -> Option<ScanRun> {
         let mut guard = self.lock();
         (|| -> rusqlite::Result<Option<ScanRun>> {
-            let tx = guard.conn.transaction()?;
+            let tx = guard
+                .conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             let run = claim_next_inner(&tx, now)?;
             tx.commit()?;
             Ok(run)
@@ -136,7 +141,10 @@ impl RunStore for SqliteScanStore {
         terminal_code: Option<&str>,
     ) -> Result<ScanRun, ScanStoreError> {
         let mut guard = self.lock();
-        let tx = guard.conn.transaction().map_err(internal)?;
+        let tx = guard
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(internal)?;
         let run = transition_inner(
             &tx,
             run_id,
@@ -159,7 +167,10 @@ impl RunStore for SqliteScanStore {
         now: f64,
     ) -> Result<(ScanRun, u64), ScanStoreError> {
         let mut guard = self.lock();
-        let tx = guard.conn.transaction().map_err(internal)?;
+        let tx = guard
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(internal)?;
         let outcome = request_control_inner(&tx, run_id, control, resume, expected_revision, now)?;
         tx.commit().map_err(internal)?;
         Ok(outcome)
@@ -171,7 +182,9 @@ impl RunStore for SqliteScanStore {
         }
         let mut guard = self.lock();
         let outcome = (|| -> rusqlite::Result<()> {
-            let tx = guard.conn.transaction()?;
+            let tx = guard
+                .conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             for failure in &failures {
                 tx.execute(
                     "INSERT OR IGNORE INTO library_scan_failures \
@@ -371,7 +384,9 @@ impl RunStore for SqliteScanStore {
     fn recover(&self, now: f64) -> Vec<ScanRun> {
         let mut guard = self.lock();
         (|| -> rusqlite::Result<Vec<ScanRun>> {
-            let tx = guard.conn.transaction()?;
+            let tx = guard
+                .conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             tx.execute(
                 "UPDATE library_scan_runs SET state = 'cancelled', terminal_at = ?1, \
                  updated_at = ?1, requested_control = 'none', \
@@ -410,7 +425,9 @@ impl RunStore for SqliteScanStore {
     fn recover_stopping(&self, now: f64) -> Vec<ScanRun> {
         let mut guard = self.lock();
         (|| -> rusqlite::Result<Vec<ScanRun>> {
-            let tx = guard.conn.transaction()?;
+            let tx = guard
+                .conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             tx.execute(
                 "UPDATE library_scan_runs SET state = 'cancelled', terminal_at = ?1, \
                  updated_at = ?1, requested_control = 'none', \

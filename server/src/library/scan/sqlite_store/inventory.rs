@@ -85,7 +85,9 @@ impl InventoryStore for SqliteScanStore {
     fn prepare_discovery_resume(&self, run_id: &str) {
         let mut guard = self.lock();
         let outcome = (|| -> rusqlite::Result<()> {
-            let tx = guard.conn.transaction()?;
+            let tx = guard
+                .conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             tx.execute(
                 "UPDATE library_scan_run_scopes SET discovery_state = 'pending', \
                  error_code = NULL, discovery_generation = discovery_generation + 1 \
@@ -110,7 +112,10 @@ impl InventoryStore for SqliteScanStore {
 
     fn finalize_discovery(&self, run_id: &str, updated_at: f64) -> Result<ScanRun, ScanStoreError> {
         let mut guard = self.lock();
-        let tx = guard.conn.transaction().map_err(internal)?;
+        let tx = guard
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(internal)?;
         if load_run(&tx, run_id).map_err(internal)?.is_none() {
             return Err(ScanStoreError::NotFound {
                 run_id: run_id.to_owned(),
@@ -146,7 +151,9 @@ impl InventoryStore for SqliteScanStore {
     fn cleanup_stale_inventory(&self, run_id: &str) -> usize {
         let mut guard = self.lock();
         (|| -> rusqlite::Result<usize> {
-            let tx = guard.conn.transaction()?;
+            let tx = guard
+                .conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             tx.execute(
                 "DELETE FROM library_scan_inventory WHERE rowid IN ( \
                  SELECT i.rowid FROM library_scan_inventory i \

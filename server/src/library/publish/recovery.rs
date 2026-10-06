@@ -309,7 +309,9 @@ fn resume_precommit<C: Catalog>(
         expected_catalog_revision: expected,
         tracks,
     };
-    let tx = conn.transaction().map_err(PublishError::from)?;
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(PublishError::from)?;
     if let Err(err) = catalog.commit_bundle(&tx, &commit) {
         drop(tx);
         compensate_bundle(conn, sandbox, &refreshed)?;

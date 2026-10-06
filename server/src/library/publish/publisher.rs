@@ -670,7 +670,10 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             expected_catalog_revision: bundle.catalog_revision,
             tracks,
         };
-        let tx = self.conn.transaction().map_err(PublishError::from)?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(PublishError::from)?;
         if let Err(err) = self.catalog.commit_bundle(&tx, &commit) {
             drop(tx);
             return Err(err);
