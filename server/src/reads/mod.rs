@@ -75,8 +75,10 @@ impl ReadsSetup {
         let discover = discover::adapters::production_deps(
             discover::adapters::DiscoverInputs {
                 pool: pool.clone(),
+                lane: inputs.lane.clone(),
                 config: inputs.config.clone(),
                 http: inputs.http.clone(),
+                no_redirect: inputs.no_redirect.clone(),
                 providers: inputs.providers.clone(),
                 listenbrainz_links: inputs.listenbrainz_links.clone(),
                 youtube_quota_path: inputs.youtube_quota_path.clone(),
@@ -278,7 +280,7 @@ fn test_discover_deps(ids: Arc<dyn IdGenerator>) -> discover::ReadsDeps {
     let clock = ManualClock::new(0);
     discover::ReadsDeps {
         content: Arc::new(FakeContent::new(clock.clone())),
-        queues: Arc::new(FakeQueues::new(clock.clone())),
+        queues: Arc::new(FakeQueues),
         batches: Arc::new(FakeBatches::new(clock)),
         charts: Arc::new(FakeCharts::new()),
         previews: Arc::new(FakePreviews),
@@ -295,6 +297,8 @@ pub struct ReadsInputs {
     /// Runtime settings, read per request (wrapped key, local-art
     /// preference, YouTube and integration settings).
     pub config: Arc<crate::runtime_config::ConfigStore>,
+    /// The writer lane (discover queue ignores and saved decks).
+    pub lane: crate::db::WriteLane,
     /// Root of the cover cache (`<cache_dir>/covers`).
     pub covers_dir: std::path::PathBuf,
     /// Size bound of the cover cache in bytes.

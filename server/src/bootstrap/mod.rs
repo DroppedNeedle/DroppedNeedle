@@ -180,6 +180,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         ids.clone(),
         ReadsInputs {
             config: config_store.clone(),
+            lane: runtime.lane().clone(),
             covers_dir: config.cache_dir.join("covers"),
             cover_cache_max_bytes: config.cover_cache_max_bytes,
             http: http.shared().clone(),

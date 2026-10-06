@@ -162,6 +162,7 @@ impl Lib {
             crate::common::reads_inputs(
                 Arc::clone(&self.store),
                 self.db_path.parent().expect("db dir"),
+                self.runtime.lane().clone(),
             ),
             None,
         )

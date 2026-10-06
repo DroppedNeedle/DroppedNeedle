@@ -192,9 +192,27 @@ impl Upstream {
         settings: Arc<dyn CatalogSettings>,
         users: UsersDeps,
     ) -> Self {
+        Self::from_clients(
+            http.shared().clone(),
+            http.no_redirect().clone(),
+            providers,
+            settings,
+            users,
+        )
+    }
+
+    /// Assemble from the factory's two clients when only the clients are
+    /// at hand (the discover wiring receives them, not the factory).
+    pub fn from_clients(
+        http: reqwest::Client,
+        no_redirect: reqwest::Client,
+        providers: Arc<Providers>,
+        settings: Arc<dyn CatalogSettings>,
+        users: UsersDeps,
+    ) -> Self {
         Self {
-            http: http.shared().clone(),
-            no_redirect: http.no_redirect().clone(),
+            http,
+            no_redirect,
             providers,
             settings,
             users,

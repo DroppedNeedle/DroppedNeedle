@@ -1,99 +1,24 @@
-//! Discover features whose builders are not ported yet: the queue deck,
-//! discovery batches, radio, and the presence feed on this router.
+//! Discover features whose builders are not ported yet: discovery
+//! batches, radio, and the presence feed on this router.
 //!
-//! None of them invent rows. The queue reads as an empty, ready deck;
-//! batch listings are empty and creating one answers "not available"
-//! (a batch files real requests, which needs the acquisition port); radio
-//! answers "not available". Live presence is served by playback, so this
-//! router's copy is empty.
+//! None of them invent rows. Batch listings are empty and creating one
+//! answers "not available" (a batch files real requests, which needs the
+//! acquisition port); radio answers "not available". Live presence is
+//! served by playback, so this router's copy is empty.
 
 use std::collections::HashMap;
 
 use crate::reads::discover::{
     models::{
-        ChartRange, ChartSection, ChartSource, GenreDetailResponse, IgnoredRelease,
-        NowPlayingEntry, PlaylistSuggestionsResponse, PopularAlbumsPage, QueueGenerateResponse,
-        RadioPlanResponse, TrendingArtistsPage, YouTubeQuotaResponse,
+        ChartRange, ChartSection, ChartSource, GenreDetailResponse, NowPlayingEntry,
+        PlaylistSuggestionsResponse, PopularAlbumsPage, RadioPlanResponse, TrendingArtistsPage,
+        YouTubeQuotaResponse,
     },
     ports::{
-        BatchItemRow, BatchRow, BatchStore, BoxFuture, ChartsSource, Clock, NowPlayingStore,
-        ProviderFailure, QueueBuild, QueueStore, RadioPlanner, YouTubeSource,
+        BatchItemRow, BatchRow, BatchStore, BoxFuture, ChartsSource, NowPlayingStore,
+        ProviderFailure, RadioPlanner, YouTubeSource,
     },
 };
-
-/// Queue id of the empty deck.
-const EMPTY_QUEUE_ID: &str = "empty";
-
-/// An empty, ready queue deck.
-pub struct EmptyQueue<C: Clock> {
-    clock: C,
-}
-
-impl<C: Clock> EmptyQueue<C> {
-    /// Stamp builds with `clock`.
-    pub fn new(clock: C) -> Self {
-        Self { clock }
-    }
-
-    fn empty(&self) -> QueueBuild {
-        QueueBuild {
-            status: "ready".to_owned(),
-            queue_id: EMPTY_QUEUE_ID.to_owned(),
-            items: Vec::new(),
-            built_at: self.clock.now_unix(),
-            error: None,
-        }
-    }
-}
-
-impl<C: Clock> QueueStore for EmptyQueue<C> {
-    fn consume(&self, _user_id: &str) -> Option<QueueBuild> {
-        None
-    }
-
-    fn build_lightweight(
-        &self,
-        _user_id: &str,
-        _count: Option<i64>,
-    ) -> Result<QueueBuild, ProviderFailure> {
-        Ok(self.empty())
-    }
-
-    fn ensure_loaded(&self, _user_id: &str) {}
-
-    fn status(&self, _user_id: &str) -> QueueBuild {
-        self.empty()
-    }
-
-    fn start_build(&self, _user_id: &str, _force: bool) -> QueueGenerateResponse {
-        let build = self.empty();
-        QueueGenerateResponse {
-            action: "built".to_owned(),
-            status: build.status,
-            queue_id: Some(build.queue_id),
-            item_count: Some(0),
-            built_at: Some(build.built_at),
-            stale: Some(false),
-            error: None,
-        }
-    }
-
-    fn ignore_release(
-        &self,
-        _user_id: &str,
-        release_group_mbid: &str,
-        _artist_mbid: &str,
-        _release_name: &str,
-        _artist_name: &str,
-    ) {
-        // The deck is empty, so there is nothing to hide the release from.
-        tracing::debug!(release_group_mbid, "queue ignore skipped: no queue builder");
-    }
-
-    fn ignored(&self, _user_id: &str) -> Vec<IgnoredRelease> {
-        Vec::new()
-    }
-}
 
 /// Discovery batches without the acquisition port behind them.
 pub struct UnavailableBatches;

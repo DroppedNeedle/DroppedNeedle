@@ -12,10 +12,11 @@ use std::collections::HashMap;
 pub use futures_util::future::BoxFuture;
 
 use crate::reads::discover::models::{
-    ChartRange, ChartSource, DiscoverActivityResponse, DiscoverQueuePreview, DiscoverResponse,
-    GenreDetailResponse, HomeResponse, IgnoredRelease, IntegrationStatus, NowPlayingEntry,
-    PopularAlbumsPage, PreviewTrackItem, QueueEnrichment, QueueGenerateResponse, QueueItem,
-    TrackPreviewResponse, TrendingArtistsPage, YouTubeQuotaResponse,
+    ChartRange, ChartSource, DiscoverActivityResponse, DiscoverQueuePreview,
+    DiscoverQueueStatusResponse, DiscoverResponse, GenreDetailResponse, HomeResponse,
+    IgnoredRelease, IntegrationStatus, NowPlayingEntry, PopularAlbumsPage, PreviewTrackItem,
+    QueueEnrichment, QueueGenerateResponse, QueueIgnoreRequest, QueueItem, TrackPreviewResponse,
+    TrendingArtistsPage, YouTubeQuotaResponse,
 };
 
 /// Why a port could not answer.
@@ -109,65 +110,77 @@ pub trait DiscoverContent: Send + Sync {
         &'a self,
         user_id: &'a str,
     ) -> BoxFuture<'a, Result<(), ProviderFailure>>;
-    /// Enrichment behind one queue card.
-    fn enrich_queue_item<'a>(
+}
+
+/// What asked for a queue build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueueTrigger {
+    /// A person asked (generate, or an ignore that reshuffles the deck).
+    Request {
+        /// Rebuild even when the current deck is fresh.
+        force: bool,
+    },
+    /// The background warm cycle. Skipped while the warm-cycle setting is
+    /// off, and replaced by any request that arrives while it runs.
+    Scheduled,
+}
+
+/// One deck as the queue route serves it.
+#[derive(Debug, Clone)]
+pub struct QueueDeck {
+    /// Build id.
+    pub queue_id: String,
+    /// Deck cards in order.
+    pub items: Vec<QueueItem>,
+}
+
+/// The queue deck: background builds, the ignore ledger, and the details
+/// behind each card.
+pub trait QueueStore: Send + Sync {
+    /// The user's last built deck, stale or not, when there is one.
+    fn current<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Option<QueueDeck>>;
+    /// Build a deck now, in the request, without keeping it. `count`
+    /// overrides the configured queue size.
+    fn build_now<'a>(
         &'a self,
+        user_id: &'a str,
+        count: Option<usize>,
+    ) -> BoxFuture<'a, Result<QueueDeck, ProviderFailure>>;
+    /// Where the user's background build stands.
+    fn status<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, DiscoverQueueStatusResponse>;
+    /// Start a background build, or report why none started.
+    fn start_build<'a>(
+        &'a self,
+        user_id: &'a str,
+        trigger: QueueTrigger,
+    ) -> BoxFuture<'a, QueueGenerateResponse>;
+    /// Record one ignored release for the user. Later decks skip it.
+    fn ignore_release<'a>(
+        &'a self,
+        user_id: &'a str,
+        release: &'a QueueIgnoreRequest,
+    ) -> BoxFuture<'a, Result<(), ProviderFailure>>;
+    /// The user's ignore ledger, newest first.
+    fn ignored<'a>(
+        &'a self,
+        user_id: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<IgnoredRelease>, ProviderFailure>>;
+    /// Details behind one card: tags, date, country, bio, listens, video.
+    fn enrich<'a>(
+        &'a self,
+        user_id: &'a str,
         release_group_mbid: &'a str,
     ) -> BoxFuture<'a, Result<QueueEnrichment, ProviderFailure>>;
-    /// On-demand preview behind one queue card.
-    fn preview_queue_item<'a>(
+    /// An on-demand video preview behind one card.
+    fn preview<'a>(
         &'a self,
         release_group_mbid: &'a str,
     ) -> BoxFuture<'a, Result<DiscoverQueuePreview, ProviderFailure>>;
-    /// Library membership behind the given release-group ids.
-    fn validate_queue_mbids<'a>(
+    /// The given release groups that the library already holds.
+    fn validate<'a>(
         &'a self,
         mbids: &'a [String],
     ) -> BoxFuture<'a, Result<Vec<String>, ProviderFailure>>;
-}
-
-/// Queue build state for one user.
-#[derive(Debug, Clone)]
-pub struct QueueBuild {
-    /// `ready`, `building`, `stale`, or `error`.
-    pub status: String,
-    /// Build id.
-    pub queue_id: String,
-    /// Deck cards.
-    pub items: Vec<QueueItem>,
-    /// Build timestamp (unix seconds).
-    pub built_at: i64,
-    /// Failure text, when the build failed.
-    pub error: Option<String>,
-}
-
-/// The queue deck store: builds, cards, and the ignore ledger.
-pub trait QueueStore: Send + Sync {
-    /// Fresh deck for the user, when a live build exists.
-    fn consume(&self, user_id: &str) -> Option<QueueBuild>;
-    /// Build a lightweight deck synchronously (fallback when no build lives).
-    fn build_lightweight(
-        &self,
-        user_id: &str,
-        count: Option<i64>,
-    ) -> Result<QueueBuild, ProviderFailure>;
-    /// Make sure state for the user is loaded.
-    fn ensure_loaded(&self, user_id: &str);
-    /// Current build status for the user.
-    fn status(&self, user_id: &str) -> QueueBuild;
-    /// Start a build, or report the live one. `force` rebuilds regardless.
-    fn start_build(&self, user_id: &str, force: bool) -> QueueGenerateResponse;
-    /// Ignore one release for the user and kick a rebuild.
-    fn ignore_release(
-        &self,
-        user_id: &str,
-        release_group_mbid: &str,
-        artist_mbid: &str,
-        release_name: &str,
-        artist_name: &str,
-    );
-    /// The user's ignore ledger, newest first.
-    fn ignored(&self, user_id: &str) -> Vec<IgnoredRelease>;
 }
 
 /// Chart pages and genre detail.

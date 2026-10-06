@@ -13,17 +13,17 @@ use std::{
 use crate::reads::discover::{
     models::{
         ChartAlbum, ChartArtist, ChartRange, ChartSection, ChartSource, DiscoverActivityResponse,
-        DiscoverQueuePreview, DiscoverResponse, GenreArtwork, GenreArtworkAlbum,
-        GenreDetailResponse, GenreLibrarySection, GenrePopularSection, HomeResponse,
-        IgnoredRelease, IntegrationStatus, NowPlayingEntry, PopularAlbumsPage, QueueEnrichment,
-        QueueGenerateResponse, QueueItem, QueueItemLight, SectionItem, ServicePrompt,
+        DiscoverQueuePreview, DiscoverQueueStatusResponse, DiscoverResponse, GenreArtwork,
+        GenreArtworkAlbum, GenreDetailResponse, GenreLibrarySection, GenrePopularSection,
+        HomeResponse, IgnoredRelease, IntegrationStatus, NowPlayingEntry, PopularAlbumsPage,
+        QueueEnrichment, QueueGenerateResponse, QueueIgnoreRequest, SectionItem, ServicePrompt,
         TopPicksSection, TrackPreviewResponse, TrendingArtistsPage, WeeklyExploration,
         YouTubeQuotaResponse,
     },
     ports::{
         AlbumSamples, BatchItemRow, BatchRow, BatchStore, BoxFuture, ChartsSource, Clock,
-        DiscoverContent, NowPlayingStore, PreviewSource, ProviderFailure, QueueBuild, QueueStore,
-        RadioPlanner, YouTubeSource,
+        DiscoverContent, NowPlayingStore, PreviewSource, ProviderFailure, QueueDeck, QueueStore,
+        QueueTrigger, RadioPlanner, YouTubeSource,
     },
 };
 
@@ -351,250 +351,115 @@ impl DiscoverContent for FakeContent {
             Ok(())
         })
     }
+}
 
-    fn enrich_queue_item<'a>(
+/// A queue with no decks and no providers, for rigs that never touch the
+/// queue routes. The real queue runs over SQLite and scripted sources in
+/// its own journey test.
+pub struct FakeQueues;
+
+impl QueueStore for FakeQueues {
+    fn current<'a>(&'a self, _user_id: &'a str) -> BoxFuture<'a, Option<QueueDeck>> {
+        Box::pin(async { None })
+    }
+
+    fn build_now<'a>(
         &'a self,
-        release_group_mbid: &'a str,
-    ) -> BoxFuture<'a, Result<QueueEnrichment, ProviderFailure>> {
-        Box::pin(async move {
-            if let Some(failure) = self.failure() {
-                return Err(failure);
-            }
-            Ok(QueueEnrichment {
-                artist_mbid: Some("artist-mbid-1".to_owned()),
-                release_date: Some("1997-09-29".to_owned()),
-                country: Some("GB".to_owned()),
-                tags: vec!["trip-hop".to_owned()],
-                youtube_url: Some(format!(
-                    "https://www.youtube.com/watch?v={release_group_mbid}"
-                )),
-                youtube_search_url: "https://www.youtube.com/results?search_query=fake".to_owned(),
-                youtube_search_available: true,
-                artist_description: Some("Bristol trip-hop band.".to_owned()),
-                listen_count: Some(42_000),
+        _user_id: &'a str,
+        _count: Option<usize>,
+    ) -> BoxFuture<'a, Result<QueueDeck, ProviderFailure>> {
+        Box::pin(async {
+            Ok(QueueDeck {
+                queue_id: "queue-empty".to_owned(),
+                items: Vec::new(),
             })
         })
     }
 
-    fn preview_queue_item<'a>(
+    fn status<'a>(&'a self, _user_id: &'a str) -> BoxFuture<'a, DiscoverQueueStatusResponse> {
+        Box::pin(async {
+            DiscoverQueueStatusResponse {
+                status: "idle".to_owned(),
+                queue_id: None,
+                item_count: None,
+                built_at: None,
+                stale: None,
+                error: None,
+            }
+        })
+    }
+
+    fn start_build<'a>(
         &'a self,
-        release_group_mbid: &'a str,
+        _user_id: &'a str,
+        _trigger: QueueTrigger,
+    ) -> BoxFuture<'a, QueueGenerateResponse> {
+        Box::pin(async {
+            QueueGenerateResponse {
+                action: "disabled".to_owned(),
+                status: "idle".to_owned(),
+                queue_id: None,
+                item_count: None,
+                built_at: None,
+                stale: None,
+                error: None,
+            }
+        })
+    }
+
+    fn ignore_release<'a>(
+        &'a self,
+        _user_id: &'a str,
+        _release: &'a QueueIgnoreRequest,
+    ) -> BoxFuture<'a, Result<(), ProviderFailure>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn ignored<'a>(
+        &'a self,
+        _user_id: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<IgnoredRelease>, ProviderFailure>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+
+    fn enrich<'a>(
+        &'a self,
+        _user_id: &'a str,
+        _release_group_mbid: &'a str,
+    ) -> BoxFuture<'a, Result<QueueEnrichment, ProviderFailure>> {
+        Box::pin(async {
+            Ok(QueueEnrichment {
+                artist_mbid: None,
+                release_date: None,
+                country: None,
+                tags: Vec::new(),
+                youtube_url: None,
+                youtube_search_url: String::new(),
+                youtube_search_available: false,
+                artist_description: None,
+                listen_count: None,
+            })
+        })
+    }
+
+    fn preview<'a>(
+        &'a self,
+        _release_group_mbid: &'a str,
     ) -> BoxFuture<'a, Result<DiscoverQueuePreview, ProviderFailure>> {
-        Box::pin(async move {
-            if let Some(failure) = self.failure() {
-                return Err(failure);
-            }
-            if release_group_mbid == "rg-missing" {
-                return Ok(DiscoverQueuePreview {
-                    status: "not_found".to_owned(),
-                    youtube_url: None,
-                    youtube_search_url: Some(
-                        "https://www.youtube.com/results?search_query=fake".to_owned(),
-                    ),
-                });
-            }
+        Box::pin(async {
             Ok(DiscoverQueuePreview {
-                status: "available".to_owned(),
-                youtube_url: Some(format!(
-                    "https://www.youtube.com/watch?v={release_group_mbid}"
-                )),
+                status: "unavailable".to_owned(),
+                youtube_url: None,
                 youtube_search_url: None,
             })
         })
     }
 
-    fn validate_queue_mbids<'a>(
+    fn validate<'a>(
         &'a self,
-        mbids: &'a [String],
+        _mbids: &'a [String],
     ) -> BoxFuture<'a, Result<Vec<String>, ProviderFailure>> {
-        Box::pin(async move {
-            if let Some(failure) = self.failure() {
-                return Err(failure);
-            }
-            Ok(mbids
-                .iter()
-                .filter(|mbid| mbid.contains("owned"))
-                .cloned()
-                .collect())
-        })
-    }
-}
-
-/// In-memory queue builds and ignore ledger.
-pub struct FakeQueues {
-    clock: ManualClock,
-    builds: Mutex<HashMap<String, QueueBuild>>,
-    ignored: Mutex<HashMap<String, Vec<IgnoredRelease>>>,
-    building: Mutex<HashMap<String, bool>>,
-    seq: Mutex<i64>,
-}
-
-impl FakeQueues {
-    /// Build empty queue state pinned to `clock`.
-    pub fn new(clock: ManualClock) -> Self {
-        Self {
-            clock,
-            builds: Mutex::new(HashMap::new()),
-            ignored: Mutex::new(HashMap::new()),
-            building: Mutex::new(HashMap::new()),
-            seq: Mutex::new(0),
-        }
-    }
-
-    fn next_id(&self) -> String {
-        let seq = self
-            .seq
-            .lock()
-            .map(|mut seq| {
-                *seq += 1;
-                *seq
-            })
-            .unwrap_or(1)
-            .max(1);
-        format!("queue-{seq}")
-    }
-
-    fn cards(count: i64) -> Vec<QueueItem> {
-        (0..count)
-            .map(|rank| {
-                QueueItem::Light(QueueItemLight {
-                    release_group_mbid: format!("rg-mbid-{rank}"),
-                    album_name: format!("Album {rank}"),
-                    artist_name: format!("Artist {rank}"),
-                    artist_mbid: format!("artist-mbid-{rank}"),
-                    recommendation_reason: "Fans also like".to_owned(),
-                    cover_url: None,
-                    is_wildcard: rank == count - 1,
-                    in_library: false,
-                })
-            })
-            .collect()
-    }
-}
-
-impl QueueStore for FakeQueues {
-    fn consume(&self, user_id: &str) -> Option<QueueBuild> {
-        self.builds
-            .lock()
-            .ok()
-            .and_then(|builds| builds.get(user_id).cloned())
-    }
-
-    fn build_lightweight(
-        &self,
-        user_id: &str,
-        count: Option<i64>,
-    ) -> Result<QueueBuild, ProviderFailure> {
-        let _ = user_id;
-        let count = count.unwrap_or(10).clamp(1, 20);
-        Ok(QueueBuild {
-            status: "ready".to_owned(),
-            queue_id: self.next_id(),
-            items: Self::cards(count),
-            built_at: self.clock.now_unix(),
-            error: None,
-        })
-    }
-
-    fn ensure_loaded(&self, _user_id: &str) {}
-
-    fn status(&self, user_id: &str) -> QueueBuild {
-        if self
-            .building
-            .lock()
-            .map(|building| building.get(user_id).copied().unwrap_or(false))
-            .unwrap_or(false)
-        {
-            return QueueBuild {
-                status: "building".to_owned(),
-                queue_id: "queue-pending".to_owned(),
-                items: Vec::new(),
-                built_at: self.clock.now_unix(),
-                error: None,
-            };
-        }
-        self.builds
-            .lock()
-            .ok()
-            .and_then(|builds| builds.get(user_id).cloned())
-            .unwrap_or_else(|| QueueBuild {
-                status: "ready".to_owned(),
-                queue_id: "queue-empty".to_owned(),
-                items: Vec::new(),
-                built_at: self.clock.now_unix(),
-                error: None,
-            })
-    }
-
-    fn start_build(&self, user_id: &str, force: bool) -> QueueGenerateResponse {
-        let live = self
-            .building
-            .lock()
-            .map(|building| building.get(user_id).copied().unwrap_or(false))
-            .unwrap_or(false);
-        if live && !force {
-            return QueueGenerateResponse {
-                action: "already_building".to_owned(),
-                status: "building".to_owned(),
-                queue_id: Some("queue-pending".to_owned()),
-                item_count: None,
-                built_at: None,
-                stale: None,
-                error: None,
-            };
-        }
-        let build = QueueBuild {
-            status: "ready".to_owned(),
-            queue_id: self.next_id(),
-            items: Self::cards(10),
-            built_at: self.clock.now_unix(),
-            error: None,
-        };
-        if let Ok(mut builds) = self.builds.lock() {
-            builds.insert(user_id.to_owned(), build.clone());
-        }
-        QueueGenerateResponse {
-            action: "started".to_owned(),
-            status: build.status,
-            queue_id: Some(build.queue_id),
-            item_count: Some(build.items.len() as i64),
-            built_at: Some(build.built_at),
-            stale: Some(false),
-            error: None,
-        }
-    }
-
-    fn ignore_release(
-        &self,
-        user_id: &str,
-        release_group_mbid: &str,
-        artist_mbid: &str,
-        release_name: &str,
-        artist_name: &str,
-    ) {
-        let row = IgnoredRelease {
-            release_group_mbid: release_group_mbid.to_owned(),
-            artist_mbid: artist_mbid.to_owned(),
-            release_name: release_name.to_owned(),
-            artist_name: artist_name.to_owned(),
-            ignored_at: self.clock.now_unix(),
-        };
-        if let Ok(mut ignored) = self.ignored.lock() {
-            ignored
-                .entry(user_id.to_owned())
-                .or_default()
-                .insert(0, row);
-        }
-        if let Ok(mut builds) = self.builds.lock() {
-            builds.remove(user_id);
-        }
-    }
-
-    fn ignored(&self, user_id: &str) -> Vec<IgnoredRelease> {
-        self.ignored
-            .lock()
-            .map(|ignored| ignored.get(user_id).cloned().unwrap_or_default())
-            .unwrap_or_default()
+        Box::pin(async { Ok(Vec::new()) })
     }
 }
 

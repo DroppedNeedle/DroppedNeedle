@@ -286,10 +286,12 @@ impl Drop for ScratchDir {
 pub fn reads_inputs(
     config: Arc<droppedneedle::runtime_config::ConfigStore>,
     dir: &Path,
+    lane: droppedneedle::db::WriteLane,
 ) -> droppedneedle::reads::ReadsInputs {
     let http = test_http();
     droppedneedle::reads::ReadsInputs {
         config,
+        lane,
         covers_dir: dir.join("covers"),
         cover_cache_max_bytes: 16 * 1024 * 1024,
         http: http.shared().clone(),

@@ -21,9 +21,6 @@ use std::{
     time::Duration,
 };
 
-/// Queue deck TTL in seconds: decks older than this read stale (v2's
-/// `queue_ttl` default was one hour; same value, now named at the loop).
-pub const QUEUE_TTL_SECS: i64 = 3_600;
 /// Discover rebuild cadence: shelves mix hourly charts with daily picks;
 /// fifteen minutes keeps charts fresh without hammering providers.
 pub const DISCOVER_REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);

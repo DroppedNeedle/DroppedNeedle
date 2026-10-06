@@ -61,7 +61,7 @@ fn rig_with_youtube(configured: bool) -> Rig {
     };
     let deps = ReadsDeps {
         content: content.clone(),
-        queues: Arc::new(FakeQueues::new(clock.clone())),
+        queues: Arc::new(FakeQueues),
         batches: Arc::new(FakeBatches::new(clock.clone())),
         charts: charts.clone(),
         previews: Arc::new(FakePreviews),

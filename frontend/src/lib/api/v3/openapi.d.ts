@@ -1523,7 +1523,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The queue deck: a live build when one exists, else a lightweight build. */
+        /** The queue deck: the caller's last built deck, else one built now. */
         get: operations["get_queue"];
         put?: never;
         post?: never;
@@ -1540,7 +1540,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Enrichment behind one queue card. */
+        /**
+         * Details behind one queue card: tags, release date, country, artist
+         *     bio, listen count and a video link when one is known.
+         */
         get: operations["enrich_queue_item"];
         put?: never;
         post?: never;
@@ -1559,7 +1562,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Trigger a queue build. */
+        /**
+         * Start a background queue build. `action` says what happened:
+         *     `started`, `already_building`, or `already_ready` (a fresh deck exists
+         *     and `force` was not set).
+         */
         post: operations["queue_generate"];
         delete?: never;
         options?: never;
@@ -1576,7 +1583,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Ignore one release: ledger it, rebuild the queue, refresh discover. */
+        /**
+         * Ignore one release: later decks skip it, and a new deck starts
+         *     building at once.
+         */
         post: operations["ignore_queue_item"];
         delete?: never;
         options?: never;
@@ -1610,7 +1620,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** On-demand preview behind one queue card. */
+        /**
+         * A video preview behind one queue card: a MusicBrainz video link when
+         *     one exists, else a YouTube search when an API key is set.
+         */
         post: operations["preview_queue_item"];
         delete?: never;
         options?: never;
@@ -1625,7 +1638,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Current queue build status for polling. */
+        /**
+         * Where the caller's background queue build stands: `idle`, `building`,
+         *     `ready` (with the deck's id, size, age and staleness) or `error`.
+         */
         get: operations["queue_status"];
         put?: never;
         post?: never;
@@ -1644,7 +1660,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Library membership behind the given cards. */
+        /** The given cards whose albums the library already holds. */
         post: operations["validate_queue"];
         delete?: never;
         options?: never;
@@ -7693,10 +7709,28 @@ export interface components {
              */
             discover_picks_genre_affinity_weight: number;
             /**
+             * Format: int64
+             * @description Albums per similar artist (1-20).
+             * @default 5
+             */
+            discover_queue_albums_per_similar: number;
+            /**
              * @description Discover queue auto-generate.
              * @default true
              */
             discover_queue_auto_generate: boolean;
+            /**
+             * Format: int64
+             * @description Queue card details cache, hours (1-168).
+             * @default 24
+             */
+            discover_queue_enrich_ttl: number;
+            /**
+             * Format: int64
+             * @description MusicBrainz lookups per Last.fm album batch (1-50).
+             * @default 10
+             */
+            discover_queue_lastfm_mbid_max_lookups: number;
             /**
              * Format: int64
              * @description Discover queue polling, seconds (1-30).
@@ -7711,6 +7745,12 @@ export interface components {
             discover_queue_seed_artists: number;
             /**
              * Format: int64
+             * @description Similar artists per seed (5-50).
+             * @default 15
+             */
+            discover_queue_similar_artists_limit: number;
+            /**
+             * Format: int64
              * @description Discover queue size (1-20).
              * @default 10
              */
@@ -7721,6 +7761,11 @@ export interface components {
              * @default 24
              */
             discover_queue_ttl: number;
+            /**
+             * @description Let the background warm cycle build queue decks.
+             * @default true
+             */
+            discover_queue_warm_cycle_build: boolean;
             /**
              * Format: int64
              * @description Discover wildcard slots (0-10).
@@ -21579,8 +21624,8 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
-            503: {
+            /** @description The library check failed */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21602,7 +21647,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Card enrichment */
+            /** @description Card details */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -21624,15 +21669,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
             };
         };
     };
@@ -21708,6 +21744,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description The ignore could not be saved */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     ignored_releases: {
@@ -21734,6 +21779,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description The ledger could not be read */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
             };
         };
     };
@@ -21772,8 +21826,8 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
-            503: {
+            /** @description MusicBrainz or YouTube failed */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -21846,8 +21900,8 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
-            503: {
+            /** @description The library check failed */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

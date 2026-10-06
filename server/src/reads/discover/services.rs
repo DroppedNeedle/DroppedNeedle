@@ -23,7 +23,7 @@ use crate::{
         },
         ports::{
             BatchItemRow, BatchStore, ChartsSource, Clock, DiscoverContent, NowPlayingStore,
-            PreviewSource, ProviderFailure, QueueStore, RadioPlanner, YouTubeSource,
+            PreviewSource, ProviderFailure, QueueStore, QueueTrigger, RadioPlanner, YouTubeSource,
         },
     },
 };
@@ -312,106 +312,101 @@ pub async fn playlist_suggestions(
         .await?)
 }
 
-/// The queue deck: a live build when one exists, else a lightweight build.
+/// The queue deck: the user's last built deck when there is one (stale
+/// or not, like v2; the page asks for a fresh build through `generate`),
+/// else a deck built now and not kept.
 pub async fn queue(
     deps: &ReadsDeps,
     user_id: &str,
     count: Option<i64>,
 ) -> Result<DiscoverQueueResponse, ServiceError> {
-    if let Some(build) = deps.queues.consume(user_id) {
+    if let Some(deck) = deps.queues.current(user_id).await {
         let items = match count {
             Some(wanted) => {
                 let take = wanted.clamp(1, QUEUE_COUNT_MAX) as usize;
-                build.items.into_iter().take(take).collect()
+                deck.items.into_iter().take(take).collect()
             }
-            None => build.items,
+            None => deck.items,
         };
         return Ok(DiscoverQueueResponse {
             items,
-            queue_id: build.queue_id,
+            queue_id: deck.queue_id,
         });
     }
-    let clamped = count.map(|wanted| wanted.clamp(1, QUEUE_COUNT_MAX));
-    let build = deps.queues.build_lightweight(user_id, clamped)?;
+    let clamped = count.map(|wanted| wanted.clamp(1, QUEUE_COUNT_MAX) as usize);
+    let deck = deps
+        .queues
+        .build_now(user_id, clamped)
+        .await
+        .map_err(owned_store_failure)?;
     Ok(DiscoverQueueResponse {
-        items: build.items,
-        queue_id: build.queue_id,
+        items: deck.items,
+        queue_id: deck.queue_id,
     })
 }
 
-/// Current queue build status.
-pub fn queue_status(deps: &ReadsDeps, user_id: &str) -> DiscoverQueueStatusResponse {
-    deps.queues.ensure_loaded(user_id);
-    let build = deps.queues.status(user_id);
-    DiscoverQueueStatusResponse {
-        status: build.status,
-        queue_id: Some(build.queue_id),
-        item_count: Some(build.items.len() as i64),
-        built_at: Some(build.built_at),
-        stale: Some(is_stale(deps, build.built_at)),
-        error: build.error,
-    }
+/// Where the user's background queue build stands.
+pub async fn queue_status(deps: &ReadsDeps, user_id: &str) -> DiscoverQueueStatusResponse {
+    deps.queues.status(user_id).await
 }
 
-/// True when the build timestamp is older than the queue TTL.
-fn is_stale(deps: &ReadsDeps, built_at: i64) -> bool {
-    deps.clock.now_unix() - built_at > crate::reads::discover::refresh::QUEUE_TTL_SECS
-}
-
-/// Trigger a queue build.
-pub fn queue_generate(
+/// Start a background queue build, or say why none started.
+pub async fn queue_generate(
     deps: &ReadsDeps,
     user_id: &str,
     body: &QueueGenerateRequest,
 ) -> QueueGenerateResponse {
-    deps.queues.start_build(user_id, body.force)
+    deps.queues
+        .start_build(user_id, QueueTrigger::Request { force: body.force })
+        .await
 }
 
-/// Enrichment behind one queue card.
-pub async fn enrich_queue_item(
-    deps: &ReadsDeps,
-    release_group_mbid: &str,
-) -> Result<QueueEnrichment, ServiceError> {
-    if release_group_mbid.trim().is_empty() {
+/// A release-group id from a path or body, lowercased; anything that is
+/// not a MusicBrainz id is a bad request.
+fn checked_release_group(value: &str) -> Result<String, ServiceError> {
+    let trimmed = value.trim();
+    if !crate::providers::musicbrainz::is_valid_mbid(trimmed) {
         return Err(ServiceError::InvalidInput(
-            "release_group_mbid must not be blank".to_owned(),
+            "release_group_mbid must be a MusicBrainz id".to_owned(),
         ));
     }
-    Ok(deps.content.enrich_queue_item(release_group_mbid).await?)
+    Ok(trimmed.to_ascii_lowercase())
 }
 
-/// On-demand preview behind one queue card.
+/// Details behind one queue card.
+pub async fn enrich_queue_item(
+    deps: &ReadsDeps,
+    user_id: &str,
+    release_group_mbid: &str,
+) -> Result<QueueEnrichment, ServiceError> {
+    let mbid = checked_release_group(release_group_mbid)?;
+    Ok(deps.queues.enrich(user_id, &mbid).await?)
+}
+
+/// An on-demand video preview behind one queue card.
 pub async fn preview_queue_item(
     deps: &ReadsDeps,
     release_group_mbid: &str,
 ) -> Result<DiscoverQueuePreview, ServiceError> {
-    if release_group_mbid.trim().is_empty() {
-        return Err(ServiceError::InvalidInput(
-            "release_group_mbid must not be blank".to_owned(),
-        ));
-    }
-    Ok(deps.content.preview_queue_item(release_group_mbid).await?)
+    let mbid = checked_release_group(release_group_mbid)?;
+    Ok(deps.queues.preview(&mbid).await?)
 }
 
-/// Ignore one release: ledger it, rebuild the queue, refresh discover.
+/// Ignore one release: record it, rebuild the queue without it, and ask
+/// discover to refresh.
 pub async fn ignore_queue_item(
     deps: &ReadsDeps,
     user_id: &str,
     body: &QueueIgnoreRequest,
 ) -> Result<(), ServiceError> {
-    if body.release_group_mbid.trim().is_empty() {
-        return Err(ServiceError::InvalidInput(
-            "release_group_mbid must not be blank".to_owned(),
-        ));
-    }
-    deps.queues.ignore_release(
-        user_id,
-        &body.release_group_mbid,
-        &body.artist_mbid,
-        &body.release_name,
-        &body.artist_name,
-    );
-    deps.queues.start_build(user_id, true);
+    checked_release_group(&body.release_group_mbid)?;
+    deps.queues
+        .ignore_release(user_id, body)
+        .await
+        .map_err(owned_store_failure)?;
+    deps.queues
+        .start_build(user_id, QueueTrigger::Request { force: true })
+        .await;
     match deps.content.trigger_refresh(user_id).await {
         // No discover builder yet: the ignore still stands, nothing to rebuild.
         Ok(()) | Err(ProviderFailure::NotBuilt(_)) => Ok(()),
@@ -419,25 +414,20 @@ pub async fn ignore_queue_item(
     }
 }
 
-/// The user's ignore ledger.
-pub fn ignored_releases(deps: &ReadsDeps, user_id: &str) -> IgnoredReleasesResponse {
-    IgnoredReleasesResponse {
-        items: deps
-            .queues
-            .ignored(user_id)
-            .into_iter()
-            .map(|row| crate::reads::discover::models::IgnoredRelease {
-                release_group_mbid: row.release_group_mbid,
-                artist_mbid: row.artist_mbid,
-                release_name: row.release_name,
-                artist_name: row.artist_name,
-                ignored_at: row.ignored_at,
-            })
-            .collect(),
-    }
+/// The user's ignore ledger, newest first.
+pub async fn ignored_releases(
+    deps: &ReadsDeps,
+    user_id: &str,
+) -> Result<IgnoredReleasesResponse, ServiceError> {
+    let items = deps
+        .queues
+        .ignored(user_id)
+        .await
+        .map_err(owned_store_failure)?;
+    Ok(IgnoredReleasesResponse { items })
 }
 
-/// Library membership behind the given cards.
+/// The given cards whose albums the library already holds.
 pub async fn validate_queue(
     deps: &ReadsDeps,
     body: &QueueValidateRequest,
@@ -449,9 +439,10 @@ pub async fn validate_queue(
     }
     Ok(QueueValidateResponse {
         in_library: deps
-            .content
-            .validate_queue_mbids(&body.release_group_mbids)
-            .await?,
+            .queues
+            .validate(&body.release_group_mbids)
+            .await
+            .map_err(owned_store_failure)?,
     })
 }
 

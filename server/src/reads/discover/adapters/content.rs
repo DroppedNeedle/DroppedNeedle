@@ -1,12 +1,10 @@
 //! Discover and home shelves before their builders are ported.
 //!
 //! The v2 shelf builders (because-you-listen-to, fresh releases, daily
-//! mixes, the queue deck) are a later port. Until then the pages answer
-//! with no shelves at all rather than invented rows, the integration
-//! status is read from the settings the way v2 read it, and library
-//! membership checks run against the catalog. Interactions that only make
-//! sense with a builder behind them (activity, refresh, queue-card
-//! enrichment) answer "not available".
+//! mixes) are a later port. Until then the pages answer with no shelves
+//! at all rather than invented rows, and the integration status is read
+//! from the settings the way v2 read it. Interactions that only make sense
+//! with a builder behind them (activity, refresh) answer "not available".
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,10 +12,7 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 
 use crate::reads::discover::{
-    models::{
-        DiscoverActivityResponse, DiscoverQueuePreview, DiscoverResponse, HomeResponse,
-        IntegrationStatus, QueueEnrichment,
-    },
+    models::{DiscoverActivityResponse, DiscoverResponse, HomeResponse, IntegrationStatus},
     ports::{BoxFuture, DiscoverContent, ProviderFailure},
 };
 use crate::runtime_config::{
@@ -31,8 +26,8 @@ use crate::runtime_config::{
 /// Genre artwork schema the frontend expects (v2 default).
 const GENRE_ARTWORK_SCHEMA: &str = "v2";
 
-/// Shelves with nothing invented: empty pages, real status, real
-/// membership.
+/// Shelves with nothing invented: empty pages and the real integration
+/// status.
 pub struct UnbuiltContent {
     config: Arc<ConfigStore>,
     pool: SqlitePool,
@@ -42,6 +37,23 @@ impl UnbuiltContent {
     /// Read settings from `config` and the catalog from `pool`.
     pub fn new(config: Arc<ConfigStore>, pool: SqlitePool) -> Self {
         Self { config, pool }
+    }
+
+    /// True when the user switched the Discover Queue section off on the
+    /// discover page (v2 blanked the flag for a hidden section). A failed
+    /// read shows the section, with a log line.
+    async fn queue_section_hidden(&self, user_id: &str) -> bool {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM user_section_prefs WHERE user_id = ?1 \
+             AND page = 'discover' AND section_key = 'discover_queue' AND enabled = 0)",
+        )
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "section prefs unreadable; showing the discover queue");
+            false
+        })
     }
 
     /// The v2 integration flags, read from the current settings. A section
@@ -94,13 +106,16 @@ impl UnbuiltContent {
 impl DiscoverContent for UnbuiltContent {
     fn discover<'a>(
         &'a self,
-        _user_id: &'a str,
+        user_id: &'a str,
     ) -> BoxFuture<'a, Result<DiscoverResponse, ProviderFailure>> {
         let status = self.status();
         Box::pin(async move {
+            let queue_hidden = self.queue_section_hidden(user_id).await;
             Ok(DiscoverResponse {
                 because_you_listen_to: Vec::new(),
-                discover_queue_enabled: false,
+                // The queue deck is built; the page shows its entry point
+                // unless the user turned the section off.
+                discover_queue_enabled: !queue_hidden,
                 fresh_releases: None,
                 missing_essentials: None,
                 rediscover: None,
@@ -204,47 +219,4 @@ impl DiscoverContent for UnbuiltContent {
             ))
         })
     }
-
-    fn enrich_queue_item<'a>(
-        &'a self,
-        _release_group_mbid: &'a str,
-    ) -> BoxFuture<'a, Result<QueueEnrichment, ProviderFailure>> {
-        Box::pin(async {
-            Err(ProviderFailure::not_built(
-                "Discover queue details are not built in this version yet.",
-            ))
-        })
-    }
-
-    fn preview_queue_item<'a>(
-        &'a self,
-        _release_group_mbid: &'a str,
-    ) -> BoxFuture<'a, Result<DiscoverQueuePreview, ProviderFailure>> {
-        Box::pin(async {
-            Err(ProviderFailure::not_built(
-                "Discover queue previews are not built in this version yet.",
-            ))
-        })
-    }
-
-    fn validate_queue_mbids<'a>(
-        &'a self,
-        mbids: &'a [String],
-    ) -> BoxFuture<'a, Result<Vec<String>, ProviderFailure>> {
-        Box::pin(async move { owned_release_groups(&self.pool, mbids).await })
-    }
-}
-
-/// The given release groups that some library album is identified as.
-async fn owned_release_groups(
-    pool: &SqlitePool,
-    mbids: &[String],
-) -> Result<Vec<String>, ProviderFailure> {
-    let wanted: Vec<&str> = mbids.iter().map(String::as_str).collect();
-    let owned = super::ownership::owned_albums(pool, &wanted).await?;
-    Ok(mbids
-        .iter()
-        .filter(|mbid| owned.contains_key(&mbid.trim().to_ascii_lowercase()))
-        .cloned()
-        .collect())
 }

@@ -326,7 +326,7 @@ pub async fn playlist_suggestions(
 // Queue
 // ---------------------------------------------------------------------------
 
-/// The queue deck: a live build when one exists, else a lightweight build.
+/// The queue deck: the caller's last built deck, else one built now.
 #[utoipa::path(
     get,
     path = "/api/v3/discover/queue",
@@ -335,7 +335,7 @@ pub async fn playlist_suggestions(
         (status = 200, description = "Queue deck", body = DiscoverQueueResponse),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
+        (status = 500, description = "The library check failed", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn get_queue(
@@ -349,7 +349,8 @@ pub async fn get_queue(
         .map_err(|error| map(error, &deps))
 }
 
-/// Current queue build status for polling.
+/// Where the caller's background queue build stands: `idle`, `building`,
+/// `ready` (with the deck's id, size, age and staleness) or `error`.
 #[utoipa::path(
     get,
     path = "/api/v3/discover/queue/status",
@@ -362,10 +363,12 @@ pub async fn queue_status(
     State(deps): State<ReadsDeps>,
     user: AuthenticatedUser,
 ) -> Json<DiscoverQueueStatusResponse> {
-    Json(services::queue_status(&deps, &user.user_id))
+    Json(services::queue_status(&deps, &user.user_id).await)
 }
 
-/// Trigger a queue build.
+/// Start a background queue build. `action` says what happened:
+/// `started`, `already_building`, or `already_ready` (a fresh deck exists
+/// and `force` was not set).
 #[utoipa::path(
     post,
     path = "/api/v3/discover/queue/generate",
@@ -381,33 +384,34 @@ pub async fn queue_generate(
     user: AuthenticatedUser,
     ValidJson(body): ValidJson<QueueGenerateRequest>,
 ) -> Json<QueueGenerateResponse> {
-    Json(services::queue_generate(&deps, &user.user_id, &body))
+    Json(services::queue_generate(&deps, &user.user_id, &body).await)
 }
 
-/// Enrichment behind one queue card.
+/// Details behind one queue card: tags, release date, country, artist
+/// bio, listen count and a video link when one is known.
 #[utoipa::path(
     get,
     path = "/api/v3/discover/queue/enrich/{release_group_mbid}",
     params(("release_group_mbid" = String, Path, description = "Release-group id")),
     responses(
-        (status = 200, description = "Card enrichment", body = QueueEnrichment),
+        (status = 200, description = "Card details", body = QueueEnrichment),
         (status = 400, description = "Bad release-group id"),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn enrich_queue_item(
     State(deps): State<ReadsDeps>,
-    _user: AuthenticatedUser,
+    user: AuthenticatedUser,
     Path(release_group_mbid): Path<String>,
 ) -> Result<Json<QueueEnrichment>, ReadsError> {
-    services::enrich_queue_item(&deps, &release_group_mbid)
+    services::enrich_queue_item(&deps, &user.user_id, &release_group_mbid)
         .await
         .map(Json)
         .map_err(|error| map(error, &deps))
 }
 
-/// On-demand preview behind one queue card.
+/// A video preview behind one queue card: a MusicBrainz video link when
+/// one exists, else a YouTube search when an API key is set.
 #[utoipa::path(
     post,
     path = "/api/v3/discover/queue/preview/{release_group_mbid}",
@@ -416,7 +420,7 @@ pub async fn enrich_queue_item(
         (status = 200, description = "Card preview", body = DiscoverQueuePreview),
         (status = 400, description = "Bad release-group id"),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
+        (status = 502, description = "MusicBrainz or YouTube failed", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn preview_queue_item(
@@ -430,7 +434,8 @@ pub async fn preview_queue_item(
         .map_err(|error| map(error, &deps))
 }
 
-/// Ignore one release: ledger it, rebuild the queue, refresh discover.
+/// Ignore one release: later decks skip it, and a new deck starts
+/// building at once.
 #[utoipa::path(
     post,
     path = "/api/v3/discover/queue/ignore",
@@ -439,6 +444,7 @@ pub async fn preview_queue_item(
         (status = 204, description = "Release ignored"),
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The ignore could not be saved", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn ignore_queue_item(
@@ -459,16 +465,20 @@ pub async fn ignore_queue_item(
     responses(
         (status = 200, description = "Ignore ledger", body = IgnoredReleasesResponse),
         (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The ledger could not be read", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn ignored_releases(
     State(deps): State<ReadsDeps>,
     user: AuthenticatedUser,
-) -> Json<IgnoredReleasesResponse> {
-    Json(services::ignored_releases(&deps, &user.user_id))
+) -> Result<Json<IgnoredReleasesResponse>, ReadsError> {
+    services::ignored_releases(&deps, &user.user_id)
+        .await
+        .map(Json)
+        .map_err(|error| map(error, &deps))
 }
 
-/// Library membership behind the given cards.
+/// The given cards whose albums the library already holds.
 #[utoipa::path(
     post,
     path = "/api/v3/discover/queue/validate",
@@ -477,7 +487,7 @@ pub async fn ignored_releases(
         (status = 200, description = "Library membership", body = QueueValidateResponse),
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
+        (status = 500, description = "The library check failed", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn validate_queue(

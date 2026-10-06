@@ -3243,7 +3243,7 @@
         "tags": [
           "crate::reads::discover::handlers"
         ],
-        "summary": "The queue deck: a live build when one exists, else a lightweight build.",
+        "summary": "The queue deck: the caller's last built deck, else one built now.",
         "operationId": "get_queue",
         "parameters": [
           {
@@ -3274,8 +3274,8 @@
           "401": {
             "description": "Not authenticated"
           },
-          "503": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+          "500": {
+            "description": "The library check failed",
             "content": {
               "application/json": {
                 "schema": {
@@ -3292,7 +3292,7 @@
         "tags": [
           "crate::reads::discover::handlers"
         ],
-        "summary": "Enrichment behind one queue card.",
+        "summary": "Details behind one queue card: tags, release date, country, artist\nbio, listen count and a video link when one is known.",
         "operationId": "enrich_queue_item",
         "parameters": [
           {
@@ -3307,7 +3307,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Card enrichment",
+            "description": "Card details",
             "content": {
               "application/json": {
                 "schema": {
@@ -3321,16 +3321,6 @@
           },
           "401": {
             "description": "Not authenticated"
-          },
-          "503": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
           }
         }
       }
@@ -3340,7 +3330,7 @@
         "tags": [
           "crate::reads::discover::handlers"
         ],
-        "summary": "Trigger a queue build.",
+        "summary": "Start a background queue build. `action` says what happened:\n`started`, `already_building`, or `already_ready` (a fresh deck exists\nand `force` was not set).",
         "operationId": "queue_generate",
         "requestBody": {
           "content": {
@@ -3377,7 +3367,7 @@
         "tags": [
           "crate::reads::discover::handlers"
         ],
-        "summary": "Ignore one release: ledger it, rebuild the queue, refresh discover.",
+        "summary": "Ignore one release: later decks skip it, and a new deck starts\nbuilding at once.",
         "operationId": "ignore_queue_item",
         "requestBody": {
           "content": {
@@ -3398,6 +3388,16 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "500": {
+            "description": "The ignore could not be saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -3422,6 +3422,16 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "500": {
+            "description": "The ledger could not be read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -3431,7 +3441,7 @@
         "tags": [
           "crate::reads::discover::handlers"
         ],
-        "summary": "On-demand preview behind one queue card.",
+        "summary": "A video preview behind one queue card: a MusicBrainz video link when\none exists, else a YouTube search when an API key is set.",
         "operationId": "preview_queue_item",
         "parameters": [
           {
@@ -3461,8 +3471,8 @@
           "401": {
             "description": "Not authenticated"
           },
-          "503": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+          "502": {
+            "description": "MusicBrainz or YouTube failed",
             "content": {
               "application/json": {
                 "schema": {
@@ -3479,7 +3489,7 @@
         "tags": [
           "crate::reads::discover::handlers"
         ],
-        "summary": "Current queue build status for polling.",
+        "summary": "Where the caller's background queue build stands: `idle`, `building`,\n`ready` (with the deck's id, size, age and staleness) or `error`.",
         "operationId": "queue_status",
         "responses": {
           "200": {
@@ -3503,7 +3513,7 @@
         "tags": [
           "crate::reads::discover::handlers"
         ],
-        "summary": "Library membership behind the given cards.",
+        "summary": "The given cards whose albums the library already holds.",
         "operationId": "validate_queue",
         "requestBody": {
           "content": {
@@ -3532,8 +3542,8 @@
           "401": {
             "description": "Not authenticated"
           },
-          "503": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+          "500": {
+            "description": "The library check failed",
             "content": {
               "application/json": {
                 "schema": {
@@ -18346,10 +18356,28 @@
             "description": "Discover genre-affinity weight (0-1).",
             "default": 0.7
           },
+          "discover_queue_albums_per_similar": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Albums per similar artist (1-20).",
+            "default": 5
+          },
           "discover_queue_auto_generate": {
             "type": "boolean",
             "description": "Discover queue auto-generate.",
             "default": true
+          },
+          "discover_queue_enrich_ttl": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Queue card details cache, hours (1-168).",
+            "default": 24
+          },
+          "discover_queue_lastfm_mbid_max_lookups": {
+            "type": "integer",
+            "format": "int64",
+            "description": "MusicBrainz lookups per Last.fm album batch (1-50).",
+            "default": 10
           },
           "discover_queue_polling_interval": {
             "type": "integer",
@@ -18363,6 +18391,12 @@
             "description": "Discover seed artists (1-10).",
             "default": 3
           },
+          "discover_queue_similar_artists_limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Similar artists per seed (5-50).",
+            "default": 15
+          },
           "discover_queue_size": {
             "type": "integer",
             "format": "int64",
@@ -18374,6 +18408,11 @@
             "format": "int64",
             "description": "Discover queue TTL, hours (1-168).",
             "default": 24
+          },
+          "discover_queue_warm_cycle_build": {
+            "type": "boolean",
+            "description": "Let the background warm cycle build queue decks.",
+            "default": true
           },
           "discover_queue_wildcard_slots": {
             "type": "integer",
