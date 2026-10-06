@@ -516,7 +516,19 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         } else {
             path.to_owned()
         };
-        self.pacing.acquire(&source, self.priority).await;
+        if let Err(wait) = self.pacing.acquire(&source, self.priority).await {
+            let secs = wait.as_secs_f64();
+            if criticality == Criticality::IdentityCritical {
+                return Err(MbError::RateLimited {
+                    retry_after_secs: Some(secs),
+                });
+            }
+            return self.provider_dead(
+                operation,
+                criticality,
+                format!("brainzmash cooling down {secs:.1}s"),
+            );
+        }
         params.push(("fmt".to_owned(), "json".to_owned()));
         let url = format!(
             "{}{}",

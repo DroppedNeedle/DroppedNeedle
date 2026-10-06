@@ -945,6 +945,31 @@ async fn brainzmash_binding_invalid_fails_closed_without_wire() {
 }
 
 #[tokio::test]
+async fn user_requests_fail_fast_during_a_long_brainzmash_cooldown() {
+    let (fake, sink) = fast_mb(vec![]);
+    let providers = Arc::new(droppedneedle::providers::Providers::unpaced());
+    let pacing = musicbrainz::MbPacing::new(providers);
+    pacing.cooldown().note_cooldown(Some(30.0));
+    let client = musicbrainz::MusicBrainzClient::brainzmash(SharedMb(fake.clone()), true, pacing)
+        .with_sink(SharedSink(sink));
+    let started = std::time::Instant::now();
+    let error = client
+        .lookup_release(
+            RELEASE_MBID,
+            &[],
+            musicbrainz::Criticality::IdentityCritical,
+        )
+        .await
+        .expect_err("a user request does not wait out 30 s");
+    assert!(
+        matches!(error, musicbrainz::MbError::RateLimited { retry_after_secs: Some(secs) } if secs > 2.5),
+        "got {error:?}"
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    assert!(fake.seen().is_empty(), "nothing is sent while cooling down");
+}
+
+#[tokio::test]
 async fn source_fn_is_read_at_every_request() {
     let (fake, sink) = fast_mb(vec![]);
     let mirror_base = "http://mirror.test/ws/2";

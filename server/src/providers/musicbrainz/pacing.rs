@@ -19,6 +19,11 @@ use super::{BRAINZMASH_MAX_COOLDOWN_SECS, MbSource};
 use crate::providers::limiter::{RateLimiter, RatePolicy};
 use crate::providers::{Providers, RequestPriority};
 
+/// Longest BrainzMash cooldown a user request waits out. Past it the
+/// request fails at once and the page answers from what it has; the
+/// matching catalog retry budget is the same 2.5 s.
+pub const USER_COOLDOWN_WAIT: Duration = Duration::from_millis(2500);
+
 /// BrainzMash cooldown base (v2 `_BRAINZMASH_COOLDOWN_BASE_SECONDS`).
 const BRAINZMASH_COOLDOWN_BASE_SECS: f64 = 1.0;
 
@@ -62,14 +67,24 @@ impl MbPacing {
         Self { providers }
     }
 
-    /// Wait for one slot on `source` at `priority`.
-    pub async fn acquire(&self, source: &MbSource, priority: RequestPriority) {
+    /// Wait for one slot on `source` at `priority`. A user request does
+    /// not sit out a BrainzMash cooldown longer than
+    /// [`USER_COOLDOWN_WAIT`]: it gets the time left back instead, so the
+    /// page answers from what it has.
+    pub async fn acquire(
+        &self,
+        source: &MbSource,
+        priority: RequestPriority,
+    ) -> Result<(), Duration> {
         match source {
             MbSource::Official { .. } => {
                 take(self.providers.limiter("musicbrainz"), priority).await;
             }
             MbSource::BrainzMash { .. } => {
                 let wait = self.cooldown().remaining();
+                if priority == RequestPriority::UserInitiated && wait > USER_COOLDOWN_WAIT {
+                    return Err(wait);
+                }
                 if !wait.is_zero() {
                     tokio::time::sleep(wait).await;
                 }
@@ -84,6 +99,7 @@ impl MbPacing {
             // Rate 0 is the owner's "unlimited" for their own mirror.
             MbSource::Mirror { .. } => {}
         }
+        Ok(())
     }
 
     /// The shared BrainzMash cooldown.
