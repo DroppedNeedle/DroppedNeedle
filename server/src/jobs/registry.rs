@@ -425,6 +425,8 @@ impl<S: RegistryStore> JobRegistry<S> {
             // The user future runs on an inner task so a panic lands here as
             // a failed row, never as a stuck `running` entry with no task.
             let inner = tokio::spawn(run(ctx));
+            // Aborting this task (a cancel past its grace) aborts the job.
+            let _abort_inner = AbortOnDrop(inner.abort_handle());
             let exit = match inner.await {
                 Ok(exit) => exit,
                 Err(join_error) => JobExit::Failed(format!("task ended: {join_error}")),
@@ -460,9 +462,9 @@ impl<S: RegistryStore> JobRegistry<S> {
         Ok(())
     }
 
-    /// Cancel one job: fire its stop, wait up to `grace` for the task, then
-    /// give up waiting (the row keeps whatever the task records when it lands;
-    /// unknown names and finished tasks are silent no-ops).
+    /// Cancel one job: fire its stop and wait up to `grace` for the task. A
+    /// task still running at the bound is aborted with a warning. Unknown
+    /// names and finished tasks are silent no-ops.
     pub async fn cancel(&self, name: &str, grace: Duration) {
         let live = self
             .shared
@@ -481,8 +483,13 @@ impl<S: RegistryStore> JobRegistry<S> {
         let Some(handle) = handle else {
             return;
         };
+        let abort = handle.abort_handle();
         match tokio::time::timeout(grace, handle).await {
-            Ok(Ok(_)) | Err(_) => {}
+            Ok(Ok(_)) => {}
+            Err(_) => {
+                tracing::warn!(job = %name, ?grace, "background job did not stop in time; aborting it");
+                abort.abort();
+            }
             Ok(Err(join_error)) => {
                 self.shared
                     .store
@@ -493,13 +500,21 @@ impl<S: RegistryStore> JobRegistry<S> {
         }
     }
 
-    /// Cancel everything live, each with the same grace. Unknown-finish races
-    /// resolve per job as in [`JobRegistry::cancel`].
+    /// Cancel everything live at once, each with the same grace, so the
+    /// whole set is bounded by one grace. Unknown-finish races resolve per
+    /// job as in [`JobRegistry::cancel`].
     pub async fn cancel_all(&self, grace: Duration) {
         let names = self.running_names();
-        for name in names {
-            self.cancel(&name, grace).await;
-        }
+        futures_util::future::join_all(names.iter().map(|name| self.cancel(name, grace))).await;
+    }
+}
+
+/// Aborts a task when dropped.
+struct AbortOnDrop(tokio::task::AbortHandle);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }
 
