@@ -17,6 +17,7 @@ import type {
 	PlexLinkPinResponse
 } from './types';
 import { SourcePlaylistQueryKeyFactory } from '$lib/queries/source-playlists/SourcePlaylistQueryKeyFactory';
+import { SPOTIFY_PLAYLISTS_KEY } from '$lib/queries/spotify/SpotifyQueries.svelte';
 
 type SourcePlaylistSource = components['schemas']['SourceName'];
 
@@ -36,6 +37,9 @@ async function invalidateConnectionAndPlaylists(service?: string): Promise<void>
 		await invalidateQueriesWithPersister({
 			queryKey: SourcePlaylistQueryKeyFactory.source(authStore.user?.id, service)
 		});
+	}
+	if (service === 'spotify') {
+		await invalidateQueriesWithPersister({ queryKey: SPOTIFY_PLAYLISTS_KEY(authStore.user?.id) });
 	}
 }
 
@@ -72,8 +76,8 @@ export const createConnectListenBrainzMutation = () =>
 
 export const createDisconnectMutation = () =>
 	createMutation(() => ({
-		// One mutation fans out to three response shapes (plus a loud
-		// rejection for services v3 cannot unlink); callers only await
+		// One mutation fans out to several response shapes (plus a loud
+		// rejection for a service with no unlink route); callers only await
 		// settlement, so the result stays unknown.
 		mutationFn: (service: string): Promise<unknown> => {
 			if (isMediaSource(service)) {
@@ -85,8 +89,11 @@ export const createDisconnectMutation = () =>
 			if (service === 'lastfm') {
 				return api.global.v3.DELETE(CONNECTIONS_ENDPOINTS.lastfm());
 			}
-			// v3 ships no disconnect for spotify (or anything else): fail
-			// loudly rather than calling a route that does not exist.
+			if (service === 'spotify') {
+				return api.global.v3.DELETE(CONNECTIONS_ENDPOINTS.spotify());
+			}
+			// Anything else has no unlink route: fail loudly rather than
+			// calling a route that does not exist.
 			return Promise.reject(new Error(`Disconnect is not supported for ${service}`));
 		},
 		onSuccess: (_data, service) => invalidateConnectionAndPlaylists(service)

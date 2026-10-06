@@ -14,5 +14,6 @@ export const CONNECTIONS_ENDPOINTS = {
 	// Plex link pins ride the single v3 Plex flow ($lib/queries/plex).
 	// Spotify presence rides the spotify slice's playlists read (200 when
 	// linked, 400 when not); the aggregate imports it from there.
+	spotify: () => v3('/api/v3/me/connections/spotify'),
 	spotifyAuthUrl: () => v3('/api/v3/acquire/spotify/auth/url')
 } as const;

@@ -6,7 +6,7 @@ import { PlaylistQueryKeyFactory } from '../playlists/PlaylistQueryKeyFactory';
 import { userIdSegment } from '../userKeySegment';
 import { SPOTIFY_ENDPOINTS } from './endpoints';
 
-const SPOTIFY_PLAYLISTS_KEY = (userId: string | null | undefined) => [
+export const SPOTIFY_PLAYLISTS_KEY = (userId: string | null | undefined) => [
 	'spotify-playlists',
 	userIdSegment(userId)
 ];

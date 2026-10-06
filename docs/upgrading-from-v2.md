@@ -139,10 +139,11 @@ Then check:
 - Your Subsonic or Jellyfin app still connects with its app password.
 - Settings > Download Client and Settings > Indexers / Prowlarr look right.
 - Add your library path under Settings > Library and let the first scan run.
-- If you import Spotify playlists: v3 sends Spotify a new redirect URI,
-  shown under Settings > Spotify. Add it to your app in the Spotify
-  developer dashboard next to the old one, or Spotify refuses the sign-in.
-  Then each user connects Spotify again from their profile.
+- If you import Spotify playlists: your Spotify app keeps working with no
+  change in the Spotify dashboard. v3 goes on sending the redirect address
+  v2 registered (Settings > Spotify shows it). Spotify sign-ins don't carry
+  over, so each user clicks Connect on the Spotify card in their profile
+  once.
 
 ## Going back to v2
 
