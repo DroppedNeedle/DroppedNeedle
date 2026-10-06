@@ -11,13 +11,32 @@ use crate::reads::collections::auth::{Principal, Role};
 use crate::reads::collections::error::CollectionsError;
 use crate::reads::collections::models::{
     FollowStatusResponse, FollowedArtist, FollowedArtistListResponse, NewReleaseItem,
-    NewReleaseListResponse, UnseenCountResponse,
+    NewReleaseListResponse, NewReleasePageQuery, RecentReleasesQuery, UnseenCountResponse,
 };
 use crate::reads::collections::state::AutoDownloadState;
-use crate::reads::collections::store::follows::{FollowRow, ReleaseRow};
+use crate::reads::collections::store::follows::{FollowRow, ReleaseFilter, ReleaseRow};
 
-/// Recent window for the recent-releases view: 30 days.
-const RECENT_WINDOW_DAYS: i64 = 30;
+/// To-do list page size: default and largest (v2 `/new-releases`).
+const PAGE_DEFAULT: usize = 50;
+const PAGE_MAX: usize = 100;
+/// Release log window in days: default and largest (v2 `/new-releases/recent`).
+const RECENT_DAYS_DEFAULT: u32 = 30;
+const RECENT_DAYS_MAX: u32 = 365;
+/// Release log size: default and largest. The page grows by 48 per "load
+/// more" and the client stops at 480.
+const RECENT_LIMIT_DEFAULT: usize = 8;
+const RECENT_LIMIT_MAX: usize = 500;
+
+/// A page size within `1..=max`, or the default when absent.
+fn page_size(value: Option<usize>, default: usize, max: usize) -> Result<usize, CollectionsError> {
+    match value {
+        None => Ok(default),
+        Some(size) if (1..=max).contains(&size) => Ok(size),
+        Some(_) => Err(CollectionsError::invalid(&format!(
+            "limit must be between 1 and {max}"
+        ))),
+    }
+}
 
 /// A follow's state: intent off is off; on is active once approved or when
 /// the follower's role approves itself, pending otherwise.
@@ -60,7 +79,7 @@ fn status(artist_mbid: &str, row: Option<&FollowRow>) -> FollowStatusResponse {
     }
 }
 
-fn release_items(rows: Vec<ReleaseRow>) -> NewReleaseListResponse {
+fn release_items(rows: Vec<ReleaseRow>, total: usize) -> NewReleaseListResponse {
     let items = rows
         .into_iter()
         .map(|row| NewReleaseItem {
@@ -70,9 +89,9 @@ fn release_items(rows: Vec<ReleaseRow>) -> NewReleaseListResponse {
             artist_mbid: row.artist_mbid,
             primary_type: row.primary_type,
             first_release_date: row.first_release_date,
+            in_library: row.in_library,
         })
         .collect::<Vec<_>>();
-    let total = items.len();
     NewReleaseListResponse { items, total }
 }
 
@@ -185,39 +204,48 @@ impl CollectionsService<'_> {
         Ok(FollowedArtistListResponse { artists })
     }
 
-    /// New releases from followed artists the library does not hold yet.
+    /// New releases from followed artists the library does not hold yet
+    /// (the to-do list), one page.
     pub async fn new_releases(
         &self,
         user_id: &str,
+        query: &NewReleasePageQuery,
     ) -> Result<NewReleaseListResponse, CollectionsError> {
-        let rows = self
-            .state
-            .stores
-            .follows
-            .releases(user_id, None, false)
-            .await?;
-        Ok(release_items(rows))
+        let filter = ReleaseFilter {
+            since: None,
+            owned_too: false,
+            limit: page_size(query.limit, PAGE_DEFAULT, PAGE_MAX)?,
+            offset: query.offset.unwrap_or(0),
+        };
+        let (rows, total) = self.state.stores.follows.releases(user_id, &filter).await?;
+        Ok(release_items(rows, total))
     }
 
-    /// Everything followed artists released in the recent window, owned
-    /// albums included (the log view).
+    /// The release log: everything followed artists released in the last
+    /// `days` days, albums already in the library flagged `in_library`
+    /// unless the caller hides them. Undated rows fall back to when they
+    /// were discovered.
     pub async fn recent_releases(
         &self,
         user_id: &str,
+        query: &RecentReleasesQuery,
     ) -> Result<NewReleaseListResponse, CollectionsError> {
-        let cutoff_ts =
-            crate::reads::collections::db::now_real() - (RECENT_WINDOW_DAYS * 86_400) as f64;
-        let rows = self
-            .state
-            .stores
-            .follows
-            .releases(
-                user_id,
-                Some((date_days_ago(RECENT_WINDOW_DAYS), cutoff_ts)),
-                true,
-            )
-            .await?;
-        Ok(release_items(rows))
+        let days = query.days.unwrap_or(RECENT_DAYS_DEFAULT);
+        if !(1..=RECENT_DAYS_MAX).contains(&days) {
+            return Err(CollectionsError::invalid(&format!(
+                "days must be between 1 and {RECENT_DAYS_MAX}"
+            )));
+        }
+        let days = i64::from(days);
+        let cutoff_ts = crate::reads::collections::db::now_real() - (days * 86_400) as f64;
+        let filter = ReleaseFilter {
+            since: Some((date_days_ago(days), cutoff_ts)),
+            owned_too: query.include_owned.unwrap_or(true),
+            limit: page_size(query.limit, RECENT_LIMIT_DEFAULT, RECENT_LIMIT_MAX)?,
+            offset: 0,
+        };
+        let (rows, total) = self.state.stores.follows.releases(user_id, &filter).await?;
+        Ok(release_items(rows, total))
     }
 
     /// Releases discovered since the caller last looked.

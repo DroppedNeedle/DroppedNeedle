@@ -19,10 +19,10 @@ use super::{
         CoverUploadBody, CoverUploadResponse, CreatePlaylistBody, EditionPinBody,
         EditionPinResponse, FavoriteListResponse, FavoriteQuery, FavoriteStatusResponse,
         FollowBody, FollowStatusResponse, FollowedArtistListResponse, NewReleaseListResponse,
-        PlaylistDetail, PlaylistListResponse, PlaylistSummary, PlaylistTrack, RemoveTracksBody,
-        RemoveTracksResponse, ReorderBody, ReorderResponse, ResolveSourcesResponse,
-        SetFavoriteBody, StatusResponse, UnseenCountResponse, UpdatePlaylistBody, UpdateTrackBody,
-        VisibilityBody,
+        NewReleasePageQuery, PlaylistDetail, PlaylistListResponse, PlaylistSummary, PlaylistTrack,
+        RecentReleasesQuery, RemoveTracksBody, RemoveTracksResponse, ReorderBody, ReorderResponse,
+        ResolveSourcesResponse, SetFavoriteBody, StatusResponse, UnseenCountResponse,
+        UpdatePlaylistBody, UpdateTrackBody, VisibilityBody,
     },
     service::CollectionsService,
     state::CollectionsState,
@@ -625,18 +625,21 @@ pub async fn list_followed_artists_handler(
     get,
     path = "/api/v3/following/new-releases",
     tag = "collections",
+    params(NewReleasePageQuery),
     responses(
         (status = 200, description = "New releases", body = NewReleaseListResponse),
+        (status = 400, description = "Bad paging"),
         (status = 401, description = "Not authenticated"),
     )
 )]
 pub async fn list_new_releases_handler(
     State(state): State<CollectionsState>,
     caller: Principal,
+    ValidQuery(query): ValidQuery<NewReleasePageQuery>,
 ) -> HttpResult<Json<NewReleaseListResponse>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .new_releases(&caller.user_id)
+            .new_releases(&caller.user_id, &query)
             .await?,
     ))
 }
@@ -646,18 +649,21 @@ pub async fn list_new_releases_handler(
     get,
     path = "/api/v3/following/new-releases/recent",
     tag = "collections",
+    params(RecentReleasesQuery),
     responses(
         (status = 200, description = "Recent releases", body = NewReleaseListResponse),
+        (status = 400, description = "Bad window or limit"),
         (status = 401, description = "Not authenticated"),
     )
 )]
 pub async fn list_recent_releases_handler(
     State(state): State<CollectionsState>,
     caller: Principal,
+    ValidQuery(query): ValidQuery<RecentReleasesQuery>,
 ) -> HttpResult<Json<NewReleaseListResponse>> {
     Ok(Json(
         CollectionsService::new(&state)
-            .recent_releases(&caller.user_id)
+            .recent_releases(&caller.user_id, &query)
             .await?,
     ))
 }

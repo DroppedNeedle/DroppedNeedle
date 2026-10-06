@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 
 // Playlists.
 
@@ -452,6 +452,32 @@ pub struct NewReleaseItem {
     pub primary_type: Option<String>,
     /// First release date, when known.
     pub first_release_date: Option<String>,
+    /// True when the library already holds the album (only the release
+    /// log shows owned albums).
+    pub in_library: bool,
+}
+
+/// To-do list paging: `limit` 1-100 (default 50), `offset` from 0.
+#[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct NewReleasePageQuery {
+    /// Page size, 1-100 (default 50).
+    pub limit: Option<usize>,
+    /// Rows to skip (default 0).
+    pub offset: Option<usize>,
+}
+
+/// Release log window: `days` 1-365 (default 30), `limit` 1-500
+/// (default 8), `include_owned` (default true).
+#[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct RecentReleasesQuery {
+    /// Window in days, 1-365 (default 30).
+    pub days: Option<u32>,
+    /// Most rows returned, 1-500 (default 8).
+    pub limit: Option<usize>,
+    /// Keep albums the library already holds (default true).
+    pub include_owned: Option<bool>,
 }
 
 /// New-release list answer.
@@ -459,7 +485,7 @@ pub struct NewReleaseItem {
 pub struct NewReleaseListResponse {
     /// Sightings for followed artists, newest first.
     pub items: Vec<NewReleaseItem>,
-    /// Item count.
+    /// Rows the filter matches, beyond this page too.
     pub total: usize,
 }
 

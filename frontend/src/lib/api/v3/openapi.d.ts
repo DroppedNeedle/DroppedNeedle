@@ -13550,6 +13550,11 @@ export interface components {
             artist_name: string;
             /** @description First release date, when known. */
             first_release_date?: string | null;
+            /**
+             * @description True when the library already holds the album (only the release
+             *     log shows owned albums).
+             */
+            in_library: boolean;
             /** @description Release-group primary type, when known. */
             primary_type?: string | null;
             /** @description Release-group MBID. */
@@ -13561,7 +13566,7 @@ export interface components {
         NewReleaseListResponse: {
             /** @description Sightings for followed artists, newest first. */
             items: components["schemas"]["NewReleaseItem"][];
-            /** @description Item count. */
+            /** @description Rows the filter matches, beyond this page too. */
             total: number;
         };
         /**
@@ -22802,7 +22807,12 @@ export interface operations {
     };
     list_new_releases_handler: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Page size, 1-100 (default 50). */
+                limit?: number;
+                /** @description Rows to skip (default 0). */
+                offset?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -22818,6 +22828,13 @@ export interface operations {
                     "application/json": components["schemas"]["NewReleaseListResponse"];
                 };
             };
+            /** @description Bad paging */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Not authenticated */
             401: {
                 headers: {
@@ -22829,7 +22846,14 @@ export interface operations {
     };
     list_recent_releases_handler: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Window in days, 1-365 (default 30). */
+                days?: number;
+                /** @description Most rows returned, 1-500 (default 8). */
+                limit?: number;
+                /** @description Keep albums the library already holds (default true). */
+                include_owned?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -22844,6 +22868,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["NewReleaseListResponse"];
                 };
+            };
+            /** @description Bad window or limit */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Not authenticated */
             401: {

@@ -4437,6 +4437,28 @@
         ],
         "summary": "List new-release sightings for followed artists.",
         "operationId": "list_new_releases_handler",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1-100 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Rows to skip (default 0).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "New releases",
@@ -4447,6 +4469,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Bad paging"
           },
           "401": {
             "description": "Not authenticated"
@@ -4461,6 +4486,38 @@
         ],
         "summary": "List recent-window sightings for followed artists.",
         "operationId": "list_recent_releases_handler",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "description": "Window in days, 1-365 (default 30).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Most rows returned, 1-500 (default 8).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "include_owned",
+            "in": "query",
+            "description": "Keep albums the library already holds (default true).",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Recent releases",
@@ -4471,6 +4528,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Bad window or limit"
           },
           "401": {
             "description": "Not authenticated"
@@ -30425,7 +30485,8 @@
           "release_group_mbid",
           "title",
           "artist_name",
-          "artist_mbid"
+          "artist_mbid",
+          "in_library"
         ],
         "properties": {
           "artist_mbid": {
@@ -30442,6 +30503,10 @@
               "null"
             ],
             "description": "First release date, when known."
+          },
+          "in_library": {
+            "type": "boolean",
+            "description": "True when the library already holds the album (only the release\nlog shows owned albums)."
           },
           "primary_type": {
             "type": [
@@ -30477,7 +30542,7 @@
           },
           "total": {
             "type": "integer",
-            "description": "Item count.",
+            "description": "Rows the filter matches, beyond this page too.",
             "minimum": 0
           }
         }

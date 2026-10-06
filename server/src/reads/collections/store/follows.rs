@@ -63,6 +63,22 @@ pub struct ReleaseRow {
     pub primary_type: Option<String>,
     /// First release date, when known.
     pub first_release_date: Option<String>,
+    /// True when the library already holds the album.
+    pub in_library: bool,
+}
+
+/// Which release sightings to read.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReleaseFilter {
+    /// Only releases dated on or after this `YYYY-MM-DD`, or, undated,
+    /// discovered at or after this epoch time.
+    pub since: Option<(String, f64)>,
+    /// Keep albums the library already holds (the log view).
+    pub owned_too: bool,
+    /// Page size.
+    pub limit: usize,
+    /// Rows skipped first.
+    pub offset: usize,
 }
 
 /// The follow store.
@@ -107,6 +123,7 @@ fn release_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<ReleaseRow, sqlx::E
         artist_mbid: row.try_get("artist_mbid")?,
         primary_type: row.try_get("primary_type")?,
         first_release_date: row.try_get("first_release_date")?,
+        in_library: row.try_get::<i64, _>("in_library")? != 0,
     })
 }
 
@@ -317,46 +334,60 @@ impl FollowStore {
             .await
     }
 
-    /// Release sightings for the user's follows. `owned_too` keeps albums
-    /// already in the library (the log view); `since` limits to releases
-    /// dated (or, undated, discovered) inside the window.
+    /// One page of release sightings for the user's follows, newest
+    /// first, with the total the filter matches.
     pub async fn releases(
         &self,
         user_id: &str,
-        since: Option<(String, f64)>,
-        owned_too: bool,
-    ) -> Result<Vec<ReleaseRow>, StoreError> {
+        filter: &ReleaseFilter,
+    ) -> Result<(Vec<ReleaseRow>, usize), StoreError> {
         let pool = self.db.pool()?;
-        let mut sql = "SELECT n.release_group_mbid AS release_group_mbid, n.title AS title, \
-             n.artist_name AS artist_name, f.artist_mbid AS artist_mbid, \
-             n.primary_type AS primary_type, n.first_release_date AS first_release_date \
-             FROM new_release_feed n JOIN user_followed_artists f \
+        let mut from = "FROM new_release_feed n JOIN user_followed_artists f \
              ON f.artist_mbid_lower = n.artist_mbid_lower AND f.user_id = ? WHERE 1 = 1"
             .to_owned();
-        if !owned_too {
-            sql.push_str(&format!(
+        if !filter.owned_too {
+            from.push_str(&format!(
                 " AND n.release_group_mbid_lower NOT IN ({OWNED_RELEASE_GROUPS})"
             ));
         }
-        if since.is_some() {
-            sql.push_str(
+        if filter.since.is_some() {
+            from.push_str(
                 " AND (n.first_release_date >= ? \
                  OR (n.first_release_date IS NULL AND n.discovered_at >= ?))",
             );
         }
-        sql.push_str(" ORDER BY n.first_release_date DESC, n.discovered_at DESC");
-        let mut query = sqlx::query(&sql).bind(user_id);
-        if let Some((date, discovered)) = &since {
+        let count_sql = format!("SELECT COUNT(*) {from}");
+        let mut count = sqlx::query_scalar::<_, i64>(&count_sql).bind(user_id);
+        if let Some((date, discovered)) = &filter.since {
+            count = count.bind(date).bind(discovered);
+        }
+        let total = count
+            .fetch_one(pool)
+            .await
+            .map_err(|error| StoreError::read("follows.releases", error))?;
+        let page_sql = format!(
+            "SELECT n.release_group_mbid AS release_group_mbid, n.title AS title, \
+             n.artist_name AS artist_name, f.artist_mbid AS artist_mbid, \
+             n.primary_type AS primary_type, n.first_release_date AS first_release_date, \
+             n.release_group_mbid_lower IN ({OWNED_RELEASE_GROUPS}) AS in_library \
+             {from} ORDER BY n.first_release_date DESC, n.discovered_at DESC LIMIT ? OFFSET ?"
+        );
+        let mut query = sqlx::query(&page_sql).bind(user_id);
+        if let Some((date, discovered)) = &filter.since {
             query = query.bind(date).bind(discovered);
         }
         let rows = query
+            .bind(i64::try_from(filter.limit).unwrap_or(i64::MAX))
+            .bind(i64::try_from(filter.offset).unwrap_or(i64::MAX))
             .fetch_all(pool)
             .await
             .map_err(|error| StoreError::read("follows.releases", error))?;
-        rows.iter()
+        let rows = rows
+            .iter()
             .map(release_from_row)
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| StoreError::read("follows.releases", error))
+            .map_err(|error| StoreError::read("follows.releases", error))?;
+        Ok((rows, total.max(0) as usize))
     }
 
     /// Releases not yet owned and discovered after the user's seen marker.
