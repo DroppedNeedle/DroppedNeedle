@@ -181,6 +181,37 @@ pub struct TopReleaseGroup {
     pub listen_count: i64,
 }
 
+/// One of an artist's most played recordings (v2 `ListenBrainzRecording`).
+/// The display fields tolerate absence; a row without a usable title is
+/// skipped rather than shown as "Unknown".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TopRecording {
+    /// Recording title.
+    pub title: String,
+    /// Credited artist name.
+    pub artist_name: String,
+    /// Total listen count.
+    pub listen_count: i64,
+    /// Recording MBID, when the row has one.
+    pub recording_mbid: Option<String>,
+    /// Release the listens point at, when known.
+    pub release_name: Option<String>,
+    /// That release's MBID, when known.
+    pub release_mbid: Option<String>,
+}
+
+/// One similar artist from LB Radio (v2 `ListenBrainzSimilarArtist`). The
+/// MBID keys the row; the listen count sums the sample recordings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SimilarArtist {
+    /// Artist MBID.
+    pub artist_mbid: String,
+    /// Artist name, empty when the sample carried none.
+    pub artist_name: String,
+    /// Summed listen count of the sampled recordings.
+    pub listen_count: i64,
+}
+
 /// Too many ids for one genre-batch call (v2 raises past 500).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BatchTooLarge {
@@ -615,6 +646,113 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
         )
     }
 
+    /// An artist's most played recordings
+    /// (`GET /1/popularity/top-recordings-for-artist/{mbid}`), most played
+    /// first. Public, no token. Malformed rows are skipped; a malformed
+    /// payload reads as an empty answer, never as "zero listens" rows.
+    pub async fn artist_top_recordings(
+        &self,
+        artist_mbid: &str,
+        count: usize,
+        creds: &ListenBrainzCredentials,
+    ) -> Outcome<Vec<TopRecording>> {
+        let artist_mbid = artist_mbid.trim();
+        if artist_mbid.is_empty() || count == 0 {
+            return Outcome::Found(Vec::new());
+        }
+        let endpoint = format!("/1/popularity/top-recordings-for-artist/{artist_mbid}");
+        let items = match self.get_array(&endpoint, &[], creds).await {
+            Ok(items) => items,
+            Err(outcome) => return outcome,
+        };
+        Outcome::Found(
+            items
+                .iter()
+                .filter_map(parse_top_recording)
+                .take(count)
+                .collect(),
+        )
+    }
+
+    /// Artists similar to one artist, from LB Radio's artist mode
+    /// (`GET /1/lb-radio/artist/{mbid}` with v2's `easy` parameters). The
+    /// reply maps each similar artist's MBID to a sample of its recordings;
+    /// the seed artist is dropped and the rest sort by summed listens.
+    pub async fn similar_artists(
+        &self,
+        artist_mbid: &str,
+        max_similar: usize,
+        creds: &ListenBrainzCredentials,
+    ) -> Outcome<Vec<SimilarArtist>> {
+        let artist_mbid = artist_mbid.trim();
+        if artist_mbid.is_empty() || max_similar == 0 {
+            return Outcome::Found(Vec::new());
+        }
+        let endpoint = format!("/1/lb-radio/artist/{artist_mbid}");
+        let max = max_similar.to_string();
+        let params = [
+            ("mode", "easy"),
+            ("max_similar_artists", max.as_str()),
+            ("max_recordings_per_artist", "5"),
+            ("pop_begin", "0"),
+            ("pop_end", "100"),
+        ];
+        let payload = match self.get(&endpoint, &params, creds, false, &[]).await {
+            Ok(Body::Json(payload)) => payload,
+            Ok(Body::NoContent | Body::InvalidJson) => return Outcome::Found(Vec::new()),
+            Err(RequestFailure::Outcome(outcome)) => return outcome,
+            Err(RequestFailure::Accepted(_)) => {
+                return self.recorded(None, "ListenBrainz gave an unexpected reply");
+            }
+        };
+        let Some(entries) = payload.as_object() else {
+            return Outcome::Found(Vec::new());
+        };
+        let mut similar: Vec<SimilarArtist> = entries
+            .iter()
+            .filter(|(mbid, _)| !mbid.eq_ignore_ascii_case(artist_mbid))
+            .filter_map(|(mbid, recordings)| {
+                let recordings = recordings.as_array()?;
+                let artist_name = recordings
+                    .first()
+                    .and_then(|first| first.get("similar_artist_name"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_owned();
+                let listen_count = recordings
+                    .iter()
+                    .filter_map(|recording| recording.get("total_listen_count"))
+                    .filter_map(count_int)
+                    .sum();
+                Some(SimilarArtist {
+                    artist_mbid: mbid.clone(),
+                    artist_name,
+                    listen_count,
+                })
+            })
+            .collect();
+        similar.sort_by(|left, right| right.listen_count.cmp(&left.listen_count));
+        Outcome::Found(similar)
+    }
+
+    /// GET an endpoint whose answer is a JSON array. Anything else reads
+    /// as an empty array.
+    async fn get_array<T>(
+        &self,
+        endpoint: &str,
+        params: &[(&str, &str)],
+        creds: &ListenBrainzCredentials,
+    ) -> Result<Vec<serde_json::Value>, Outcome<T>> {
+        match self.get(endpoint, params, creds, false, &[]).await {
+            Ok(Body::Json(serde_json::Value::Array(items))) => Ok(items),
+            Ok(_) => Ok(Vec::new()),
+            Err(RequestFailure::Outcome(outcome)) => Err(outcome),
+            Err(RequestFailure::Accepted(_)) => {
+                Err(self.recorded(None, "ListenBrainz gave an unexpected reply"))
+            }
+        }
+    }
+
     /// Run one paced GET. `accepted` statuses are validators' expected
     /// negatives (a 404 on a username check, a 401/403 on a token check);
     /// they come back as `Accepted` and stay neutral to retry and
@@ -1010,6 +1148,28 @@ fn parse_top_release_group(item: &serde_json::Value) -> Option<TopReleaseGroup> 
         release_group_mbid: mbid.to_owned(),
         name,
         listen_count,
+    })
+}
+
+/// Parse one top-recording row: a non-blank title and an integer count are
+/// required, everything else is optional display data.
+fn parse_top_recording(item: &serde_json::Value) -> Option<TopRecording> {
+    let text = |key: &str| {
+        item.get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+    let title = text("recording_name")?;
+    let listen_count = item.get("total_listen_count").and_then(count_int)?;
+    Some(TopRecording {
+        title,
+        artist_name: text("artist_name").unwrap_or_default(),
+        listen_count,
+        recording_mbid: text("recording_mbid"),
+        release_name: text("release_name"),
+        release_mbid: text("release_mbid"),
     })
 }
 

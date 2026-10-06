@@ -168,6 +168,8 @@ pub struct ArtistInfo {
     pub url: String,
     /// Biography summary.
     pub bio_summary: String,
+    /// Full biography, when the payload carried one.
+    pub bio_content: String,
     /// Tags.
     pub tags: Vec<Tag>,
     /// Similar artists.
@@ -223,6 +225,20 @@ pub struct SimilarArtist {
     pub score: f64,
     /// Last.fm URL.
     pub url: String,
+}
+
+/// One row of an artist's top tracks or top albums (v2 `LastFmTrack` /
+/// `LastFmAlbum`). The name is required; counts are lenient.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TopItem {
+    /// Track or album title.
+    pub name: String,
+    /// Credited artist name.
+    pub artist_name: String,
+    /// MusicBrainz id (recording or release), when Last.fm knows one.
+    pub mbid: Option<String>,
+    /// Play count.
+    pub playcount: i64,
 }
 
 /// Last.fm client. Holds no credentials; every method takes the calling
@@ -400,6 +416,75 @@ impl<P: Pacer, S: DegradationSink> LastFmClient<P, S> {
             .cloned()
             .unwrap_or_default();
         Outcome::Found(artists.iter().map(parse_similar_artist).collect())
+    }
+
+    /// `artist.getTopTracks`, most played first.
+    pub async fn artist_top_tracks(
+        &self,
+        creds: &LastFmCredentials,
+        artist: &str,
+        mbid: Option<&str>,
+        limit: u32,
+    ) -> Outcome<Vec<TopItem>> {
+        self.top_items(
+            "artist.getTopTracks",
+            "toptracks",
+            "track",
+            creds,
+            artist,
+            mbid,
+            limit,
+        )
+        .await
+    }
+
+    /// `artist.getTopAlbums`, most played first.
+    pub async fn artist_top_albums(
+        &self,
+        creds: &LastFmCredentials,
+        artist: &str,
+        mbid: Option<&str>,
+        limit: u32,
+    ) -> Outcome<Vec<TopItem>> {
+        self.top_items(
+            "artist.getTopAlbums",
+            "topalbums",
+            "album",
+            creds,
+            artist,
+            mbid,
+            limit,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn top_items(
+        &self,
+        method: &str,
+        envelope: &str,
+        key: &str,
+        creds: &LastFmCredentials,
+        artist: &str,
+        mbid: Option<&str>,
+        limit: u32,
+    ) -> Outcome<Vec<TopItem>> {
+        let limit_text = limit.to_string();
+        let params: Vec<(&str, &str)> = match mbid {
+            Some(mbid) => vec![("mbid", mbid), ("limit", &limit_text)],
+            None => vec![("artist", artist), ("limit", &limit_text)],
+        };
+        let payload = match self.request(method, creds, &params, false, false).await {
+            Ok(payload) => payload,
+            Err(outcome) => return outcome,
+        };
+        let items = payload
+            .get(envelope)
+            .and_then(|list| list.get(key))
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        Outcome::Found(items.iter().filter_map(parse_top_item).collect())
     }
 
     /// Weighted artist tags from the live-verified genre surface
@@ -795,12 +880,16 @@ fn parse_artist_info(payload: &serde_json::Value) -> Option<ArtistInfo> {
     }
     let stats = artist.get("stats");
     let stats = stats.and_then(serde_json::Value::as_object);
-    let bio_summary = artist
-        .get("bio")
-        .and_then(|bio| bio.get("summary"))
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("")
-        .to_owned();
+    let bio_text = |key: &str| {
+        artist
+            .get("bio")
+            .and_then(|bio| bio.get(key))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .to_owned()
+    };
+    let bio_summary = bio_text("summary");
+    let bio_content = bio_text("content");
     let similar = artist
         .get("similar")
         .and_then(|similar| similar.get("artist"))
@@ -818,6 +907,7 @@ fn parse_artist_info(payload: &serde_json::Value) -> Option<ArtistInfo> {
             .unwrap_or("")
             .to_owned(),
         bio_summary,
+        bio_content,
         tags: parse_tags(artist),
         similar: similar.iter().map(parse_similar_artist).collect(),
     })
@@ -882,6 +972,30 @@ fn parse_album_info(payload: &serde_json::Value) -> Option<AlbumInfo> {
 }
 
 /// Parse one similar artist (v2 `parse_similar_artist`).
+/// Parse one top-tracks or top-albums row (v2 `parse_top_track` /
+/// `parse_top_album`). A blank name skips the row.
+fn parse_top_item(item: &serde_json::Value) -> Option<TopItem> {
+    let item = item.as_object()?;
+    let name = item.get("name")?.as_str()?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let artist_name = match item.get("artist") {
+        Some(serde_json::Value::Object(artist)) => artist
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(""),
+        Some(serde_json::Value::String(artist)) => artist.as_str(),
+        _ => "",
+    };
+    Some(TopItem {
+        name: name.to_owned(),
+        artist_name: artist_name.to_owned(),
+        mbid: blank_to_none(item.get("mbid")),
+        playcount: lenient_int(item.get("playcount")),
+    })
+}
+
 fn parse_similar_artist(item: &serde_json::Value) -> SimilarArtist {
     let item = item.as_object();
     SimilarArtist {
