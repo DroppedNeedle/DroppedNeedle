@@ -138,14 +138,6 @@ export const API = {
 	events: {
 		stream: () => '/api/v1/events/stream'
 	},
-	following: {
-		concerts: () => '/api/v1/following/concerts',
-		concertCities: () => '/api/v1/following/concerts/cities',
-		concertCitySearch: (q: string) =>
-			`/api/v1/following/concerts/city-search?q=${encodeURIComponent(q)}`,
-		concertsUnseenCount: () => '/api/v1/following/concerts/unseen-count',
-		markConcertsSeen: () => '/api/v1/following/concerts/seen'
-	},
 	library: {
 		membership: () => '/api/v1/library/membership',
 		album: (mbid: string) => `/api/v1/library/albums/${mbid}/status`,

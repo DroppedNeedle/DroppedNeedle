@@ -48,54 +48,11 @@ export type ApprovalBatch = components['schemas']['ApprovalBatchItem'];
 export type ApprovalBatchListResponse = components['schemas']['ApprovalBatchListResponse'];
 export type ApprovalActionResponse = components['schemas']['ActionResponse'];
 
-// Concert shapes (no v3 route yet).
-export type ConcertStatus = 'scheduled' | 'cancelled' | 'rescheduled';
-
-export interface Concert {
-	artist_mbid: string;
-	artist_name: string;
-	event_name: string;
-	local_date: string;
-	status: ConcertStatus;
-	source: 'ticketmaster' | 'skiddle';
-	source_event_id: string;
-	matched_city: string;
-	venue_name?: string | null;
-	city?: string | null;
-	region?: string | null;
-	country_code?: string | null;
-	starts_at?: string | null;
-	ticket_url?: string | null;
-	distance_km?: number | null;
-}
-
-export interface ConcertsResponse {
-	configured: boolean;
-	items: Concert[];
-	total: number;
-}
-
-export interface EventCity {
-	city_name: string;
-	latitude: number;
-	longitude: number;
-	radius_km: number;
-	country_code?: string | null;
-}
-
-export interface EventCitiesResponse {
-	items: EventCity[];
-}
-
-export interface CitySearchResult {
-	name: string;
-	latitude: number;
-	longitude: number;
-	country_code?: string | null;
-	country?: string | null;
-	region?: string | null;
-}
-
-export interface CitySearchResponse {
-	items: CitySearchResult[];
-}
+// Concert shapes from the generated v3 contract.
+export type ConcertStatus = components['schemas']['ConcertStatus'];
+export type Concert = components['schemas']['Concert'];
+export type ConcertsResponse = components['schemas']['ConcertsResponse'];
+export type EventCity = components['schemas']['EventCity'];
+export type EventCitiesResponse = components['schemas']['EventCitiesResponse'];
+export type CitySearchResult = components['schemas']['CitySearchResult'];
+export type CitySearchResponse = components['schemas']['CitySearchResponse'];

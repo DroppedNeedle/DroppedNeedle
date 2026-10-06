@@ -4,13 +4,7 @@ import { authStore } from '$lib/stores/authStore.svelte';
 import { FollowQueryKeyFactory } from './FollowQueryKeyFactory';
 import { CONCERT_ENDPOINTS, FOLLOW_ENDPOINTS } from './endpoints';
 import { toFollowStatus, toFollowedArtist, toNewRelease } from './FollowAdapters';
-import type {
-	CitySearchResponse,
-	ConcertsResponse,
-	EventCitiesResponse,
-	NewReleasesResponse,
-	UnseenCountResponse
-} from './types';
+import type { NewReleasesResponse } from './types';
 
 type Getter<T> = () => T;
 
@@ -54,15 +48,13 @@ export const getRecentReleasesQuery = (
 export const getConcertsQuery = () =>
 	createQuery(() => ({
 		queryKey: FollowQueryKeyFactory.concerts(authStore.user?.id),
-		queryFn: ({ signal }) =>
-			api.global.get<ConcertsResponse>(CONCERT_ENDPOINTS.concerts(), { signal })
+		queryFn: ({ signal }) => api.global.v3.GET(CONCERT_ENDPOINTS.concerts(), { signal })
 	}));
 
 export const getEventCitiesQuery = () =>
 	createQuery(() => ({
 		queryKey: FollowQueryKeyFactory.concertCities(authStore.user?.id),
-		queryFn: ({ signal }) =>
-			api.global.get<EventCitiesResponse>(CONCERT_ENDPOINTS.concertCities(), { signal })
+		queryFn: ({ signal }) => api.global.v3.GET(CONCERT_ENDPOINTS.concertCities(), { signal })
 	}));
 
 // enabled only from 2 chars (the backend's min query length); callers debounce
@@ -70,7 +62,7 @@ export const getCitySearchQuery = (getQ: Getter<string>) =>
 	createQuery(() => ({
 		queryKey: FollowQueryKeyFactory.citySearch(authStore.user?.id, getQ()),
 		queryFn: ({ signal }) =>
-			api.global.get<CitySearchResponse>(CONCERT_ENDPOINTS.concertCitySearch(getQ()), { signal }),
+			api.global.v3.GET(CONCERT_ENDPOINTS.concertCitySearch(getQ()), { signal }),
 		enabled: getQ().trim().length >= 2
 	}));
 
@@ -79,8 +71,7 @@ export const getCitySearchQuery = (getQ: Getter<string>) =>
 export const getUnseenConcertsCountQuery = () =>
 	createQuery(() => ({
 		queryKey: FollowQueryKeyFactory.concertsUnseen(authStore.user?.id),
-		queryFn: ({ signal }) =>
-			api.global.get<UnseenCountResponse>(CONCERT_ENDPOINTS.concertsUnseenCount(), { signal }),
+		queryFn: ({ signal }) => api.global.v3.GET(CONCERT_ENDPOINTS.concertsUnseenCount(), { signal }),
 		enabled: !!authStore.user?.id,
 		refetchInterval: 60_000
 	}));

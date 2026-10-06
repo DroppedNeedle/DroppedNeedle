@@ -77,7 +77,7 @@ export const createMarkNewReleasesSeenMutation = () =>
 export const createReplaceEventCitiesMutation = () =>
 	createMutation(() => ({
 		mutationFn: (cities: EventCity[]) =>
-			api.global.put<EventCitiesResponse>(CONCERT_ENDPOINTS.concertCities(), { items: cities }),
+			api.global.v3.PUT(CONCERT_ENDPOINTS.concertCities(), { items: cities }),
 		onSuccess: (data) => {
 			void setQueryDataWithPersister<EventCitiesResponse>(
 				FollowQueryKeyFactory.concertCities(authStore.user?.id),
@@ -100,7 +100,7 @@ export const createReplaceEventCitiesMutation = () =>
 // cache so the badge clears without waiting for a refetch
 export const createMarkConcertsSeenMutation = () =>
 	createMutation(() => ({
-		mutationFn: () => api.global.post<UnseenCountResponse>(CONCERT_ENDPOINTS.markConcertsSeen()),
+		mutationFn: () => api.global.v3.POST(CONCERT_ENDPOINTS.markConcertsSeen()),
 		onSuccess: (data) => {
 			void setQueryDataWithPersister<UnseenCountResponse>(
 				FollowQueryKeyFactory.concertsUnseen(authStore.user?.id),

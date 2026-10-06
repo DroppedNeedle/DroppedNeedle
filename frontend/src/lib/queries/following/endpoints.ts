@@ -1,5 +1,4 @@
 import { v3 } from '$lib/api/v3/endpoint';
-import { API } from '$lib/constants';
 
 // The current user is resolved server-side from the session cookie.
 export const FOLLOW_ENDPOINTS = {
@@ -33,12 +32,10 @@ export const FOLLOW_ENDPOINTS = {
 		})
 } as const;
 
-// Concerts and event cities have no v3 route yet; these stay on the old
-// paths until the server serves them.
 export const CONCERT_ENDPOINTS = {
-	concerts: () => API.following.concerts(),
-	concertCities: () => API.following.concertCities(),
-	concertCitySearch: (q: string) => API.following.concertCitySearch(q),
-	concertsUnseenCount: () => API.following.concertsUnseenCount(),
-	markConcertsSeen: () => API.following.markConcertsSeen()
+	concerts: () => v3('/api/v3/following/concerts'),
+	concertCities: () => v3('/api/v3/following/concerts/cities'),
+	concertCitySearch: (q: string) => v3('/api/v3/following/concerts/city-search', { query: { q } }),
+	concertsUnseenCount: () => v3('/api/v3/following/concerts/unseen-count'),
+	markConcertsSeen: () => v3('/api/v3/following/concerts/seen')
 } as const;
