@@ -133,7 +133,7 @@ function invalidateLocalPinScope(variables: {
 			queryKey: editionsKey(variables.userId, variables.rgMbid)
 		}),
 		invalidateQueriesWithPersister({
-			queryKey: LibraryQueryKeyFactory.albumDetail(variables.localId)
+			queryKey: LibraryQueryKeyFactory.catalog.albumDetail(variables.userId, variables.localId)
 		})
 	];
 	return Promise.all(invalidations);

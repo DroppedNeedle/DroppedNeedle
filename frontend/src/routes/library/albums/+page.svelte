@@ -3,8 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { ChevronLeft, Disc3, Search, X } from 'lucide-svelte';
-	import { getLibraryAlbumsV3Query } from '$lib/queries/library/LibraryV3Queries.svelte';
-	import { albumViewToSummary } from '$lib/queries/library/LibraryV3Adapters';
+	import { getLibraryAlbumsQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import type { LibraryV3AlbumsParams } from '$lib/queries/library/LibraryQueryKeyFactory';
 	import LibraryAlbumCard from '$lib/components/library/LibraryAlbumCard.svelte';
 	import Pagination from '$lib/components/Pagination.svelte';
@@ -36,14 +35,14 @@
 		artist: { sort: 'artist', order: 'asc' }
 	};
 
-	const albumsQuery = getLibraryAlbumsV3Query(() => ({
+	const albumsQuery = getLibraryAlbumsQuery(() => ({
 		limit: PAGE_SIZE,
 		offset: (params.page - 1) * PAGE_SIZE,
 		...SORT_MAP[params.sort],
 		...(params.q ? { q: params.q } : {}),
 		...(params.format ? { format: params.format } : {})
 	}));
-	const albums = $derived((albumsQuery.data?.items ?? []).map(albumViewToSummary));
+	const albums = $derived(albumsQuery.data?.items ?? []);
 	const total = $derived(albumsQuery.data?.total ?? 0);
 	const totalPages = $derived(
 		albumsQuery.data ? Math.max(1, Math.ceil(albumsQuery.data.total / PAGE_SIZE)) : 1

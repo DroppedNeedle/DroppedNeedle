@@ -42,7 +42,7 @@
 		getRemoteConnectionQuery,
 		getRemoteStatsQuery
 	} from '$lib/queries/remotes/RemoteQueries.svelte';
-	import { getLibraryStatsV3Query } from '$lib/queries/library/LibraryV3Queries.svelte';
+	import { getLibraryStatsQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import { formatBytes } from '$lib/utils/formatting';
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
@@ -70,7 +70,7 @@
 	const navidromeStats = getRemoteStatsQuery(() => 'navidrome');
 	const jellyfinStats = getRemoteStatsQuery(() => 'jellyfin');
 	const plexStats = getRemoteStatsQuery(() => 'plex');
-	const libraryStatsQuery = getLibraryStatsV3Query();
+	const libraryStatsQuery = getLibraryStatsQuery();
 	const profile = $derived(profileQuery.data);
 	const providers = $derived(profile?.providers ?? authStore.user?.providers ?? []);
 	const hasLocalPassword = $derived(providers.includes('local'));

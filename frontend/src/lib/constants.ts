@@ -167,39 +167,11 @@ export const API = {
 		markConcertsSeen: () => '/api/v1/following/concerts/seen'
 	},
 	album: {
-		tracks: (id: string) => `/api/v1/albums/${id}/tracks`,
 		purchaseOptions: (id: string) => `/api/v1/albums/${id}/purchase-options`
 	},
 	library: {
 		membership: () => '/api/v1/library/membership',
-		albums: (page = 1, sort = 'recent', q?: string, format?: string, pageSize = 50) => {
-			let url = `/api/v1/library/albums?page=${page}&page_size=${pageSize}&sort=${sort}`;
-			if (q) url += `&q=${encodeURIComponent(q)}`;
-			if (format) url += `&format=${encodeURIComponent(format)}`;
-			return url;
-		},
-		tracks: (limit = 48, offset = 0, sort = 'recent', q?: string) => {
-			let url = `/api/v1/library/tracks?limit=${limit}&offset=${offset}&sort=${sort}`;
-			if (q) url += `&q=${encodeURIComponent(q)}`;
-			return url;
-		},
-		artists: (
-			limit = 50,
-			offset = 0,
-			sortBy = 'name',
-			sortOrder = 'asc',
-			q?: string,
-			scope: 'album' | 'contributors' = 'album'
-		) => {
-			let url = `/api/v1/library/artists?limit=${limit}&offset=${offset}&sort_by=${sortBy}&sort_order=${sortOrder}`;
-			if (q) url += `&q=${encodeURIComponent(q)}`;
-			url += `&scope=${scope}`;
-			return url;
-		},
 		album: (mbid: string) => `/api/v1/library/albums/${mbid}/status`,
-		albumDetail: (albumId: string) => `/api/v1/library/albums/${albumId}`,
-		albumCopies: (albumId: string) => `/api/v1/library/albums/${albumId}/copies`,
-		albumTracks: (albumId: string) => `/api/v1/library/albums/${albumId}/tracks`,
 		createContribution: (albumId: string) => `/api/v1/library/albums/${albumId}/contributions`,
 		contribution: (contributionId: string) => `/api/v1/library/contributions/${contributionId}`,
 		contributionDraft: (contributionId: string) =>
@@ -226,13 +198,6 @@ export const API = {
 			`/api/v1/library/contributions/${contributionId}/musicbrainz/verify`,
 		cachedAlbumArtwork: (albumId: string, coverVersion: number) =>
 			`/api/v1/library/albums/${encodeURIComponent(albumId)}/artwork/cached?v=${coverVersion}`,
-		artistDetail: (artistId: string) => `/api/v1/library/artists/${artistId}`,
-		artistAlbums: (artistId: string) => `/api/v1/library/artists/${artistId}/albums`,
-		artistAppearances: (artistId: string, limit = 20, offset = 0) =>
-			`/api/v1/library/artists/${artistId}/appearances?limit=${limit}&offset=${offset}`,
-		recentlyAdded: (limit = 20) => `/api/v1/library/recently-added?limit=${limit}`,
-		stats: () => '/api/v1/library/stats',
-		scanSchedule: () => '/api/v1/settings/library/schedule',
 		rescanAlbum: (mbid: string) => `/api/v1/library/albums/${mbid}/rescan`,
 		reidentifyAlbum: (mbid: string) => `/api/v1/library/albums/${mbid}/reidentify`,
 		reenableAlbumManagement: (albumId: string) =>

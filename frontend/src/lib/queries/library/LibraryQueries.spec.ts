@@ -35,23 +35,10 @@ async function callQueryFn(opts: unknown) {
 describe('LibraryQueryKeyFactory', () => {
 	it('keys start with the library prefix', () => {
 		expect(LibraryQueryKeyFactory.all[0]).toBe('library');
-		expect(LibraryQueryKeyFactory.stats()[0]).toBe('library');
 		expect(LibraryQueryKeyFactory.album('x')[0]).toBe('library');
 	});
 
-	it('album browse key encodes page/sort/q/format', () => {
-		const key = LibraryQueryKeyFactory.albums(2, 'title', 'foo', 'flac');
-		expect(key).toEqual([
-			'library',
-			'albums',
-			{ page: 2, sort: 'title', q: 'foo', format: 'flac' }
-		]);
-	});
-
 	it('produces distinct keys for different params', () => {
-		expect(LibraryQueryKeyFactory.albums(1, 'recent', '', '')).not.toEqual(
-			LibraryQueryKeyFactory.albums(2, 'recent', '', '')
-		);
 		expect(LibraryQueryKeyFactory.album('a')).not.toEqual(LibraryQueryKeyFactory.album('b'));
 	});
 

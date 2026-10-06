@@ -104,5 +104,6 @@ export const LibraryV3Api = {
 	scan: () => v3('/api/v3/library/scan'),
 	scanRuns: () => v3('/api/v3/library/scan/runs'),
 	scanRun: (runId: string) => v3('/api/v3/library/scan/runs/{id}', { path: { id: runId } }),
-	roots: () => v3('/api/v3/library/roots')
+	roots: () => v3('/api/v3/library/roots'),
+	schedule: () => v3('/api/v3/settings/library/schedule')
 };

@@ -135,8 +135,12 @@
 		void invalidateQueriesWithPersister({
 			queryKey: DownloadQueryKeyFactory.tasks(authStore.user?.id)
 		});
-		void invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.stats() });
-		void invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.recentlyAdded() });
+		void invalidateQueriesWithPersister({
+			queryKey: LibraryQueryKeyFactory.catalog.stats(authStore.user?.id)
+		});
+		void invalidateQueriesWithPersister({
+			queryKey: LibraryQueryKeyFactory.catalog.recentlyAddedPrefix(authStore.user?.id)
+		});
 		if (releaseGroupMbid) {
 			void invalidateQueriesWithPersister({
 				queryKey: LibraryQueryKeyFactory.album(releaseGroupMbid)

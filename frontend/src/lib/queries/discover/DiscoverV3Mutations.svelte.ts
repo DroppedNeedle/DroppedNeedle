@@ -104,10 +104,10 @@ async function invalidateAfterBatchChangeV3(
 		// unopened album page self-heals via the global staleTime window.
 		const userId = authStore.user?.id;
 		await invalidateQueriesWithPersister({
-			queryKey: LibraryQueryKeyFactory.v3.stats(userId)
+			queryKey: LibraryQueryKeyFactory.catalog.stats(userId)
 		});
 		await invalidateQueriesWithPersister({
-			queryKey: [...LibraryQueryKeyFactory.v3.root(userId), 'recently-added']
+			queryKey: LibraryQueryKeyFactory.catalog.recentlyAddedPrefix(userId)
 		});
 	}
 }

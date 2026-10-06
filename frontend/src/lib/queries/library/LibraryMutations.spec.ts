@@ -5,7 +5,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { post: vi.fn(), put: vi.fn(), delete: vi.fn() } }
+	api: { global: { post: vi.fn(), put: vi.fn(), delete: vi.fn(), v3: { PUT: vi.fn() } } }
 }));
 
 const { mockRemoveMbid } = vi.hoisted(() => ({ mockRemoveMbid: vi.fn() }));
@@ -108,6 +108,6 @@ describe('library scan mutations', () => {
 			last_scan: null,
 			last_scan_success: true
 		});
-		expect(mockPut.mock.calls[0][0]).toBe('/api/v1/settings/library/schedule');
+		expect(vi.mocked(api.global.v3.PUT).mock.calls[0][0]).toBe('/api/v3/settings/library/schedule');
 	});
 });

@@ -1,6 +1,7 @@
 import { createMutation } from '@tanstack/svelte-query';
 import { API } from '$lib/constants';
 import { api } from '$lib/api/client';
+import { authStore } from '$lib/stores/authStore.svelte';
 import { libraryStore } from '$lib/stores/library';
 import { ArtistQueryKeyFactory } from '../artist/ArtistQueryKeyFactory';
 import { DiscoverQueryKeyFactory } from '../discover/DiscoverQueryKeyFactory';
@@ -9,6 +10,7 @@ import { WantedQueryKeyFactory } from '../wanted/WantedQueryKeyFactory';
 import { invalidateQueriesWithPersister, setQueryDataWithPersister } from '../QueryClient';
 import { LOCAL_KEYS } from '../local/LocalV3Keys';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
+import { LibraryV3Api } from './LibraryV3Api';
 import { albumSourceMatchCache } from '$lib/utils/albumDetailCache';
 import type {
 	AlbumRemoveResponse,
@@ -91,7 +93,12 @@ export function rescanAlbum() {
 export function saveLibraryScanSchedule() {
 	return createMutation(() => ({
 		mutationFn: (schedule: LibraryScanSchedule) =>
-			api.global.put<LibraryScanSchedule>(API.library.scanSchedule(), schedule),
+			api.global.v3.PUT(LibraryV3Api.schedule(), {
+				scan_frequency: schedule.scan_frequency,
+				daily_scan_time: schedule.daily_scan_time,
+				last_scan: schedule.last_scan,
+				last_scan_success: schedule.last_scan_success
+			}),
 		onSuccess: () =>
 			invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.scanSchedule() })
 	}));
@@ -112,7 +119,9 @@ export function removeLibraryTrack() {
 			await invalidateQueriesWithPersister({
 				queryKey: LibraryQueryKeyFactory.album(albumMbid)
 			});
-			await invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.stats() });
+			await invalidateQueriesWithPersister({
+				queryKey: LibraryQueryKeyFactory.catalog.stats(authStore.user?.id)
+			});
 			await invalidateQueriesWithPersister({ queryKey: LOCAL_KEYS.root });
 		}
 	}));

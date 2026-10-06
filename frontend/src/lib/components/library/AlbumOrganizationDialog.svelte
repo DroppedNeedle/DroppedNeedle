@@ -30,10 +30,11 @@
 	let stalePreview = $state(false);
 	let previewResult = $state<MembershipPreviewResponse | null>(null);
 	const targetAlbums = getLibraryAlbumsQuery(() => ({
-		page: 1,
-		sort: 'title',
-		q: targetSearch,
-		format: ''
+		limit: 48,
+		offset: 0,
+		sort: 'name',
+		order: 'asc',
+		...(targetSearch ? { q: targetSearch } : {})
 	}));
 	const targetAlbum = getLibraryAlbumDetailQuery(() => targetAlbumId ?? '');
 	const splitPreview = previewAlbumMembership('split');

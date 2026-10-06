@@ -502,8 +502,12 @@ export function retryHeldManagementUnit() {
 			// album gets its own key below. Other library lists (paginated grids the
 			// retry cannot name) self-heal within the 1-minute global staleTime +
 			// refetch-on-mount window instead of wiping `library` ALL.
-			void invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.stats() });
-			void invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.recentlyAdded() });
+			void invalidateQueriesWithPersister({
+				queryKey: LibraryQueryKeyFactory.catalog.stats(authStore.user?.id)
+			});
+			void invalidateQueriesWithPersister({
+				queryKey: LibraryQueryKeyFactory.catalog.recentlyAddedPrefix(authStore.user?.id)
+			});
 			invalidateAlbum(input.releaseGroupMbid);
 		},
 		onError: (err: unknown) => {
