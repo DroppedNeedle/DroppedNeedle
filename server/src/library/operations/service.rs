@@ -180,19 +180,29 @@ impl Operations {
     }
 
     /// One page of MusicBrainz releases for the album's edition finder,
-    /// with the album's current identity marked. Store reads block, so
-    /// they run on a blocking thread.
+    /// with the album's current identity marked: a title (and artist)
+    /// search, or every release of `release_group` so the administrator can
+    /// pick any edition of the album. Store reads block, so they run on a
+    /// blocking thread.
     pub async fn search_releases(
         &self,
         album_id: &str,
         title: &str,
         artist: &str,
+        release_group: Option<&str>,
         limit: u32,
         offset: u32,
     ) -> Result<ReleaseSearch, OperationError> {
         let title_query = title.split_whitespace().collect::<Vec<_>>().join(" ");
         let artist_query = artist.split_whitespace().collect::<Vec<_>>().join(" ");
-        if title_query.is_empty() {
+        let release_group_mbid = release_group
+            .map(|raw| {
+                uuid::Uuid::parse_str(raw.trim())
+                    .map(|id| id.hyphenated().to_string())
+                    .map_err(|_| OperationError::Invalid(reasons::RELEASE_GROUP_MBID_INVALID))
+            })
+            .transpose()?;
+        if title_query.is_empty() && release_group_mbid.is_none() {
             return Err(OperationError::Invalid(reasons::SEARCH_NEEDS_TITLE));
         }
         let limit = limit.clamp(1, RELEASE_PAGE_MAX);
@@ -214,6 +224,7 @@ impl Operations {
             .search_editions(EditionQuery {
                 title: title_query.clone(),
                 artist: artist_query.clone(),
+                release_group_mbid: release_group_mbid.clone(),
                 limit,
                 offset,
             })
@@ -222,6 +233,7 @@ impl Operations {
         Ok(ReleaseSearch {
             title_query,
             artist_query,
+            release_group_query: release_group_mbid,
             current_release_group_mbid: identity
                 .as_ref()
                 .and_then(|row| row.release_group_mbid.clone()),

@@ -265,6 +265,8 @@ pub struct UndoOutcome {
 pub struct ReleaseSearch {
     pub title_query: String,
     pub artist_query: String,
+    /// Set when the page lists one release group's releases.
+    pub release_group_query: Option<String>,
     pub current_release_group_mbid: Option<String>,
     pub current_release_mbid: Option<String>,
     pub page: crate::library::identify::sources::EditionPage,

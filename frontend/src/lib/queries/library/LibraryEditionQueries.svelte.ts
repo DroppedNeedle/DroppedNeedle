@@ -32,6 +32,9 @@ export interface ReleaseEditionResult {
 export interface ReleaseEditionSearchResponse {
 	title_query: string;
 	artist_query: string;
+	/** Set when the page lists every release of one release group. */
+	release_group_query: string | null;
+	current_release_group_mbid: string | null;
 	items: ReleaseEditionResult[];
 	total: number;
 	offset: number;
@@ -43,6 +46,8 @@ type ReleaseEditionSearchView = components['schemas']['ReleaseEditionSearchRespo
 function toReleaseEditionSearch(view: ReleaseEditionSearchView): ReleaseEditionSearchResponse {
 	return {
 		...view,
+		release_group_query: view.release_group_query ?? null,
+		current_release_group_mbid: view.current_release_group_mbid ?? null,
 		items: view.items.map((item) => ({
 			...item,
 			date: item.date ?? null,
@@ -63,7 +68,9 @@ export function getReleaseEditionSearchQuery(
 	getTitle: Getter<string>,
 	getArtist: Getter<string>,
 	getOffset: Getter<number>,
-	getEnabled: Getter<boolean> = () => true
+	getEnabled: Getter<boolean> = () => true,
+	/** List every release of this release group instead of searching. */
+	getReleaseGroup: Getter<string | null> = () => null
 ) {
 	return createQuery(() => {
 		const userId = getUserId();
@@ -71,19 +78,25 @@ export function getReleaseEditionSearchQuery(
 		const title = getTitle();
 		const artist = getArtist();
 		const offset = getOffset();
+		const releaseGroup = getReleaseGroup();
 		return {
-			enabled: getEnabled() && Boolean(albumId && title.trim()),
+			enabled: getEnabled() && Boolean(albumId && (releaseGroup || title.trim())),
 			queryKey: LibraryQueryKeyFactory.reidentificationReleases(
 				userId,
 				albumId,
-				title,
-				artist,
+				releaseGroup ? `group:${releaseGroup}` : title,
+				releaseGroup ? '' : artist,
 				offset
 			),
 			queryFn: async ({ signal }): Promise<ReleaseEditionSearchResponse> =>
 				toReleaseEditionSearch(
 					await api.global.v3.GET(
-						LibraryV3Api.reidentificationReleases(albumId, { title, artist, limit: 12, offset }),
+						LibraryV3Api.reidentificationReleases(
+							albumId,
+							releaseGroup
+								? { title: '', artist: '', release_group_mbid: releaseGroup, limit: 12, offset }
+								: { title, artist, limit: 12, offset }
+						),
 						{ signal }
 					)
 				)

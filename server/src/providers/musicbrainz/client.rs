@@ -259,6 +259,29 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         .await
     }
 
+    /// One page of every release in one release group, for a curator
+    /// choosing any edition of an album. `rgid` is MusicBrainz's release
+    /// group field in the release index.
+    pub async fn search_release_group_editions(
+        &self,
+        release_group_mbid: &str,
+        limit: u32,
+        offset: u32,
+        criticality: Criticality,
+    ) -> Result<SearchPage<ReleaseSearchHit>, MbError> {
+        let query = format!("rgid:{}", normalize_mb_id(release_group_mbid));
+        self.search_page(
+            "/release",
+            &query,
+            limit,
+            offset,
+            "releases",
+            "search_release_group_editions",
+            criticality,
+        )
+        .await
+    }
+
     /// Search release groups by title and artist (verified Lucene shape).
     pub async fn search_release_groups(
         &self,

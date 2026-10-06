@@ -13412,6 +13412,7 @@ export interface components {
             /** Format: int64 */
             succeeded_count: number;
             terminal_code?: string | null;
+            terminal_reason?: null | components["schemas"]["ReasonView"];
             /** Format: double */
             updated_at: number;
         };
@@ -13419,6 +13420,7 @@ export interface components {
         OperationWorkResultView: {
             action: string;
             failure_code?: string | null;
+            failure_reason?: null | components["schemas"]["ReasonView"];
             local_album_id?: string | null;
             local_track_id?: string | null;
             /** Format: int64 */
@@ -14809,6 +14811,15 @@ export interface components {
          * @enum {string}
          */
         RawAacTagPolicy: "save_apev2" | "do_not_write" | "remove_apev2";
+        /**
+         * @description Why a job or work item ended where it did: a stable code, a plain
+         *     sentence, and what to do about it.
+         */
+        ReasonView: {
+            action: string;
+            code: string;
+            message: string;
+        };
         /** @description A minted recovery code. The code appears here once, never again. */
         RecoveryCodeResponse: {
             /**
@@ -14923,11 +14934,21 @@ export interface components {
         /** @description One page of the edition finder. */
         ReleaseEditionSearchResponse: {
             artist_query: string;
+            /**
+             * @description The album's current release group, for "every edition of this
+             *     album".
+             */
+            current_release_group_mbid?: string | null;
             items: components["schemas"]["ReleaseEditionView"][];
             /** Format: int32 */
             limit: number;
             /** Format: int64 */
             offset: number;
+            /**
+             * @description The release group whose editions are listed, when the page is a
+             *     release group listing rather than a search.
+             */
+            release_group_query?: string | null;
             title_query: string;
             /** Format: int64 */
             total: number;
@@ -22409,10 +22430,15 @@ export interface operations {
             path: {
                 /** @description Local album id */
                 album_id: string;
-                /** @description Release title (required). */
+                /** @description Release title; required unless `release_group_mbid` is given. */
                 title: string;
                 /** @description Artist name; blank searches every artist. */
                 artist: string;
+                /**
+                 * @description List every release of this release group instead of searching by
+                 *     title, so any edition of the album can be chosen.
+                 */
+                release_group_mbid: string | null;
                 /** @description Page size, 1 to 12 (default 12). */
                 limit: number | null;
                 /** @description Page offset (default 0). */

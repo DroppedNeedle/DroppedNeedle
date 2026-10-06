@@ -45,6 +45,9 @@
 	let releaseTitleField: HTMLInputElement | undefined;
 	let advancedValue = $state('');
 	let advancedAttempted = $state(false);
+	// Set while the list shows every release of the album's release group.
+	let releaseGroup = $state<string | null>(null);
+	let knownReleaseGroup = $state<string | null>(null);
 
 	const searchQuery = getReleaseEditionSearchQuery(
 		() => authStore.user?.id,
@@ -52,9 +55,13 @@
 		() => submittedTitle,
 		() => submittedArtist,
 		() => offset,
-		() => suggestionsOpen
+		() => suggestionsOpen,
+		() => releaseGroup
 	);
 	const result = $derived(searchQuery.data);
+	$effect(() => {
+		if (result?.current_release_group_mbid) knownReleaseGroup = result.current_release_group_mbid;
+	});
 	const currentEdition = $derived(
 		result?.items.find((edition) => edition.is_current_release) ?? null
 	);
@@ -65,7 +72,9 @@
 	const hasNext = $derived(Boolean(result && result.offset + result.items.length < result.total));
 	const musicBrainzQuery = $derived(buildMusicBrainzQuery(submittedTitle, submittedArtist));
 	const musicBrainzSearchUrl = $derived(
-		`https://musicbrainz.org/search?query=${encodeURIComponent(musicBrainzQuery)}&type=release&method=indexed`
+		releaseGroup
+			? `https://musicbrainz.org/release-group/${releaseGroup}`
+			: `https://musicbrainz.org/search?query=${encodeURIComponent(musicBrainzQuery)}&type=release&method=indexed`
 	);
 	const parsedAdvancedMbid = $derived(parseMusicBrainzReleaseId(advancedValue));
 
@@ -99,9 +108,15 @@
 	function search(): void {
 		const normalizedTitle = releaseTitleInput.trim();
 		if (!normalizedTitle) return;
+		releaseGroup = null;
 		offset = 0;
 		submittedTitle = normalizedTitle;
 		submittedArtist = artistInput.trim();
+	}
+
+	function listReleaseGroup(group: string | null): void {
+		releaseGroup = group;
+		offset = 0;
 	}
 
 	function toggleReplacement(event: Event & { currentTarget: HTMLDetailsElement }): void {
@@ -143,6 +158,19 @@
 			<Search class="h-4 w-4" /> Search
 		</button>
 	</form>
+	{#if releaseGroup}
+		<p class="text-sm text-base-content/60">
+			Showing every edition of this album on MusicBrainz.
+			<button class="btn btn-link btn-sm px-1" onclick={() => listReleaseGroup(null)}
+				>Back to search results</button
+			>
+		</p>
+	{:else if knownReleaseGroup}
+		<button
+			class="btn btn-ghost btn-sm self-start"
+			onclick={() => listReleaseGroup(knownReleaseGroup)}>Show every edition of this album</button
+		>
+	{/if}
 
 	{#if searchQuery.isLoading || searchQuery.isFetching}
 		<div class="edition-finder-list" aria-live="polite" aria-label="Loading MusicBrainz editions">

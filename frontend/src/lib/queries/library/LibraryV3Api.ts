@@ -99,7 +99,13 @@ export const LibraryV3Api = {
 		v3('/api/v3/library/albums/{album_id}/reidentify', { path: { album_id: albumId } }),
 	reidentificationReleases: (
 		albumId: string,
-		params: { title: string; artist: string; limit: number; offset: number }
+		params: {
+			title: string;
+			artist: string;
+			release_group_mbid?: string;
+			limit: number;
+			offset: number;
+		}
 	) =>
 		v3('/api/v3/library/albums/{album_id}/reidentification/releases', {
 			path: { album_id: albumId },

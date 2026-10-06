@@ -46,11 +46,13 @@ pub struct ReleaseHit {
 }
 
 /// A curator's release search: one page of editions for a title and
-/// (unless blank) an artist.
+/// (unless blank) an artist, or every release of one release group.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditionQuery {
     pub title: String,
     pub artist: String,
+    /// List this release group's releases instead of searching by name.
+    pub release_group_mbid: Option<String>,
     pub limit: u32,
     pub offset: u32,
 }
@@ -190,16 +192,28 @@ impl<T: MbTransport, S: DegradationSink> ReleaseSource for MusicBrainzClient<T, 
     ) -> BoxFuture<'a, Result<EditionPage, SourceError>> {
         Box::pin(async move {
             // A dead index is an error the curator sees, not an empty list.
-            let page = self
-                .search_release_editions(
-                    &query.title,
-                    &query.artist,
-                    query.limit,
-                    query.offset,
-                    Criticality::IdentityCritical,
-                )
-                .await
-                .map_err(|error| SourceError(error.to_string()))?;
+            let page = match query.release_group_mbid.as_deref() {
+                Some(group) => {
+                    self.search_release_group_editions(
+                        group,
+                        query.limit,
+                        query.offset,
+                        Criticality::IdentityCritical,
+                    )
+                    .await
+                }
+                None => {
+                    self.search_release_editions(
+                        &query.title,
+                        &query.artist,
+                        query.limit,
+                        query.offset,
+                        Criticality::IdentityCritical,
+                    )
+                    .await
+                }
+            }
+            .map_err(|error| SourceError(error.to_string()))?;
             Ok(EditionPage {
                 total: page.count,
                 offset: page.offset,

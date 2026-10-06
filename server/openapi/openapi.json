@@ -5026,7 +5026,7 @@
           {
             "name": "title",
             "in": "path",
-            "description": "Release title (required).",
+            "description": "Release title; required unless `release_group_mbid` is given.",
             "required": true,
             "schema": {
               "type": "string"
@@ -5039,6 +5039,18 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "release_group_mbid",
+            "in": "path",
+            "description": "List every release of this release group instead of searching by\ntitle, so any edition of the album can be chosen.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           {
@@ -30043,6 +30055,17 @@
               "null"
             ]
           },
+          "terminal_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReasonView",
+                "description": "What `terminal_code` means and what to do about it."
+              }
+            ]
+          },
           "updated_at": {
             "type": "number",
             "format": "double"
@@ -30066,6 +30089,17 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "failure_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReasonView",
+                "description": "Why the item failed, in words, with what to do about it."
+              }
             ]
           },
           "local_album_id": {
@@ -32977,6 +33011,26 @@
           "remove_apev2"
         ]
       },
+      "ReasonView": {
+        "type": "object",
+        "description": "Why a job or work item ended where it did: a stable code, a plain\nsentence, and what to do about it.",
+        "required": [
+          "code",
+          "message",
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
       "RecoveryCodeResponse": {
         "type": "object",
         "description": "A minted recovery code. The code appears here once, never again.",
@@ -33231,6 +33285,13 @@
           "artist_query": {
             "type": "string"
           },
+          "current_release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The album's current release group, for \"every edition of this\nalbum\"."
+          },
           "items": {
             "type": "array",
             "items": {
@@ -33246,6 +33307,13 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          },
+          "release_group_query": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The release group whose editions are listed, when the page is a\nrelease group listing rather than a search."
           },
           "title_query": {
             "type": "string"

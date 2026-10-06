@@ -334,11 +334,15 @@ pub struct AutomaticEditionUndoResponse {
 /// Edition finder query.
 #[derive(Debug, Clone, Deserialize, IntoParams)]
 pub struct ReleaseSearchQuery {
-    /// Release title (required).
+    /// Release title; required unless `release_group_mbid` is given.
+    #[serde(default)]
     pub title: String,
     /// Artist name; blank searches every artist.
     #[serde(default)]
     pub artist: String,
+    /// List every release of this release group instead of searching by
+    /// title, so any edition of the album can be chosen.
+    pub release_group_mbid: Option<String>,
     /// Page size, 1 to 12 (default 12).
     pub limit: Option<u32>,
     /// Page offset (default 0).
@@ -375,6 +379,12 @@ pub struct ReleaseEditionView {
 pub struct ReleaseEditionSearchResponse {
     pub title_query: String,
     pub artist_query: String,
+    /// The release group whose editions are listed, when the page is a
+    /// release group listing rather than a search.
+    pub release_group_query: Option<String>,
+    /// The album's current release group, for "every edition of this
+    /// album".
+    pub current_release_group_mbid: Option<String>,
     pub items: Vec<ReleaseEditionView>,
     pub total: u64,
     pub offset: u64,
@@ -729,11 +739,16 @@ pub async fn search_reidentification_releases(
     {
         return Err(OperationError::Invalid(reasons::SEARCH_TOO_LONG).into());
     }
+    let release_group = query
+        .release_group_mbid
+        .as_deref()
+        .filter(|group| !group.trim().is_empty());
     let search = Operations::new(&state)
         .search_releases(
             &album_id,
             &query.title,
             &query.artist,
+            release_group,
             limit,
             query.offset.unwrap_or(0),
         )
@@ -773,6 +788,8 @@ pub async fn search_reidentification_releases(
             .collect(),
         title_query: search.title_query,
         artist_query: search.artist_query,
+        release_group_query: search.release_group_query,
+        current_release_group_mbid: search.current_release_group_mbid,
         total: search.page.total,
         offset: search.page.offset,
         limit: search.limit,
