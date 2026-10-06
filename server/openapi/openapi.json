@@ -2849,6 +2849,16 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "503": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -2886,6 +2896,16 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "503": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -2943,6 +2963,16 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "503": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -3002,6 +3032,16 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "503": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -3125,6 +3165,16 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "503": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -3164,6 +3214,16 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "503": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -3202,6 +3262,16 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "503": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -3331,6 +3401,16 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "503": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -3392,6 +3472,16 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "503": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -3503,6 +3593,26 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "429": {
+            "description": "YouTube search quota used up for today (RATE_LIMITED)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -3550,6 +3660,26 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "429": {
+            "description": "YouTube search quota used up for today (RATE_LIMITED)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -3587,6 +3717,16 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "503": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -3624,6 +3764,16 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "503": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -3648,6 +3798,16 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "503": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -3695,6 +3855,16 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "503": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -3966,6 +4136,16 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "503": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -4034,6 +4214,16 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "503": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -4058,6 +4248,16 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "503": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -4125,6 +4325,16 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "503": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -4192,6 +4402,16 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "503": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -4259,6 +4479,16 @@
           },
           "401": {
             "description": "Not authenticated"
+          },
+          "503": {
+            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
           }
         }
       }
@@ -4584,6 +4814,15 @@
               "type": "integer",
               "format": "int64"
             }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "description": "250, 500, 1200, or original (the default) for full size",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -4594,7 +4833,7 @@
             "description": "Image unchanged"
           },
           "400": {
-            "description": "Bad query string"
+            "description": "Bad query string or unsupported size"
           },
           "401": {
             "description": "Not authenticated"

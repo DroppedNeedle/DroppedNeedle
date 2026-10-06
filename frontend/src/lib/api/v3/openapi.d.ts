@@ -18171,6 +18171,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     record_activity: {
@@ -18208,6 +18217,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
             };
         };
     };
@@ -18249,6 +18267,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
             };
         };
     };
@@ -18314,6 +18341,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
             };
         };
     };
@@ -18437,6 +18473,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     get_queue: {
@@ -18474,6 +18519,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     enrich_queue_item: {
@@ -18510,6 +18564,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
             };
         };
     };
@@ -18649,6 +18712,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     queue_status: {
@@ -18713,6 +18785,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
             };
         };
     };
@@ -18825,6 +18906,24 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description YouTube search quota used up for today (RATE_LIMITED) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     youtube_track_search: {
@@ -18864,6 +18963,24 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description YouTube search quota used up for today (RATE_LIMITED) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     discover_radio: {
@@ -18901,6 +19018,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
             };
         };
     };
@@ -18940,6 +19066,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     refresh_discover: {
@@ -18966,6 +19101,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
             };
         };
     };
@@ -19005,6 +19149,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
             };
         };
     };
@@ -19270,6 +19423,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     genre_detail: {
@@ -19314,6 +19476,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     integration_status: {
@@ -19340,6 +19511,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
             };
         };
     };
@@ -19384,6 +19564,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     trending_artists: {
@@ -19427,6 +19616,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
         };
     };
     your_top_albums: {
@@ -19469,6 +19667,15 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
             };
         };
     };
@@ -19704,6 +19911,8 @@ export interface operations {
             query?: {
                 /** @description Art version the caller holds */
                 v?: number;
+                /** @description 250, 500, 1200, or original (the default) for full size */
+                size?: string;
             };
             header?: never;
             path: {
@@ -19728,7 +19937,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Bad query string */
+            /** @description Bad query string or unsupported size */
             400: {
                 headers: {
                     [name: string]: unknown;
