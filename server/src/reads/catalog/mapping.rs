@@ -446,7 +446,7 @@ pub fn store_label(store: &str) -> Option<&'static str> {
 }
 
 /// Host of a URL, lowercase, without credentials or port.
-fn host_of(url: &str) -> String {
+pub fn host_of(url: &str) -> String {
     let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
     let host = authority.rsplit('@').next().unwrap_or("");

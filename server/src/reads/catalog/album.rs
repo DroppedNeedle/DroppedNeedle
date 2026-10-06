@@ -19,6 +19,7 @@ use super::models::{
     AlbumTracksInfo, CatalogSource, LastFmAlbumEnrichment, LastFmTag, PurchaseKind, PurchaseLink,
     PurchaseOptionsResponse,
 };
+use super::ports::PurchaseQuery;
 use super::{Catalog, MISS_TTL, mb_error, mb_retry, record_mb_down, secs};
 
 /// Includes for the release-group lookup: one call serves the header, the
@@ -711,17 +712,35 @@ impl Catalog {
                     .iter()
                     .map(|release| self.release_key(&release.id)),
             );
-            let region = self.upstream().settings().store_region();
-            keys.push(purchase_key(&group.mbid, &region));
+            keys.push(self.purchase_key(&group.mbid));
         }
         self.forget(&keys).await;
         self.album_basic(&id).await
     }
 
+    /// The purchase cache key: per MusicBrainz source, store region and set
+    /// of extra link providers.
+    fn purchase_key(&self, mbid: &str) -> String {
+        let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
+        let region = self.upstream().settings().store_region();
+        crate::providers::digest_key(
+            "getit:",
+            &[
+                &namespace,
+                &mbid.to_ascii_lowercase(),
+                &region.to_ascii_uppercase(),
+                &self.purchase_links.token(),
+            ],
+            "v1",
+        )
+    }
+
     /// `GET /albums/{album_id}/purchase-options`: store links from
     /// MusicBrainz (group first, then up to two releases, official first),
-    /// an iTunes match when MusicBrainz has no download store, and a
-    /// Bandcamp search as the floor. Kept a week per store region.
+    /// extra links from purchase-link providers, an iTunes match when
+    /// nothing so far is a download store, and a Bandcamp search as the
+    /// floor. Kept a week; an answer missing iTunes because iTunes failed
+    /// is not kept.
     pub async fn album_purchase_options(
         &self,
         raw_id: &str,
@@ -729,29 +748,33 @@ impl Catalog {
         let id = checked_mbid(raw_id, "album")?;
         let region = self.upstream().settings().store_region();
         let catalog = self.clone();
-        let key = purchase_key(&id, &region);
+        let key = self.purchase_key(&id);
         let value = self
             .cached(&self.inner.flights.other, key, move || async move {
-                let options = catalog.build_purchase_options(&id, &region).await?;
+                let (options, complete) = catalog.build_purchase_options(&id, &region).await?;
                 let value = serde_json::to_value(&options)
                     .map_err(|error| CatalogError::Internal(format!("purchase encode: {error}")))?;
-                Ok((value, Some(PURCHASE_TTL)))
+                Ok((value, complete.then_some(PURCHASE_TTL)))
             })
             .await?;
         serde_json::from_value(value)
             .map_err(|error| CatalogError::Internal(format!("purchase decode: {error}")))
     }
 
+    /// The options plus whether every source answered (only then cached).
     async fn build_purchase_options(
         &self,
         id: &str,
         region: &str,
-    ) -> Result<PurchaseOptionsResponse, CatalogError> {
+    ) -> Result<(PurchaseOptionsResponse, bool), CatalogError> {
         let Some(group) = self.group_detail(id).await? else {
-            return Ok(PurchaseOptionsResponse {
-                bandcamp_search_url: bandcamp_album_search(""),
-                ..PurchaseOptionsResponse::default()
-            });
+            return Ok((
+                PurchaseOptionsResponse {
+                    bandcamp_search_url: bandcamp_album_search(""),
+                    ..PurchaseOptionsResponse::default()
+                },
+                true,
+            ));
         };
         let mut links = group.store_links.clone();
         let mut candidates: Vec<&ReleaseSummary> = group.releases.iter().collect();
@@ -769,6 +792,33 @@ impl Catalog {
             }
         }
         let artist = group.credit.as_str();
+        if !artist.is_empty() || !group.title.is_empty() {
+            let query = PurchaseQuery {
+                artist: artist.to_owned(),
+                title: group.title.clone(),
+                release_group_mbid: group.mbid.clone(),
+            };
+            for extra in self.purchase_links.links(&query).await {
+                let url = extra.url.trim();
+                if !(url.starts_with("https://") || url.starts_with("http://"))
+                    || links.iter().any(|known| known.url == url)
+                {
+                    continue;
+                }
+                let store = mapping::store_for(url);
+                links.push(PurchaseLink {
+                    store: store.to_owned(),
+                    label: extra
+                        .label
+                        .filter(|label| !label.trim().is_empty())
+                        .or_else(|| mapping::store_label(store).map(str::to_owned))
+                        .unwrap_or_else(|| mapping::host_of(url)),
+                    url: url.to_owned(),
+                    kind: extra.kind.unwrap_or(PurchaseKind::Digital),
+                });
+            }
+        }
+        let mut complete = true;
         let has_digital = links.iter().any(|link| link.kind == PurchaseKind::Digital);
         if !has_digital && !artist.is_empty() && !group.title.is_empty() {
             let http = self.upstream().http_get();
@@ -786,6 +836,7 @@ impl Catalog {
                 Err(error) => {
                     tracing::warn!(album = %group.mbid, ?error, "itunes lookup failed");
                     record_current("itunes", IntegrationStatus::Error, false);
+                    complete = false;
                 }
             }
         }
@@ -798,12 +849,15 @@ impl Catalog {
             mapping::sort_links(&mut chosen);
             chosen
         };
-        Ok(PurchaseOptionsResponse {
-            digital: split(PurchaseKind::Digital),
-            physical: split(PurchaseKind::Physical),
-            free: split(PurchaseKind::Free),
-            bandcamp_search_url: bandcamp_album_search(&format!("{artist} {}", group.title)),
-        })
+        Ok((
+            PurchaseOptionsResponse {
+                digital: split(PurchaseKind::Digital),
+                physical: split(PurchaseKind::Physical),
+                free: split(PurchaseKind::Free),
+                bandcamp_search_url: bandcamp_album_search(&format!("{artist} {}", group.title)),
+            },
+            complete,
+        ))
     }
 
     /// `GET /albums/{album_id}/lastfm`: Last.fm summary and tags with the
@@ -862,14 +916,6 @@ impl Catalog {
             .await?;
         Ok(serde_json::from_value(value).unwrap_or_default())
     }
-}
-
-fn purchase_key(mbid: &str, region: &str) -> String {
-    format!(
-        "getit:{}:{}",
-        mbid.to_ascii_lowercase(),
-        region.to_ascii_uppercase()
-    )
 }
 
 fn bandcamp_album_search(term: &str) -> String {

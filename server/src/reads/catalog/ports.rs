@@ -43,3 +43,52 @@ impl FollowLookup for NoFollows {
         Box::pin(async { None })
     }
 }
+
+/// What a purchase-link provider is asked about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PurchaseQuery {
+    /// The album's artist credit as printed.
+    pub artist: String,
+    /// The album title.
+    pub title: String,
+    /// The release-group MBID.
+    pub release_group_mbid: String,
+}
+
+/// One extra "where to buy" link from a provider outside MusicBrainz.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtraPurchaseLink {
+    /// Store page; only http(s) URLs are shown.
+    pub url: String,
+    /// Display name, when the provider gave one.
+    pub label: Option<String>,
+    /// Digital, physical or free; digital when the provider did not say.
+    pub kind: Option<super::models::PurchaseKind>,
+}
+
+/// Extra purchase links, the plugins' `purchase_links` capability in v2.
+/// The plugin host plugs in here; until then the source is empty.
+pub trait PurchaseLinkSource: Send + Sync {
+    /// Identifies the providers answering right now (their names, sorted).
+    /// It keys the purchase cache, so enabling or disabling a provider
+    /// misses to a fresh answer instead of serving a week-old one.
+    fn token(&self) -> String;
+
+    /// Links for one album. Failures are the provider's to log; they read
+    /// as no links.
+    fn links<'a>(&'a self, query: &'a PurchaseQuery) -> BoxFuture<'a, Vec<ExtraPurchaseLink>>;
+}
+
+/// No purchase-link providers.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoPurchaseLinks;
+
+impl PurchaseLinkSource for NoPurchaseLinks {
+    fn token(&self) -> String {
+        String::new()
+    }
+
+    fn links<'a>(&'a self, _query: &'a PurchaseQuery) -> BoxFuture<'a, Vec<ExtraPurchaseLink>> {
+        Box::pin(async { Vec::new() })
+    }
+}

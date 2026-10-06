@@ -57,6 +57,7 @@ pub const MISS_TTL: Duration = Duration::from_secs(600);
 pub struct Catalog {
     inner: Arc<Inner>,
     follows: Arc<dyn ports::FollowLookup>,
+    purchase_links: Arc<dyn ports::PurchaseLinkSource>,
 }
 
 struct Inner {
@@ -90,7 +91,16 @@ impl Catalog {
                 warming: Mutex::new(HashSet::new()),
             }),
             follows: Arc::new(ports::NoFollows),
+            purchase_links: Arc::new(ports::NoPurchaseLinks),
         }
+    }
+
+    /// Add extra purchase links (the plugins' `purchase_links`) from this
+    /// source.
+    #[must_use]
+    pub fn with_purchase_links(mut self, source: Arc<dyn ports::PurchaseLinkSource>) -> Self {
+        self.purchase_links = source;
+        self
     }
 
     /// Read follow state for the artist header from this store.
