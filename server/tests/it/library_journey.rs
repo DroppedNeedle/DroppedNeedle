@@ -1099,6 +1099,54 @@ async fn copies_stay_apart_and_keep_ids_when_moved() {
     assert!(copy_a.is_file());
 }
 
+/// An album whose files went away in an earlier scan is not handed to a
+/// new album that happens to share its names: that one is another
+/// release, and the old identity stays where it was.
+#[tokio::test]
+async fn long_missing_album_is_not_taken_over() {
+    use droppedneedle::library::scan::CatalogStore as _;
+    use droppedneedle::library::tags::save::{TagEdit, save_tags};
+    use lofty::tag::ItemKey;
+
+    let (_scratch, library, music) = bare_library("lib-no-takeover");
+    let green = plant(&music, "green/01.flac", "flac_full_02.flac");
+    add_music_root(&library, &music).await;
+    let old_track = library
+        .scan_store
+        .track_at("music", "green/01.flac")
+        .expect("track indexed");
+    let old_album = library
+        .scan_store
+        .album_for_track(&old_track)
+        .expect("album");
+    std::fs::remove_file(&green).expect("delete");
+    rescan(&library).await;
+    assert_eq!(library.scan_store.track_at("music", "green/01.flac"), None);
+
+    // Another release under the same names: other songs, no shared ids.
+    let red = plant(&music, "red/01.flac", "flac_compilation_01.flac");
+    save_tags(
+        &red,
+        &[
+            TagEdit::new(ItemKey::AlbumTitle, vec!["OK Computer".to_owned()]),
+            TagEdit::new(ItemKey::AlbumArtist, vec!["Radiohead".to_owned()]),
+        ],
+    )
+    .expect("renamed");
+    rescan(&library).await;
+
+    let new_track = library
+        .scan_store
+        .track_at("music", "red/01.flac")
+        .expect("new track indexed");
+    assert_ne!(new_track, old_track);
+    let new_album = library
+        .scan_store
+        .album_for_track(&new_track)
+        .expect("album");
+    assert_ne!(new_album, old_album, "a long-gone album is not reused");
+}
+
 /// Retagging every track of an album to a new name keeps the album row,
 /// and with it the curator's identity.
 #[tokio::test]

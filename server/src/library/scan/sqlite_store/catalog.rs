@@ -10,6 +10,10 @@ use super::*;
 const IN_SCOPE: &str = "(?2 = '.' OR relative_path = ?2 \
     OR (relative_path > ?2 || '/' AND relative_path < ?2 || '0'))";
 
+/// [`IN_SCOPE`] for a `local_tracks t` alias.
+const IN_SCOPE_T: &str = "(?2 = '.' OR t.relative_path = ?2 \
+    OR (t.relative_path > ?2 || '/' AND t.relative_path < ?2 || '0'))";
+
 impl CatalogStore for SqliteScanStore {
     fn commit_window(&self, window: &IndexWindow) -> Result<WindowOutcome, ScanStoreError> {
         let mut guard = self.lock();
@@ -141,6 +145,60 @@ impl CatalogStore for SqliteScanStore {
             )
             .map(|count| count.max(0) as usize)
             .map_err(internal)
+    }
+
+    fn vanish_counts(
+        &self,
+        run_id: &str,
+        root_id: &str,
+        scope_relative_path: &str,
+    ) -> Result<(usize, usize), ScanStoreError> {
+        let guard = self.lock();
+        guard
+            .conn
+            .query_row(
+                &format!(
+                    "SELECT \
+                     (SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
+                      AND t.availability = 'indexed' AND {IN_SCOPE_T} AND NOT EXISTS ( \
+                      SELECT 1 FROM library_scan_inventory i \
+                      JOIN library_scan_run_scopes s ON s.run_id = i.run_id \
+                      AND s.root_id = i.root_id AND s.relative_path = i.scope_relative_path \
+                      WHERE i.run_id = ?3 AND i.root_id = ?1 AND i.relative_path = t.relative_path \
+                      AND s.discovery_generation = i.discovery_generation)), \
+                     (SELECT COUNT(*) FROM local_tracks t WHERE t.root_id = ?1 \
+                      AND t.availability = 'indexed' AND {IN_SCOPE_T}) \
+                     + (SELECT COUNT(*) FROM library_scan_inventory i WHERE i.run_id = ?3 \
+                      AND i.root_id = ?1 AND i.scope_relative_path = ?2 \
+                      AND i.comparison_result = 'new')"
+                ),
+                params![root_id, scope_relative_path, run_id],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .map(|(missing, total)| (missing.max(0) as usize, total.max(0) as usize))
+            .map_err(internal)
+    }
+
+    fn scope_guarded(&self, run_id: &str, root_id: &str, scope_relative_path: &str) -> bool {
+        let guard = self.lock();
+        guard
+            .conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM library_scan_failures WHERE run_id = ?1 \
+                 AND root_id = ?2 AND relative_path = ?3 AND failure_code = ?4)",
+                params![
+                    run_id,
+                    root_id,
+                    scope_relative_path,
+                    failure_codes::MASS_MISSING_GUARD
+                ],
+                |row| row.get(0),
+            )
+            .unwrap_or_else(|error| {
+                tracing::error!(%error, "scan scope_guarded failed");
+                // Unknown reads as guarded: holding back is the safe side.
+                true
+            })
     }
 
     fn missing_catalog_paths(

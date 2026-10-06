@@ -286,6 +286,21 @@ pub trait CatalogStore: Send + Sync {
         scope_relative_path: &str,
     ) -> Result<usize, ScanStoreError>;
 
+    /// For one walked scope before indexing: indexed rows the walk did
+    /// not see, and the rows the scope holds once its new files index.
+    /// Feeds the mass-missing guard.
+    fn vanish_counts(
+        &self,
+        run_id: &str,
+        root_id: &str,
+        scope_relative_path: &str,
+    ) -> Result<(usize, usize), ScanStoreError>;
+
+    /// True when the run held missing detection back for this scope (the
+    /// mass-missing guard). Such a scope counts as not walked: nothing in
+    /// it is missing, moved, or taken over.
+    fn scope_guarded(&self, run_id: &str, root_id: &str, scope_relative_path: &str) -> bool;
+
     /// Catalog paths under `scope_relative_path` that the run's current
     /// inventory does not contain: the missing set for one cleanly-walked
     /// scope. Only indexed catalog rows qualify, and scope matching is the

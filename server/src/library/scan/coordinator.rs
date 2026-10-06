@@ -775,6 +775,7 @@ impl<S: ScanStore, T: TagReader + 'static> LibraryScanCoordinator<S, T> {
                 }
             };
             self.log_progress(&run, "phase_discovery_end", true);
+            self.guard_vanished_scopes(&run.id).await;
             run = match self.store.transition(
                 &run.id,
                 ScanState::Discovering,
@@ -1297,6 +1298,9 @@ impl<S: ScanStore, T: TagReader + 'static> LibraryScanCoordinator<S, T> {
                 .store
                 .scope_discovery_state(run_id, &scope.root_id, &scope.relative_path)
                 != ScopeDiscoveryState::Completed
+                || self
+                    .store
+                    .scope_guarded(run_id, &scope.root_id, &scope.relative_path)
             {
                 continue;
             }
@@ -1323,29 +1327,7 @@ impl<S: ScanStore, T: TagReader + 'static> LibraryScanCoordinator<S, T> {
                 .indexed_count(&scope.root_id, &scope.relative_path)
                 .unwrap_or(paths.len());
             if mass_missing(paths.len(), indexed) {
-                tracing::warn!(
-                    root_id = scope.root_id,
-                    scope = scope.relative_path,
-                    missing = paths.len(),
-                    indexed,
-                    "most of a scope vanished at once; missing detection held back"
-                );
-                self.store.record_failures(
-                    run_id,
-                    vec![ScanFailureRecord {
-                        root_id: scope.root_id.clone(),
-                        relative_path: scope.relative_path.clone(),
-                        failure_code: failure_codes::MASS_MISSING_GUARD.to_owned(),
-                        recorded_at: self.now(),
-                        failure_detail: format!(
-                            "{} of {} indexed files under this scope were not found. \
-                             Check that the library is mounted; nothing was marked missing.",
-                            paths.len(),
-                            indexed
-                        ),
-                        phase: ScanPhase::Reconciling,
-                    }],
-                );
+                self.hold_back(run_id, scope, paths.len(), indexed, ScanPhase::Reconciling);
                 continue;
             }
             for chunk in paths.chunks(RECONCILE_CHUNK) {
@@ -1368,6 +1350,76 @@ impl<S: ScanStore, T: TagReader + 'static> LibraryScanCoordinator<S, T> {
             }
         }
         missing
+    }
+}
+
+impl<S: ScanStore, T: TagReader + 'static> LibraryScanCoordinator<S, T> {
+    /// Before indexing, hold back every walked scope that lost most of its
+    /// tracks at once. A held-back scope counts as not walked for the
+    /// whole run, so an unmounted share neither marks its tracks missing
+    /// nor hands their ids and albums to copies found elsewhere.
+    async fn guard_vanished_scopes(&self, run_id: &str) {
+        let scopes = self
+            .store
+            .get_run(run_id)
+            .map(|(_, scopes, _)| scopes)
+            .unwrap_or_default();
+        for scope in &scopes {
+            if self
+                .store
+                .scope_discovery_state(run_id, &scope.root_id, &scope.relative_path)
+                != ScopeDiscoveryState::Completed
+            {
+                continue;
+            }
+            let (id, root, rel) = (
+                run_id.to_owned(),
+                scope.root_id.clone(),
+                scope.relative_path.clone(),
+            );
+            match self
+                .on_store(move |store| store.vanish_counts(&id, &root, &rel))
+                .await
+            {
+                Ok((missing, total)) if mass_missing(missing, total) => {
+                    self.hold_back(run_id, scope, missing, total, ScanPhase::Discovering);
+                }
+                Ok(_) => {}
+                Err(error) => tracing::error!(%error, "scan mass-missing check failed"),
+            }
+        }
+    }
+
+    /// Record that missing detection is held back for one scope.
+    fn hold_back(
+        &self,
+        run_id: &str,
+        scope: &ScanScope,
+        missing: usize,
+        indexed: usize,
+        phase: ScanPhase,
+    ) {
+        tracing::warn!(
+            root_id = scope.root_id,
+            scope = scope.relative_path,
+            missing,
+            indexed,
+            "most of a scope vanished at once; missing detection held back"
+        );
+        self.store.record_failures(
+            run_id,
+            vec![ScanFailureRecord {
+                root_id: scope.root_id.clone(),
+                relative_path: scope.relative_path.clone(),
+                failure_code: failure_codes::MASS_MISSING_GUARD.to_owned(),
+                recorded_at: self.now(),
+                failure_detail: format!(
+                    "{missing} of {indexed} indexed files under this scope were not found. \
+                     Check that the library is mounted; nothing was marked missing."
+                ),
+                phase,
+            }],
+        );
     }
 }
 

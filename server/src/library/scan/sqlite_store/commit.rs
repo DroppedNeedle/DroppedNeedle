@@ -154,37 +154,52 @@ struct Place<'a> {
 
 /// A track still counts as present unless it is missing or this run
 /// walked its folder to the end without seeing it.
-const TRACK_PRESENT: &str = "t.availability = 'indexed' \
+const TRACK_PRESENT: &str = "(t.availability = 'indexed' \
     AND NOT (EXISTS (SELECT 1 FROM library_scan_run_scopes s WHERE s.run_id = ?1 \
       AND s.root_id = t.root_id AND s.discovery_state = 'completed' \
+      AND NOT EXISTS (SELECT 1 FROM library_scan_failures f WHERE f.run_id = ?1 \
+        AND f.root_id = s.root_id AND f.relative_path = s.relative_path \
+        AND f.failure_code = 'MASS_MISSING_GUARD') \
       AND (s.relative_path = '.' OR t.relative_path = s.relative_path \
         OR substr(t.relative_path, 1, length(s.relative_path) + 1) = s.relative_path || '/')) \
     AND NOT EXISTS (SELECT 1 FROM library_scan_inventory i WHERE i.run_id = ?1 \
-      AND i.root_id = t.root_id AND i.relative_path = t.relative_path))";
+      AND i.root_id = t.root_id AND i.relative_path = t.relative_path)))";
 
-/// Where an album's present tracks are, seen from one folder: (some are
-/// in this folder, some are anywhere else).
+/// Where an album's tracks are, seen from one folder.
+#[derive(Default)]
+struct Presence {
+    /// Some present tracks are in this folder.
+    here: bool,
+    /// Some present tracks are anywhere else.
+    elsewhere: bool,
+    /// Some tracks this run found gone (not ones missing since earlier).
+    gone_this_run: bool,
+}
+
 fn album_presence(
     tx: &Connection,
     place: &Place<'_>,
     album_id: &str,
-) -> rusqlite::Result<(bool, bool)> {
+) -> rusqlite::Result<Presence> {
     let mut stmt = tx.prepare_cached(&format!(
-        "SELECT t.root_id, t.relative_path FROM local_tracks t \
-         WHERE t.local_album_id = ?2 AND {TRACK_PRESENT}"
+        "SELECT t.root_id, t.relative_path, {TRACK_PRESENT} FROM local_tracks t \
+         WHERE t.local_album_id = ?2 AND t.availability = 'indexed'"
     ))?;
     let mut rows = stmt.query(params![place.run_id, album_id])?;
-    let (mut here, mut elsewhere) = (false, false);
+    let mut presence = Presence::default();
     while let Some(row) = rows.next()? {
         let root: String = row.get(0)?;
         let path: String = row.get(1)?;
-        if root == place.root_id && grouping_directory(&path) == place.directory {
-            here = true;
+        let present: bool = row.get(2)?;
+        if !present {
+            presence.gone_this_run = true;
+        } else if root == place.root_id && grouping_directory(&path) == place.directory {
+            presence.here = true;
         } else {
-            elsewhere = true;
+            presence.elsewhere = true;
         }
     }
-    Ok((here, elsewhere))
+    Ok(presence)
 }
 
 /// The album a track files under. Copies of one album in different
@@ -198,8 +213,9 @@ fn album_presence(
 ///    folder (for tagged names, also a same-named album where only some
 ///    files carry the release MBID, so a partly tagged album stays
 ///    whole);
-/// 3. an album with the key that has no present tracks anywhere, whose
-///    files moved here or were retagged (the oldest first);
+/// 3. an album with the key that has no present tracks anywhere and
+///    whose files this run found gone, so they moved here (the oldest
+///    first);
 /// 4. else a new album.
 fn resolve_album(
     tx: &Connection,
@@ -214,7 +230,7 @@ fn resolve_album(
                 "SELECT EXISTS(SELECT 1 FROM local_albums WHERE id = ?1 AND grouping_key = ?2)",
             )?
             .query_row(params![previous, key], |row| row.get(0))?;
-        if same && !album_presence(tx, place, previous)?.1 {
+        if same && !album_presence(tx, place, previous)?.elsewhere {
             return Ok(previous.to_owned());
         }
     }
@@ -248,11 +264,14 @@ fn resolve_album(
     };
     let mut takeover: Option<String> = None;
     for (id, exact) in candidates {
-        let (here, elsewhere) = album_presence(tx, place, &id)?;
-        if here {
+        let presence = album_presence(tx, place, &id)?;
+        if presence.here {
             return Ok(id);
         }
-        if exact && !elsewhere && takeover.is_none() {
+        // An album missing since an earlier run may be a different
+        // release that happens to share the names; only one this run
+        // emptied is taken over.
+        if exact && !presence.elsewhere && presence.gone_this_run && takeover.is_none() {
             takeover = Some(id);
         }
     }
@@ -287,10 +306,15 @@ struct TrackKey<'a> {
 }
 
 /// A track is gone when it is already marked missing, or when this run
-/// walked its folder to the end without seeing the file.
+/// walked its folder to the end without seeing the file. A scope the
+/// mass-missing guard held back (an unmounted share looks like that)
+/// does not count as walked.
 const TRACK_GONE: &str = "(t.availability = 'missing' OR (t.availability = 'indexed' \
     AND EXISTS (SELECT 1 FROM library_scan_run_scopes s WHERE s.run_id = ?1 \
       AND s.root_id = t.root_id AND s.discovery_state = 'completed' \
+      AND NOT EXISTS (SELECT 1 FROM library_scan_failures f WHERE f.run_id = ?1 \
+        AND f.root_id = s.root_id AND f.relative_path = s.relative_path \
+        AND f.failure_code = 'MASS_MISSING_GUARD') \
       AND (s.relative_path = '.' OR t.relative_path = s.relative_path \
         OR substr(t.relative_path, 1, length(s.relative_path) + 1) = s.relative_path || '/')) \
     AND NOT EXISTS (SELECT 1 FROM library_scan_inventory i WHERE i.run_id = ?1 \
@@ -300,9 +324,9 @@ const TRACK_GONE: &str = "(t.availability = 'missing' OR (t.availability = 'inde
 const DURATION_TOLERANCE_SECONDS: f64 = 1.0;
 
 /// The gone track a newly seen file continues, as (track id, album id):
-/// same recording MBID, or else same album names, disc, track number,
-/// title and duration. Only an unambiguous match counts; among several
-/// recording matches, the one on the same album, disc and track wins.
+/// the same album names, disc and track number, plus the same recording
+/// MBID, or else the same title and duration. Only an unambiguous match
+/// counts.
 fn find_moved_track(
     tx: &Connection,
     run_id: &str,
