@@ -1034,16 +1034,14 @@ impl Plan {
                 _ => None,
             })
             .collect();
+        // Only work this import really queues is listed: the follow
+        // refresh rows land in the same transaction as the follows.
         if !follow_keys.is_empty() {
             plan.rebuild.push(format!(
                 "follow-poll-requeue: {} artist(s)",
                 follow_keys.len()
             ));
         }
-        plan.rebuild.push("mbid-warmup: scheduler".to_owned());
-        plan.rebuild
-            .push("discovery-snapshot: scheduler".to_owned());
-        plan.rebuild.push("compat-id-map: scheduler".to_owned());
         plan
     }
 
