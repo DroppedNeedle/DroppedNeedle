@@ -5,15 +5,80 @@ in place. You export from v2, import into a fresh v3 data directory, then
 start v3 on that directory. Your v2 directory is never modified by the
 export, so you can always go back.
 
-What moves across: user accounts (passwords keep working, no resets),
-roles, app passwords for Subsonic and Jellyfin clients, linked login
-providers, recovery codes, followed artists, auto-download approvals, and
-settings, including saved API keys and secrets. Your music files are not
-touched.
+Your music files are not touched. The library itself is rescanned from disk
+on first start.
 
-What does not move: playlists, favorites, play history, per-user quota
-overrides and per-user remote-server connections. Re-create those after the
-upgrade. The library is rescanned from disk on first start.
+## What moves across
+
+- User accounts and roles. Passwords keep working, no resets.
+- App passwords for Subsonic and Jellyfin clients, linked login providers
+  and recovery codes.
+- Settings, including saved API keys and secrets.
+- Each user's linked Last.fm, ListenBrainz, Spotify, Navidrome, Jellyfin
+  and Plex accounts. Scrobbling, Wrapped and Spotify playlist import keep
+  working without linking again.
+- Followed artists, auto-download approvals, the new-release feed and what
+  each artist had already released (so v3 does not miss a release that
+  came out around the upgrade).
+- Playlists with their covers, favorites (with the names they had in v2)
+  and play history.
+- Finished requests and finished downloads, wanted watches, and the list of
+  bad download sources.
+- Per-user quota overrides. Past requests still count toward each user's
+  request limit. Storage a user's past downloads take up counts again once
+  the later library step links your files to the downloads that brought
+  them in; until then it starts from zero.
+- Concert cities and the concerts you marked as seen.
+- Small per-user preferences: scrobble targets, home page sections,
+  Navidrome folders, personal-mix approvals, and profile pictures.
+- Saved play queues and bookmarks of Subsonic and Jellyfin apps.
+
+One catch for the last two groups. v3 gives the songs in your library new
+ids when it rescans. Playlist entries, favorites, play history, saved
+queues and bookmarks keep the song ids v2 used, and the import records each
+one so a later version of the upgrade tool can link them to the rescanned
+library. Until then a playlist entry still shows its title but does not play
+from the library, and favorites, queues and bookmarks of library songs may
+not show up. Nothing is thrown away.
+
+## What stays behind
+
+The export lists everything it leaves behind with a count, and so do
+`validate` and the import report (`left_behind`). In short:
+
+- The library catalog and everything tied to it: matches you made by hand,
+  review decisions, edition pins and custom editions, exclusions, and
+  Library Management history including the saved original tags. A later
+  version of the upgrade tool carries these. If you may want to restore
+  original tags of files v2 changed, keep your v2 backup, and do not apply
+  Library Management changes in v3 until then: v3 records the file as it
+  finds it as the original.
+- Held imports and their files. They stay in `V2_ROOT/cache/held`.
+- Requests still waiting for approval or downloading, and unfinished
+  downloads. Ask again in v3.
+- Download attempts still cleaning up their download folder.
+- Sign-in sessions. Everyone signs in again.
+- YouTube links and the discover queue's ignore list. v3 has nowhere to
+  keep these yet.
+- Unfinished MusicBrainz contributions. They belong to v2's library
+  albums, which v3 builds again when it scans, so start them again in v3
+  after the first scan.
+- Caches, which v3 fills again on its own.
+- Plugins. Install them again from Settings > Plugins; their settings come
+  across.
+
+## Each kind of data moves once
+
+The import remembers, per v2 instance, which kinds of data it has brought
+across: playlists, history, requests and so on. Running the same import
+again changes nothing. Importing a newer export of the same v2 instance
+later brings only the kinds that never came across before, so a playlist
+you deleted in v3 does not come back. If you want a clean second try, start
+again from an empty `V3_ROOT`.
+
+Import before anyone signs in to v3. Someone who signs in first and, say,
+uploads an avatar or links Last.fm keeps what they set up in v3, and the
+import leaves their v2 version out.
 
 Paths below:
 
@@ -57,6 +122,12 @@ docker run --rm -e PUID=$(id -u) -e PGID=$(id -g) \
   --v2-commit V2_VERSION --passphrase-file /work/passphrase.txt
 ```
 
+This writes two files: `export.json` and `export.bundle.sqlite` next to it.
+The bundle holds the playlists, history and other user data; the JSON holds
+the accounts, settings and every secret, sealed. Keep the two together.
+Both are readable only by you, and both hold private data, so delete them
+once you are done.
+
 If v2's key file (`config/.env`) is missing, or its key does not decrypt
 your stored secrets, the export refuses rather than writing a broken file.
 Restore `config/.env` from your backup and try again.
@@ -73,6 +144,10 @@ A clean file ends with `valid: N warning(s)`. Two warnings are normal:
 `REVOKED_APP_PASSWORD_KEPT` (revoked app passwords stay revoked) and
 `DANGLING_REVIEWER` (an approval whose reviewer no longer exists; the
 reviewer field is cleared on import).
+
+Above that it prints what stays behind in v2, one line per table with a
+row count and the reason. Read it: this is the moment to decide whether
+anything there matters to you before you move.
 
 If it reports `DANGLING_USER_REF`, v2 has follows or approvals that point at
 deleted users. Remove them from `V2_ROOT` (not the backup) and export again:
@@ -101,7 +176,9 @@ record. A dry run writes no records.
 
 ## 6. Import
 
-The same command with `import` instead of `dry-run`:
+Do this before v3 has ever run on `V3_ROOT`, so nobody has signed in to v3
+yet (see "Each kind of data moves once" above). Use the same command with
+`import` instead of `dry-run`:
 
 ```sh
 docker run --rm -e PUID=$(id -u) -e PGID=$(id -g) \
@@ -113,8 +190,17 @@ docker run --rm -e PUID=$(id -u) -e PGID=$(id -g) \
 ```
 
 The counts match the dry run. Running the import again is safe: it changes
-nothing the second time. The tool refuses to run while a server has the
-target database open.
+nothing the second time. If an import stops partway (a crash, a full disk),
+run the same command again: everything already imported stays, and it picks
+up at the first part it had not finished. The tool refuses to run while a
+server has the target database open.
+
+Profile pictures land in `V3_ROOT/cache/avatars`, the folder that holds the
+database. If your v3 cache lives somewhere else, add
+`--cache-dir /path/to/cache`.
+
+`pending_links` in the report counts the song, album and artist ids waiting
+for the library step described above.
 
 Settings the export could not carry are listed under `settings_defaulted`
 in `WORK/import.json`. Check that list for anything you expected to keep.
@@ -142,15 +228,19 @@ Then check:
 - You can log in with your v2 password.
 - Your Subsonic or Jellyfin app still connects with its app password.
 - Settings > Download Client and Settings > Indexers / Prowlarr look right.
-- Add your library path under Settings > Library and let the first scan run.
+- Your library folders are listed under Settings > Library. They come across
+  with your settings, so check them rather than adding them again: a folder
+  added a second time gets a new id, and the later library step relies on
+  the old one. Then let the first scan run.
 - If you import Spotify playlists: your Spotify app keeps working with no
   change in the Spotify dashboard. v3 goes on sending the redirect address
-  v2 registered (Settings > Spotify shows it). Spotify sign-ins don't carry
-  over, so each user clicks Connect on the Spotify card in their profile
-  once.
+  v2 registered (Settings > Spotify shows it). Linked Spotify accounts carry
+  over too, so nobody has to click Connect again.
 - If you had a MusicBrainz contribution open in the release editor during
   the upgrade: saving it still brings you back, because v3 also answers on
-  the v2 return address.
+  the v2 return address, but v3 can't link it, since the contribution
+  stayed in v2. After the first scan, start a contribution for that album
+  in v3 and enter the release link by hand.
 
 ## Going back to v2
 
@@ -173,4 +263,8 @@ Those only happen if you turned Library Management on and applied changes.
 | `INSTANCE_MISMATCH` | The export came from a different v2 instance | Export from the right `V2_ROOT` |
 | `ENVELOPE_AUTH_FAILED` | Wrong passphrase | Re-run with the right passphrase file; no records were imported |
 | `CHECKSUM_MISMATCH` | The export file was changed or truncated | Export again; do not edit the file |
+| `BUNDLE_MISSING` | `export.bundle.sqlite` is not next to `export.json` | Put the two files in the same folder |
+| `BUNDLE_MISMATCH` | The bundle next to the export comes from another export, or was changed | Use the bundle written together with that export, or export again |
+| `BUNDLE_SECTION_MISSING` | The bundle lacks a part the export says it holds | Export again; do not edit the bundle |
+| `BUNDLE_COLUMN_MISSING` | Your v2 is too old to have a value v3 needs for some data | Update v2 to its last release, start and stop it once, then export again |
 | `target database is locked` | A server has the v3 database open | Stop it and re-run |
