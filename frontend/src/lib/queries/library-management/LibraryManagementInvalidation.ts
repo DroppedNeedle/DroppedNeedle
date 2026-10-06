@@ -7,7 +7,7 @@ import { FreeMusicQueryKeyFactory } from '$lib/queries/free-music/FreeMusicQuery
 import { GenreQueryKeyFactory } from '$lib/queries/genre/GenreQueryKeyFactory';
 import { DropImportQueryKeyFactory } from '$lib/queries/import/DropImportQueryKeyFactory';
 import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
-import { LOCAL_KEYS } from '$lib/queries/local/LocalQueries.svelte';
+import { LOCAL_KEYS } from '$lib/queries/local/LocalV3Keys';
 import { LyricsQueryKeyFactory } from '$lib/queries/lyrics/LyricsQueryKeyFactory';
 import { searchStore } from '$lib/stores/search';
 

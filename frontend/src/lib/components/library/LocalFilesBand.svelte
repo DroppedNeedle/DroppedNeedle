@@ -1,6 +1,11 @@
 <script lang="ts">
 	import { Headphones, Play, Shuffle, Sparkles, ArrowRight } from 'lucide-svelte';
-	import { getLocalStatsQuery, getLocalRecentQuery } from '$lib/queries/local/LocalQueries.svelte';
+	import {
+		getLocalRecentV3Query,
+		getLocalStatsV3Query
+	} from '$lib/queries/local/LocalV3Queries.svelte';
+	import { albumCardToSummary } from '$lib/queries/local/LocalV3Adapters';
+	import { formatBytes } from '$lib/utils/formatting';
 	import { createLibraryTrackLoader } from '$lib/utils/libraryTrackLoader.svelte';
 	import { buildDiscoveryQueueFromLocal } from '$lib/player/queueHelpers';
 	import { playerStore } from '$lib/stores/player.svelte';
@@ -10,10 +15,11 @@
 	import type { NativeTrackListItem, NativeTrackPage } from '$lib/types';
 	import { withBasePath } from '$lib/utils/basePath';
 
-	const statsQuery = getLocalStatsQuery();
-	const recentQuery = getLocalRecentQuery();
+	const statsQuery = getLocalStatsV3Query();
+	const recentQuery = getLocalRecentV3Query(() => 1);
 	const stats = $derived(statsQuery.data);
-	const backdropAlbum = $derived(recentQuery.data?.[0] ?? null);
+	const backdropCard = $derived(recentQuery.data?.[0]);
+	const backdropAlbum = $derived(backdropCard ? albumCardToSummary(backdropCard) : null);
 
 	const PAGE_SIZE = 100;
 	const loader = createLibraryTrackLoader<NativeTrackListItem>(
@@ -150,7 +156,7 @@
 					<p class="text-sm text-base-content/60">
 						{#if stats}
 							{stats.total_tracks.toLocaleString()} tracks · {stats.total_artists.toLocaleString()} artists
-							· {stats.total_size_human}
+							· {formatBytes(stats.total_size_bytes)}
 						{:else}
 							Your local music collection
 						{/if}

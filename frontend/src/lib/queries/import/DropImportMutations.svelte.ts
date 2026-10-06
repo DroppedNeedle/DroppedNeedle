@@ -4,7 +4,7 @@ import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
-import { LOCAL_KEYS } from '$lib/queries/local/LocalQueries.svelte';
+import { LOCAL_KEYS } from '$lib/queries/local/LocalV3Keys';
 import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
 import { toastStore } from '$lib/stores/toast';
 

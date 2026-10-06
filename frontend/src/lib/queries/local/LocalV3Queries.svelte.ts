@@ -4,7 +4,7 @@ import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
 import { CACHE_TTL } from '$lib/constants';
-import { LOCAL_V3_KEYS, type LocalV3AlbumsParams, type LocalV3PageParams } from './LocalV3Keys';
+import { LOCAL_KEYS, type LocalV3AlbumsParams, type LocalV3PageParams } from './LocalV3Keys';
 import { LocalV3Api } from './LocalV3Api';
 
 export type AlbumCardPageV3 = components['schemas']['AlbumCardPage'];
@@ -22,7 +22,7 @@ export const getLocalRecentV3Query = (getLimit: Getter<number | null> = () => nu
 		const limit = getLimit();
 		return queryOptions({
 			staleTime: CACHE_TTL.LIBRARY_NATIVE,
-			queryKey: LOCAL_V3_KEYS.recent(limit),
+			queryKey: LOCAL_KEYS.recent(limit),
 			queryFn: ({ signal }) => api.global.v3.GET(LocalV3Api.recent(limit), { signal })
 		});
 	});
@@ -36,7 +36,7 @@ export const getLocalAlbumsV3Query = (
 		return queryOptions({
 			enabled: getEnabled(),
 			staleTime: CACHE_TTL.LIBRARY_NATIVE,
-			queryKey: LOCAL_V3_KEYS.albums(params),
+			queryKey: LOCAL_KEYS.albums(params),
 			queryFn: ({ signal }) => api.global.v3.GET(LocalV3Api.albums(params), { signal })
 		});
 	});
@@ -52,7 +52,7 @@ export const getLocalSuggestionsV3Query = (
 			// crate should feel alive, never serve stale
 			staleTime: 0,
 			gcTime: 0,
-			queryKey: LOCAL_V3_KEYS.suggestions(limit, decade),
+			queryKey: LOCAL_KEYS.suggestions(limit, decade),
 			queryFn: ({ signal }) =>
 				api.global.v3.GET(LocalV3Api.suggestions(limit, decade), {
 					signal
@@ -72,7 +72,7 @@ export const getLocalSearchV3Query = (
 			enabled: term.length >= 2,
 			staleTime: CACHE_TTL.LIBRARY_NATIVE,
 			placeholderData: keepPreviousData,
-			queryKey: LOCAL_V3_KEYS.search(term, limit),
+			queryKey: LOCAL_KEYS.search(term, limit),
 			queryFn: ({ signal }) => api.global.v3.GET(LocalV3Api.search(term, limit), { signal })
 		});
 	});
@@ -81,16 +81,18 @@ export const getLocalDecadesV3Query = () =>
 	createQuery(() =>
 		queryOptions({
 			staleTime: CACHE_TTL.LIBRARY_NATIVE,
-			queryKey: LOCAL_V3_KEYS.decades(),
+			queryKey: LOCAL_KEYS.decades(),
 			queryFn: ({ signal }) => api.global.v3.GET(LocalV3Api.decades(), { signal })
 		})
 	);
 
-export const getLocalStatsV3Query = () =>
+// The enabled getter keeps the read off when local files are not set up.
+export const getLocalStatsV3Query = (getEnabled: Getter<boolean> = () => true) =>
 	createQuery(() =>
 		queryOptions({
+			enabled: getEnabled(),
 			staleTime: CACHE_TTL.LIBRARY_NATIVE,
-			queryKey: LOCAL_V3_KEYS.stats(),
+			queryKey: LOCAL_KEYS.stats(),
 			queryFn: ({ signal }) => api.global.v3.GET(LocalV3Api.stats(), { signal })
 		})
 	);
@@ -105,7 +107,7 @@ export const getLocalAlbumMatchV3Query = (
 		return queryOptions({
 			enabled: mbid.length > 0,
 			staleTime: CACHE_TTL.LIBRARY_NATIVE,
-			queryKey: LOCAL_V3_KEYS.albumMatch(mbid, page),
+			queryKey: LOCAL_KEYS.albumMatch(mbid, page),
 			queryFn: ({ signal }) => api.global.v3.GET(LocalV3Api.albumMatch(mbid, page), { signal })
 		});
 	});

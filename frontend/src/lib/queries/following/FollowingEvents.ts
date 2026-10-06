@@ -7,7 +7,7 @@ import { WantedQueryKeyFactory } from '$lib/queries/wanted/WantedQueryKeyFactory
 import { DropImportQueryKeyFactory } from '$lib/queries/import/DropImportQueryKeyFactory';
 import { FreeMusicQueryKeyFactory } from '$lib/queries/free-music/FreeMusicQueryKeyFactory';
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
-import { LOCAL_KEYS } from '$lib/queries/local/LocalQueries.svelte';
+import { LOCAL_KEYS } from '$lib/queries/local/LocalV3Keys';
 import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
 import {
 	muxEventStream,

@@ -1,11 +1,6 @@
 import { musicBrainzSourceKey } from '../musicbrainz/sourceScope.svelte';
 import { userIdSegment } from '../userKeySegment';
 
-const providerAll = (userId: string | null | undefined) => {
-	const normalizedUserId = userIdSegment(userId);
-	return ['search', normalizedUserId, musicBrainzSourceKey(normalizedUserId)] as const;
-};
-
 export type SearchV3UserId = string | null | undefined;
 
 export type SearchV3Bucket = 'artists' | 'albums' | 'tracks';
@@ -24,7 +19,6 @@ export interface SearchV3EnrichFingerprint {
 const normalizeQuery = (query: string) => query.trim().toLowerCase();
 
 export const SearchQueryKeyFactory = {
-	all: (userId: string | null | undefined) => ['search', userIdSegment(userId)] as const,
 	// v3 search keys. Unified search, bucket drill-downs, and suggestions read
 	// the local catalog, so they carry only the userId. Enrichment fans out to
 	// the metadata provider, so it also embeds the provider source identity and
@@ -70,25 +64,5 @@ export const SearchQueryKeyFactory = {
 				fingerprint
 			] as const;
 		}
-	},
-	localArtists: (userId: string | null | undefined, query: string, limit: number) =>
-		[
-			...SearchQueryKeyFactory.all(userId),
-			'local-artists',
-			query.trim().toLowerCase(),
-			limit
-		] as const,
-	localAlbums: (userId: string | null | undefined, query: string, limit: number) =>
-		[
-			...SearchQueryKeyFactory.all(userId),
-			'local-albums',
-			query.trim().toLowerCase(),
-			limit
-		] as const,
-	artists: (userId: string | null | undefined, query: string, limit: number) =>
-		[...providerAll(userId), 'artists', query.trim().toLowerCase(), limit] as const,
-	albums: (userId: string | null | undefined, query: string, limit: number) =>
-		[...providerAll(userId), 'albums', query.trim().toLowerCase(), limit] as const,
-	suggestions: (userId: string | null | undefined, query: string, limit: number) =>
-		[...providerAll(userId), 'suggestions', query.trim().toLowerCase(), limit] as const
+	}
 };

@@ -7,7 +7,7 @@ import { DiscoverQueryKeyFactory } from '../discover/DiscoverQueryKeyFactory';
 import { HomeQueryKeyFactory } from '../HomeQueryKeyFactory';
 import { WantedQueryKeyFactory } from '../wanted/WantedQueryKeyFactory';
 import { invalidateQueriesWithPersister, setQueryDataWithPersister } from '../QueryClient';
-import { LOCAL_KEYS } from '../local/LocalQueries.svelte';
+import { LOCAL_KEYS } from '../local/LocalV3Keys';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { albumSourceMatchCache } from '$lib/utils/albumDetailCache';
 import type {

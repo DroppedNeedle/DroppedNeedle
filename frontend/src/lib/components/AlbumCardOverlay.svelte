@@ -13,7 +13,7 @@
 	} from '$lib/utils/albumCardPlayback';
 	import { openGlobalPlaylistModal } from '$lib/stores/playlistModal.svelte';
 	import { downloadAlbumArchive } from '$lib/utils/downloadActions';
-	import { getDownloadAccessQuery } from '$lib/queries/local/LocalQueries.svelte';
+	import { getDownloadAccessQuery } from '$lib/queries/local/DownloadAccessQuery.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { API } from '$lib/constants';
 

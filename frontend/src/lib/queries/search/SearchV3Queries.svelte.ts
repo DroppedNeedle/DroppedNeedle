@@ -13,7 +13,6 @@ import {
 	type SearchV3Limits,
 	type SearchV3UserId
 } from './SearchQueryKeyFactory';
-import { SEARCH_FAILURE_STALE_TIME_MS, successfulSearchStaleTime } from './SearchQueries.svelte';
 
 export type SearchResponseV3 = components['schemas']['SearchResponse'];
 export type SearchBucketResponseV3 = components['schemas']['SearchBucketResponse'];
@@ -23,6 +22,15 @@ export type EnrichmentResponseV3 = components['schemas']['EnrichmentResponse'];
 
 const enabled = (userId: SearchV3UserId, query: string) =>
 	Boolean(userId && query.trim().length >= 2);
+
+// A failed remote search used to collapse staleTime to 0, so every tab
+// return during a provider outage re-ran the server's MusicBrainz fan-out.
+// Failures hold a short floor instead; success keeps the full search window.
+const SEARCH_FAILURE_STALE_TIME_MS = 60_000;
+const successfulSearchStaleTime = (query: { state: { data?: { status?: string } } }) =>
+	query.state.data?.status === 'ok'
+		? ttl('search', CACHE_TTL.SEARCH)
+		: SEARCH_FAILURE_STALE_TIME_MS;
 
 // A degraded enrichment answers from a partial provider fan-out, so it holds
 // briefly; a clean answer keeps the full search window.

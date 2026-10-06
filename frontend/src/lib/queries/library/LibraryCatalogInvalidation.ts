@@ -4,7 +4,7 @@ import { DiscoverQueryKeyFactory } from '$lib/queries/discover/DiscoverQueryKeyF
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { ArtistReconciliationQueryKeyFactory } from '$lib/queries/artist-reconciliation/ArtistReconciliationQueryKeyFactory';
 import { LyricsQueryKeyFactory } from '$lib/queries/lyrics/LyricsQueryKeyFactory';
-import { LOCAL_KEYS } from '$lib/queries/local/LocalQueries.svelte';
+import { LOCAL_KEYS } from '$lib/queries/local/LocalV3Keys';
 import { searchStore } from '$lib/stores/search';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 

@@ -1,14 +1,11 @@
 import { api, ApiError } from '$lib/api/client';
-import { API, CACHE_TTL } from '$lib/constants';
-import type {
-	LyricLine,
-	JellyfinLyricsResponse,
-	LocalLyricsResponse,
-	NavidromeLyricsResponse
-} from '$lib/types';
+import { CACHE_TTL } from '$lib/constants';
+import type { LyricLine } from '$lib/types';
 import type { NowPlaying } from '$lib/player/types';
 import { createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
+import { LibraryV3Api } from '$lib/queries/library/LibraryV3Api';
+import { remoteApi } from '$lib/queries/remotes/remoteApi';
 import { LyricsQueryKeyFactory } from './LyricsQueryKeyFactory';
 
 export interface LyricsData {
@@ -18,33 +15,32 @@ export interface LyricsData {
 }
 
 export async function fetchLyrics(np: NowPlaying, signal: AbortSignal): Promise<LyricsData | null> {
+	const id = np.trackSourceId;
+	if (!id) return null;
 	try {
 		if (np.sourceType === 'local') {
-			const data = await api.global.get<LocalLyricsResponse>(API.local.lyrics(np.trackSourceId!), {
-				signal
-			});
+			const data = await api.global.v3.GET(LibraryV3Api.lyrics(id), { signal });
 			return {
-				text: data.text ?? '',
-				is_synced: data.is_synced ?? false,
-				lines: data.lines ?? []
+				text: data.text,
+				is_synced: data.is_synced,
+				lines: data.lines.map((line) => ({
+					text: line.text,
+					start_seconds: line.start_seconds ?? null
+				}))
 			};
 		}
-		if (np.sourceType === 'navidrome') {
-			const url = API.navidromeLibrary.lyrics(np.trackSourceId!, np.artistName, np.trackName ?? '');
-			const data = await api.global.get<NavidromeLyricsResponse>(url, { signal });
+		if (np.sourceType === 'navidrome' || np.sourceType === 'jellyfin') {
+			// Navidrome's classic lyrics need the artist and title as a fallback.
+			const params =
+				np.sourceType === 'navidrome' ? { artist: np.artistName, title: np.trackName ?? '' } : {};
+			const data = await remoteApi.lyrics(np.sourceType, id, params, signal);
 			return {
-				text: data.text ?? '',
-				is_synced: data.is_synced ?? false,
-				lines: data.lines ?? []
-			};
-		}
-		if (np.sourceType === 'jellyfin') {
-			const url = API.jellyfinLibrary.lyrics(np.trackSourceId!);
-			const data = await api.global.get<JellyfinLyricsResponse>(url, { signal });
-			return {
-				text: data.lyrics_text ?? '',
-				is_synced: data.is_synced ?? false,
-				lines: data.lines ?? []
+				text: data.text,
+				is_synced: data.is_synced,
+				lines: data.lines.map((line) => ({
+					text: line.text,
+					start_seconds: line.start_ms == null ? null : line.start_ms / 1000
+				}))
 			};
 		}
 		return null;

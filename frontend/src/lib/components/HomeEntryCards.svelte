@@ -5,11 +5,11 @@
 	import DropImportZone from '$lib/components/import/DropImportZone.svelte';
 	import { integrationStore } from '$lib/stores/integration';
 	import { authStore } from '$lib/stores/authStore.svelte';
-	import { getLocalStatsQuery } from '$lib/queries/local/LocalQueries.svelte';
+	import { getLocalStatsV3Query } from '$lib/queries/local/LocalV3Queries.svelte';
+	import { formatBytes } from '$lib/utils/formatting';
 	import { getLibraryActivityQuery } from '$lib/queries/library/LibraryActivityQueries.svelte';
 	import { getLibraryStatsQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import { formatLastUpdated } from '$lib/utils/formatting';
-	import type { FormatInfo } from '$lib/types';
 	import { withBasePath } from '$lib/utils/basePath';
 
 	type CardState = 'loading' | 'prompt' | 'error' | 'stats';
@@ -42,7 +42,7 @@
 	const localEnabled = $derived(integrations.current.localfiles);
 	const canImport = $derived(authStore.isTrusted);
 
-	const localStatsQuery = getLocalStatsQuery(() => localEnabled);
+	const localStatsQuery = getLocalStatsV3Query(() => localEnabled);
 	const libraryStatsQuery = getLibraryStatsQuery();
 	const libraryActivityQuery = getLibraryActivityQuery(() => authStore.user?.id);
 
@@ -54,9 +54,9 @@
 	const stillMatching = $derived(
 		(identificationActivity?.waiting_count ?? 0) + (identificationActivity?.deferred_count ?? 0)
 	);
-	function topFormats(breakdown: Record<string, FormatInfo>): string {
+	function topFormats(breakdown: Record<string, number>): string {
 		return Object.entries(breakdown)
-			.sort((a, b) => b[1].count - a[1].count)
+			.sort((a, b) => b[1] - a[1])
 			.slice(0, 2)
 			.map(([format]) => format.toUpperCase())
 			.join(' · ');
@@ -93,7 +93,7 @@
 				: libUnmatched > 0
 					? `${libUnmatched.toLocaleString()} need review`
 					: localStats && localStats.total_tracks > 0
-						? `${localStats.total_size_human}${localFormats ? ' · ' + localFormats : ''}`
+						? `${formatBytes(localStats.total_size_bytes)}${localFormats ? ' · ' + localFormats : ''}`
 						: libLastScan
 							? `Scanned ${formatLastUpdated(libLastScan)}`
 							: 'Not scanned yet'
