@@ -398,7 +398,7 @@ pub struct FlowsBundle {
     pub worklist: UpgradeWorklist,
     /// Drop-import quarantine.
     pub quarantine: QuarantineStore,
-    /// Library presence (empty until a library port fills it).
+    /// Library presence, read from the catalog.
     pub library: Arc<LibraryPresence>,
     /// Sweep ownership directory (refreshed from auth at boot).
     pub admins: Arc<AdminDirectory>,
@@ -489,6 +489,28 @@ impl LibraryOrganise for StagingOrganise {
         std::fs::rename(&source, &dest).map_err(|error| format!("cannot resolve drop: {error}"))?;
         Ok(dest.to_string_lossy().into_owned())
     }
+}
+
+/// After a landing settles a task, resolve its requests and wanted watch
+/// right away through the status-sync rules.
+pub fn settled_hook(flows: Arc<FlowsBundle>) -> super::worker::SettledHook {
+    Arc::new(move |task, status| {
+        let flows = flows.clone();
+        Box::pin(async move {
+            let now = super::db::to_i64(super::db::now_epoch());
+            let completed_album = (status == super::downloads::state::TaskStatus::Completed
+                && task.download_type == "album")
+                .then_some(task.release_group_mbid.as_str());
+            super::flows::loops::settle_task(
+                now,
+                &flows.sync_deps,
+                &flows.watches,
+                &task.id,
+                completed_album,
+            )
+            .await;
+        })
+    })
 }
 
 /// Landing settings from the download-policy section: the quality band
@@ -779,7 +801,8 @@ impl AcquireSetup {
                 }),
             )
             .with_plugin_events(worker_plugins)
-            .with_landing(landing.clone()),
+            .with_landing(landing.clone())
+            .with_settled(settled_hook(core.flows.clone())),
         );
 
         Ok(Self {
@@ -959,7 +982,8 @@ impl AcquireSetup {
                     ..WorkerConfig::default()
                 },
             )
-            .with_landing(landing.clone()),
+            .with_landing(landing.clone())
+            .with_settled(settled_hook(core.flows.clone())),
         );
         let probe_cache = Arc::new(ProbeCache::new(seed_from_config(
             &SlskdConnection::default(),
@@ -1255,7 +1279,9 @@ fn flows_bundle(
     let follows = FlowsFollowStore::new(db.clone());
     let worklist = UpgradeWorklist::new(db.clone());
     let quarantine = QuarantineStore::new(db.clone());
-    let library = Arc::new(LibraryPresence::new());
+    let library = Arc::new(LibraryPresence::over_catalog(
+        crate::reads::catalog::library::LocalCatalog::new(db.pool().clone()),
+    ));
     let admins = Arc::new(AdminDirectory::new());
     let handoff = Arc::new(MemoryHandoff::new());
     let ops = OpStore::new(db.clone());

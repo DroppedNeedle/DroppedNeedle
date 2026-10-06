@@ -400,16 +400,28 @@ impl QuarantineStore {
     }
 }
 
-/// Library presence: the MBIDs the library already holds.
+/// Library presence: the release groups (or releases) the library holds,
+/// so the wanted watcher and status sync never re-want an owned album.
+/// Production reads the catalog (an album identified as the group with at
+/// least one indexed file); tests mark MBIDs by hand.
 #[derive(Debug, Default)]
 pub struct LibraryPresence {
     mbids: Mutex<HashSet<String>>,
+    catalog: Option<crate::reads::catalog::library::LocalCatalog>,
 }
 
 impl LibraryPresence {
     /// Empty presence.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Presence read from the library catalog.
+    pub fn over_catalog(catalog: crate::reads::catalog::library::LocalCatalog) -> Self {
+        Self {
+            mbids: Mutex::new(HashSet::new()),
+            catalog: Some(catalog),
+        }
     }
 
     /// Mark MBIDs as owned.
@@ -421,12 +433,28 @@ impl LibraryPresence {
         }
     }
 
-    /// True when the library holds the MBID.
-    pub fn contains(&self, mbid: &str) -> bool {
-        self.mbids
+    /// True when the library holds the MBID. A catalog read failure is
+    /// logged and reads as not held: the watcher then searches once more
+    /// rather than dropping a request.
+    pub async fn contains(&self, mbid: &str) -> bool {
+        let marked = self
+            .mbids
             .lock()
             .map(|owned| owned.contains(mbid))
-            .unwrap_or(false)
+            .unwrap_or(false);
+        if marked {
+            return true;
+        }
+        let Some(catalog) = &self.catalog else {
+            return false;
+        };
+        match catalog.owned_albums(&[mbid.to_ascii_lowercase()]).await {
+            Ok(owned) => !owned.is_empty(),
+            Err(error) => {
+                tracing::warn!(mbid, %error, "library presence unreadable");
+                false
+            }
+        }
     }
 }
 

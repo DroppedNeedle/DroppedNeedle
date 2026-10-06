@@ -411,7 +411,7 @@ async fn check_watch(
     summary: &mut WantedSummary,
 ) -> Result<(), RequestsError> {
     let at = epoch(now);
-    if deps.library.contains(&watch.key) {
+    if deps.library.contains(&watch.key).await {
         deps.watches
             .mark_fulfilled(&watch.key, "in_library", at)
             .await?;
@@ -565,7 +565,7 @@ async fn enrol_watches(now: i64, settings: &WantedSettings, deps: &WantedDeps) -
             let Some(user_id) = row.user_id.clone().filter(|user| !user.is_empty()) else {
                 continue;
             };
-            if deps.library.contains(&row.key) {
+            if deps.library.contains(&row.key).await {
                 continue;
             }
             if let Some(task_id) = row.task_id.as_deref() {
@@ -1177,6 +1177,47 @@ pub async fn sync_tick(now: i64, state: &mut LoopState, deps: &SyncDeps) -> Sync
     summary
 }
 
+/// Resolve the requests one settled download served, right away instead
+/// of on the next sync pass (v2 `_sync_request_on_terminal`): each live
+/// request linked to the task takes the status the task maps to, and a
+/// completed album also settles its wanted watch.
+pub async fn settle_task(
+    now: i64,
+    deps: &SyncDeps,
+    watches: &WantedStore,
+    task_id: &str,
+    completed_album: Option<&str>,
+) -> SyncSummary {
+    let mut summary = SyncSummary::default();
+    if let Some(key) = completed_album.filter(|key| !key.is_empty())
+        && let Err(error) = watches.mark_fulfilled(key, "imported", epoch(now)).await
+    {
+        tracing::warn!(key, ?error, "wanted watch not settled after import");
+    }
+    let rows = match deps.ledger.active(None, None).await {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(
+                task_id,
+                ?error,
+                "requests for a settled download unreadable"
+            );
+            summary.errors += 1;
+            return summary;
+        }
+    };
+    for row in rows
+        .iter()
+        .filter(|row| row.task_id.as_deref() == Some(task_id))
+    {
+        if let Err(cause) = sync_one(now, deps, row, &mut summary).await {
+            tracing::warn!(key = %row.key, %cause, "request not settled after import");
+            summary.errors += 1;
+        }
+    }
+    summary
+}
+
 /// The plugin event for one request that reached the library.
 fn fulfilled(row: &RequestRecord) -> FlowEvent {
     let release_group_mbid = match row.kind {
@@ -1242,7 +1283,7 @@ async fn sync_one(
         }
         return Ok(());
     }
-    if row.kind == RequestKind::Track || !deps.library.contains(&row.key) {
+    if row.kind == RequestKind::Track || !deps.library.contains(&row.key).await {
         return Ok(());
     }
     let won = deps

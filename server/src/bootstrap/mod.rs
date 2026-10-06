@@ -272,6 +272,17 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
     )
     .map_err(stage("acquire setup"))?
     .with_plugins(plugin_host.clone());
+    // Finished downloads reach the library through its import seam.
+    let acquire = match library.releases.clone() {
+        Some(releases) => acquire.with_library(Arc::new(
+            crate::acquire::landing::library::LibraryLanding::new(
+                library.clone(),
+                releases,
+                runtime.pool().clone(),
+            ),
+        )),
+        None => acquire,
+    };
     acquire.refresh_admins().await;
     // Startup recovery before serving traffic. Re-running after a clean
     // shutdown is a no-op: nothing destructive repeats.

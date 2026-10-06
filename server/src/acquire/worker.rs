@@ -152,6 +152,31 @@ pub enum Source {
     Sab(Arc<SabnzbdSource>),
     /// A plugin's download client (`plugin:<name>`).
     Plugin(Arc<PluginDownloadSource>),
+    /// Files already on disk, finished at once (tests only).
+    #[cfg(any(test, feature = "test-support"))]
+    Fixed(Arc<FixedSource>),
+}
+
+/// A test source whose every download is finished at once and landed at
+/// fixed paths, so journeys can drive the worker end to end.
+#[cfg(any(test, feature = "test-support"))]
+pub struct FixedSource {
+    paths: Vec<PathBuf>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl FixedSource {
+    /// Downloads land at `paths`.
+    pub fn new(paths: Vec<PathBuf>) -> Self {
+        Self { paths }
+    }
+
+    fn names(&self) -> Vec<String> {
+        self.paths
+            .iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect()
+    }
 }
 
 impl Source {
@@ -160,6 +185,8 @@ impl Source {
             Self::Slskd(_) => "slskd",
             Self::Sab(_) => "sabnzbd",
             Self::Plugin(source) => source.key(),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Fixed(_) => "fixed",
         }
     }
 
@@ -169,6 +196,8 @@ impl Source {
             Self::Slskd(_) => "soulseek",
             Self::Sab(_) => "usenet",
             Self::Plugin(source) => source.key(),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Fixed(_) => "plugin:fixed",
         }
     }
 
@@ -181,6 +210,13 @@ impl Source {
             Self::Slskd(source) => source.enqueue(task_id, candidate_index).await,
             Self::Sab(source) => source.enqueue(task_id, candidate_index).await,
             Self::Plugin(source) => source.enqueue(task_id, candidate_index).await,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Fixed(source) => Ok(SourceHandle {
+                source: "plugin:fixed".to_owned(),
+                filenames: source.names(),
+                job_name: format!("fixed-{task_id}-{candidate_index}"),
+                ..SourceHandle::default()
+            }),
         }
     }
 
@@ -192,6 +228,16 @@ impl Source {
             Self::Slskd(source) => source.poll(handle).await,
             Self::Sab(source) => source.poll(handle).await,
             Self::Plugin(source) => source.poll(handle).await,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Fixed(source) => Ok(super::downloads::sources::TransferProgress {
+                all_terminal: true,
+                all_succeeded: true,
+                has_active_transfer: false,
+                downloaded_bytes: 1,
+                succeeded_filenames: source.names(),
+                queue_position_start: None,
+                queue_position_end: None,
+            }),
         }
     }
 
@@ -200,6 +246,8 @@ impl Source {
             Self::Slskd(source) => source.discard(handle).await,
             Self::Sab(source) => source.discard(handle).await,
             Self::Plugin(source) => source.discard(handle).await,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Fixed(_) => Ok(true),
         }
     }
 
@@ -208,6 +256,8 @@ impl Source {
             Self::Slskd(source) => source.abort(handle).await,
             Self::Sab(source) => source.abort(handle).await,
             Self::Plugin(source) => source.abort(handle).await,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Fixed(_) => Ok(true),
         }
     }
 
@@ -217,6 +267,8 @@ impl Source {
             Self::Slskd(source) => source.locate_files(handle).await,
             Self::Sab(source) => source.inspect(handle).await.map(|seen| seen.paths),
             Self::Plugin(source) => source.inspect(handle).await.map(|seen| seen.paths),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Fixed(source) => Ok(source.paths.clone()),
         }
     }
 
@@ -226,6 +278,8 @@ impl Source {
         match self {
             Self::Slskd(_) | Self::Plugin(_) => None,
             Self::Sab(source) => source.job_present(handle).await.ok(),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Fixed(_) => None,
         }
     }
 
@@ -245,6 +299,8 @@ impl Source {
                 .await
                 .map(|seen| seen.mount_healthy)
                 .ok(),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Fixed(_) => None,
         }
     }
 }

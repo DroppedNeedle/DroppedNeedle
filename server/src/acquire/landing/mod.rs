@@ -25,6 +25,7 @@
 
 pub mod decision;
 pub mod hold;
+pub mod library;
 pub mod matching;
 pub mod ports;
 pub mod probe;
@@ -160,6 +161,11 @@ impl LandingService {
                     .await;
             }
         };
+        if landing.nothing_found()
+            && let Some(report) = self.already_landed(task, attempt_id).await
+        {
+            return report;
+        }
         let library = self.library.get().cloned();
         let settings = (self.settings)();
         let mut policy = QualityPolicy {
@@ -207,6 +213,39 @@ impl LandingService {
         };
         self.finish(task, attempt_id, &decision, &landing, 0, held)
             .await
+    }
+
+    /// A landing that finds no files because this attempt already imported
+    /// them (the process stopped between the import and settling the
+    /// task): answer the recorded result again instead of failing.
+    async fn already_landed(
+        &self,
+        task: &TaskRow,
+        attempt_id: Option<&str>,
+    ) -> Option<LandingReport> {
+        let task_id = task.id.clone();
+        let last = self
+            .journal
+            .run("downloads.landing.last", move |store| {
+                store.latest_import_decision(&task_id)
+            })
+            .await
+            .ok()
+            .flatten()?;
+        if last.attempt_id.as_deref() != attempt_id {
+            return None;
+        }
+        let complete = match last.outcome.as_str() {
+            "imported" => true,
+            "partial" => false,
+            _ => return None,
+        };
+        tracing::info!(task_id = %task.id, "landing already imported this attempt");
+        Some(LandingReport {
+            result: LandingResult::Imported { complete },
+            files_imported: usize::try_from(last.files_imported).unwrap_or(0),
+            files_held: usize::try_from(last.files_held).unwrap_or(0),
+        })
     }
 
     /// Act on a decision reached after matching.

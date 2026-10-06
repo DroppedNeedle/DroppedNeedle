@@ -9,6 +9,7 @@ mod acquire_downloads;
 mod acquire_flows;
 mod acquire_imports;
 mod acquire_journey;
+mod acquire_landing;
 mod acquire_requests;
 mod acquire_slskd;
 mod acquire_usenet;
