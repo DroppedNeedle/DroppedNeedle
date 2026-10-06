@@ -51,6 +51,7 @@ cbc = { version = "0.1", features = ["alloc"] }
 hmac = "0.12"
 toml = "1"
 time = { version = "0.3", default-features = false, features = ["std", "formatting"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 
 [features]
 # Fakes, mocks, memory stores and test constructors for the test suite.

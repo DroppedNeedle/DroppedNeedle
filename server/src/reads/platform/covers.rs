@@ -133,8 +133,13 @@ pub trait CoverArt: Send + Sync + 'static {
         album_id: &'a str,
         size: Option<&'a str>,
     ) -> BoxFuture<'a, Option<CoverBytes>>;
-    /// The album's own art (folder or embedded), with its version.
-    fn local_album_art<'a>(&'a self, album_id: &'a str) -> BoxFuture<'a, Option<CoverBytes>>;
+    /// The album's own art (folder or embedded) at `size` (`None` is full
+    /// size), with its version.
+    fn local_album_art<'a>(
+        &'a self,
+        album_id: &'a str,
+        size: Option<&'a str>,
+    ) -> BoxFuture<'a, Option<CoverBytes>>;
 }
 
 /// Scripted art source for tests. Entries are keyed exactly as the
@@ -236,7 +241,11 @@ impl CoverArt for FakeCoverArt {
         Box::pin(async move { found })
     }
 
-    fn local_album_art<'a>(&'a self, album_id: &'a str) -> BoxFuture<'a, Option<CoverBytes>> {
+    fn local_album_art<'a>(
+        &'a self,
+        album_id: &'a str,
+        _size: Option<&'a str>,
+    ) -> BoxFuture<'a, Option<CoverBytes>> {
         let found = self.albums.get(album_id).cloned();
         Box::pin(async move { found })
     }
@@ -289,11 +298,14 @@ pub struct ArtistSizeQuery {
     pub size: Option<u32>,
 }
 
-/// `v` query for the album artwork route.
+/// Query for the album artwork route.
 #[derive(Debug, Deserialize)]
-pub struct VersionQuery {
+pub struct AlbumArtQuery {
     /// Art version the caller holds (`cover_version`).
     pub v: Option<i64>,
+    /// 250, 500, 1200, or absent / `original` for full size.
+    #[serde(default)]
+    pub size: String,
 }
 
 /// Validate a release-cover `size` value. `Ok(None)` means full size;
@@ -544,11 +556,12 @@ pub async fn artist_cover(
     params(
         ("id" = String, Path, description = "Local album id"),
         ("v" = Option<i64>, Query, description = "Art version the caller holds"),
+        ("size" = Option<String>, Query, description = "250, 500, 1200, or original (the default) for full size"),
     ),
     responses(
         (status = 200, description = "Image bytes"),
         (status = 304, description = "Image unchanged"),
-        (status = 400, description = "Bad query string"),
+        (status = 400, description = "Bad query string or unsupported size"),
         (status = 401, description = "Not authenticated"),
         (status = 404, description = "The album has no local art"),
     )
@@ -557,9 +570,17 @@ pub async fn album_artwork(
     State(state): State<CoversState>,
     Path(album_id): Path<String>,
     headers: HeaderMap,
-    ValidQuery(query): ValidQuery<VersionQuery>,
+    ValidQuery(query): ValidQuery<AlbumArtQuery>,
 ) -> Response {
-    let Some(art) = state.covers.local_album_art(&album_id).await else {
+    let size = match normalize_size(&query.size) {
+        Ok(size) => size,
+        Err(message) => return invalid_input(message),
+    };
+    let Some(art) = state
+        .covers
+        .local_album_art(&album_id, size.as_deref())
+        .await
+    else {
         return (
             StatusCode::NOT_FOUND,
             [

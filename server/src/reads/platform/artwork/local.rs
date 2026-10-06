@@ -14,8 +14,8 @@ use sqlx::{Row as _, SqlitePool};
 
 use crate::providers::coverart::sniff_image_content_type;
 
-/// Folder images larger than this are not served (the scan uses the same
-/// bound).
+/// Folder images and embedded pictures larger than this are not served
+/// (the scan uses the same bound).
 const MAX_LOCAL_BYTES: u64 = 25 * 1024 * 1024;
 
 /// One album's recorded local art.
@@ -143,7 +143,7 @@ pub async fn read_local_art(art: &LocalArt) -> Option<(Vec<u8>, &'static str)> {
     let read = tokio::task::spawn_blocking(move || -> Option<Vec<u8>> {
         if embedded {
             match crate::library::tags::read_cover_art(&path) {
-                Ok(bytes) => bytes,
+                Ok(bytes) => bytes.filter(|bytes| bytes.len() as u64 <= MAX_LOCAL_BYTES),
                 Err(error) => {
                     tracing::debug!(%error, path = %path.display(), "embedded art unreadable");
                     None

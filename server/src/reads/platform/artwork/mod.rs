@@ -12,6 +12,9 @@
 //! 3. With the preference off, local art is the fallback when the archive
 //!    has nothing.
 //!
+//! Local art larger than the asked size (250, 500 or 1200) is scaled down
+//! once (see [`resize`]) and the rendition cached next to the original.
+//!
 //! Every image lands in the content-addressed [`cache`], so a cover is
 //! fetched from the archive once and served from disk afterwards, and a
 //! "no art" answer is remembered for a while instead of asked again.
@@ -24,6 +27,7 @@
 pub mod cache;
 pub mod local;
 pub mod remote;
+pub mod resize;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -99,26 +103,31 @@ impl ArtworkService {
             return CoverLookup::Missing;
         }
         let prefer_local = (self.prefer_local)();
-        if prefer_local && let Some(cover) = self.local_for(entity, &mbid).await {
+        if prefer_local && let Some(cover) = self.local_for(entity, &mbid, size).await {
             return CoverLookup::Found(cover);
         }
         match self.remote_cover(entity, &mbid, size, wait).await {
             CoverLookup::Missing => {}
             other => return other,
         }
-        if !prefer_local && let Some(cover) = self.local_for(entity, &mbid).await {
+        if !prefer_local && let Some(cover) = self.local_for(entity, &mbid, size).await {
             return CoverLookup::Found(cover);
         }
         CoverLookup::Missing
     }
 
-    async fn local_for(&self, entity: EntityKind, mbid: &str) -> Option<CoverBytes> {
+    async fn local_for(
+        &self,
+        entity: EntityKind,
+        mbid: &str,
+        size: Option<&str>,
+    ) -> Option<CoverBytes> {
         let found = match entity {
             EntityKind::ReleaseGroup => self.local.by_release_group(mbid).await,
             EntityKind::Release => self.local.by_release(mbid).await,
         };
         match found {
-            Ok(Some(art)) => self.serve_local(&art).await,
+            Ok(Some(art)) => self.serve_local(&art, size).await,
             Ok(None) => None,
             Err(error) => {
                 tracing::warn!(%error, "local art lookup failed; trying other sources");
@@ -127,9 +136,59 @@ impl ArtworkService {
         }
     }
 
-    /// Bytes for a scan-recorded art row: from the cache when the stored
-    /// hash is there, else from the file (then cached).
-    async fn serve_local(&self, art: &LocalArt) -> Option<CoverBytes> {
+    /// A scan-recorded art row at `size` (`None` is full size): the
+    /// original from the cache or the file, scaled down once when it is
+    /// larger than the asked size.
+    async fn serve_local(&self, art: &LocalArt, size: Option<&str>) -> Option<CoverBytes> {
+        let original = self.local_original(art).await?;
+        let Some(max) = size.and_then(|size| size.parse::<u32>().ok()) else {
+            return Some(original);
+        };
+        let key = format!("rendition:{}:{max}", original.hash);
+        if let Some(KeyEntry::Hit { hash, content_type }) = self.cache.key(&key).await
+            && let Some(bytes) = self.cache.blob(&hash).await
+        {
+            return Some(CoverBytes {
+                bytes,
+                content_type,
+                hash,
+                ..original
+            });
+        }
+        let source = original.bytes.clone();
+        let shrunk = tokio::task::spawn_blocking(move || resize::shrink_to_fit(&source, max))
+            .await
+            .unwrap_or_else(|error| {
+                tracing::error!(%error, "local art resize task failed");
+                None
+            });
+        match shrunk {
+            Some((bytes, content_type)) => {
+                let hash = self
+                    .cache
+                    .put(Some(&key), bytes.clone(), content_type)
+                    .await;
+                Some(CoverBytes {
+                    bytes,
+                    content_type: content_type.to_owned(),
+                    hash,
+                    ..original
+                })
+            }
+            None => {
+                // Already small enough: remember that, so it is not decoded
+                // again.
+                self.cache
+                    .put(Some(&key), original.bytes.clone(), &original.content_type)
+                    .await;
+                Some(original)
+            }
+        }
+    }
+
+    /// The original bytes of a scan-recorded art row: from the cache when
+    /// the stored hash is there, else from the file (then cached).
+    async fn local_original(&self, art: &LocalArt) -> Option<CoverBytes> {
         if let Some(hash) = &art.content_hash
             && let Some(bytes) = self.cache.blob(hash).await
             && let Some(content_type) = sniff_image_content_type(&bytes)
@@ -304,7 +363,7 @@ impl CoverArt for ArtworkService {
             let prefer_local = (self.prefer_local)();
             if prefer_local
                 && let Some(art) = &context.local
-                && let Some(cover) = self.serve_local(art).await
+                && let Some(cover) = self.serve_local(art, size).await
             {
                 return Some(cover);
             }
@@ -319,17 +378,21 @@ impl CoverArt for ArtworkService {
                 }
             }
             match &context.local {
-                Some(art) if !prefer_local => self.serve_local(art).await,
+                Some(art) if !prefer_local => self.serve_local(art, size).await,
                 _ => None,
             }
         })
     }
 
-    fn local_album_art<'a>(&'a self, album_id: &'a str) -> BoxFuture<'a, Option<CoverBytes>> {
+    fn local_album_art<'a>(
+        &'a self,
+        album_id: &'a str,
+        size: Option<&'a str>,
+    ) -> BoxFuture<'a, Option<CoverBytes>> {
         Box::pin(async move {
             match self.local.album(album_id).await {
                 Ok(Some(context)) => match &context.local {
-                    Some(art) => self.serve_local(art).await,
+                    Some(art) => self.serve_local(art, size).await,
                     None => None,
                 },
                 Ok(None) => None,

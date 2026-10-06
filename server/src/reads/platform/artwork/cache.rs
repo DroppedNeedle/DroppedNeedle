@@ -11,12 +11,15 @@
 //!
 //! When the blobs pass `COVER_CACHE_MAX_SIZE_MB` the least recently used
 //! ones are deleted. A key whose blob was evicted reads as a miss, so the
-//! art is fetched again. Every file operation runs on a blocking thread,
+//! art is fetched again. Key records pointing at evicted blobs, and miss
+//! markers past their time, are removed when the cache first loads and
+//! after each eviction. Every file operation runs on a blocking thread,
 //! and writes go through a temporary file and a rename so a crash never
 //! leaves a half-written image behind.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -103,6 +106,7 @@ impl ArtworkCache {
 
     /// Read a key record.
     pub async fn key(&self, key: &str) -> Option<KeyEntry> {
+        self.ensure_index().await;
         let path = self.key_path(key);
         let text = blocking(move || std::fs::read_to_string(path).ok()).await??;
         parse_key(&text)
@@ -192,15 +196,33 @@ impl ArtworkCache {
         let scanned = blocking(move || scan_blobs(&blobs_dir))
             .await
             .unwrap_or_default();
-        let mut guard = self.lock();
-        if guard.is_none() {
+        let live = {
+            let mut guard = self.lock();
+            if guard.is_some() {
+                return;
+            }
             let total = scanned.values().map(|entry| entry.size).sum();
             let clock = scanned.len() as u64;
+            let live: HashSet<String> = scanned.keys().cloned().collect();
             *guard = Some(Index {
                 blobs: scanned,
                 total,
                 clock,
             });
+            live
+        };
+        self.clean_keys(live).await;
+    }
+
+    /// Remove key records whose blob is gone and miss markers past their
+    /// time.
+    async fn clean_keys(&self, live: HashSet<String>) {
+        let keys_dir = self.root.join("keys");
+        let removed = blocking(move || clean_key_files(&keys_dir, &live, unix_now()))
+            .await
+            .unwrap_or(0);
+        if removed > 0 {
+            tracing::debug!(removed, "cover cache dropped stale key records");
         }
     }
 
@@ -234,6 +256,11 @@ impl ArtworkCache {
             return;
         }
         let count = victims.len();
+        let live: HashSet<String> = self
+            .lock()
+            .as_ref()
+            .map(|index| index.blobs.keys().cloned().collect())
+            .unwrap_or_default();
         blocking(move || {
             for path in victims {
                 if let Err(error) = std::fs::remove_file(&path)
@@ -245,6 +272,7 @@ impl ArtworkCache {
         })
         .await;
         tracing::debug!(count, "cover cache evicted old images");
+        self.clean_keys(live).await;
     }
 
     fn blob_path(&self, hash: &str) -> PathBuf {
@@ -305,11 +333,49 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let temp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+    // Unique per write, so two writers of the same blob never share a
+    // temporary file.
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    let temp = dir.join(format!(".{name}.{}.{seq}.tmp", std::process::id()));
     std::fs::write(&temp, bytes)?;
     std::fs::rename(&temp, path).inspect_err(|_| {
         let _ = std::fs::remove_file(&temp);
     })
+}
+
+/// Delete key records that point at a blob not in `live`, expired miss
+/// markers, and records that do not parse. Returns how many went.
+fn clean_key_files(dir: &Path, live: &HashSet<String>, now: u64) -> usize {
+    let mut removed = 0;
+    let Ok(shards) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    for shard in shards.flatten() {
+        let Ok(files) = std::fs::read_dir(shard.path()) else {
+            continue;
+        };
+        for file in files.flatten() {
+            let path = file.path();
+            if file.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            let stale = match std::fs::read_to_string(&path)
+                .ok()
+                .as_deref()
+                .map(parse_key)
+            {
+                Some(Some(KeyEntry::Hit { hash, .. })) => !live.contains(&hash),
+                Some(Some(KeyEntry::Miss { until })) => until <= now,
+                Some(None) => true,
+                None => false,
+            };
+            if stale && std::fs::remove_file(&path).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    removed
 }
 
 /// Every blob on disk with its size; older files count as less recently
