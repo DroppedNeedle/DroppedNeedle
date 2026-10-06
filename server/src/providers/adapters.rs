@@ -199,9 +199,22 @@ impl From<enrich::IntegrationStatus> for CoreStatus {
 /// production with default credentials. `Missing` (authoritative negative)
 /// reads as empty, exactly like the client's fail-soft contract; only
 /// `Unavailable` becomes a leg error and degrades the row.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LiveListenBrainz {
     client: ListenBrainzClient<CorePacer, CoreSink>,
+    enabled: Switch,
+}
+
+/// A live settings switch, read on every call so a change in Settings
+/// takes effect without a restart.
+pub type Switch = Arc<dyn Fn() -> bool + Send + Sync>;
+
+impl std::fmt::Debug for LiveListenBrainz {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LiveListenBrainz")
+            .field("client", &self.client)
+            .finish_non_exhaustive()
+    }
 }
 
 impl LiveListenBrainz {
@@ -214,13 +227,27 @@ impl LiveListenBrainz {
     pub fn with_base(http: reqwest::Client, base_url: &str, pacer: CorePacer) -> Self {
         Self {
             client: ListenBrainzClient::new(http, base_url, pacer, CoreSink),
+            enabled: Arc::new(|| true),
         }
+    }
+
+    /// Serve only while `enabled` reads true; off reads as unavailable.
+    #[must_use]
+    pub fn with_switch(mut self, enabled: Switch) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    fn switched_off(&self) -> Option<enrich::ProviderError> {
+        (!(self.enabled)()).then(|| {
+            enrich::ProviderError::new("listenbrainz", "listenbrainz is switched off".to_owned())
+        })
     }
 }
 
 impl enrich::ListenBrainzClient for LiveListenBrainz {
     fn is_available(&self) -> bool {
-        true
+        (self.enabled)()
     }
 
     fn artist_top_release_groups<'a>(
@@ -229,6 +256,9 @@ impl enrich::ListenBrainzClient for LiveListenBrainz {
         count: usize,
     ) -> enrich::BoxFuture<'a, Result<Vec<enrich::TopRelease>, enrich::ProviderError>> {
         Box::pin(async move {
+            if let Some(off) = self.switched_off() {
+                return Err(off);
+            }
             let creds = ListenBrainzCredentials::default();
             match self
                 .client
@@ -256,6 +286,9 @@ impl enrich::ListenBrainzClient for LiveListenBrainz {
     ) -> enrich::BoxFuture<'a, Result<std::collections::HashMap<String, i64>, enrich::ProviderError>>
     {
         Box::pin(async move {
+            if let Some(off) = self.switched_off() {
+                return Err(off);
+            }
             let creds = ListenBrainzCredentials::default();
             match self.client.release_group_popularity(mbids, &creds).await {
                 super::listenbrainz::Outcome::Found(counts) => Ok(counts),
@@ -532,24 +565,25 @@ impl enrich::LyricsClient for UnconfiguredLyrics {
 }
 
 /// Build the production enrichment pair over the shared HTTP client and
-/// provider deps. ListenBrainz popularity serves only when the integration
-/// is enabled, and likewise lyrics serve only when `lyrics_enabled` holds;
+/// provider deps. ListenBrainz popularity serves only while the live
+/// `listenbrainz_enabled` switch reads true, and lyrics serve only when
+/// `lyrics_enabled` holds;
 /// Last.fm stays unconfigured (per-user credentials), the events feed stays
 /// unconfigured (no persistence), and MusicBrainz identity stays
 /// unconfigured (no route serves it).
 pub fn production_enrichment(
     http: &reqwest::Client,
     providers: &Arc<Providers>,
-    listenbrainz_enabled: bool,
+    listenbrainz_enabled: Switch,
     lyrics_enabled: bool,
 ) -> ProductionEnrichment {
-    let lb: Arc<dyn enrich::ListenBrainzClient> = match (
-        listenbrainz_enabled,
-        CorePacer::for_source(providers.clone(), "listenbrainz"),
-    ) {
-        (true, Some(pacer)) => Arc::new(LiveListenBrainz::new(http.clone(), pacer)),
-        _ => Arc::new(UnconfiguredListenBrainz),
-    };
+    let lb: Arc<dyn enrich::ListenBrainzClient> =
+        match CorePacer::for_source(providers.clone(), "listenbrainz") {
+            Some(pacer) => Arc::new(
+                LiveListenBrainz::new(http.clone(), pacer).with_switch(listenbrainz_enabled),
+            ),
+            None => Arc::new(UnconfiguredListenBrainz),
+        };
     let live_lyrics =
         lyrics_enabled.then(|| Arc::new(LiveLrclib::new(ReqwestGet::new(http.clone()))));
     let lyrics_role: Arc<dyn enrich::LyricsClient> = match &live_lyrics {
@@ -852,7 +886,7 @@ mod tests {
 
         let http = HttpClientFactory::new().unwrap();
         let providers = Arc::new(Providers::with_memory_cache());
-        let pair = production_enrichment(http.shared(), &providers, false, false);
+        let pair = production_enrichment(http.shared(), &providers, Arc::new(|| false), false);
         let response = pair
             .search
             .enrich_batch(EnrichmentBatchRequest {
@@ -880,9 +914,9 @@ mod tests {
     fn production_enrichment_gates_live_lyrics_on_the_flag() {
         let http = HttpClientFactory::new().unwrap();
         let providers = Arc::new(Providers::with_memory_cache());
-        let off = production_enrichment(http.shared(), &providers, false, false);
+        let off = production_enrichment(http.shared(), &providers, Arc::new(|| false), false);
         assert!(off.lyrics.is_none(), "disabled lyrics wire no live client");
-        let on = production_enrichment(http.shared(), &providers, false, true);
+        let on = production_enrichment(http.shared(), &providers, Arc::new(|| false), true);
         assert!(on.lyrics.is_some(), "enabled lyrics wire the live role");
     }
 }

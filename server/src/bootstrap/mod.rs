@@ -136,13 +136,17 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
     // cache stays shared with the admin stats and clear routes.
     let provider_cache = Arc::new(InMemoryProviderCache::new());
     let providers = Arc::new(Providers::new(provider_cache.clone()));
-    let listenbrainz_enabled = match config_store.get_raw::<ListenBrainzConnection>() {
-        Ok(settings) => settings.enabled,
-        Err(error) => {
-            tracing::warn!(%error, "cannot read listenbrainz settings; popularity enrichment disabled");
-            false
-        }
-    };
+    // Read per call so turning ListenBrainz on or off takes effect at once.
+    let listenbrainz_store = config_store.clone();
+    let listenbrainz_enabled: crate::providers::adapters::Switch = Arc::new(move || {
+        listenbrainz_store
+            .get_raw::<ListenBrainzConnection>()
+            .map(|settings| settings.enabled)
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "cannot read listenbrainz settings; popularity enrichment off");
+                false
+            })
+    });
     let lyrics_enabled = match config_store.get::<LyricsSettings>() {
         Ok(settings) => settings.enabled,
         Err(error) => {
