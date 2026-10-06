@@ -25,6 +25,7 @@ use crate::{
     auth::{prod::ProdAuth, users::stores::SystemClock, wiring::AuthSetup},
     compat::{CompatSetup, settings::LiveSettings, setup::CompatDeps},
     db::{BackupService, DbConfig, error::DbError, open_runtime},
+    events::EventHub,
     http_client::{HttpClientError, HttpClientFactory},
     ids::UuidGenerator,
     jobs::{media::MediaJobs, wiring::JobsSetup},
@@ -115,6 +116,9 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
     )?);
     let ids = Arc::new(UuidGenerator);
     let clock = Arc::new(SystemClock);
+    // One live event hub for the process. Bundles built below publish into
+    // it once the state attaches it; the revision poller feeds it too.
+    let events = EventHub::new();
     // The plugin host exists early so playback, acquisition and streaming
     // can hold it; no plugin starts until `PluginsSetup::build` loads it.
     let plugin_host = crate::plugins::wiring::new_host(config.plugins_dir(), config_store.clone());
@@ -397,7 +401,17 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         .await
         .map_err(stage("acquire loops"))?;
     background.extend(acquire_loops);
-    background.extend(library.spawn_loops(stop));
+    background.extend(library.spawn_loops(stop.clone()));
+    // `activity.changed` for every open stream; it closes the hub at
+    // shutdown so streams end before connections drain.
+    background.push(
+        "event-revisions",
+        tokio::spawn(crate::events::revisions::run(
+            events.clone(),
+            runtime.pool().clone(),
+            stop,
+        )),
+    );
     // Registry jobs stop through the registry at shutdown, not the watch.
     jobs.spawn_loops().await.map_err(stage("jobs loops"))?;
 
@@ -417,7 +431,8 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         jobs.clone(),
         plugins,
         concerts,
-    );
+    )
+    .with_events(events);
     let router = create_app_with_web(state, web);
     Ok((
         router,

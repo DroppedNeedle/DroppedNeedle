@@ -1810,6 +1810,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/events/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Live events for the signed-in user.
+         * @description Event names: `activity.changed` and `snapshot` (now playing) go to
+         *     everyone; `wanted_new_candidates`, `wanted_auto_dispatched`,
+         *     `wanted_fulfilled`, `auto_download_enqueued`, `request_imported`,
+         *     `playlist_imported`, `drop_import_updated`, `free_music_updated`,
+         *     `personal_mix_refreshed` and `concerts_new` go only to the user they
+         *     concern. Each `data:` line is one JSON payload (see the `ActivityChanged`,
+         *     `NowPlayingSnapshot`, `WantedNotice`, `AutoDownloadEnqueued`,
+         *     `RequestImported`, `PlaylistImported`, `DropImportUpdated`,
+         *     `FreeMusicUpdated`, `PersonalMixRefreshed` and `ConcertsNew` schemas).
+         */
+        get: operations["events_stream"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/favorites": {
         parameters: {
             query?: never;
@@ -6633,6 +6661,25 @@ export interface components {
             items: components["schemas"]["RequestItem"][];
         };
         /**
+         * @description `activity.changed`: the library's activity revisions moved. Sent to
+         *     everyone; the web UI refetches library activity, or the catalog when
+         *     `catalog` moved.
+         */
+        ActivityChanged: {
+            /**
+             * @description Stable id of this revision set (`activity:` plus 16 hex digits). The
+             *     stream also sends it as the SSE `id:` line.
+             */
+            id: string;
+            /**
+             * @description Revision per stream: `scan`, `identification`, `operation` and
+             *     `catalog`.
+             */
+            revisions: {
+                [key: string]: number;
+            };
+        };
+        /**
          * @description Add a library root. The path must exist and be absolute; the id
          *     defaults to a fresh uuid.
          */
@@ -8060,6 +8107,22 @@ export interface components {
             enabled: boolean;
         };
         /**
+         * @description `auto_download_enqueued`: a followed artist's new release was queued.
+         *     The web UI de-duplicates on `task_id`.
+         */
+        AutoDownloadEnqueued: {
+            /** @description Followed artist. */
+            artist_mbid: string;
+            /** @description Artist name, empty when the poll did not carry one. */
+            artist_name: string;
+            /** @description The new release group. */
+            release_group_mbid: string;
+            /** @description Download task started. */
+            task_id: string;
+            /** @description Release title. */
+            title: string;
+        };
+        /**
          * @description Avatar upload. JSON with base64 bytes: the server has no multipart
          *     support, and one JSON shape keeps every client on the same parser.
          */
@@ -8621,6 +8684,15 @@ export interface components {
          * @enum {string}
          */
         ConcertStatus: "scheduled" | "cancelled" | "rescheduled";
+        /** @description `concerts_new`: a sweep stored new concerts for a followed artist. */
+        ConcertsNew: {
+            /** @description Followed artist. */
+            artist_mbid: string;
+            /** @description Artist name. */
+            artist_name: string;
+            /** @description Listings first seen in this sweep. */
+            new_events: number;
+        };
         /** @description The caller's concerts list. */
         ConcertsResponse: {
             /** @description False when the admin has no events source switched on with a key. */
@@ -9511,6 +9583,13 @@ export interface components {
             /** @description Read-only recipe verdict: `v1`, `v2`, `non_convertible`, `invalid`. */
             quality_recipe_status: string;
         };
+        /** @description `drop_import_updated`: one of the user's drop-import jobs moved. */
+        DropImportUpdated: {
+            /** @description Id for de-duplication. */
+            event_id: string;
+            /** @description The job that moved. */
+            job_id: string;
+        };
         DuplicateCandidate: {
             artist_name?: string;
             differences?: string[];
@@ -10026,6 +10105,15 @@ export interface components {
             enabled: boolean;
             /** @default flac */
             preferred_format: components["schemas"]["AudioFormat"];
+        };
+        /** @description `free_music_updated`: one of the user's Free Music tasks moved. */
+        FreeMusicUpdated: {
+            /** @description Id for de-duplication. */
+            event_id: string;
+            /** @description Its status now (`completed` makes the UI refresh library views). */
+            status: string;
+            /** @description The task that moved. */
+            task_id: string;
         };
         /**
          * @description Frontend cache TTLs in backend units (milliseconds), verbatim from
@@ -12936,6 +13024,27 @@ export interface components {
             /** @description Pending rows. */
             items: components["schemas"]["PersonalMixApprovalItem"][];
         };
+        /** @description `personal_mix_refreshed`: the weekly mix build finished. */
+        PersonalMixRefreshed: {
+            /** @description Id for de-duplication. */
+            event_id: string;
+            /** @description The mix playlist, when one was written. */
+            playlist_id?: string | null;
+            /** @description Why it was skipped (`no_tracks`, ...), empty otherwise. */
+            reason: string;
+            /**
+             * Format: int32
+             * @description Albums requested to fill it.
+             */
+            requested_albums: number;
+            /** @description True when no mix was built. */
+            skipped: boolean;
+            /**
+             * Format: int32
+             * @description Tracks in the mix.
+             */
+            track_count: number;
+        };
         /** @description Heartbeat for a live session: keeps presence alive and the scrubber live. */
         PlaybackProgressRequest: {
             /** @description Reporting device slug. */
@@ -13040,6 +13149,13 @@ export interface components {
              * @description Last mutation time, epoch seconds.
              */
             updated_at: number;
+        };
+        /** @description `playlist_imported`: an imported playlist has its tracks. */
+        PlaylistImported: {
+            /** @description Id for de-duplication. */
+            event_id: string;
+            /** @description The filled playlist. */
+            playlist_id: string;
         };
         /** @description One row of the playlist list: a full summary or a redacted stub. */
         PlaylistListItem: components["schemas"]["PlaylistSummary"] | components["schemas"]["RedactedPlaylist"];
@@ -14560,6 +14676,20 @@ export interface components {
          * @enum {string}
          */
         ReplayGainMode: "preserve" | "fill_missing" | "replace";
+        /**
+         * @description `request_imported`: another user (a curator) imported an album this
+         *     user had requested.
+         */
+        RequestImported: {
+            /** @description Album title. */
+            album_title: string;
+            /** @description Artist name. */
+            artist_name: string;
+            /** @description Id for de-duplication. */
+            event_id: string;
+            /** @description The imported release group. */
+            release_group_mbid: string;
+        };
         /** @description One request row in list views. */
         RequestItem: {
             /** @description Album title. */
@@ -16464,6 +16594,29 @@ export interface components {
              * @description Release year.
              */
             year?: number | null;
+        };
+        /** @description `wanted_new_candidates`, `wanted_auto_dispatched` and `wanted_fulfilled`. */
+        WantedNotice: {
+            /** @description Album title. */
+            album_title: string;
+            /** @description Artist name. */
+            artist_name: string;
+            /** @description Id for de-duplication. */
+            event_id: string;
+            /**
+             * Format: int32
+             * @description New candidates found (`wanted_new_candidates` only).
+             */
+            new_candidates?: number | null;
+            /** @description The wanted album's release group. */
+            release_group_mbid: string;
+            /** @description Download task started (`wanted_auto_dispatched` for whole albums). */
+            task_id?: string | null;
+            /**
+             * Format: int32
+             * @description Tracks started (`wanted_auto_dispatched` for a partial album).
+             */
+            tracks?: number | null;
         };
         /** @description Wanted list: watches plus the still-retrying set. */
         WantedResponse: {
@@ -20438,6 +20591,33 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ReimportResponse"];
                 };
+            };
+        };
+    };
+    events_stream: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Server-Sent Events stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

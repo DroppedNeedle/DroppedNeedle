@@ -49,7 +49,7 @@ use tower::ServiceExt as _;
 use utoipa::OpenApi as _;
 
 /// Fixed host for every request; cookie mutations also send this as Origin.
-const HOST: &str = "e2e.test";
+pub(crate) const HOST: &str = "e2e.test";
 const ORIGIN: &str = "http://e2e.test";
 /// Wrapped shared secret saved into every scratch config.
 const TEST_WRAPPED_KEY: &str = "e2e-wrapped-key-1";
@@ -157,6 +157,12 @@ impl E2e {
     /// A fresh router over the same database. Each build carries fresh rate
     /// buckets, so multi-pass tests rebuild instead of tripping the limiter.
     pub(crate) fn router(&self) -> Router {
+        create_app(self.state())
+    }
+
+    /// A fresh application state over the same database, for tests that
+    /// also reach a bundle (the event hub) behind the router.
+    pub(crate) fn state(&self) -> AppState {
         let auth = self.auth_setup();
         let reads = ReadsSetup::build(
             self.runtime.pool(),
@@ -290,7 +296,7 @@ impl E2e {
                 pool: self.runtime.pool().clone(),
             },
         ));
-        let state = AppState::new(
+        AppState::new(
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
             self.http.clone(),
             app_config,
@@ -306,8 +312,7 @@ impl E2e {
             jobs,
             plugins,
             concerts,
-        );
-        create_app(state)
+        )
     }
 
     pub(crate) fn users(&self) -> UsersDeps {
@@ -425,6 +430,23 @@ async fn call_raw(
     (status, headers, bytes)
 }
 
+/// The live event stream never ends on its own, so the matrix reads only
+/// its status and drops the body.
+const EVENT_STREAM: &str = "/api/v3/events/stream";
+
+/// One request answered by status alone; the body is never read.
+async fn call_status(app: Router, method: &str, uri: &str, headers: &[(&str, &str)]) -> StatusCode {
+    let mut builder = Request::builder().method(method).uri(uri);
+    builder = builder.header("host", HOST);
+    for (name, value) in headers {
+        builder = builder.header(*name, *value);
+    }
+    app.oneshot(builder.body(Body::empty()).expect("request builds"))
+        .await
+        .expect("router responds")
+        .status()
+}
+
 fn bearer(token: &str) -> String {
     format!("Bearer {token}")
 }
@@ -449,7 +471,7 @@ fn error_code(body: &Value) -> &str {
 }
 
 /// First-run setup on a fresh app. Returns (admin id, cookie-or-token).
-async fn setup_admin(
+pub(crate) async fn setup_admin(
     app: Router,
     username: &str,
     password: &str,
@@ -477,7 +499,7 @@ async fn setup_admin(
     (body["user"].clone(), credential)
 }
 
-async fn login(
+pub(crate) async fn login(
     app: Router,
     username: &str,
     password: &str,
@@ -1438,6 +1460,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("GET", "/api/v3/home/popular/albums", Posture::User),
     ("GET", "/api/v3/home/your-top/albums", Posture::User),
     ("GET", "/api/v3/now-playing", Posture::User),
+    ("GET", "/api/v3/events/stream", Posture::User),
     // Stage-4 collections: playlists.
     ("GET", "/api/v3/playlists", Posture::User),
     ("POST", "/api/v3/playlists", Posture::User),
@@ -2113,7 +2136,16 @@ async fn auth_on_every_endpoint() {
         }
         // Covers answer SVG/PNG bytes, so the user pass reads them raw;
         // every other row still decodes JSON for the failure message.
-        let (status, response_body) = if template.starts_with("/api/v3/covers/") {
+        let (status, response_body) = if *template == EVENT_STREAM {
+            let status = call_status(
+                e2e.router(),
+                method,
+                &uri,
+                &[("authorization", user_auth.as_str())],
+            )
+            .await;
+            (status, Value::Null)
+        } else if template.starts_with("/api/v3/covers/") {
             let (status, _, _) = call_raw(
                 e2e.router(),
                 method,
@@ -2208,7 +2240,16 @@ async fn auth_on_every_endpoint() {
                 "disclosure_version": "matrix",
             }));
         }
-        let (status, response_body) = if template.starts_with("/api/v3/covers/") {
+        let (status, response_body) = if *template == EVENT_STREAM {
+            let status = call_status(
+                e2e.router(),
+                method,
+                &uri,
+                &[("authorization", admin_auth.as_str())],
+            )
+            .await;
+            (status, Value::Null)
+        } else if template.starts_with("/api/v3/covers/") {
             let (status, _, _) = call_raw(
                 e2e.router(),
                 method,

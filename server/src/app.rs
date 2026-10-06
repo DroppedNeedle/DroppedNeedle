@@ -113,7 +113,11 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
                 .merge(state.settings.gated_router())
                 .merge(state.settings.me_router())
                 .merge(state.jobs.settings_router())
-                .merge(state.concerts.gated_router()),
+                .merge(state.concerts.gated_router())
+                .merge(crate::events::router(
+                    state.events.clone(),
+                    crate::events::session_check(state.auth.session_auth.store.clone()),
+                )),
         )
         .merge(state.reads.search_router())
         .layer(middleware::from_fn_with_state(
@@ -263,9 +267,13 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
 /// transcodes stream live. Responses that already carry a
 /// `Content-Encoding` (the web UI's precompressed assets, audio's
 /// `identity`) pass through untouched, as do bodies under 32 bytes and
-/// event streams.
+/// event streams: an encoder buffers its output, which would hold
+/// `/api/v3/events/stream` frames back. `DefaultPredicate` skips
+/// `text/event-stream` too; the explicit rule keeps that true if the base
+/// predicate ever changes.
 fn compression_layer() -> tower_http::compression::CompressionLayer<impl Predicate> {
     let predicate = DefaultPredicate::new()
+        .and(NotForContentType::SSE)
         .and(NotForContentType::const_new("audio/"))
         .and(NotForContentType::const_new("video/"))
         .and(NotForContentType::const_new("application/ogg"))

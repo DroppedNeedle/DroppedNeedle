@@ -31,6 +31,7 @@ mod concerts;
 mod config_secrets;
 mod contract;
 mod envelope;
+mod events_stream;
 mod export_envelope;
 mod export_seal;
 mod export_v2;

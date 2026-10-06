@@ -3960,6 +3960,31 @@
         }
       }
     },
+    "/api/v3/events/stream": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Live events for the signed-in user.",
+        "description": "Event names: `activity.changed` and `snapshot` (now playing) go to\neveryone; `wanted_new_candidates`, `wanted_auto_dispatched`,\n`wanted_fulfilled`, `auto_download_enqueued`, `request_imported`,\n`playlist_imported`, `drop_import_updated`, `free_music_updated`,\n`personal_mix_refreshed` and `concerts_new` go only to the user they\nconcern. Each `data:` line is one JSON payload (see the `ActivityChanged`,\n`NowPlayingSnapshot`, `WantedNotice`, `AutoDownloadEnqueued`,\n`RequestImported`, `PlaylistImported`, `DropImportUpdated`,\n`FreeMusicUpdated`, `PersonalMixRefreshed` and `ConcertsNew` schemas).",
+        "operationId": "events_stream",
+        "responses": {
+          "200": {
+            "description": "Server-Sent Events stream",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
     "/api/v3/favorites": {
       "get": {
         "tags": [
@@ -15865,6 +15890,32 @@
           }
         }
       },
+      "ActivityChanged": {
+        "type": "object",
+        "description": "`activity.changed`: the library's activity revisions moved. Sent to\neveryone; the web UI refetches library activity, or the catalog when\n`catalog` moved.",
+        "required": [
+          "id",
+          "revisions"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable id of this revision set (`activity:` plus 16 hex digits). The\nstream also sends it as the SSE `id:` line."
+          },
+          "revisions": {
+            "type": "object",
+            "description": "Revision per stream: `scan`, `identification`, `operation` and\n`catalog`.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "AddRootBody": {
         "type": "object",
         "description": "Add a library root. The path must exist and be absolute; the id\ndefaults to a fresh uuid.",
@@ -18511,6 +18562,39 @@
           }
         }
       },
+      "AutoDownloadEnqueued": {
+        "type": "object",
+        "description": "`auto_download_enqueued`: a followed artist's new release was queued.\nThe web UI de-duplicates on `task_id`.",
+        "required": [
+          "artist_mbid",
+          "artist_name",
+          "release_group_mbid",
+          "title",
+          "task_id"
+        ],
+        "properties": {
+          "artist_mbid": {
+            "type": "string",
+            "description": "Followed artist."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Artist name, empty when the poll did not carry one."
+          },
+          "release_group_mbid": {
+            "type": "string",
+            "description": "The new release group."
+          },
+          "task_id": {
+            "type": "string",
+            "description": "Download task started."
+          },
+          "title": {
+            "type": "string",
+            "description": "Release title."
+          }
+        }
+      },
       "AvatarUpload": {
         "type": "object",
         "description": "Avatar upload. JSON with base64 bytes: the server has no multipart\nsupport, and one JSON shape keeps every client on the same parser.",
@@ -19716,6 +19800,30 @@
           "cancelled",
           "rescheduled"
         ]
+      },
+      "ConcertsNew": {
+        "type": "object",
+        "description": "`concerts_new`: a sweep stored new concerts for a followed artist.",
+        "required": [
+          "artist_mbid",
+          "artist_name",
+          "new_events"
+        ],
+        "properties": {
+          "artist_mbid": {
+            "type": "string",
+            "description": "Followed artist."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Artist name."
+          },
+          "new_events": {
+            "type": "integer",
+            "description": "Listings first seen in this sweep.",
+            "minimum": 0
+          }
+        }
       },
       "ConcertsResponse": {
         "type": "object",
@@ -21806,6 +21914,24 @@
         ],
         "description": "GET view of the acquisition policy: the stored policy plus the\nread-only recipe verdict, recomputed on every read and never saved."
       },
+      "DropImportUpdated": {
+        "type": "object",
+        "description": "`drop_import_updated`: one of the user's drop-import jobs moved.",
+        "required": [
+          "event_id",
+          "job_id"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "description": "Id for de-duplication."
+          },
+          "job_id": {
+            "type": "string",
+            "description": "The job that moved."
+          }
+        }
+      },
       "DuplicateCandidate": {
         "type": "object",
         "required": [
@@ -22902,6 +23028,29 @@
               }
             ],
             "default": "flac"
+          }
+        }
+      },
+      "FreeMusicUpdated": {
+        "type": "object",
+        "description": "`free_music_updated`: one of the user's Free Music tasks moved.",
+        "required": [
+          "event_id",
+          "task_id",
+          "status"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "description": "Id for de-duplication."
+          },
+          "status": {
+            "type": "string",
+            "description": "Its status now (`completed` makes the UI refresh library views)."
+          },
+          "task_id": {
+            "type": "string",
+            "description": "The task that moved."
           }
         }
       },
@@ -28559,6 +28708,50 @@
           }
         }
       },
+      "PersonalMixRefreshed": {
+        "type": "object",
+        "description": "`personal_mix_refreshed`: the weekly mix build finished.",
+        "required": [
+          "track_count",
+          "requested_albums",
+          "skipped",
+          "reason",
+          "event_id"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "description": "Id for de-duplication."
+          },
+          "playlist_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The mix playlist, when one was written."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why it was skipped (`no_tracks`, ...), empty otherwise."
+          },
+          "requested_albums": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Albums requested to fill it.",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "boolean",
+            "description": "True when no mix was built."
+          },
+          "track_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Tracks in the mix.",
+            "minimum": 0
+          }
+        }
+      },
       "PlaybackProgressRequest": {
         "type": "object",
         "description": "Heartbeat for a live session: keeps presence alive and the scrubber live.",
@@ -28806,6 +28999,24 @@
             "format": "int64",
             "description": "Last mutation time, epoch seconds.",
             "minimum": 0
+          }
+        }
+      },
+      "PlaylistImported": {
+        "type": "object",
+        "description": "`playlist_imported`: an imported playlist has its tracks.",
+        "required": [
+          "playlist_id",
+          "event_id"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "description": "Id for de-duplication."
+          },
+          "playlist_id": {
+            "type": "string",
+            "description": "The filled playlist."
           }
         }
       },
@@ -32129,6 +32340,34 @@
           "fill_missing",
           "replace"
         ]
+      },
+      "RequestImported": {
+        "type": "object",
+        "description": "`request_imported`: another user (a curator) imported an album this\nuser had requested.",
+        "required": [
+          "event_id",
+          "release_group_mbid",
+          "artist_name",
+          "album_title"
+        ],
+        "properties": {
+          "album_title": {
+            "type": "string",
+            "description": "Album title."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Artist name."
+          },
+          "event_id": {
+            "type": "string",
+            "description": "Id for de-duplication."
+          },
+          "release_group_mbid": {
+            "type": "string",
+            "description": "The imported release group."
+          }
+        }
       },
       "RequestItem": {
         "type": "object",
@@ -36196,6 +36435,59 @@
             ],
             "format": "int32",
             "description": "Release year."
+          }
+        }
+      },
+      "WantedNotice": {
+        "type": "object",
+        "description": "`wanted_new_candidates`, `wanted_auto_dispatched` and `wanted_fulfilled`.",
+        "required": [
+          "event_id",
+          "release_group_mbid",
+          "artist_name",
+          "album_title"
+        ],
+        "properties": {
+          "album_title": {
+            "type": "string",
+            "description": "Album title."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Artist name."
+          },
+          "event_id": {
+            "type": "string",
+            "description": "Id for de-duplication."
+          },
+          "new_candidates": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "New candidates found (`wanted_new_candidates` only).",
+            "minimum": 0
+          },
+          "release_group_mbid": {
+            "type": "string",
+            "description": "The wanted album's release group."
+          },
+          "task_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Download task started (`wanted_auto_dispatched` for whole albums)."
+          },
+          "tracks": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Tracks started (`wanted_auto_dispatched` for a partial album).",
+            "minimum": 0
           }
         }
       },

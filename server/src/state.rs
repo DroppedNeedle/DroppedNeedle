@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use crate::{
     acquire::AcquireSetup, admin::AdminSetup, auth::wiring::AuthSetup, compat::CompatSetup,
-    concerts::ConcertsSetup, config::AppConfig, http_client::HttpClientFactory, ids::IdGenerator,
-    jobs::wiring::JobsSetup, library::wiring::LibrarySetup, media::MediaSetup,
+    concerts::ConcertsSetup, config::AppConfig, events::EventHub, http_client::HttpClientFactory,
+    ids::IdGenerator, jobs::wiring::JobsSetup, library::wiring::LibrarySetup, media::MediaSetup,
     plugins::wiring::PluginsSetup, provider_policy::ProviderPolicy, providers::Providers,
     reads::ReadsSetup, settings::wiring::SettingsSetup,
 };
@@ -49,11 +49,15 @@ pub struct AppState {
     pub plugins: PluginsSetup,
     /// Concerts: the feed routes (the jobs bundle runs the sweep).
     pub concerts: ConcertsSetup,
+    /// Live event hub behind `/api/v3/events/stream`.
+    pub events: EventHub,
 }
 
 impl AppState {
     /// Wire the state from its parts. Callers pass the production generator
     /// or a fake; nothing here reaches globals. One argument per bundle.
+    /// The state gets its own event hub, attached to every bundle that
+    /// publishes; boot swaps in the hub it built with [`Self::with_events`].
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         ids: Arc<dyn IdGenerator>,
@@ -88,7 +92,25 @@ impl AppState {
             jobs,
             plugins,
             concerts,
+            events: EventHub::new(),
         }
+        .attach_events()
+    }
+
+    /// Use `hub` for the stream route and every publishing bundle. Boot
+    /// builds the hub first so the revision poller (and any bundle built
+    /// before the state) shares it.
+    pub fn with_events(mut self, hub: EventHub) -> Self {
+        self.events = hub;
+        self.attach_events()
+    }
+
+    /// Point every publishing bundle at this state's hub.
+    fn attach_events(self) -> Self {
+        self.media.playback.presence.attach_events(&self.events);
+        self.acquire.attach_events(&self.events);
+        self.library.events.attach(&self.events);
+        self
     }
 
     /// Verified per-provider rate policy table.
