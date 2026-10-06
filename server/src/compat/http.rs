@@ -2,8 +2,9 @@
 //!
 //! Layers on the compat routers, outermost first: case-insensitive path
 //! canonicalization (before routing), CORS (`*`, creds off, preflight
-//! short-circuit pre-auth), and rate limits (media-exempt, public-IP plus
-//! principal buckets, auth-failure backoff). Auth itself lives inside the
+//! short-circuit pre-auth), and rate limits (media and artwork exempt, a
+//! public-IP bucket for unauthenticated routes, principal buckets for
+//! signed-in callers, auth-failure backoff). Auth itself lives inside the
 //! protocol paths (Subsonic `dispatch`, Jellyfin handlers), never in the
 //! `/api` session middleware: compat mounts outside it.
 //!
@@ -66,6 +67,7 @@ pub const JELLYFIN_TEMPLATES: &[&str] = &[
     "/jellyfin/Items/{item_id}/Images/{image_type}",
     "/jellyfin/Items/{item_id}/Images/{image_type}/{index}",
     "/jellyfin/Audio/{item_id}/{tail}",
+    "/jellyfin/Items/{item_id}/File",
     "/jellyfin/Items/{item_id}/PlaybackInfo",
     "/jellyfin/Users/{user_id}/FavoriteItems/{item_id}",
     "/jellyfin/UserFavoriteItems/{item_id}",
@@ -333,14 +335,15 @@ fn limit_reject(
     response
 }
 
-/// Rate-limit layer: media paths skip the token buckets but still take
-/// the auth-failure lockout pre-check (else `stream`/`download` would be
-/// a brute-force bypass around backoff); everything else takes the
-/// public-IP bucket plus the pre-check. Authed Jellyfin callers
-/// additionally take their principal bucket (labeled by a token lookup
-/// with no use stamp); Subsonic principal buckets run post-verify in the
-/// adapter. Jellyfin 401s feed backoff on the way out (every Jellyfin 401
-/// is an auth denial); Subsonic denials record in the adapter.
+/// Rate-limit layer. Every request first takes the auth-failure lockout
+/// pre-check (else `stream`/`download` would be a brute-force bypass around
+/// backoff). Media and artwork then skip the token buckets. The public-IP
+/// bucket applies only to unauthenticated routes: the Subsonic public
+/// endpoint and the anonymous Jellyfin routes (login, public info). Signed-in
+/// Jellyfin callers take their principal bucket here (labeled by a token
+/// lookup with no use stamp); Subsonic principal buckets run post-verify in
+/// the adapter. Jellyfin 401s feed backoff on the way out (every Jellyfin
+/// 401 is an auth denial); Subsonic denials record in the adapter.
 pub async fn limits_layer(
     State(state): State<CompatLimits>,
     mut request: Request,
@@ -348,7 +351,7 @@ pub async fn limits_layer(
 ) -> Response {
     let path = request.uri().path().to_owned();
     let method = request.method().to_string();
-    let media = ratelimit::is_media_request(&path);
+    let exempt = ratelimit::is_media_request(&path) || ratelimit::is_artwork_request(&path);
     let client = limit_ip(&request, &state.trusted_proxies);
     // The Subsonic adapter keys its post-verify buckets on the same value.
     if let Some(client) = client {
@@ -357,25 +360,29 @@ pub async fn limits_layer(
     let ip = client.map_or_else(|| "unknown".to_owned(), |client| client.to_string());
     let now = state.now();
     let raw_query = request.uri().query().map(str::to_owned);
-    if let Some(retry_after) = auth::auth_locked_out(&mut state.lock(), &ip, now) {
-        return limit_reject(
+    let reject = |retry_after: u64| {
+        limit_reject(
             &path,
             raw_query.as_deref(),
             retry_after,
             &state.settings.subsonic(),
-        );
+        )
+    };
+    if let Some(retry_after) = auth::auth_locked_out(&mut state.lock(), &ip, now) {
+        return reject(retry_after);
     }
-    if !media {
-        if let Some(retry_after) = state.lock().public_retry_after(&ip, now) {
-            return limit_reject(
-                &path,
-                raw_query.as_deref(),
-                retry_after,
-                &state.settings.subsonic(),
-            );
-        }
-        if path.to_lowercase().starts_with("/jellyfin")
-            && !auth::jellyfin_is_anonymous(&method, &path)
+    let is_jellyfin = path.to_lowercase().starts_with("/jellyfin");
+    if !exempt {
+        let anonymous = if is_jellyfin {
+            auth::jellyfin_is_anonymous(&method, &path)
+        } else {
+            auth::subsonic_is_public(path.rsplit('/').next().unwrap_or(""))
+        };
+        if anonymous {
+            if let Some(retry_after) = state.lock().public_retry_after(&ip, now) {
+                return reject(retry_after);
+            }
+        } else if is_jellyfin
             && let Some(token) = label_token(&request)
             && let Some(user_id) = state.labels.user_for_token(&token).await
         {
@@ -385,16 +392,10 @@ pub async fn limits_layer(
                 .lock()
                 .principal_retry_after(&principal, mutation, now)
             {
-                return limit_reject(
-                    &path,
-                    raw_query.as_deref(),
-                    retry_after,
-                    &state.settings.subsonic(),
-                );
+                return reject(retry_after);
             }
         }
     }
-    let is_jellyfin = path.to_lowercase().starts_with("/jellyfin");
     let response = next.run(request).await;
     if is_jellyfin && response.status() == StatusCode::UNAUTHORIZED {
         let _ = auth::record_auth_denial(&mut state.lock(), &ip, now);
@@ -644,8 +645,9 @@ where
         .map(|client| client.0.to_string())
         .unwrap_or_else(|| "unknown".to_owned());
     let now = state.now();
-    // Principal buckets + backoff run here (post-verify); the public
-    // bucket and lockout pre-check ran in the limits layer.
+    // Principal buckets + backoff run here (post-verify); the lockout
+    // pre-check and, for the public endpoint, the public bucket ran in the
+    // limits layer.
     let principal = if name == crate::compat::subsonic::PUBLIC_ENDPOINT {
         None
     } else {
@@ -691,13 +693,19 @@ where
         match state.verifier.verify(&credentials).await {
             Ok(principal) => {
                 let label = auth::principal_label(Some(principal.user_id()), &ip);
-                let mutation =
-                    ratelimit::is_mutation_request(&method, &format!("/subsonic/rest/{endpoint}"));
-                let retry_after = state
-                    .limits
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .principal_retry_after(&label, mutation, now);
+                let path = format!("/subsonic/rest/{endpoint}");
+                let exempt =
+                    ratelimit::is_media_request(&path) || ratelimit::is_artwork_request(&path);
+                let mutation = ratelimit::is_mutation_request(&method, &path);
+                let retry_after = if exempt {
+                    None
+                } else {
+                    state
+                        .limits
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .principal_retry_after(&label, mutation, now)
+                };
                 if let Some(retry_after) = retry_after {
                     let mut response = envelope(0, "Rate limit exceeded");
                     if let Ok(value) = retry_after.to_string().parse() {

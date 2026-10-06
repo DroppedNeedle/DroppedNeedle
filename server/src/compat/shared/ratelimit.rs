@@ -1,11 +1,13 @@
 //! Bounded, identity-aware rate limiting for the compat APIs.
 //!
 //! Ports v2's compat rate limiter: a public-IP bucket
-//! (5/s, burst 20), per-principal browse (30/s, burst 120) and mutation
-//! (5/s, burst 20) buckets, and per-IP auth-failure backoff (5 failures
-//! in 60s locks out for 10s, doubling to 5min). Media paths are
-//! limiter-exempt; every 429 carries `Retry-After`. Buckets and the bounded
-//! TTL maps are the native limiter's ([`crate::auth::session::rate_limit`]).
+//! (5/s, burst 20) for unauthenticated routes only (login, public probes),
+//! per-principal browse (30/s, burst 120) and mutation (5/s, burst 20)
+//! buckets for signed-in callers, and per-IP auth-failure backoff (5
+//! failures in 60s locks out for 10s, doubling to 5min). Media and artwork
+//! skip the buckets (a cover grid is dozens of requests at once); every 429
+//! carries `Retry-After`. Buckets and the bounded TTL maps are the native
+//! limiter's ([`crate::auth::session::rate_limit`]).
 //!
 //! Time is an explicit `now` (monotonic seconds) so tests pin behavior
 //! without sleeping; production passes its monotonic clock.
@@ -150,17 +152,42 @@ impl CompatRateLimits {
     }
 }
 
-/// Media paths skip limiting entirely (v2 `is_media_request`):
-/// Subsonic `stream`/`download`, Jellyfin `/audio/*`. Matched
-/// case-insensitively on the canonical path.
+/// Normalized Subsonic endpoint of a `/subsonic/rest/...` path.
+fn subsonic_endpoint(low: &str) -> Option<&str> {
+    let rest = low.strip_prefix("/subsonic/rest/")?;
+    let endpoint = rest.rsplit('/').next().unwrap_or(rest);
+    Some(endpoint.strip_suffix(".view").unwrap_or(endpoint))
+}
+
+/// Media paths skip the token buckets (v2 `is_media_request`): Subsonic
+/// `stream`/`download`, Jellyfin `/audio/*` and `/items/{id}/file`.
+/// Matched case-insensitively on the canonical path.
 pub fn is_media_request(path: &str) -> bool {
     let low = path.to_lowercase();
-    if let Some(rest) = low.strip_prefix("/subsonic/rest/") {
-        let endpoint = rest.rsplit('/').next().unwrap_or(rest);
-        let endpoint = endpoint.strip_suffix(".view").unwrap_or(endpoint);
+    if let Some(endpoint) = subsonic_endpoint(&low) {
         return matches!(endpoint, "stream" | "download");
     }
-    low.starts_with("/jellyfin/audio/")
+    if low.starts_with("/jellyfin/audio/") {
+        return true;
+    }
+    let segs: Vec<&str> = low.split('/').collect();
+    matches!(segs.as_slice(), ["", "jellyfin", "items", id, "file"] if !id.is_empty())
+}
+
+/// Artwork paths skip the token buckets too: Subsonic `getCoverArt` and
+/// `getAvatar`, Jellyfin `/items/{id}/images/*`. A client paints a grid of
+/// covers at once, so a request budget would only produce blank tiles.
+pub fn is_artwork_request(path: &str) -> bool {
+    let low = path.to_lowercase();
+    if let Some(endpoint) = subsonic_endpoint(&low) {
+        return matches!(endpoint, "getcoverart" | "getavatar");
+    }
+    let segs: Vec<&str> = low.split('/').collect();
+    matches!(
+        segs.as_slice(),
+        ["", "jellyfin", "items", id, "images", kind] | ["", "jellyfin", "items", id, "images", kind, _]
+            if !id.is_empty() && !kind.is_empty()
+    )
 }
 
 /// Mutation classification (v2 `is_mutation_request`): DELETE/PATCH/PUT

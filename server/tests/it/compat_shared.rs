@@ -105,7 +105,15 @@ fn rate_limit_budgets() {
     // mutations.
     assert!(ratelimit::is_media_request("/subsonic/rest/stream.view"));
     assert!(ratelimit::is_media_request("/jellyfin/audio/abc/stream"));
+    assert!(ratelimit::is_media_request("/jellyfin/Items/abc/File"));
     assert!(!ratelimit::is_media_request("/subsonic/rest/getCoverArt"));
+    assert!(ratelimit::is_artwork_request(
+        "/subsonic/rest/getCoverArt.view"
+    ));
+    assert!(ratelimit::is_artwork_request(
+        "/jellyfin/Items/abc/Images/Primary/0"
+    ));
+    assert!(!ratelimit::is_artwork_request("/jellyfin/Items/abc"));
     assert!(ratelimit::is_mutation_request(
         "POST",
         "/subsonic/rest/star"

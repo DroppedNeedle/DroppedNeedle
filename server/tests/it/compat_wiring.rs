@@ -164,6 +164,20 @@ async fn layered_limits_reject_in_each_protocol_shape() {
         }
         assert!(rejected, "{uri}: the public bucket never tripped");
     }
+    // Artwork skips the public bucket: a cover grid is dozens of anonymous
+    // image requests at once and must not see 429s.
+    let app = enabled();
+    for _ in 0..60 {
+        let (status, _, _) = oneshot(
+            app.clone(),
+            "GET",
+            "/jellyfin/Items/abc/Images/Primary",
+            &[],
+            b"",
+        )
+        .await;
+        assert_ne!(status, StatusCode::TOO_MANY_REQUESTS);
+    }
 }
 
 /// Compat clients put app passwords in the query string, so source code may
