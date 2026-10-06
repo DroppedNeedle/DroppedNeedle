@@ -171,7 +171,6 @@ impl<P: Pacer, S: DegradationSink> AcoustIdClient<P, S> {
             // retried and never counted toward the breaker.
             return self.unrecorded(format!("AcoustID rejected the lookup ({status})"));
         }
-        self.sink.succeeded(SOURCE);
         let payload: serde_json::Value = match response.text().await {
             Ok(text) => match serde_json::from_str(&text) {
                 Ok(payload) => payload,
@@ -238,7 +237,6 @@ impl<P: Pacer, S: DegradationSink> AcoustIdClient<P, S> {
                     .record(SOURCE, format!("AcoustID batch lookup answered {status}"));
                 continue;
             }
-            self.sink.succeeded(SOURCE);
             let body = response.text().await.unwrap_or_default();
             let payload = match serde_json::from_str::<serde_json::Value>(&body) {
                 Ok(payload) => payload,
@@ -253,6 +251,7 @@ impl<P: Pacer, S: DegradationSink> AcoustIdClient<P, S> {
                     .record(SOURCE, "AcoustID batch lookup did not succeed".to_owned());
                 continue;
             }
+            self.sink.succeeded(SOURCE);
             for (index, matched) in parse_batch(&payload) {
                 if index < chunk.len() {
                     found.insert(offset + index, matched);
@@ -270,7 +269,7 @@ impl<P: Pacer, S: DegradationSink> AcoustIdClient<P, S> {
             None => return self.malformed(),
         };
         match body.get("status").and_then(serde_json::Value::as_str) {
-            Some("ok") => {}
+            Some("ok") => self.sink.succeeded(SOURCE),
             Some(other) => return self.recorded(None, other.to_owned()),
             None => return self.malformed(),
         }

@@ -341,7 +341,7 @@ impl SpotifySettingsStore for MemorySpotifySettings {
             .inner
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if inner.client_id != settings.client_id {
+        if inner.client_id.trim() != settings.client_id.trim() {
             self.set_legacy_callback(false);
         }
         inner.client_id = settings.client_id.clone();

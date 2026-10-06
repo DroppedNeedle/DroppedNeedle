@@ -903,10 +903,8 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
     ) -> Result<Body, RequestFailure<T>> {
         let status = response.status().as_u16();
         let category = endpoint_category(endpoint);
-        if status == 200 || status == 204 {
-            self.sink.succeeded(SOURCE);
-        }
         if status == 204 {
+            self.sink.succeeded(SOURCE);
             return Ok(Body::NoContent);
         }
         if status == 429 {
@@ -951,7 +949,10 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
         }
         match response.text().await {
             Ok(text) => match serde_json::from_str(&text) {
-                Ok(payload) => Ok(Body::Json(payload)),
+                Ok(payload) => {
+                    self.sink.succeeded(SOURCE);
+                    Ok(Body::Json(payload))
+                }
                 // v2 records a note and returns None on invalid JSON rather
                 // than raising; each caller below then applies its own
                 // empty-answer rule.

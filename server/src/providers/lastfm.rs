@@ -715,7 +715,6 @@ impl<P: Pacer, S: DegradationSink> LastFmClient<P, S> {
                 return Err(self.recorded(None, &format!("Last.fm request failed ({status})")));
             }
         }
-        self.sink.succeeded(SOURCE);
         let payload: serde_json::Value = match response.text().await {
             Ok(text) => match serde_json::from_str(&text) {
                 Ok(payload) => payload,
@@ -739,6 +738,7 @@ impl<P: Pacer, S: DegradationSink> LastFmClient<P, S> {
             let code = code.as_i64();
             return Err(self.mapped_error(code, message));
         }
+        self.sink.succeeded(SOURCE);
         Ok(payload)
     }
 
@@ -754,7 +754,11 @@ impl<P: Pacer, S: DegradationSink> LastFmClient<P, S> {
             ),
             // Unknown entity. v2 raises ResourceNotFoundError, which the info
             // and genre reads translate to None.
-            Some(6) => Outcome::Missing,
+            // The service answered; the entity is just not there.
+            Some(6) => {
+                self.sink.succeeded(SOURCE);
+                Outcome::Missing
+            }
             // Credential and authorization failures. v2 raises
             // ConfigurationError / TokenNotAuthorizedError, never recorded.
             Some(4) => self.unrecorded(&format!(

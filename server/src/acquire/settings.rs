@@ -160,8 +160,13 @@ impl SpotifySettingsStore for ConfigSpotifySettings {
 
     fn save(&self, settings: &ImportsSpotifySettings) -> Result<(), String> {
         // The v2 marker belongs to the app it was stamped for: a different
-        // client id is a new app, registered with the v3 path.
-        let stored = self.stored();
+        // client id is a new app, registered with the v3 path. A stored
+        // section that does not read fails the save rather than dropping
+        // the marker.
+        let stored = self
+            .store
+            .get_raw::<SpotifySettings>()
+            .map_err(|error| error.to_string())?;
         let same_app = stored.client_id.trim() == settings.client_id.trim();
         let incoming = SpotifySettings {
             client_id: settings.client_id.clone(),

@@ -291,10 +291,12 @@ impl<P: Pacer, S: DegradationSink> AudioDbClient<P, S> {
         if status != 200 {
             return Err(self.unavailable(None, format!("AudioDB request failed ({status})")));
         }
-        self.sink.succeeded(SOURCE);
         match response.text().await {
             Ok(text) => match serde_json::from_str(&text) {
-                Ok(payload) => Ok(payload),
+                Ok(payload) => {
+                    self.sink.succeeded(SOURCE);
+                    Ok(payload)
+                }
                 Err(_) => {
                     let message = "AudioDB returned invalid JSON".to_owned();
                     self.sink.record_quiet(SOURCE, message.clone());
