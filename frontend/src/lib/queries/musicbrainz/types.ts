@@ -1,3 +1,4 @@
+import type { components } from '$lib/api/v3/openapi';
 // Page model for the MusicBrainz settings. The v3 view is adapted into it in
 // MusicBrainzAdapters.ts; the request bodies match the generated schemas.
 
@@ -38,17 +39,6 @@ export interface MusicBrainzSettingsResponse {
 	clamped_to_official_limits?: boolean;
 }
 
-export interface MusicBrainzSettingsUpdate {
-	source_mode: MusicBrainzSourceMode;
-	api_url: string | null;
-	rate_limit: number;
-	concurrent_searches: number;
-	community_acknowledged: boolean | null;
-}
+export type MusicBrainzSettingsUpdate = components['schemas']['MusicBrainzSettingsUpdate'];
 
-export interface BrainzMashBinding {
-	access_revision: string;
-	source_id: string;
-	generation: number;
-	disclosure_version: string;
-}
+export type BrainzMashBinding = components['schemas']['MusicBrainzBindingRequest'];

@@ -1,6 +1,6 @@
 import type { components } from '$lib/api/v3/openapi';
 import type { V3Response } from '$lib/api/v3/client';
-import type { AuthUser, MusicBrainzSourceIdentity } from '$lib/stores/authStore.svelte';
+import type { AuthUser } from '$lib/stores/authStore.svelte';
 
 // No v3 route serves this yet (the backend allowlists /api/v3/auth/providers
 // but ships no handler), so the login page keeps its own shape: the query
@@ -13,9 +13,7 @@ export interface AuthProviders {
 }
 
 /** User payload returned by every endpoint that establishes a session. */
-export type AuthSessionUser = components['schemas']['UserResponse'] & {
-	musicbrainz_source?: MusicBrainzSourceIdentity | null;
-};
+export type AuthSessionUser = components['schemas']['UserResponse'];
 
 /** The least a login answer carries: the native UserResponse and the leaner
  * federated poll view both satisfy this, and it is all toAuthUser reads. */
@@ -28,7 +26,6 @@ export interface SessionUserLike {
 	username?: string | null;
 	username_display?: string | null;
 	providers?: string[];
-	musicbrainz_source?: MusicBrainzSourceIdentity | null;
 }
 
 /** Login/setup success body, inferred from the contract (user plus the raw
@@ -85,9 +82,6 @@ export function toAuthUser(user: SessionUserLike): AuthUser {
 		avatar_url: user.avatar_url ?? null,
 		username: user.username ?? null,
 		username_display: user.username_display ?? null,
-		providers: user.providers ?? [],
-		...(user.musicbrainz_source === undefined
-			? {}
-			: { musicbrainz_source: user.musicbrainz_source })
+		providers: user.providers ?? []
 	};
 }

@@ -1,8 +1,5 @@
 import { setDownloadScope } from '$lib/queries/downloads/downloadScope.svelte';
-import {
-	resetMusicBrainzSourceScope,
-	setMusicBrainzSourceScope
-} from '$lib/queries/musicbrainz/sourceScope.svelte';
+import { resetMusicBrainzSourceScope } from '$lib/queries/musicbrainz/sourceScope.svelte';
 import type { MusicBrainzSourceMode } from '$lib/queries/musicbrainz/types';
 
 /** localStorage key holding the last hydrated user id, so a page load as a
@@ -24,7 +21,6 @@ export interface AuthUser {
 	username: string | null;
 	username_display: string | null;
 	providers: string[];
-	musicbrainz_source?: MusicBrainzSourceIdentity | null;
 }
 
 function createAuthStore() {
@@ -56,11 +52,9 @@ function createAuthStore() {
 			const previousUserId = user?.id ?? null;
 			setDownloadScope(newUser.id, newUser.role);
 			user = newUser;
-			if (newUser.musicbrainz_source) {
-				setMusicBrainzSourceScope(newUser.musicbrainz_source, newUser.id);
-			} else if (previousUserId !== newUser.id) {
-				resetMusicBrainzSourceScope();
-			}
+			// The source scope arrives with the MusicBrainz settings and discover
+			// reads; a different account starts from the default scope.
+			if (previousUserId !== newUser.id) resetMusicBrainzSourceScope();
 		},
 
 		clear() {

@@ -170,23 +170,6 @@ describe('MusicBrainz source scope', () => {
 		});
 	});
 
-	it('refreshes the active scope when an authenticated session carries source identity', () => {
-		authStore.setUser({
-			...user('user-a'),
-			musicbrainz_source: {
-				source_mode: 'official',
-				source_id: 'official-a',
-				generation: 3
-			}
-		});
-
-		expect(getMusicBrainzSourceScope()).toEqual({
-			userId: 'user-a',
-			sourceMode: 'official',
-			sourceId: 'official-a',
-			generation: 3
-		});
-	});
 	it('refreshes from a cross-tab storage event and cleans up its listener', () => {
 		authStore.setUser(user('user-a'));
 		setMusicBrainzSourceScope(

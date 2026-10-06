@@ -91,28 +91,16 @@ export type SearchSuggestResponse = {
 
 export type EnrichmentSource = 'listenbrainz' | 'lastfm' | 'none';
 
-export type ArtistEnrichment = {
-	musicbrainz_id: string;
-	release_group_count?: number | null;
-	listen_count?: number | null;
-};
+export type ArtistEnrichment = components['schemas']['ArtistEnrichment'];
 
-export type AlbumEnrichment = {
-	musicbrainz_id: string;
-	track_count?: number | null;
-	listen_count?: number | null;
-};
+export type AlbumEnrichment = components['schemas']['AlbumEnrichment'];
 
 export type ArtistEnrichmentRequest = {
 	musicbrainz_id: string;
 	name: string;
 };
 
-export type AlbumEnrichmentRequest = {
-	musicbrainz_id: string;
-	artist_name: string;
-	album_name: string;
-};
+export type AlbumEnrichmentRequest = components['schemas']['AlbumEnrichmentRequest'];
 
 export type EnrichmentResponse = {
 	artists: ArtistEnrichment[];
@@ -567,12 +555,7 @@ export type DiscoverQueueEnrichment = {
 	listen_count: number | null;
 };
 
-export type DiscoverActivity = {
-	feature: 'home' | 'discover' | 'queue' | 'artist';
-	artist_mbid?: string;
-	section?: 'similar' | 'top_songs' | 'top_albums';
-	provider?: 'lastfm' | 'listenbrainz';
-};
+export type DiscoverActivity = components['schemas']['DiscoverActivityRequest'];
 
 export type YouTubeQuotaStatus = {
 	used: number;
@@ -2105,14 +2088,7 @@ export interface IndexerSettings {
 	priority: number;
 }
 
-export interface IndexerTestResult {
-	valid: boolean;
-	version?: string | null;
-	message: string;
-	supports_audio_search: boolean;
-	category_count: number;
-	suggested_url?: string | null;
-}
+export type IndexerTestResult = components['schemas']['IndexerTestResponse'];
 
 export interface IndexerSavedResponse {
 	id: string;
@@ -2124,12 +2100,7 @@ export interface ProwlarrConnectionSettings {
 	api_key: string;
 }
 
-export interface ProwlarrTestResult {
-	valid: boolean;
-	version?: string | null;
-	message: string;
-	indexer_count?: number | null;
-}
+export type ProwlarrTestResult = components['schemas']['ProwlarrTestResponse'];
 
 export type UsenetSearchBackendName = 'indexers' | 'prowlarr';
 
@@ -2153,17 +2124,7 @@ export interface SabnzbdConnectionSettings {
 	downloads_mount: string;
 }
 
-export interface SabnzbdTestResult {
-	valid: boolean;
-	version?: string | null;
-	message: string;
-	categories: string[];
-	complete_dir?: string | null;
-	mount_has_files?: boolean | null;
-	resolvable_downloads?: number | null;
-	sampled_downloads?: number | null;
-	mount_message?: string | null;
-}
+export type SabnzbdTestResult = components['schemas']['SabnzbdTestResponse'];
 
 export type QualityRecipeFormat = 'flac' | 'mp3';
 
@@ -2588,15 +2549,7 @@ export interface PolicySummary {
 	quality_recipe_error: string | null;
 }
 
-export interface PolicyImpactResponse {
-	manual_search_jobs: number;
-	queued_without_attempts: number;
-	awaiting_review: number;
-	remote_queued_zero_byte: number;
-	transferring_immutable: number;
-	held_reviews: number;
-	legacy_representable: boolean;
-}
+export type PolicyImpactResponse = components['schemas']['PolicyImpactResponse'];
 
 export interface RestartWithPolicyRequest {
 	expected_snapshot_hash?: string | null;
@@ -2684,15 +2637,7 @@ export type AppPasswordView = components['schemas']['AppPasswordView'];
 // Admin oversight roster: every user's active app-passwords (never a secret).
 export type AdminAppPasswordView = components['schemas']['AdminAppPasswordView'];
 
-export interface SectionPrefItem {
-	key: string;
-	title: string;
-	description: string;
-	zone: string;
-	enabled: boolean;
-	available: boolean;
-	requires?: string | null;
-}
+export type SectionPrefItem = components['schemas']['SectionPrefItem'];
 
 export interface SectionPrefsResponse {
 	pages: Record<string, SectionPrefItem[]>;
@@ -2711,12 +2656,7 @@ export interface PreviewTrackItem {
 	position: number | null;
 }
 
-export interface RadioSeedItem {
-	artist_mbid: string;
-	artist_name?: string;
-	album_mbid?: string | null;
-	album_name?: string;
-}
+export type RadioSeedItem = components['schemas']['RadioSeedItem'];
 
 export interface RadioPlanRequest {
 	seed_type: 'artist' | 'album' | 'genre' | 'items';
