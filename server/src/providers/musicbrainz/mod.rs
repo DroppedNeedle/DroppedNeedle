@@ -257,6 +257,50 @@ pub fn build_release_group_search_query(title: &str, artist: &str) -> String {
     query
 }
 
+/// Release-group tag query (v2 `build_musicbrainz_tag_query`): the tag as
+/// written, boosted, OR'd with its common spelling variants (hyphen and
+/// space swapped, `&` and `and` swapped), each a quoted `tag:` phrase.
+pub fn build_tag_query(tag: &str) -> String {
+    let normalize = |value: &str| {
+        value
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase()
+    };
+    let base = normalize(tag);
+    if base.is_empty() {
+        return r#"tag:""^3"#.to_owned();
+    }
+    let mut variants = vec![base.clone()];
+    let mut add = |value: String| {
+        let value = normalize(&value);
+        if !value.is_empty() && !variants.contains(&value) {
+            variants.push(value);
+        }
+    };
+    add(base.replace('-', " "));
+    add(base.replace(' ', "-"));
+    if base.contains('&') {
+        add(base.replace('&', " and "));
+        add(base.replace('&', " "));
+    }
+    if base.contains(" and ") {
+        add(base.replace(" and ", " & "));
+        add(base.replace(" and ", " "));
+    }
+    variants
+        .iter()
+        .enumerate()
+        .map(|(index, variant)| {
+            let escaped = variant.replace('\\', "\\\\").replace('"', "\\\"");
+            let boost = if index == 0 { "^3" } else { "^2" };
+            format!(r#"tag:"{escaped}"{boost}"#)
+        })
+        .collect::<Vec<_>>()
+        .join(" OR ")
+}
+
 /// Recording query using the same verified Lucene field escaping (v2
 /// `build_recording_search_query`).
 pub fn build_recording_search_query(title: &str, artist: &str) -> String {

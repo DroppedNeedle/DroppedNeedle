@@ -303,6 +303,28 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         .await
     }
 
+    /// Search release groups carrying one tag (v2
+    /// `search_release_groups_by_tag`), spelling variants included.
+    pub async fn search_release_groups_by_tag(
+        &self,
+        tag: &str,
+        limit: u32,
+        offset: u32,
+        criticality: Criticality,
+    ) -> Result<SearchPage<ReleaseGroupSearchHit>, MbError> {
+        let query = super::build_tag_query(tag);
+        self.search_page(
+            "/release-group",
+            &query,
+            limit,
+            offset,
+            "release-groups",
+            "search_release_groups_by_tag",
+            criticality,
+        )
+        .await
+    }
+
     /// Search artists by name.
     pub async fn search_artists(
         &self,

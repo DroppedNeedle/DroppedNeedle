@@ -499,6 +499,30 @@ impl<P: Pacer, S: DegradationSink> LastFmClient<P, S> {
         .await
     }
 
+    /// `user.getTopArtists` for one Last.fm user over `period`, most played
+    /// first (v2 `get_user_top_artists`). Each row's `name` is the artist.
+    pub async fn user_top_artists(
+        &self,
+        creds: &LastFmCredentials,
+        username: &str,
+        period: &str,
+        limit: u32,
+    ) -> Outcome<Vec<TopItem>> {
+        let limit_text = limit.to_string();
+        self.list_items(
+            "user.getTopArtists",
+            "topartists",
+            "artist",
+            creds,
+            &[
+                ("user", username),
+                ("period", period),
+                ("limit", &limit_text),
+            ],
+        )
+        .await
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn top_items(
         &self,
