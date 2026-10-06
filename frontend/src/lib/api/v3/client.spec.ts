@@ -195,11 +195,11 @@ describe('v3 POST, PUT, and PATCH', () => {
 		fetchMock.mockResolvedValue(jsonResponse({ ok: true }));
 		const client = createV3Client(fetchMock);
 
-		await client.PUT(v3('/api/v3/settings/library/sync'));
+		await client.PUT(v3('/api/v3/acquire/lidarr-import/config'), { url: '', api_key: '' });
 		await client.PATCH(v3('/api/v3/me'), { display_name: 'New name' });
 
 		expect(fetchMock.mock.calls[0]).toEqual([
-			'/api/v3/settings/library/sync',
+			'/api/v3/acquire/lidarr-import/config',
 			expect.objectContaining({ method: 'PUT' })
 		]);
 		expect(fetchMock.mock.calls[1]).toEqual([

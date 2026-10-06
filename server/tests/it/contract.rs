@@ -51,7 +51,13 @@ fn path_parameters_match_their_templates() {
             .skip(1)
             .filter_map(|rest| rest.split_once('}').map(|(name, _)| name))
             .collect();
-        for (method, operation) in item.as_object().unwrap() {
+        let operations = item.as_object().unwrap().iter().filter(|(key, _)| {
+            matches!(
+                key.as_str(),
+                "get" | "put" | "post" | "delete" | "options" | "head" | "patch" | "trace"
+            )
+        });
+        for (method, operation) in operations {
             let declared: BTreeSet<&str> = operation["parameters"]
                 .as_array()
                 .into_iter()
