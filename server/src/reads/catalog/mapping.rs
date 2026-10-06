@@ -196,10 +196,12 @@ pub fn external_links(relations: &[Relation]) -> Vec<ExternalLink> {
         let Some(url) = relation.url.as_ref().map(|url| url.resource.trim()) else {
             continue;
         };
-        if url.is_empty() {
+        let lowered = url.to_lowercase();
+        if !(lowered.starts_with("https://") || lowered.starts_with("http://")) {
+            // Only web links are rendered as links; other schemes are
+            // dropped rather than handed to the browser.
             continue;
         }
-        let lowered = url.to_lowercase();
         let (label, category) = PLATFORM_PATTERNS
             .iter()
             .find(|(pattern, _, _)| lowered.contains(pattern))
@@ -292,20 +294,6 @@ pub fn media_track_count(release: &MbRelease) -> u32 {
         .iter()
         .map(|medium| medium.track_count.unwrap_or(0))
         .sum()
-}
-
-/// The ranked release whose track count is closest to the library's file
-/// count, keeping rank order on ties (v2 `_closest_release_id`).
-pub fn closest_release(ranked: &[&MbRelease], file_count: u32) -> Option<String> {
-    ranked
-        .iter()
-        .enumerate()
-        .filter_map(|(rank, release)| {
-            let count = media_track_count(release);
-            (count > 0).then(|| (count.abs_diff(file_count), rank, release.id.clone()))
-        })
-        .min()
-        .map(|(_, _, id)| id)
 }
 
 /// The tracklist of one release and its total length in milliseconds
@@ -544,4 +532,21 @@ pub fn release_group_cover_url(release_group_mbid: &str) -> Option<String> {
             release_group_mbid.trim().to_ascii_lowercase()
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn external_links_keep_web_urls_only() {
+        let relations: Vec<Relation> = serde_json::from_value(serde_json::json!([
+            {"type": "official homepage", "type-id": "x", "url": {"resource": "javascript:alert(1)"}},
+            {"type": "wikipedia", "type-id": "y", "url": {"resource": "https://en.wikipedia.org/wiki/Radiohead"}},
+        ]))
+        .unwrap();
+        let links = external_links(&relations);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].label, "Wikipedia");
+    }
 }
