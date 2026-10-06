@@ -7,6 +7,7 @@
 //! in-repo loopback mocks or scripted probes; nothing touches a live
 //! Lidarr, Spotify, slskd, SABnzbd, or indexer.
 
+use crate::common;
 use droppedneedle::acquire::imports;
 
 use std::sync::Arc;
@@ -33,8 +34,9 @@ use imports::mocks::{
 use imports::models::{LidarrConnectionSettings, SpotifySettings};
 use imports::spotify::{
     FixedMbidResolver, MemoryPlaylistIndex, MemorySpotifyConnections, MemorySpotifySettings,
-    MemorySpotifyStates, MemoryTrackSink, PlaylistTrackSink as _, SpotifyClient,
-    SpotifyConnectionStore as _, SpotifyImportService, is_allowed_cover_url, redirect_uri,
+    MemorySpotifyStates, MemoryTrackSink, PlaylistTrackSink as _, SPOTIFY_CALLBACK_PATH,
+    SPOTIFY_LEGACY_CALLBACK_PATH, SpotifyClient, SpotifyConnectionStore as _, SpotifyImportService,
+    is_allowed_cover_url, redirect_uri,
 };
 use imports::spotify::{SpotifyConnection, TokenGrant};
 use serde_json::{Value, json};
@@ -266,15 +268,15 @@ fn open_client(version: &str, message: &str) -> ClientProbe {
 fn redirect_uri_prefers_origin_and_mounts_base_path_once() {
     assert_eq!(
         redirect_uri("https://music.example.com", "http://app.test", ""),
-        "https://music.example.com/api/v3/spotify/auth/callback"
+        "https://music.example.com/api/v3/acquire/spotify/auth/callback"
     );
     assert_eq!(
         redirect_uri("", "http://app.test/", ""),
-        "http://app.test/api/v3/spotify/auth/callback"
+        "http://app.test/api/v3/acquire/spotify/auth/callback"
     );
     assert_eq!(
         redirect_uri("", "http://app.test", "/needle"),
-        "http://app.test/needle/api/v3/spotify/auth/callback"
+        "http://app.test/needle/api/v3/acquire/spotify/auth/callback"
     );
     assert_eq!(
         redirect_uri(
@@ -282,7 +284,7 @@ fn redirect_uri_prefers_origin_and_mounts_base_path_once() {
             "http://app.test",
             "/needle"
         ),
-        "https://music.example.com/needle/api/v3/spotify/auth/callback"
+        "https://music.example.com/needle/api/v3/acquire/spotify/auth/callback"
     );
 }
 
@@ -528,6 +530,11 @@ fn state_from_auth_url(auth_url: &str) -> String {
 
 /// Link `user_id` through the real authorize + callback flow.
 async fn link_spotify(bundle_deps: ImportsDeps, user_id: &str) {
+    link_spotify_via(bundle_deps, user_id, "/acquire/spotify/auth/callback").await;
+}
+
+/// [`link_spotify`] with the callback answered at `callback`.
+async fn link_spotify_via(bundle_deps: ImportsDeps, user_id: &str, callback: &str) {
     let (status, body) = get_json(
         authed_app(bundle_deps.clone(), user_id),
         "/acquire/spotify/auth/url",
@@ -538,7 +545,7 @@ async fn link_spotify(bundle_deps: ImportsDeps, user_id: &str) {
     assert!(auth_url.starts_with("https://accounts.spotify.com/authorize?"));
     assert!(auth_url.contains("test-client"));
     let state = state_from_auth_url(auth_url);
-    let callback = format!("/acquire/spotify/auth/callback?code=good-code&state={state}");
+    let callback = format!("{callback}?code=good-code&state={state}");
     let response = anon_app(bundle_deps)
         .oneshot(
             Request::get(callback)
@@ -624,7 +631,7 @@ async fn spotify_settings_round_trip_and_reject_bad_origin() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         body["redirect_uri"],
-        "http://app.test/api/v3/spotify/auth/callback"
+        "http://app.test/api/v3/acquire/spotify/auth/callback"
     );
 }
 
@@ -889,6 +896,47 @@ async fn spotify_expired_tokens_refresh_transparently() {
             .iter()
             .any(|grant| grant == "refresh_token")
     );
+}
+
+/// The redirect URI must name a mounted route, and the v2 path that
+/// migrated Spotify apps registered must keep answering.
+#[tokio::test]
+async fn spotify_callback_paths_are_mounted_in_the_app() {
+    let app = droppedneedle::create_app(common::hooked_state());
+    for path in [SPOTIFY_CALLBACK_PATH, SPOTIFY_LEGACY_CALLBACK_PATH] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("{path}?error=access_denied"))
+                    .body(Body::empty())
+                    .expect("request builds"),
+            )
+            .await
+            .expect("router answers");
+        assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT, "{path}");
+    }
+}
+
+#[tokio::test]
+async fn spotify_links_through_v2_callback_and_disconnects() {
+    let (rig, admin_id, user_id) = seed_rig().await;
+    let (lidarr, _) = serve_lidarr().await.expect("mock serves");
+    let (api, accounts, _, _) = serve_spotify().await.expect("mock serves");
+    let bundle = rig_for(&rig, &lidarr.base_url, &api.base_url, &accounts.base_url);
+    seed_spotify_app(bundle.deps.clone(), &admin_id).await;
+    link_spotify_via(bundle.deps.clone(), &user_id, SPOTIFY_LEGACY_CALLBACK_PATH).await;
+    assert!(bundle.spotify_links.get(&user_id).is_some());
+
+    let response = authed_app(bundle.deps, &user_id)
+        .oneshot(
+            Request::delete("/me/connections/spotify")
+                .body(Body::empty())
+                .expect("request builds"),
+        )
+        .await
+        .expect("router answers");
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(bundle.spotify_links.get(&user_id).is_none());
 }
 
 // --- Health smoke + per-source gate tests ---

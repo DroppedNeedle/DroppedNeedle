@@ -2802,6 +2802,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/me/connections/spotify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Unlink the caller's Spotify account (v2 `DELETE /me/connections/spotify`).
+         *     Idempotent: no link reads as done too.
+         */
+        delete: operations["disconnect_spotify"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/me/email": {
         parameters: {
             query?: never;
@@ -15903,7 +15923,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LidarrConnectionSettings"];
+            };
+        };
         responses: {
             /** @description Saved Lidarr settings */
             200: {
@@ -15923,7 +15947,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LidarrImportRequest"];
+            };
+        };
         responses: {
             /** @description Import summary */
             200: {
@@ -15943,7 +15971,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LidarrConnectionSettings"];
+            };
+        };
         responses: {
             /** @description Lidarr probe verdict */
             200: {
@@ -15998,7 +16030,14 @@ export interface operations {
     };
     spotify_callback: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Authorization code from Spotify. */
+                code?: string;
+                /** @description Round-tripped state token. */
+                state?: string;
+                /** @description Provider-side error, when the user declined. */
+                error?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -16038,7 +16077,10 @@ export interface operations {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Spotify playlist id the import runs for */
+                id: string;
+            };
             cookie?: never;
         };
         requestBody?: never;
@@ -16078,10 +16120,17 @@ export interface operations {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Spotify playlist id */
+                id: string;
+            };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpotifyImportRequest"];
+            };
+        };
         responses: {
             /** @description Import acknowledgement */
             200: {
@@ -16141,7 +16190,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpotifySettings"];
+            };
+        };
         responses: {
             /** @description Saved Spotify settings */
             200: {
@@ -22028,6 +22081,31 @@ export interface operations {
             };
             /** @description No link */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    disconnect_spotify: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Unlinked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

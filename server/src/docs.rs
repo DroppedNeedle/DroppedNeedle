@@ -440,6 +440,7 @@ use crate::{
         crate::acquire::imports::handlers::list_spotify_playlists,
         crate::acquire::imports::handlers::import_spotify_playlist,
         crate::acquire::imports::handlers::get_spotify_job,
+        crate::acquire::imports::handlers::disconnect_spotify,
         crate::acquire::imports::handlers::get_health,
         crate::acquire::imports::handlers::get_slskd_status,
         crate::acquire::imports::handlers::get_sabnzbd_status,

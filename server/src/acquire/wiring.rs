@@ -35,7 +35,9 @@ use super::flows::stores::{
     AdminDirectory, FollowStore as FlowsFollowStore, LibraryPresence, QuarantineStore,
     UpgradePolicy, UpgradeWorklist,
 };
-use super::imports::handlers::{ImportsDeps, imports_callback_router, imports_gated_router};
+use super::imports::handlers::{
+    ImportsDeps, imports_callback_router, imports_gated_router, imports_legacy_callback_router,
+};
 use super::imports::jobs::{JobRegistry, QueuedSpotifyImport, TaskExecutor};
 use super::imports::lidarr::LidarrClient;
 use super::imports::spotify::{
@@ -954,6 +956,12 @@ impl AcquireSetup {
     /// session gate (state-token identified).
     pub fn callback_router(&self) -> Router {
         imports_callback_router(self.imports.clone())
+    }
+
+    /// The Spotify OAuth callback at its v2 path, at full path: mount it at
+    /// the root, outside the session gate, like the OIDC legacy callback.
+    pub fn legacy_callback_router(&self) -> Router {
+        imports_legacy_callback_router(self.imports.clone())
     }
 
     /// Run startup recovery before serving traffic: durable-op

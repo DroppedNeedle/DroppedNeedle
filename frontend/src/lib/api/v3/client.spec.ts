@@ -172,10 +172,10 @@ describe('v3 POST, PUT, and PATCH', () => {
 		fetchMock.mockResolvedValue(jsonResponse({ ok: true }));
 		const client = createV3Client(fetchMock);
 
-		await client.POST(v3('/api/v3/acquire/lidarr-import/test'));
+		await client.POST(v3('/api/v3/admin/backups'));
 
 		expect(fetchMock).toHaveBeenCalledWith(
-			'/api/v3/acquire/lidarr-import/test',
+			'/api/v3/admin/backups',
 			expect.objectContaining({ method: 'POST' })
 		);
 		expect(fetchMock.mock.calls[0]![1]).not.toHaveProperty('body');
@@ -195,11 +195,11 @@ describe('v3 POST, PUT, and PATCH', () => {
 		fetchMock.mockResolvedValue(jsonResponse({ ok: true }));
 		const client = createV3Client(fetchMock);
 
-		await client.PUT(v3('/api/v3/acquire/lidarr-import/config'));
+		await client.PUT(v3('/api/v3/settings/library/sync'));
 		await client.PATCH(v3('/api/v3/me'), { display_name: 'New name' });
 
 		expect(fetchMock.mock.calls[0]).toEqual([
-			'/api/v3/acquire/lidarr-import/config',
+			'/api/v3/settings/library/sync',
 			expect.objectContaining({ method: 'PUT' })
 		]);
 		expect(fetchMock.mock.calls[1]).toEqual([

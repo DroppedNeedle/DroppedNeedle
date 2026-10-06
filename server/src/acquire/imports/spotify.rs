@@ -30,8 +30,14 @@ pub const REFRESH_BUFFER_SECS: i64 = 60;
 /// Network read bound for one playlist cover (v2 5 MiB). Looser than the
 /// storage cap on purpose: it only stops an unbounded wire read.
 pub const MAX_COVER_FETCH_BYTES: usize = 5 * 1024 * 1024;
-/// v3-native OAuth callback path under `/api/v3`.
-pub const SPOTIFY_CALLBACK_PATH: &str = "/api/v3/spotify/auth/callback";
+/// OAuth callback path: the route [`imports_callback_router`] mounts
+/// under `/api/v3`.
+///
+/// [`imports_callback_router`]: super::handlers::imports_callback_router
+pub const SPOTIFY_CALLBACK_PATH: &str = "/api/v3/acquire/spotify/auth/callback";
+/// The v2 callback path. Spotify apps registered against v2 still list it,
+/// so the server keeps answering there.
+pub const SPOTIFY_LEGACY_CALLBACK_PATH: &str = "/api/v1/me/connections/spotify/auth/callback";
 
 /// Seconds since the Unix epoch, saturating on clock failure.
 pub fn now_unix_secs() -> i64 {
@@ -48,6 +54,23 @@ pub fn now_unix_secs() -> i64 {
 /// admin-configured origin wins; empty keeps the request-derived base. The
 /// deployment base path lands between origin and callback exactly once.
 pub fn redirect_uri(configured_origin: &str, request_base_url: &str, base_path: &str) -> String {
+    redirect_uri_at(
+        SPOTIFY_CALLBACK_PATH,
+        configured_origin,
+        request_base_url,
+        base_path,
+    )
+}
+
+/// [`redirect_uri`] for an explicit callback path. The token exchange must
+/// send the exact URI the authorize step used, so a callback that arrives
+/// on the v2 path exchanges with the v2 URI.
+pub fn redirect_uri_at(
+    callback_path: &str,
+    configured_origin: &str,
+    request_base_url: &str,
+    base_path: &str,
+) -> String {
     let origin = configured_origin.trim();
     let base = if origin.is_empty() {
         request_base_url.trim_end_matches('/').to_owned()
@@ -55,9 +78,9 @@ pub fn redirect_uri(configured_origin: &str, request_base_url: &str, base_path: 
         origin.trim_end_matches('/').to_owned()
     };
     if base_path.is_empty() || base.ends_with(base_path) {
-        format!("{base}{SPOTIFY_CALLBACK_PATH}")
+        format!("{base}{callback_path}")
     } else {
-        format!("{base}{base_path}{SPOTIFY_CALLBACK_PATH}")
+        format!("{base}{base_path}{callback_path}")
     }
 }
 
@@ -114,6 +137,8 @@ pub trait SpotifyConnectionStore: Send + Sync {
     fn upsert(&self, user_id: &str, connection: &SpotifyConnection);
     /// Read one user's link, if any.
     fn get(&self, user_id: &str) -> Option<SpotifyConnection>;
+    /// Drop one user's link. Answers whether a link was there.
+    fn remove(&self, user_id: &str) -> bool;
 }
 
 /// Internal playlist index the import keys on `spotify:{id}` source refs
@@ -330,6 +355,14 @@ impl SpotifyConnectionStore for MemorySpotifyConnections {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(user_id)
             .cloned()
+    }
+
+    fn remove(&self, user_id: &str) -> bool {
+        self.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(user_id)
+            .is_some()
     }
 }
 

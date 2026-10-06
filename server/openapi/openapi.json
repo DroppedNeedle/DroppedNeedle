@@ -78,6 +78,16 @@
         ],
         "summary": "Save the Lidarr connection. A masked key preserves the stored one.",
         "operationId": "put_lidarr_config",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LidarrConnectionSettings"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Saved Lidarr settings",
@@ -99,6 +109,16 @@
         ],
         "summary": "Import selected Lidarr artists into the caller's follows.",
         "operationId": "import_lidarr",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LidarrImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Import summary",
@@ -120,6 +140,16 @@
         ],
         "summary": "Test submitted Lidarr credentials against `system/status` (v2 Test\nroute): the submitted url/key are probed so Test works before the first\nsave, a masked key resolves to the stored one, and reachable/bad-key\nverdicts travel in the body, never as a leaked 5xx, never echoing the\nURL or host.",
         "operationId": "test_lidarr",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LidarrConnectionSettings"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Lidarr probe verdict",
@@ -183,6 +213,35 @@
         ],
         "summary": "Spotify OAuth callback (v2 `spotify_auth_callback`). State-identified,\nso it sits outside the session gate like v2's ungated route: every\noutcome redirects to the profile page with the v2 query contract\n(`spotify=connected`, or `spotify=error` with an optional `reason`).",
         "operationId": "spotify_callback",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "description": "Authorization code from Spotify.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "Round-tripped state token.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "description": "Provider-side error, when the user declined.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "307": {
             "description": "Redirect to the profile page"
@@ -218,6 +277,17 @@
         ],
         "summary": "Latest known state of one `spotify:import` job.",
         "operationId": "get_spotify_job",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Spotify playlist id the import runs for",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Job state",
@@ -260,6 +330,27 @@
         ],
         "summary": "Start a Spotify playlist import: ensure the internal record, queue the\n`spotify:import` durable job unless it already runs, and answer the id\nimmediately (v2 answer-fast shape).",
         "operationId": "import_spotify_playlist",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Spotify playlist id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpotifyImportRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Import acknowledgement",
@@ -321,6 +412,16 @@
         ],
         "summary": "Save the Spotify app settings. A masked secret preserves the stored\none; a non-absolute redirect origin is a 400 (v2 text kept).",
         "operationId": "put_spotify_settings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpotifySettings"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Saved Spotify settings",
@@ -6840,6 +6941,23 @@
           },
           "404": {
             "description": "No link"
+          }
+        }
+      }
+    },
+    "/api/v3/me/connections/spotify": {
+      "delete": {
+        "tags": [
+          "crate::acquire::imports::handlers"
+        ],
+        "summary": "Unlink the caller's Spotify account (v2 `DELETE /me/connections/spotify`).\nIdempotent: no link reads as done too.",
+        "operationId": "disconnect_spotify",
+        "responses": {
+          "204": {
+            "description": "Unlinked"
+          },
+          "401": {
+            "description": "Not authenticated"
           }
         }
       }

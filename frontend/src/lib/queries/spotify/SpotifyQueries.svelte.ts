@@ -28,10 +28,9 @@ interface ImportSpotifyPlaylistInput {
 
 export const createImportSpotifyPlaylistMutation = () =>
 	createMutation(() => ({
-		// v3 takes no import body (the name rides the stored Spotify
-		// playlist); the input keeps `name` so callers stay unchanged.
+		// The name seeds the internal playlist record the import fills.
 		mutationFn: (input: ImportSpotifyPlaylistInput) =>
-			api.global.v3.POST(SPOTIFY_ENDPOINTS.importPlaylist(input.id)),
+			api.global.v3.POST(SPOTIFY_ENDPOINTS.importPlaylist(input.id), { name: input.name }),
 		onSuccess: () => {
 			invalidateQueriesWithPersister({
 				queryKey: PlaylistQueryKeyFactory.root(authStore.user?.id)

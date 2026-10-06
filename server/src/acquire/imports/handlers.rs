@@ -7,7 +7,8 @@
 //! [`imports_gated_router`] inside the session gate and the Spotify OAuth
 //! callback outside it; every gated handler also takes a user extractor, so
 //! those routes 401 anonymously (the callback is identified by its state
-//! token, exactly like v2).
+//! token, exactly like v2). The callback also answers on its v2 path for
+//! Spotify apps registered against v2.
 
 use std::sync::Arc;
 
@@ -21,8 +22,9 @@ use axum::{
     Json,
     extract::{FromRequestParts, Path, State},
     http::HeaderMap,
+    http::StatusCode,
     response::{IntoResponse, Redirect, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use serde::Deserialize;
 use utoipa::IntoParams;
@@ -43,9 +45,10 @@ use super::models::{
     SpotifyJobStatus, SpotifyPlaylistListResponse, SpotifyRedirectUri, SpotifySettings,
 };
 use super::spotify::{
-    AlbumMbidResolver, PlaylistIndex, PlaylistTrackSink, SpotifyClient, SpotifyConnection,
-    SpotifyConnectionStore, SpotifyError, SpotifyImportService, SpotifySettingsStore,
-    SpotifyStateStore, now_unix_secs, redirect_uri,
+    AlbumMbidResolver, PlaylistIndex, PlaylistTrackSink, SPOTIFY_CALLBACK_PATH,
+    SPOTIFY_LEGACY_CALLBACK_PATH, SpotifyClient, SpotifyConnection, SpotifyConnectionStore,
+    SpotifyError, SpotifyImportService, SpotifySettingsStore, SpotifyStateStore, now_unix_secs,
+    redirect_uri, redirect_uri_at,
 };
 
 /// Every dependency the imports routes need, injected by constructor.
@@ -113,12 +116,14 @@ impl ImportsDeps {
     }
 }
 
-/// The gated routes plus the OAuth callback in one router, for tests. The
-/// app mounts [`imports_gated_router`] inside the session gate and
-/// [`imports_callback_router`] outside it.
+/// The gated routes plus both OAuth callbacks in one router, for tests. The
+/// app mounts [`imports_gated_router`] inside the session gate and the
+/// callbacks outside it.
 #[cfg(any(test, feature = "test-support"))]
 pub fn imports_router(deps: ImportsDeps) -> axum::Router {
-    imports_gated_router(deps.clone()).merge(imports_callback_router(deps))
+    imports_gated_router(deps.clone())
+        .merge(imports_callback_router(deps.clone()))
+        .merge(imports_legacy_callback_router(deps))
 }
 
 /// Session-gated routes. Paths are relative: the app nests this under
@@ -147,6 +152,7 @@ pub fn imports_gated_router(deps: ImportsDeps) -> axum::Router {
             post(import_spotify_playlist),
         )
         .route("/acquire/spotify/jobs/{id}", get(get_spotify_job))
+        .route("/me/connections/spotify", delete(disconnect_spotify))
         .route("/acquire/health", get(get_health))
         .route("/acquire/slskd/status", get(get_slskd_status))
         .route("/acquire/sabnzbd/status", get(get_sabnzbd_status))
@@ -158,6 +164,14 @@ pub fn imports_gated_router(deps: ImportsDeps) -> axum::Router {
 pub fn imports_callback_router(deps: ImportsDeps) -> axum::Router {
     axum::Router::new()
         .route("/acquire/spotify/auth/callback", get(spotify_callback))
+        .with_state(deps)
+}
+
+/// The callback at its v2 path, at full path (not nested under `/api/v3`).
+/// Public and state-identified like the v3 one.
+pub fn imports_legacy_callback_router(deps: ImportsDeps) -> axum::Router {
+    axum::Router::new()
+        .route(SPOTIFY_LEGACY_CALLBACK_PATH, get(spotify_legacy_callback))
         .with_state(deps)
 }
 
@@ -273,6 +287,7 @@ pub async fn get_lidarr_config(
 
 /// Save the Lidarr connection. A masked key preserves the stored one.
 #[utoipa::path(put, path = "/api/v3/acquire/lidarr-import/config",
+    request_body = LidarrConnectionSettings,
     responses((status = 200, description = "Saved Lidarr settings", body = LidarrConnectionSettings)))]
 pub async fn put_lidarr_config(
     State(deps): State<ImportsDeps>,
@@ -289,6 +304,7 @@ pub async fn put_lidarr_config(
 /// verdicts travel in the body, never as a leaked 5xx, never echoing the
 /// URL or host.
 #[utoipa::path(post, path = "/api/v3/acquire/lidarr-import/test",
+    request_body = LidarrConnectionSettings,
     responses((status = 200, description = "Lidarr probe verdict", body = LidarrTestResponse)))]
 pub async fn test_lidarr(
     State(deps): State<ImportsDeps>,
@@ -342,6 +358,7 @@ pub async fn list_lidarr_artists(
 
 /// Import selected Lidarr artists into the caller's follows.
 #[utoipa::path(post, path = "/api/v3/acquire/lidarr-import/import",
+    request_body = LidarrImportRequest,
     responses((status = 200, description = "Import summary", body = LidarrImportResponse)))]
 pub async fn import_lidarr(
     State(deps): State<ImportsDeps>,
@@ -371,6 +388,7 @@ pub async fn get_spotify_settings(
 /// Save the Spotify app settings. A masked secret preserves the stored
 /// one; a non-absolute redirect origin is a 400 (v2 text kept).
 #[utoipa::path(put, path = "/api/v3/acquire/spotify/settings",
+    request_body = SpotifySettings,
     responses((status = 200, description = "Saved Spotify settings", body = SpotifySettings)))]
 pub async fn put_spotify_settings(
     State(deps): State<ImportsDeps>,
@@ -419,6 +437,7 @@ pub async fn get_spotify_auth_url(
 
 /// OAuth callback query (v2: `code`, `state`, `error`, all optional).
 #[derive(Debug, Clone, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct SpotifyCallbackQuery {
     /// Authorization code from Spotify.
     pub code: Option<String>,
@@ -433,11 +452,34 @@ pub struct SpotifyCallbackQuery {
 /// outcome redirects to the profile page with the v2 query contract
 /// (`spotify=connected`, or `spotify=error` with an optional `reason`).
 #[utoipa::path(get, path = "/api/v3/acquire/spotify/auth/callback",
+    params(SpotifyCallbackQuery),
     responses((status = 307, description = "Redirect to the profile page")))]
 pub async fn spotify_callback(
     State(deps): State<ImportsDeps>,
     headers: HeaderMap,
     ValidQuery(query): ValidQuery<SpotifyCallbackQuery>,
+) -> Response {
+    finish_spotify_link(&deps, &headers, query, SPOTIFY_CALLBACK_PATH).await
+}
+
+/// The same callback on the v2 path. Spotify sends the user back to the
+/// URI the authorize step named, and an app registered against v2 names
+/// this one.
+pub async fn spotify_legacy_callback(
+    State(deps): State<ImportsDeps>,
+    headers: HeaderMap,
+    ValidQuery(query): ValidQuery<SpotifyCallbackQuery>,
+) -> Response {
+    finish_spotify_link(&deps, &headers, query, SPOTIFY_LEGACY_CALLBACK_PATH).await
+}
+
+/// Consume the state, exchange the code with the redirect URI built for
+/// `callback_path`, read the Spotify profile and store the link.
+async fn finish_spotify_link(
+    deps: &ImportsDeps,
+    headers: &HeaderMap,
+    query: SpotifyCallbackQuery,
+    callback_path: &str,
 ) -> Response {
     let profile = |suffix: &str| format!("{}{suffix}", deps.base_path);
     if query.error.is_some() || query.code.is_none() || query.state.is_none() {
@@ -451,9 +493,10 @@ pub async fn spotify_callback(
             .into_response();
     };
     let raw = deps.spotify_settings.get_raw();
-    let uri = redirect_uri(
+    let uri = redirect_uri_at(
+        callback_path,
         &raw.spotify_redirect_origin,
-        &request_base(&headers),
+        &request_base(headers),
         &deps.base_path,
     );
     let grant = match deps
@@ -515,6 +558,23 @@ pub async fn spotify_callback(
     Redirect::temporary(&profile("/profile?spotify=connected")).into_response()
 }
 
+/// Unlink the caller's Spotify account (v2 `DELETE /me/connections/spotify`).
+/// Idempotent: no link reads as done too.
+#[utoipa::path(delete, path = "/api/v3/me/connections/spotify",
+    responses(
+        (status = 204, description = "Unlinked"),
+        (status = 401, description = "Not authenticated"),
+    ))]
+pub async fn disconnect_spotify(
+    State(deps): State<ImportsDeps>,
+    ImportsUser(ctx): ImportsUser,
+) -> StatusCode {
+    if deps.spotify_links.remove(&ctx.user_id) {
+        tracing::info!(user_id = %ctx.user_id, "spotify link removed");
+    }
+    StatusCode::NO_CONTENT
+}
+
 /// The caller's owned Spotify playlists. Unlinked reads as the v2 400;
 /// upstream failures as the v2 502.
 #[utoipa::path(get, path = "/api/v3/acquire/spotify/playlists",
@@ -544,6 +604,8 @@ pub async fn list_spotify_playlists(
 /// `spotify:import` durable job unless it already runs, and answer the id
 /// immediately (v2 answer-fast shape).
 #[utoipa::path(post, path = "/api/v3/acquire/spotify/playlists/{id}/import",
+    params(("id" = String, Path, description = "Spotify playlist id")),
+    request_body = SpotifyImportRequest,
     responses((status = 200, description = "Import acknowledgement", body = SpotifyImportResponse)))]
 pub async fn import_spotify_playlist(
     State(deps): State<ImportsDeps>,
@@ -573,6 +635,7 @@ pub async fn import_spotify_playlist(
 
 /// Latest known state of one `spotify:import` job.
 #[utoipa::path(get, path = "/api/v3/acquire/spotify/jobs/{id}",
+    params(("id" = String, Path, description = "Spotify playlist id the import runs for")),
     responses((status = 200, description = "Job state", body = SpotifyJobStatus)))]
 pub async fn get_spotify_job(
     State(deps): State<ImportsDeps>,
