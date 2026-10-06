@@ -371,7 +371,7 @@ async fn breached_passwords_reject_when_screening_is_on() {
 }
 
 #[tokio::test]
-async fn import_creates_new_accounts_and_links_known_emails() {
+async fn import_creates_new_accounts_and_reports_known_emails() {
     let (rig, _, _) = rig_with_admin().await;
     let known = rig.seed_user("known", Role::User).await;
     rig.users
@@ -401,6 +401,7 @@ async fn import_creates_new_accounts_and_links_known_emails() {
     .unwrap();
     assert_eq!(batch.imported.len(), 1);
     assert_eq!(batch.imported[0].role, Role::User);
-    assert_eq!(batch.linked[0].id, known.id);
+    // The email match is reported, never linked to the existing account.
+    assert_eq!(batch.conflicts, vec!["px-link".to_owned()]);
     assert_eq!(batch.skipped, vec!["px-unknown".to_owned()]);
 }

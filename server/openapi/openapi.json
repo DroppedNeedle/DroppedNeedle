@@ -19835,24 +19835,24 @@
         "description": "A finished import batch.",
         "required": [
           "imported",
-          "linked",
+          "conflicts",
           "skipped",
           "total_imported"
         ],
         "properties": {
+          "conflicts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Uids not imported because their email already belongs to an\naccount. They are never linked to it automatically."
+          },
           "imported": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/UserResponse"
             },
             "description": "Newly created accounts, in request order."
-          },
-          "linked": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/UserResponse"
-            },
-            "description": "Existing accounts the provider was linked to (email match)."
           },
           "skipped": {
             "type": "array",

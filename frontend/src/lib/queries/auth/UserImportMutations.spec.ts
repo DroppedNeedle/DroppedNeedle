@@ -58,7 +58,7 @@ describe('AuthQueryKeyFactory.importCandidates', () => {
 
 describe('createImportUsersMutation', () => {
 	it('posts provider + uids to the import endpoint via the authenticated api', async () => {
-		mockPost.mockResolvedValue({ imported: [], linked: [], skipped: [], total_imported: 0 });
+		mockPost.mockResolvedValue({ imported: [], conflicts: [], skipped: [], total_imported: 0 });
 		const { createImportUsersMutation } = await import('./UserImportMutations.svelte');
 		createImportUsersMutation();
 
@@ -79,7 +79,7 @@ describe('createImportUsersMutation', () => {
 
 		const onSuccess = lastMutationOpts().onSuccess as (r: unknown, v: unknown) => unknown;
 		await onSuccess(
-			{ imported: [], linked: [], skipped: [], total_imported: 0 },
+			{ imported: [], conflicts: [], skipped: [], total_imported: 0 },
 			{ provider: 'plex', provider_uids: [] }
 		);
 

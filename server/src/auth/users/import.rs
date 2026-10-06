@@ -71,7 +71,7 @@ pub async fn import_users(
         .collect();
 
     let mut imported = Vec::new();
-    let mut linked = Vec::new();
+    let mut conflicts = Vec::new();
     let mut skipped = Vec::new();
     for uid in provider_uids {
         let Some(candidate) = catalog.get(uid.as_str()) else {
@@ -82,9 +82,7 @@ pub async fn import_users(
             Ok(ImportOutcome::Imported(user)) => {
                 imported.push(render_user(deps, &user).await?);
             }
-            Ok(ImportOutcome::Linked(user)) => {
-                linked.push(render_user(deps, &user).await?);
-            }
+            Ok(ImportOutcome::Conflict) => conflicts.push(uid.clone()),
             Ok(ImportOutcome::Skipped) => skipped.push(uid.clone()),
             Err(ImportFault::UsernameExhausted) => {
                 // Un-de-dupable username: the whole batch fails as 409 (v2
@@ -107,14 +105,14 @@ pub async fn import_users(
     tracing::info!(
         provider = directory.provider(),
         imported = imported.len(),
-        linked = linked.len(),
+        conflicts = conflicts.len(),
         skipped = skipped.len(),
         "user import finished",
     );
     Ok(ImportUsersResponse {
         total_imported: imported.len() as u64,
         imported,
-        linked,
+        conflicts,
         skipped,
     })
 }
@@ -122,7 +120,10 @@ pub async fn import_users(
 /// What one uid imported as.
 enum ImportOutcome {
     Imported(UserRecord),
-    Linked(UserRecord),
+    /// The directory email belongs to an existing account. Nothing is
+    /// linked: a media-server profile email is not proof of ownership, so
+    /// the admin decides.
+    Conflict,
     Skipped,
 }
 
@@ -152,8 +153,8 @@ async fn import_one(
         return Ok(ImportOutcome::Skipped);
     }
 
-    // Email collision: link to the existing account without touching its
-    // email, display name, or username. They then log in via this provider.
+    // Email collision: report it and import nothing. A directory email is
+    // not proof the person owns the existing account.
     let email = match services::normalize_email(candidate.email.as_deref()) {
         Ok(email) => email,
         Err(_) => {
@@ -170,22 +171,8 @@ async fn import_one(
             .get_by_email(email)
             .await
             .map_err(ImportFault::Store)?;
-        if let Some(existing) = existing {
-            match deps
-                .users
-                .insert_provider_binding(ProviderBinding {
-                    id: deps.ids.new_id(),
-                    user_id: existing.id.clone(),
-                    provider: provider.to_owned(),
-                    provider_uid: uid.to_owned(),
-                })
-                .await
-            {
-                Ok(()) => return Ok(ImportOutcome::Linked(existing)),
-                // A concurrent bind won the race: skip, never duplicate.
-                Err(StoreError::Conflict) => return Ok(ImportOutcome::Skipped),
-                Err(error) => return Err(ImportFault::Store(error)),
-            }
+        if existing.is_some() {
+            return Ok(ImportOutcome::Conflict);
         }
     }
 

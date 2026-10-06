@@ -58,7 +58,8 @@
 				provider_uids: selected
 			});
 			const parts = [`${res.total_imported} imported`];
-			if (res.linked.length) parts.push(`${res.linked.length} linked to existing`);
+			if (res.conflicts.length)
+				parts.push(`${res.conflicts.length} not imported: email already used by an account`);
 			if (res.skipped.length) parts.push(`${res.skipped.length} skipped`);
 			resultMsg = parts.join(', ');
 			selected = [];

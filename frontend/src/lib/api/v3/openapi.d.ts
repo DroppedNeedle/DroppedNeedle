@@ -9061,10 +9061,13 @@ export interface components {
         };
         /** @description A finished import batch. */
         ImportUsersResponse: {
+            /**
+             * @description Uids not imported because their email already belongs to an
+             *     account. They are never linked to it automatically.
+             */
+            conflicts: string[];
             /** @description Newly created accounts, in request order. */
             imported: components["schemas"]["UserResponse"][];
-            /** @description Existing accounts the provider was linked to (email match). */
-            linked: components["schemas"]["UserResponse"][];
             /** @description Uids skipped: unknown, already bound, or failed. */
             skipped: string[];
             /**

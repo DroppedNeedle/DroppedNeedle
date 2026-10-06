@@ -481,8 +481,9 @@ pub struct ImportUsersRequest {
 pub struct ImportUsersResponse {
     /// Newly created accounts, in request order.
     pub imported: Vec<UserResponse>,
-    /// Existing accounts the provider was linked to (email match).
-    pub linked: Vec<UserResponse>,
+    /// Uids not imported because their email already belongs to an
+    /// account. They are never linked to it automatically.
+    pub conflicts: Vec<String>,
     /// Uids skipped: unknown, already bound, or failed.
     pub skipped: Vec<String>,
     /// Count of `imported`, for the admin summary line.
