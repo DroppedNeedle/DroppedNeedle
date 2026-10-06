@@ -8,10 +8,11 @@
 //! the path parse, then placeholders, each with its provenance; artists
 //! key by name and sort name.
 //!
-//! Ids survive moves (the Navidrome approach). An album is found by a
-//! persistent key (release MBID, else the tagged album artist and title)
-//! rather than by its folder, so moving or organizing a folder keeps the
-//! album row with its identity and reviews. A file that appears where a
+//! Ids survive moves (the Navidrome approach). An album carries a
+//! persistent key (release MBID, else the tagged album artist and title),
+//! so when its files move or are organized the album row follows them
+//! with its identity and reviews. Copies of one album in different
+//! folders still stay separate albums, as in v2. A file that appears where a
 //! track's file just went away continues that track (same recording MBID,
 //! or same album key, disc, track number, title and duration), so
 //! favorites, history and playlists follow a moved file. When every track
@@ -143,14 +144,66 @@ impl AlbumNames<'_> {
     }
 }
 
-/// The album a track files under: the one it was in while that album
-/// still answers to the key, else the oldest live album with the key.
-/// Tagged names also join an album of the same names where only some
-/// files carry the release MBID, so a partly tagged album stays whole
-/// (an album with a different release MBID stays apart). Else a new id.
+/// Where a track's group lives: its root and grouping directory.
+struct Place<'a> {
+    run_id: &'a str,
+    root_id: &'a str,
+    directory: &'a str,
+}
+
+/// A track still counts as present unless it is missing or this run
+/// walked its folder to the end without seeing it.
+const TRACK_PRESENT: &str = "t.availability = 'indexed' \
+    AND NOT (EXISTS (SELECT 1 FROM library_scan_run_scopes s WHERE s.run_id = ?1 \
+      AND s.root_id = t.root_id AND s.discovery_state = 'completed' \
+      AND (s.relative_path = '.' OR t.relative_path = s.relative_path \
+        OR substr(t.relative_path, 1, length(s.relative_path) + 1) = s.relative_path || '/')) \
+    AND NOT EXISTS (SELECT 1 FROM library_scan_inventory i WHERE i.run_id = ?1 \
+      AND i.root_id = t.root_id AND i.relative_path = t.relative_path))";
+
+/// Where an album's present tracks are, seen from one folder: (some are
+/// in this folder, some are anywhere else).
+fn album_presence(
+    tx: &Connection,
+    place: &Place<'_>,
+    album_id: &str,
+) -> rusqlite::Result<(bool, bool)> {
+    let mut stmt = tx.prepare_cached(&format!(
+        "SELECT t.root_id, t.relative_path FROM local_tracks t \
+         WHERE t.local_album_id = ?2 AND {TRACK_PRESENT}"
+    ))?;
+    let mut rows = stmt.query(params![place.run_id, album_id])?;
+    let (mut here, mut elsewhere) = (false, false);
+    while let Some(row) = rows.next()? {
+        let root: String = row.get(0)?;
+        let path: String = row.get(1)?;
+        if root == place.root_id && grouping_directory(&path) == place.directory {
+            here = true;
+        } else {
+            elsewhere = true;
+        }
+    }
+    Ok((here, elsewhere))
+}
+
+/// The album a track files under. Copies of one album in different
+/// folders stay different albums (duplicate resolution depends on it),
+/// so the persistent key only carries an album along when it moved or
+/// was retagged:
+///
+/// 1. the album the track was in, while it still answers to the key and
+///    has no present tracks outside this folder;
+/// 2. an album with the key that already has present tracks in this
+///    folder (for tagged names, also a same-named album where only some
+///    files carry the release MBID, so a partly tagged album stays
+///    whole);
+/// 3. an album with the key that has no present tracks anywhere, whose
+///    files moved here or were retagged (the oldest first);
+/// 4. else a new album.
 fn resolve_album(
     tx: &Connection,
     names: &AlbumNames<'_>,
+    place: &Place<'_>,
     previous: Option<&str>,
 ) -> rusqlite::Result<String> {
     let key = names.key();
@@ -160,50 +213,64 @@ fn resolve_album(
                 "SELECT EXISTS(SELECT 1 FROM local_albums WHERE id = ?1 AND grouping_key = ?2)",
             )?
             .query_row(params![previous, key], |row| row.get(0))?;
-        if same {
+        if same && !album_presence(tx, place, previous)?.1 {
             return Ok(previous.to_owned());
         }
     }
-    let mut found: Option<String> = tx
-        .prepare_cached(
-            "SELECT id FROM local_albums WHERE grouping_key = ?1 \
-             AND retired_into_album_id IS NULL ORDER BY created_at, id LIMIT 1",
-        )?
-        .query_row(params![key], |row| row.get(0))
-        .optional()?;
-    if found.is_none() && names.from_tags {
-        // With an MBID: an album of these names nobody tagged yet. Without
-        // one: an album of these names known by its MBID.
-        let other = if names.release_mbid.is_some() {
+    // Tagged names: with an MBID, a same-named album nobody tagged yet;
+    // without one, a same-named album known by its MBID. Same folder only.
+    let same_folder_only = names.from_tags.then(|| {
+        if names.release_mbid.is_some() {
             names.name_key()
         } else {
             "mbid:".to_owned()
-        };
-        found = tx
-            .prepare_cached(
-                "SELECT id FROM local_albums WHERE title_folded = ?1 \
-                 AND album_artist_name_folded = ?2 AND retired_into_album_id IS NULL \
-                 AND (grouping_key = ?3 OR (?3 = 'mbid:' AND grouping_key LIKE 'mbid:%')) \
-                 ORDER BY created_at, id LIMIT 1",
-            )?
-            .query_row(
-                params![names.title_folded, names.artist_folded, other],
-                |row| row.get(0),
-            )
-            .optional()?;
+        }
+    });
+    let candidates: Vec<(String, bool)> = {
+        let mut stmt = tx.prepare_cached(
+            "SELECT id, grouping_key = ?1 FROM local_albums \
+             WHERE retired_into_album_id IS NULL AND (grouping_key = ?1 \
+             OR (?2 IS NOT NULL AND title_folded = ?3 AND album_artist_name_folded = ?4 \
+               AND (grouping_key = ?2 OR (?2 = 'mbid:' AND grouping_key LIKE 'mbid:%')))) \
+             ORDER BY created_at, id",
+        )?;
+        stmt.query_map(
+            params![
+                key,
+                same_folder_only,
+                names.title_folded,
+                names.artist_folded
+            ],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?
+        .collect::<rusqlite::Result<_>>()?
+    };
+    let mut takeover: Option<String> = None;
+    for (id, exact) in candidates {
+        let (here, elsewhere) = album_presence(tx, place, &id)?;
+        if here {
+            return Ok(id);
+        }
+        if exact && !elsewhere && takeover.is_none() {
+            takeover = Some(id);
+        }
     }
-    if let Some(id) = found {
+    if let Some(id) = takeover {
         return Ok(id);
     }
-    let stable = stable_id(&format!("album:{key}"));
-    let taken: bool = tx
-        .prepare_cached("SELECT EXISTS(SELECT 1 FROM local_albums WHERE id = ?1)")?
-        .query_row(params![stable], |row| row.get(0))?;
-    Ok(if taken {
-        uuid::Uuid::new_v4().to_string()
-    } else {
-        stable
-    })
+    for seed in [
+        format!("album:{key}"),
+        format!("album:{key}:{}:{}", place.root_id, place.directory),
+    ] {
+        let stable = stable_id(&seed);
+        let taken: bool = tx
+            .prepare_cached("SELECT EXISTS(SELECT 1 FROM local_albums WHERE id = ?1)")?
+            .query_row(params![stable], |row| row.get(0))?;
+        if !taken {
+            return Ok(stable);
+        }
+    }
+    Ok(uuid::Uuid::new_v4().to_string())
 }
 
 /// What a newly seen file is matched on against tracks whose files went
@@ -444,6 +511,11 @@ fn write_item(
     let album_id = resolve_album(
         tx,
         &names,
+        &Place {
+            run_id,
+            root_id: &item.root_id,
+            directory: &directory,
+        },
         previous.as_ref().map(|(_, album)| album.as_str()),
     )?;
     let primary_artist = album_artist_ids

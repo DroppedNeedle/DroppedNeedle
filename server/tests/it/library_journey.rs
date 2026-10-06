@@ -1056,6 +1056,49 @@ async fn moved_file_keeps_its_track() {
     );
 }
 
+/// Two copies of one album in different folders stay two albums (the
+/// duplicate tools compare them), and moving one copy keeps its own ids.
+#[tokio::test]
+async fn copies_stay_apart_and_keep_ids_when_moved() {
+    use droppedneedle::library::scan::CatalogStore as _;
+
+    let (_scratch, library, music) = bare_library("lib-copies");
+    let copy_a = plant(&music, "flac/01.flac", "flac_full_01.flac");
+    let copy_b = plant(&music, "lossy/01.flac", "flac_full_01.flac");
+    add_music_root(&library, &music).await;
+    let track_a = library
+        .scan_store
+        .track_at("music", "flac/01.flac")
+        .expect("copy a indexed");
+    let track_b = library
+        .scan_store
+        .track_at("music", "lossy/01.flac")
+        .expect("copy b indexed");
+    let album_a = library
+        .scan_store
+        .album_for_track(&track_a)
+        .expect("album a");
+    let album_b = library
+        .scan_store
+        .album_for_track(&track_b)
+        .expect("album b");
+    assert_ne!(album_a, album_b, "copies are separate albums");
+
+    let moved = music.join("archive/01.flac");
+    std::fs::create_dir_all(moved.parent().expect("parent")).expect("mkdir");
+    std::fs::rename(&copy_b, &moved).expect("move one copy");
+    rescan(&library).await;
+
+    assert_eq!(
+        library.scan_store.track_at("music", "archive/01.flac"),
+        Some(track_b.clone()),
+        "the moved copy keeps its track"
+    );
+    assert_eq!(library.scan_store.album_for_track(&track_b), Some(album_b));
+    assert_eq!(library.scan_store.album_for_track(&track_a), Some(album_a));
+    assert!(copy_a.is_file());
+}
+
 /// Retagging every track of an album to a new name keeps the album row,
 /// and with it the curator's identity.
 #[tokio::test]
