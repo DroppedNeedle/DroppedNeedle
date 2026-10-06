@@ -39,10 +39,11 @@ const queryClientRules = [
 // the transport. A path literal is allowed only as the template argument of
 // v3() and as a type argument naming a contract path. Module specifiers such
 // as '$lib/api/client' are not paths and do not match; a full URL to a
-// versioned API path ('https://host/api/v3/...') does, while third-party
-// links such as 'https://www.last.fm/api/account' do not. Event streams, beacons and XHR are server
-// channels too, so they stay in the transport as well.
-const API_PATH = '/(^|[^\\w$.]|:\\/\\/[^/]*)\\/api\\/v\\d+\\//';
+// versioned API path ('https://host/api/v3/...') does, and so does a bare
+// base such as '/api/v1' with nothing after it, while third-party links such
+// as 'https://www.last.fm/api/account' do not. Event streams, beacons and XHR
+// are server channels too, so they stay in the transport as well.
+const API_PATH = '/(^|[^\\w$.]|:\\/\\/[^/]*)\\/api\\/v\\d+(?=\\/|$)/';
 const transportRules = [
 	{
 		selector: `Literal[value=${API_PATH}]:not(CallExpression[callee.name='v3'] > Literal.arguments):not(TSLiteralType > Literal)`,
