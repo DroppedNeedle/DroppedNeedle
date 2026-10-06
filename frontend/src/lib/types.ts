@@ -2651,14 +2651,6 @@ export interface RetryDownloadResponse {
 	task_id: string;
 }
 
-export interface ReimportDownloadResponse {
-	success: boolean;
-	status: string;
-	files_imported: number;
-	files_failed: number;
-	error_message?: string | null;
-}
-
 export interface QuarantineEntry {
 	id: number;
 	client_id: string;

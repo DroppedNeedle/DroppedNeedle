@@ -5,7 +5,7 @@
 	import DeleteAlbumModal from './DeleteAlbumModal.svelte';
 	import type { RequestItem } from '$lib/queries/requests/types';
 	import type { RequestKind } from '$lib/constants';
-	import { reimportDownloadV3 } from '$lib/queries/downloads/DownloadMutations.svelte';
+	import { reimportDownload } from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import {
 		ChevronDown,
@@ -57,7 +57,7 @@
 		onreimported
 	}: Props = $props();
 
-	const reimport = reimportDownloadV3();
+	const reimport = reimportDownload();
 
 	let confirmingCancel = $state(false);
 	let showDeleteModal = $state(false);

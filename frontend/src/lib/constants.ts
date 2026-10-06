@@ -492,10 +492,6 @@ export const API = {
 		previewArtwork: (jobId: string, ordinal: number, sha256: string) =>
 			`/api/v1/library/management/previews/${encodeURIComponent(jobId)}/items/${ordinal}/artwork/${encodeURIComponent(sha256)}`
 	},
-	search: {
-		albums: (query: string, limit = 50, offset = 0) =>
-			`/api/v1/search/albums?q=${encodeURIComponent(query)}&limit=${limit}${offset ? `&offset=${offset}` : ''}`
-	},
 	system: {
 		health: () => '/api/v1/system/health'
 	},
@@ -575,7 +571,6 @@ export const API = {
 			`/api/v1/downloads/held/management/${taskId}/discard`,
 		heldVerdictDiscard: (taskId: string) => `/api/v1/downloads/held/verdict/${taskId}/discard`,
 		heldAudio: (id: number) => `/api/v1/downloads/held/${id}/audio`,
-		reimport: (taskId: string) => `/api/v1/downloads/${taskId}/reimport`,
 		cutoffUnmet: () => '/api/v1/downloads/cutoff-unmet',
 		upgradeAlbum: () => '/api/v1/downloads/upgrade/album',
 		upgradeTrack: () => '/api/v1/downloads/upgrade/track'

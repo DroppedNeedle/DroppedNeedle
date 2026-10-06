@@ -5,6 +5,8 @@
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { getCoverUrl } from '$lib/utils/errorHandling';
 	import { api } from '$lib/api/client';
+	import { SearchV3Api } from '$lib/queries/search/SearchV3Api';
+	import { toV1Album } from '$lib/queries/search/SearchV3Adapters';
 	import type { YouTubeLink, Album } from '$lib/types';
 	import { X } from 'lucide-svelte';
 
@@ -68,10 +70,10 @@
 		searching = true;
 		searchTimeout = setTimeout(async () => {
 			try {
-				const data = await api.global.get<{ results?: Album[] }>(
-					API.search.albums(searchQuery.trim())
+				const data = await api.global.v3.GET(
+					SearchV3Api.bucket('albums', searchQuery.trim(), 50, 0)
 				);
-				searchResults = data.results ?? [];
+				searchResults = data.results.map(toV1Album);
 			} catch {
 				// Ignore errors
 			} finally {

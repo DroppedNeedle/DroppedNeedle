@@ -26,11 +26,6 @@ interface NextSourceResponse {
 	started?: boolean;
 }
 
-interface ReimportDownloadResponse {
-	status: string;
-	error_message?: string | null;
-}
-
 interface RetryDownloadResponse {
 	started?: boolean;
 }
@@ -576,41 +571,10 @@ interface ReimportInput {
 	release_group_mbid?: string | null;
 }
 
-export function reimportDownload() {
-	return createMutation(() => ({
-		mutationFn: (input: ReimportInput) =>
-			api.global.post<ReimportDownloadResponse>(API.downloads.reimport(input.id), {}),
-		onSuccess: (data: ReimportDownloadResponse, input: ReimportInput) => {
-			if (data.status === 'completed') {
-				toastStore.show({ message: 'Import complete', type: 'success' });
-			} else if (data.status === 'partial') {
-				toastStore.show({
-					message: 'Imported what was found, some files still missing',
-					type: 'info'
-				});
-			} else {
-				toastStore.show({
-					message: data.error_message ?? "Couldn't find the files on the downloads mount yet",
-					type: 'error'
-				});
-			}
-			void invalidateTasks();
-			// A completed/partial reimport writes files into the library; refresh the album
-			// so its page/badge don't show stale data (the persister survives reloads).
-			if (data.status === 'completed' || data.status === 'partial') {
-				invalidateAlbum(input.release_group_mbid);
-			}
-		},
-		onError: (err: unknown) =>
-			toastStore.show({ message: errorMessage(err, 'Failed to reimport download'), type: 'error' })
-	}));
-}
-
-// v3 admin reimport: the task goes back in line with its picked candidate
+// Admin reimport: the task goes back in line with its picked candidate
 // kept, so the worker checks the downloads mount again without
-// re-searching. The request history card calls this; the card's
-// onreimported callback refreshes its own list.
-export function reimportDownloadV3() {
+// re-searching.
+export function reimportDownload() {
 	return createMutation(() => ({
 		mutationFn: (input: ReimportInput) =>
 			api.global.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.reimport(input.id)),
