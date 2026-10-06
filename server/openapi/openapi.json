@@ -17076,6 +17076,536 @@
         }
       }
     },
+    "/api/v3/youtube/generate": {
+      "post": {
+        "tags": [
+          "crate::reads::youtube::handlers"
+        ],
+        "summary": "Find and save a full-album video. A saved one answers without a search.",
+        "operationId": "generate_link",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/YouTubeLinkGenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved link and today's budget",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YouTubeLinkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "YouTube had no video for the album",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Today's search budget is spent (RATE_LIMITED)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "YouTube failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "YouTube search is not set up (NOT_CONFIGURED)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/youtube/generate-track": {
+      "post": {
+        "tags": [
+          "crate::reads::youtube::handlers"
+        ],
+        "summary": "Find and save one track's video. A saved one answers without a search.",
+        "operationId": "generate_track_link",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/YouTubeTrackLinkGenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved track link and today's budget",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YouTubeTrackLinkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "YouTube had no video for the track",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Today's search budget is spent (RATE_LIMITED)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "YouTube failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "YouTube search is not set up (NOT_CONFIGURED)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/youtube/generate-tracks": {
+      "post": {
+        "tags": [
+          "crate::reads::youtube::handlers"
+        ],
+        "summary": "Find and save videos for many tracks. Tracks YouTube has nothing for,\nor that could not be searched, come back under `failed`.",
+        "operationId": "generate_track_links",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/YouTubeTrackLinkBatchGenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved track links, failures and today's budget",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YouTubeTrackLinkBatchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request body or too many tracks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/youtube/link/{album_id}": {
+      "get": {
+        "tags": [
+          "crate::reads::youtube::handlers"
+        ],
+        "summary": "One album's saved link. 204 when there is none.",
+        "operationId": "get_link",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Saved link",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YouTubeLink"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No link saved for the album"
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "crate::reads::youtube::handlers"
+        ],
+        "summary": "Edit a saved link: video, names or cover.",
+        "operationId": "update_link",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/YouTubeLinkUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Edited link",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YouTubeLink"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad body or not a YouTube URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "No link saved for the album",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "crate::reads::youtube::handlers"
+        ],
+        "summary": "Remove an album link and its track links.",
+        "operationId": "delete_link",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed, or nothing was saved"
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/youtube/links": {
+      "get": {
+        "tags": [
+          "crate::reads::youtube::handlers"
+        ],
+        "summary": "Every saved album link, newest first.",
+        "operationId": "list_links",
+        "responses": {
+          "200": {
+            "description": "Saved links",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/YouTubeLink"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/youtube/manual": {
+      "post": {
+        "tags": [
+          "crate::reads::youtube::handlers"
+        ],
+        "summary": "Save a video a person pasted, for a known album or a made-up one.",
+        "operationId": "save_manual_link",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/YouTubeManualLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved link",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YouTubeLink"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad body or not a YouTube URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/youtube/quota": {
+      "get": {
+        "tags": [
+          "crate::reads::youtube::handlers"
+        ],
+        "summary": "Today's YouTube search budget. A zero budget while search is off.",
+        "operationId": "get_quota",
+        "responses": {
+          "200": {
+            "description": "Today's budget",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YouTubeQuotaStatus"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/youtube/track-link/{album_id}/{disc_number}/{track_number}": {
+      "delete": {
+        "tags": [
+          "crate::reads::youtube::handlers"
+        ],
+        "summary": "Remove one track link.",
+        "operationId": "delete_track_link",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "disc_number",
+            "in": "path",
+            "description": "Disc number",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "track_number",
+            "in": "path",
+            "description": "Track position on its disc",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed, or nothing was saved"
+          },
+          "400": {
+            "description": "Disc or track is not a number",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/youtube/track-links/{album_id}": {
+      "get": {
+        "tags": [
+          "crate::reads::youtube::handlers"
+        ],
+        "summary": "One album's track links, in disc then track order.",
+        "operationId": "list_track_links",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Saved track links",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/YouTubeTrackLink"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "tags": [
@@ -40406,6 +40936,185 @@
           }
         }
       },
+      "YouTubeLink": {
+        "type": "object",
+        "description": "A saved album entry. It holds a full-album video, track videos, or both:\nan entry created by track generation alone has no `video_id`.",
+        "required": [
+          "album_id",
+          "album_name",
+          "artist_name",
+          "created_at",
+          "is_manual",
+          "track_count"
+        ],
+        "properties": {
+          "album_id": {
+            "type": "string",
+            "description": "Album id (a release-group MBID, or `manual-...` for hand-made links)."
+          },
+          "album_name": {
+            "type": "string",
+            "description": "Album title."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Artist name."
+          },
+          "cover_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cover image URL, when known."
+          },
+          "created_at": {
+            "type": "string",
+            "description": "When the link was saved (ISO-8601, UTC)."
+          },
+          "embed_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Embed URL for the full-album video, when one is saved."
+          },
+          "is_manual": {
+            "type": "boolean",
+            "description": "True when a person pasted the video rather than search finding it."
+          },
+          "track_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many track videos the album has."
+          },
+          "video_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Full-album video id, when one is saved."
+          }
+        }
+      },
+      "YouTubeLinkGenerateRequest": {
+        "type": "object",
+        "description": "Body for `POST /youtube/generate`.",
+        "required": [
+          "artist_name",
+          "album_name",
+          "album_id"
+        ],
+        "properties": {
+          "album_id": {
+            "type": "string",
+            "description": "Album id the link is saved under."
+          },
+          "album_name": {
+            "type": "string",
+            "description": "Album title to search for."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Artist name to search for."
+          },
+          "cover_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cover image URL to show with the link."
+          }
+        }
+      },
+      "YouTubeLinkResponse": {
+        "type": "object",
+        "description": "Answer of `POST /youtube/generate`.",
+        "required": [
+          "link",
+          "quota"
+        ],
+        "properties": {
+          "link": {
+            "$ref": "#/components/schemas/YouTubeLink",
+            "description": "The saved (or already saved) album link."
+          },
+          "quota": {
+            "$ref": "#/components/schemas/YouTubeQuotaStatus",
+            "description": "Search budget after the call."
+          }
+        }
+      },
+      "YouTubeLinkUpdateRequest": {
+        "type": "object",
+        "description": "Body for `PUT /youtube/link/{album_id}`. Fields left out keep their\nsaved value; `cover_url: null` clears the cover.",
+        "properties": {
+          "album_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New album title."
+          },
+          "artist_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New artist name."
+          },
+          "cover_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New cover URL; `null` clears it, leaving it out keeps it."
+          },
+          "youtube_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New YouTube URL or video id."
+          }
+        }
+      },
+      "YouTubeManualLinkRequest": {
+        "type": "object",
+        "description": "Body for `POST /youtube/manual`.",
+        "required": [
+          "album_name",
+          "artist_name",
+          "youtube_url"
+        ],
+        "properties": {
+          "album_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Album id to save under. Left out, a `manual-...` id is made up."
+          },
+          "album_name": {
+            "type": "string",
+            "description": "Album title."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Artist name."
+          },
+          "cover_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cover image URL."
+          },
+          "youtube_url": {
+            "type": "string",
+            "description": "A YouTube URL or a bare 11-character video id."
+          }
+        }
+      },
       "YouTubeQuotaResponse": {
         "type": "object",
         "description": "YouTube data-API quota state.",
@@ -40429,6 +41138,37 @@
             "type": "integer",
             "format": "int64",
             "description": "Quota units spent in the current window."
+          }
+        }
+      },
+      "YouTubeQuotaStatus": {
+        "type": "object",
+        "description": "Today's YouTube search budget.",
+        "required": [
+          "used",
+          "limit",
+          "remaining",
+          "date"
+        ],
+        "properties": {
+          "date": {
+            "type": "string",
+            "description": "UTC date the numbers belong to, YYYY-MM-DD."
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Daily budget."
+          },
+          "remaining": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Searches left today, never negative."
+          },
+          "used": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Searches spent today."
           }
         }
       },
@@ -40460,6 +41200,246 @@
               "null"
             ],
             "description": "Resolved video id, when found."
+          }
+        }
+      },
+      "YouTubeTrackInput": {
+        "type": "object",
+        "description": "One track in a batch generation.",
+        "required": [
+          "track_name",
+          "track_number"
+        ],
+        "properties": {
+          "disc_number": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Disc number, 1 when left out."
+          },
+          "track_name": {
+            "type": "string",
+            "description": "Track title to search for."
+          },
+          "track_number": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Track position on its disc."
+          }
+        }
+      },
+      "YouTubeTrackLink": {
+        "type": "object",
+        "description": "A saved video for one track.",
+        "required": [
+          "album_id",
+          "album_name",
+          "disc_number",
+          "track_number",
+          "track_name",
+          "video_id",
+          "artist_name",
+          "embed_url",
+          "created_at"
+        ],
+        "properties": {
+          "album_id": {
+            "type": "string",
+            "description": "Album id the track belongs to."
+          },
+          "album_name": {
+            "type": "string",
+            "description": "Album title."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Artist name."
+          },
+          "created_at": {
+            "type": "string",
+            "description": "When the link was saved (ISO-8601, UTC)."
+          },
+          "disc_number": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Disc number, 1 for single-disc albums."
+          },
+          "embed_url": {
+            "type": "string",
+            "description": "Embed URL for the video."
+          },
+          "track_name": {
+            "type": "string",
+            "description": "Track title."
+          },
+          "track_number": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Track position on its disc."
+          },
+          "video_id": {
+            "type": "string",
+            "description": "Video id."
+          }
+        }
+      },
+      "YouTubeTrackLinkBatchGenerateRequest": {
+        "type": "object",
+        "description": "Body for `POST /youtube/generate-tracks`.",
+        "required": [
+          "album_id",
+          "album_name",
+          "artist_name",
+          "tracks"
+        ],
+        "properties": {
+          "album_id": {
+            "type": "string",
+            "description": "Album id the tracks belong to."
+          },
+          "album_name": {
+            "type": "string",
+            "description": "Album title."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Artist name to search for."
+          },
+          "cover_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cover image URL for the album entry."
+          },
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/YouTubeTrackInput"
+            },
+            "description": "Tracks to find videos for."
+          }
+        }
+      },
+      "YouTubeTrackLinkBatchResponse": {
+        "type": "object",
+        "description": "Answer of `POST /youtube/generate-tracks`.",
+        "required": [
+          "track_links",
+          "failed",
+          "quota"
+        ],
+        "properties": {
+          "failed": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/YouTubeTrackLinkFailure"
+            },
+            "description": "Tracks without a video."
+          },
+          "quota": {
+            "$ref": "#/components/schemas/YouTubeQuotaStatus",
+            "description": "Search budget after the call."
+          },
+          "track_links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/YouTubeTrackLink"
+            },
+            "description": "Saved links, including tracks that already had one."
+          }
+        }
+      },
+      "YouTubeTrackLinkFailure": {
+        "type": "object",
+        "description": "A track the batch could not find a video for.",
+        "required": [
+          "disc_number",
+          "track_number",
+          "track_name",
+          "reason"
+        ],
+        "properties": {
+          "disc_number": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Disc number."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why, in a sentence for the user."
+          },
+          "track_name": {
+            "type": "string",
+            "description": "Track title."
+          },
+          "track_number": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Track position on its disc."
+          }
+        }
+      },
+      "YouTubeTrackLinkGenerateRequest": {
+        "type": "object",
+        "description": "Body for `POST /youtube/generate-track`.",
+        "required": [
+          "album_id",
+          "album_name",
+          "artist_name",
+          "track_name",
+          "track_number"
+        ],
+        "properties": {
+          "album_id": {
+            "type": "string",
+            "description": "Album id the track belongs to."
+          },
+          "album_name": {
+            "type": "string",
+            "description": "Album title."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Artist name to search for."
+          },
+          "cover_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cover image URL for the album entry."
+          },
+          "disc_number": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Disc number, 1 when left out."
+          },
+          "track_name": {
+            "type": "string",
+            "description": "Track title to search for."
+          },
+          "track_number": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Track position on its disc."
+          }
+        }
+      },
+      "YouTubeTrackLinkResponse": {
+        "type": "object",
+        "description": "Answer of `POST /youtube/generate-track`.",
+        "required": [
+          "track_link",
+          "quota"
+        ],
+        "properties": {
+          "quota": {
+            "$ref": "#/components/schemas/YouTubeQuotaStatus",
+            "description": "Search budget after the call."
+          },
+          "track_link": {
+            "$ref": "#/components/schemas/YouTubeTrackLink",
+            "description": "The saved (or already saved) track link."
           }
         }
       }

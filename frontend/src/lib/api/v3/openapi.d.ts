@@ -7092,6 +7092,164 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/youtube/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Find and save a full-album video. A saved one answers without a search. */
+        post: operations["generate_link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/youtube/generate-track": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Find and save one track's video. A saved one answers without a search. */
+        post: operations["generate_track_link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/youtube/generate-tracks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Find and save videos for many tracks. Tracks YouTube has nothing for,
+         *     or that could not be searched, come back under `failed`.
+         */
+        post: operations["generate_track_links"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/youtube/link/{album_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One album's saved link. 204 when there is none. */
+        get: operations["get_link"];
+        /** Edit a saved link: video, names or cover. */
+        put: operations["update_link"];
+        post?: never;
+        /** Remove an album link and its track links. */
+        delete: operations["delete_link"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/youtube/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every saved album link, newest first. */
+        get: operations["list_links"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/youtube/manual": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Save a video a person pasted, for a known album or a made-up one. */
+        post: operations["save_manual_link"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/youtube/quota": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Today's YouTube search budget. A zero budget while search is off. */
+        get: operations["get_quota"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/youtube/track-link/{album_id}/{disc_number}/{track_number}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove one track link. */
+        delete: operations["delete_track_link"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/youtube/track-links/{album_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One album's track links, in disc then track order. */
+        get: operations["list_track_links"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -18137,6 +18295,78 @@ export interface components {
              */
             enabled: boolean;
         };
+        /**
+         * @description A saved album entry. It holds a full-album video, track videos, or both:
+         *     an entry created by track generation alone has no `video_id`.
+         */
+        YouTubeLink: {
+            /** @description Album id (a release-group MBID, or `manual-...` for hand-made links). */
+            album_id: string;
+            /** @description Album title. */
+            album_name: string;
+            /** @description Artist name. */
+            artist_name: string;
+            /** @description Cover image URL, when known. */
+            cover_url?: string | null;
+            /** @description When the link was saved (ISO-8601, UTC). */
+            created_at: string;
+            /** @description Embed URL for the full-album video, when one is saved. */
+            embed_url?: string | null;
+            /** @description True when a person pasted the video rather than search finding it. */
+            is_manual: boolean;
+            /**
+             * Format: int64
+             * @description How many track videos the album has.
+             */
+            track_count: number;
+            /** @description Full-album video id, when one is saved. */
+            video_id?: string | null;
+        };
+        /** @description Body for `POST /youtube/generate`. */
+        YouTubeLinkGenerateRequest: {
+            /** @description Album id the link is saved under. */
+            album_id: string;
+            /** @description Album title to search for. */
+            album_name: string;
+            /** @description Artist name to search for. */
+            artist_name: string;
+            /** @description Cover image URL to show with the link. */
+            cover_url?: string | null;
+        };
+        /** @description Answer of `POST /youtube/generate`. */
+        YouTubeLinkResponse: {
+            /** @description The saved (or already saved) album link. */
+            link: components["schemas"]["YouTubeLink"];
+            /** @description Search budget after the call. */
+            quota: components["schemas"]["YouTubeQuotaStatus"];
+        };
+        /**
+         * @description Body for `PUT /youtube/link/{album_id}`. Fields left out keep their
+         *     saved value; `cover_url: null` clears the cover.
+         */
+        YouTubeLinkUpdateRequest: {
+            /** @description New album title. */
+            album_name?: string | null;
+            /** @description New artist name. */
+            artist_name?: string | null;
+            /** @description New cover URL; `null` clears it, leaving it out keeps it. */
+            cover_url?: string | null;
+            /** @description New YouTube URL or video id. */
+            youtube_url?: string | null;
+        };
+        /** @description Body for `POST /youtube/manual`. */
+        YouTubeManualLinkRequest: {
+            /** @description Album id to save under. Left out, a `manual-...` id is made up. */
+            album_id?: string | null;
+            /** @description Album title. */
+            album_name: string;
+            /** @description Artist name. */
+            artist_name: string;
+            /** @description Cover image URL. */
+            cover_url?: string | null;
+            /** @description A YouTube URL or a bare 11-character video id. */
+            youtube_url: string;
+        };
         /** @description YouTube data-API quota state. */
         YouTubeQuotaResponse: {
             /**
@@ -18155,6 +18385,26 @@ export interface components {
              */
             used: number;
         };
+        /** @description Today's YouTube search budget. */
+        YouTubeQuotaStatus: {
+            /** @description UTC date the numbers belong to, YYYY-MM-DD. */
+            date: string;
+            /**
+             * Format: int64
+             * @description Daily budget.
+             */
+            limit: number;
+            /**
+             * Format: int64
+             * @description Searches left today, never negative.
+             */
+            remaining: number;
+            /**
+             * Format: int64
+             * @description Searches spent today.
+             */
+            used: number;
+        };
         /**
          * @description A resolved YouTube video. `error: "not_found"` means the search ran and
          *     found nothing; absence of both video and error never happens.
@@ -18168,6 +18418,117 @@ export interface components {
             error?: string | null;
             /** @description Resolved video id, when found. */
             video_id?: string | null;
+        };
+        /** @description One track in a batch generation. */
+        YouTubeTrackInput: {
+            /**
+             * Format: int64
+             * @description Disc number, 1 when left out.
+             */
+            disc_number?: number;
+            /** @description Track title to search for. */
+            track_name: string;
+            /**
+             * Format: int64
+             * @description Track position on its disc.
+             */
+            track_number: number;
+        };
+        /** @description A saved video for one track. */
+        YouTubeTrackLink: {
+            /** @description Album id the track belongs to. */
+            album_id: string;
+            /** @description Album title. */
+            album_name: string;
+            /** @description Artist name. */
+            artist_name: string;
+            /** @description When the link was saved (ISO-8601, UTC). */
+            created_at: string;
+            /**
+             * Format: int64
+             * @description Disc number, 1 for single-disc albums.
+             */
+            disc_number: number;
+            /** @description Embed URL for the video. */
+            embed_url: string;
+            /** @description Track title. */
+            track_name: string;
+            /**
+             * Format: int64
+             * @description Track position on its disc.
+             */
+            track_number: number;
+            /** @description Video id. */
+            video_id: string;
+        };
+        /** @description Body for `POST /youtube/generate-tracks`. */
+        YouTubeTrackLinkBatchGenerateRequest: {
+            /** @description Album id the tracks belong to. */
+            album_id: string;
+            /** @description Album title. */
+            album_name: string;
+            /** @description Artist name to search for. */
+            artist_name: string;
+            /** @description Cover image URL for the album entry. */
+            cover_url?: string | null;
+            /** @description Tracks to find videos for. */
+            tracks: components["schemas"]["YouTubeTrackInput"][];
+        };
+        /** @description Answer of `POST /youtube/generate-tracks`. */
+        YouTubeTrackLinkBatchResponse: {
+            /** @description Tracks without a video. */
+            failed: components["schemas"]["YouTubeTrackLinkFailure"][];
+            /** @description Search budget after the call. */
+            quota: components["schemas"]["YouTubeQuotaStatus"];
+            /** @description Saved links, including tracks that already had one. */
+            track_links: components["schemas"]["YouTubeTrackLink"][];
+        };
+        /** @description A track the batch could not find a video for. */
+        YouTubeTrackLinkFailure: {
+            /**
+             * Format: int64
+             * @description Disc number.
+             */
+            disc_number: number;
+            /** @description Why, in a sentence for the user. */
+            reason: string;
+            /** @description Track title. */
+            track_name: string;
+            /**
+             * Format: int64
+             * @description Track position on its disc.
+             */
+            track_number: number;
+        };
+        /** @description Body for `POST /youtube/generate-track`. */
+        YouTubeTrackLinkGenerateRequest: {
+            /** @description Album id the track belongs to. */
+            album_id: string;
+            /** @description Album title. */
+            album_name: string;
+            /** @description Artist name to search for. */
+            artist_name: string;
+            /** @description Cover image URL for the album entry. */
+            cover_url?: string | null;
+            /**
+             * Format: int64
+             * @description Disc number, 1 when left out.
+             */
+            disc_number?: number;
+            /** @description Track title to search for. */
+            track_name: string;
+            /**
+             * Format: int64
+             * @description Track position on its disc.
+             */
+            track_number: number;
+        };
+        /** @description Answer of `POST /youtube/generate-track`. */
+        YouTubeTrackLinkResponse: {
+            /** @description Search budget after the call. */
+            quota: components["schemas"]["YouTubeQuotaStatus"];
+            /** @description The saved (or already saved) track link. */
+            track_link: components["schemas"]["YouTubeTrackLink"];
         };
     };
     responses: never;
@@ -33527,6 +33888,480 @@ export interface operations {
                 };
             };
             /** @description Invalid or missing wrapped API key */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    generate_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["YouTubeLinkGenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description Saved link and today's budget */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["YouTubeLinkResponse"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description YouTube had no video for the album */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Today's search budget is spent (RATE_LIMITED) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description YouTube failed */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description YouTube search is not set up (NOT_CONFIGURED) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    generate_track_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["YouTubeTrackLinkGenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description Saved track link and today's budget */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["YouTubeTrackLinkResponse"];
+                };
+            };
+            /** @description Bad request body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description YouTube had no video for the track */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Today's search budget is spent (RATE_LIMITED) */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description YouTube failed */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description YouTube search is not set up (NOT_CONFIGURED) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    generate_track_links: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["YouTubeTrackLinkBatchGenerateRequest"];
+            };
+        };
+        responses: {
+            /** @description Saved track links, failures and today's budget */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["YouTubeTrackLinkBatchResponse"];
+                };
+            };
+            /** @description Bad request body or too many tracks */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Saved link */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["YouTubeLink"];
+                };
+            };
+            /** @description No link saved for the album */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    update_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["YouTubeLinkUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Edited link */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["YouTubeLink"];
+                };
+            };
+            /** @description Bad body or not a YouTube URL */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No link saved for the album */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    delete_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed, or nothing was saved */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_links: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Saved links */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["YouTubeLink"][];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    save_manual_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["YouTubeManualLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Saved link */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["YouTubeLink"];
+                };
+            };
+            /** @description Bad body or not a YouTube URL */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_quota: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Today's budget */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["YouTubeQuotaStatus"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    delete_track_link: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Album id */
+                album_id: string;
+                /** @description Disc number */
+                disc_number: number;
+                /** @description Track position on its disc */
+                track_number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed, or nothing was saved */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Disc or track is not a number */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_track_links: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Saved track links */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["YouTubeTrackLink"][];
+                };
+            };
+            /** @description Not authenticated */
             401: {
                 headers: {
                     [name: string]: unknown;

@@ -21,6 +21,7 @@ pub mod enrichment;
 pub mod library;
 pub mod platform;
 pub mod search;
+pub mod youtube;
 
 use std::sync::Arc;
 
@@ -51,6 +52,9 @@ pub struct ReadsSetup {
     pub catalog: Option<catalog::CatalogDeps>,
     /// Covers/version/wrapped states.
     pub platform: platform::PlatformState,
+    /// Saved YouTube links. Unwired until [`ReadsSetup::with_collections`]
+    /// hands over the database.
+    pub youtube: youtube::YouTubeLinks,
 }
 
 impl ReadsSetup {
@@ -82,6 +86,7 @@ impl ReadsSetup {
             ids.clone(),
         );
         let platform = platform_state(pool, &users, inputs);
+        let youtube = unwired_youtube(&discover, ids.clone());
         let library_db = library::sqlite::LibraryDb::new(pool);
         let catalog: Arc<dyn library::stores::LibraryCatalog> =
             Arc::new(library::sqlite::SqliteCatalog::new(&library_db));
@@ -126,6 +131,7 @@ impl ReadsSetup {
             collections: collections::CollectionsState::unwired(),
             catalog: None,
             platform,
+            youtube,
         }
     }
 
@@ -136,7 +142,9 @@ impl ReadsSetup {
     pub fn for_tests(users: UsersDeps, ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
         let pool = sqlx::SqlitePool::connect_lazy("sqlite::memory:")
             .map_err(|error| format!("test reads pool: {error}"))?;
+        let discover = test_discover_deps(ids.clone());
         Ok(Self {
+            youtube: unwired_youtube(&discover, ids.clone()),
             library: library::LibraryDeps {
                 catalog: Arc::new(library::memory::MemoryCatalog::new()),
                 favorites: Arc::new(library::memory::MemoryFavorites::new()),
@@ -152,7 +160,7 @@ impl ReadsSetup {
                 Arc::new(search::ports::UnconfiguredEnrichment),
                 ids.clone(),
             ),
-            discover: test_discover_deps(ids.clone()),
+            discover,
             collections: collections::CollectionsState::unwired(),
             catalog: None,
             platform: test_platform_state(),
@@ -167,9 +175,13 @@ impl ReadsSetup {
         self
     }
 
-    /// Serve collections from this database (pool plus writer lane).
+    /// Serve collections and saved YouTube links from this database (pool
+    /// plus writer lane).
     #[must_use]
     pub fn with_collections(mut self, db: collections::db::CollectionsDb) -> Self {
+        self.youtube = self
+            .youtube
+            .with_store(youtube::store::LinkStore::new(db.clone()));
         self.collections = collections::CollectionsState::new(db);
         self
     }
@@ -200,7 +212,8 @@ impl ReadsSetup {
             .merge(library::library_router(self.library.clone()))
             .merge(discover::reads_router(self.discover.clone()))
             .merge(collections)
-            .merge(platform::session_router(&self.platform));
+            .merge(platform::session_router(&self.platform))
+            .merge(youtube::router(self.youtube.clone()));
         match &self.catalog {
             Some(deps) => router.merge(catalog::router(deps.clone())),
             None => router,
@@ -238,6 +251,19 @@ fn upgrade_policy_source(
                 library::stores::UpgradePolicy::default()
             }
         },
+    )
+}
+
+/// YouTube links with no database yet, searching through discover's
+/// YouTube client so both spend from one daily budget.
+fn unwired_youtube(
+    discover: &discover::ReadsDeps,
+    ids: Arc<dyn IdGenerator>,
+) -> youtube::YouTubeLinks {
+    youtube::YouTubeLinks::new(
+        youtube::store::LinkStore::new(collections::db::CollectionsDb::unwired()),
+        discover.youtube.clone(),
+        ids,
     )
 }
 
