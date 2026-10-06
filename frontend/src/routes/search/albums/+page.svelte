@@ -18,7 +18,7 @@
 	} from '$lib/queries/search/SearchV3Queries.svelte';
 	import { SearchEnrichCollector } from '$lib/queries/search/SearchV3Enrichment.svelte';
 	import {
-		dedupeAlbums,
+		dedupeByMbid,
 		toSearchRemoteStatus,
 		toV1Album
 	} from '$lib/queries/search/SearchV3Adapters';
@@ -58,12 +58,17 @@
 
 	// pages can repeat a release group, and the grid is keyed on its id
 	let baseAlbums = $derived(
-		dedupeAlbums(
+		dedupeByMbid(
 			[...pages.entries()].sort(([left], [right]) => left - right).flatMap(([, page]) => page.items)
 		)
 	);
 	let albums = $derived(enrichment ? applyAlbumEnrichment(baseAlbums, enrichment) : baseAlbums);
 	let topAlbum = $derived(pages.get(0)?.top ?? null);
+
+	// ids differ in case between MusicBrainz and library rows
+	function sameMbid(album: Album, top: Album | null): boolean {
+		return album.musicbrainz_id.toLowerCase() === top?.musicbrainz_id.toLowerCase();
+	}
 	let remoteStatus: SearchRemoteStatus = $derived(
 		pageQuery.isError ? 'error' : (pages.get(0)?.status ?? 'ok')
 	);
@@ -225,7 +230,7 @@
 			<div
 				class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
 			>
-				{#each topAlbum ? albums.filter((a) => a.musicbrainz_id !== topAlbum?.musicbrainz_id) : albums as album (album.musicbrainz_id)}
+				{#each topAlbum ? albums.filter((a) => !sameMbid(a, topAlbum)) : albums as album (album.musicbrainz_id)}
 					<AlbumCard
 						{album}
 						{enrichmentSource}

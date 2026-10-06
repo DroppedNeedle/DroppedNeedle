@@ -40,22 +40,24 @@ export function toV1Album(row: SearchResultItemV3): Album {
 }
 
 /**
- * One card per release group. Album lists are keyed on `musicbrainz_id`, and
- * the search join can return the same group twice (a MusicBrainz row and the
- * library copy). The first position wins; the row with a library id is kept,
- * so the card can link to the copy.
+ * One row per MusicBrainz id. Album grids and the typeahead are keyed on
+ * `musicbrainz_id`, and the search join can return the same release group
+ * twice (a MusicBrainz row and the library copy). The first position wins;
+ * the row with a library id is kept, so it can link to the copy.
  */
-export function dedupeAlbums(albums: Album[]): Album[] {
-	const out: Album[] = [];
+export function dedupeByMbid<T extends { musicbrainz_id: string; local_id?: string | null }>(
+	rows: T[]
+): T[] {
+	const out: T[] = [];
 	const positions = new Map<string, number>();
-	for (const album of albums) {
-		const key = album.musicbrainz_id.toLowerCase();
+	for (const row of rows) {
+		const key = row.musicbrainz_id.toLowerCase();
 		const at = positions.get(key);
 		if (at === undefined) {
 			positions.set(key, out.length);
-			out.push(album);
-		} else if (!out[at].local_id && album.local_id) {
-			out[at] = album;
+			out.push(row);
+		} else if (!out[at].local_id && row.local_id) {
+			out[at] = row;
 		}
 	}
 	return out;
@@ -67,7 +69,7 @@ export function dedupeAlbums(albums: Album[]): Album[] {
  * out rather than offered under a local id.
  */
 export function toMusicBrainzAlbums(rows: SearchResultItemV3[]): Album[] {
-	return dedupeAlbums(rows.filter((row) => !!row.musicbrainz_id).map(toV1Album));
+	return dedupeByMbid(rows.filter((row) => !!row.musicbrainz_id).map(toV1Album));
 }
 
 // The v3 contract mirrors the v1 status values exactly, so statuses pass
@@ -97,5 +99,6 @@ export function toSuggestResultsV1(rows: SuggestResultV3[]): SuggestResult[] {
 			local_id: row.id ?? null
 		});
 	}
-	return out;
+	// the dropdown is keyed on musicbrainz_id
+	return dedupeByMbid(out);
 }
