@@ -397,8 +397,10 @@ impl LibrarySetup {
     /// Startup recovery: publish reconcile (resume-or-compensate,
     /// never half-apply) plus contribution lease recovery. Scan
     /// recovery runs in the supervisor preamble. Re-running after a
-    /// clean shutdown is a no-op.
-    pub async fn run_recovery(&self) -> Result<LibraryRecovery, String> {
+    /// clean shutdown is a no-op. Never fails boot: a publish journal
+    /// that cannot be reconciled is logged and left for an
+    /// administrator, and managed writes stay closed until it clears.
+    pub async fn run_recovery(&self) -> LibraryRecovery {
         let registry = self.live_registry();
         // Startup is uncontended, so the guards cost nothing; taken
         // first so reconcile can never race a scan.
@@ -409,7 +411,10 @@ impl LibrarySetup {
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             cell.refresh(&registry, &self.root_dirs)
-                .map_err(|error| format!("publish recovery: {error}"))?
+                .unwrap_or_else(|error| {
+                    tracing::error!(%error, "publish recovery did not run; managed writes stay closed");
+                    Vec::new()
+                })
         };
         let requeued = {
             use super::identify::stores::QueueStore as _;
@@ -419,13 +424,13 @@ impl LibrarySetup {
             tracing::info!(requeued, "identify jobs from the previous run requeued");
         }
         let recovered = self.contrib_worker.recover(now_unix()).await;
-        Ok(LibraryRecovery {
+        LibraryRecovery {
             publish_recoveries: recoveries
                 .into_iter()
                 .map(|recovery| (recovery.bundle_id, format!("{:?}", recovery.action)))
                 .collect(),
             contrib_recovered: recovered,
-        })
+        }
     }
 
     /// Spawn the library background loops over one shutdown watch.

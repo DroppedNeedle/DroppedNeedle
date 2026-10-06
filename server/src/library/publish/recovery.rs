@@ -40,6 +40,9 @@ pub enum RecoveryAction {
     CleanupFinished,
     /// Evidence was ambiguous; the bundle needs an administrator.
     NeedsAttention(String),
+    /// This pass failed on the bundle (an unsafe path, a file operation);
+    /// it stays as it was for the next pass.
+    Deferred(String),
     /// Nothing left to do; all journals already terminal.
     Noop,
 }
@@ -68,7 +71,12 @@ pub fn startup_gate(conn: &Connection) -> Result<(), PublishError> {
 
 /// Reconcile every bundle with nonterminal journals, in bundle-id
 /// order. Runs at startup after schema ratchets and before scan,
-/// import, acquisition, or operation workers.
+/// import, acquisition, or operation workers. One bundle never stops
+/// the others: a bundle naming a root that is no longer a usable library
+/// root (removed or excluded) moves to `needs_attention`, and a bundle
+/// this pass fails on (an unsafe path, a file operation) is logged and
+/// left for the next pass. Only the startup gate or an unreadable
+/// journal fails the pass.
 pub fn reconcile<C: Catalog>(
     conn: &mut Connection,
     sandbox: &Sandbox,
@@ -78,10 +86,39 @@ pub fn reconcile<C: Catalog>(
     let bundles = JournalStore::new(conn).active_bundles()?;
     let mut results = Vec::new();
     for bundle_id in bundles {
-        let action = reconcile_bundle(conn, sandbox, catalog, &bundle_id)?;
+        let journals = JournalStore::new(conn).bundle(&bundle_id)?;
+        let action = if let Some(root) = unusable_root(sandbox, &journals) {
+            tracing::warn!(bundle_id, root, "publish bundle names an unusable root");
+            flag_attention(conn, &journals)?;
+            RecoveryAction::NeedsAttention(format!(
+                "bundle {bundle_id} names root {root}, which is not a usable library root"
+            ))
+        } else {
+            match reconcile_bundle(conn, sandbox, catalog, &bundle_id) {
+                Ok(action) => action,
+                Err(error) => {
+                    tracing::warn!(bundle_id, %error, "publish bundle left for the next recovery pass");
+                    RecoveryAction::Deferred(error.to_string())
+                }
+            }
+        };
         results.push(BundleRecovery { bundle_id, action });
     }
     Ok(results)
+}
+
+/// The first root a bundle's active journals name that the sandbox does
+/// not hold.
+fn unusable_root(sandbox: &Sandbox, journals: &[FileJournal]) -> Option<String> {
+    journals
+        .iter()
+        .filter(|journal| !journal.state.is_terminal())
+        .flat_map(|journal| {
+            std::iter::once(journal.dest_root.as_str())
+                .chain(journal.source.as_ref().map(|(root, _)| root.as_str()))
+        })
+        .find(|root| sandbox.root_dir(root).is_err())
+        .map(str::to_owned)
 }
 
 /// Reconcile one bundle.

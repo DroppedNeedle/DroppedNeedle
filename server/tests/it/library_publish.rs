@@ -1245,8 +1245,11 @@ fn committed_dest_swapped_for_symlink_refuses_without_touching_target() {
     std::os::unix::fs::symlink(&canary, &dest).unwrap();
 
     let mut conn = open_db(&fix);
-    let err = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap_err();
-    assert!(matches!(err, PublishError::UnsafePath(_)), "got {err:?}");
+    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    assert!(
+        matches!(&results[0].action, publish::RecoveryAction::Deferred(reason) if reason.contains("symlink")),
+        "got {results:?}"
+    );
     assert_eq!(std::fs::read(&canary).unwrap(), b"canary");
     let source = fix.sandbox.resolve("music", "staging/a.flac").unwrap();
     assert!(source.is_file(), "source was cleaned through a symlink");

@@ -832,10 +832,7 @@ async fn library_journey_retag_apply_baseline_restore() {
 #[tokio::test]
 async fn library_loops_start_and_stop() {
     let lib = Lib::open("loops").await;
-    lib.library
-        .run_recovery()
-        .await
-        .expect("recovery runs clean");
+    lib.library.run_recovery().await;
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let loops = lib.library.spawn_loops(shutdown_rx);
     assert_eq!(loops.len(), 5);
@@ -946,10 +943,17 @@ async fn library_roots_survive_a_restart() {
 fn bare_library(tag: &str) -> (ScratchDir, LibrarySetup, PathBuf) {
     let scratch = ScratchDir::new(tag);
     let dir = scratch.to_path_buf();
-    let db_path = dir.join("app.db");
-    let connection = droppedneedle::db::open_connection(&db_path).expect("scratch db opens");
+    let connection =
+        droppedneedle::db::open_connection(&dir.join("app.db")).expect("scratch db opens");
     droppedneedle::schema::apply_migrations_blocking(&connection).expect("migrations apply");
     drop(connection);
+    let library = open_library(&dir);
+    (scratch, library, dir.join("music"))
+}
+
+/// A library bundle over the database and settings in `dir`, as a
+/// restart would build it.
+fn open_library(dir: &Path) -> LibrarySetup {
     let config = Arc::new(
         ConfigStore::open(
             &dir.join("config.json"),
@@ -957,16 +961,15 @@ fn bare_library(tag: &str) -> (ScratchDir, LibrarySetup, PathBuf) {
         )
         .expect("config opens"),
     );
-    let library = LibrarySetup::for_tests_at(
+    LibrarySetup::for_tests_at(
         droppedneedle::auth::wiring::AuthSetup::for_tests()
             .expect("test auth builds")
             .users,
         Arc::new(UuidGenerator) as Arc<dyn IdGenerator>,
-        &db_path,
+        &dir.join("app.db"),
         config,
     )
-    .expect("bundle builds");
-    (scratch, library, dir.join("music"))
+    .expect("bundle builds")
 }
 
 /// Add `music` as the only root and scan it.
@@ -1162,6 +1165,41 @@ async fn failed_approval_leaves_the_review_pending() {
     );
 }
 
+/// A publish journal that recovery cannot reconcile (its root was
+/// removed) never stops boot: recovery finishes and flags the bundle.
+#[tokio::test]
+async fn unrecoverable_journal_needs_attention() {
+    let (scratch, first, music) = bare_library("lib-journal-gone");
+    plant(&music, "album/01.flac", "flac_full_01.flac");
+    add_music_root(&first, &music).await;
+    first
+        .scan_store
+        .execute_batch_for_tests(
+            "INSERT INTO library_publish_journal (id, bundle_id, kind, source_root, \
+             source_rel, dest_root, dest_rel, staged, staged_sha256, state) \
+             VALUES ('j-1', 'bundle-1', 'audio', 'removed', 'a/01.flac', 'removed', \
+             'b/01.flac', '/nowhere/.staged', 'abc', 'cleanup_pending');",
+        )
+        .expect("journal seed");
+    drop(first);
+
+    let library = open_library(&scratch);
+    let recovery = library.run_recovery().await;
+
+    assert_eq!(recovery.publish_recoveries.len(), 1);
+    assert_eq!(
+        library
+            .scan_store
+            .query_i64_for_tests(
+                "SELECT COUNT(*) FROM library_publish_journal \
+                 WHERE id = 'j-1' AND state = 'needs_attention'"
+            )
+            .expect("state reads"),
+        1,
+        "the bundle waits for an administrator"
+    );
+}
+
 /// Identification state is durable: a job the scan queued survives a
 /// restart, and a curator's approval stays a manual identity after the
 /// next one.
@@ -1216,7 +1254,7 @@ async fn identification_survives_restarts() {
 
     // The scan-queued job is still there after a restart.
     let second = bundle();
-    second.run_recovery().await.expect("recovery runs");
+    second.run_recovery().await;
     second
         .test_providers
         .as_ref()

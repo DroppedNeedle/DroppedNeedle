@@ -262,10 +262,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
     );
     // Publish journal reconciliation and contribution lease recovery; scan
     // recovery runs when the scan supervisor starts.
-    let library_recovery = library
-        .run_recovery()
-        .await
-        .map_err(stage("library recovery"))?;
+    let library_recovery = library.run_recovery().await;
     tracing::info!(
         publish_bundles = library_recovery.publish_recoveries.len(),
         contrib_recovered = library_recovery.contrib_recovered,
