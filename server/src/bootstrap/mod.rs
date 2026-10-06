@@ -312,6 +312,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         Ok(loaded) => tracing::info!(loaded, "quota overrides reloaded"),
         Err(error) => tracing::warn!(%error, "quota overrides failed to reload; defaults apply"),
     }
+    let concerts = crate::concerts::ConcertsSetup::from_runtime(&runtime, &http, &config_store);
     // The one registry every background job registers on.
     let jobs = JobsSetup::build(
         auth.users.clone(),
@@ -325,7 +326,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
             http: http.shared().clone(),
             pool: Some(runtime.pool().clone()),
         },
-        crate::concerts::ConcertsSetup::from_runtime(&runtime, &http, &config_store),
+        concerts.sweep(),
     );
     let admin = admin.with_precache(jobs.precache_trigger());
     let effects: Arc<dyn SaveEffects> = Arc::new(LiveSaveEffects::new(
@@ -415,6 +416,7 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         settings,
         jobs.clone(),
         plugins,
+        concerts,
     );
     let router = create_app_with_web(state, web);
     Ok((

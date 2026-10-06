@@ -239,20 +239,20 @@ impl E2e {
             .parent()
             .map(|parent| parent.join("backups"))
             .unwrap_or_else(std::env::temp_dir);
+        let jobs = droppedneedle::jobs::wiring::JobsSetup::for_tests(auth.users.clone());
         // Concerts over the scratch database; the sources point at the
         // discard port so no row can reach a real provider.
-        let jobs = droppedneedle::jobs::wiring::JobsSetup::for_tests(auth.users.clone())
-            .with_concerts(droppedneedle::concerts::ConcertsSetup::new(
-                self.runtime.pool().clone(),
-                self.runtime.lane().clone(),
-                self.http.shared().clone(),
-                Arc::clone(&self.store),
-                droppedneedle::concerts::Endpoints {
-                    ticketmaster: "http://127.0.0.1:9".to_owned(),
-                    skiddle: "http://127.0.0.1:9".to_owned(),
-                    geocoding: "http://127.0.0.1:9".to_owned(),
-                },
-            ));
+        let concerts = droppedneedle::concerts::ConcertsSetup::new(
+            self.runtime.pool().clone(),
+            self.runtime.lane().clone(),
+            self.http.shared().clone(),
+            Arc::clone(&self.store),
+            droppedneedle::concerts::Endpoints {
+                ticketmaster: "http://127.0.0.1:9".to_owned(),
+                skiddle: "http://127.0.0.1:9".to_owned(),
+                geocoding: "http://127.0.0.1:9".to_owned(),
+            },
+        );
         let admin = droppedneedle::admin::AdminSetup::new(
             auth.users.clone(),
             acquire.requests.quota.clone(),
@@ -305,6 +305,7 @@ impl E2e {
             settings,
             jobs,
             plugins,
+            concerts,
         );
         create_app(state)
     }

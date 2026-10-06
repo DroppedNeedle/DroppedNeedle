@@ -247,6 +247,7 @@ impl Lib {
             settings,
             jobs,
             plugins,
+            droppedneedle::concerts::ConcertsSetup::unwired(),
         );
         create_app(state)
     }

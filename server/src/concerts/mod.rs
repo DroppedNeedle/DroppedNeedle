@@ -42,9 +42,16 @@ pub use service::ConcertsService;
 pub use sources::Endpoints;
 pub use sweep::ConcertsSweep;
 
-/// The routes plus the sweep, built once at boot.
+/// The concerts bundle on `AppState`: the routes plus the sweep the jobs
+/// bundle runs. Test states without a database carry an unwired bundle
+/// that mounts no routes and has no sweep.
 #[derive(Clone)]
 pub struct ConcertsSetup {
+    live: Option<Live>,
+}
+
+#[derive(Clone)]
+struct Live {
     store: store::ConcertsStore,
     config: Arc<ConfigStore>,
     sources: Arc<sources::Sources>,
@@ -78,37 +85,56 @@ impl ConcertsSetup {
         endpoints: Endpoints,
     ) -> Self {
         Self {
-            store: store::ConcertsStore::new(pool, lane),
-            config,
-            sources: Arc::new(sources::Sources::new(http, endpoints)),
-            events: Arc::new(NoEventStream),
+            live: Some(Live {
+                store: store::ConcertsStore::new(pool, lane),
+                config,
+                sources: Arc::new(sources::Sources::new(http, endpoints)),
+                events: Arc::new(NoEventStream),
+            }),
         }
+    }
+
+    /// No database: no routes, no sweep.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn unwired() -> Self {
+        Self { live: None }
     }
 
     /// Send `concerts_new` events to `events`.
     #[must_use]
     pub fn with_events(mut self, events: Arc<dyn ConcertsEvents>) -> Self {
-        self.events = events;
+        if let Some(live) = &mut self.live {
+            live.events = events;
+        }
         self
     }
 
-    /// The sweep the events watcher and the settings kick run.
-    pub fn sweep(&self) -> ConcertsSweep {
-        ConcertsSweep::new(
-            self.store.clone(),
-            Arc::clone(&self.config),
-            Arc::clone(&self.sources),
-            Arc::clone(&self.events),
-        )
+    /// The sweep the events watcher and the settings kick run; `None` when
+    /// unwired.
+    pub fn sweep(&self) -> Option<ConcertsSweep> {
+        self.live.as_ref().map(|live| {
+            ConcertsSweep::new(
+                live.store.clone(),
+                Arc::clone(&live.config),
+                Arc::clone(&live.sources),
+                Arc::clone(&live.events),
+            )
+        })
     }
 
-    /// The six concerts routes. Mounted inside the session gate.
+    /// The six concerts routes, mounted inside the session gate. Empty
+    /// when unwired.
     pub fn gated_router(&self) -> Router {
-        handlers::router(ConcertsService::new(
-            self.store.clone(),
-            Arc::clone(&self.config),
-            Arc::clone(&self.sources),
-        ))
+        self.live
+            .as_ref()
+            .map(|live| {
+                handlers::router(ConcertsService::new(
+                    live.store.clone(),
+                    Arc::clone(&live.config),
+                    Arc::clone(&live.sources),
+                ))
+            })
+            .unwrap_or_default()
     }
 }
 

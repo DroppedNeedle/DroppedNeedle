@@ -211,6 +211,7 @@ impl E2e {
             settings,
             jobs,
             plugins,
+            droppedneedle::concerts::ConcertsSetup::unwired(),
         );
         (create_app(state), acquire)
     }

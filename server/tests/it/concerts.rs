@@ -223,7 +223,7 @@ async fn sweep_fills_feed_and_routes_narrow_it_to_saved_cities() {
         transport: Transport::Bearer,
     }));
     let stop = tokio::sync::Notify::new();
-    let sweep = setup.sweep().without_delay();
+    let sweep = setup.sweep().expect("wired concerts sweep").without_delay();
 
     let (_, first) = sweep.run(None, &stop).await.unwrap();
     assert_eq!(

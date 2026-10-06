@@ -81,6 +81,7 @@ pub fn hooked_state() -> AppState {
         settings,
         jobs,
         plugins,
+        droppedneedle::concerts::ConcertsSetup::unwired(),
     )
 }
 
@@ -131,6 +132,7 @@ pub fn hooked_state_with_compat(subsonic: bool, jellyfin: bool) -> AppState {
         settings,
         jobs,
         plugins,
+        droppedneedle::concerts::ConcertsSetup::unwired(),
     )
 }
 
@@ -180,6 +182,7 @@ pub fn prod_like_state() -> AppState {
         settings,
         jobs,
         plugins,
+        droppedneedle::concerts::ConcertsSetup::unwired(),
     )
 }
 

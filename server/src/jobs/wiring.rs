@@ -11,13 +11,10 @@
 //! restarts); test states bind [`MemoryRegistryStore`] behind the same
 //! [`StoreKind`] seam so the setup type stays concrete. Loop backends are
 //! real where they exist (checkpoint passes, the now-playing feed and its
-//! upstream session pollers, the Navidrome playlist export, the concerts
-//! sweep) and no-ops where their services do not exist yet (the personal
-//! mixer); each interim adapter says what is missing.
-//!
-//! The concerts bundle rides here because its sweep is the events watcher
-//! loop and the settings kick; its routes mount through
-//! [`JobsSetup::concerts_router`].
+//! upstream session pollers, the Navidrome playlist export, events
+//! settings reads, the concerts sweep) and no-ops where their services do
+//! not exist yet (the personal mixer); each interim adapter says what is
+//! missing.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,7 +22,7 @@ use std::time::Duration;
 use axum::Router;
 
 use crate::auth::users::{UsersDeps, roles::Role};
-use crate::concerts::ConcertsSetup;
+use crate::concerts::ConcertsSweep;
 use crate::db::{CheckpointService, DurableWorkWakeups, WriteLane};
 use crate::jobs::checkpoint::{self, CheckpointRunner};
 use crate::jobs::events_kick::{self, EventsKick, FnKick, KickOutcome};
@@ -275,7 +272,7 @@ pub struct JobsSetup {
     playlist: PlaylistSyncState<NavidromeSyncSettings, M3uPlaylistExporter>,
     presence: (RegistryFeed, RemoteSessionPollers),
     poll_time: EventsPollTime,
-    concerts: Option<ConcertsSetup>,
+    watcher: Option<ConcertsSweep>,
     config: Option<Arc<ConfigStore>>,
 }
 
@@ -283,7 +280,7 @@ impl JobsSetup {
     /// Bind the production backends: durable rows, live checkpoint passes,
     /// settings reads over the shared store, the route's admin gate over
     /// the user store, the media feeds (presence, playlist export), and the
-    /// concerts sweep and routes.
+    /// concerts sweep (`None` only on states without concerts).
     pub fn build(
         users: UsersDeps,
         wakeups: DurableWorkWakeups,
@@ -291,7 +288,7 @@ impl JobsSetup {
         checkpoint: CheckpointService,
         config: Arc<ConfigStore>,
         media: MediaJobs,
-        concerts: ConcertsSetup,
+        watcher: Option<ConcertsSweep>,
     ) -> Self {
         Self {
             registry: JobRegistry::new(StoreKind::Durable(DurableRegistryStore::new(
@@ -311,7 +308,7 @@ impl JobsSetup {
             poll_time: EventsPollTime {
                 store: Some(Arc::clone(&config)),
             },
-            concerts: Some(concerts),
+            watcher,
             config: Some(config),
         }
     }
@@ -333,31 +330,9 @@ impl JobsSetup {
             },
             presence: (media.feed(), media.pollers()),
             poll_time: EventsPollTime { store: None },
-            concerts: None,
+            watcher: None,
             config: None,
         }
-    }
-
-    /// Mount concerts over a test database (route and sweep tests).
-    #[cfg(any(test, feature = "test-support"))]
-    #[must_use]
-    pub fn with_concerts(mut self, concerts: ConcertsSetup) -> Self {
-        self.concerts = Some(concerts);
-        self
-    }
-
-    /// The concerts routes, empty on states without concerts. Mounts
-    /// inside the session gate.
-    pub fn concerts_router(&self) -> Router {
-        self.concerts
-            .as_ref()
-            .map(ConcertsSetup::gated_router)
-            .unwrap_or_default()
-    }
-
-    /// The concerts sweep, or `None` on states without concerts.
-    fn watcher(&self) -> Option<crate::concerts::ConcertsSweep> {
-        self.concerts.as_ref().map(ConcertsSetup::sweep)
     }
 
     /// The shared registry. The plugins bundle takes a clone so tick loops
@@ -388,7 +363,7 @@ impl JobsSetup {
     /// Overlapping kicks collapse (the sweep is idempotent).
     pub fn events_kick(&self) -> Arc<dyn EventsKick> {
         let registry = self.registry.clone();
-        let watcher = self.watcher();
+        let watcher = self.watcher.clone();
         Arc::new(FnKick {
             kick_fn: move || {
                 let registry = registry.clone();
@@ -438,7 +413,7 @@ impl JobsSetup {
         .map_err(|_| format!("{} is already running", playlist_sync::JOB_NAME))?;
         events_watcher::spawn_on(
             &self.registry,
-            self.watcher(),
+            self.watcher.clone(),
             self.poll_time.clone(),
             SystemWatchClock,
         )

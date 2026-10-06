@@ -8,10 +8,10 @@ use std::sync::Arc;
 
 use crate::{
     acquire::AcquireSetup, admin::AdminSetup, auth::wiring::AuthSetup, compat::CompatSetup,
-    config::AppConfig, http_client::HttpClientFactory, ids::IdGenerator, jobs::wiring::JobsSetup,
-    library::wiring::LibrarySetup, media::MediaSetup, plugins::wiring::PluginsSetup,
-    provider_policy::ProviderPolicy, providers::Providers, reads::ReadsSetup,
-    settings::wiring::SettingsSetup,
+    concerts::ConcertsSetup, config::AppConfig, http_client::HttpClientFactory, ids::IdGenerator,
+    jobs::wiring::JobsSetup, library::wiring::LibrarySetup, media::MediaSetup,
+    plugins::wiring::PluginsSetup, provider_policy::ProviderPolicy, providers::Providers,
+    reads::ReadsSetup, settings::wiring::SettingsSetup,
 };
 
 /// All long-lived server dependencies.
@@ -47,6 +47,8 @@ pub struct AppState {
     pub jobs: JobsSetup,
     /// Plugins: host, routes, scrobble backend, ticks.
     pub plugins: PluginsSetup,
+    /// Concerts: the feed routes (the jobs bundle runs the sweep).
+    pub concerts: ConcertsSetup,
 }
 
 impl AppState {
@@ -68,6 +70,7 @@ impl AppState {
         settings: SettingsSetup,
         jobs: JobsSetup,
         plugins: PluginsSetup,
+        concerts: ConcertsSetup,
     ) -> Self {
         Self {
             ids,
@@ -84,6 +87,7 @@ impl AppState {
             settings,
             jobs,
             plugins,
+            concerts,
         }
     }
 

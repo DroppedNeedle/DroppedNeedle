@@ -113,7 +113,7 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
                 .merge(state.settings.gated_router())
                 .merge(state.settings.me_router())
                 .merge(state.jobs.settings_router())
-                .merge(state.jobs.concerts_router()),
+                .merge(state.concerts.gated_router()),
         )
         .merge(state.reads.search_router())
         .layer(middleware::from_fn_with_state(
