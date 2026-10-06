@@ -8,6 +8,8 @@ export interface EventHandlerDeps {
 	getAlbum: () => AlbumBasicInfo | null;
 	setAlbum: (a: AlbumBasicInfo | null) => void;
 	getAlbumId: () => string;
+	/** The edition the page shows, which a request fetches. */
+	getSelectedRelease?: () => string | null;
 	albumBasicCacheSet: (data: AlbumBasicInfo, key: string) => void;
 	setTrackLinks: (tl: YouTubeTrackLink[]) => void;
 	getTrackLinks: () => YouTubeTrackLink[];
@@ -58,7 +60,8 @@ export function createEventHandlers(deps: EventHandlerDeps) {
 					artist_name: album.artist_name ?? undefined,
 					album_title: album.title,
 					year: album.year ?? undefined,
-					artist_mbid: album.artist_id
+					artist_mbid: album.artist_id,
+					release_mbid: deps.getSelectedRelease?.() ?? null
 				})
 				.catch(() => null);
 			const current = deps.getAlbum();

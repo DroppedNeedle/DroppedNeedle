@@ -695,6 +695,7 @@ export function createAlbumPageState(albumIdGetter: () => string) {
 		getAlbum: () => album,
 		setAlbum: (a) => (album = a),
 		getAlbumId: albumIdGetter,
+		getSelectedRelease: () => tracksInfo?.selected_release_mbid ?? null,
 		albumBasicCacheSet: (data, key) => albumBasicCache.set(data, key),
 		setTrackLinks: (tl) => (trackLinks = tl),
 		getTrackLinks: () => trackLinks,

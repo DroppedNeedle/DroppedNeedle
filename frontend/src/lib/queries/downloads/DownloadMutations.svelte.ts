@@ -36,6 +36,8 @@ interface AlbumRequestInput {
 	album_title?: string | null;
 	year?: number | null;
 	artist_mbid?: string | null;
+	/** The edition to fetch; omitted, the library's chosen edition is fetched. */
+	release_mbid?: string | null;
 	monitor_artist?: boolean;
 	auto_download_artist?: boolean;
 }
@@ -85,6 +87,7 @@ export function requestAlbum() {
 					album: input.album_title ?? null,
 					year: input.year ?? null,
 					artist_mbid: input.artist_mbid ?? null,
+					release_mbid: input.release_mbid ?? null,
 					...(input.monitor_artist || input.auto_download_artist
 						? {
 								monitor_artist: input.monitor_artist === true,
