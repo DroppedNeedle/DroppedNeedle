@@ -98,10 +98,15 @@ it('includes the authenticated user in every editions query key', () => {
 	expect(queryA.enabled).toBe(true);
 });
 
-it('pins by group on v3 and refreshes the group and album for the initiating user', async () => {
+it('pins by group on v3 and refreshes the group and its one copy', async () => {
 	const pin = setEditionPin() as unknown as EditionMutationOptions;
 	const clear = clearEditionPin() as unknown as EditionMutationOptions;
-	const pinVariables = { userId: 'user-a', mbid: 'release-group', releaseMbid: 'release' };
+	const pinVariables = {
+		userId: 'user-a',
+		mbid: 'release-group',
+		releaseMbid: 'release',
+		localId: 'local-1'
+	};
 	const clearVariables = { userId: 'user-b', mbid: 'release-group' };
 
 	await pin.mutationFn(pinVariables);
@@ -116,7 +121,8 @@ it('pins by group on v3 and refreshes the group and album for the initiating use
 	const invalidated = h.invalidate.mock.calls.map(([arg]) => arg.queryKey);
 	expect(invalidated).toContainEqual(editionsKey('user-a', 'release-group'));
 	expect(invalidated).toContainEqual(editionsKey('user-b', 'release-group'));
-	expect(invalidated).toContainEqual(['library', 'album', 'release-group']);
+	expect(invalidated).toContainEqual(['library', 'catalog', 'user-a', 'edition-pin', 'local-1']);
+	expect(invalidated).toContainEqual(['library', 'catalog', 'user-a', 'album-detail', 'local-1']);
 	expect(h.removeTracks).toHaveBeenCalledWith('release-group');
 	expect(h.removeBasic).toHaveBeenCalledWith('release-group');
 });

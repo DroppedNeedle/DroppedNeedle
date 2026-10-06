@@ -234,22 +234,28 @@
 		// the DaisyUI dropdown is focus-driven: blur the trigger so the menu
 		// closes on selection instead of hanging over the refreshed page
 		(document.activeElement as HTMLElement | null)?.blur();
+		// the group pin lands on the library's one copy, when there is exactly one
+		const copyIds = localCopies.flatMap((copy) => (copy.id ? [copy.id] : []));
+		const localId = copyIds.length === 1 ? copyIds[0] : undefined;
 		try {
 			if (releaseMbid === null) {
 				await clearPinMutation.mutateAsync({
 					mbid: editionsMbid,
-					userId: authStore.user?.id
+					userId: authStore.user?.id,
+					localId
 				});
 				toastStore.show({ message: 'Edition back to automatic.', type: 'success' });
 			} else {
 				await pinMutation.mutateAsync({
 					mbid: editionsMbid,
 					releaseMbid,
-					userId: authStore.user?.id
+					userId: authStore.user?.id,
+					localId
 				});
 				toastStore.show({ message: 'Edition pinned.', type: 'success' });
 			}
-			onrefresh(); // the pin changes the served tracklist - refetch the page
+			// the pin changes the served tracklist: reload the page and its library status
+			onrefresh();
 		} catch (e) {
 			// Per-album pins need a known library-local id: with no addressable
 			// copies (unowned RG) the RG route stays authoritative and the

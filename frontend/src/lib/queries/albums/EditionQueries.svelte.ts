@@ -42,25 +42,23 @@ export const getAlbumEditionsQuery = (
 	}));
 
 /**
- * A pin changes which release the group serves: its edition list, the album
- * page's tracklist and header, the library status and the purchase links.
- * Both pin routes (by group and by library copy) refresh all of them.
+ * A pin changes which release the group serves. This marks the group's
+ * edition list and purchase links stale and drops the album page's cached
+ * header and tracklist; with a copy id it also refreshes that copy's pin and
+ * library album detail. It does not wait for the refetches, and it leaves the
+ * library status and the album page reload to the page's own refresh.
  */
 function invalidatePinScope(variables: {
 	userId: EditionUserId;
 	rgMbid: string;
 	localId?: string;
-}) {
+}): void {
 	const { userId, rgMbid, localId } = variables;
 	const keys: (readonly unknown[])[] = [];
 	if (rgMbid) {
 		albumBasicCache.remove(rgMbid);
 		albumTracksCache.remove(rgMbid);
-		keys.push(
-			editionsKey(userId, rgMbid),
-			LibraryQueryKeyFactory.album(rgMbid),
-			purchaseOptionsKey(rgMbid)
-		);
+		keys.push(editionsKey(userId, rgMbid), purchaseOptionsKey(rgMbid));
 	}
 	if (localId) {
 		keys.push(
@@ -68,25 +66,31 @@ function invalidatePinScope(variables: {
 			LibraryQueryKeyFactory.catalog.albumDetail(userId, localId)
 		);
 	}
-	return Promise.all(keys.map((queryKey) => invalidateQueriesWithPersister({ queryKey })));
+	for (const queryKey of keys) void invalidateQueriesWithPersister({ queryKey });
 }
 
+// The group pin lands on the library's one copy of the group (the server
+// answers 404 with none and 409 with several); pass that copy's id when the
+// caller knows it, so the copy's own pin and detail refresh too.
 type EditionPinVariables = {
 	userId: EditionUserId;
 	mbid: string;
 	releaseMbid: string;
+	localId?: string;
 };
 
 type EditionClearVariables = {
 	userId: EditionUserId;
 	mbid: string;
+	localId?: string;
 };
 
 export function setEditionPin() {
 	return createMutation(() => ({
 		mutationFn: ({ mbid, releaseMbid }: EditionPinVariables) =>
 			api.global.v3.PUT(CATALOG_ENDPOINTS.editionPin(mbid), { release_mbid: releaseMbid }),
-		onSuccess: (_d, { userId, mbid }) => invalidatePinScope({ userId, rgMbid: mbid })
+		onSuccess: (_d, { userId, mbid, localId }) =>
+			invalidatePinScope({ userId, rgMbid: mbid, localId })
 	}));
 }
 
@@ -94,7 +98,8 @@ export function clearEditionPin() {
 	return createMutation(() => ({
 		mutationFn: ({ mbid }: EditionClearVariables) =>
 			api.global.v3.DELETE(CATALOG_ENDPOINTS.editionPin(mbid)),
-		onSuccess: (_d, { userId, mbid }) => invalidatePinScope({ userId, rgMbid: mbid })
+		onSuccess: (_d, { userId, mbid, localId }) =>
+			invalidatePinScope({ userId, rgMbid: mbid, localId })
 	}));
 }
 
