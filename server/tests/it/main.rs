@@ -77,6 +77,7 @@ mod reads_enrichment;
 mod reads_library;
 mod reads_platform;
 mod reads_search;
+mod reads_youtube;
 mod remotes_adapter;
 mod settings_library_policy;
 mod settings_management;
