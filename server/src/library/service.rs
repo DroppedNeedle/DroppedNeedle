@@ -203,12 +203,9 @@ impl LibrarySetup {
             .ok_or_else(|| ServiceError::internal(&"identify job not recorded"))
     }
 
-    /// Publish bundles recovery left for a later pass.
-    pub fn held_publish_bundles(&self) -> Vec<String> {
-        self.held_bundles
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
+    /// Unsettled publish bundles in the journal. Blocking.
+    pub fn held_publish_bundles(&self) -> Result<Vec<String>, ServiceError> {
+        self.held_bundles.list().map_err(publish_error)
     }
 
     /// Pending reviews for one album, oldest first.

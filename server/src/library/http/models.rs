@@ -37,10 +37,10 @@ pub struct RootsResponse {
     pub enabled: bool,
     /// Opaque policy revision running scans checkpoint against.
     pub policy_revision: String,
-    /// Managed-write bundles recovery could not finish yet (their root is
-    /// gone or excluded, or a file operation failed). The background
-    /// maintenance retries them; their tracks take no new managed writes
-    /// until then.
+    /// Managed-write bundles not yet settled: cleanup still pending, or
+    /// recovery could not finish (their root is gone or excluded, a file
+    /// operation failed). The background maintenance retries them; their
+    /// tracks take no new managed writes until then.
     pub held_publish_bundles: Vec<String>,
 }
 

@@ -167,6 +167,10 @@ pub async fn list_roots(
     State(state): State<LibrarySetup>,
     _caller: Principal,
 ) -> Result<Json<RootsResponse>, LibraryError> {
+    let held = {
+        let state = state.clone();
+        blocking(move || state.held_publish_bundles()).await??
+    };
     let registry = state.live_registry();
     Ok(Json(RootsResponse {
         roots: registry
@@ -180,7 +184,7 @@ pub async fn list_roots(
             .collect(),
         enabled: registry.enabled(),
         policy_revision: registry.policy_revision().to_owned(),
-        held_publish_bundles: state.held_publish_bundles(),
+        held_publish_bundles: held,
     }))
 }
 

@@ -2,10 +2,10 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use super::adapters::FsSpaceProbe;
 use super::clock::today_day;
+use super::publish::journal::JournalStore;
 use super::publish::planner::{
     Capability, CollisionGate, DiskPreflight, FileFingerprint, PlanBundle, PlanItem, PlanKind,
     ReleaseIdentity, SealRecheck, SealedPreview,
@@ -63,47 +63,54 @@ pub(crate) struct OpenPublish {
 pub struct PublishCell {
     db_path: PathBuf,
     pub(crate) cell: Option<OpenPublish>,
-    /// Bundles the last reconcile pass left as they were. Shared so the
-    /// status read never waits on a publish holding the cell.
-    held: HeldBundles,
 }
 
-/// Bundle ids recovery could not settle yet, newest pass wins.
-pub type HeldBundles = Arc<std::sync::Mutex<Vec<String>>>;
+/// Unsettled publish bundles as the journal records them: anything not
+/// cleaned, compensated, or flagged for an administrator. Reads its own
+/// connection, so a status read never waits on a publish holding the cell.
+#[derive(Clone)]
+pub struct HeldBundles {
+    db_path: PathBuf,
+}
 
-impl PublishCell {
-    /// An unopened cell over the application database at `db_path`,
-    /// reporting held bundles into `held`.
-    pub(crate) fn new(db_path: &Path, held: HeldBundles) -> Self {
+impl HeldBundles {
+    pub(crate) fn new(db_path: &Path) -> Self {
         Self {
             db_path: db_path.to_owned(),
-            cell: None,
-            held,
         }
     }
 
-    /// Remember which bundles a full reconcile pass left as they were.
-    fn note(&self, recoveries: &[super::publish::recovery::BundleRecovery]) {
-        let deferred = recoveries
-            .iter()
-            .filter(|recovery| {
-                matches!(recovery.action, super::publish::RecoveryAction::Deferred(_))
-            })
-            .map(|recovery| recovery.bundle_id.clone())
-            .collect();
-        *self
-            .held
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = deferred;
+    /// Bundle ids with unsettled journals. Blocking.
+    pub fn list(&self) -> Result<Vec<String>, PublishError> {
+        let conn = crate::db::open_connection(&self.db_path)
+            .map_err(|error| PublishError::Store(error.to_string()))?;
+        JournalStore::new(&conn).active_bundles()
+    }
+}
+
+impl PublishCell {
+    /// An unopened cell over the application database at `db_path`.
+    pub(crate) fn new(db_path: &Path) -> Self {
+        Self {
+            db_path: db_path.to_owned(),
+            cell: None,
+        }
     }
 
-    /// True while some bundle waits for a later recovery pass.
+    /// True while the journal holds an unsettled bundle (cleanup still
+    /// pending, a deferred recovery, a compensation that did not finish).
+    /// The cell lock keeps any publish out, so none of them is in flight.
     pub(crate) fn has_held(&self) -> bool {
-        !self
-            .held
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .is_empty()
+        let Some(open) = self.cell.as_ref() else {
+            return false;
+        };
+        match JournalStore::new(open.publisher.connection()).active_bundles() {
+            Ok(bundles) => !bundles.is_empty(),
+            Err(error) => {
+                tracing::warn!(%error, "publish journal unreadable; no retry this tick");
+                false
+            }
+        }
     }
 
     /// Reconcile again under the open sandbox: the maintenance tick's
@@ -116,10 +123,7 @@ impl PublishCell {
         };
         let mut conn = crate::db::open_connection(&self.db_path)
             .map_err(|error| PublishError::Store(error.to_string()))?;
-        let recoveries =
-            super::publish::recovery::reconcile(&mut conn, &open.sandbox, &SqliteCatalog)?;
-        self.note(&recoveries);
-        Ok(recoveries)
+        super::publish::recovery::reconcile(&mut conn, &open.sandbox, &SqliteCatalog)
     }
 
     fn root_dirs(registry: &RootRegistry) -> Vec<super::publish::paths::Root> {
@@ -162,7 +166,6 @@ impl PublishCell {
                 .map_err(|error| PublishError::Store(error.to_string()))?;
             super::publish::recovery::reconcile(&mut conn, &sandbox, &SqliteCatalog)?
         };
-        self.note(&recoveries);
         let publisher = Publisher::open(
             sandbox.clone(),
             &self.db_path,
@@ -730,7 +733,7 @@ impl LibrarySetup {
                 message: format!("Bundle {bundle_id} holds no undoable snapshots"),
             });
         }
-        let journals = super::publish::journal::JournalStore::new(conn)
+        let journals = JournalStore::new(conn)
             .bundle(bundle_id)
             .map_err(publish_error)?;
         let blobs = BlobStore::new(conn);

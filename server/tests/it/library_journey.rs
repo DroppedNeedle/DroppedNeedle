@@ -1147,6 +1147,63 @@ async fn long_missing_album_is_not_taken_over() {
     assert_ne!(new_album, old_album, "a long-gone album is not reused");
 }
 
+/// A share that comes up empty (unmounted) while a copy of one of its
+/// files appears in another root: the guard holds the share back, so its
+/// tracks keep their ids and stay available, and the copy gets its own row.
+#[tokio::test]
+async fn unmounted_share_keeps_its_tracks() {
+    use droppedneedle::library::scan::{CatalogStore as _, EffectivePolicy};
+
+    let (scratch, library, local) = bare_library("lib-share-guard");
+    let share = scratch.join("share");
+    let shared = plant(&share, "album/01.flac", "flac_full_01.flac");
+    // Enough tracks for the mass-missing guard to apply.
+    for n in 2..=20 {
+        plant(&share, &format!("other/{n:02}.flac"), "flac_no_tags.flac");
+    }
+    std::fs::create_dir_all(&local).expect("local root");
+    for (id, path) in [("share", &share), ("local", &local)] {
+        library
+            .add_root(
+                Some(id.to_owned()),
+                path.to_string_lossy().into_owned(),
+                EffectivePolicy::Automatic,
+            )
+            .expect("root adds");
+    }
+    drain_scans(&library).await;
+    let track = library
+        .scan_store
+        .track_at("share", "album/01.flac")
+        .expect("share track indexed");
+
+    // The share goes dark; a copy of one of its files lands locally.
+    std::fs::remove_dir_all(&share).expect("unmount");
+    std::fs::create_dir_all(&share).expect("empty mount point");
+    plant(&local, "album/01.flac", "flac_full_01.flac");
+    assert!(!shared.exists());
+    rescan(&library).await;
+
+    assert_eq!(
+        library.scan_store.track_at("share", "album/01.flac"),
+        Some(track.clone()),
+        "the share's track keeps its id and stays available"
+    );
+    let copy = library
+        .scan_store
+        .track_at("local", "album/01.flac")
+        .expect("copy indexed");
+    assert_ne!(copy, track, "the copy gets its own row");
+    assert_eq!(
+        library
+            .scan_store
+            .query_i64_for_tests("SELECT COUNT(*) FROM local_tracks WHERE availability = 'missing'")
+            .expect("count reads"),
+        0,
+        "nothing is marked missing"
+    );
+}
+
 /// Retagging every track of an album to a new name keeps the album row,
 /// and with it the curator's identity.
 #[tokio::test]
@@ -1280,7 +1337,10 @@ async fn journal_on_a_removed_root_waits() {
 
     assert_eq!(recovery.publish_recoveries.len(), 1);
     assert!(recovery.publish_recoveries[0].1.starts_with("Deferred"));
-    assert_eq!(library.held_publish_bundles(), vec!["bundle-1".to_owned()]);
+    assert_eq!(
+        library.held_publish_bundles().expect("held reads"),
+        vec!["bundle-1".to_owned()]
+    );
     assert_eq!(
         library
             .scan_store
@@ -1293,7 +1353,10 @@ async fn journal_on_a_removed_root_waits() {
         "the bundle is left as it was"
     );
     library.publish_tick().expect("maintenance retries");
-    assert_eq!(library.held_publish_bundles(), vec!["bundle-1".to_owned()]);
+    assert_eq!(
+        library.held_publish_bundles().expect("held reads"),
+        vec!["bundle-1".to_owned()]
+    );
 }
 
 /// Identification state is durable: a job the scan queued survives a
