@@ -62,7 +62,7 @@ impl LibraryPolicyService {
         let settings = self.settings.clone();
         let task = tokio::task::spawn_blocking(move || {
             let stored = settings.get_masked::<TypedLibrary>()?;
-            op(stored.try_map(|library| library_policy::resolve(&library))?)
+            op(stored.map(|library| library_policy::resolve_stored(&library)))
         });
         match task.await {
             Ok(result) => result,

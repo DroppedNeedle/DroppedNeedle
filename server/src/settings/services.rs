@@ -277,7 +277,7 @@ impl SettingsService {
             let stored = store
                 .get_masked::<TypedLibrary>()
                 .map_err(|error| SettingsError::from_config(error, ids.as_ref()))?;
-            let resolved = stored.try_map(|library| library_policy::resolve(&library))?;
+            let resolved = stored.map(|library| library_policy::resolve_stored(&library));
             Ok(library_policy::settings_response(resolved))
         })
         .await

@@ -320,7 +320,7 @@ pub fn resolve(settings: &TypedLibrary) -> Result<ResolvedLibraryPolicy, Setting
 
 /// 409 unless `expected` is the stored settings' revision.
 pub fn check_revision(stored: &TypedLibrary, expected: &str) -> Result<(), SettingsError> {
-    if expected != revision(stored) {
+    if expected != resolve_stored(stored).policy_revision {
         return Err(SettingsError::StaleRevision {
             message: "Library settings changed since this page loaded. Refresh and retry."
                 .to_owned(),
@@ -343,6 +343,28 @@ pub fn guard_last_root(
         });
     }
     Ok(())
+}
+
+/// Normalize stored settings for reading. Settings that no longer pass
+/// validation (a hand edit, or a rule written before a check existed)
+/// still load: they come back as stored, revisioned as stored, with the
+/// validation message as a warning, so the page can show them and save a
+/// fix. [`check_revision`] compares against the same revision.
+pub fn resolve_stored(settings: &TypedLibrary) -> ResolvedLibraryPolicy {
+    match resolve(settings) {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            let message = match error {
+                SettingsError::InvalidInput { message } => message,
+                other => format!("{other:?}"),
+            };
+            ResolvedLibraryPolicy {
+                settings: settings.clone(),
+                warnings: vec![format!("Saved library settings need fixing: {message}")],
+                policy_revision: revision(settings),
+            }
+        }
+    }
 }
 
 /// Content revision over roots plus rules (enabled, staging, naming,
@@ -840,10 +862,11 @@ fn recovered_root_path(root: &CatalogRoot) -> Option<PathBuf> {
 }
 
 /// Roots the catalog holds rows for that the saved settings no longer
-/// list, with their recovered paths. A root whose recovered path equals,
-/// holds, or sits inside a configured root is left out: restoring it
-/// would fail the overlap check, and its files already belong to that
-/// root.
+/// list, with their recovered paths, sorted by id. A root whose recovered
+/// path equals, holds, or sits inside a configured root is left out:
+/// restoring it would fail the overlap check, and its files already
+/// belong to that root. Of two candidates that overlap each other, the
+/// one with more tracks is offered.
 pub fn restorable_roots(
     settings: &TypedLibrary,
     catalog: &[CatalogRoot],
@@ -858,22 +881,34 @@ pub fn restorable_roots(
         .iter()
         .filter_map(|root| clean_absolute(&root.path))
         .collect();
-    catalog
+    let mut candidates: Vec<(&CatalogRoot, PathBuf)> = catalog
         .iter()
         .filter(|root| !configured_ids.contains(root.root_id.as_str()))
-        .filter_map(|root| {
-            let path = recovered_root_path(root)?;
-            if configured_paths
+        .filter_map(|root| Some((root, recovered_root_path(root)?)))
+        .filter(|(_, path)| {
+            !configured_paths
                 .iter()
-                .any(|configured| paths_overlap(&path, configured))
-            {
-                return None;
-            }
-            Some(LibraryRestorableRoot {
-                root_id: root.root_id.clone(),
-                path: path.to_string_lossy().into_owned(),
-                indexed_file_count: root.track_count,
-            })
+                .any(|configured| paths_overlap(path, configured))
+        })
+        .collect();
+    candidates.sort_by(|(a, _), (b, _)| {
+        b.track_count
+            .cmp(&a.track_count)
+            .then_with(|| a.root_id.cmp(&b.root_id))
+    });
+    let mut accepted: Vec<(&CatalogRoot, PathBuf)> = Vec::new();
+    for (root, path) in candidates {
+        if !accepted.iter().any(|(_, kept)| paths_overlap(&path, kept)) {
+            accepted.push((root, path));
+        }
+    }
+    accepted.sort_by(|(a, _), (b, _)| a.root_id.cmp(&b.root_id));
+    accepted
+        .into_iter()
+        .map(|(root, path)| LibraryRestorableRoot {
+            root_id: root.root_id.clone(),
+            path: path.to_string_lossy().into_owned(),
+            indexed_file_count: root.track_count,
         })
         .collect()
 }
@@ -1022,12 +1057,12 @@ pub fn settings_response(resolved: Masked<ResolvedLibraryPolicy>) -> LibrarySett
 mod tests {
     use super::*;
 
-    fn catalog_root(id: &str, file: &str, relative: &str) -> CatalogRoot {
+    fn catalog_root(id: &str, file: &str, relative: &str, track_count: i64) -> CatalogRoot {
         CatalogRoot {
             root_id: id.to_owned(),
             sample_file_path: file.to_owned(),
             sample_relative_path: relative.to_owned(),
-            track_count: 1,
+            track_count,
         }
     }
 
@@ -1043,14 +1078,17 @@ mod tests {
             ..TypedLibrary::default()
         };
         let catalog = [
-            catalog_root("same", "/music/A/one.flac", "A/one.flac"),
-            catalog_root("inside", "/music/A/one.flac", "one.flac"),
-            catalog_root("holds", "/one.flac", "one.flac"),
-            catalog_root("apart", "/other/x/../B/two.flac", "B/two.flac"),
+            catalog_root("same", "/music/A/one.flac", "A/one.flac", 1),
+            catalog_root("inside", "/music/A/one.flac", "one.flac", 1),
+            catalog_root("holds", "/one.flac", "one.flac", 1),
+            catalog_root("apart", "/other/x/../B/two.flac", "B/two.flac", 3),
+            // Overlaps "apart" with fewer tracks: the bigger root wins.
+            catalog_root("nested", "/other/B/two.flac", "two.flac", 1),
         ];
         let offered = restorable_roots(&settings, &catalog);
         assert_eq!(offered.len(), 1);
         assert_eq!(offered[0].root_id, "apart");
         assert_eq!(offered[0].path, "/other");
+        assert!(offered.iter().all(|root| root.root_id != "nested"));
     }
 }

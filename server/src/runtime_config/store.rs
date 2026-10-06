@@ -24,7 +24,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, RwLock};
+use std::sync::{Mutex, MutexGuard, PoisonError, RwLock};
 
 use super::crypto::Crypto;
 use super::error::ConfigError;
@@ -195,10 +195,13 @@ impl ConfigStore {
         Ok(self.save_secret_locked(proposed)?)
     }
 
-    fn lock_secret_writes(&self) -> Result<std::sync::MutexGuard<'_, ()>, ConfigError> {
-        self.secret_writes
+    /// The lock guards no data, so a save that panicked while holding it
+    /// leaves nothing inconsistent: a poisoned lock is taken as is.
+    fn lock_secret_writes(&self) -> Result<MutexGuard<'_, ()>, ConfigError> {
+        Ok(self
+            .secret_writes
             .lock()
-            .map_err(|_| ConfigError::LockUnavailable("config secret writes"))
+            .unwrap_or_else(PoisonError::into_inner))
     }
 
     fn save_secret_locked<S: SecretSection>(&self, incoming: S) -> Result<Masked<S>, ConfigError> {
