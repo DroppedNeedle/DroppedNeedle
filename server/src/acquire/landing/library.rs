@@ -84,6 +84,30 @@ impl LandingLibrary for LibraryLanding {
         self.releases.release(mbid)
     }
 
+    fn edition_pin<'a>(&'a self, release_group_mbid: &'a str) -> BoxFuture<'a, Option<String>> {
+        Box::pin(async move {
+            let pinned = sqlx::query_scalar::<_, String>(
+                "SELECT p.release_mbid FROM library_album_release_pins p \
+                 JOIN local_albums b ON b.id = p.local_album_id \
+                   AND b.retired_into_album_id IS NULL \
+                 WHERE lower(p.release_group_mbid) = ?1 \
+                 ORDER BY p.set_at DESC LIMIT 1",
+            )
+            .bind(release_group_mbid.to_ascii_lowercase())
+            .fetch_optional(&self.pool)
+            .await;
+            match pinned {
+                Ok(pin) => pin
+                    .map(|pin| pin.trim().to_ascii_lowercase())
+                    .filter(|pin| !pin.is_empty()),
+                Err(error) => {
+                    tracing::warn!(%error, "edition pin unreadable; the request's edition is used");
+                    None
+                }
+            }
+        })
+    }
+
     fn owned<'a>(&'a self, release_group_mbid: &'a str) -> BoxFuture<'a, OwnedTracks> {
         Box::pin(async move {
             let mut owned = OwnedTracks::default();

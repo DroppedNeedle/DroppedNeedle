@@ -86,6 +86,11 @@ pub trait LandingLibrary: Send + Sync {
     /// One release with its tracklist.
     fn release<'a>(&'a self, mbid: &'a str) -> BoxFuture<'a, Result<Option<Release>, SourceError>>;
 
+    /// The edition the owner pinned for the library's copy of a release
+    /// group, if any. The landing honours it over the edition the request
+    /// carried: the pin is the album's remembered choice.
+    fn edition_pin<'a>(&'a self, release_group_mbid: &'a str) -> BoxFuture<'a, Option<String>>;
+
     /// Tracks the library already holds for a release group.
     fn owned<'a>(&'a self, release_group_mbid: &'a str) -> BoxFuture<'a, OwnedTracks>;
 

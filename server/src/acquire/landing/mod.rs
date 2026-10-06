@@ -237,6 +237,21 @@ impl LandingService {
         let mut target = target_for(task, &details, manifest);
         target.wait_for_files = patient;
         let library = self.library.get().cloned();
+        // The album's edition pin is the only acceptable release: matching,
+        // the missing positions and the pinned-edition check all use it.
+        if let Some(library) = &library
+            && !target.release_group_mbid.is_empty()
+            && let Some(pin) = library.edition_pin(&target.release_group_mbid).await
+        {
+            if target
+                .release_mbid
+                .as_deref()
+                .is_some_and(|asked| asked != pin)
+            {
+                tracing::info!(task_id = %task.id, %pin, "landing follows the album's edition pin");
+            }
+            target.release_mbid = Some(pin);
+        }
         let library_dirs = library
             .as_ref()
             .map(|library| library.library_dirs())
