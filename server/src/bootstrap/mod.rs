@@ -34,7 +34,11 @@ use crate::{
     providers::{InMemoryProviderCache, Providers, adapters::production_enrichment},
     reads::{
         ReadsSetup,
-        catalog::{Catalog, library::LocalCatalog, upstream::Upstream},
+        catalog::{
+            Catalog,
+            library::LocalCatalog,
+            upstream::{Upstream, instance_lastfm_key},
+        },
         collections::db::CollectionsDb,
         platform::wrapped::ConfigWrappedKey,
     },
@@ -181,7 +185,8 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
             providers.clone(),
             config_store.clone(),
             auth.users.clone(),
-        ),
+        )
+        .with_instance_lastfm_key(instance_lastfm_key(auth.users.lastfm_switch.clone())),
         LocalCatalog::new(runtime.pool().clone()),
     ));
     let connect_apps = match config_store.get::<ConnectApps>() {

@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use crate::auth::users::UsersDeps;
+use crate::auth::users::stores::LastFmSwitch;
 use crate::providers::adapters::{CorePacer, CoreSink, ReqwestGet};
 use crate::providers::audiodb::{self, AudioDbClient};
 use crate::providers::lastfm::{self, LastFmClient, LastFmCredentials};
@@ -136,9 +137,16 @@ pub struct Upstream {
 
 /// Reads the instance-wide Last.fm API key, per call. Last.fm reads use a
 /// user's own key first and fall back to this one; `None` means no
-/// instance key is saved. The default has none: the settings section that
-/// stores it plugs in here through [`Upstream::with_instance_lastfm_key`].
+/// instance key is saved. The default has none; boot plugs in
+/// [`instance_lastfm_key`] through [`Upstream::with_instance_lastfm_key`].
 pub type InstanceLastFmKey = Arc<dyn Fn() -> Option<String> + Send + Sync>;
+
+/// The API key the admin saved under Settings > Last.fm (the sealed
+/// `lastfm_settings` pair), read on every call through the same switch the
+/// scrobble forwarder uses, so a new key applies without a restart.
+pub fn instance_lastfm_key(switch: Arc<dyn LastFmSwitch>) -> InstanceLastFmKey {
+    Arc::new(move || switch.instance_keys().map(|keys| keys.api_key))
+}
 
 impl Upstream {
     /// Assemble from the shared HTTP clients and provider deps.
