@@ -305,6 +305,10 @@ async fn search3_sync_pages_are_stable_and_words_match_across_columns() {
         .await;
     assert!(found.contains("tr-trk-2"), "{found}");
     assert!(!found.contains("tr-trk-3"), "{found}");
+    let dashed = rig
+        .subsonic("search3", &[("query", "Portishead - Roads")])
+        .await;
+    assert!(dashed.contains("tr-trk-2"), "{dashed}");
 
     let jellyfin = rig.compat.jellyfin_state();
     let mut shuffled = Vec::new();

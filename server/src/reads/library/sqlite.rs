@@ -141,6 +141,8 @@ impl TextSearch {
         let short_words = crate::db::fold_text(raw)
             .split_whitespace()
             .filter(|word| word.chars().count() < 3)
+            // A lone "-" or "&" between words is punctuation, not a word.
+            .filter(|word| word.chars().any(char::is_alphanumeric))
             .map(like_pattern)
             .collect();
         Some(Self { fts, short_words })

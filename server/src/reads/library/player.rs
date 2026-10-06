@@ -681,43 +681,78 @@ fn shuffle_order(alias: &str, seed: u32) -> String {
 /// an hour are dropped once the map grows.
 #[derive(Debug, Default)]
 pub struct ShuffleSeeds {
-    seeds: Mutex<HashMap<String, (u32, std::time::Instant)>>,
+    seeds: Mutex<HashMap<SeedKey, (u32, std::time::Instant)>>,
 }
 
+/// Caller, list kind (`track`/`album`) and a hash of the filter.
+type SeedKey = (String, &'static str, u64);
+
 impl ShuffleSeeds {
-    /// Most lists remembered before idle ones are pruned.
-    const PRUNE_AT: usize = 1024;
+    /// Most lists remembered; past this the idle ones go, then the oldest.
+    const CAP: usize = 1024;
     /// Idle time after which a seed may be pruned.
     const IDLE: std::time::Duration = std::time::Duration::from_secs(3600);
 
     /// The seed for a random track list at `offset`.
     pub fn tracks(&self, caller: &str, query: &TrackQuery, offset: u64) -> u32 {
-        self.seed(&format!("{caller}\u{1f}track\u{1f}{query:?}"), offset)
+        self.seed(caller, "track", &format!("{query:?}"), offset)
     }
 
     /// The seed for a random album list at `offset`.
     pub fn albums(&self, caller: &str, query: &AlbumQuery, offset: u64) -> u32 {
-        self.seed(&format!("{caller}\u{1f}album\u{1f}{query:?}"), offset)
+        self.seed(caller, "album", &format!("{query:?}"), offset)
     }
 
-    fn seed(&self, key: &str, offset: u64) -> u32 {
+    fn seed(&self, caller: &str, kind: &'static str, filter: &str, offset: u64) -> u32 {
+        use std::hash::{Hash as _, Hasher as _};
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        filter.hash(&mut hasher);
+        let key = (caller.to_owned(), kind, hasher.finish());
         let now = std::time::Instant::now();
         let mut seeds = self
             .seeds
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if seeds.len() >= Self::PRUNE_AT {
+        if !seeds.contains_key(&key) && seeds.len() >= Self::CAP {
             seeds.retain(|_, (_, used)| now.duration_since(*used) < Self::IDLE);
+            while seeds.len() >= Self::CAP {
+                let oldest = seeds
+                    .iter()
+                    .min_by_key(|(_, (_, used))| *used)
+                    .map(|(key, _)| key.clone());
+                match oldest {
+                    Some(oldest) => seeds.remove(&oldest),
+                    None => break,
+                };
+            }
         }
         let fresh = || uuid::Uuid::new_v4().as_u128() as u32;
-        let entry = seeds
-            .entry(key.to_owned())
-            .or_insert_with(|| (fresh(), now));
+        let entry = seeds.entry(key).or_insert_with(|| (fresh(), now));
         if offset == 0 {
             entry.0 = fresh();
         }
         entry.1 = now;
         entry.0
+    }
+}
+
+#[cfg(test)]
+mod shuffle_seed_tests {
+    use super::*;
+
+    #[test]
+    fn seed_map_stays_capped() {
+        let seeds = ShuffleSeeds::default();
+        for caller in 0..ShuffleSeeds::CAP + 10 {
+            seeds.tracks(&caller.to_string(), &TrackQuery::default(), 0);
+        }
+        let held = seeds
+            .seeds
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len();
+        assert_eq!(held, ShuffleSeeds::CAP);
     }
 }
 
