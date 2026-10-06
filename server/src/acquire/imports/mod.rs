@@ -27,5 +27,6 @@ pub mod lidarr;
 #[cfg(any(test, feature = "test-support"))]
 pub mod mocks;
 pub mod models;
+pub mod mount;
 pub mod spotify;
 pub mod spotify_store;

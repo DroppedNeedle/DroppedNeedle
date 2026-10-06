@@ -231,6 +231,32 @@ pub struct SlskdStatusResponse {
     pub version: Option<String>,
     /// User-safe summary.
     pub message: String,
+    /// The downloads mount, once the first probe pass checked it.
+    pub mount: Option<DownloadsMountView>,
+    /// One plain sentence when the mount looks fine but cannot see slskd's
+    /// finished downloads, with what to change.
+    pub mount_advisory: Option<String>,
+    /// slskd's own downloads folder (in slskd's container), when slskd
+    /// reported it.
+    pub slskd_downloads_dir: Option<String>,
+    /// The folder DroppedNeedle reads: the mount plus the downloads
+    /// subfolder.
+    pub effective_downloads_path: Option<String>,
+}
+
+/// The slskd downloads folder as DroppedNeedle sees it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct DownloadsMountView {
+    /// The folder exists and is writable.
+    pub ok: bool,
+    /// Imports can move files into a library root in one step. When false
+    /// they copy and then delete, which is slower but still works.
+    pub move_supported: bool,
+    /// `ok`, `not_set`, `missing`, `not_writable`, `different_mount`,
+    /// `different_filesystem`, or `stat_error`.
+    pub reason: String,
+    /// The mount path inside DroppedNeedle's container.
+    pub path: String,
 }
 
 /// Live SABnzbd status against the saved config (v2 `SabnzbdTestResponse`,

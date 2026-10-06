@@ -8,6 +8,7 @@
 //! a slow loop, so the smoke and the status routes always render a fresh
 //! verdict without blocking a request on five network calls.
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use super::imports::health::{
@@ -15,6 +16,7 @@ use super::imports::health::{
     NewznabProbe, SabnzbdProbe, SlskdProbe,
 };
 use super::imports::lidarr::{LidarrClient, LidarrError};
+use super::imports::mount::{self, SlskdMountReport};
 use super::slskd::{ReqwestSlskdHttp, SlskdRepository};
 use super::usenet::newznab::NewznabIndexer;
 use super::usenet::prowlarr::ProwlarrIndexer;
@@ -30,6 +32,8 @@ use crate::runtime_config::sections::{AudioFormat, FreeMusic};
 pub struct CachedProbes {
     /// slskd client verdict.
     pub slskd: ClientProbe,
+    /// slskd downloads mount report.
+    pub slskd_mount: Option<SlskdMountReport>,
     /// SABnzbd client verdict.
     pub sabnzbd: ClientProbe,
     /// SABnzbd categories, when the probe reached the client.
@@ -103,6 +107,10 @@ impl SlskdProbe for LiveProbes {
     fn status(&self) -> ClientProbe {
         self.cache.snapshot().slskd
     }
+
+    fn mount(&self) -> Option<SlskdMountReport> {
+        self.cache.snapshot().slskd_mount
+    }
 }
 
 impl SabnzbdProbe for LiveProbes {
@@ -143,6 +151,12 @@ pub struct ProbeInputs {
     pub slskd: Option<Arc<SlskdRepository<ReqwestSlskdHttp>>>,
     /// slskd master switch.
     pub slskd_enabled: bool,
+    /// `SLSKD_DOWNLOADS_PATH`: the downloads mount.
+    pub slskd_mount_base: PathBuf,
+    /// The downloads subfolder inside the mount, from settings.
+    pub slskd_subpath: String,
+    /// Library root folders, to tell whether imports can rename.
+    pub library_roots: Vec<PathBuf>,
     /// SABnzbd queue, when the section configures one.
     pub sabnzbd: Option<Arc<SabnzbdQueue>>,
     /// SABnzbd section, for the switch and mount-independent fields.
@@ -169,6 +183,7 @@ pub struct ProbeInputs {
 pub async fn refresh_probes(cache: &ProbeCache, inputs: &ProbeInputs) {
     cache.update(CachedProbes {
         slskd: refresh_slskd(inputs).await,
+        slskd_mount: Some(refresh_slskd_mount(inputs).await),
         sabnzbd: refresh_sabnzbd(inputs).await,
         sabnzbd_categories: refresh_sabnzbd_categories(inputs).await,
         sabnzbd_complete_dir: refresh_sabnzbd_complete_dir(inputs).await,
@@ -283,6 +298,48 @@ async fn refresh_slskd(inputs: &ProbeInputs) -> ClientProbe {
         reachable: verdict.ok,
         version: verdict.version,
         message: verdict.message,
+    }
+}
+
+/// Check the downloads mount and, when it looks usable and slskd is set
+/// up, whether slskd's finished downloads can be found in it.
+async fn refresh_slskd_mount(inputs: &ProbeInputs) -> SlskdMountReport {
+    let base = inputs.slskd_mount_base.clone();
+    let roots = inputs.library_roots.clone();
+    let check = match tokio::task::spawn_blocking(move || {
+        mount::check_downloads_mount(&base, &roots)
+    })
+    .await
+    {
+        Ok(check) => check,
+        Err(error) => {
+            tracing::warn!(%error, "downloads mount check did not finish; reporting it unchecked");
+            mount::MountCheck {
+                ok: false,
+                move_supported: false,
+                reason: mount::MountReason::StatError,
+                path: inputs.slskd_mount_base.display().to_string(),
+            }
+        }
+    };
+    let effective = mount::effective_path(&inputs.slskd_mount_base, &inputs.slskd_subpath)
+        .display()
+        .to_string();
+    let (advisory, client_downloads_dir) = match &inputs.slskd {
+        Some(repo) if repo.is_configured() && check.ok => {
+            let diagnosis = repo.diagnose_downloads_mount().await;
+            (
+                mount::advisory(&check, &diagnosis, &inputs.slskd_subpath, &effective),
+                diagnosis.client_downloads_dir,
+            )
+        }
+        _ => (None, None),
+    };
+    SlskdMountReport {
+        mount: check,
+        advisory,
+        client_downloads_dir,
+        effective_path: effective,
     }
 }
 

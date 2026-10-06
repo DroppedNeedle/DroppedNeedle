@@ -82,7 +82,7 @@ use crate::reads::collections::state::CollectionsState;
 use crate::runtime_config::ConfigStore;
 use crate::runtime_config::secret_sections::{
     AdvancedSettings, DownloadClients, LidarrImportConnection, NewznabIndexer as ConfigIndexer,
-    ProwlarrConnection, SecretSection, SlskdConnection,
+    ProwlarrConnection, SecretSection, SlskdConnection, TypedLibrary,
 };
 use crate::runtime_config::sections::{
     DownloadPolicy, FreeMusic, Section, SourcePriority, UsenetBackendSetting, UserPreferences,
@@ -151,6 +151,8 @@ pub struct ClientSettings {
     pub free: FreeMusic,
     /// Active Usenet search side.
     pub backend: UsenetBackendSetting,
+    /// Library root folders (the mount probe compares filesystems).
+    pub library_roots: Vec<PathBuf>,
 }
 
 impl ClientSettings {
@@ -169,6 +171,11 @@ impl ClientSettings {
             policy: plain(store),
             free: plain(store),
             backend: plain(store),
+            library_roots: plain::<TypedLibrary>(store)
+                .library_roots
+                .into_iter()
+                .map(|root| PathBuf::from(root.path))
+                .collect(),
         }
     }
 }
@@ -322,6 +329,9 @@ impl LiveClients {
         let probe_inputs = Arc::new(ProbeInputs {
             slskd: slskd_repo,
             slskd_enabled: settings.slskd.enabled,
+            slskd_mount_base: self.slskd_downloads.clone(),
+            slskd_subpath: settings.slskd.downloads_subpath.clone(),
+            library_roots: settings.library_roots.clone(),
             sabnzbd: sab_queue,
             sabnzbd_section: settings.sabnzbd.clone(),
             newznab,
@@ -1427,14 +1437,7 @@ fn slskd_repository(
     }
     let transport = ReqwestSlskdHttp::new(http.clone(), &section.url, section.api_key.expose());
     let client = SlskdClient::new(transport);
-    let mut mount = downloads.to_path_buf();
-    for part in section.downloads_subpath.split(['/', '\\']) {
-        let part = part.trim();
-        if part.is_empty() || part == "." || part == ".." {
-            continue;
-        }
-        mount = mount.join(part);
-    }
+    let mount = super::imports::mount::effective_path(downloads, &section.downloads_subpath);
     let mut repo = SlskdRepository::new(
         client,
         &section.url,

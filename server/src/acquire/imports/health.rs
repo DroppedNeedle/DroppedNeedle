@@ -14,7 +14,10 @@
 #[cfg(any(test, feature = "test-support"))]
 use std::sync::Mutex;
 
-use super::models::{AcquireHealth, SabnzbdStatusResponse, SlskdStatusResponse, SourceGate};
+use super::models::{
+    AcquireHealth, DownloadsMountView, SabnzbdStatusResponse, SlskdStatusResponse, SourceGate,
+};
+use super::mount::SlskdMountReport;
 
 /// Live verdict from one client probe.
 #[derive(Debug, Clone, PartialEq)]
@@ -58,6 +61,10 @@ pub struct FreeReadiness {
 pub trait SlskdProbe: Send + Sync {
     /// Probe the saved slskd config.
     fn status(&self) -> ClientProbe;
+    /// The downloads mount report, once a probe pass made one.
+    fn mount(&self) -> Option<SlskdMountReport> {
+        None
+    }
 }
 
 /// SABnzbd client probe (v2 `SabnzbdDownloadClient` health half).
@@ -422,11 +429,21 @@ pub fn smoke(probes: &HealthProbes) -> AcquireHealth {
 /// client half; any authenticated user may read it).
 pub fn slskd_status(probe: &dyn SlskdProbe) -> SlskdStatusResponse {
     let status = probe.status();
+    let report = probe.mount();
     SlskdStatusResponse {
         configured: status.configured,
         reachable: status.reachable,
         version: status.version,
         message: status.message,
+        mount: report.as_ref().map(|report| DownloadsMountView {
+            ok: report.mount.ok,
+            move_supported: report.mount.move_supported,
+            reason: report.mount.reason.as_str().to_owned(),
+            path: report.mount.path.clone(),
+        }),
+        mount_advisory: report.as_ref().and_then(|r| r.advisory.clone()),
+        slskd_downloads_dir: report.as_ref().and_then(|r| r.client_downloads_dir.clone()),
+        effective_downloads_path: report.map(|r| r.effective_path),
     }
 }
 
