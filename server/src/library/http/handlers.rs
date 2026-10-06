@@ -83,6 +83,15 @@ pub(super) fn run_view(run: &ScanRun) -> ScanRunView {
     }
 }
 
+/// Run view for `caller`: only administrators see who asked for a run.
+fn caller_run_view(caller: &Principal, run: &ScanRun) -> ScanRunView {
+    let mut view = run_view(run);
+    if !caller.role.is_admin() {
+        view.requested_by_user_id = None;
+    }
+    view
+}
+
 fn scope_view(scope: &ScanScope) -> ScanScopeView {
     ScanScopeView {
         root_id: scope.root_id.clone(),
@@ -278,13 +287,14 @@ pub async fn trigger_scan(
 )]
 pub async fn list_runs(
     State(state): State<LibrarySetup>,
-    _caller: Principal,
+    caller: Principal,
 ) -> Result<Json<ScanRunsResponse>, LibraryError> {
     let (current, history) =
         blocking(move || (state.coordinator.current(), state.coordinator.history(20))).await?;
+    let view = |run: &ScanRun| caller_run_view(&caller, run);
     Ok(Json(ScanRunsResponse {
-        current: current.iter().map(run_view).collect(),
-        history: history.iter().map(run_view).collect(),
+        current: current.iter().map(view).collect(),
+        history: history.iter().map(view).collect(),
     }))
 }
 
@@ -301,12 +311,12 @@ pub async fn list_runs(
 )]
 pub async fn get_run(
     State(state): State<LibrarySetup>,
-    _caller: Principal,
+    caller: Principal,
     Path(id): Path<String>,
 ) -> Result<Json<RunDetailResponse>, LibraryError> {
     let (run, scopes, files) = blocking(move || state.run_detail(&id)).await??;
     Ok(Json(RunDetailResponse {
-        run: run_view(&run),
+        run: caller_run_view(&caller, &run),
         scopes: scopes.iter().map(scope_view).collect(),
         files: files
             .iter()
