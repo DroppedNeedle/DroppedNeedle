@@ -44,6 +44,8 @@ with the same ids, and v3 checks it against your files on its first scan.
   before v2 first touched it.
 - Downloads held back for review, with their files. They land in
   `V3_ROOT/cache/held`.
+- MusicBrainz contributions you had in progress, with their verification
+  and the return link MusicBrainz calls when you save the release.
 
 Every edition you chose in v2 stays the album's edition in v3: a manual
 match, an edition pin, or an active custom edition. v3's automatic
@@ -73,11 +75,10 @@ The export lists everything it leaves behind with a count, and so do
   downloads. Ask again in v3.
 - Download attempts still cleaning up their download folder.
 - Sign-in sessions. Everyone signs in again.
+- MusicBrainz contributions that were already linked, cancelled or out of
+  date. A linked album keeps its match.
 - YouTube links and the discover queue's ignore list. v3 has nowhere to
-  keep these yet.
-- Unfinished MusicBrainz contributions. They belong to v2's library
-  albums, which v3 builds again when it scans, so start them again in v3
-  after the first scan.
+  keep these yet; add them again in v3.
 - Caches, which v3 fills again on its own.
 - Plugins. Install them again from Settings > Plugins; their settings come
   across.
@@ -270,9 +271,8 @@ Then check:
   over too, so nobody has to click Connect again.
 - If you had a MusicBrainz contribution open in the release editor during
   the upgrade: saving it still brings you back, because v3 also answers on
-  the v2 return address, but v3 can't link it, since the contribution
-  stayed in v2. After the first scan, start a contribution for that album
-  in v3 and enter the release link by hand.
+  the v2 return address, and v3 links it, since the contribution came
+  across with its return link.
 
 ## Going back to v2
 

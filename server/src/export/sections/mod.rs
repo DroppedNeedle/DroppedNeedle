@@ -16,6 +16,7 @@
 pub mod avatars;
 pub mod collections;
 pub mod compat;
+pub mod contributions;
 pub mod downloads;
 pub mod held;
 pub mod history;
@@ -359,6 +360,9 @@ pub const ALL: &[&TableSection] = &[
     &management::EDITION_ACTIVE,
     &management::EXCLUSIONS,
     &management::OVERRIDES,
+    &contributions::DRAFTS,
+    &contributions::VERIFICATION_JOBS,
+    &contributions::CALLBACK_TOKENS,
     &held::HELD_IMPORTS,
 ];
 

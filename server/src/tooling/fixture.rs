@@ -1135,6 +1135,27 @@ const V2_LIBRARY_SCHEMA: &str = "
         last_operation_job_id TEXT, managed_root_id TEXT, managed_path_revision TEXT,
         last_managed_at REAL, last_outcome TEXT, last_reason_code TEXT,
         row_revision INTEGER NOT NULL DEFAULT 1);
+    CREATE TABLE library_contribution_drafts (
+        id TEXT PRIMARY KEY, local_album_id TEXT NOT NULL, created_by_user_id TEXT,
+        updated_by_user_id TEXT, state TEXT NOT NULL, album_row_revision INTEGER NOT NULL,
+        input_revision TEXT NOT NULL, local_snapshot_json TEXT NOT NULL,
+        resolved_draft_json TEXT NOT NULL, source_selection_json TEXT NOT NULL,
+        provider_snapshot_expires_at REAL, duplicate_result_json TEXT,
+        duplicate_checked_at REAL, duplicate_input_revision TEXT, result_release_mbid TEXT,
+        result_source TEXT, result_received_at REAL, seed_snapshot_json TEXT, seed_hash TEXT,
+        seeded_at REAL, terminal_at REAL, created_at REAL NOT NULL, updated_at REAL NOT NULL,
+        row_revision INTEGER NOT NULL DEFAULT 1);
+    CREATE TABLE library_contribution_callback_tokens (
+        token_hash TEXT PRIMARY KEY, contribution_id TEXT NOT NULL,
+        requested_by_user_id TEXT NOT NULL, expires_at REAL NOT NULL, consumed_at REAL,
+        created_at REAL NOT NULL);
+    CREATE TABLE library_contribution_verification_jobs (
+        id TEXT PRIMARY KEY, contribution_id TEXT NOT NULL, state TEXT NOT NULL,
+        attempt_count INTEGER NOT NULL DEFAULT 0, not_before REAL NOT NULL DEFAULT 0,
+        requested_by_user_id TEXT, last_failure_code TEXT, lease_owner TEXT,
+        lease_expires_at REAL, heartbeat_at REAL, created_at REAL NOT NULL,
+        updated_at REAL NOT NULL, terminal_at REAL, row_revision INTEGER NOT NULL DEFAULT 1,
+        event_revision INTEGER NOT NULL DEFAULT 0);
 ";
 
 /// Low-cost bcrypt for fixtures (fast, still `$2b$` shaped).

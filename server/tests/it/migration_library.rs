@@ -3,8 +3,9 @@
 //! through export and import, v3 scans it, and everything that cannot be
 //! rebuilt is still there: the track and album ids (which every Subsonic
 //! and Jellyfin id derives from), the manual identity, an edition pin as
-//! the album's protected edition, and the original file, which "restore
-//! original" brings back exactly as v2 first found it.
+//! the album's protected edition, an open MusicBrainz contribution, and
+//! the original file, which "restore original" brings back exactly as v2
+//! first found it.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -180,7 +181,17 @@ fn managed_album(v2_root: &Path, alice: &str) -> PathBuf {
                  '2025-06-01T00:00:00Z');
          INSERT INTO library_track_management_state (local_track_id, baseline_id,
              managed_root_id, last_managed_at, last_outcome)
-         VALUES ('{V2_TRACK_ID}', 'baseline-1', '{MUSIC_ROOT_ID}', 1700000600.0, 'applied');",
+         VALUES ('{V2_TRACK_ID}', 'baseline-1', '{MUSIC_ROOT_ID}', 1700000600.0, 'applied');
+         INSERT INTO library_contribution_drafts (id, local_album_id, created_by_user_id,
+             state, album_row_revision, input_revision, local_snapshot_json,
+             resolved_draft_json, source_selection_json, seeded_at, created_at, updated_at)
+         VALUES ('contrib-open', '{PINNED_ALBUM_ID}', '{alice}', 'seeded', 1, 'r1', '{{}}',
+                 '{{}}', '{{}}', 1700000700.0, 1700000700.0, 1700000700.0),
+                ('contrib-done', '{V2_ALBUM_ID}', '{alice}', 'linked', 1, 'r1', '{{}}',
+                 '{{}}', '{{}}', NULL, 1700000100.0, 1700000200.0);
+         INSERT INTO library_contribution_callback_tokens (token_hash, contribution_id,
+             requested_by_user_id, expires_at, created_at)
+         VALUES ('token-open', 'contrib-open', '{alice}', 4000000000.0, 1700000700.0);",
         len = snapshot.len(),
     ))
     .expect("library rows");
@@ -274,6 +285,10 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
     assert_eq!(count("album_identity"), 1);
     assert_eq!(count("management_baseline"), 1);
     assert_eq!(count("original_baseline"), 1, "{:?}", report.items);
+    // The open MusicBrainz contribution moves with its return link; the
+    // linked one stays behind.
+    assert_eq!(count("contribution_draft"), 1);
+    assert_eq!(count("contribution_callback_token"), 1);
     pool.close().await;
 
     // v3 starts on the imported state and scans the carried root.
