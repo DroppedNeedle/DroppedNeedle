@@ -1081,7 +1081,7 @@ pub async fn lyrics<P: Principal, S: Store, B: AudioBackend>(
     }
     let tracks = ctx
         .store
-        .get_tracks_page(100, 0, Some(&title))
+        .get_tracks_by_title(&title)
         .await
         .map_err(Ctx::<P, S, B>::store_err)?;
     let mut candidates: Vec<_> = tracks

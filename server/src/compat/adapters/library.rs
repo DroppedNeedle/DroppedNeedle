@@ -166,27 +166,6 @@ impl CompatLibrary {
         CollectionsService::new(&self.collections)
     }
 
-    /// Artists leading at least one album, name order, plus the total.
-    pub async fn album_artists(
-        &self,
-        query: Option<&str>,
-        limit: u64,
-        offset: u64,
-    ) -> Result<(Vec<ArtistRecord>, u64), CompatError> {
-        let (artists, total, _, _) = self
-            .catalog
-            .list_artists(
-                ArtistScope::AlbumArtists,
-                query,
-                ArtistSort::Name,
-                false,
-                limit,
-                offset,
-            )
-            .await?;
-        Ok((artists, total))
-    }
-
     /// One page of artists in name order, plus the total.
     pub async fn artist_page(
         &self,
@@ -262,9 +241,29 @@ impl CompatLibrary {
         Ok(self.player.track_page(query, order, limit, offset).await?)
     }
 
-    /// The caller's shuffle seed for a random page at `offset`.
-    pub fn shuffle_seed(&self, caller: &str, offset: u64) -> u32 {
-        self.shuffles.seed(caller, offset)
+    /// The caller's shuffle seed for a random track page at `offset`.
+    pub fn track_shuffle(&self, caller: &str, query: &TrackQuery, offset: u64) -> u32 {
+        self.shuffles.tracks(caller, query, offset)
+    }
+
+    /// The caller's shuffle seed for a random album page at `offset`.
+    pub fn album_shuffle(&self, caller: &str, query: &AlbumQuery, offset: u64) -> u32 {
+        self.shuffles.albums(caller, query, offset)
+    }
+
+    /// One page of album artists without the total: name order, or
+    /// insertion order when `natural`.
+    pub async fn album_artist_page(
+        &self,
+        query: Option<&str>,
+        natural: bool,
+        limit: u64,
+        offset: u64,
+    ) -> Result<Vec<ArtistRecord>, CompatError> {
+        Ok(self
+            .player
+            .album_artist_page(query, natural, limit, offset)
+            .await?)
     }
 
     /// One page of tracks.

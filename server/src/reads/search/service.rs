@@ -519,22 +519,23 @@ impl SearchService {
             .collect())
     }
 
-    /// One page of track hits, exact title first. Words of 3+ characters
-    /// search the trigram FTS index (every word, in the title, artist or
-    /// album); a query with none keeps the LIKE substring match.
+    /// One page of track hits, exact title first. Every word must appear in
+    /// the title, artist or album (the FTS index for words of 3+
+    /// characters, LIKE for shorter ones); a query with no long word keeps
+    /// the LIKE substring match.
     async fn search_tracks(
         &self,
         folded: &str,
         limit: u32,
         offset: u32,
     ) -> Result<Vec<SearchResultItem>, sqlx::Error> {
-        let fts = crate::reads::library::sqlite::fts_match_phrase(folded);
-        let text = if fts.is_some() {
-            crate::reads::library::sqlite::TRACK_TEXT_MATCH
-        } else {
-            "(t.title_folded LIKE ? ESCAPE '\\' \
+        let search = crate::reads::library::sqlite::TextSearch::parse(folded);
+        let text = match &search {
+            Some(search) => search.sql(),
+            None => "(t.title_folded LIKE ? ESCAPE '\\' \
              OR COALESCE(t.artist_name_folded, '') LIKE ? ESCAPE '\\' \
              OR t.album_title_folded LIKE ? ESCAPE '\\')"
+                .to_owned(),
         };
         let sql = format!(
             "SELECT t.id, t.title, t.title_folded, t.artist_name, t.year, \
@@ -548,13 +549,19 @@ impl SearchService {
              t.title_folded ASC LIMIT ? OFFSET ?"
         );
         let mut query = sqlx::query(&sql);
-        query = match fts {
-            Some(expression) => query.bind(expression),
-            None => query
-                .bind(like_contains(folded))
-                .bind(like_contains(folded))
-                .bind(like_contains(folded)),
-        };
+        match search {
+            Some(search) => {
+                for bind in search.binds() {
+                    query = query.bind(bind);
+                }
+            }
+            None => {
+                query = query
+                    .bind(like_contains(folded))
+                    .bind(like_contains(folded))
+                    .bind(like_contains(folded));
+            }
+        }
         let rows = query
             .bind(folded)
             .bind(like_prefix(folded))

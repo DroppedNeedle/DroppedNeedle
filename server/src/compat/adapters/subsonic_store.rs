@@ -253,11 +253,38 @@ impl Store for SubsonicStore {
         offset: usize,
         query: Option<&str>,
     ) -> Result<Vec<ViewArtist>, CompatError> {
-        let (artists, _) = self
+        let artists = self
             .library
-            .album_artists(query, limit as u64, offset as u64)
+            .album_artist_page(query, false, limit as u64, offset as u64)
             .await?;
         self.artists_for_caller(artists).await
+    }
+
+    async fn search_artists(
+        &self,
+        limit: usize,
+        offset: usize,
+        query: Option<&str>,
+    ) -> Result<Vec<ViewArtist>, CompatError> {
+        // The empty query is the sync: insertion order, stable while a scan
+        // adds artists.
+        let artists = self
+            .library
+            .album_artist_page(query, query.is_none(), limit as u64, offset as u64)
+            .await?;
+        self.artists_for_caller(artists).await
+    }
+
+    async fn get_tracks_by_title(&self, title: &str) -> Result<Vec<ViewTrack>, CompatError> {
+        let query = TrackQuery {
+            title: Some(title.to_owned()),
+            ..TrackQuery::default()
+        };
+        let tracks = self
+            .library
+            .track_page(&query, TrackOrder::Title, 500, 0)
+            .await?;
+        self.tracks_for_caller(tracks).await
     }
 
     async fn get_library_revision(&self) -> Result<i64, CompatError> {
@@ -392,25 +419,27 @@ impl Store for SubsonicStore {
             (Some(from), Some(to)) => (Some(from.min(to)), Some(from.max(to))),
             other => other,
         };
-        let order = match sort {
-            AlbumSort::Recent => AlbumOrder::Newest,
-            AlbumSort::Title => AlbumOrder::Title,
-            AlbumSort::Artist => AlbumOrder::Artist,
-            // Random pages share one shuffle per caller, drawn at offset 0.
-            AlbumSort::Random => AlbumOrder::Shuffle(
-                self.library
-                    .shuffle_seed(self.caller.as_deref().unwrap_or(""), offset as u64),
-            ),
-            AlbumSort::Natural => AlbumOrder::Natural,
-            AlbumSort::YearAsc => AlbumOrder::YearAsc,
-            AlbumSort::YearDesc => AlbumOrder::YearDesc,
-        };
         let query = AlbumQuery {
             q: query.map(str::to_owned),
             genre: genre.map(str::to_owned),
             year_from: low,
             year_to: high,
             ..AlbumQuery::default()
+        };
+        let order = match sort {
+            AlbumSort::Recent => AlbumOrder::Newest,
+            AlbumSort::Title => AlbumOrder::Title,
+            AlbumSort::Artist => AlbumOrder::Artist,
+            // Random pages share one shuffle per caller and filter, drawn
+            // at offset 0.
+            AlbumSort::Random => AlbumOrder::Shuffle(self.library.album_shuffle(
+                self.caller.as_deref().unwrap_or(""),
+                &query,
+                offset as u64,
+            )),
+            AlbumSort::Natural => AlbumOrder::Natural,
+            AlbumSort::YearAsc => AlbumOrder::YearAsc,
+            AlbumSort::YearDesc => AlbumOrder::YearDesc,
         };
         let albums = self
             .library

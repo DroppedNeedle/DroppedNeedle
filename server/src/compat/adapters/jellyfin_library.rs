@@ -289,7 +289,9 @@ impl LibraryRead for JellyfinLibrary {
                 .library
                 .tracks(
                     &query,
-                    track_order(sort, || self.library.shuffle_seed(user_id, to_u64(start))),
+                    track_order(sort, || {
+                        self.library.track_shuffle(user_id, &query, to_u64(start))
+                    }),
                     to_u64(limit),
                     to_u64(start),
                 )
@@ -341,7 +343,9 @@ impl LibraryRead for JellyfinLibrary {
                 .library
                 .albums(
                     &query,
-                    album_order(sort, || self.library.shuffle_seed(user_id, to_u64(start))),
+                    album_order(sort, || {
+                        self.library.album_shuffle(user_id, &query, to_u64(start))
+                    }),
                     to_u64(limit),
                     to_u64(start),
                 )

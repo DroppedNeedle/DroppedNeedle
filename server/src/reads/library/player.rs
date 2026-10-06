@@ -15,10 +15,10 @@ use sqlx::{Row as _, SqlitePool};
 use std::sync::{Arc, Mutex};
 
 use super::sqlite::{
-    ALBUM_COLUMNS, ALBUM_JOINS, LibraryDb, TRACK_MISS_ORACLE, TRACK_TEXT_MATCH, fts_match_phrase,
-    sample_track_ids,
+    ALBUM_COLUMNS, ALBUM_JOINS, LED_PREDICATE, LibraryDb, TRACK_MISS_ORACLE, TextSearch,
+    hydrate_artists,
 };
-use super::stores::{AlbumRecord, BoxFuture, StoreError};
+use super::stores::{AlbumRecord, ArtistRecord, BoxFuture, StoreError};
 
 /// One streamable track with everything a player shows.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -105,8 +105,10 @@ pub struct PlayerAlbum {
 /// Track filters; every set field narrows.
 #[derive(Debug, Clone, Default)]
 pub struct TrackQuery {
-    /// Title/artist/album substring.
+    /// Title/artist/album search: every word, any column.
     pub q: Option<String>,
+    /// Exact title, matched folded.
+    pub title: Option<String>,
     /// One album.
     pub album_id: Option<String>,
     /// Credited (any position) artist ids.
@@ -203,8 +205,6 @@ pub enum AlbumOrder {
     YearAsc,
     /// Year descending, unknown last.
     YearDesc,
-    /// A fresh random order on every call.
-    Random,
     /// One fixed shuffle per seed, for paging (see [`TrackOrder::Shuffle`]).
     Shuffle(u32),
     /// Insertion order (rowid).
@@ -269,6 +269,17 @@ pub trait PlayerCatalog: Send + Sync {
         limit: u64,
         offset: u64,
     ) -> BoxFuture<'a, Result<Vec<PlayerAlbum>, StoreError>>;
+
+    /// One page of album artists without the total: name order, or
+    /// insertion order when `natural` (the search3 empty-query sync, stable
+    /// while a scan adds artists). `q` narrows by folded name substring.
+    fn album_artist_page<'a>(
+        &'a self,
+        q: Option<&'a str>,
+        natural: bool,
+        limit: u64,
+        offset: u64,
+    ) -> BoxFuture<'a, Result<Vec<ArtistRecord>, StoreError>>;
 
     /// Which of `ids` exist, for one kind (`artist`, `album`, `track`).
     fn existing<'a>(
@@ -469,14 +480,24 @@ fn texts(values: &[String]) -> Vec<Bind> {
     values.iter().cloned().map(Bind::Text).collect()
 }
 
-fn track_clause(query: &TrackQuery) -> Clause {
+/// The WHERE clause for a track query. `row_check` keeps the planner off
+/// the availability indexes (unary plus): orders that walk the table or
+/// another index (insertion order, year) would otherwise be driven from an
+/// availability index, which looks free because nearly every track is
+/// streamable, and then sort the whole catalog.
+fn track_clause(query: &TrackQuery, row_check: bool) -> Clause {
     let mut clause = Clause::default();
-    clause.push("t.availability = 'indexed'", []);
+    if row_check {
+        clause.push("+t.availability = 'indexed'", []);
+    } else {
+        clause.push("t.availability = 'indexed'", []);
+    }
     if let Some(q) = &query.q {
-        // Words of 3+ characters search the FTS index (every word, any
-        // column); anything else keeps the LIKE substring match.
-        if let Some(expression) = fts_match_phrase(q) {
-            clause.push(TRACK_TEXT_MATCH, [Bind::Text(expression)]);
+        // Words of 3+ characters search the FTS index, shorter words LIKE
+        // over its candidates; a query with no long word keeps the LIKE
+        // substring match.
+        if let Some(search) = TextSearch::parse(q) {
+            clause.push(&search.sql(), search.binds().into_iter().map(Bind::Text));
             return finish_track_clause(clause, query);
         }
         let pattern = like_pattern(q);
@@ -495,6 +516,12 @@ fn track_clause(query: &TrackQuery) -> Clause {
 
 /// The non-text track filters.
 fn finish_track_clause(mut clause: Clause, query: &TrackQuery) -> Clause {
+    if let Some(title) = &query.title {
+        clause.push(
+            "t.title_folded = ?",
+            [Bind::Text(crate::db::fold_text(title.trim()))],
+        );
+    }
     if let Some(album_id) = &query.album_id {
         clause.push("t.local_album_id = ?", [Bind::Text(album_id.clone())]);
     }
@@ -554,6 +581,7 @@ fn track_query_reads_album(query: &TrackQuery) -> bool {
 /// No filter beyond streamability: the maintained total applies.
 fn track_query_is_open(query: &TrackQuery) -> bool {
     query.q.is_none()
+        && query.title.is_none()
         && query.album_id.is_none()
         && query.artist_ids.is_empty()
         && query.album_artist_ids.is_empty()
@@ -627,38 +655,52 @@ impl Order {
     }
 }
 
-/// Prime modulus of the shuffle permutation; above any realistic rowid.
+/// Prime modulus of the shuffle keys; above any realistic rowid, so every
+/// intermediate product stays inside 64 bits.
 const SHUFFLE_PRIME: i64 = 2_147_483_647;
 
-/// A seeded permutation of `alias` rows: `(rowid * a + b) mod p` is a
-/// bijection for rowids below the prime, so one seed is one fixed order
-/// with no ties, and different seeds give different orders (Navidrome's
-/// SEEDEDRAND, without a custom SQL function). The values are integers
-/// derived here, never caller text.
+/// A seeded shuffle key for `alias` rows: `h = (rowid * a + b) mod p`, then
+/// `(k * h^2 + h) mod p`. The square makes it non-linear, so neighbouring
+/// rowids land far apart instead of in a regular lattice; rowid breaks the
+/// rare tie. One seed is one fixed order (Navidrome's SEEDEDRAND, without a
+/// custom SQL function). The values are integers derived here, never caller
+/// text.
 fn shuffle_order(alias: &str, seed: u32) -> String {
     let seed = i64::from(seed);
     let a = seed % (SHUFFLE_PRIME - 1) + 1;
     let b = (seed * 7919) % SHUFFLE_PRIME;
-    format!("({alias}.rowid * {a} + {b}) % {SHUFFLE_PRIME}, {alias}.rowid")
+    let k = (seed * 104_729) % (SHUFFLE_PRIME - 1) + 1;
+    let h = format!("(({alias}.rowid * {a} + {b}) % {SHUFFLE_PRIME})");
+    format!("((({h} * {h}) % {SHUFFLE_PRIME}) * {k} + {h}) % {SHUFFLE_PRIME}, {alias}.rowid")
 }
 
-/// Per-caller seeds for paged random lists. The first page (offset 0)
-/// draws a new seed and later pages reuse it, so a client paging through
-/// "random" sees one shuffle with no repeats or gaps. Seeds idle for an
-/// hour are dropped once the map grows.
+/// Seeds for paged random lists, one per caller, kind and filter. The first
+/// page (offset 0) draws a new seed and later pages reuse it, so a client
+/// paging through "random" sees one shuffle with no repeats or gaps, and a
+/// random track list never reshuffles a random album list. Seeds idle for
+/// an hour are dropped once the map grows.
 #[derive(Debug, Default)]
 pub struct ShuffleSeeds {
     seeds: Mutex<HashMap<String, (u32, std::time::Instant)>>,
 }
 
 impl ShuffleSeeds {
-    /// Most callers remembered before idle ones are pruned.
+    /// Most lists remembered before idle ones are pruned.
     const PRUNE_AT: usize = 1024;
-    /// Idle time after which a caller's seed may be pruned.
+    /// Idle time after which a seed may be pruned.
     const IDLE: std::time::Duration = std::time::Duration::from_secs(3600);
 
-    /// The seed for `caller` at `offset`.
-    pub fn seed(&self, caller: &str, offset: u64) -> u32 {
+    /// The seed for a random track list at `offset`.
+    pub fn tracks(&self, caller: &str, query: &TrackQuery, offset: u64) -> u32 {
+        self.seed(&format!("{caller}\u{1f}track\u{1f}{query:?}"), offset)
+    }
+
+    /// The seed for a random album list at `offset`.
+    pub fn albums(&self, caller: &str, query: &AlbumQuery, offset: u64) -> u32 {
+        self.seed(&format!("{caller}\u{1f}album\u{1f}{query:?}"), offset)
+    }
+
+    fn seed(&self, key: &str, offset: u64) -> u32 {
         let now = std::time::Instant::now();
         let mut seeds = self
             .seeds
@@ -669,7 +711,7 @@ impl ShuffleSeeds {
         }
         let fresh = || uuid::Uuid::new_v4().as_u128() as u32;
         let entry = seeds
-            .entry(caller.to_owned())
+            .entry(key.to_owned())
             .or_insert_with(|| (fresh(), now));
         if offset == 0 {
             entry.0 = fresh();
@@ -782,7 +824,6 @@ fn album_order_sql(order: AlbumOrder, played_by: Option<&String>) -> Order {
         AlbumOrder::YearDesc => {
             Order::fixed("(a.year IS NULL) ASC, a.year DESC, a.title_folded ASC, a.id ASC")
         }
-        AlbumOrder::Random => Order::fixed("RANDOM()"),
         AlbumOrder::Shuffle(seed) => Order::fixed(&shuffle_order("a", seed)),
         AlbumOrder::Natural => Order::fixed("a.rowid ASC"),
         AlbumOrder::By(key, descending) => Order::keyed(
@@ -884,9 +925,9 @@ impl SqlitePlayerCatalog {
     ) -> Result<Option<Vec<String>>, StoreError> {
         // Miss oracle: a query no track text contains matches nothing,
         // whatever the other filters say.
-        if let Some(expression) = query.q.as_deref().and_then(fts_match_phrase) {
+        if let Some(search) = query.q.as_deref().and_then(TextSearch::parse) {
             let hit: bool = sqlx::query_scalar(TRACK_MISS_ORACLE)
-                .bind(expression)
+                .bind(search.fts)
                 .fetch_one(pool)
                 .await
                 .map_err(read_error("player.tracks.search"))?;
@@ -894,26 +935,11 @@ impl SqlitePlayerCatalog {
                 return Ok(None);
             }
         }
-        // A one-shot random list over the whole catalog samples rowids
-        // instead of drawing a random key for every track.
-        if order == TrackOrder::Random && track_query_is_open(query) {
-            return sample_track_ids(pool, limit)
-                .await
-                .map(Some)
-                .map_err(read_error("player.tracks.random"));
-        }
-        let mut clause = track_clause(query);
-        // Insertion order walks the table itself and year order walks
-        // (year, id); nearly every track is streamable, so with planner
-        // statistics an availability index looks free and the planner would
-        // drive from it and sort the whole catalog instead. The unary plus
-        // keeps the filter a plain row check.
-        if matches!(
+        let row_check = matches!(
             order,
             TrackOrder::Natural | TrackOrder::By(OrderKey::Year, _)
-        ) {
-            clause.sql[0] = "+t.availability = 'indexed'".to_owned();
-        }
+        );
+        let clause = track_clause(query, row_check);
         let page_from = if track_query_reads_album(query) || order == TrackOrder::Album {
             "local_tracks t JOIN local_albums a ON a.id = t.local_album_id"
         } else {
@@ -959,7 +985,7 @@ impl SqlitePlayerCatalog {
             .await
             .map_err(read_error("player.tracks.count"))?
         } else {
-            let clause = track_clause(query);
+            let clause = track_clause(query, false);
             let from = if track_query_reads_album(query) {
                 "local_tracks t JOIN local_albums a ON a.id = t.local_album_id"
             } else {
@@ -1243,6 +1269,39 @@ impl PlayerCatalog for SqlitePlayerCatalog {
                 }
             }
             Ok(out)
+        })
+    }
+
+    fn album_artist_page<'a>(
+        &'a self,
+        q: Option<&'a str>,
+        natural: bool,
+        limit: u64,
+        offset: u64,
+    ) -> BoxFuture<'a, Result<Vec<ArtistRecord>, StoreError>> {
+        Box::pin(async move {
+            let pool = self.pool()?;
+            let order = if natural {
+                "r.rowid ASC"
+            } else {
+                "r.folded_name ASC, r.id ASC"
+            };
+            let sql = format!(
+                "SELECT r.id FROM local_artists r \
+                 WHERE r.retired_into_artist_id IS NULL AND {LED_PREDICATE} \
+                 AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\') \
+                 ORDER BY {order} LIMIT ? OFFSET ?"
+            );
+            let pattern = q.map(like_pattern);
+            let ids: Vec<String> = sqlx::query_scalar(&sql)
+                .bind(pattern.as_deref())
+                .bind(pattern.as_deref())
+                .bind(limit.min(i64::MAX as u64) as i64)
+                .bind(offset.min(i64::MAX as u64) as i64)
+                .fetch_all(pool)
+                .await
+                .map_err(read_error("player.album_artists"))?;
+            hydrate_artists(pool, &ids).await
         })
     }
 

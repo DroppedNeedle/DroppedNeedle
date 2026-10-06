@@ -90,14 +90,13 @@ fn in_placeholders(len: usize) -> String {
     vec!["?"; len].join(", ")
 }
 
-/// FTS5 trigram match expression for a track text search, or `None` when
-/// the LIKE path must run instead. Each folded word of 3 or more
-/// characters becomes a quoted phrase and the phrases are AND-ed, so all
-/// words must appear, in any of the indexed columns. A trigram phrase is
-/// exact substring, but only for 3 or more characters (shorter phrases
-/// silently match nothing), so shorter words are left out; a query with no
-/// such word, or with a NUL byte (which would truncate the bind), falls
-/// back to LIKE.
+/// FTS5 trigram match expression for the words of 3 or more characters in
+/// a track search, or `None` when there is no such word or the query holds
+/// a NUL byte (which would truncate the bind). Each word becomes a quoted
+/// phrase and the phrases are AND-ed, so every word must appear, in any of
+/// the indexed columns. A trigram phrase is exact substring, but only for 3
+/// or more characters: shorter phrases silently match nothing, which is why
+/// [`TextSearch`] checks short words with LIKE instead.
 /// Visible to the plan tests, which assemble the same statements.
 pub(crate) fn fts_match_phrase(raw: &str) -> Option<String> {
     let folded = crate::db::fold_text(raw);
@@ -117,86 +116,54 @@ pub(crate) fn fts_match_phrase(raw: &str) -> Option<String> {
 pub(crate) const TRACK_TEXT_MATCH: &str =
     "t.rowid IN (SELECT rowid FROM local_tracks_fts WHERE local_tracks_fts MATCH ?)";
 
-/// Indexed tracks with at least this many rows are sampled by rowid probes;
-/// smaller catalogs shuffle the whole id list, which is exact and cheap.
-const SAMPLE_PROBE_MIN_TRACKS: i64 = 5_000;
+/// One word that must appear in the title, artist or album.
+const TRACK_WORD_LIKE: &str = " AND (t.title_folded LIKE ? ESCAPE '\\' \
+    OR t.artist_name_folded LIKE ? ESCAPE '\\' OR t.album_title_folded LIKE ? ESCAPE '\\')";
 
-/// Up to `limit` random streamable track ids, in random order.
-///
-/// Large catalogs probe random rowids between the lowest and highest track
-/// rowid and take the first streamable track at or after each probe: one
-/// index seek per pick instead of a random key for every row (Navidrome's
-/// rowid sampling). Tracks right after a run of deleted rows are a little
-/// more likely; duplicates are dropped and the probe rounds repeat a few
-/// times before topping up from a full shuffle.
-pub(crate) async fn sample_track_ids(
-    pool: &SqlitePool,
-    limit: u64,
-) -> Result<Vec<String>, sqlx::Error> {
-    let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-    if limit == 0 {
-        return Ok(Vec::new());
+/// A track text search on the FTS index. Every word must appear in the
+/// title, artist or album, in any order: words of 3+ characters through
+/// the trigram index, shorter ones ("the xx") with LIKE over those
+/// candidates. A query with no word of 3+ characters ("U2", "xx", one CJK
+/// character) is not a `TextSearch`; callers keep the LIKE substring match
+/// on the whole query for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TextSearch {
+    /// The FTS expression from [`fts_match_phrase`].
+    pub fts: String,
+    /// Escaped LIKE patterns for the words under 3 characters.
+    pub short_words: Vec<String>,
+}
+
+impl TextSearch {
+    /// Split a query, or `None` when the LIKE path must run.
+    pub(crate) fn parse(raw: &str) -> Option<Self> {
+        let fts = fts_match_phrase(raw)?;
+        let short_words = crate::db::fold_text(raw)
+            .split_whitespace()
+            .filter(|word| word.chars().count() < 3)
+            .map(like_pattern)
+            .collect();
+        Some(Self { fts, short_words })
     }
-    let full_shuffle = |limit: i64| {
-        sqlx::query_scalar::<_, String>(
-            "SELECT t.id FROM local_tracks t WHERE t.availability = 'indexed' \
-             ORDER BY RANDOM() LIMIT ?",
-        )
-        .bind(limit)
-        .fetch_all(pool)
-    };
-    let indexed: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(indexed_tracks), 0) FROM library_track_format_stats",
-    )
-    .fetch_one(pool)
-    .await?;
-    if indexed < SAMPLE_PROBE_MIN_TRACKS || limit > indexed / 4 {
-        return full_shuffle(limit).await;
-    }
-    let (low, high): (i64, i64) =
-        sqlx::query_as("SELECT COALESCE(MIN(rowid), 0), COALESCE(MAX(rowid), 0) FROM local_tracks")
-            .fetch_one(pool)
-            .await?;
-    let span = (high - low).max(0) + 1;
-    let mut picked: Vec<String> = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    for _ in 0..3 {
-        let want = limit - picked.len() as i64;
-        if want <= 0 {
-            break;
+
+    /// The predicate over alias `t`; bind [`Self::binds`] in order.
+    pub(crate) fn sql(&self) -> String {
+        let mut sql = TRACK_TEXT_MATCH.to_owned();
+        for _ in &self.short_words {
+            sql.push_str(TRACK_WORD_LIKE);
         }
-        let ids: Vec<Option<String>> = sqlx::query_scalar(
-            "WITH RECURSIVE probe(n, at) AS ( \
-               SELECT 1, ?1 + abs(random() % ?2) \
-               UNION ALL SELECT n + 1, ?1 + abs(random() % ?2) FROM probe WHERE n < ?3) \
-             SELECT (SELECT t.id FROM local_tracks t WHERE t.availability = 'indexed' \
-               AND t.rowid >= probe.at ORDER BY t.rowid LIMIT 1) FROM probe",
-        )
-        .bind(low)
-        .bind(span)
-        .bind(want + want / 2 + 4)
-        .fetch_all(pool)
-        .await?;
-        for id in ids.into_iter().flatten() {
-            if picked.len() as i64 >= limit {
-                break;
-            }
-            if seen.insert(id.clone()) {
-                picked.push(id);
-            }
-        }
+        sql
     }
-    if (picked.len() as i64) < limit {
-        for id in full_shuffle(limit).await? {
-            if picked.len() as i64 >= limit {
-                break;
-            }
-            if seen.insert(id.clone()) {
-                picked.push(id);
-            }
+
+    /// The binds for [`Self::sql`]: the FTS expression, then each short
+    /// word's pattern once per column.
+    pub(crate) fn binds(&self) -> Vec<String> {
+        let mut binds = vec![self.fts.clone()];
+        for word in &self.short_words {
+            binds.extend(std::iter::repeat_n(word.clone(), 3));
         }
+        binds
     }
-    Ok(picked)
 }
 
 /// One album's aggregate columns, shared by every album SELECT.
@@ -312,17 +279,21 @@ pub(crate) const TRACK_FILTER: &str = "t.availability = 'indexed' \
     WHERE g.local_track_id = t.id AND g.folded_name = ?) \
     OR t.genre_folded = ?)";
 
-/// [`TRACK_FILTER`] with the text predicate on the FTS index: the first
-/// bind is the match expression from [`fts_match_phrase`], the rest bind
-/// like [`TRACK_FILTER`]'s after its four text binds.
-pub(crate) const TRACK_FILTER_FTS: &str = "t.availability = 'indexed' \
-    AND t.rowid IN (SELECT rowid FROM local_tracks_fts WHERE local_tracks_fts MATCH ?) \
-    AND (? IS NULL OR t.local_album_id = ?) \
-    AND (? IS NULL OR EXISTS (SELECT 1 FROM local_track_artists x \
-    WHERE x.local_track_id = t.id AND x.local_artist_id = ?)) \
-    AND (? IS NULL OR EXISTS (SELECT 1 FROM local_track_genres g \
-    WHERE g.local_track_id = t.id AND g.folded_name = ?) \
-    OR t.genre_folded = ?)";
+/// [`TRACK_FILTER`] with the text predicate on the FTS index: the search's
+/// binds come first, then the album, artist and genre binds as in
+/// [`TRACK_FILTER`] after its four text binds.
+pub(crate) fn track_filter_fts(search: &TextSearch) -> String {
+    format!(
+        "t.availability = 'indexed' AND {} \
+         AND (? IS NULL OR t.local_album_id = ?) \
+         AND (? IS NULL OR EXISTS (SELECT 1 FROM local_track_artists x \
+         WHERE x.local_track_id = t.id AND x.local_artist_id = ?)) \
+         AND (? IS NULL OR EXISTS (SELECT 1 FROM local_track_genres g \
+         WHERE g.local_track_id = t.id AND g.folded_name = ?) \
+         OR t.genre_folded = ?)",
+        search.sql()
+    )
+}
 
 /// True when any track text matches the trigram phrase: the miss oracle.
 pub(crate) const TRACK_MISS_ORACLE: &str =
@@ -402,7 +373,7 @@ pub(crate) const ARTIST_CREDIT_COUNTS: &str = "SELECT ata.local_artist_id AS id,
     GROUP BY 1";
 
 /// Artists leading at least one album.
-const LED_PREDICATE: &str =
+pub(crate) const LED_PREDICATE: &str =
     "EXISTS (SELECT 1 FROM local_albums la WHERE la.album_artist_id = r.id)";
 
 /// Artists credited anywhere (album or track level).
@@ -492,19 +463,23 @@ async fn artist_counts(
     Ok((album_counts, credit_counts))
 }
 
-/// Bind [`TRACK_FILTER`] or [`TRACK_FILTER_FTS`] onto `sql`. Text binds
-/// come first: the one match expression, or the four LIKE binds; the album,
+/// Bind [`TRACK_FILTER`] or [`track_filter_fts`] onto `sql`. Text binds
+/// come first: the search's binds, or the four LIKE binds; the album,
 /// artist and genre binds follow either way.
 fn bind_track_filter<'q>(
     sql: &'q str,
-    fts: Option<&str>,
+    search: Option<&TextSearch>,
     pattern: Option<&str>,
     filter: &TrackFilter,
     genre: Option<&str>,
 ) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>> {
     let mut query = sqlx::query(sql);
-    match fts {
-        Some(expression) => query = query.bind(expression.to_owned()),
+    match search {
+        Some(search) => {
+            for bind in search.binds() {
+                query = query.bind(bind);
+            }
+        }
         None => {
             for _ in 0..4 {
                 query = query.bind(pattern.map(str::to_owned));
@@ -522,6 +497,41 @@ fn bind_track_filter<'q>(
         .bind(genre.clone())
         .bind(genre.clone())
         .bind(genre)
+}
+
+/// Artist rows with their counts for `ids`, in `ids` order; unknown ids
+/// drop out.
+pub(crate) async fn hydrate_artists(
+    pool: &SqlitePool,
+    ids: &[String],
+) -> Result<Vec<ArtistRecord>, StoreError> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let sql = format!(
+        "SELECT {ARTIST_ROW_COLUMNS} {ARTIST_JOINS} WHERE r.id IN ({})",
+        in_placeholders(ids.len())
+    );
+    let mut query = sqlx::query(&sql);
+    for id in ids {
+        query = query.bind(id);
+    }
+    let rows = query
+        .fetch_all(pool)
+        .await
+        .map_err(|error| internal("library.artists.list", error))?;
+    let (album_counts, credit_counts) = artist_counts(pool, ids).await?;
+    let mut by_id = HashMap::with_capacity(rows.len());
+    for row in &rows {
+        let id: String = row.get("id");
+        let album_count = album_counts.get(&id).copied().unwrap_or(0);
+        let (track_count, appearances) = credit_counts.get(&id).copied().unwrap_or((0, 0));
+        by_id.insert(
+            id.clone(),
+            map_artist(row, album_count, track_count, appearances),
+        );
+    }
+    Ok(ids.iter().filter_map(|id| by_id.remove(id)).collect())
 }
 
 /// Catalog reads over the reader pool.
@@ -773,39 +783,7 @@ impl LibraryCatalog for SqliteCatalog {
                 .await
                 .map_err(|error| internal("library.artists.list", error))?
             };
-            let mut records = Vec::with_capacity(ids.len());
-            if !ids.is_empty() {
-                let placeholders = in_placeholders(ids.len());
-                let sql = format!(
-                    "SELECT {ARTIST_ROW_COLUMNS} {ARTIST_JOINS} \
-                     WHERE r.id IN ({placeholders})"
-                );
-                let mut query = sqlx::query(&sql);
-                for id in &ids {
-                    query = query.bind(id);
-                }
-                let rows = query
-                    .fetch_all(pool)
-                    .await
-                    .map_err(|error| internal("library.artists.list", error))?;
-                let (album_counts, credit_counts) = artist_counts(pool, &ids).await?;
-                let mut by_id = HashMap::with_capacity(rows.len());
-                for row in &rows {
-                    let id: String = row.get("id");
-                    let album_count = album_counts.get(&id).copied().unwrap_or(0);
-                    let (track_count, appearances) =
-                        credit_counts.get(&id).copied().unwrap_or((0, 0));
-                    by_id.insert(
-                        id.clone(),
-                        map_artist(row, album_count, track_count, appearances),
-                    );
-                }
-                for id in &ids {
-                    if let Some(record) = by_id.remove(id) {
-                        records.push(record);
-                    }
-                }
-            }
+            let records = hydrate_artists(pool, &ids).await?;
             let totals = sqlx::query(&format!(
                 "SELECT COUNT(*) AS total, \
                  COALESCE(SUM(CASE WHEN {LED_PREDICATE} THEN 1 ELSE 0 END), 0) AS led, \
@@ -962,12 +940,12 @@ impl LibraryCatalog for SqliteCatalog {
             };
             // Words of 3+ characters search the FTS index; anything else
             // keeps the LIKE substring match.
-            let fts = filter.q.as_deref().and_then(fts_match_phrase);
+            let search = filter.q.as_deref().and_then(TextSearch::parse);
             // Miss oracle: when no track text matches, the page and total
             // are empty whatever the other filters say (they only narrow).
-            if let Some(expression) = &fts {
+            if let Some(search) = &search {
                 let hit: bool = sqlx::query_scalar(TRACK_MISS_ORACLE)
-                    .bind(expression)
+                    .bind(&search.fts)
                     .fetch_one(pool)
                     .await
                     .map_err(|error| internal("library.tracks.search", error))?;
@@ -975,7 +953,7 @@ impl LibraryCatalog for SqliteCatalog {
                     return Ok((Vec::new(), 0));
                 }
             }
-            let pattern = match fts {
+            let pattern = match search {
                 Some(_) => None,
                 None => filter.q.as_deref().map(like_pattern),
             };
@@ -983,15 +961,14 @@ impl LibraryCatalog for SqliteCatalog {
                 .genre
                 .as_deref()
                 .map(|name| crate::db::fold_text(name.trim()));
-            let where_sql = if fts.is_some() {
-                TRACK_FILTER_FTS
-            } else {
-                TRACK_FILTER
+            let where_sql = match &search {
+                Some(search) => track_filter_fts(search),
+                None => TRACK_FILTER.to_owned(),
             };
             let bind_filter = |sql| {
                 bind_track_filter(
                     sql,
-                    fts.as_deref(),
+                    search.as_ref(),
                     pattern.as_deref(),
                     filter,
                     genre.as_deref(),
@@ -1265,22 +1242,19 @@ impl LibraryCatalog for SqliteCatalog {
             let Some(pool) = self.db.live() else {
                 return Err(unwired_store());
             };
-            // Two phases: pick ids over the narrow rows, then read the wide
-            // columns for the picks alone.
-            let ids: Vec<String> = match decade {
-                None => sample_track_ids(pool, limit).await,
-                Some(decade) => {
-                    sqlx::query_scalar(
-                        "SELECT t.id FROM local_tracks t WHERE t.availability = 'indexed' \
-                         AND t.year >= ? AND t.year < ? + 10 ORDER BY RANDOM() LIMIT ?",
-                    )
-                    .bind(decade)
-                    .bind(decade)
-                    .bind(limit as i64)
-                    .fetch_all(pool)
-                    .await
-                }
-            }
+            // Two phases: a uniform random pick over the narrow rows, then
+            // the wide columns for the picks alone.
+            let ids: Vec<String> = sqlx::query_scalar(
+                "SELECT t.id FROM local_tracks t WHERE t.availability = 'indexed' \
+                 AND (? IS NULL OR (t.year >= ? AND t.year < ? + 10)) \
+                 ORDER BY RANDOM() LIMIT ?",
+            )
+            .bind(decade)
+            .bind(decade)
+            .bind(decade)
+            .bind(limit as i64)
+            .fetch_all(pool)
+            .await
             .map_err(|error| internal("library.tracks.random", error))?;
             if ids.is_empty() {
                 return Ok(Vec::new());

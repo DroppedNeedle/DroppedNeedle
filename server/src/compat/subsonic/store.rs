@@ -232,14 +232,36 @@ pub trait Store: Clone + Send + Sync {
         self.clone()
     }
 
-    /// Artists page, optional match query (None = match-all). No caller
-    /// shows a total, so none is counted.
+    /// Artists page in name order, optional match query (None = match-all).
+    /// No caller shows a total, so none is counted.
     fn get_artists(
         &self,
         limit: usize,
         offset: usize,
         query: Option<&str>,
     ) -> impl Future<Output = Result<Vec<ViewArtist>, Self::Error>> + Send;
+
+    /// Artists page for search2/search3: like [`Store::get_artists`], but an
+    /// empty query pages in insertion order (the sync order) where a store
+    /// has one.
+    fn search_artists(
+        &self,
+        limit: usize,
+        offset: usize,
+        query: Option<&str>,
+    ) -> impl Future<Output = Result<Vec<ViewArtist>, Self::Error>> + Send {
+        self.get_artists(limit, offset, query)
+    }
+
+    /// Tracks whose title equals `title` (case-insensitive), for the legacy
+    /// getLyrics lookup. The default searches a page; stores with an exact
+    /// title read override it.
+    fn get_tracks_by_title(
+        &self,
+        title: &str,
+    ) -> impl Future<Output = Result<Vec<ViewTrack>, Self::Error>> + Send {
+        self.get_tracks_page(100, 0, Some(title))
+    }
 
     /// Library revision for getIndexes freshness.
     fn get_library_revision(&self) -> impl Future<Output = Result<i64, Self::Error>> + Send;

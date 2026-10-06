@@ -580,7 +580,7 @@ pub async fn search_query<P: Principal, S: Store, B: AudioBackend>(
     if artist_count > 0 {
         artists = ctx
             .store
-            .get_artists(artist_count, artist_offset, query.as_deref())
+            .search_artists(artist_count, artist_offset, query.as_deref())
             .await
             .map_err(Ctx::<P, S, B>::store_err)?;
     }

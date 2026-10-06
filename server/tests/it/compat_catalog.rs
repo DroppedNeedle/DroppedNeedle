@@ -176,9 +176,15 @@ async fn subsonic_and_jellyfin_read_the_scanned_library() {
     assert_eq!((played.len(), total), (0, 0), "history sorts skip unplayed");
 }
 
-/// One more streamable track on the seeded album.
+/// One more streamable track on the seeded album, by Portishead.
 fn track_row(id: &str, title: &str, number: i64) -> String {
+    track_by(id, title, "Portishead", number)
+}
+
+/// One more streamable track on the seeded album, by `artist`.
+fn track_by(id: &str, title: &str, artist: &str, number: i64) -> String {
     let folded = title.to_lowercase();
+    let artist_folded = artist.to_lowercase();
     format!(
         "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
          path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
@@ -186,9 +192,51 @@ fn track_row(id: &str, title: &str, number: i64) -> String {
          album_artist_name_folded, track_number, duration_seconds, file_format, ingest_source, \
          imported_at, membership_source) \
          VALUES ('{id}', 'alb-1', 'root', '/music/dummy/{id}.flac', 'dummy/{id}.flac', 'h-{id}', \
-         1000, 1, 'r-{id}', '{title}', '{folded}', 'Portishead', 'portishead', 'Dummy', 'dummy', \
-         'Portishead', 'portishead', {number}, 200.0, 'flac', 'scan', 1, 'automatic');"
+         1000, 1, 'r-{id}', '{title}', '{folded}', '{artist}', '{artist_folded}', 'Dummy', \
+         'dummy', 'Portishead', 'portishead', {number}, 200.0, 'flac', 'scan', 1, 'automatic');"
     )
+}
+
+/// Words under 3 characters still narrow a search that has a longer word:
+/// "the xx" finds The xx, not every track with "the" in it.
+#[tokio::test]
+async fn short_words_narrow_a_search() {
+    let rig = Rig::open().await;
+    let seed = [
+        track_by("trk-a", "The Rip", "Portishead", 2),
+        track_by("trk-b", "Over The Hill", "Portishead", 3),
+        track_by("trk-c", "Intro", "The xx", 4),
+    ]
+    .concat();
+    rig.runtime
+        .lane()
+        .write(Lane::Foreground, "more tracks", move |tx| {
+            tx.execute_batch(&seed)?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let found = rig
+        .subsonic(
+            "search3",
+            &[
+                ("query", "the xx"),
+                ("songCount", "1"),
+                ("artistCount", "0"),
+                ("albumCount", "0"),
+            ],
+        )
+        .await;
+    assert!(found.contains("tr-trk-c"), "{found}");
+    // A query with no word of 3+ characters keeps the substring match.
+    let short = rig
+        .subsonic(
+            "search3",
+            &[("query", "xx"), ("artistCount", "0"), ("albumCount", "0")],
+        )
+        .await;
+    assert!(short.contains("tr-trk-c"), "{short}");
+    assert!(!short.contains("tr-trk-a"), "{short}");
 }
 
 /// The search3 empty-query sync (Symfonium, Tempo) pages in insertion
