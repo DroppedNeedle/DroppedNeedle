@@ -52,6 +52,7 @@
 			WALK_TIMEOUT: 'Stopped because a library folder stopped responding',
 			FAILED: 'The scan could not finish'
 		};
+		if (run.terminal_message) return run.terminal_message;
 		return run.terminal_code
 			? (labels[run.terminal_code] ?? 'Finished with a recorded status')
 			: '-';
@@ -243,6 +244,9 @@
 				<span class="badge badge-ghost badge-sm">{detailRun.state.replaceAll('_', ' ')}</span>
 			</div>
 			<p class="mt-4 text-sm">{terminalReason(detailRun)}</p>
+			{#if detailRun.terminal_action}
+				<p class="mt-1 text-sm text-base-content/60">{detailRun.terminal_action}</p>
+			{/if}
 			<dl class="mt-4 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
 				{#each Object.entries(detailRun.counters) as [name, count] (name)}
 					<div class="rounded-box bg-base-200/60 p-3">
@@ -272,9 +276,13 @@
 				{:else}
 					<ul class="mt-2 space-y-1 text-sm text-base-content/65">
 						{#each failureItems as failure, index (index)}
-							<li class="flex items-center justify-between gap-2">
-								<span class="truncate">{failure.relative_path}</span>
-								<span class="badge badge-error badge-sm shrink-0">{failure.failure_code}</span>
+							<li class="space-y-0.5">
+								<div class="flex items-center justify-between gap-2">
+									<span class="truncate">{failure.relative_path}</span>
+									<span class="badge badge-error badge-sm shrink-0">{failure.failure_code}</span>
+								</div>
+								<p class="text-xs text-base-content/70">{failure.message}</p>
+								<p class="text-xs text-base-content/55">{failure.action}</p>
 							</li>
 						{/each}
 					</ul>

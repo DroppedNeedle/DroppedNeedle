@@ -15376,9 +15376,14 @@ export interface components {
         };
         /** @description One path a scan could not read or index. */
         ScanRunFailureItem: {
-            /** @description Machine code, for example `TAG_READ_FAILED`. */
+            /** @description What to do about it. */
+            action: string;
+            /** @description Stable machine code, for example `TAG_READ_FAILED`. */
             failure_code: string;
+            /** @description Technical detail for diagnostics; not meant for display. */
             failure_detail: string;
+            /** @description What happened, in plain words. */
+            message: string;
             /** @description `discovering`, `indexing` or `reconciling`. */
             phase: string;
             /**
@@ -15484,6 +15489,8 @@ export interface components {
             started_at?: number | null;
             /** @description Run state. */
             state: string;
+            /** @description What to do about the terminal code. */
+            terminal_action?: string | null;
             /**
              * Format: double
              * @description Terminal time, when terminal.
@@ -15491,6 +15498,8 @@ export interface components {
             terminal_at?: number | null;
             /** @description Terminal code, when terminal. */
             terminal_code?: string | null;
+            /** @description What the terminal code means, in plain words. */
+            terminal_message?: string | null;
             /** @description What triggered the run. */
             trigger: string;
             /**

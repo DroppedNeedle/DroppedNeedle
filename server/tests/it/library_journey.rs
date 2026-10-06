@@ -965,6 +965,8 @@ async fn library_journey_scan_controls_and_activity() {
     let music = lib.dir.join("music");
     plant(&music, "album-a/01.flac", "management_full.flac");
     plant(&music, "album-a/02.flac", "management_full.flac");
+    // Not audio at all: its tags cannot be read.
+    std::fs::write(music.join("album-a/03.flac"), b"not a flac file").expect("junk file");
     let (status, body) = call(
         lib.router(),
         "POST",
@@ -1056,9 +1058,24 @@ async fn library_journey_scan_controls_and_activity() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["items"][0]["id"], json!(queued_id));
+    // The unreadable file is listed with its code, a plain reason and an
+    // action.
     let (status, body) = get(format!("/api/v3/library/scan/runs/{run_id}/failures")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["items"], json!([]));
+    let failures = body["items"].as_array().expect("failures");
+    assert_eq!(failures.len(), 1, "{body}");
+    assert_eq!(failures[0]["relative_path"], json!("album-a/03.flac"));
+    assert_eq!(failures[0]["failure_code"], json!("TAG_READ_FAILED"));
+    assert!(
+        failures[0]["message"]
+            .as_str()
+            .is_some_and(|message| message.starts_with("Can't read this file's tags"))
+    );
+    assert!(
+        failures[0]["action"]
+            .as_str()
+            .is_some_and(|action| !action.is_empty())
+    );
     let (status, _) = get("/api/v3/library/scan/runs/nope/failures".into()).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     let (status, body) = get("/api/v3/library/scan/runs/estimate?scope_ids=music".into()).await;

@@ -123,6 +123,10 @@ export interface ScanRun {
 	resume_phase: 'queued' | 'discovering' | 'indexing' | 'reconciling' | null;
 	requested_control: 'none' | 'pause' | 'stop';
 	terminal_code: string | null;
+	/** What the terminal code means, in plain words. */
+	terminal_message?: string | null;
+	/** What to do about the terminal code. */
+	terminal_action?: string | null;
 	coalesced_request_count: number;
 	row_revision: number;
 	event_revision: number;
@@ -165,6 +169,10 @@ export interface ScanRunFailureItem {
 	root_id: string;
 	relative_path: string;
 	failure_code: string;
+	/** What happened, in plain words. */
+	message: string;
+	/** What to do about it. */
+	action: string;
 	failure_detail: string;
 	phase: 'discovering' | 'indexing' | 'reconciling';
 	recorded_at: number;

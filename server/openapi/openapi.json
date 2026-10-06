@@ -34073,17 +34073,28 @@
           "root_id",
           "relative_path",
           "failure_code",
+          "message",
+          "action",
           "failure_detail",
           "phase",
           "recorded_at"
         ],
         "properties": {
+          "action": {
+            "type": "string",
+            "description": "What to do about it."
+          },
           "failure_code": {
             "type": "string",
-            "description": "Machine code, for example `TAG_READ_FAILED`."
+            "description": "Stable machine code, for example `TAG_READ_FAILED`."
           },
           "failure_detail": {
-            "type": "string"
+            "type": "string",
+            "description": "Technical detail for diagnostics; not meant for display."
+          },
+          "message": {
+            "type": "string",
+            "description": "What happened, in plain words."
           },
           "phase": {
             "type": "string",
@@ -34325,6 +34336,13 @@
             "type": "string",
             "description": "Run state."
           },
+          "terminal_action": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What to do about the terminal code."
+          },
           "terminal_at": {
             "type": [
               "number",
@@ -34339,6 +34357,13 @@
               "null"
             ],
             "description": "Terminal code, when terminal."
+          },
+          "terminal_message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the terminal code means, in plain words."
           },
           "trigger": {
             "type": "string",

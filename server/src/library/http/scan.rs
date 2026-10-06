@@ -22,6 +22,7 @@ use super::handlers::run_view;
 use super::models::{ScanRunView, snake};
 use crate::library::activity::feed::LibraryActivity;
 use crate::library::scan::models::{Disposition, ScanKind};
+use crate::library::scan::reasons::scan_reason;
 use crate::library::scans::{MAX_FAILURE_PAGE, MAX_PAGE, RunControl};
 use crate::library::wiring::LibrarySetup;
 
@@ -196,8 +197,13 @@ pub struct FailuresQuery {
 pub struct ScanRunFailureItem {
     pub root_id: String,
     pub relative_path: String,
-    /// Machine code, for example `TAG_READ_FAILED`.
+    /// Stable machine code, for example `TAG_READ_FAILED`.
     pub failure_code: String,
+    /// What happened, in plain words.
+    pub message: String,
+    /// What to do about it.
+    pub action: String,
+    /// Technical detail for diagnostics; not meant for display.
     pub failure_detail: String,
     /// `discovering`, `indexing` or `reconciling`.
     pub phase: String,
@@ -411,13 +417,18 @@ pub async fn scan_run_failures(
     Ok(Json(ScanRunFailuresResponse {
         items: failures
             .into_iter()
-            .map(|failure| ScanRunFailureItem {
-                phase: snake(&failure.phase),
-                root_id: failure.root_id,
-                relative_path: failure.relative_path,
-                failure_code: failure.failure_code,
-                failure_detail: failure.failure_detail,
-                recorded_at: failure.recorded_at,
+            .map(|failure| {
+                let reason = scan_reason(&failure.failure_code);
+                ScanRunFailureItem {
+                    message: reason.message.to_owned(),
+                    action: reason.action.to_owned(),
+                    phase: snake(&failure.phase),
+                    root_id: failure.root_id,
+                    relative_path: failure.relative_path,
+                    failure_code: failure.failure_code,
+                    failure_detail: failure.failure_detail,
+                    recorded_at: failure.recorded_at,
+                }
             })
             .collect(),
         next_cursor,

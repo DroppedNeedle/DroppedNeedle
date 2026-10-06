@@ -60,6 +60,10 @@ fn parse_policy(raw: Option<&str>) -> Result<EffectivePolicy, LibraryError> {
 }
 
 pub(super) fn run_view(run: &ScanRun) -> ScanRunView {
+    let terminal = run
+        .terminal_code
+        .as_deref()
+        .map(crate::library::scan::reasons::scan_reason);
     ScanRunView {
         id: run.id.clone(),
         kind: snake(&run.kind),
@@ -73,6 +77,8 @@ pub(super) fn run_view(run: &ScanRun) -> ScanRunView {
         updated_at: run.updated_at,
         terminal_at: run.terminal_at,
         terminal_code: run.terminal_code.clone(),
+        terminal_message: terminal.as_ref().map(|reason| reason.message.to_owned()),
+        terminal_action: terminal.as_ref().map(|reason| reason.action.to_owned()),
         requested_by_user_id: run.requested_by_user_id.clone(),
         resume_phase: run.resume_phase.as_ref().map(snake),
         requested_control: snake(&run.requested_control),

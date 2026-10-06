@@ -102,6 +102,10 @@ pub struct ScanRunView {
     pub terminal_at: Option<f64>,
     /// Terminal code, when terminal.
     pub terminal_code: Option<String>,
+    /// What the terminal code means, in plain words.
+    pub terminal_message: Option<String>,
+    /// What to do about the terminal code.
+    pub terminal_action: Option<String>,
     /// Who asked for the run, when someone did.
     pub requested_by_user_id: Option<String>,
     /// Phase a paused run picks up from.

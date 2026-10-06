@@ -32,6 +32,8 @@ export function toScanRun(view: ScanRunView): ScanRun {
 		resume_phase: (view.resume_phase ?? null) as ScanRun['resume_phase'],
 		requested_control: view.requested_control as ScanRun['requested_control'],
 		terminal_code: view.terminal_code ?? null,
+		terminal_message: view.terminal_message ?? null,
+		terminal_action: view.terminal_action ?? null,
 		coalesced_request_count: view.coalesced_request_count,
 		row_revision: view.row_revision,
 		event_revision: view.event_revision,

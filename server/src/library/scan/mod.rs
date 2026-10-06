@@ -40,6 +40,7 @@ pub mod fs;
 pub mod models;
 pub mod naming;
 pub mod pool;
+pub mod reasons;
 pub mod revision;
 pub mod roots;
 pub mod scheduler;
