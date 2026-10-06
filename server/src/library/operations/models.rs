@@ -4,6 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::reasons::Reason;
 use crate::library::identify::models::{CandidateEvidence, EvidenceClass};
 
 /// What kind of work a job carries. Only explicit re-identification has a
@@ -270,21 +271,17 @@ pub struct ReleaseSearch {
     pub limit: u32,
 }
 
-/// Why an operation request failed. Handlers map each to a status.
+/// Why an operation request failed. Handlers map each to a status; every
+/// refusal carries its [`Reason`]: a code, a sentence, and what to do.
 #[derive(Debug)]
 pub enum OperationError {
-    NotFound(String),
-    /// Bad input; the message is safe to show.
-    Invalid(String),
-    /// A valid request against the wrong state.
-    Conflict(String),
-    /// The job, album, or identity moved since the caller read it.
-    Stale(String),
-    /// The exact release does not map every file.
-    MappingIncomplete(String),
-    /// A custom edition cannot be sealed from these files.
-    NotSealable(String),
-    /// MusicBrainz could not answer.
+    NotFound(Reason),
+    /// Bad input, or a choice these files cannot take.
+    Invalid(Reason),
+    /// A valid request against the wrong state, or against a job or album
+    /// that moved since the caller read it.
+    Conflict(Reason),
+    /// MusicBrainz could not answer; the cause is for the log.
     Unavailable(String),
     /// A store fault; the cause is for the log.
     Store(String),
@@ -293,14 +290,10 @@ pub enum OperationError {
 impl std::fmt::Display for OperationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotFound(message)
-            | Self::Invalid(message)
-            | Self::Conflict(message)
-            | Self::Stale(message)
-            | Self::MappingIncomplete(message)
-            | Self::NotSealable(message)
-            | Self::Unavailable(message)
-            | Self::Store(message) => write!(f, "{message}"),
+            Self::NotFound(reason) | Self::Invalid(reason) | Self::Conflict(reason) => {
+                write!(f, "{}: {}", reason.code, reason.message)
+            }
+            Self::Unavailable(cause) | Self::Store(cause) => write!(f, "{cause}"),
         }
     }
 }

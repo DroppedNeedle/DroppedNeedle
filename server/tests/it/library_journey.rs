@@ -2114,40 +2114,74 @@ async fn library_contribution_seed_callback_verify_links_album() {
     );
 }
 
-/// The single release the planted file names, built from its own tags so
-/// every id agrees.
+/// The release the planted files name, built from their own tags so every
+/// id agrees.
 fn tagged_release(library: &LibrarySetup, album_id: &str) -> Release {
     use droppedneedle::library::identify::stores::FactsSource as _;
     let facts = library
         .identify_store
         .album_facts(album_id)
         .expect("album facts");
-    let track = &facts.tracks[0];
+    let first = &facts.tracks[0];
     Release {
-        id: track.release_mbid.clone().expect("tagged release"),
-        release_group_id: track.release_group_mbid.clone().expect("tagged group"),
+        id: first.release_mbid.clone().expect("tagged release"),
+        release_group_id: first.release_group_mbid.clone().expect("tagged group"),
         title: facts.title.clone(),
         artists: vec![CreditedArtist {
-            id: "10000000-0000-4000-8000-000000000005".to_owned(),
+            id: "a74b1b7f-71a5-4011-9441-d0b5e4122711".to_owned(),
             name: facts.album_artist_name.clone(),
             sort_name: None,
             join: String::new(),
         }],
-        tracks: vec![ReleaseTrack {
-            id: track
-                .release_track_mbid
-                .clone()
-                .expect("tagged release track"),
-            recording_id: track.recording_mbid.clone().expect("tagged recording"),
-            title: track.title.clone(),
-            artists: Vec::new(),
-            disc: track.disc_number.max(1),
-            position: track.track_number,
-            absolute_position: track.track_number,
-            length_ms: track.duration_secs.map(|seconds| seconds * 1000),
-        }],
+        tracks: facts
+            .tracks
+            .iter()
+            .enumerate()
+            .map(|(index, track)| ReleaseTrack {
+                id: format!("release-track-{index}"),
+                recording_id: track.recording_mbid.clone().expect("tagged recording"),
+                title: track.title.clone(),
+                artists: Vec::new(),
+                disc: track.disc_number.max(1),
+                position: track.track_number,
+                absolute_position: index as u32 + 1,
+                length_ms: track.duration_secs.map(|seconds| seconds * 1000),
+            })
+            .collect(),
         ..Release::default()
     }
+}
+
+/// One track identity row as `(recording, release, release track, disc,
+/// position, decision source)`.
+type TrackRow = (
+    String,
+    Option<String>,
+    Option<String>,
+    Option<i64>,
+    Option<i64>,
+    String,
+);
+
+fn track_row(db: &Path, track_id: &str) -> TrackRow {
+    let conn = droppedneedle::db::open_connection(db).expect("db opens");
+    conn.query_row(
+        "SELECT recording_mbid, release_mbid, release_track_mbid, medium_position, \
+         release_track_position, decision_source FROM local_track_external_identities \
+         WHERE local_track_id = ?1",
+        [track_id],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
+        },
+    )
+    .expect("track identity row")
 }
 
 /// Automatic edition undone to review, then an explicit re-identification:
@@ -2164,7 +2198,8 @@ async fn library_journey_undo_edition_then_reidentify() {
     let auth = bearer(&admin);
     let headers = [("authorization", auth.as_str())];
     let music = lib.dir.join("music");
-    plant(&music, "album-r/01.flac", "management_full.flac");
+    plant(&music, "album-r/01.flac", "flac_full_01.flac");
+    plant(&music, "album-r/02.flac", "flac_full_02.flac");
     let (status, body) = call(
         lib.router(),
         "POST",
@@ -2207,6 +2242,49 @@ async fn library_journey_undo_edition_then_reidentify() {
     .await;
     let album = body["album_id"].as_str().expect("album id").to_owned();
     let release = tagged_release(&lib.library, &album);
+    let (manual_track, auto_track) = {
+        use droppedneedle::library::identify::stores::FactsSource as _;
+        let facts = lib
+            .library
+            .identify_store
+            .album_facts(&album)
+            .expect("facts");
+        (
+            facts.tracks[0].local_track_id.clone(),
+            facts.tracks[1].local_track_id.clone(),
+        )
+    };
+    // Before the automatic pass: a curator's track row, and an automatic
+    // row placed on an earlier release.
+    let manual_row: TrackRow = (
+        "manual-recording".to_owned(),
+        None,
+        None,
+        None,
+        None,
+        "manual".to_owned(),
+    );
+    let prior_auto_row: TrackRow = (
+        release.tracks[1].recording_id.clone(),
+        Some("prior-release".to_owned()),
+        Some("prior-release-track".to_owned()),
+        Some(1),
+        Some(7),
+        "automatic".to_owned(),
+    );
+    {
+        let conn = droppedneedle::db::open_connection(&lib.db_path).expect("db opens");
+        for (track, row) in [(&manual_track, &manual_row), (&auto_track, &prior_auto_row)] {
+            conn.execute(
+                "INSERT INTO local_track_external_identities (local_track_id, provider, \
+                 recording_mbid, release_mbid, release_track_mbid, medium_position, \
+                 release_track_position, decision_source, selected_at, row_revision) \
+                 VALUES (?1, 'musicbrainz', ?2, ?3, ?4, ?5, ?6, ?7, 1.0, 3)",
+                rusqlite::params![track, row.0, row.1, row.2, row.3, row.4, row.5],
+            )
+            .expect("prior track row");
+        }
+    }
     let scripted = lib.library.test_providers.as_ref().expect("scripted");
     scripted.set_recall(RecallResult {
         releases: vec![release.clone()],
@@ -2221,6 +2299,11 @@ async fn library_journey_undo_edition_then_reidentify() {
         .album_identity(&album)
         .expect("sealed");
     assert_eq!(sealed.release_mbid.as_deref(), Some(release.id.as_str()));
+    assert_eq!(track_row(&lib.db_path, &manual_track), manual_row);
+    assert_eq!(
+        track_row(&lib.db_path, &auto_track).1.as_deref(),
+        Some(release.id.as_str())
+    );
 
     // Undo needs the revisions the acceptance left; stale ones are refused.
     let (album_revision, identity_revision) = service::automatic_edition_undo(&lib.library, &album)
@@ -2242,6 +2325,10 @@ async fn library_journey_undo_edition_then_reidentify() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["outcome"], json!("cleared_to_review"));
     assert!(lib.library.identify_store.album_identity(&album).is_none());
+    // The curator's track row was never touched; the automatic one is back
+    // on its earlier release, disc, and position.
+    assert_eq!(track_row(&lib.db_path, &manual_track), manual_row);
+    assert_eq!(track_row(&lib.db_path, &auto_track), prior_auto_row);
     let reviews = format!("/api/v3/library/reviews?album_id={album}");
     let (_, body) = call(lib.router(), "GET", &reviews, &headers, None).await;
     assert_eq!(
@@ -2325,9 +2412,8 @@ async fn library_journey_undo_edition_then_reidentify() {
         total: 1,
         offset: 0,
     });
-    let finder = format!(
-        "/api/v3/library/albums/{album}/reidentification/releases?title=Management%20Album"
-    );
+    let finder =
+        format!("/api/v3/library/albums/{album}/reidentification/releases?title=OK%20Computer");
     let (status, found) = call(lib.router(), "GET", &finder, &headers, None).await;
     assert_eq!(status, StatusCode::OK, "{found}");
     assert_eq!(found["items"][0]["is_current_release"], json!(false));

@@ -15,6 +15,7 @@ use super::models::{
     CandidateChoice, Control, OperationDetail, OperationError, OperationJob, ReidentifyInput,
     ReleaseSearch, UndoOutcome,
 };
+use super::reasons;
 use super::reidentify::{MAX_ATTEMPTS, RETRY_SECS, evaluation, unavailable};
 use super::store::{self, NewReidentification};
 use crate::ids::IdGenerator;
@@ -23,7 +24,7 @@ use crate::library::identify::service::IdentifyService;
 use crate::library::identify::sources::EditionQuery;
 use crate::library::identify::sqlite::SqliteIdentifyStore;
 use crate::library::identify::stores::{FactsSource as _, IdentityStore as _};
-use crate::library::wiring::LibrarySetup;
+use crate::library::wiring::{LibrarySetup, ScanCoordinator};
 
 /// Largest edition-finder page, as in v2.
 pub const RELEASE_PAGE_MAX: u32 = 12;
@@ -34,6 +35,7 @@ pub struct Operations {
     store: Arc<SqliteIdentifyStore>,
     identify: Arc<IdentifyService>,
     ids: Arc<dyn IdGenerator>,
+    coordinator: Arc<ScanCoordinator>,
 }
 
 impl Operations {
@@ -42,7 +44,13 @@ impl Operations {
             store: setup.identify_store.clone(),
             identify: setup.identify.clone(),
             ids: setup.ids.clone(),
+            coordinator: setup.coordinator.clone(),
         }
+    }
+
+    /// True while a scan runs: it may be changing the files a job reads.
+    fn scan_running(&self) -> bool {
+        !self.coordinator.current().is_empty()
     }
 
     fn read<T>(
@@ -69,7 +77,7 @@ impl Operations {
     pub fn get(&self, job_id: &str) -> Result<OperationDetail, OperationError> {
         self.read(|conn| {
             let job = store::job(conn, job_id)?
-                .ok_or_else(|| OperationError::NotFound("Library operation not found.".into()))?;
+                .ok_or(OperationError::NotFound(reasons::OPERATION_NOT_FOUND))?;
             let (results, results_truncated) = store::work_results(conn, job_id)?;
             let (candidates, selected_candidate_key) = if job.is_reidentification() {
                 match store::snapshot(conn, job_id)? {
@@ -125,11 +133,7 @@ impl Operations {
             .map(|raw| {
                 uuid::Uuid::parse_str(raw.trim())
                     .map(|id| id.hyphenated().to_string())
-                    .map_err(|_| {
-                        OperationError::Invalid(
-                            "The exact MusicBrainz release ID is invalid.".into(),
-                        )
-                    })
+                    .map_err(|_| OperationError::Invalid(reasons::RELEASE_MBID_INVALID))
             })
             .transpose()?;
         let new = NewReidentification {
@@ -189,9 +193,7 @@ impl Operations {
         let title_query = title.split_whitespace().collect::<Vec<_>>().join(" ");
         let artist_query = artist.split_whitespace().collect::<Vec<_>>().join(" ");
         if title_query.is_empty() {
-            return Err(OperationError::Invalid(
-                "A release title is required.".into(),
-            ));
+            return Err(OperationError::Invalid(reasons::SEARCH_NEEDS_TITLE));
         }
         let limit = limit.clamp(1, RELEASE_PAGE_MAX);
         let identity = {
@@ -200,7 +202,7 @@ impl Operations {
             tokio::task::spawn_blocking(move || {
                 let known = ops.read(|conn| Ok(store::album_revisions(conn, &album_id)?))?;
                 if known.is_none() {
-                    return Err(OperationError::NotFound("Library album not found.".into()));
+                    return Err(OperationError::NotFound(reasons::ALBUM_NOT_FOUND));
                 }
                 Ok(ops.store.album_identity(&album_id))
             })
@@ -278,7 +280,16 @@ impl Operations {
                 )?)
             });
         };
+        let scanning = self.scan_running();
         let halted = self.write(|tx| {
+            if scanning {
+                return Ok(Some(store::requeue_for_scan(
+                    tx,
+                    &job.id,
+                    worker,
+                    now_unix(),
+                )?));
+            }
             if !store::matches_snapshot(tx, &snap)? {
                 return Ok(Some(store::fail(
                     tx,
@@ -314,9 +325,16 @@ impl Operations {
                 }
             });
         }
-        if let Some(left) =
-            self.write(|tx| Ok(store::checkpoint(tx, &job.id, worker, now_unix())?))?
-        {
+        // A scan that started during recall may have moved the files: wait
+        // for it and evaluate again rather than calling the input stale.
+        let scanning = self.scan_running();
+        let left = self.write(|tx| {
+            if scanning {
+                return Ok(store::requeue_for_scan(tx, &job.id, worker, now_unix())?);
+            }
+            Ok(store::checkpoint(tx, &job.id, worker, now_unix())?)
+        })?;
+        if let Some(left) = left {
             return Ok(Some(left));
         }
         let ranking = self.identify.rank(&facts, &recall);

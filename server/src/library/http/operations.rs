@@ -23,6 +23,7 @@ use crate::library::operations::models::{
     CandidateChoice, Control, DecisionMode, OperationDetail, OperationError, OperationJob,
     ReidentificationCandidate, ReidentifyInput,
 };
+use crate::library::operations::reasons::{self, Reason};
 use crate::library::operations::service::{Operations, RELEASE_PAGE_MAX};
 use crate::library::wiring::LibrarySetup;
 
@@ -82,44 +83,28 @@ impl From<OperationError> for OperationsHttpError {
 
 impl IntoResponse for OperationsHttpError {
     fn into_response(self) -> Response {
-        use crate::error::{envelope_response, fault_response};
+        use crate::error::envelope_response;
         let error = match self {
             Self::Library(error) => return error.into_response(),
             Self::Operation(error) => error,
         };
+        let refuse = |status: StatusCode, reason: Reason| {
+            envelope_response(
+                status,
+                reason.code,
+                reason.message,
+                Some(serde_json::json!({ "action": reason.action })),
+            )
+        };
         match error {
-            OperationError::NotFound(message) => {
-                envelope_response(StatusCode::NOT_FOUND, "NOT_FOUND", message, None)
-            }
-            OperationError::Invalid(message) => {
-                envelope_response(StatusCode::BAD_REQUEST, "INVALID_INPUT", message, None)
-            }
-            OperationError::MappingIncomplete(message) => envelope_response(
-                StatusCode::BAD_REQUEST,
-                "EXACT_RELEASE_MAPPING_INCOMPLETE",
-                message,
-                None,
-            ),
-            OperationError::NotSealable(message) => envelope_response(
-                StatusCode::BAD_REQUEST,
-                "CUSTOM_EDITION_NOT_SEALABLE",
-                message,
-                None,
-            ),
-            OperationError::Conflict(message) => {
-                envelope_response(StatusCode::CONFLICT, "CONFLICT", message, None)
-            }
-            OperationError::Stale(message) => {
-                envelope_response(StatusCode::CONFLICT, "STALE_REVISION", message, None)
-            }
+            OperationError::NotFound(reason) => refuse(StatusCode::NOT_FOUND, reason),
+            OperationError::Invalid(reason) => refuse(StatusCode::BAD_REQUEST, reason),
+            OperationError::Conflict(reason) => refuse(StatusCode::CONFLICT, reason),
             OperationError::Unavailable(cause) => {
-                let error_id = uuid::Uuid::new_v4().to_string();
-                tracing::warn!(error_id, %cause, "MusicBrainz release search failed");
-                fault_response(
+                tracing::warn!(%cause, "MusicBrainz release search failed");
+                refuse(
                     StatusCode::SERVICE_UNAVAILABLE,
-                    crate::error::UPSTREAM_ERROR,
-                    crate::error::FIXED_UPSTREAM_MESSAGE,
-                    &error_id,
+                    reasons::MUSICBRAINZ_UNAVAILABLE,
                 )
             }
             OperationError::Store(cause) => LibraryError::internal(&cause).into_response(),
@@ -141,6 +126,29 @@ async fn blocking<T: Send + 'static>(
 // DTOs.
 // ---------------------------------------------------------------------------
 
+/// Why a job or work item ended where it did: a stable code, a plain
+/// sentence, and what to do about it.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ReasonView {
+    pub code: String,
+    pub message: String,
+    pub action: String,
+}
+
+impl From<Reason> for ReasonView {
+    fn from(reason: Reason) -> Self {
+        Self {
+            code: reason.code.to_owned(),
+            message: reason.message.to_owned(),
+            action: reason.action.to_owned(),
+        }
+    }
+}
+
+fn ending(code: Option<&str>) -> Option<ReasonView> {
+    code.map(|code| reasons::terminal(code).into())
+}
+
 /// One work item's outcome.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct OperationWorkResultView {
@@ -151,6 +159,8 @@ pub struct OperationWorkResultView {
     pub local_album_id: Option<String>,
     pub local_track_id: Option<String>,
     pub failure_code: Option<String>,
+    /// Why the item failed, in words, with what to do about it.
+    pub failure_reason: Option<ReasonView>,
     /// What the work item recorded (for a re-identification: `outcome`,
     /// `reason_code`, `candidate_keys`).
     #[schema(value_type = Object)]
@@ -235,6 +245,8 @@ pub struct OperationView {
     /// A control the worker has not acted on yet: `none`, `pause`, `stop`.
     pub control_request: String,
     pub terminal_code: Option<String>,
+    /// What `terminal_code` means and what to do about it.
+    pub terminal_reason: Option<ReasonView>,
     /// Echo this on every control and choice.
     pub row_revision: i64,
     pub event_revision: i64,
@@ -451,6 +463,7 @@ fn job_view(job: &OperationJob) -> OperationView {
         skipped_count: job.skipped_count,
         control_request: job.control_request.as_str().to_owned(),
         terminal_code: job.terminal_code.clone(),
+        terminal_reason: ending(job.terminal_code.as_deref()),
         row_revision: job.row_revision,
         event_revision: job.event_revision,
         created_at: job.created_at,
@@ -475,6 +488,7 @@ fn detail_view(detail: &OperationDetail) -> OperationView {
                 local_album_id: result.local_album_id.clone(),
                 local_track_id: result.local_track_id.clone(),
                 failure_code: result.failure_code.clone(),
+                failure_reason: ending(result.failure_code.as_deref()),
                 result: result.result.clone(),
             })
             .collect(),
@@ -713,10 +727,7 @@ pub async fn search_reidentification_releases(
         || query.title.chars().count() > 250
         || query.artist.chars().count() > 250
     {
-        return Err(OperationError::Invalid(
-            "Titles and artists are at most 250 characters; pages hold 1 to 12 releases.".into(),
-        )
-        .into());
+        return Err(OperationError::Invalid(reasons::SEARCH_TOO_LONG).into());
     }
     let search = Operations::new(&state)
         .search_releases(

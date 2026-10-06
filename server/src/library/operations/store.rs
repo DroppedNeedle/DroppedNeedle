@@ -22,6 +22,7 @@ use super::models::{
     Control, ControlRequest, Evaluation, OperationError, OperationJob, OperationKind,
     OperationState, WorkResult,
 };
+use super::reasons;
 use crate::library::identify::sqlite::album_input_revision;
 
 /// How long a worker holds a claimed job before recovery requeues it.
@@ -76,8 +77,7 @@ fn job_by_key(conn: &Connection, key: &str) -> rusqlite::Result<Option<Operation
 
 /// The job after a write that must have found it.
 pub(super) fn job_after(conn: &Connection, job_id: &str) -> Result<OperationJob, OperationError> {
-    job(conn, job_id)?
-        .ok_or_else(|| OperationError::NotFound("Library operation not found.".into()))
+    job(conn, job_id)?.ok_or(OperationError::NotFound(reasons::OPERATION_NOT_FOUND))
 }
 
 /// The first work results of a job, and whether more exist.
@@ -282,7 +282,7 @@ pub fn create_reidentification(
         return Ok(existing);
     }
     let revisions = album_revisions(tx, &new.local_album_id)?
-        .ok_or_else(|| OperationError::NotFound("Album not found.".into()))?;
+        .ok_or(OperationError::NotFound(reasons::ALBUM_NOT_FOUND))?;
     let key = match caller_key {
         Some(key) => key,
         None => {
@@ -300,23 +300,17 @@ pub fn create_reidentification(
         .expected_album_revision
         .is_some_and(|expected| expected != revisions.album_revision)
     {
-        return Err(OperationError::Stale(
-            "The album changed before re-identification started.".into(),
-        ));
+        return Err(OperationError::Conflict(reasons::ALBUM_CHANGED));
     }
     if new
         .expected_input_revision
         .as_deref()
         .is_some_and(|expected| expected != revisions.input_revision)
     {
-        return Err(OperationError::Stale(
-            "The album files changed before re-identification started.".into(),
-        ));
+        return Err(OperationError::Conflict(reasons::ALBUM_FILES_CHANGED));
     }
     if revisions.policies.iter().any(|policy| policy == "excluded") {
-        return Err(OperationError::Conflict(
-            "Excluded albums cannot be re-identified.".into(),
-        ));
+        return Err(OperationError::Conflict(reasons::ALBUM_EXCLUDED));
     }
     if revisions
         .policies
@@ -325,7 +319,7 @@ pub fn create_reidentification(
         && !new.one_off_local_metadata
     {
         return Err(OperationError::Conflict(
-            "Confirm the one-off lookup for Local metadata content.".into(),
+            reasons::LOCAL_METADATA_NEEDS_CONFIRMATION,
         ));
     }
     tx.execute(
@@ -386,13 +380,10 @@ pub fn request_control(
     idempotency_key: Option<&str>,
     now: f64,
 ) -> Result<OperationJob, OperationError> {
-    let current = job(tx, job_id)?
-        .ok_or_else(|| OperationError::NotFound("Library operation not found.".into()))?;
+    let current = job(tx, job_id)?.ok_or(OperationError::NotFound(reasons::OPERATION_NOT_FOUND))?;
     if let Some(key) = idempotency_key {
         if key.trim().is_empty() {
-            return Err(OperationError::Invalid(
-                "A control idempotency key cannot be empty.".into(),
-            ));
+            return Err(OperationError::Invalid(reasons::CONTROL_KEY_EMPTY));
         }
         let prior: Option<(String, String)> = tx
             .query_row(
@@ -404,17 +395,13 @@ pub fn request_control(
             .optional()?;
         if let Some((prior_job, prior_control)) = prior {
             if prior_job != job_id || prior_control != control.as_str() {
-                return Err(OperationError::Conflict(
-                    "The control idempotency key belongs to another request.".into(),
-                ));
+                return Err(OperationError::Conflict(reasons::CONTROL_KEY_REUSED));
             }
             return Ok(current);
         }
     }
     if current.row_revision != expected_row_revision {
-        return Err(OperationError::Stale(
-            "The operation changed before the control request.".into(),
-        ));
+        return Err(OperationError::Conflict(reasons::OPERATION_CHANGED));
     }
     if let Some(key) = idempotency_key {
         tx.execute(
@@ -473,9 +460,7 @@ pub fn request_control(
         params![now, job_id, expected_row_revision],
     )?;
     if changed != 1 {
-        return Err(OperationError::Stale(
-            "The operation changed before the control request.".into(),
-        ));
+        return Err(OperationError::Conflict(reasons::OPERATION_CHANGED));
     }
     job_after(tx, job_id)
 }
@@ -591,6 +576,16 @@ pub fn checkpoint(
     job(tx, job_id)
 }
 
+/// True while `worker` holds the running job's lease.
+fn holds(tx: &Transaction<'_>, job_id: &str, worker: &str) -> rusqlite::Result<bool> {
+    tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM library_operation_jobs WHERE id = ?1 \
+         AND state = 'running' AND lease_owner = ?2)",
+        params![job_id, worker],
+        |row| row.get(0),
+    )
+}
+
 /// End a running job with no evaluation (the album went away or moved).
 pub fn fail(
     tx: &Transaction<'_>,
@@ -599,6 +594,9 @@ pub fn fail(
     code: &str,
     now: f64,
 ) -> rusqlite::Result<Option<OperationJob>> {
+    if !holds(tx, job_id, worker)? {
+        return job(tx, job_id);
+    }
     tx.execute(
         "UPDATE library_operation_work SET state = 'failed', failure_code = ?2, \
          updated_at = ?3, row_revision = row_revision + 1 \
@@ -617,6 +615,32 @@ pub fn fail(
     job(tx, job_id)
 }
 
+/// A scan started while the job ran: hand the work back without counting
+/// an attempt, so the job evaluates again once the scan is done.
+pub fn requeue_for_scan(
+    tx: &Transaction<'_>,
+    job_id: &str,
+    worker: &str,
+    now: f64,
+) -> rusqlite::Result<Option<OperationJob>> {
+    if !holds(tx, job_id, worker)? {
+        return job(tx, job_id);
+    }
+    tx.execute(
+        "UPDATE library_operation_work SET state = 'pending', updated_at = ?2, \
+         row_revision = row_revision + 1 WHERE job_id = ?1 AND state = 'running'",
+        params![job_id, now],
+    )?;
+    tx.execute(
+        "UPDATE library_operation_jobs SET state = 'queued', lease_owner = NULL, \
+         lease_expires_at = NULL, heartbeat_at = NULL, updated_at = ?3, \
+         row_revision = row_revision + 1, event_revision = event_revision + 1 \
+         WHERE id = ?1 AND state = 'running' AND lease_owner = ?2",
+        params![job_id, worker, now],
+    )?;
+    job(tx, job_id)
+}
+
 /// MusicBrainz was down: hand the work back and try again at `retry_at`.
 pub fn defer(
     tx: &Transaction<'_>,
@@ -626,6 +650,9 @@ pub fn defer(
     retry_at: f64,
     now: f64,
 ) -> rusqlite::Result<Option<OperationJob>> {
+    if !holds(tx, job_id, worker)? {
+        return job(tx, job_id);
+    }
     tx.execute(
         "UPDATE library_operation_work SET state = 'pending', failure_code = ?2, \
          updated_at = ?3, row_revision = row_revision + 1 \
@@ -662,15 +689,13 @@ pub fn finish_evaluation(
     evaluation: &Evaluation,
     now: f64,
 ) -> Result<Option<OperationJob>, OperationError> {
-    let ours: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM library_operation_jobs WHERE id = ?1 \
-         AND state = 'running' AND lease_owner = ?2)",
-        params![job_id, worker],
-        |row| row.get(0),
-    )?;
-    if !ours {
+    if !holds(tx, job_id, worker)? {
         // Stopped, or the lease ran out and another worker took over.
         return Ok(job(tx, job_id)?);
+    }
+    // A pause or stop that arrived during recall wins over the result.
+    if let Some(halted) = checkpoint(tx, job_id, worker, now)? {
+        return Ok(Some(halted));
     }
     let Some(snap) = snapshot(tx, job_id)? else {
         return Ok(fail(tx, job_id, worker, "MISSING_SNAPSHOT", now)?);

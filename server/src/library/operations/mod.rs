@@ -16,6 +16,7 @@
 pub mod control;
 pub mod decisions;
 pub mod models;
+pub mod reasons;
 pub mod reidentify;
 pub mod service;
 pub mod store;

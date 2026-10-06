@@ -124,16 +124,48 @@ pub struct TrackIdentity {
     pub row_revision: u64,
 }
 
-/// What an automatic exact-edition seal replaced: the album and track
-/// identity rows before it, and the album identity revision it wrote. An
-/// administrator can put these back while nothing else touched the album.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct EditionUndo {
+/// An automatic win to seal: the album's release and the supported
+/// tracks' recordings. The store writes it in one go and never over a
+/// curator's row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AutomaticSeal {
     pub local_album_id: String,
-    pub prior: Option<AlbumIdentity>,
-    pub prior_tracks: Vec<TrackIdentity>,
-    /// Album identity revision the seal wrote.
-    pub identity_revision: u64,
+    pub release_group_mbid: String,
+    pub release_mbid: Option<String>,
+    pub tracks: Vec<TrackIdentity>,
+}
+
+/// The album identity row an automatic exact-edition seal replaced, as kept
+/// in `library_automatic_edition_undo.prior_identity_json`. Keys are v2's
+/// column names, and every field is optional, so snapshots v2 wrote read
+/// too.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PriorAlbumIdentity {
+    pub release_group_mbid: Option<String>,
+    pub release_mbid: Option<String>,
+    pub decision_source: Option<String>,
+    pub matcher_version: Option<String>,
+    pub attempt_id: Option<String>,
+    pub selected_by_user_id: Option<String>,
+    pub selected_at: Option<f64>,
+    pub row_revision: Option<i64>,
+}
+
+/// One track identity row the seal replaced, as kept in
+/// `prior_track_identities_json` (v2 keys, every field optional).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PriorTrackIdentity {
+    pub local_track_id: String,
+    pub recording_mbid: Option<String>,
+    pub release_mbid: Option<String>,
+    pub release_track_mbid: Option<String>,
+    pub medium_position: Option<i64>,
+    pub release_track_position: Option<i64>,
+    pub decision_source: Option<String>,
+    pub attempt_id: Option<String>,
+    pub selected_at: Option<f64>,
 }
 
 /// The durable artist identity row.

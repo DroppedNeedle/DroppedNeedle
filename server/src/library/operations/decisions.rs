@@ -13,8 +13,12 @@ use super::models::{
     CandidateChoice, DecisionMode, OperationError, OperationJob, OperationState,
     ReidentificationCandidate, UndoOutcome,
 };
+use super::reasons;
 use super::store::{PROVIDER, Snapshot, job, job_after, matches_snapshot, snapshot};
-use crate::library::identify::models::{AlbumIdentity, EvidenceClass, TrackIdentity};
+use crate::library::identify::models::{
+    AlbumIdentity, EvidenceClass, PriorAlbumIdentity, PriorTrackIdentity,
+};
+use crate::library::identify::sqlite::{album_identity_row, track_identity_rows};
 
 /// Settle a re-identification with the administrator's choice: seal the
 /// exact release, seal a custom edition, or leave the album unmanaged.
@@ -27,20 +31,18 @@ pub fn select_candidate(
 ) -> Result<OperationJob, OperationError> {
     let current = job(tx, job_id)?
         .filter(OperationJob::is_reidentification)
-        .ok_or_else(|| OperationError::NotFound("Re-identification job not found.".into()))?;
-    let snap = snapshot(tx, job_id)?
-        .ok_or_else(|| OperationError::NotFound("Re-identification job not found.".into()))?;
+        .ok_or(OperationError::NotFound(reasons::OPERATION_NOT_FOUND))?;
+    let snap =
+        snapshot(tx, job_id)?.ok_or(OperationError::NotFound(reasons::OPERATION_NOT_FOUND))?;
     let open = current.state == OperationState::Ready
         || (current.state == OperationState::Succeeded
             && choice.decision_mode == DecisionMode::LeaveUnmanaged);
     if !open || current.row_revision != choice.expected_row_revision {
-        return Err(OperationError::Stale(
-            "The re-identification candidates changed before selection.".into(),
-        ));
+        return Err(OperationError::Conflict(reasons::CANDIDATES_CHANGED));
     }
     if !matches_snapshot(tx, &snap)? {
-        return Err(OperationError::Stale(
-            "The album changed after candidates were evaluated.".into(),
+        return Err(OperationError::Conflict(
+            reasons::ALBUM_CHANGED_SINCE_EVALUATION,
         ));
     }
     let mut evaluation = snap.evaluation.clone().unwrap_or_default();
@@ -53,9 +55,7 @@ pub fn select_candidate(
                 .iter()
                 .find(|candidate| candidate.candidate_key == choice.candidate_key)
                 .cloned()
-                .ok_or_else(|| {
-                    OperationError::Stale("The selected candidate is no longer available.".into())
-                })?,
+                .ok_or(OperationError::Conflict(reasons::CANDIDATE_GONE))?,
         )
     };
     let album_id = snap.local_album_id.clone();
@@ -74,12 +74,10 @@ pub fn select_candidate(
             ("LEFT_UNMANAGED", "MANAGEMENT_EXCLUDED", None)
         }
         DecisionMode::CustomEdition => {
-            let candidate = candidate.ok_or_else(|| {
-                OperationError::Stale("The selected candidate is no longer available.".into())
-            })?;
+            let candidate = candidate.ok_or(OperationError::Conflict(reasons::CANDIDATE_GONE))?;
             if !choice.confirmation {
-                return Err(OperationError::NotSealable(
-                    "Confirm creating a Custom edition from the current local album.".into(),
+                return Err(OperationError::Invalid(
+                    reasons::CUSTOM_EDITION_NEEDS_CONFIRMATION,
                 ));
             }
             let manifest = seal_custom_edition(tx, &snap, &candidate, before.as_ref(), actor, now)?;
@@ -92,15 +90,11 @@ pub fn select_candidate(
             )
         }
         DecisionMode::ExactRelease => {
-            let candidate = candidate.ok_or_else(|| {
-                OperationError::Stale("The selected candidate is no longer available.".into())
-            })?;
+            let candidate = candidate.ok_or(OperationError::Conflict(reasons::CANDIDATE_GONE))?;
             let needs_confirmation =
                 !candidate.automatic_safe || snap.requested_release_mbid.is_some();
             if needs_confirmation && !choice.confirmation {
-                return Err(OperationError::Invalid(
-                    "Confirm the conflicting candidate evidence before applying it.".into(),
-                ));
+                return Err(OperationError::Invalid(reasons::CONFIRMATION_REQUIRED));
             }
             seal_exact_release(tx, &album_id, &candidate, actor, now)?;
             evaluation.outcome = "identified".into();
@@ -137,9 +131,7 @@ pub fn select_candidate(
         params![job_id, terminal, now, choice.expected_row_revision],
     )?;
     if changed != 1 {
-        return Err(OperationError::Stale(
-            "The re-identification candidates changed before selection.".into(),
-        ));
+        return Err(OperationError::Conflict(reasons::CANDIDATES_CHANGED));
     }
     record_action(
         tx,
@@ -227,10 +219,8 @@ fn seal_exact_release(
     let release = candidate.evidence.release_mbid.clone();
     let mapping = exact_mapping(&indexed, candidate).filter(|_| release.is_some());
     let Some(mapping) = mapping else {
-        return Err(OperationError::MappingIncomplete(
-            "This exact MusicBrainz edition does not map every local file uniquely. Choose \
-             Custom edition, acquire the missing tracks, or leave the album unmanaged."
-                .into(),
+        return Err(OperationError::Invalid(
+            reasons::EXACT_RELEASE_MAPPING_INCOMPLETE,
         ));
     };
     seal_album(
@@ -371,25 +361,6 @@ fn upsert_track_identity(
     Ok(())
 }
 
-/// Drop the identities of the album's indexed tracks, except `keep`.
-fn clear_track_identities(
-    tx: &Transaction<'_>,
-    album_id: &str,
-    keep: &[&str],
-) -> rusqlite::Result<()> {
-    for track_id in indexed_track_ids(tx, album_id)? {
-        if keep.contains(&track_id.as_str()) {
-            continue;
-        }
-        tx.execute(
-            "DELETE FROM local_track_external_identities \
-             WHERE local_track_id = ?1 AND provider = ?2",
-            params![track_id, PROVIDER],
-        )?;
-    }
-    Ok(())
-}
-
 /// Keep the album out of Library Management. An existing identity keeps
 /// its release group but loses the exact edition; without one, the
 /// candidate's release group is kept when its names do not conflict.
@@ -502,10 +473,9 @@ fn seal_custom_edition(
     now: f64,
 ) -> Result<String, OperationError> {
     let album_id = snap.local_album_id.as_str();
-    let not_sealable = |message: &str| OperationError::NotSealable(message.to_owned());
     if !names_hold(candidate) {
-        return Err(not_sealable(
-            "This album's provider identity conflicts with the selected release group.",
+        return Err(OperationError::Invalid(
+            reasons::CUSTOM_EDITION_NAMES_CONFLICT,
         ));
     }
     if before.is_some_and(|identity| {
@@ -513,8 +483,8 @@ fn seal_custom_edition(
             !group.eq_ignore_ascii_case(&candidate.evidence.release_group_mbid)
         })
     }) {
-        return Err(not_sealable(
-            "The selected release group conflicts with the album's accepted provider identity.",
+        return Err(OperationError::Invalid(
+            reasons::CUSTOM_EDITION_GROUP_CONFLICT,
         ));
     }
     let (title, album_artist, artist_mbid, album_meta, album_revision): (
@@ -547,15 +517,15 @@ fn seal_custom_edition(
         },
     )?;
     if title.trim().is_empty() || album_artist.trim().is_empty() {
-        return Err(not_sealable(
-            "The local album needs a coherent title and album artist before it can be sealed.",
+        return Err(OperationError::Invalid(
+            reasons::CUSTOM_EDITION_NAMES_MISSING,
         ));
     }
     if let (Some(known), Some(offered)) = (artist_mbid.as_deref(), candidate.artist_mbid.as_deref())
         && !known.eq_ignore_ascii_case(offered)
     {
-        return Err(not_sealable(
-            "The selected album artist conflicts with the accepted artist identity.",
+        return Err(OperationError::Invalid(
+            reasons::CUSTOM_EDITION_ARTIST_CONFLICT,
         ));
     }
     let tracks = manifest_tracks(tx, album_id)?;
@@ -571,10 +541,7 @@ fn seal_custom_edition(
             .iter()
             .any(|(disc, track)| *disc < 1 || *track < 1)
     {
-        return Err(not_sealable(
-            "Every local file needs one unique positive disc and track position before it can be \
-             sealed.",
-        ));
+        return Err(OperationError::Invalid(reasons::CUSTOM_EDITION_POSITIONS));
     }
 
     seal_album(
@@ -890,9 +857,10 @@ pub fn live_automatic_edition_undo(
     .optional()
 }
 
-/// Put back what the album's last automatic edition replaced. With no
-/// earlier identity, the album goes to review instead. Pins are never
-/// touched.
+/// Put back what the album's last automatic edition replaced, column for
+/// column (v2's restore). With no earlier album identity, the album goes
+/// to review instead. Track rows a curator holds now are never rewritten,
+/// and pins are never touched.
 pub fn undo_automatic_edition(
     tx: &Transaction<'_>,
     album_id: &str,
@@ -901,19 +869,28 @@ pub fn undo_automatic_edition(
     actor: &str,
     now: f64,
 ) -> Result<UndoOutcome, OperationError> {
-    let undo: Option<(String, Option<String>, String, i64)> = tx
+    let undo: Option<(String, Option<String>, String, i64, i64)> = tx
         .query_row(
             "SELECT id, prior_identity_json, prior_track_identities_json, \
-             expected_post_identity_revision FROM library_automatic_edition_undo \
+             expected_post_album_revision, expected_post_identity_revision \
+             FROM library_automatic_edition_undo \
              WHERE local_album_id = ?1 AND consumed_at IS NULL",
             params![album_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .optional()?;
-    let Some((undo_id, prior_json, prior_tracks_json, post_identity_revision)) = undo else {
-        return Err(OperationError::NotFound(
-            "This album has no reversible automatic edition acceptance.".into(),
-        ));
+    let Some((undo_id, prior_json, prior_tracks_json, post_album_revision, post_identity_revision)) =
+        undo
+    else {
+        return Err(OperationError::NotFound(reasons::NO_AUTOMATIC_EDITION));
     };
     let album_revision: Option<i64> = tx
         .query_row(
@@ -922,46 +899,48 @@ pub fn undo_automatic_edition(
             |row| row.get(0),
         )
         .optional()?;
-    let current = album_identity(tx, album_id)?;
+    let current = album_identity_row(tx, album_id)?;
     let fresh = album_revision == Some(expected_album_revision)
+        && expected_album_revision == post_album_revision
         && current.as_ref().is_some_and(|identity| {
-            identity.decision_source == crate::library::identify::models::DecisionSource::Automatic
-                && identity.row_revision as i64 == expected_identity_revision
-                && identity.row_revision as i64 == post_identity_revision
+            identity.decision_source.as_deref() == Some("automatic")
+                && identity.row_revision == Some(expected_identity_revision)
+                && expected_identity_revision == post_identity_revision
         });
     if !fresh {
-        return Err(OperationError::Stale(
-            "The album identity changed since the automatic acceptance; undo would restore a \
-             stale identity."
-                .into(),
-        ));
+        return Err(OperationError::Conflict(reasons::UNDO_STALE));
     }
     let unreadable = |error: serde_json::Error| OperationError::Store(error.to_string());
-    let prior: Option<AlbumIdentity> = prior_json
+    let prior: Option<PriorAlbumIdentity> = prior_json
         .as_deref()
         .map(serde_json::from_str)
         .transpose()
         .map_err(unreadable)?;
-    let prior_tracks: Vec<TrackIdentity> =
+    let prior_tracks: Vec<PriorTrackIdentity> =
         serde_json::from_str(&prior_tracks_json).map_err(unreadable)?;
+    let current_tracks = track_identity_rows(tx, album_id)?;
+
     let mut review_id = None;
-    let outcome = match prior.as_ref().and_then(|prior| {
-        prior
-            .release_group_mbid
-            .as_deref()
-            .map(|group| (prior, group))
-    }) {
-        Some((prior, group)) => {
+    let outcome = match prior
+        .filter(|prior| prior.release_group_mbid.is_some() && prior.decision_source.is_some())
+    {
+        Some(prior) => {
             tx.execute(
                 "UPDATE local_album_external_identities SET release_group_mbid = ?2, \
-                 release_mbid = ?3, decision_source = ?4, selected_at = ?5, \
-                 row_revision = row_revision + 1 WHERE local_album_id = ?1 AND provider = ?6",
+                 release_mbid = ?3, decision_source = ?4, matcher_version = ?5, \
+                 attempt_id = ?6, \
+                 selected_by_user_id = (SELECT id FROM auth_users WHERE id = ?7), \
+                 selected_at = ?8, row_revision = row_revision + 1 \
+                 WHERE local_album_id = ?1 AND provider = ?9",
                 params![
                     album_id,
-                    group,
+                    prior.release_group_mbid,
                     prior.release_mbid,
-                    prior.decision_source.as_str(),
-                    now,
+                    prior.decision_source,
+                    prior.matcher_version,
+                    prior.attempt_id,
+                    prior.selected_by_user_id,
+                    prior.selected_at.unwrap_or(now),
                     PROVIDER,
                 ],
             )?;
@@ -984,31 +963,28 @@ pub fn undo_automatic_edition(
             "cleared_to_review"
         }
     };
-    let indexed = indexed_track_ids(tx, album_id)?;
-    let restored: Vec<(&TrackIdentity, &str)> = prior_tracks
-        .iter()
-        .filter(|track| indexed.contains(&track.local_track_id))
-        .filter_map(|track| Some((track, track.recording_mbid.as_deref()?)))
-        .collect();
-    let keep: Vec<&str> = restored
-        .iter()
-        .map(|(track, _)| track.local_track_id.as_str())
-        .collect();
-    clear_track_identities(tx, album_id, &keep)?;
-    for (track, recording) in restored {
-        upsert_track_identity(
-            tx,
-            &TrackRow {
-                local_track_id: &track.local_track_id,
-                recording_mbid: recording,
-                release_mbid: None,
-                release_track_mbid: track.release_track_mbid.as_deref(),
-                medium_position: None,
-                release_track_position: None,
-                decision_source: track.decision_source.as_str(),
-            },
-            now,
-        )?;
+    for track_id in indexed_track_ids(tx, album_id)? {
+        let now_row = current_tracks
+            .iter()
+            .find(|row| row.local_track_id == track_id);
+        if now_row.is_some_and(|row| row.decision_source.as_deref() != Some("automatic")) {
+            // A curator's (or the tags') row stays as it is.
+            continue;
+        }
+        let before = prior_tracks
+            .iter()
+            .find(|row| row.local_track_id == track_id && row.recording_mbid.is_some());
+        match before {
+            Some(row) => restore_track_row(tx, row, now)?,
+            None if now_row.is_some() => {
+                tx.execute(
+                    "DELETE FROM local_track_external_identities \
+                     WHERE local_track_id = ?1 AND provider = ?2",
+                    params![track_id, PROVIDER],
+                )?;
+            }
+            None => {}
+        }
     }
     let action = record_action(
         tx,
@@ -1017,7 +993,7 @@ pub fn undo_automatic_edition(
             kind: "undo_automatic_edition",
             album_id,
             job_id: None,
-            before: serde_json::to_value(&current).unwrap_or_default(),
+            before: serde_json::json!({ "identity": current, "tracks": current_tracks }),
             after: serde_json::json!({
                 "outcome": outcome,
                 "review_id": review_id,
@@ -1038,4 +1014,39 @@ pub fn undo_automatic_edition(
         outcome: outcome.to_owned(),
         review_id,
     })
+}
+
+/// Write one snapshot track row back exactly; an existing row takes the
+/// next revision.
+fn restore_track_row(
+    tx: &Transaction<'_>,
+    row: &PriorTrackIdentity,
+    now: f64,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, release_mbid, release_track_mbid, medium_position, \
+         release_track_position, decision_source, attempt_id, selected_at, row_revision) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 1) \
+         ON CONFLICT (local_track_id, provider) DO UPDATE SET \
+         recording_mbid = excluded.recording_mbid, release_mbid = excluded.release_mbid, \
+         release_track_mbid = excluded.release_track_mbid, \
+         medium_position = excluded.medium_position, \
+         release_track_position = excluded.release_track_position, \
+         decision_source = excluded.decision_source, attempt_id = excluded.attempt_id, \
+         selected_at = excluded.selected_at, row_revision = row_revision + 1",
+        params![
+            row.local_track_id,
+            PROVIDER,
+            row.recording_mbid,
+            row.release_mbid,
+            row.release_track_mbid,
+            row.medium_position,
+            row.release_track_position,
+            row.decision_source.as_deref().unwrap_or("automatic"),
+            row.attempt_id,
+            row.selected_at.unwrap_or(now),
+        ],
+    )?;
+    Ok(())
 }

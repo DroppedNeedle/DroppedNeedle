@@ -390,9 +390,11 @@
 	function candidateErrorMessage(): string {
 		const error = selectCandidate.error;
 		if (!(error instanceof ApiError)) return 'Could not save this album decision.';
-		return error.code === 'STALE_REVISION'
-			? 'The album changed. Review the current evidence and try again.'
-			: error.message;
+		if (error.code === 'STALE_REVISION')
+			return 'The album changed. Review the current evidence and try again.';
+		// Refusals carry what to do next alongside the sentence.
+		const action = (error.details as { action?: unknown } | null)?.action;
+		return typeof action === 'string' ? `${error.message} ${action}` : error.message;
 	}
 
 	function chooseCandidate(

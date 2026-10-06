@@ -2,8 +2,8 @@
 //! tests may bind the memory fakes (`memory`).
 
 use super::models::{
-    AlbumIdentity, Alias, ArtistCredit, ArtistIdentity, CreditProof, EditionUndo, IdentifyJob,
-    JobState, LocalAlbumFacts, ReleasePin, ReviewItem, ReviewState, TrackIdentity,
+    AlbumIdentity, Alias, ArtistCredit, ArtistIdentity, AutomaticSeal, CreditProof, DecisionSource,
+    IdentifyJob, JobState, LocalAlbumFacts, ReleasePin, ReviewItem, ReviewState, TrackIdentity,
 };
 use crate::library::matching::Release;
 
@@ -25,9 +25,38 @@ pub trait IdentityStore: Send + Sync {
     fn accepted_release_mbid_for_artist(&self, _source_local_artist_id: &str) -> Option<String> {
         None
     }
-    /// Keep what an automatic exact-edition seal replaced, so an
-    /// administrator can undo it. Stores without undo support ignore it.
-    fn record_automatic_edition(&self, _undo: &EditionUndo) {}
+    /// Seal an automatic win: the album row and the given track rows, never
+    /// over a curator's row. Durable stores do it in one transaction and,
+    /// for an exact edition, keep what it replaced so an administrator can
+    /// undo it. `false` when a curator's row holds the album (nothing is
+    /// written). This default suits stores without transactions.
+    fn seal_automatic(&self, seal: &AutomaticSeal) -> bool {
+        let current = self.album_identity(&seal.local_album_id);
+        if current
+            .as_ref()
+            .is_some_and(|row| !row.decision_source.automatic_may_overwrite())
+        {
+            return false;
+        }
+        self.save_album_identity(AlbumIdentity {
+            local_album_id: seal.local_album_id.clone(),
+            provider: "musicbrainz".to_owned(),
+            release_group_mbid: Some(seal.release_group_mbid.clone()),
+            release_mbid: seal.release_mbid.clone(),
+            decision_source: DecisionSource::Automatic,
+            row_revision: current.map(|row| row.row_revision + 1).unwrap_or(1),
+        });
+        for track in &seal.tracks {
+            if self
+                .track_identity(&track.local_track_id)
+                .is_some_and(|row| !row.decision_source.automatic_may_overwrite())
+            {
+                continue;
+            }
+            self.save_track_identity(track.clone());
+        }
+        true
+    }
 }
 
 /// Local album facts the matcher reads. Production answers from the

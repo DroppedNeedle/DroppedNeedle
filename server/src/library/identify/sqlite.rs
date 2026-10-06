@@ -22,9 +22,10 @@ use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
 use sha2::{Digest as _, Sha256};
 
 use super::models::{
-    AlbumIdentity, Alias, AliasKind, ArtistCredit, ArtistIdentity, CandidateEvidence, CreditProof,
-    DecisionSource, EditionUndo, IdentifyJob, IdentifyKind, JobState, LocalAlbumFacts,
-    LocalTrackFacts, ReleasePin, ReviewItem, ReviewState, TrackIdentity,
+    AlbumIdentity, Alias, AliasKind, ArtistCredit, ArtistIdentity, AutomaticSeal,
+    CandidateEvidence, CreditProof, DecisionSource, IdentifyJob, IdentifyKind, JobState,
+    LocalAlbumFacts, LocalTrackFacts, PriorAlbumIdentity, PriorTrackIdentity, ReleasePin,
+    ReviewItem, ReviewState, TrackIdentity,
 };
 use super::queue::PRIORITY_NEW_OR_CHANGED;
 use super::stores::{
@@ -368,10 +369,15 @@ impl IdentityStore for SqliteIdentifyStore {
     }
 
     fn clear_album_identity(&self, local_album_id: &str) {
+        // Only automatic passes retract; a curator's row is never removed
+        // here, even if one landed after the attempt read the album.
         self.write("clear album identity", |tx| {
             tx.execute(
-                "DELETE FROM local_album_external_identities \
-                 WHERE local_album_id = ?1 AND provider = ?2",
+                &format!(
+                    "DELETE FROM local_album_external_identities \
+                     WHERE local_album_id = ?1 AND provider = ?2 \
+                     AND decision_source IN {REVISABLE}"
+                ),
                 params![local_album_id, PROVIDER],
             )
         });
@@ -563,49 +569,175 @@ impl IdentityStore for SqliteIdentifyStore {
         .flatten()
     }
 
-    fn record_automatic_edition(&self, undo: &EditionUndo) {
-        let prior = match undo.prior.as_ref().map(serde_json::to_string).transpose() {
-            Ok(prior) => prior,
-            Err(error) => {
-                tracing::warn!(%error, album = undo.local_album_id, "edition undo not recorded");
-                return;
-            }
-        };
-        let tracks = match serde_json::to_string(&undo.prior_tracks) {
-            Ok(tracks) => tracks,
-            Err(error) => {
-                tracing::warn!(%error, album = undo.local_album_id, "edition undo not recorded");
-                return;
-            }
-        };
-        self.write("record automatic edition", |tx| {
-            // One live undo per album: a later automatic seal replaces it.
-            tx.execute(
-                "INSERT INTO library_automatic_edition_undo (id, local_album_id, \
-                 prior_identity_json, prior_track_identities_json, \
-                 expected_post_album_revision, expected_post_identity_revision, reason_code, \
-                 created_at) \
-                 SELECT ?1, id, ?2, ?3, row_revision, ?4, 'AUTOMATIC_EXACT_EDITION', ?5 \
-                 FROM local_albums WHERE id = ?6 \
-                 ON CONFLICT (local_album_id) DO UPDATE SET id = excluded.id, \
-                 job_id = NULL, evidence_id = NULL, \
-                 prior_identity_json = excluded.prior_identity_json, \
-                 prior_track_identities_json = excluded.prior_track_identities_json, \
-                 expected_post_album_revision = excluded.expected_post_album_revision, \
-                 expected_post_identity_revision = excluded.expected_post_identity_revision, \
-                 reason_code = excluded.reason_code, created_at = excluded.created_at, \
-                 consumed_at = NULL, consumed_action_id = NULL",
-                params![
-                    uuid::Uuid::new_v4().to_string(),
-                    prior,
-                    tracks,
-                    undo.identity_revision.max(1) as i64,
-                    now_secs(),
-                    undo.local_album_id,
-                ],
-            )
-        });
+    fn seal_automatic(&self, seal: &AutomaticSeal) -> bool {
+        self.write("seal automatic identity", |tx| seal_automatic_tx(tx, seal))
+            .unwrap_or(false)
     }
+}
+
+/// The raw album identity row, every column the undo puts back.
+pub fn album_identity_row(
+    conn: &Connection,
+    local_album_id: &str,
+) -> rusqlite::Result<Option<PriorAlbumIdentity>> {
+    conn.query_row(
+        "SELECT release_group_mbid, release_mbid, decision_source, matcher_version, \
+         attempt_id, selected_by_user_id, selected_at, row_revision \
+         FROM local_album_external_identities WHERE local_album_id = ?1 AND provider = ?2",
+        params![local_album_id, PROVIDER],
+        |row| {
+            Ok(PriorAlbumIdentity {
+                release_group_mbid: row.get(0)?,
+                release_mbid: row.get(1)?,
+                decision_source: row.get(2)?,
+                matcher_version: row.get(3)?,
+                attempt_id: row.get(4)?,
+                selected_by_user_id: row.get(5)?,
+                selected_at: row.get(6)?,
+                row_revision: row.get(7)?,
+            })
+        },
+    )
+    .optional()
+}
+
+/// The raw identity rows of the album's indexed tracks, by track id.
+pub fn track_identity_rows(
+    conn: &Connection,
+    local_album_id: &str,
+) -> rusqlite::Result<Vec<PriorTrackIdentity>> {
+    let mut stmt = conn.prepare(
+        "SELECT i.local_track_id, i.recording_mbid, i.release_mbid, i.release_track_mbid, \
+         i.medium_position, i.release_track_position, i.decision_source, i.attempt_id, \
+         i.selected_at FROM local_track_external_identities i \
+         JOIN local_tracks t ON t.id = i.local_track_id \
+         WHERE t.local_album_id = ?1 AND t.availability = 'indexed' AND i.provider = ?2 \
+         ORDER BY i.local_track_id",
+    )?;
+    stmt.query_map(params![local_album_id, PROVIDER], |row| {
+        Ok(PriorTrackIdentity {
+            local_track_id: row.get(0)?,
+            recording_mbid: row.get(1)?,
+            release_mbid: row.get(2)?,
+            release_track_mbid: row.get(3)?,
+            medium_position: row.get(4)?,
+            release_track_position: row.get(5)?,
+            decision_source: row.get(6)?,
+            attempt_id: row.get(7)?,
+            selected_at: row.get(8)?,
+        })
+    })?
+    .collect()
+}
+
+/// Decision sources an automatic pass may replace: its own rows and ids
+/// the tags carried.
+const REVISABLE: &str = "('automatic','embedded')";
+
+fn to_json<T: serde::Serialize>(value: &T) -> rusqlite::Result<String> {
+    serde_json::to_string(value)
+        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))
+}
+
+/// One automatic seal in one transaction: read what is there, refuse a
+/// curator's album row, write the album and the revisable track rows, and
+/// for an exact edition keep the rows it replaced for undo.
+fn seal_automatic_tx(
+    tx: &rusqlite::Transaction<'_>,
+    seal: &AutomaticSeal,
+) -> rusqlite::Result<bool> {
+    let album = &seal.local_album_id;
+    let prior = album_identity_row(tx, album)?;
+    let revisable = |source: Option<&str>| matches!(source, Some("automatic" | "embedded"));
+    if prior
+        .as_ref()
+        .is_some_and(|row| !revisable(row.decision_source.as_deref()))
+    {
+        return Ok(false);
+    }
+    let prior_tracks = track_identity_rows(tx, album)?;
+    let now = now_secs();
+    let written = tx.execute(
+        &format!(
+            "INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, release_mbid, decision_source, selected_at, row_revision) \
+             VALUES (?1, ?2, ?3, ?4, 'automatic', ?5, 1) \
+             ON CONFLICT (local_album_id, provider) DO UPDATE SET \
+             release_group_mbid = excluded.release_group_mbid, \
+             release_mbid = excluded.release_mbid, decision_source = 'automatic', \
+             matcher_version = NULL, attempt_id = NULL, selected_by_user_id = NULL, \
+             selected_at = excluded.selected_at, row_revision = row_revision + 1 \
+             WHERE local_album_external_identities.decision_source IN {REVISABLE}"
+        ),
+        params![
+            album,
+            PROVIDER,
+            seal.release_group_mbid,
+            seal.release_mbid,
+            now
+        ],
+    )?;
+    if written != 1 {
+        return Ok(false);
+    }
+    for track in &seal.tracks {
+        let Some(recording) = track.recording_mbid.as_deref() else {
+            continue;
+        };
+        tx.execute(
+            &format!(
+                "INSERT INTO local_track_external_identities (local_track_id, provider, \
+                 recording_mbid, release_mbid, release_track_mbid, decision_source, \
+                 selected_at, row_revision) VALUES (?1, ?2, ?3, ?4, ?5, 'automatic', ?6, 1) \
+                 ON CONFLICT (local_track_id, provider) DO UPDATE SET \
+                 recording_mbid = excluded.recording_mbid, \
+                 release_mbid = excluded.release_mbid, \
+                 release_track_mbid = excluded.release_track_mbid, \
+                 medium_position = NULL, release_track_position = NULL, \
+                 decision_source = 'automatic', attempt_id = NULL, \
+                 selected_at = excluded.selected_at, row_revision = row_revision + 1 \
+                 WHERE local_track_external_identities.decision_source IN {REVISABLE}"
+            ),
+            params![
+                track.local_track_id,
+                PROVIDER,
+                recording,
+                seal.release_mbid,
+                track.release_track_mbid,
+                now,
+            ],
+        )?;
+    }
+    if seal.release_mbid.is_none() {
+        return Ok(true);
+    }
+    // One live undo per album: a later automatic seal replaces it.
+    tx.execute(
+        "INSERT INTO library_automatic_edition_undo (id, local_album_id, \
+         prior_identity_json, prior_track_identities_json, expected_post_album_revision, \
+         expected_post_identity_revision, reason_code, created_at) \
+         SELECT ?1, a.id, ?2, ?3, a.row_revision, i.row_revision, \
+         'AUTOMATIC_EXACT_EDITION', ?4 FROM local_albums a \
+         JOIN local_album_external_identities i \
+         ON i.local_album_id = a.id AND i.provider = ?6 WHERE a.id = ?5 \
+         ON CONFLICT (local_album_id) DO UPDATE SET id = excluded.id, \
+         job_id = NULL, evidence_id = NULL, \
+         prior_identity_json = excluded.prior_identity_json, \
+         prior_track_identities_json = excluded.prior_track_identities_json, \
+         expected_post_album_revision = excluded.expected_post_album_revision, \
+         expected_post_identity_revision = excluded.expected_post_identity_revision, \
+         reason_code = excluded.reason_code, created_at = excluded.created_at, \
+         consumed_at = NULL, consumed_action_id = NULL",
+        params![
+            uuid::Uuid::new_v4().to_string(),
+            prior.as_ref().map(to_json).transpose()?,
+            to_json(&prior_tracks)?,
+            now,
+            album,
+            PROVIDER,
+        ],
+    )?;
+    Ok(true)
 }
 
 impl FactsSource for SqliteIdentifyStore {

@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 use super::evidence::{candidate_evidence, local_album};
 use super::models::{
-    AlbumIdentity, Alias, AliasKind, Appearance, CandidateEvidence, CreditProof, DecisionSource,
-    EditionUndo, EvidenceClass, IdentificationOutcome, IdentifyJob, IdentifyKind, IdentityBrief,
+    AlbumIdentity, Alias, AliasKind, Appearance, AutomaticSeal, CandidateEvidence, CreditProof,
+    DecisionSource, EvidenceClass, IdentificationOutcome, IdentifyJob, IdentifyKind, IdentityBrief,
     JobState, LocalAlbumFacts, RecallResult, ReviewState, TrackIdentity,
 };
 use super::providers::{IdentifyProviders, RecallOutcome};
@@ -371,55 +371,40 @@ impl IdentifyService {
         }
     }
 
-    /// Seal an automatic win: album row, supported track rows (skipping
-    /// curator-protected tracks), and fresh credit proof rows. An exact
-    /// edition keeps what it replaced, so an administrator can undo it.
+    /// Seal an automatic win: album row, supported track rows (curator
+    /// tracks keep theirs), and fresh credit proof rows. The store writes
+    /// them together, never over a curator's album row, and an exact
+    /// edition keeps what it replaced so an administrator can undo it.
     fn seal_automatic(&self, facts: &LocalAlbumFacts, winner: &CandidateEvidence) {
-        let prior = self.deps.identities.album_identity(&facts.local_album_id);
-        let prior_tracks: Vec<TrackIdentity> = facts
-            .tracks
+        let tracks = winner
+            .track_evidence
             .iter()
-            .filter_map(|track| self.deps.identities.track_identity(&track.local_track_id))
+            .filter(|track| track.classification == EvidenceClass::Supported)
+            .filter_map(|track| {
+                Some(TrackIdentity {
+                    local_track_id: track.local_track_id.clone(),
+                    provider: "musicbrainz".to_owned(),
+                    recording_mbid: Some(track.recording_mbid.clone()?),
+                    release_track_mbid: track.release_track_mbid.clone(),
+                    decision_source: DecisionSource::Automatic,
+                    row_revision: 1,
+                })
+            })
             .collect();
-        let revision = prior.as_ref().map(|row| row.row_revision + 1).unwrap_or(1);
-        self.deps.identities.save_album_identity(AlbumIdentity {
+        let sealed = self.deps.identities.seal_automatic(&AutomaticSeal {
             local_album_id: facts.local_album_id.clone(),
-            provider: "musicbrainz".to_owned(),
-            release_group_mbid: Some(winner.release_group_mbid.clone()),
+            release_group_mbid: winner.release_group_mbid.clone(),
             release_mbid: winner.release_mbid.clone(),
-            decision_source: DecisionSource::Automatic,
-            row_revision: revision,
+            tracks,
         });
-        for track in &winner.track_evidence {
-            if track.classification != EvidenceClass::Supported {
-                continue;
-            }
-            let Some(recording) = track.recording_mbid.as_deref() else {
-                continue;
-            };
-            if let Some(existing) = self.deps.identities.track_identity(&track.local_track_id)
-                && !existing.decision_source.automatic_may_overwrite()
-            {
-                continue;
-            }
-            self.deps.identities.save_track_identity(TrackIdentity {
-                local_track_id: track.local_track_id.clone(),
-                provider: "musicbrainz".to_owned(),
-                recording_mbid: Some(recording.to_owned()),
-                release_track_mbid: track.release_track_mbid.clone(),
-                decision_source: DecisionSource::Automatic,
-                row_revision: 1,
-            });
+        if sealed {
+            self.bank_proofs(facts, winner);
+        } else {
+            tracing::info!(
+                album = facts.local_album_id,
+                "a curator decided this album meanwhile; automatic seal skipped"
+            );
         }
-        if winner.release_mbid.is_some() {
-            self.deps.identities.record_automatic_edition(&EditionUndo {
-                local_album_id: facts.local_album_id.clone(),
-                prior,
-                prior_tracks,
-                identity_revision: revision,
-            });
-        }
-        self.bank_proofs(facts, winner);
     }
 
     /// Edition-uncertain tier: pin the release GROUP only, never an exact
@@ -452,17 +437,13 @@ impl IdentifyService {
         if held_exact {
             return;
         }
-        let revision = current
-            .as_ref()
-            .map(|row| row.row_revision + 1)
-            .unwrap_or(1);
-        self.deps.identities.save_album_identity(AlbumIdentity {
+        // Through the guarded seal, so a curator's choice that landed after
+        // the read above still wins.
+        self.deps.identities.seal_automatic(&AutomaticSeal {
             local_album_id: facts.local_album_id.clone(),
-            provider: "musicbrainz".to_owned(),
-            release_group_mbid: Some(group),
+            release_group_mbid: group,
             release_mbid: None,
-            decision_source: DecisionSource::Automatic,
-            row_revision: revision,
+            tracks: Vec::new(),
         });
     }
 
