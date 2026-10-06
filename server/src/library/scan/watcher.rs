@@ -26,7 +26,7 @@ use std::time::Duration;
 use tokio::sync::Notify;
 
 use super::fs::is_management_artifact;
-use super::models::{ScanKind, ScanRequest, ScanRequestResult, ScanTrigger};
+use super::models::{ScanKind, ScanRequest, ScanTrigger};
 use super::pool::BlockingPool;
 use super::roots::RootRegistry;
 use super::scheduler::{InclusionRule, scheduled_scopes};
@@ -110,11 +110,10 @@ pub fn snapshot_tree(root: &Path) -> std::io::Result<Snapshot> {
                 Ok(relative) => relative.to_string_lossy().replace('\\', "/"),
                 Err(_) => continue,
             };
-            // Own sidecar writes must not retrigger the watcher: the
-            // server keeps its publish database under the management
-            // prefix inside watched roots. The walk already skips the
-            // same rule; skipping here drops both the entry and the
-            // descent, since the push below never runs.
+            // The publisher's own staging and backup temps must not
+            // retrigger the watcher. The walk skips the same rule;
+            // skipping here drops both the entry and the descent, since
+            // the push below never runs.
             if is_management_artifact(Path::new(&relative)) {
                 continue;
             }
@@ -371,85 +370,6 @@ pub fn watcher_request(registry: &RootRegistry, rules: &[InclusionRule]) -> Opti
 /// Clear the batch timer after the scan was requested (or dropped).
 pub fn clear_pending(state: &mut WatcherState) {
     state.pending_since = None;
-}
-
-/// Run the watcher loop until `shutdown` is set. Every getter is re-read
-/// each iteration, never captured: a settings save rebuilds singletons
-/// and the next poll must see the new instances.
-pub async fn watch_library_filesystem<F, G>(
-    inputs: &WatcherInputs,
-    pool: &BlockingPool,
-    request: F,
-    shutdown: &std::sync::atomic::AtomicBool,
-    mut sleep: G,
-) where
-    F: Fn(ScanRequest) -> ScanRequestResult,
-    G: AsyncSleep,
-{
-    let mut state = WatcherState::new();
-    loop {
-        if shutdown.load(std::sync::atomic::Ordering::Relaxed) {
-            break;
-        }
-        let settings = (inputs.settings)();
-        let registry = (inputs.registry)();
-        let now = (inputs.clock)();
-        let action = poll_once(
-            &mut state,
-            &settings,
-            &registry,
-            &(inputs.root_paths)(),
-            pool,
-            now,
-        )
-        .await;
-        let sleep_secs = match action {
-            WatcherAction::Idle { sleep_secs: wait } => wait,
-            WatcherAction::Batching { sleep_secs: wait } => wait,
-            WatcherAction::Due => {
-                let rules = (inputs.inclusion_rules)();
-                match watcher_request(&registry, &rules) {
-                    None => {
-                        tracing::debug!(
-                            "filesystem watcher dropping pending scan: no scheduled scopes"
-                        );
-                        clear_pending(&mut state);
-                    }
-                    Some(scan) => {
-                        let result = request(scan);
-                        tracing::info!(
-                            disposition = ?result.disposition,
-                            "filesystem watcher requested incremental scan"
-                        );
-                        clear_pending(&mut state);
-                        inputs.wakeups.notify("scan");
-                    }
-                }
-                settings.poll_interval_seconds.max(MIN_POLL_INTERVAL_SECS)
-            }
-        };
-        sleep
-            .sleep(Duration::from_secs_f64(sleep_secs.max(0.0)))
-            .await;
-        // Loop iterations never fail: snapshot errors are contained per
-        // root above, so no catch-all is needed to keep the lifetime
-        // watcher alive.
-    }
-}
-
-/// Watcher loop inputs. Getters are re-read every iteration.
-pub struct WatcherInputs {
-    pub root_paths: Arc<dyn Fn() -> HashMap<String, PathBuf> + Send + Sync>,
-    pub settings: Arc<dyn Fn() -> WatcherSettings + Send + Sync>,
-    pub registry: Arc<dyn Fn() -> RootRegistry + Send + Sync>,
-    pub inclusion_rules: Arc<dyn Fn() -> Vec<InclusionRule> + Send + Sync>,
-    pub clock: Arc<dyn Fn() -> f64 + Send + Sync>,
-    pub wakeups: WorkWakeups,
-}
-
-/// Async sleep seam so tests fast-forward the loop.
-pub trait AsyncSleep {
-    fn sleep(&mut self, duration: Duration) -> impl std::future::Future<Output = ()> + Send;
 }
 
 #[cfg(test)]

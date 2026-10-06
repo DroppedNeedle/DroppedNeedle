@@ -100,23 +100,22 @@ impl LibrarySetup {
             now_unix(),
         )
         .await;
-        if matches!(action, WatcherAction::Due)
-            && let Some(request) = watcher_request(&registry, &[])
-        {
-            match self.coordinator.request_run(&request) {
-                Ok(result) => {
-                    tracing::info!(
-                        disposition = ?result.disposition,
-                        "filesystem watcher requested incremental scan"
-                    );
-                    clear_pending(&mut state);
-                    self.wakeups.notify("scan");
-                }
-                Err(error) => {
-                    tracing::warn!(%error, "watcher scan request failed");
-                    clear_pending(&mut state);
-                }
+        if matches!(action, WatcherAction::Due) {
+            let rules = super::settings::inclusion_rules(&registry);
+            match watcher_request(&registry, &rules) {
+                None => tracing::debug!("filesystem watcher dropping pending scan: no scopes"),
+                Some(request) => match self.coordinator.request_run(&request) {
+                    Ok(result) => {
+                        tracing::info!(
+                            disposition = ?result.disposition,
+                            "filesystem watcher requested incremental scan"
+                        );
+                        self.wakeups.notify("scan");
+                    }
+                    Err(error) => tracing::warn!(%error, "watcher scan request failed"),
+                },
             }
+            clear_pending(&mut state);
         }
         {
             let mut guard = self
@@ -239,7 +238,12 @@ pub(crate) async fn watcher_loop(setup: LibrarySetup, mut shutdown: watch::Recei
         if *shutdown.borrow() {
             break;
         }
-        let action = setup.watcher_tick().await;
+        // A snapshot of a large tree takes a while; shutdown does not wait
+        // for it.
+        let action = tokio::select! {
+            _ = shutdown.changed() => break,
+            action = setup.watcher_tick() => action,
+        };
         let sleep_secs = match action {
             WatcherAction::Idle { sleep_secs } | WatcherAction::Batching { sleep_secs } => {
                 sleep_secs.max(0.0)

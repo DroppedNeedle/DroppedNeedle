@@ -84,7 +84,6 @@ pub use store::{
 pub use supervisor::SupervisorInputs;
 pub use walk::{InventoryScanner, inventory_key, is_audio_file, relativize, text_safe_posix};
 pub use watcher::{
-    DirtyScopes, Snapshot, WatcherAction, WatcherInputs, WatcherSettings, WatcherState,
-    WorkWakeups, clear_pending as watcher_clear_pending, poll_once as watcher_poll_once,
-    watcher_request,
+    DirtyScopes, Snapshot, WatcherAction, WatcherSettings, WatcherState, WorkWakeups,
+    clear_pending as watcher_clear_pending, poll_once as watcher_poll_once, watcher_request,
 };
