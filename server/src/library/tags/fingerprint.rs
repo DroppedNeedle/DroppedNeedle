@@ -46,13 +46,26 @@ pub struct Fingerprint {
 /// Generate the fingerprint for one file. WMA is rejected outright.
 pub fn generate_fingerprint(path: &Path) -> Result<Fingerprint, TagsError> {
     let format = format_for_path(path)?;
-    let info = super::probe(path).map_err(|error| match error {
-        TagsError::Probe { reason, .. } => TagsError::Fingerprint {
-            path: path.display().to_string(),
-            reason,
-        },
-        other => other,
-    })?;
+    // The container header knows the duration; decoding the whole file
+    // for it is the fallback when the header says nothing.
+    let header_seconds = super::read::read_scan_metadata(path, format)
+        .ok()
+        .and_then(|(_, header)| header.duration_seconds)
+        .filter(|seconds| *seconds > 0.0);
+    let duration_seconds = match header_seconds {
+        Some(seconds) => seconds,
+        None => {
+            super::probe(path)
+                .map_err(|error| match error {
+                    TagsError::Probe { reason, .. } => TagsError::Fingerprint {
+                        path: path.display().to_string(),
+                        reason,
+                    },
+                    other => other,
+                })?
+                .duration_seconds
+        }
+    };
     let pcm =
         super::probe::decode_pcm_s16(path, format, Some(WINDOW_SECONDS)).map_err(|error| {
             match error {
@@ -81,7 +94,7 @@ pub fn generate_fingerprint(path: &Path) -> Result<Fingerprint, TagsError> {
     let fingerprint = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(compressed);
     Ok(Fingerprint {
         fingerprint,
-        duration_seconds: info.duration_seconds.max(0.0) as u32,
+        duration_seconds: duration_seconds.max(0.0) as u32,
         partial_decode: pcm.partial,
         raw_items: raw.len(),
     })
