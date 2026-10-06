@@ -544,17 +544,21 @@ fn plex_token(headers: &HeaderMap) -> &str {
         .unwrap_or("")
 }
 
+/// PIN ids count up from 42 like plex.tv's, so a test can guess them.
+static NEXT_PIN: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(42);
+
 fn plex_router(_base: String) -> Router {
     async fn create_pin(headers: HeaderMap) -> (StatusCode, Json<Value>) {
         assert!(headers.contains_key("x-plex-client-identifier"));
-        (StatusCode::CREATED, Json(json!({"id": 42, "code": "ABCD"})))
+        let id = NEXT_PIN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        (StatusCode::CREATED, Json(json!({"id": id, "code": "ABCD"})))
     }
     async fn poll_pin(Path(id): Path<i64>) -> Json<Value> {
-        // 42 is the member, 43 an outsider, anything else still pending.
+        // 43 is an outsider, 44 still pending, every other PIN the member.
         Json(match id {
-            42 => json!({"id": 42, "authToken": "acct-member"}),
             43 => json!({"id": 43, "authToken": "acct-outsider"}),
-            _ => json!({"id": id, "authToken": null}),
+            44 => json!({"id": 44, "authToken": null}),
+            _ => json!({"id": id, "authToken": "acct-member"}),
         })
     }
     async fn user(headers: HeaderMap) -> Result<Json<Value>, StatusCode> {
@@ -612,7 +616,7 @@ fn plex_router(_base: String) -> Router {
 }
 
 #[tokio::test]
-async fn plex_pin_sign_in_gates_membership_links_and_imports() {
+async fn plex_pins_are_bound_to_their_starter_and_gate_membership() {
     let mock = serve(plex_router).await;
     let e2e = E2e::open("plex").await.with_upstreams(Upstreams {
         plex_tv: mock.clone(),
@@ -630,72 +634,98 @@ async fn plex_pin_sign_in_gates_membership_links_and_imports() {
         .save_secret(settings.clone())
         .expect("plex settings save");
     assert_eq!(providers(e2e.router()).await["plex"], true);
-
-    let (status, body, _) = call(e2e.router(), "POST", "/api/v3/auth/plex/start", &[], None).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["pin_id"], 42);
-    assert!(
-        body["authorize_url"]
-            .as_str()
-            .is_some_and(|url| url.starts_with("https://app.plex.tv/auth#?clientID=")
-                && url.contains("&code=ABCD")),
-        "{body}"
-    );
-
-    let poll = |pin: i64| {
-        let app = e2e.router();
+    // One app throughout: started PINs live in its memory.
+    let app = e2e.router();
+    let start = |path: &'static str, auth: Option<String>| {
+        let app = app.clone();
+        async move {
+            let headers: Vec<(&str, String)> = auth
+                .map(|auth| vec![("authorization", auth)])
+                .unwrap_or_default();
+            let headers: Vec<(&str, &str)> =
+                headers.iter().map(|(k, v)| (*k, v.as_str())).collect();
+            let (status, body, _) = call(app, "POST", path, &headers, None).await;
+            assert_eq!(status, StatusCode::OK, "{path}: {body}");
+            (
+                body["pin_id"].as_i64().expect("pin id"),
+                body["pin_secret"].as_str().expect("pin secret").to_owned(),
+                body["authorize_url"].as_str().expect("url").to_owned(),
+            )
+        }
+    };
+    let poll = |pin: i64, secret: String| {
+        let app = app.clone();
         async move {
             call(
                 app,
                 "POST",
                 "/api/v3/auth/plex/poll/login",
                 &[],
-                Some(json!({"pin_id": pin, "transport": "bearer"})),
+                Some(json!({"pin_id": pin, "pin_secret": secret, "transport": "bearer"})),
             )
             .await
         }
     };
-    let (status, body, _) = poll(44).await;
+
+    let (member, member_secret, url) = start("/api/v3/auth/plex/start", None).await;
+    assert!(
+        url.starts_with("https://app.plex.tv/auth#?clientID=") && url.contains("&code=ABCD"),
+        "{url}"
+    );
+    let (outsider, outsider_secret, _) = start("/api/v3/auth/plex/start", None).await;
+    let (pending, pending_secret, _) = start("/api/v3/auth/plex/start", None).await;
+    assert_eq!((member, outsider, pending), (42, 43, 44));
+
+    let (status, body, _) = poll(pending, pending_secret.clone()).await;
     assert_eq!(
         (status, body["completed"].clone()),
         (StatusCode::OK, json!(false))
     );
-    // An account without access to the configured server is refused.
-    let (status, _, _) = poll(43).await;
+    // Someone who guessed the PIN id but holds another PIN's secret (or
+    // none) cannot finish this sign-in.
+    let (status, _, _) = poll(member, pending_secret).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
-    let (status, body, _) = poll(42).await;
+    // An account without access to the configured server is refused.
+    let (status, _, _) = poll(outsider, outsider_secret).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, body, _) = poll(member, member_secret.clone()).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["completed"], true);
     assert_eq!(body["user"]["role"], "admin");
     // plex.tv does not vouch for the address, so it is not stored.
     assert_eq!(body["user"]["email"], Value::Null);
     let token = body["token"].as_str().expect("bearer token").to_owned();
-    let links = linked_accounts(e2e.router(), &token).await;
+    // The first approved poll consumed the PIN.
+    let (status, _, _) = poll(member, member_secret).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let links = linked_accounts(app.clone(), &token).await;
     assert_eq!(links.get("plex").map(String::as_str), Some("Jane P"));
 
-    // The link flow stores the account server-side and returns only the name.
+    // Linking needs a session and stores the account server-side; the
+    // answer carries only the name.
     let (status, _, _) = call(
-        e2e.router(),
+        app.clone(),
         "POST",
-        "/api/v3/auth/plex/start?purpose=link",
+        "/api/v3/auth/plex/start/link",
         &[],
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (pin, secret, _) = start("/api/v3/auth/plex/start/link", Some(bearer(&token))).await;
     let (status, body, _) = call(
-        e2e.router(),
+        app.clone(),
         "POST",
         "/api/v3/auth/plex/poll/link",
         &[("authorization", &bearer(&token))],
-        Some(json!({"pin_id": 42})),
+        Some(json!({"pin_id": pin, "pin_secret": secret})),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body, json!({"completed": true, "username": "Jane P"}));
 
     let (status, body, _) = call(
-        e2e.router(),
+        app.clone(),
         "GET",
         "/api/v3/admin/import/plex",
         &[("authorization", &bearer(&token))],
@@ -724,12 +754,32 @@ async fn plex_pin_sign_in_gates_membership_links_and_imports() {
         ]
     );
 
+    // A configured server that cannot be reached fails the login instead
+    // of skipping the membership check.
+    let reachable = settings.plex_url.clone();
+    settings.plex_url = "http://127.0.0.1:9".to_owned();
+    e2e.store
+        .save_secret(settings.clone())
+        .expect("settings save");
+    // A fresh app: the Plex rate budget of the first one is spent.
+    let app = e2e.router();
+    let (status, body, _) = call(app.clone(), "POST", "/api/v3/auth/plex/start", &[], None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, _, _) = call(
+        app.clone(),
+        "POST",
+        "/api/v3/auth/plex/poll/login",
+        &[],
+        Some(json!({"pin_id": body["pin_id"], "pin_secret": body["pin_secret"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+
     // With Plex login off, starting a login is refused outright.
+    settings.plex_url = reachable;
     settings.login_enabled = false;
     e2e.store.save_secret(settings).expect("settings save");
-    let (status, _, _) = call(e2e.router(), "POST", "/api/v3/auth/plex/start", &[], None).await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    let (status, _, _) = poll(42).await;
+    let (status, _, _) = call(app, "POST", "/api/v3/auth/plex/start", &[], None).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
 }
 

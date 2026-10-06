@@ -9,8 +9,9 @@
 //!
 //! Plex keeps exactly the v2 shape: only the login start and login poll are
 //! public (v2 `/auth/plex/pin` + `/auth/plex/poll`). The link and connect
-//! polls hand out account Bearer tokens, which a PIN id alone must never unlock, so they stay session-gated
-//! like their v2 parents (link under `/me`, settings under `/plex`).
+//! starts and polls stay session-gated like their v2 parents (link under
+//! `/me`, settings under `/plex`), and every poll also needs the secret
+//! its start handed out.
 
 /// Exact public paths under `/api/v3`. Logout is public so a stale client can
 /// always clear its cookie. Every entry must be a mounted route (pinned by a
@@ -76,6 +77,7 @@ mod tests {
         }
         assert!(is_public("/api/v3/auth/oidc/exchange"));
         assert!(!is_public("/api/v3/auth/plex/poll/link"));
+        assert!(!is_public("/api/v3/auth/plex/start/link"));
         assert!(!is_public("/api/v3/auth/plex/poll/connect"));
         assert!(!is_public("/api/v3/auth/plex"));
         assert!(!is_public("/api/v3/auth/login/"));

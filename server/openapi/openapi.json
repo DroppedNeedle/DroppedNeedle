@@ -1475,22 +1475,65 @@
         "tags": [
           "crate::auth::routes::federated"
         ],
-        "summary": "Start any Plex flow: mints a PIN and its browser URL. Link and connect\nstarts 400 without a configured Plex server; login starts never gate.",
+        "summary": "Start a Plex sign-in: mints a PIN, its browser URL, and the secret\nevery poll must present. 503 while Plex login is switched off.",
         "operationId": "plex_start_handler",
-        "parameters": [
-          {
-            "name": "purpose",
-            "in": "query",
-            "description": "Which flow this PIN serves: login (default), link, or connect",
-            "required": false,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
         "responses": {
           "200": {
-            "description": "Fresh PIN and browser URL",
+            "description": "Fresh PIN, browser URL and poll secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlexStartBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Plex login is off, or Plex is unreachable"
+          }
+        }
+      }
+    },
+    "/api/v3/auth/plex/start/connect": {
+      "post": {
+        "tags": [
+          "crate::auth::routes::federated"
+        ],
+        "summary": "Start the settings sign-in that hands an admin their Plex token for\nthe server settings. Admin only.",
+        "operationId": "plex_start_connect_handler",
+        "responses": {
+          "200": {
+            "description": "Fresh PIN, browser URL and poll secret",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlexStartBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid session"
+          },
+          "403": {
+            "description": "Admin access required"
+          },
+          "503": {
+            "description": "Plex unreachable"
+          }
+        }
+      }
+    },
+    "/api/v3/auth/plex/start/link": {
+      "post": {
+        "tags": [
+          "crate::auth::routes::federated"
+        ],
+        "summary": "Start linking the caller's Plex account. 400 without a configured Plex\nserver.",
+        "operationId": "plex_start_link_handler",
+        "responses": {
+          "200": {
+            "description": "Fresh PIN, browser URL and poll secret",
             "content": {
               "application/json": {
                 "schema": {
@@ -1500,10 +1543,13 @@
             }
           },
           "400": {
-            "description": "Link/connect start without a configured Plex server"
+            "description": "No Plex server is configured"
+          },
+          "401": {
+            "description": "Missing or invalid session"
           },
           "503": {
-            "description": "Plex login is off, or Plex is unreachable"
+            "description": "Plex or the configured server is unreachable"
           }
         }
       }
@@ -24078,13 +24124,18 @@
         "type": "object",
         "description": "Login-completion poll body.",
         "required": [
-          "pin_id"
+          "pin_id",
+          "pin_secret"
         ],
         "properties": {
           "pin_id": {
             "type": "integer",
             "format": "int64",
             "description": "PIN id from the start step."
+          },
+          "pin_secret": {
+            "type": "string",
+            "description": "Secret from the start step."
           },
           "transport": {
             "$ref": "#/components/schemas/TransportDto",
@@ -24127,13 +24178,18 @@
         "type": "object",
         "description": "One PIN to poll.",
         "required": [
-          "pin_id"
+          "pin_id",
+          "pin_secret"
         ],
         "properties": {
           "pin_id": {
             "type": "integer",
             "format": "int64",
             "description": "PIN id from the start step."
+          },
+          "pin_secret": {
+            "type": "string",
+            "description": "Secret from the start step."
           }
         }
       },
@@ -24142,7 +24198,8 @@
         "description": "Plex journey start answer.",
         "required": [
           "pin_id",
-          "authorize_url"
+          "authorize_url",
+          "pin_secret"
         ],
         "properties": {
           "authorize_url": {
@@ -24153,6 +24210,10 @@
             "type": "integer",
             "format": "int64",
             "description": "PIN id for the poll steps."
+          },
+          "pin_secret": {
+            "type": "string",
+            "description": "Proof that the poller started this PIN. Shown once; send it with\nevery poll. Keep it in memory, never in a URL."
           }
         }
       },

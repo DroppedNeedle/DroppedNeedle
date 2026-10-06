@@ -108,7 +108,12 @@ impl E2e {
             runtime,
             bundle,
             store,
-            upstreams: Upstreams::default(),
+            // Nothing listens on the discard port: no test reaches the real
+            // plex.tv or Last.fm unless it points these at its own mock.
+            upstreams: Upstreams {
+                plex_tv: "http://127.0.0.1:9".to_owned(),
+                lastfm: "http://127.0.0.1:9/".to_owned(),
+            },
             crypto,
             http,
             ids,
@@ -855,6 +860,8 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("POST", "/api/v3/auth/plex/start", Posture::Public),
     ("POST", "/api/v3/auth/plex/poll/login", Posture::Public),
     // Link/connect polls hand out account Bearer tokens, so they stay session-gated (B1 fix).
+    ("POST", "/api/v3/auth/plex/start/link", Posture::User),
+    ("POST", "/api/v3/auth/plex/start/connect", Posture::Admin),
     ("POST", "/api/v3/auth/plex/poll/link", Posture::User),
     ("POST", "/api/v3/auth/plex/poll/connect", Posture::User),
     (
@@ -2016,14 +2023,16 @@ async fn auth_on_every_endpoint() {
             "{method} {uri}: admin pass tripped the limiter"
         );
         // Honest-503 rows: no Jellyfin or Plex server is set up in the
-        // scratch config, so the import directories report unconfigured.
-        // The 503 is the contract here, not a failure, so it pins exactly.
-        if *method == "GET"
-            && matches!(
-                *template,
-                "/api/v3/admin/import/jellyfin" | "/api/v3/admin/import/plex"
-            )
-        {
+        // scratch config, so the import directories report unconfigured,
+        // and plex.tv is unreachable, so the admin's Plex settings sign-in
+        // cannot mint a PIN. The 503 is the contract here, not a failure,
+        // so it pins exactly.
+        if matches!(
+            (*method, *template),
+            ("GET", "/api/v3/admin/import/jellyfin")
+                | ("GET", "/api/v3/admin/import/plex")
+                | ("POST", "/api/v3/auth/plex/start/connect")
+        ) {
             assert_eq!(
                 status,
                 StatusCode::SERVICE_UNAVAILABLE,

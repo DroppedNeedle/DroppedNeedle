@@ -147,6 +147,9 @@ pub struct PlexStartBody {
     pub pin_id: i64,
     /// `app.plex.tv` URL the user authorizes at.
     pub authorize_url: String,
+    /// Proof that the poller started this PIN. Shown once; send it with
+    /// every poll. Keep it in memory, never in a URL.
+    pub pin_secret: String,
 }
 
 /// One PIN to poll.
@@ -154,6 +157,8 @@ pub struct PlexStartBody {
 pub struct PlexPinBody {
     /// PIN id from the start step.
     pub pin_id: i64,
+    /// Secret from the start step.
+    pub pin_secret: String,
 }
 
 /// Login-completion poll body.
@@ -161,6 +166,8 @@ pub struct PlexPinBody {
 pub struct PlexLoginPollBody {
     /// PIN id from the start step.
     pub pin_id: i64,
+    /// Secret from the start step.
+    pub pin_secret: String,
     /// Credential handoff; defaults to cookie.
     #[serde(default)]
     pub transport: TransportDto,

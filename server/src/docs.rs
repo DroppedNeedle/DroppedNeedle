@@ -209,6 +209,8 @@ use crate::{
         crate::auth::routes::federated::oidc_exchange_handler,
         crate::auth::routes::federated::jellyfin_login_handler,
         crate::auth::routes::federated::plex_start_handler,
+        crate::auth::routes::federated::plex_start_link_handler,
+        crate::auth::routes::federated::plex_start_connect_handler,
         crate::auth::routes::federated::plex_poll_login_handler,
         crate::auth::routes::federated::plex_poll_link_handler,
         crate::auth::routes::federated::plex_poll_connect_handler,

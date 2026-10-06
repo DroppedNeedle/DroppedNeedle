@@ -228,16 +228,20 @@ impl PlexPinClient for PlexTv {
         })
     }
 
-    async fn server_machine_id(&self) -> Option<String> {
-        let section = match self.store.get_raw::<PlexConnection>() {
-            Ok(section) => section,
-            Err(error) => {
-                tracing::warn!(%error, "cannot read plex settings");
-                return None;
-            }
+    async fn server_machine_id(&self) -> Result<Option<String>, FederatedError> {
+        let unreadable = || {
+            FederatedError::ProviderUnavailable(
+                "Could not reach the configured Plex server".to_owned(),
+            )
         };
-        if !section.enabled || section.plex_url.is_empty() {
-            return None;
+        let section = self.store.get_raw::<PlexConnection>().map_err(|error| {
+            tracing::warn!(%error, "cannot read plex settings");
+            unreadable()
+        })?;
+        // Only a missing server URL means "no server": a configured server
+        // that cannot be read must never skip the membership gate.
+        if section.plex_url.trim().is_empty() {
+            return Ok(None);
         }
         let server = PlexAdapter::new(
             self.http.clone(),
@@ -247,10 +251,14 @@ impl PlexPinClient for PlexTv {
             Vec::new(),
         );
         match server.machine_identifier().await {
-            Ok(machine_id) => machine_id,
+            Ok(Some(machine_id)) => Ok(Some(machine_id)),
+            Ok(None) => {
+                tracing::warn!("the Plex server did not name its machine id");
+                Err(unreadable())
+            }
             Err(error) => {
                 tracing::warn!(%error, "could not read the Plex server machine id");
-                None
+                Err(unreadable())
             }
         }
     }

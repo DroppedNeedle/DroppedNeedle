@@ -63,6 +63,8 @@
 //! POST /api/v3/auth/oidc/exchange               (public)
 //! POST /api/v3/auth/jellyfin/login              (public)
 //! POST /api/v3/auth/plex/start                  (public)
+//! POST /api/v3/auth/plex/start/link             (session-gated)
+//! POST /api/v3/auth/plex/start/connect          (session-gated, admin)
 //! POST /api/v3/auth/plex/poll/login             (public)
 //! POST /api/v3/auth/plex/poll/link              (session-gated)
 //! POST /api/v3/auth/plex/poll/connect           (session-gated)
@@ -81,6 +83,8 @@
 //! federated::oidc_exchange_handler,
 //! federated::jellyfin_login_handler,
 //! federated::plex_start_handler,
+//! federated::plex_start_link_handler,
+//! federated::plex_start_connect_handler,
 //! federated::plex_poll_login_handler,
 //! federated::plex_poll_link_handler,
 //! federated::plex_poll_connect_handler,

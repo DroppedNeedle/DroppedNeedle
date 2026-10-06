@@ -30,11 +30,16 @@ type V3HasSuccessBody<T extends V3Path, M extends V3LowerMethod> =
 				: true
 		: false;
 
-/** Success data for one endpoint: void where the contract has no 2xx JSON body. */
+/**
+ * Success data for one endpoint: void where the contract has no 2xx JSON body.
+ * The constraint names the method's paths only; intersecting it with V3Path
+ * here made TypeScript build a union of every path pair, which overflows its
+ * 100,000-member limit once the contract passes 316 paths.
+ */
 export type V3Response<
-	T extends V3Path & ClientPathsWithMethod<V3ClientShape, M>,
+	T extends ClientPathsWithMethod<V3ClientShape, M>,
 	M extends V3LowerMethod
-> = V3HasSuccessBody<T, M> extends true ? MethodResponse<V3ClientShape, M, T> : void;
+> = V3HasSuccessBody<T & V3Path, M> extends true ? MethodResponse<V3ClientShape, M, T> : void;
 
 /** Request JSON body for one endpoint: never where the contract has none. */
 export type V3Body<T extends V3Path, M extends V3LowerMethod> = RequestBodyOption<

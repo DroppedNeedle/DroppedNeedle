@@ -4,28 +4,46 @@
 //! login (`/auth/plex/pin` + `/auth/plex/poll`, membership gated only
 //! when a server is configured, issues a session), link
 //! (`/me/connections/plex/auth/*`, machine id required, mandatory
-//! membership gate, returns the profile with no login side effects), and
+//! membership gate, stores the link with no login side effects), and
 //! settings OAuth (`/plex/auth/*`, returns the raw auth token). They all
 //! minted the same PIN and the same `app.plex.tv` URL; only the poll
 //! completion differed.
 //!
 //! This module keeps one [`PlexJourney`] with one [`PlexJourney::start`]
-//! and three poll methods. The per-purpose completion rules are the v2
-//! rules verbatim, so each old flow maps to exactly one method:
-//! login to [`PlexJourney::poll_login`], link to [`PlexJourney::poll_link`],
+//! and three poll methods, one per v2 flow: login to
+//! [`PlexJourney::poll_login`], link to [`PlexJourney::poll_link`],
 //! settings to [`PlexJourney::poll_connect`].
 //!
-//! One rule is new: login starts and completes only while the admin has
-//! Plex login switched on. v2 hid the tab but still accepted the calls,
-//! which let any Plex account create a user when no server was set up.
+//! Rules that tighten v2:
+//!
+//! - Every PIN is bound to whoever started it. plex.tv PIN ids are
+//!   sequential and v2 accepted any id on the poll, so a stranger could
+//!   finish someone else's sign-in. Now the start mints a random secret,
+//!   keeps only its hash with the PIN (and the starting user for link and
+//!   connect), and every poll must present it. The first poll that sees
+//!   the approval consumes the record.
+//! - Login starts and completes only while the admin's Plex login switch
+//!   is on (v2 only hid the tab).
+//! - When a Plex server is configured, a login whose membership cannot be
+//!   checked fails (v2 skipped the check when the server lookup failed).
+//! - Connect (the settings flow) is admin only; link needs a session.
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use super::users::{
-    FederatedProfile, FederatedUserStore, PROVIDER_PLEX, StoredUser, find_or_create_federated_user,
+    FederatedProfile, FederatedUserStore, PROVIDER_PLEX, ROLE_ADMIN, StoredUser,
+    find_or_create_federated_user,
 };
 use super::{FederatedError, SessionIssuer, json_string};
+use crate::auth::session::tokens::{constant_time_eq, hash_token, mint_token};
 
 /// Product token in the `app.plex.tv` URL.
 pub const PRODUCT: &str = "DroppedNeedle";
+/// How long a started PIN may be polled. plex.tv expires strong PINs
+/// sooner; this only bounds our own records.
+pub const PIN_TTL: Duration = Duration::from_secs(30 * 60);
 
 /// A freshly minted PIN awaiting authorization.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -94,9 +112,12 @@ pub trait PlexPinClient: Clone + Send + Sync + 'static {
         auth_token: &str,
     ) -> impl Future<Output = Result<PlexAccount, FederatedError>> + Send;
 
-    /// Configured server machine id; `None` when Plex is disabled or the
-    /// server is unreachable (v2 swallows this lookup: it never fails).
-    fn server_machine_id(&self) -> impl Future<Output = Option<String>> + Send;
+    /// The configured server's machine id. `Ok(None)` only when no Plex
+    /// server URL is set; a configured server that cannot be read is an
+    /// error, so the membership gate never fails open.
+    fn server_machine_id(
+        &self,
+    ) -> impl Future<Output = Result<Option<String>, FederatedError>> + Send;
 
     /// Machine ids of servers this account can access.
     fn account_server_ids(
@@ -133,34 +154,107 @@ pub enum PlexPoll<T> {
     Complete(T),
 }
 
-/// Which flow a Plex start serves. Link and connect starts need a
-/// configured Plex server (v2 400s without one); login starts never gate
-/// (v2 parity: login works server-less).
+/// Which flow a Plex PIN serves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlexPurpose {
-    /// Login flow: gate-free, works with no server configured.
+    /// Login flow: public, works with no server configured.
     Login,
-    /// Per-user connection link: needs the configured server.
+    /// Per-user connection link: needs a session and the configured server.
     Link,
-    /// Settings OAuth: needs the configured server.
+    /// Settings OAuth: admin only.
     Connect,
 }
 
-impl PlexPurpose {
-    /// True when the start must refuse without a configured server.
-    pub fn needs_server(self) -> bool {
-        !matches!(self, Self::Login)
-    }
-}
-
-/// Why a purpose-gated start failed.
+/// Why a start failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlexStartDenied {
-    /// Link/connect start with no Plex server configured (the route maps
-    /// this to 400 with the v2 message verbatim).
+    /// Link start with no Plex server configured (the route maps this to
+    /// 400 with the v2 message verbatim).
     NotConfigured,
-    /// PIN creation failed (the route maps this like [`PlexJourney::start`]).
+    /// Connect start by a non-admin.
+    Forbidden,
+    /// PIN creation or the server lookup failed, or login is switched off.
     StartFailed(FederatedError),
+}
+
+/// A started PIN: what the browser gets back, once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlexStart {
+    /// PIN id to poll.
+    pub pin_id: i64,
+    /// `app.plex.tv` URL the user approves at.
+    pub authorize_url: String,
+    /// Proof that the poller started this PIN; sent on every poll.
+    pub pin_secret: String,
+}
+
+/// Who is polling: the PIN, its secret, and the signed-in user (link and
+/// connect only).
+#[derive(Debug, Clone, Copy)]
+pub struct PinClaim<'a> {
+    /// PIN id from the start.
+    pub pin_id: i64,
+    /// Secret from the start.
+    pub pin_secret: &'a str,
+    /// The polling user, for link and connect.
+    pub user_id: Option<&'a str>,
+}
+
+#[derive(Debug)]
+struct PendingPin {
+    purpose: PlexPurpose,
+    secret_hash: String,
+    user_id: Option<String>,
+    started: Instant,
+}
+
+/// In-memory records of started PINs. A restart drops them; the user
+/// starts again.
+#[derive(Debug, Clone, Default)]
+struct PendingPins(Arc<Mutex<HashMap<i64, PendingPin>>>);
+
+fn unknown_pin() -> FederatedError {
+    FederatedError::Authentication("Unknown or expired Plex sign-in".to_owned())
+}
+
+impl PendingPins {
+    fn insert(&self, pin_id: i64, record: PendingPin) -> Result<(), FederatedError> {
+        let mut pins = self
+            .0
+            .lock()
+            .map_err(|_| FederatedError::StoreUnavailable("plex pin lock".to_owned()))?;
+        pins.retain(|_, pin| pin.started.elapsed() < PIN_TTL);
+        pins.insert(pin_id, record);
+        Ok(())
+    }
+
+    /// Check that `claim` matches the record for its PIN and `purpose`.
+    /// Missing, expired, or mismatched records fail closed.
+    fn check(&self, claim: &PinClaim<'_>, purpose: PlexPurpose) -> Result<(), FederatedError> {
+        let pins = self
+            .0
+            .lock()
+            .map_err(|_| FederatedError::StoreUnavailable("plex pin lock".to_owned()))?;
+        let pin = pins.get(&claim.pin_id).ok_or_else(unknown_pin)?;
+        let secret_ok = constant_time_eq(&hash_token(claim.pin_secret), &pin.secret_hash);
+        if !secret_ok
+            || pin.purpose != purpose
+            || pin.user_id.as_deref() != claim.user_id
+            || pin.started.elapsed() >= PIN_TTL
+        {
+            return Err(unknown_pin());
+        }
+        Ok(())
+    }
+
+    /// Consume the record once the PIN is approved. Only one poller wins.
+    fn consume(&self, pin_id: i64) -> Result<(), FederatedError> {
+        let mut pins = self
+            .0
+            .lock()
+            .map_err(|_| FederatedError::StoreUnavailable("plex pin lock".to_owned()))?;
+        pins.remove(&pin_id).map(|_| ()).ok_or_else(unknown_pin)
+    }
 }
 
 /// The unified journey. Generic over stores so tests inject fakes.
@@ -170,6 +264,7 @@ pub struct PlexJourney<S, C, L, N> {
     client: C,
     links: L,
     sessions: N,
+    pins: PendingPins,
 }
 
 impl<S, C, L, N> PlexJourney<S, C, L, N> {
@@ -180,6 +275,7 @@ impl<S, C, L, N> PlexJourney<S, C, L, N> {
             client,
             links,
             sessions,
+            pins: PendingPins::default(),
         }
     }
 }
@@ -191,46 +287,93 @@ where
     L: PlexConnectionLink,
     N: SessionIssuer,
 {
-    /// Start any of the three flows: mint a PIN and its browser URL.
-    pub async fn start(&self) -> Result<(i64, String), FederatedError> {
-        let pin = match self.client.create_pin().await {
-            Ok(pin) => pin,
-            Err(_) => {
-                return Err(FederatedError::Authentication(
-                    "Could not start Plex authentication".to_owned(),
-                ));
-            }
-        };
-        Ok((pin.id, plex_auth_url(&self.client.client_id(), &pin.code)))
-    }
-
-    /// Start gated by purpose: link/connect refuse without a configured
-    /// Plex server (no resolvable machine id); login needs the admin's
-    /// Plex login switch.
-    pub async fn start_for_purpose(
+    /// Start a flow: check who may start it, mint a PIN, and bind it to
+    /// the caller with a fresh secret. `caller` is the signed-in user for
+    /// link and connect (the routes require a session for those).
+    pub async fn start(
         &self,
         purpose: PlexPurpose,
-    ) -> Result<(i64, String), PlexStartDenied> {
-        if purpose == PlexPurpose::Login && !self.client.login_enabled() {
-            return Err(PlexStartDenied::StartFailed(login_disabled()));
+        caller: Option<&str>,
+    ) -> Result<PlexStart, PlexStartDenied> {
+        match purpose {
+            PlexPurpose::Login => {
+                if !self.client.login_enabled() {
+                    return Err(PlexStartDenied::StartFailed(login_disabled()));
+                }
+            }
+            PlexPurpose::Link => match self.client.server_machine_id().await {
+                Ok(Some(_)) => {}
+                Ok(None) => return Err(PlexStartDenied::NotConfigured),
+                Err(error) => return Err(PlexStartDenied::StartFailed(error)),
+            },
+            PlexPurpose::Connect => {
+                let user = match caller {
+                    Some(user_id) => self
+                        .users
+                        .get_user_by_id(user_id)
+                        .await
+                        .map_err(PlexStartDenied::StartFailed)?,
+                    None => None,
+                };
+                if user.is_none_or(|user| user.role != ROLE_ADMIN) {
+                    return Err(PlexStartDenied::Forbidden);
+                }
+            }
         }
-        if purpose.needs_server() && self.client.server_machine_id().await.is_none() {
-            return Err(PlexStartDenied::NotConfigured);
-        }
-        self.start().await.map_err(PlexStartDenied::StartFailed)
+        let pin = self.client.create_pin().await.map_err(|error| {
+            tracing::warn!(%error, "could not create a Plex PIN");
+            PlexStartDenied::StartFailed(FederatedError::ProviderUnavailable(
+                "Could not start Plex authentication".to_owned(),
+            ))
+        })?;
+        let pin_secret = mint_token()
+            .map_err(|_| PlexStartDenied::StartFailed(FederatedError::RngUnavailable))?;
+        self.pins
+            .insert(
+                pin.id,
+                PendingPin {
+                    purpose,
+                    secret_hash: hash_token(&pin_secret),
+                    user_id: match purpose {
+                        PlexPurpose::Login => None,
+                        PlexPurpose::Link | PlexPurpose::Connect => caller.map(str::to_owned),
+                    },
+                    started: Instant::now(),
+                },
+            )
+            .map_err(PlexStartDenied::StartFailed)?;
+        Ok(PlexStart {
+            pin_id: pin.id,
+            authorize_url: plex_auth_url(&self.client.client_id(), &pin.code),
+            pin_secret,
+        })
+    }
+
+    /// Check the claim, poll plex.tv, and consume the record on approval.
+    async fn approved_token(
+        &self,
+        claim: &PinClaim<'_>,
+        purpose: PlexPurpose,
+    ) -> Result<Option<String>, FederatedError> {
+        self.pins.check(claim, purpose)?;
+        let Some(auth_token) = self.client.poll_pin(claim.pin_id).await? else {
+            return Ok(None);
+        };
+        self.pins.consume(claim.pin_id)?;
+        Ok(Some(auth_token))
     }
 
     /// Login flow: poll, gate membership when a server is configured,
     /// import the user, auto-link, and mint a session.
     pub async fn poll_login(
         &self,
-        pin_id: i64,
+        claim: &PinClaim<'_>,
         user_agent: Option<&str>,
     ) -> Result<PlexPoll<(StoredUser, String)>, FederatedError> {
         if !self.client.login_enabled() {
             return Err(login_disabled());
         }
-        let Some(auth_token) = self.client.poll_pin(pin_id).await? else {
+        let Some(auth_token) = self.approved_token(claim, PlexPurpose::Login).await? else {
             return Ok(PlexPoll::Pending);
         };
         let profile = self.verified_profile(&auth_token, false).await?;
@@ -262,15 +405,15 @@ where
         Ok(PlexPoll::Complete((user, raw_token)))
     }
 
-    /// Link flow: poll, verify the profile and store it as `user_id`'s
+    /// Link flow: poll, verify the profile and store it as the caller's
     /// Plex media link. The machine id is required and the membership gate
     /// is mandatory; no session is minted.
     pub async fn poll_link(
         &self,
-        pin_id: i64,
-        user_id: &str,
+        claim: &PinClaim<'_>,
     ) -> Result<PlexPoll<PlexProfile>, FederatedError> {
-        let Some(auth_token) = self.client.poll_pin(pin_id).await? else {
+        let user_id = claim.user_id.ok_or_else(unknown_pin)?;
+        let Some(auth_token) = self.approved_token(claim, PlexPurpose::Link).await? else {
             return Ok(PlexPoll::Pending);
         };
         let profile = self.verified_profile(&auth_token, true).await?;
@@ -282,17 +425,22 @@ where
     }
 
     /// Settings flow: poll and return the raw auth token untouched.
-    pub async fn poll_connect(&self, pin_id: i64) -> Result<PlexPoll<String>, FederatedError> {
-        let token = self.client.poll_pin(pin_id).await?;
-        Ok(match token {
-            Some(token) => PlexPoll::Complete(token),
-            None => PlexPoll::Pending,
-        })
+    pub async fn poll_connect(
+        &self,
+        claim: &PinClaim<'_>,
+    ) -> Result<PlexPoll<String>, FederatedError> {
+        Ok(
+            match self.approved_token(claim, PlexPurpose::Connect).await? {
+                Some(token) => PlexPoll::Complete(token),
+                None => PlexPoll::Pending,
+            },
+        )
     }
 
-    /// Fetch the profile and enforce the membership gate. When
-    /// `require_machine` is set (link flow), a missing machine id fails;
-    /// otherwise an unconfigured server skips the gate (login flow).
+    /// Fetch the profile and enforce the membership gate. With no server
+    /// URL configured the gate is skipped, except for the link flow
+    /// (`require_machine`), which always needs one. A configured server
+    /// that cannot be read fails the sign-in.
     async fn verified_profile(
         &self,
         auth_token: &str,
@@ -306,7 +454,7 @@ where
                 ));
             }
         };
-        let machine_id = self.client.server_machine_id().await;
+        let machine_id = self.client.server_machine_id().await?;
         if machine_id.is_none() && require_machine {
             return Err(FederatedError::Authentication(
                 "Could not verify the configured Plex server".to_owned(),

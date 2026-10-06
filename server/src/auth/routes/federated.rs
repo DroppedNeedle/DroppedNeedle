@@ -19,7 +19,8 @@ use crate::auth::federated::oidc::{
     OidcConfig, OidcExchangeStore, OidcIdp, OidcLogin, OidcStateStore,
 };
 use crate::auth::federated::plex::{
-    PlexConnectionLink, PlexJourney, PlexPinClient, PlexPoll, PlexPurpose, PlexStartDenied,
+    PinClaim, PlexConnectionLink, PlexJourney, PlexPinClient, PlexPoll, PlexPurpose,
+    PlexStartDenied,
 };
 use crate::auth::federated::users::FederatedUserStore;
 use crate::auth::routes::native::PeerAddr;
@@ -34,7 +35,6 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use serde::Deserialize;
 
 use super::error::{AuthRouteError, ValidQuery};
 use super::models::{
@@ -486,9 +486,9 @@ where
 }
 
 /// Plex journey routes. Relative paths; the orchestrator nests them under
-/// `/api/v3`. Only start and poll/login are allowlisted public; poll/link
-/// and poll/connect additionally carry the session extractor, so they 401
-/// even if mounted without the middleware.
+/// `/api/v3`. Only the login start and poll/login are allowlisted public;
+/// the link and connect steps carry the session extractor, so they 401 even
+/// if mounted without the middleware.
 pub fn plex_router<S, C, L, N>(state: PlexRouteState<S, C, L, N>) -> Router
 where
     S: FederatedUserStore,
@@ -498,36 +498,20 @@ where
 {
     Router::new()
         .route("/auth/plex/start", post(plex_start_handler))
+        .route("/auth/plex/start/link", post(plex_start_link_handler))
+        .route("/auth/plex/start/connect", post(plex_start_connect_handler))
         .route("/auth/plex/poll/login", post(plex_poll_login_handler))
         .route("/auth/plex/poll/link", post(plex_poll_link_handler))
         .route("/auth/plex/poll/connect", post(plex_poll_connect_handler))
         .with_state(state)
 }
 
-/// Plex start query: which flow this PIN serves. Absent means login.
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct PlexStartQuery {
-    /// `login` (default), `link`, or `connect`.
-    pub purpose: Option<String>,
-}
-
-/// Start any Plex flow: mints a PIN and its browser URL. Link and connect
-/// starts 400 without a configured Plex server; login starts never gate.
-#[utoipa::path(
-    post,
-    path = "/api/v3/auth/plex/start",
-    params(
-        ("purpose" = Option<String>, Query, description = "Which flow this PIN serves: login (default), link, or connect")
-    ),
-    responses(
-        (status = 200, description = "Fresh PIN and browser URL", body = PlexStartBody),
-        (status = 400, description = "Link/connect start without a configured Plex server"),
-        (status = 503, description = "Plex login is off, or Plex is unreachable")
-    )
-)]
-pub async fn plex_start_handler<S, C, L, N>(
-    State(state): State<PlexRouteState<S, C, L, N>>,
-    ValidQuery(query): ValidQuery<PlexStartQuery>,
+/// Run one start and render it. The secret is returned once and never
+/// stored in clear.
+async fn start_rendered<S, C, L, N>(
+    state: &PlexRouteState<S, C, L, N>,
+    purpose: PlexPurpose,
+    caller: Option<&str>,
 ) -> Result<Json<PlexStartBody>, AuthRouteError>
 where
     S: FederatedUserStore,
@@ -535,30 +519,96 @@ where
     L: PlexConnectionLink,
     N: SessionIssuer,
 {
-    let purpose = match query.purpose.as_deref() {
-        None | Some("login") => PlexPurpose::Login,
-        Some("link") => PlexPurpose::Link,
-        Some("connect") => PlexPurpose::Connect,
-        Some(other) => {
-            return Err(AuthRouteError::InvalidInput {
-                message: format!("Unknown Plex start purpose: {other}"),
-            });
-        }
-    };
-    match state.journey.start_for_purpose(purpose).await {
-        Ok((pin_id, authorize_url)) => Ok(Json(PlexStartBody {
-            pin_id,
-            authorize_url,
+    match state.journey.start(purpose, caller).await {
+        Ok(started) => Ok(Json(PlexStartBody {
+            pin_id: started.pin_id,
+            authorize_url: started.authorize_url,
+            pin_secret: started.pin_secret,
         })),
         Err(PlexStartDenied::NotConfigured) => Err(AuthRouteError::InvalidInput {
             message: PLEX_NOT_CONFIGURED.to_owned(),
         }),
-        // No caller credential exists at this step, so any failure is the
-        // IdP being down (v2 let it escape to a 500; v3 says 503).
+        Err(PlexStartDenied::Forbidden) => Err(AuthRouteError::Forbidden {
+            message: "Admin access required".to_owned(),
+        }),
+        // No caller credential is at fault here: the IdP is down, the
+        // server lookup failed, or login is switched off.
         Err(PlexStartDenied::StartFailed(error)) => {
             Err(federated_unavailable(&error, state.ids.as_ref()))
         }
     }
+}
+
+/// Start a Plex sign-in: mints a PIN, its browser URL, and the secret
+/// every poll must present. 503 while Plex login is switched off.
+#[utoipa::path(
+    post,
+    path = "/api/v3/auth/plex/start",
+    responses(
+        (status = 200, description = "Fresh PIN, browser URL and poll secret", body = PlexStartBody),
+        (status = 503, description = "Plex login is off, or Plex is unreachable")
+    )
+)]
+pub async fn plex_start_handler<S, C, L, N>(
+    State(state): State<PlexRouteState<S, C, L, N>>,
+) -> Result<Json<PlexStartBody>, AuthRouteError>
+where
+    S: FederatedUserStore,
+    C: PlexPinClient,
+    L: PlexConnectionLink,
+    N: SessionIssuer,
+{
+    start_rendered(&state, PlexPurpose::Login, None).await
+}
+
+/// Start linking the caller's Plex account. 400 without a configured Plex
+/// server.
+#[utoipa::path(
+    post,
+    path = "/api/v3/auth/plex/start/link",
+    responses(
+        (status = 200, description = "Fresh PIN, browser URL and poll secret", body = PlexStartBody),
+        (status = 400, description = "No Plex server is configured"),
+        (status = 401, description = "Missing or invalid session"),
+        (status = 503, description = "Plex or the configured server is unreachable")
+    )
+)]
+pub async fn plex_start_link_handler<S, C, L, N>(
+    State(state): State<PlexRouteState<S, C, L, N>>,
+    AuthenticatedSession(session): AuthenticatedSession,
+) -> Result<Json<PlexStartBody>, AuthRouteError>
+where
+    S: FederatedUserStore,
+    C: PlexPinClient,
+    L: PlexConnectionLink,
+    N: SessionIssuer,
+{
+    start_rendered(&state, PlexPurpose::Link, Some(&session.user_id)).await
+}
+
+/// Start the settings sign-in that hands an admin their Plex token for
+/// the server settings. Admin only.
+#[utoipa::path(
+    post,
+    path = "/api/v3/auth/plex/start/connect",
+    responses(
+        (status = 200, description = "Fresh PIN, browser URL and poll secret", body = PlexStartBody),
+        (status = 401, description = "Missing or invalid session"),
+        (status = 403, description = "Admin access required"),
+        (status = 503, description = "Plex unreachable")
+    )
+)]
+pub async fn plex_start_connect_handler<S, C, L, N>(
+    State(state): State<PlexRouteState<S, C, L, N>>,
+    AuthenticatedSession(session): AuthenticatedSession,
+) -> Result<Json<PlexStartBody>, AuthRouteError>
+where
+    S: FederatedUserStore,
+    C: PlexPinClient,
+    L: PlexConnectionLink,
+    N: SessionIssuer,
+{
+    start_rendered(&state, PlexPurpose::Connect, Some(&session.user_id)).await
 }
 
 /// Plex login completion: polls the PIN, and once authorized imports the
@@ -587,9 +637,14 @@ where
     N: SessionIssuer,
 {
     let user_agent = user_agent_of(&headers);
+    let claim = PinClaim {
+        pin_id: body.pin_id,
+        pin_secret: &body.pin_secret,
+        user_id: None,
+    };
     match state
         .journey
-        .poll_login(body.pin_id, user_agent.as_deref())
+        .poll_login(&claim, user_agent.as_deref())
         .await
     {
         Ok(PlexPoll::Pending) => Ok(Json(PlexLoginPollResult {
@@ -652,7 +707,12 @@ where
     L: PlexConnectionLink,
     N: SessionIssuer,
 {
-    match state.journey.poll_link(body.pin_id, &session.user_id).await {
+    let claim = PinClaim {
+        pin_id: body.pin_id,
+        pin_secret: &body.pin_secret,
+        user_id: Some(&session.user_id),
+    };
+    match state.journey.poll_link(&claim).await {
         Ok(PlexPoll::Pending) => Ok(Json(PlexLinkPollResult {
             completed: false,
             username: None,
@@ -686,7 +746,7 @@ where
 )]
 pub async fn plex_poll_connect_handler<S, C, L, N>(
     State(state): State<PlexRouteState<S, C, L, N>>,
-    AuthenticatedSession(_session): AuthenticatedSession,
+    AuthenticatedSession(session): AuthenticatedSession,
     ValidJson(body): ValidJson<PlexPinBody>,
 ) -> Result<Json<PlexConnectPollResult>, AuthRouteError>
 where
@@ -695,7 +755,12 @@ where
     L: PlexConnectionLink,
     N: SessionIssuer,
 {
-    match state.journey.poll_connect(body.pin_id).await {
+    let claim = PinClaim {
+        pin_id: body.pin_id,
+        pin_secret: &body.pin_secret,
+        user_id: Some(&session.user_id),
+    };
+    match state.journey.poll_connect(&claim).await {
         Ok(PlexPoll::Pending) => Ok(Json(PlexConnectPollResult {
             completed: false,
             auth_token: None,

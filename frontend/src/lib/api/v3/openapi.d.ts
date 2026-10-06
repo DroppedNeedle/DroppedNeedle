@@ -910,10 +910,50 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Start any Plex flow: mints a PIN and its browser URL. Link and connect
-         *     starts 400 without a configured Plex server; login starts never gate.
+         * Start a Plex sign-in: mints a PIN, its browser URL, and the secret
+         *     every poll must present. 503 while Plex login is switched off.
          */
         post: operations["plex_start_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/auth/plex/start/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start the settings sign-in that hands an admin their Plex token for
+         *     the server settings. Admin only.
+         */
+        post: operations["plex_start_connect_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/auth/plex/start/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start linking the caller's Plex account. 400 without a configured Plex
+         *     server.
+         */
+        post: operations["plex_start_link_handler"];
         delete?: never;
         options?: never;
         head?: never;
@@ -11324,6 +11364,8 @@ export interface components {
              * @description PIN id from the start step.
              */
             pin_id: number;
+            /** @description Secret from the start step. */
+            pin_secret: string;
             /** @description Credential handoff; defaults to cookie. */
             transport?: components["schemas"]["TransportDto"];
         };
@@ -11346,6 +11388,8 @@ export interface components {
              * @description PIN id from the start step.
              */
             pin_id: number;
+            /** @description Secret from the start step. */
+            pin_secret: string;
         };
         /** @description Plex journey start answer. */
         PlexStartBody: {
@@ -11356,6 +11400,11 @@ export interface components {
              * @description PIN id for the poll steps.
              */
             pin_id: number;
+            /**
+             * @description Proof that the poller started this PIN. Shown once; send it with
+             *     every poll. Keep it in memory, never in a URL.
+             */
+            pin_secret: string;
         };
         /** @description Plex verify verdict, with music libraries on success. */
         PlexVerifyResponse: {
@@ -15843,17 +15892,14 @@ export interface operations {
     };
     plex_start_handler: {
         parameters: {
-            query?: {
-                /** @description Which flow this PIN serves: login (default), link, or connect */
-                purpose?: string;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Fresh PIN and browser URL */
+            /** @description Fresh PIN, browser URL and poll secret */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -15862,14 +15908,89 @@ export interface operations {
                     "application/json": components["schemas"]["PlexStartBody"];
                 };
             };
-            /** @description Link/connect start without a configured Plex server */
+            /** @description Plex login is off, or Plex is unreachable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    plex_start_connect_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Fresh PIN, browser URL and poll secret */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlexStartBody"];
+                };
+            };
+            /** @description Missing or invalid session */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin access required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Plex unreachable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    plex_start_link_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Fresh PIN, browser URL and poll secret */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlexStartBody"];
+                };
+            };
+            /** @description No Plex server is configured */
             400: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
             };
-            /** @description Plex login is off, or Plex is unreachable */
+            /** @description Missing or invalid session */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Plex or the configured server is unreachable */
             503: {
                 headers: {
                     [name: string]: unknown;
