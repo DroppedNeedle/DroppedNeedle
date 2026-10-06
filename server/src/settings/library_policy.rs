@@ -318,6 +318,33 @@ pub fn resolve(settings: &TypedLibrary) -> Result<ResolvedLibraryPolicy, Setting
     })
 }
 
+/// 409 unless `expected` is the stored settings' revision.
+pub fn check_revision(stored: &TypedLibrary, expected: &str) -> Result<(), SettingsError> {
+    if expected != revision(stored) {
+        return Err(SettingsError::StaleRevision {
+            message: "Library settings changed since this page loaded. Refresh and retry."
+                .to_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// 400 when a proposal drops every root while the catalog holds tracks:
+/// those tracks would be left with no root.
+pub fn guard_last_root(
+    proposal: &TypedLibrary,
+    catalog_has_tracks: bool,
+) -> Result<(), SettingsError> {
+    if proposal.library_roots.is_empty() && catalog_has_tracks {
+        return Err(SettingsError::InvalidInput {
+            message: "Removing every library root would orphan the existing catalog. \
+                      Keep at least one root, or set its policy to Excluded instead."
+                .to_owned(),
+        });
+    }
+    Ok(())
+}
+
 /// Content revision over roots plus rules (enabled, staging, naming,
 /// and keys are excluded, exactly like v2).
 pub fn revision(settings: &TypedLibrary) -> String {

@@ -80,14 +80,7 @@ impl LibrarySetup {
             });
         }
         let root = LibraryRoot::new(&id, dir, policy);
-        {
-            // One settings writer at a time: the save is read-modify-write.
-            let _write = self
-                .settings_write
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            super::settings::add_root(&self.config, &root)?;
-        }
+        super::settings::add_root(&self.config, &root)?;
         // The refresh swaps the new root in and marks it dirty, so the
         // supervisor gives it an initial scan.
         let registry = self.refresh_registry();

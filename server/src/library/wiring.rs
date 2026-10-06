@@ -111,8 +111,6 @@ pub struct LibrarySetup {
     /// Runtime settings: roots, schedule, and watcher are re-read from
     /// here every tick.
     pub config: Arc<ConfigStore>,
-    /// Serializes read-modify-write saves of the library settings.
-    pub settings_write: Arc<std::sync::Mutex<()>>,
     /// Root registry the scan checkpoints and the stream gateway read;
     /// refreshed from the settings on every tick.
     pub registry: Arc<SharedResolver>,
@@ -355,7 +353,6 @@ impl LibrarySetup {
             users,
             ids,
             config,
-            settings_write: Arc::new(std::sync::Mutex::new(())),
             registry,
             scan_store,
             coordinator,

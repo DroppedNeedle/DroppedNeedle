@@ -28,7 +28,7 @@ pub use quota::{QuotaStatus, QuotaStore};
 pub use secret::Secret;
 pub use secret_sections::SecretSection;
 pub use sections::Section;
-pub use store::ConfigStore;
+pub use store::{ConfigStore, UpdateError};
 
 /// Every top-level key v3 owns in `config.json`: kept sections plus the
 /// instance id. Anything else is reported by

@@ -5,6 +5,9 @@
 //! shape) and serialized under one write lock (the v2 `_section_save_lock`
 //! shape). The file is cached in memory after `open`, like v2's
 //! `_config_cache`, and the cache only advances after a durable write.
+//! Secret-section saves also hold a second lock across their read and
+//! write, so [`ConfigStore::update_secret`] can check the stored section
+//! and save in one step.
 //!
 //! Save discipline per section kind:
 //!
@@ -21,7 +24,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 
 use super::crypto::Crypto;
 use super::error::ConfigError;
@@ -43,6 +46,23 @@ pub struct ConfigStore {
     path: PathBuf,
     crypto: Crypto,
     cache: RwLock<serde_json::Value>,
+    /// Held across every secret-section read-modify-write.
+    secret_writes: Mutex<()>,
+}
+
+/// Why [`ConfigStore::update_secret`] did not save.
+#[derive(Debug)]
+pub enum UpdateError<E> {
+    /// The update refused the change; nothing was written.
+    Rejected(E),
+    /// Reading or writing the config failed.
+    Config(ConfigError),
+}
+
+impl<E> From<ConfigError> for UpdateError<E> {
+    fn from(error: ConfigError) -> Self {
+        Self::Config(error)
+    }
 }
 
 impl std::fmt::Debug for ConfigStore {
@@ -82,6 +102,7 @@ impl ConfigStore {
             path: path.to_path_buf(),
             crypto,
             cache: RwLock::new(value),
+            secret_writes: Mutex::new(()),
         })
     }
 
@@ -153,6 +174,34 @@ impl ConfigStore {
     /// saved section masked, so a client that re-saves the echo keeps its
     /// secrets instead of encrypting the mask.
     pub fn save_secret<S: SecretSection>(&self, incoming: S) -> Result<Masked<S>, ConfigError> {
+        let _writing = self.lock_secret_writes()?;
+        self.save_secret_locked(incoming)
+    }
+
+    /// Read, check, and save one secret section with no other secret save
+    /// in between. `update` gets the stored section masked and returns the
+    /// values to save, which go through the [`ConfigStore::save_secret`]
+    /// rules (a mask keeps the stored secret). An `Err` from `update`
+    /// writes nothing. `update` must not call back into the store's
+    /// secret writes.
+    pub fn update_secret<S, E, F>(&self, update: F) -> Result<Masked<S>, UpdateError<E>>
+    where
+        S: SecretSection,
+        F: FnOnce(Masked<S>) -> Result<S, E>,
+    {
+        let _writing = self.lock_secret_writes()?;
+        let current = self.get_masked::<S>()?;
+        let proposed = update(current).map_err(UpdateError::Rejected)?;
+        Ok(self.save_secret_locked(proposed)?)
+    }
+
+    fn lock_secret_writes(&self) -> Result<std::sync::MutexGuard<'_, ()>, ConfigError> {
+        self.secret_writes
+            .lock()
+            .map_err(|_| ConfigError::LockUnavailable("config secret writes"))
+    }
+
+    fn save_secret_locked<S: SecretSection>(&self, incoming: S) -> Result<Masked<S>, ConfigError> {
         incoming.validate()?;
         let mut normalized = incoming;
         normalized.normalize();

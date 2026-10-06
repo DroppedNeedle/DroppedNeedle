@@ -13,11 +13,11 @@ use super::scan::roots::{LibraryRoot, PolicyRule, RootRegistry, fingerprint_root
 use super::scan::scheduler::{InclusionRule, ScheduleSettings};
 use super::scan::watcher::WatcherSettings;
 use super::service::ServiceError;
-use crate::runtime_config::ConfigStore;
 use crate::runtime_config::secret_sections::{
     IdentificationPolicy, LibraryRoot as StoredRoot, TypedLibrary,
 };
 use crate::runtime_config::sections::{FilesystemWatcher, LibraryScanSchedule, ScanFrequency};
+use crate::runtime_config::{ConfigStore, UpdateError};
 use crate::settings::error::SettingsError;
 use crate::settings::library_policy::{self, clean_absolute};
 
@@ -169,12 +169,24 @@ pub fn watcher(config: &ConfigStore) -> WatcherSettings {
 /// Add one root to the stored settings. The id must be new; the settings
 /// resolver the settings page saves through then refuses a path that
 /// equals, holds, or sits inside another root (or staging). The label is
-/// the directory name, made unique against the other roots.
+/// the directory name, made unique against the other roots. The checks
+/// and the write run as one locked store update, the same lock every
+/// settings-page library save takes.
 pub fn add_root(config: &ConfigStore, root: &LibraryRoot) -> Result<(), ServiceError> {
-    let mut settings = config
-        .get_masked::<TypedLibrary>()
-        .map_err(|error| ServiceError::internal(&error))?
-        .into_inner();
+    config
+        .update_secret::<TypedLibrary, ServiceError, _>(|stored| {
+            with_root(stored.into_inner(), root)
+        })
+        .map(|_| ())
+        .map_err(|error| match error {
+            UpdateError::Rejected(error) => error,
+            UpdateError::Config(error) => ServiceError::internal(&error),
+        })
+}
+
+/// The stored settings with `root` added and normalized. The masked
+/// AcoustID key in `settings` resolves back to the stored one on save.
+fn with_root(mut settings: TypedLibrary, root: &LibraryRoot) -> Result<TypedLibrary, ServiceError> {
     if settings
         .library_roots
         .iter()
@@ -215,9 +227,5 @@ pub fn add_root(config: &ConfigStore, root: &LibraryRoot) -> Result<(), ServiceE
         }
         other => ServiceError::internal(&format!("{other:?}")),
     })?;
-    // The masked AcoustID key resolves back to the stored one on save.
-    config
-        .save_secret(resolved.settings)
-        .map(|_| ())
-        .map_err(|error| ServiceError::internal(&error))
+    Ok(resolved.settings)
 }

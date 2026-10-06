@@ -43,7 +43,9 @@ use crate::runtime_config::sections::{
     DownloadPolicy, LibraryScanSchedule, PlainSection, SecuritySettings, SourcePriority,
     UsenetBackendSetting, derive_default_order, validate_quality_recipe,
 };
-use crate::runtime_config::{ConfigError, ConfigStore, Masked, SecretSection, Section};
+use crate::runtime_config::{
+    ConfigError, ConfigStore, Masked, SecretSection, Section, UpdateError,
+};
 
 /// Settings reads, writes, and verify probes. Built once at boot; every
 /// call reads the store, so a save takes effect on the next call.
@@ -58,9 +60,6 @@ pub struct SettingsService {
     pub timezone: Option<String>,
     /// Connection probes behind the verify methods.
     probes: Arc<dyn VerifyProbes>,
-    /// Serializes library settings writes: the revision check and the
-    /// write of one save happen with no other library save in between.
-    library_writes: tokio::sync::Mutex<()>,
 }
 
 impl SettingsService {
@@ -77,7 +76,6 @@ impl SettingsService {
             ids,
             timezone: None,
             probes,
-            library_writes: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -275,41 +273,33 @@ impl SettingsService {
     pub async fn get_library(&self) -> Result<LibrarySettingsResponse, SettingsError> {
         let store = self.store.clone();
         let ids = self.ids.clone();
-        let task = tokio::task::spawn_blocking(move || {
+        self.library_blocking(move || {
             let stored = store
                 .get_masked::<TypedLibrary>()
                 .map_err(|error| SettingsError::from_config(error, ids.as_ref()))?;
             let resolved = stored.try_map(|library| library_policy::resolve(&library))?;
             Ok(library_policy::settings_response(resolved))
-        });
-        match task.await {
-            Ok(result) => result,
-            Err(cause) => Err(SettingsError::internal(
-                &format!("library settings read failed: {cause}"),
-                self.ids.as_ref(),
-            )),
-        }
+        })
+        .await
     }
 
-    /// Save the library settings. The expected revision must match the
-    /// stored one or the save is a 409; a masked AcoustID key keeps the
-    /// stored one. The check and the write run under the library write
-    /// lock, so two saves holding the same revision cannot both land.
-    /// The save invalidates the AcoustID cache root.
+    /// Save the library settings. Under the store's write lock: a stale
+    /// expected revision is a 409 before anything else, then the
+    /// candidate is normalized, then dropping every root while the
+    /// catalog holds tracks is a 400. A masked AcoustID key keeps the
+    /// stored one.
     pub async fn save_library(
         &self,
         request: LibrarySettingsSaveRequest,
+        catalog_has_tracks: bool,
     ) -> Result<LibrarySettingsResponse, SettingsError> {
-        let _writing = self.library_writes.lock().await;
-        let stored = self.get_masked::<TypedLibrary>()?.into_inner();
-        if request.expected_policy_revision != library_policy::revision(&stored) {
-            return Err(SettingsError::StaleRevision {
-                message: "Library settings changed since this page loaded. Refresh and retry."
-                    .to_owned(),
-            });
-        }
-        let resolved = library_policy::resolve(&request.settings)?;
-        self.save_library_settings(resolved.settings).await
+        self.update_library(move |stored| {
+            library_policy::check_revision(&stored, &request.expected_policy_revision)?;
+            let resolved = library_policy::resolve(&request.settings)?;
+            library_policy::guard_last_root(&resolved.settings, catalog_has_tracks)?;
+            Ok(resolved.settings)
+        })
+        .await
     }
 
     /// Add one library root path. The path must be a directory on this
@@ -332,58 +322,101 @@ impl SettingsService {
                 message: format!("Path does not exist or is not a directory: {candidate}"),
             });
         }
-        let _writing = self.library_writes.lock().await;
-        let mut library = self.get_masked::<TypedLibrary>()?.into_inner();
-        if !library
-            .library_roots
-            .iter()
-            .any(|root| root.path == candidate)
-        {
-            let label = std::path::Path::new(&candidate)
-                .file_name()
-                .and_then(|name| name.to_str())
-                .filter(|name| !name.is_empty())
-                .unwrap_or(&candidate)
-                .to_owned();
-            library.library_roots.push(LibraryRoot {
-                id: self.ids.new_id(),
-                path: candidate,
-                label,
-                policy: IdentificationPolicy::Automatic,
-                rules: Vec::new(),
-            });
-        }
-        self.save_library_roots(library).await
+        let id = self.ids.new_id();
+        self.update_library(move |mut library| {
+            if !library
+                .library_roots
+                .iter()
+                .any(|root| root.path == candidate)
+            {
+                let label = std::path::Path::new(&candidate)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or(&candidate)
+                    .to_owned();
+                library.library_roots.push(LibraryRoot {
+                    id,
+                    path: candidate,
+                    label,
+                    policy: IdentificationPolicy::Automatic,
+                    rules: Vec::new(),
+                });
+            }
+            Ok(library_policy::resolve(&library)?.settings)
+        })
+        .await
     }
 
     /// Remove every library root at one path. Unknown paths are a silent
-    /// no-op.
+    /// no-op; removing the last root while the catalog holds tracks is a
+    /// 400.
     pub async fn remove_library_path(
         &self,
         path: &str,
+        catalog_has_tracks: bool,
     ) -> Result<LibrarySettingsResponse, SettingsError> {
-        let _writing = self.library_writes.lock().await;
-        let mut library = self.get_masked::<TypedLibrary>()?.into_inner();
-        library.library_roots.retain(|root| root.path != path);
-        self.save_library_roots(library).await
+        let path = path.to_owned();
+        self.update_library(move |mut library| {
+            let before = library.library_roots.len();
+            library.library_roots.retain(|root| root.path != path);
+            if library.library_roots.len() < before {
+                library_policy::guard_last_root(&library, catalog_has_tracks)?;
+            }
+            Ok(library_policy::resolve(&library)?.settings)
+        })
+        .await
     }
 
-    async fn save_library_roots(
+    /// Read, check, and save the library settings in one step under the
+    /// store's secret write lock, on the blocking pool (normalizing stats
+    /// the roots). `update` gets the stored settings with the AcoustID key
+    /// masked and returns the settings to save; an `Err` writes nothing.
+    /// Every library-settings writer goes through the same lock, the scan
+    /// engine's add-root included.
+    pub async fn update_library<F>(
         &self,
-        library: TypedLibrary,
-    ) -> Result<LibrarySettingsResponse, SettingsError> {
-        let resolved = library_policy::resolve(&library)?;
-        self.save_library_settings(resolved.settings).await
+        update: F,
+    ) -> Result<LibrarySettingsResponse, SettingsError>
+    where
+        F: FnOnce(TypedLibrary) -> Result<TypedLibrary, SettingsError> + Send + 'static,
+    {
+        let store = self.store.clone();
+        let ids = self.ids.clone();
+        let response = self
+            .library_blocking(move || {
+                let saved = store
+                    .update_secret::<TypedLibrary, SettingsError, _>(|stored| {
+                        update(stored.into_inner())
+                    })
+                    .map_err(|error| match error {
+                        UpdateError::Rejected(error) => error,
+                        UpdateError::Config(error) => {
+                            SettingsError::from_config(error, ids.as_ref())
+                        }
+                    })?;
+                let resolved = saved.try_map(|library| library_policy::resolve(&library))?;
+                Ok(library_policy::settings_response(resolved))
+            })
+            .await?;
+        self.effects
+            .after_save(SavedSection::for_key(TypedLibrary::KEY))
+            .await;
+        Ok(response)
     }
 
-    /// Save normalized library settings and answer with the masked view.
-    async fn save_library_settings(
-        &self,
-        settings: TypedLibrary,
-    ) -> Result<LibrarySettingsResponse, SettingsError> {
-        let saved = self.save_submitted(settings).await?;
-        let resolved = saved.try_map(|library| library_policy::resolve(&library))?;
-        Ok(library_policy::settings_response(resolved))
+    async fn library_blocking<T, F>(&self, op: F) -> Result<T, SettingsError>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> Result<T, SettingsError> + Send + 'static,
+    {
+        match tokio::task::spawn_blocking(op).await {
+            Ok(result) => result,
+            Err(cause) => Err(SettingsError::internal(
+                &format!("library settings task failed: {cause}"),
+                self.ids.as_ref(),
+            )),
+        }
     }
 
     // --- download policy --------------------------------------------------------------

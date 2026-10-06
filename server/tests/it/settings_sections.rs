@@ -337,7 +337,10 @@ async fn library_round_trip_cas_and_paths() {
 
     // Stale token rejected before anything persists.
     let stale = request(json!({}), "wrong");
-    let error = service.save_library(stale).await.expect_err("stale fails");
+    let error = service
+        .save_library(stale, false)
+        .await
+        .expect_err("stale fails");
     assert!(matches!(
         error,
         droppedneedle::settings::error::SettingsError::StaleRevision { .. }
@@ -348,10 +351,13 @@ async fn library_round_trip_cas_and_paths() {
     let root = dir.join("music").to_string_lossy().into_owned();
 
     let saved = service
-        .save_library(request(
-            json!({"acoustid_api_key": "acoustid-secret"}),
-            &view.policy_revision,
-        ))
+        .save_library(
+            request(
+                json!({"acoustid_api_key": "acoustid-secret"}),
+                &view.policy_revision,
+            ),
+            false,
+        )
         .await
         .expect("saves");
     assert_eq!(saved.settings.acoustid_api_key.expose(), ACOUSTID_KEY_MASK);
@@ -372,10 +378,13 @@ async fn library_round_trip_cas_and_paths() {
     let missing = service.add_library_path("").await.expect_err("blank fails");
     assert!(format!("{missing:?}").contains("required"));
 
-    let removed = service.remove_library_path(&root).await.expect("removes");
+    let removed = service
+        .remove_library_path(&root, false)
+        .await
+        .expect("removes");
     assert!(removed.settings.library_roots.is_empty());
     service
-        .remove_library_path("/nothing/here")
+        .remove_library_path("/nothing/here", false)
         .await
         .expect("unknown remove is silent");
 }
@@ -400,8 +409,8 @@ async fn concurrent_library_saves_cannot_both_pass_the_revision_check() {
         .expect("request decodes")
     };
     let (first, second) = tokio::join!(
-        service.save_library(request("a")),
-        service.save_library(request("b"))
+        service.save_library(request("a"), false),
+        service.save_library(request("b"), false)
     );
     let stale = [&first, &second]
         .iter()

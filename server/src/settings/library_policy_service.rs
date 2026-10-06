@@ -4,9 +4,10 @@
 //!
 //! Each call reads the saved library settings, normalizes them on the
 //! blocking pool (normalizing checks root paths on disk), and reads the
-//! catalog through the [`LibraryPolicyCatalog`] port. Saves go through
-//! [`SettingsService::save_library`], so the revision check and the
-//! post-save fan-out stay in one place. Without a wired catalog the
+//! catalog through the [`LibraryPolicyCatalog`] port. Writes go through
+//! [`SettingsService::update_library`], which checks the revision and
+//! saves under the config store's write lock and runs the post-save
+//! fan-out. Without a wired catalog the
 //! tree and impact previews leave their counts empty and the routes that
 //! need catalog rows answer 503.
 
@@ -161,7 +162,8 @@ impl LibraryPolicyService {
     }
 
     /// Put every removed root back (automatic, no rules), at its
-    /// recovered path or the caller's override, through the normal save.
+    /// recovered path or the caller's override. The revision check, the
+    /// choice of roots, and the write happen in one locked update.
     pub async fn restore_roots(
         &self,
         request: LibraryRestoreRootsRequest,
@@ -171,15 +173,14 @@ impl LibraryPolicyService {
             .catalog_roots()
             .await
             .map_err(|cause| self.catalog_error(cause))?;
-        let stored = self.settings.get_masked::<TypedLibrary>()?;
-        let restorable = library_policy::restorable_roots(&stored, &roots);
         let paths: BTreeMap<String, String> = request.paths.unwrap_or_default();
-        let restored = stored
-            .try_map(|library| library_policy::with_restored_roots(library, &restorable, &paths))?;
+        let expected = request.expected_policy_revision;
         self.settings
-            .save_library(LibrarySettingsSaveRequest {
-                settings: restored,
-                expected_policy_revision: request.expected_policy_revision,
+            .update_library(move |stored| {
+                library_policy::check_revision(&stored, &expected)?;
+                let restorable = library_policy::restorable_roots(&stored, &roots);
+                let restored = library_policy::with_restored_roots(stored, &restorable, &paths)?;
+                Ok(library_policy::resolve(&restored)?.settings)
             })
             .await
     }
@@ -202,40 +203,31 @@ impl LibraryPolicyService {
         &self,
         request: LibrarySettingsSaveRequest,
     ) -> Result<LibrarySettingsResponse, SettingsError> {
-        if request.settings.library_roots.is_empty() {
-            self.guard_catalog().await?;
-        }
-        self.settings.save_library(request).await
+        // A proposal keeps every submitted root, so only an empty one can
+        // trip the guard.
+        let has_tracks = if request.settings.library_roots.is_empty() {
+            self.catalog_has_tracks().await?
+        } else {
+            false
+        };
+        self.settings.save_library(request, has_tracks).await
     }
 
     /// Remove every root at one path, with the same guard as a save.
     pub async fn remove_path(&self, path: &str) -> Result<LibrarySettingsResponse, SettingsError> {
-        let stored = self.settings.get_masked::<TypedLibrary>()?;
-        if !stored.library_roots.is_empty()
-            && stored.library_roots.iter().all(|root| root.path == path)
-        {
-            self.guard_catalog().await?;
-        }
-        self.settings.remove_library_path(path).await
+        let has_tracks = self.catalog_has_tracks().await?;
+        self.settings.remove_library_path(path, has_tracks).await
     }
 
-    /// 400 when the catalog holds tracks: removing every root would
-    /// leave them with no root. Unwired catalogs skip the check.
-    async fn guard_catalog(&self) -> Result<(), SettingsError> {
+    /// Whether the catalog holds tracks. False when the catalog is
+    /// unwired, which turns the last-root guard off.
+    async fn catalog_has_tracks(&self) -> Result<bool, SettingsError> {
         let Some(catalog) = self.catalog.as_deref() else {
-            return Ok(());
+            return Ok(false);
         };
-        let has_tracks = catalog
+        catalog
             .has_tracks()
             .await
-            .map_err(|cause| self.catalog_error(cause))?;
-        if has_tracks {
-            return Err(SettingsError::InvalidInput {
-                message: "Removing every library root would orphan the existing catalog. \
-                          Keep at least one root, or set its policy to Excluded instead."
-                    .to_owned(),
-            });
-        }
-        Ok(())
+            .map_err(|cause| self.catalog_error(cause))
     }
 }

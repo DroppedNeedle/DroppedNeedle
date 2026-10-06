@@ -72,13 +72,21 @@ async fn removed_root_restores_and_previews_count_the_catalog() {
     assert_eq!(offered.restorable_roots[0].indexed_file_count, 2);
     let revision = offered.policy_revision;
 
-    // Saving with no roots would orphan the catalog.
-    let empty: LibrarySettingsSaveRequest = serde_json::from_value(json!({
-        "settings": {"library_roots": []},
-        "expected_policy_revision": revision,
-    }))
-    .expect("request decodes");
-    let refused = policy.save(empty).await.expect_err("guard refuses");
+    // Saving with no roots would orphan the catalog; a stale revision is
+    // still a 409 first.
+    let empty = |revision: &str| -> LibrarySettingsSaveRequest {
+        serde_json::from_value(json!({
+            "settings": {"library_roots": []},
+            "expected_policy_revision": revision,
+        }))
+        .expect("request decodes")
+    };
+    let stale = policy.save(empty("stale")).await.expect_err("stale fails");
+    assert!(matches!(stale, SettingsError::StaleRevision { .. }));
+    let refused = policy
+        .save(empty(&revision))
+        .await
+        .expect_err("guard refuses");
     assert!(matches!(refused, SettingsError::InvalidInput { .. }));
 
     let stale = policy
