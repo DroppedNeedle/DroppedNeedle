@@ -170,6 +170,8 @@ fn album_view(record: &AlbumRecord, favorite: bool) -> AlbumView {
         cover_available: record.cover_available,
         date_added: record.date_added,
         favorite,
+        contribution_id: record.contribution_id.clone(),
+        contribution_state: record.contribution_state.clone(),
     }
 }
 

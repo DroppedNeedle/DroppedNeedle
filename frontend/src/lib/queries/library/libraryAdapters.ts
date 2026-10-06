@@ -2,6 +2,7 @@ import type { components } from '$lib/api/v3/openapi';
 import type { TargetLibrarySettingsResponse } from './LibraryOperationsTypes';
 import type {
 	AlbumIdentityState,
+	ContributionState,
 	LibraryAlbumDetail,
 	LibraryAlbumSummary,
 	LibraryArtistRelationship,
@@ -18,9 +19,10 @@ type StatsView = components['schemas']['StatsView'];
 type LibrarySettingsResponse = components['schemas']['LibrarySettingsResponse'];
 
 // The library pages read the native page models that the v2 catalog served.
-// v3's catalog views carry the browse fields only: identity is `local_only`
-// or `linked`, and the management, contribution and edition-conversion
-// fields have no v3 source yet, so they read as "nothing to manage" here.
+// v3's catalog views carry the browse fields plus the open contribution:
+// identity is `local_only` or `linked`, and the management and
+// edition-conversion fields have no v3 source yet, so they read as
+// "nothing to manage" here.
 
 function albumIdentity(album: AlbumView): AlbumIdentityState {
 	if (album.identity_state !== 'linked') return 'local_only';
@@ -48,8 +50,8 @@ export function toAlbumSummary(album: AlbumView): LibraryAlbumSummary {
 		date_added: album.date_added ?? null,
 		sort_name: null,
 		original_release_date: null,
-		contribution_id: null,
-		contribution_state: null
+		contribution_id: album.contribution_id ?? null,
+		contribution_state: (album.contribution_state as ContributionState | null | undefined) ?? null
 	};
 }
 

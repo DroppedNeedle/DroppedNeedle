@@ -1679,6 +1679,18 @@ async fn library_contribution_seed_callback_verify_links_album() {
     assert_eq!(status, StatusCode::OK, "{created}");
     assert_eq!(created["state"], json!("draft"));
     let id = created["id"].as_str().expect("contribution id").to_owned();
+    // The album view carries the open contribution for the album page.
+    let (status, album) = call(
+        lib.router(),
+        "GET",
+        "/api/v3/library/albums/album-1",
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{album}");
+    assert_eq!(album["contribution_id"], json!(id));
+    assert_eq!(album["contribution_state"], json!("draft"));
     let (status, ready) = call(
         lib.router(),
         "PUT",

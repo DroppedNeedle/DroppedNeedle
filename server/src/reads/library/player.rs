@@ -412,6 +412,8 @@ fn map_album(row: &sqlx::sqlite::SqliteRow) -> Result<PlayerAlbum, sqlx::Error> 
             is_compilation: row.try_get("is_compilation")?,
             cover_available: row.try_get("cover_available")?,
             date_added: row.try_get("date_added")?,
+            contribution_id: None,
+            contribution_state: None,
         },
         genre: row.try_get("primary_genre")?,
         sort_name: row.try_get("album_sort_name")?,

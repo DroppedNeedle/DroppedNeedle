@@ -137,6 +137,10 @@ pub struct AlbumRecord {
     pub cover_available: bool,
     /// Import time, unix seconds.
     pub date_added: Option<f64>,
+    /// The album's open MusicBrainz contribution, if any.
+    pub contribution_id: Option<String>,
+    /// That contribution's state (`draft`, `ready`, `seeded`, ...).
+    pub contribution_state: Option<String>,
 }
 
 /// One artist row with its streamable-only aggregates.

@@ -184,7 +184,11 @@ pub(crate) const ALBUM_COLUMNS: &str = "a.id AS id, a.title AS title, \
      GROUP BY t2.file_format ORDER BY COUNT(*) DESC, t2.file_format LIMIT 1) AS format, \
     a.year AS year, a.is_compilation AS is_compilation, \
     (w.local_album_id IS NOT NULL) AS cover_available, \
-    a.created_at AS date_added";
+    a.created_at AS date_added, \
+    (SELECT c.id FROM library_contribution_drafts c WHERE c.local_album_id = a.id \
+     AND c.state NOT IN ('linked','cancelled','stale')) AS contribution_id, \
+    (SELECT c.state FROM library_contribution_drafts c WHERE c.local_album_id = a.id \
+     AND c.state NOT IN ('linked','cancelled','stale')) AS contribution_state";
 
 /// Joins shared by every album SELECT. Track joins filter to streamable.
 /// Visible to the plan tests, which assemble the same statements.
@@ -246,6 +250,8 @@ fn map_album(row: &sqlx::sqlite::SqliteRow) -> AlbumRecord {
         is_compilation: row.get("is_compilation"),
         cover_available: row.get("cover_available"),
         date_added: row.get("date_added"),
+        contribution_id: row.get("contribution_id"),
+        contribution_state: row.get("contribution_state"),
     }
 }
 

@@ -66,6 +66,8 @@ fn album(
         is_compilation: false,
         cover_available: true,
         date_added: Some(added),
+        contribution_id: None,
+        contribution_state: None,
     }
 }
 

@@ -17217,6 +17217,20 @@
             "type": "string",
             "description": "Album artist display name."
           },
+          "contribution_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The album's open MusicBrainz contribution, if any."
+          },
+          "contribution_state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "That contribution's state: `draft`, `ready`, `seeded`, `verifying`\nor `needs_review`."
+          },
           "cover_available": {
             "type": "boolean",
             "description": "True when an artwork row exists for this album."

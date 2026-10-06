@@ -304,6 +304,8 @@ fn map_album(row: &sqlx::sqlite::SqliteRow) -> AlbumRecord {
         is_compilation: row.get("is_compilation"),
         cover_available: row.get("cover_available"),
         date_added: row.get("date_added"),
+        contribution_id: None,
+        contribution_state: None,
     }
 }
 

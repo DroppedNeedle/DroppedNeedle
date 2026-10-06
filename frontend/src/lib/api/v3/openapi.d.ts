@@ -7430,6 +7430,13 @@ export interface components {
             artist_mbid?: string | null;
             /** @description Album artist display name. */
             artist_name: string;
+            /** @description The album's open MusicBrainz contribution, if any. */
+            contribution_id?: string | null;
+            /**
+             * @description That contribution's state: `draft`, `ready`, `seeded`, `verifying`
+             *     or `needs_review`.
+             */
+            contribution_state?: string | null;
             /** @description True when an artwork row exists for this album. */
             cover_available: boolean;
             /**

@@ -47,6 +47,11 @@ pub struct AlbumView {
     pub date_added: Option<f64>,
     /// True when the caller favorited this album.
     pub favorite: bool,
+    /// The album's open MusicBrainz contribution, if any.
+    pub contribution_id: Option<String>,
+    /// That contribution's state: `draft`, `ready`, `seeded`, `verifying`
+    /// or `needs_review`.
+    pub contribution_state: Option<String>,
 }
 
 /// One page of catalog albums.
