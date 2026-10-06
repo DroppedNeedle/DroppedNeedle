@@ -6,6 +6,8 @@ import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import type {
 	DownloadPolicySettings,
+	NzbgetConnectionSettings,
+	NzbgetTestResult,
 	SabnzbdConnectionSettings,
 	SabnzbdTestResult,
 	SourcePriority,
@@ -55,6 +57,26 @@ const sabnzbdStatusOptions = () =>
 
 export const getSabnzbdStatusQuery = () => createQuery(() => sabnzbdStatusOptions());
 
+const nzbgetOptions = () =>
+	queryOptions({
+		staleTime: CACHE_TTL.LIBRARY_NATIVE,
+		queryKey: DownloadQueryKeyFactory.nzbget(),
+		queryFn: ({ signal }) =>
+			api.global.get<NzbgetConnectionSettings>(API.downloadClients.nzbget(), { signal })
+	});
+
+export const getNzbgetConfigQuery = () => createQuery(() => nzbgetOptions());
+
+const nzbgetStatusOptions = () =>
+	queryOptions({
+		staleTime: CACHE_TTL.LIBRARY_NATIVE,
+		queryKey: DownloadQueryKeyFactory.nzbgetStatus(),
+		queryFn: ({ signal }) =>
+			api.global.get<NzbgetTestResult>(API.downloadClients.nzbgetStatus(), { signal })
+	});
+
+export const getNzbgetStatusQuery = () => createQuery(() => nzbgetStatusOptions());
+
 const policyOptions = () =>
 	queryOptions({
 		staleTime: CACHE_TTL.LIBRARY_NATIVE,
@@ -71,6 +93,8 @@ export const getDownloadPolicyQuery = (getEnabled: () => boolean = () => true) =
 async function invalidateClients() {
 	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.sabnzbd() });
 	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.sabnzbdStatus() });
+	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.nzbget() });
+	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.nzbgetStatus() });
 	await invalidateQueriesWithPersister({ queryKey: DownloadQueryKeyFactory.clientStatus() });
 	await invalidateQueriesWithPersister({ queryKey: HomeQueryKeyFactory.prefix });
 }
@@ -87,6 +111,21 @@ export function testSabnzbd() {
 	return createMutation(() => ({
 		mutationFn: (config: SabnzbdConnectionSettings) =>
 			api.global.post<SabnzbdTestResult>(API.downloadClients.sabnzbdTest(), config)
+	}));
+}
+
+export function saveNzbgetConfig() {
+	return createMutation(() => ({
+		mutationFn: (config: NzbgetConnectionSettings) =>
+			api.global.put<NzbgetConnectionSettings>(API.downloadClients.nzbget(), config),
+		onSuccess: invalidateClients
+	}));
+}
+
+export function testNzbget() {
+	return createMutation(() => ({
+		mutationFn: (config: NzbgetConnectionSettings) =>
+			api.global.post<NzbgetTestResult>(API.downloadClients.nzbgetTest(), config)
 	}));
 }
 

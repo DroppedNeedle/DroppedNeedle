@@ -2267,6 +2267,29 @@ export interface SabnzbdTestResult {
 	mount_message?: string | null;
 }
 
+export interface NzbgetConnectionSettings {
+	enabled: boolean;
+	client_type: string;
+	url: string;
+	username: string;
+	password: string;
+	category: string;
+	priority: number;
+	downloads_mount: string;
+}
+
+export interface NzbgetTestResult {
+	valid: boolean;
+	version?: string | null;
+	message: string;
+	categories: string[];
+	complete_dir?: string | null;
+	mount_has_files?: boolean | null;
+	resolvable_downloads?: number | null;
+	sampled_downloads?: number | null;
+	mount_message?: string | null;
+}
+
 export type QualityRecipeFormat = 'flac' | 'mp3';
 
 export type QualityRecipeQuality =
