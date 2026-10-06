@@ -34,6 +34,8 @@ pub struct TrackCommit {
     /// Adopted root and relative path.
     pub root_id: String,
     pub rel_path: String,
+    /// Adopted absolute path, stored as the track's `file_path`.
+    pub file_path: String,
     /// SHA-256 the catalog must record.
     pub fingerprint: String,
     /// Management state after commit.
@@ -67,7 +69,8 @@ pub trait Catalog {
         track_id: &str,
     ) -> Result<Option<(String, String, String, String)>, PublishError>;
     /// Commit one bundle: CAS on the expected revision, move every track
-    /// row to its published location, bump the catalog once.
+    /// row (and its album's root) to its published location, bump the
+    /// catalog once. Track and album ids stay as they are.
     fn commit_bundle(&self, conn: &Connection, commit: &BundleCommit) -> Result<(), PublishError>;
     /// Mark a track missing so streaming and search stay accurate when
     /// committed bytes cannot be recovered.
@@ -147,12 +150,13 @@ impl Catalog for SqliteCatalog {
         let now = now_secs();
         for track in &commit.tracks {
             let moved = conn.execute(
-                "UPDATE local_tracks SET root_id = ?2, relative_path = ?3, file_path = ?3, \
-                 path_hash = ?4, row_revision = row_revision + 1 WHERE id = ?1",
+                "UPDATE local_tracks SET root_id = ?2, relative_path = ?3, file_path = ?4, \
+                 path_hash = ?5, row_revision = row_revision + 1 WHERE id = ?1",
                 rusqlite::params![
                     track.track_id,
                     track.root_id,
                     track.rel_path,
+                    track.file_path,
                     sha256_hex(track.rel_path.as_bytes())
                 ],
             )?;
@@ -162,6 +166,14 @@ impl Catalog for SqliteCatalog {
                     track.track_id
                 )));
             }
+            // An organize into another root takes the album along; its id
+            // (and with it the identity) stays.
+            conn.execute(
+                "UPDATE local_albums SET root_id = ?2, row_revision = row_revision + 1 \
+                 WHERE id = (SELECT local_album_id FROM local_tracks WHERE id = ?1) \
+                 AND root_id <> ?2",
+                rusqlite::params![track.track_id, track.root_id],
+            )?;
             conn.execute(
                 "INSERT INTO library_track_management_state (local_track_id, managed_root_id, \
                  applied_projection_hash, last_outcome, last_managed_at) \
@@ -647,24 +659,25 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
     /// Single-transaction commit: catalog CAS plus every journal
     /// `published -> committed`, then cache invalidation rows.
     fn commit(&mut self, bundle: &PlanBundle, staged: &[PreparedFile]) -> Result<(), PublishError> {
-        let tracks: Vec<TrackCommit> = staged
-            .iter()
-            .map(|file| {
-                let item = bundle
-                    .items
-                    .iter()
-                    .find(|item| item.track_id == file.track_id)
-                    .cloned();
-                item.map(|item| TrackCommit {
-                    track_id: file.track_id.clone(),
-                    root_id: item.dest_root.clone(),
-                    rel_path: item.dest_rel.clone(),
-                    fingerprint: file.staged_sha256.clone(),
-                    mgmt_state: format!("managed:{}", bundle.profile_revision),
-                })
-            })
-            .collect::<Option<Vec<_>>>()
-            .ok_or_else(|| PublishError::Journal("staged file without a plan item".into()))?;
+        let mut tracks = Vec::with_capacity(staged.len());
+        for file in staged {
+            let item = bundle
+                .items
+                .iter()
+                .find(|item| item.track_id == file.track_id)
+                .ok_or_else(|| PublishError::Journal("staged file without a plan item".into()))?;
+            let dest = self
+                .sandbox
+                .resolve_no_symlink(&item.dest_root, &item.dest_rel)?;
+            tracks.push(TrackCommit {
+                track_id: file.track_id.clone(),
+                root_id: item.dest_root.clone(),
+                rel_path: item.dest_rel.clone(),
+                file_path: dest.to_string_lossy().into_owned(),
+                fingerprint: file.staged_sha256.clone(),
+                mgmt_state: format!("managed:{}", bundle.profile_revision),
+            });
+        }
         let commit = BundleCommit {
             bundle_id: bundle.id.clone(),
             expected_catalog_revision: bundle.catalog_revision,

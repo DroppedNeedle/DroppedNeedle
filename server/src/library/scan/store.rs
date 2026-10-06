@@ -49,6 +49,8 @@ pub type InventoryPage = (Vec<ScanInventoryItem>, Option<(String, String)>);
 pub struct CommitIndexedItem {
     pub root_id: String,
     pub relative_path: String,
+    /// Where the walk found the file, stored as the track's `file_path`.
+    pub absolute_path: String,
     pub size_bytes: u64,
     pub mtime_ns: i64,
     pub tags_read_at: f64,

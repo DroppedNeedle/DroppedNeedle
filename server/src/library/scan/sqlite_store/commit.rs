@@ -5,9 +5,18 @@
 //! picks up at the first unprocessed row with nothing counted twice.
 //!
 //! Catalog rows follow v2's indexer: display names come from tags, then
-//! the path parse, then placeholders, each with its provenance; albums
-//! group by directory (disc folders folded) plus album title and album
-//! artist; artists key by name and sort name.
+//! the path parse, then placeholders, each with its provenance; artists
+//! key by name and sort name.
+//!
+//! Ids survive moves (the Navidrome approach). An album is found by a
+//! persistent key (release MBID, else the tagged album artist and title)
+//! rather than by its folder, so moving or organizing a folder keeps the
+//! album row with its identity and reviews. A file that appears where a
+//! track's file just went away continues that track (same recording MBID,
+//! or same album key, disc, track number, title and duration), so
+//! favorites, history and playlists follow a moved file. When every track
+//! of an album is retagged into a new album in one run, the old row takes
+//! the new name instead of being left behind.
 
 use super::*;
 use crate::library::identify::sqlite::offer_album;
@@ -93,9 +102,202 @@ fn upsert_artist(tx: &Connection, credit: &Credit, now: f64) -> rusqlite::Result
     Ok(id)
 }
 
-/// Write one file's catalog rows. Returns the track id and its album id.
+/// Separator inside name-based album keys; never part of a folded name.
+const KEY_SEPARATOR: char = '\u{1f}';
+
+/// How one file names its album.
+struct AlbumNames<'a> {
+    release_mbid: Option<&'a str>,
+    /// Both the album title and the album artist came from tags.
+    from_tags: bool,
+    directory: &'a str,
+    title_folded: String,
+    artist_folded: String,
+}
+
+impl AlbumNames<'_> {
+    /// The key an album is found by wherever its files sit: the release
+    /// MBID when the file carries one, else the folded album artist and
+    /// title from tags. Names parsed from the path (or placeholders) only
+    /// mean something next to that path, so those keys keep the folder.
+    /// Migration 0013 writes the same keys for albums indexed before it.
+    fn key(&self) -> String {
+        match self.release_mbid {
+            Some(mbid) => format!("mbid:{}", mbid.to_lowercase()),
+            None => self.name_key(),
+        }
+    }
+
+    fn name_key(&self) -> String {
+        if self.from_tags {
+            format!(
+                "tag:{}{KEY_SEPARATOR}{}",
+                self.artist_folded, self.title_folded
+            )
+        } else {
+            format!(
+                "{}\0{}\0{}",
+                self.directory, self.title_folded, self.artist_folded
+            )
+        }
+    }
+}
+
+/// The album a track files under: the one it was in while that album
+/// still answers to the key, else the oldest live album with the key.
+/// Tagged names also join an album of the same names where only some
+/// files carry the release MBID, so a partly tagged album stays whole
+/// (an album with a different release MBID stays apart). Else a new id.
+fn resolve_album(
+    tx: &Connection,
+    names: &AlbumNames<'_>,
+    previous: Option<&str>,
+) -> rusqlite::Result<String> {
+    let key = names.key();
+    if let Some(previous) = previous {
+        let same: bool = tx
+            .prepare_cached(
+                "SELECT EXISTS(SELECT 1 FROM local_albums WHERE id = ?1 AND grouping_key = ?2)",
+            )?
+            .query_row(params![previous, key], |row| row.get(0))?;
+        if same {
+            return Ok(previous.to_owned());
+        }
+    }
+    let mut found: Option<String> = tx
+        .prepare_cached(
+            "SELECT id FROM local_albums WHERE grouping_key = ?1 \
+             AND retired_into_album_id IS NULL ORDER BY created_at, id LIMIT 1",
+        )?
+        .query_row(params![key], |row| row.get(0))
+        .optional()?;
+    if found.is_none() && names.from_tags {
+        // With an MBID: an album of these names nobody tagged yet. Without
+        // one: an album of these names known by its MBID.
+        let other = if names.release_mbid.is_some() {
+            names.name_key()
+        } else {
+            "mbid:".to_owned()
+        };
+        found = tx
+            .prepare_cached(
+                "SELECT id FROM local_albums WHERE title_folded = ?1 \
+                 AND album_artist_name_folded = ?2 AND retired_into_album_id IS NULL \
+                 AND (grouping_key = ?3 OR (?3 = 'mbid:' AND grouping_key LIKE 'mbid:%')) \
+                 ORDER BY created_at, id LIMIT 1",
+            )?
+            .query_row(
+                params![names.title_folded, names.artist_folded, other],
+                |row| row.get(0),
+            )
+            .optional()?;
+    }
+    if let Some(id) = found {
+        return Ok(id);
+    }
+    let stable = stable_id(&format!("album:{key}"));
+    let taken: bool = tx
+        .prepare_cached("SELECT EXISTS(SELECT 1 FROM local_albums WHERE id = ?1)")?
+        .query_row(params![stable], |row| row.get(0))?;
+    Ok(if taken {
+        uuid::Uuid::new_v4().to_string()
+    } else {
+        stable
+    })
+}
+
+/// What a newly seen file is matched on against tracks whose files went
+/// away.
+struct TrackKey<'a> {
+    recording_mbid: Option<&'a str>,
+    album_title_folded: &'a str,
+    album_artist_folded: &'a str,
+    title_folded: &'a str,
+    disc_number: i64,
+    track_number: i64,
+    duration_seconds: Option<f64>,
+}
+
+/// A track is gone when it is already marked missing, or when this run
+/// walked its folder to the end without seeing the file.
+const TRACK_GONE: &str = "(t.availability = 'missing' OR (t.availability = 'indexed' \
+    AND EXISTS (SELECT 1 FROM library_scan_run_scopes s WHERE s.run_id = ?1 \
+      AND s.root_id = t.root_id AND s.discovery_state = 'completed' \
+      AND (s.relative_path = '.' OR t.relative_path = s.relative_path \
+        OR substr(t.relative_path, 1, length(s.relative_path) + 1) = s.relative_path || '/')) \
+    AND NOT EXISTS (SELECT 1 FROM library_scan_inventory i WHERE i.run_id = ?1 \
+      AND i.root_id = t.root_id AND i.relative_path = t.relative_path)))";
+
+/// Durations closer than this are the same recording.
+const DURATION_TOLERANCE_SECONDS: f64 = 1.0;
+
+/// The gone track a newly seen file continues, as (track id, album id):
+/// same recording MBID, or else same album names, disc, track number,
+/// title and duration. Only an unambiguous match counts; among several
+/// recording matches, the one on the same album, disc and track wins.
+fn find_moved_track(
+    tx: &Connection,
+    run_id: &str,
+    key: &TrackKey<'_>,
+) -> rusqlite::Result<Option<(String, String)>> {
+    struct Candidate {
+        id: String,
+        album_id: String,
+        same_place: bool,
+    }
+    let columns = "SELECT t.id, t.local_album_id, \
+         (t.album_title_folded = ?3 AND COALESCE(t.album_artist_name_folded, '') = ?4 \
+          AND t.disc_number = ?5 AND t.track_number = ?6), t.duration_seconds \
+         FROM local_tracks t";
+    let sql = match key.recording_mbid {
+        Some(_) => format!("{columns} WHERE t.embedded_recording_mbid = ?2 AND {TRACK_GONE}"),
+        None => format!(
+            "{columns} WHERE t.title_folded = ?2 AND t.album_title_folded = ?3 \
+             AND COALESCE(t.album_artist_name_folded, '') = ?4 AND t.disc_number = ?5 \
+             AND t.track_number = ?6 AND {TRACK_GONE}"
+        ),
+    };
+    let first = key.recording_mbid.unwrap_or(key.title_folded);
+    let mut candidates = Vec::new();
+    let mut stmt = tx.prepare_cached(&sql)?;
+    let mut rows = stmt.query(params![
+        run_id,
+        first,
+        key.album_title_folded,
+        key.album_artist_folded,
+        key.disc_number,
+        key.track_number
+    ])?;
+    while let Some(row) = rows.next()? {
+        let duration: Option<f64> = row.get(3)?;
+        let same_length = match (duration, key.duration_seconds) {
+            (Some(old), Some(new)) => (old - new).abs() < DURATION_TOLERANCE_SECONDS,
+            (None, None) => true,
+            _ => false,
+        };
+        if key.recording_mbid.is_none() && !same_length {
+            continue;
+        }
+        candidates.push(Candidate {
+            id: row.get(0)?,
+            album_id: row.get(1)?,
+            same_place: row.get(2)?,
+        });
+    }
+    if candidates.len() > 1 {
+        candidates.retain(|candidate| candidate.same_place);
+    }
+    Ok(match candidates.as_slice() {
+        [only] => Some((only.id.clone(), only.album_id.clone())),
+        _ => None,
+    })
+}
+
+/// Write one file's catalog rows. Returns the track id, its album id, and
+/// the album it left, if it changed albums.
 fn write_item(
     tx: &Connection,
+    run_id: &str,
     item: &CommitIndexedItem,
 ) -> rusqlite::Result<(String, String, Option<String>)> {
     let tag = &item.tags.tag;
@@ -182,12 +384,68 @@ fn write_item(
         track_artist_ids.push(id);
     }
 
-    let grouping_key = format!(
-        "{directory}\0{}\0{}",
-        fold_text(&album_title),
-        fold_text(&album_artist)
-    );
-    let album_id = stable_id(&format!("album:{}:{grouping_key}", item.root_id));
+    let release_mbid = tag
+        .musicbrainz_release_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|mbid| !mbid.is_empty());
+    let names = AlbumNames {
+        release_mbid,
+        from_tags: album_title_provenance == "tag" && album_artist_provenance == "tag",
+        directory: &directory,
+        title_folded: fold_text(&album_title),
+        artist_folded: fold_text(&album_artist),
+    };
+    let grouping_key = names.key();
+    let disc_number = i64::from(tag.disc_number.max(1));
+    let title_folded = fold_text(&title);
+
+    // The row at this path keeps its id. A new path continues a track
+    // whose file went away when the keys agree: the old row moves here
+    // and the upsert below refreshes it.
+    let mut previous: Option<(String, String)> = tx
+        .prepare_cached(
+            "SELECT id, local_album_id FROM local_tracks WHERE root_id = ?1 AND relative_path = ?2",
+        )?
+        .query_row(params![item.root_id, item.relative_path], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .optional()?;
+    if previous.is_none() {
+        let recording = tag
+            .musicbrainz_recording_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|mbid| !mbid.is_empty());
+        let key = TrackKey {
+            recording_mbid: recording,
+            album_title_folded: &names.title_folded,
+            album_artist_folded: &names.artist_folded,
+            title_folded: &title_folded,
+            disc_number,
+            track_number: i64::from(track_number),
+            duration_seconds: header.duration_seconds,
+        };
+        if let Some((moved_id, moved_album)) = find_moved_track(tx, run_id, &key)? {
+            tx.prepare_cached(
+                "UPDATE local_tracks SET root_id = ?2, relative_path = ?3, path_hash = ?4, \
+                 file_path = ?5, row_revision = row_revision + 1 WHERE id = ?1",
+            )?
+            .execute(params![
+                moved_id,
+                item.root_id,
+                item.relative_path,
+                sha256_hex(&item.relative_path),
+                item.absolute_path,
+            ])?;
+            previous = Some((moved_id, moved_album));
+        }
+    }
+    let album_id = resolve_album(
+        tx,
+        &names,
+        previous.as_ref().map(|(_, album)| album.as_str()),
+    )?;
     let primary_artist = album_artist_ids
         .first()
         .cloned()
@@ -199,7 +457,7 @@ fn write_item(
          is_compilation, grouping_source, created_at, updated_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, \
          'automatic', ?16, ?16) \
-         ON CONFLICT (id) DO UPDATE SET title = excluded.title, \
+         ON CONFLICT (id) DO UPDATE SET root_id = excluded.root_id, title = excluded.title, \
          title_folded = excluded.title_folded, album_artist_name = excluded.album_artist_name, \
          album_artist_name_folded = excluded.album_artist_name_folded, \
          tag_album_title = excluded.tag_album_title, \
@@ -246,16 +504,7 @@ fn write_item(
         ])?;
     }
 
-    // The previous row (if any) keeps its id; a new path takes a stable
-    // id unless a moved track already holds it.
-    let previous: Option<(String, String)> = tx
-        .prepare_cached(
-            "SELECT id, local_album_id FROM local_tracks WHERE root_id = ?1 AND relative_path = ?2",
-        )?
-        .query_row(params![item.root_id, item.relative_path], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })
-        .optional()?;
+    // A new path takes a stable id unless a moved track already holds it.
     let track_id = match &previous {
         Some((id, _)) => id.clone(),
         None => {
@@ -345,7 +594,7 @@ fn write_item(
         track_id,
         album_id,
         item.root_id,
-        item.relative_path,
+        item.absolute_path,
         item.relative_path,
         sha256_hex(&item.relative_path),
         item.size_bytes as i64,
@@ -354,7 +603,7 @@ fn write_item(
         tag_revision,
         now,
         title,
-        fold_text(&title),
+        title_folded,
         track_artist,
         fold_text(&track_artist),
         album_title,
@@ -363,8 +612,8 @@ fn write_item(
         fold_text(&album_artist),
         raw_album,
         tag.album_artist.as_deref().unwrap_or("").trim(),
-        tag.disc_number.max(1) as i64,
-        track_number as i64,
+        disc_number,
+        i64::from(track_number),
         year,
         tag.genre,
         tag.genre.as_deref().map(fold_text),
@@ -450,7 +699,114 @@ fn write_item(
     let moved_from = previous
         .map(|(_, album)| album)
         .filter(|album| *album != stored_album);
+    if let Some(left) = &moved_from {
+        // Recorded now, not with the window's marks: a later item in this
+        // window may empty the album this one left.
+        tx.prepare_cached(
+            "UPDATE library_scan_inventory SET local_track_id = ?4, previous_album_id = ?5 \
+             WHERE run_id = ?1 AND root_id = ?2 AND relative_path = ?3",
+        )?
+        .execute(params![
+            run_id,
+            item.root_id,
+            item.relative_path,
+            track_id,
+            left
+        ])?;
+    }
     Ok((track_id, stored_album, moved_from))
+}
+
+/// An album this run emptied: when every track it lost went to one album,
+/// and that album holds nothing but those tracks and nothing of its own
+/// (identity, reviews), the whole album was retagged together. The old
+/// row then takes over the new name and key, keeping its id, identity,
+/// reviews and pins, and the new row goes. Returns the album that went.
+fn follow_regrouped(
+    tx: &Connection,
+    run_id: &str,
+    album_id: &str,
+) -> rusqlite::Result<Option<String>> {
+    let remaining: i64 = tx
+        .prepare_cached("SELECT COUNT(*) FROM local_tracks WHERE local_album_id = ?1")?
+        .query_row(params![album_id], |row| row.get(0))?;
+    if remaining > 0 {
+        return Ok(None);
+    }
+    let destinations: Vec<String> = tx
+        .prepare_cached(
+            "SELECT DISTINCT t.local_album_id FROM library_scan_inventory i \
+             JOIN local_tracks t ON t.id = i.local_track_id \
+             WHERE i.run_id = ?1 AND i.previous_album_id = ?2",
+        )?
+        .query_map(params![run_id, album_id], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let [target] = destinations.as_slice() else {
+        return Ok(None);
+    };
+    if target == album_id {
+        return Ok(None);
+    }
+    let foreign: bool = tx
+        .prepare_cached(
+            "SELECT EXISTS(SELECT 1 FROM local_tracks t WHERE t.local_album_id = ?2 \
+             AND NOT EXISTS (SELECT 1 FROM library_scan_inventory i WHERE i.run_id = ?1 \
+             AND i.local_track_id = t.id AND i.previous_album_id = ?3)) \
+             OR EXISTS(SELECT 1 FROM local_album_external_identities WHERE local_album_id = ?2) \
+             OR EXISTS(SELECT 1 FROM library_identify_reviews WHERE local_album_id = ?2)",
+        )?
+        .query_row(params![run_id, target, album_id], |row| row.get(0))?;
+    if foreign {
+        return Ok(None);
+    }
+    tx.execute("SAVEPOINT follow_album", [])?;
+    let followed = (|| {
+        tx.execute(
+            "UPDATE local_albums SET (root_id, grouping_key, title, title_folded, \
+             album_artist_name, album_artist_name_folded, tag_album_title, \
+             tag_album_artist_name, album_artist_id, album_artist_sort_name, year, \
+             original_release_date, primary_genre, is_compilation, updated_at) = \
+             (SELECT root_id, grouping_key, title, title_folded, album_artist_name, \
+             album_artist_name_folded, tag_album_title, tag_album_artist_name, \
+             album_artist_id, album_artist_sort_name, year, original_release_date, \
+             primary_genre, is_compilation, updated_at FROM local_albums WHERE id = ?2), \
+             row_revision = row_revision + 1 WHERE id = ?1",
+            params![album_id, target],
+        )?;
+        tx.execute(
+            "UPDATE local_tracks SET local_album_id = ?1 WHERE local_album_id = ?2",
+            params![album_id, target],
+        )?;
+        tx.execute(
+            "DELETE FROM local_album_artists WHERE local_album_id = ?1",
+            params![album_id],
+        )?;
+        tx.execute(
+            "UPDATE local_album_artists SET local_album_id = ?1 WHERE local_album_id = ?2",
+            params![album_id, target],
+        )?;
+        tx.execute(
+            "DELETE FROM local_album_artwork WHERE local_album_id = ?1",
+            params![target],
+        )?;
+        tx.execute(
+            "DELETE FROM library_identify_jobs WHERE local_album_id = ?1",
+            params![target],
+        )?;
+        tx.execute("DELETE FROM local_albums WHERE id = ?1", params![target])
+    })();
+    match followed {
+        Ok(_) => {
+            tx.execute("RELEASE follow_album", [])?;
+            Ok(Some(target.clone()))
+        }
+        Err(error) => {
+            tracing::debug!(%error, album_id, target, "regrouped album still referenced; kept both");
+            tx.execute("ROLLBACK TO follow_album", [])?;
+            tx.execute("RELEASE follow_album", [])?;
+            Ok(None)
+        }
+    }
 }
 
 /// Drop an album left with no tracks, with its scan-owned joins. Rows that
@@ -563,7 +919,7 @@ fn write_window(
     for item in &window.items {
         let written = if isolate {
             tx.execute("SAVEPOINT item", [])?;
-            match write_item(tx, item) {
+            match write_item(tx, &window.run_id, item) {
                 Ok(written) => {
                     tx.execute("RELEASE item", [])?;
                     Ok(written)
@@ -575,7 +931,7 @@ fn write_window(
                 }
             }
         } else {
-            write_item(tx, item)
+            write_item(tx, &window.run_id, item)
         };
         match written {
             Ok((track_id, album_id, moved_from)) => {
@@ -601,8 +957,17 @@ fn write_window(
             Err(error) => return Err(error),
         }
     }
+    emptied.sort();
+    emptied.dedup();
     for album_id in emptied {
-        drop_if_empty(tx, &album_id)?;
+        match follow_regrouped(tx, &window.run_id, &album_id)? {
+            Some(gone) => {
+                for offer in offered.iter_mut().filter(|offer| **offer == gone) {
+                    offer.clone_from(&album_id);
+                }
+            }
+            None => drop_if_empty(tx, &album_id)?,
+        }
     }
     offered.sort();
     offered.dedup();

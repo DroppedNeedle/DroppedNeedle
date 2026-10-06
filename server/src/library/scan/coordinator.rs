@@ -1261,6 +1261,7 @@ impl<S: ScanStore, T: TagReader + 'static> LibraryScanCoordinator<S, T> {
                         window.items.push(CommitIndexedItem {
                             root_id: item.root_id.clone(),
                             relative_path: item.relative_path.clone(),
+                            absolute_path: item.absolute_path.clone(),
                             size_bytes: item.file_size_bytes,
                             mtime_ns: item.file_mtime_ns,
                             tags_read_at: self.now(),

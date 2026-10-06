@@ -284,10 +284,12 @@ fn resume_precommit<C: Catalog>(
             journal.mgmt_state.as_deref(),
         ) {
             expected_revision.get_or_insert(rev as u64);
+            let dest = sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
             tracks.push(TrackCommit {
                 track_id: track_id.to_string(),
                 root_id: journal.dest_root.clone(),
                 rel_path: journal.dest_rel.clone(),
+                file_path: dest.to_string_lossy().into_owned(),
                 fingerprint: journal.staged_sha256.clone(),
                 mgmt_state: mgmt.to_string(),
             });

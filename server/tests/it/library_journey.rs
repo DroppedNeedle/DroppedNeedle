@@ -406,7 +406,10 @@ fn ambiguous_recall(track_a: &str, track_b: &str) -> RecallResult {
                 release_mbid: Some("rel-1".to_owned()),
                 album_title: "Journey Album".to_owned(),
                 album_artist_name: "Journey Artist".to_owned(),
-                track_evidence: vec![evidence(track_a, "rec-a", "rt-a")],
+                track_evidence: vec![
+                    evidence(track_a, "rec-a", "rt-a"),
+                    evidence(track_b, "rec-b", "rt-b"),
+                ],
                 score: 0.9,
                 margin: 0.0,
                 reason_code: "SUPPORTED".to_owned(),
@@ -417,7 +420,10 @@ fn ambiguous_recall(track_a: &str, track_b: &str) -> RecallResult {
                 release_mbid: Some("rel-2".to_owned()),
                 album_title: "Journey Album".to_owned(),
                 album_artist_name: "Journey Artist".to_owned(),
-                track_evidence: vec![evidence(track_b, "rec-b", "rt-b")],
+                track_evidence: vec![
+                    evidence(track_a, "rec-a2", "rt-a2"),
+                    evidence(track_b, "rec-b2", "rt-b2"),
+                ],
                 score: 0.8,
                 margin: 0.0,
                 reason_code: "SUPPORTED".to_owned(),
@@ -592,7 +598,8 @@ async fn library_journey_scan_identify_review_organize_undo() {
     assert_eq!(body["identity"]["release_mbid"], json!("rel-1"));
     assert_eq!(body["identity"]["decision_source"], json!("manual"));
 
-    // Auto-organize: preview, apply, and the file moves with new tags.
+    // Auto-organize the whole album: preview, apply, and the files move
+    // with new tags.
     let (status, body) = call(
         lib.router(),
         "POST",
@@ -601,12 +608,20 @@ async fn library_journey_scan_identify_review_organize_undo() {
         Some(json!({
             "kind": "organize",
             "album_id": album_key,
-            "items": [{
-                "root_id": "music",
-                "rel_path": "album-a/01.flac",
-                "dest_rel": "organized/01.flac",
-                "managed_updates": {"title": ["Organized Title"]},
-            }],
+            "items": [
+                {
+                    "root_id": "music",
+                    "rel_path": "album-a/01.flac",
+                    "dest_rel": "organized/01.flac",
+                    "managed_updates": {"title": ["Organized Title"]},
+                },
+                {
+                    "root_id": "music",
+                    "rel_path": "album-a/02.flac",
+                    "dest_rel": "organized/02.flac",
+                    "managed_updates": {"title": ["Organized Title"]},
+                },
+            ],
         })),
     )
     .await;
@@ -628,6 +643,36 @@ async fn library_journey_scan_identify_review_organize_undo() {
     assert!(!file_a.exists(), "source leaves after commit");
     assert_eq!(read_title(&moved), "Organized Title");
 
+    // A rescan after the move re-reads the rewritten files and keeps them
+    // on the same album, so the curator's identity still applies.
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/scan",
+        &headers,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    drain_scans(&lib.library).await;
+    {
+        use droppedneedle::library::identify::stores::IdentityStore as _;
+        use droppedneedle::library::scan::CatalogStore as _;
+        for track in [&track_a, &track_b] {
+            assert_eq!(
+                lib.library.scan_store.album_for_track(track).as_deref(),
+                Some(album_key),
+                "an organized track stays on its album"
+            );
+        }
+        let identity = lib
+            .library
+            .identify_store
+            .album_identity(album_key)
+            .expect("identity stays with the album");
+        assert_eq!(identity.release_mbid.as_deref(), Some("rel-1"));
+    }
+
     // Undo restores the exact before state: path and tags.
     let (status, body) = call(
         lib.router(),
@@ -638,7 +683,12 @@ async fn library_journey_scan_identify_review_organize_undo() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["restored"], json!([track_a]));
+    let mut restored: Vec<String> =
+        serde_json::from_value(body["restored"].clone()).expect("restored ids");
+    restored.sort();
+    let mut expected = vec![track_a.clone(), track_b.clone()];
+    expected.sort();
+    assert_eq!(restored, expected);
     assert!(file_a.is_file(), "source returns after undo");
     assert!(!moved.exists(), "destination clears after undo");
     assert_eq!(read_title(&file_a), title_a_before);
@@ -889,6 +939,184 @@ async fn library_roots_survive_a_restart() {
     let (run, _, _) = second.coordinator.snapshot(&result.run_id).expect("run");
     assert_eq!(run.counters.get("new_count").copied(), Some(0));
     assert_eq!(run.counters.get("unchanged_count").copied(), Some(1));
+}
+
+/// A bare library bundle over a migrated scratch database, with its
+/// music folder (not yet a root).
+fn bare_library(tag: &str) -> (ScratchDir, LibrarySetup, PathBuf) {
+    let scratch = ScratchDir::new(tag);
+    let dir = scratch.to_path_buf();
+    let db_path = dir.join("app.db");
+    let connection = droppedneedle::db::open_connection(&db_path).expect("scratch db opens");
+    droppedneedle::schema::apply_migrations_blocking(&connection).expect("migrations apply");
+    drop(connection);
+    let config = Arc::new(
+        ConfigStore::open(
+            &dir.join("config.json"),
+            Crypto::from_key_bytes(&[7u8; 32]).expect("test key"),
+        )
+        .expect("config opens"),
+    );
+    let library = LibrarySetup::for_tests_at(
+        droppedneedle::auth::wiring::AuthSetup::for_tests()
+            .expect("test auth builds")
+            .users,
+        Arc::new(UuidGenerator) as Arc<dyn IdGenerator>,
+        &db_path,
+        config,
+    )
+    .expect("bundle builds");
+    (scratch, library, dir.join("music"))
+}
+
+/// Add `music` as the only root and scan it.
+async fn add_music_root(library: &LibrarySetup, music: &Path) {
+    library
+        .add_root(
+            Some("music".to_owned()),
+            music.to_string_lossy().into_owned(),
+            droppedneedle::library::scan::EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+    drain_scans(library).await;
+}
+
+/// Scan every root again and wait for it.
+async fn rescan(library: &LibrarySetup) {
+    use droppedneedle::library::scan::{ScanKind, ScanRequest, ScanTrigger};
+    let registry = library.live_registry();
+    library
+        .coordinator
+        .request_run(&ScanRequest {
+            kind: ScanKind::Incremental,
+            trigger: ScanTrigger::Manual,
+            scopes: registry.scheduled_root_scopes(),
+            requested_by_user_id: None,
+            policy_revision: registry.policy_revision().to_owned(),
+        })
+        .expect("scan requested");
+    drain_scans(library).await;
+}
+
+/// A file moved by hand keeps its track id on the next scan, so the
+/// favorites and play history that name the track follow the file.
+#[tokio::test]
+async fn moved_file_keeps_its_track() {
+    use droppedneedle::library::scan::CatalogStore as _;
+
+    let (_scratch, library, music) = bare_library("lib-move");
+    let old = plant(&music, "before/01.flac", "flac_full_01.flac");
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "before/01.flac")
+        .expect("track indexed");
+    library
+        .scan_store
+        .execute_batch_for_tests(&format!(
+            "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+             VALUES ('listener', 'track', '{track}', 0); \
+             INSERT INTO library_play_history (id, user_id, local_track_id, track_name, \
+             artist_name, played_at) VALUES ('play-1', 'listener', '{track}', 'Song', \
+             'Artist', '2026-01-01T00:00:00Z');"
+        ))
+        .expect("favorite and play seed");
+
+    let new = music.join("after/01.flac");
+    std::fs::create_dir_all(new.parent().expect("parent")).expect("mkdir");
+    std::fs::rename(&old, &new).expect("move by hand");
+    rescan(&library).await;
+
+    assert_eq!(
+        library.scan_store.track_at("music", "after/01.flac"),
+        Some(track.clone()),
+        "the moved file continues its track"
+    );
+    let following = library
+        .scan_store
+        .query_i64_for_tests(&format!(
+            "SELECT (SELECT COUNT(*) FROM library_user_favorites f JOIN local_tracks t \
+             ON t.id = f.item_id WHERE t.id = '{track}' AND t.availability = 'indexed') \
+             + (SELECT COUNT(*) FROM library_play_history h JOIN local_tracks t \
+             ON t.id = h.local_track_id WHERE t.id = '{track}' \
+             AND t.relative_path = 'after/01.flac' AND t.availability = 'indexed')"
+        ))
+        .expect("count reads");
+    assert_eq!(following, 2, "favorite and history follow the file");
+    assert_eq!(
+        library
+            .scan_store
+            .query_i64_for_tests("SELECT COUNT(*) FROM local_tracks")
+            .expect("count reads"),
+        1,
+        "no second row for the moved file"
+    );
+}
+
+/// Retagging every track of an album to a new name keeps the album row,
+/// and with it the curator's identity.
+#[tokio::test]
+async fn retagged_album_keeps_its_identity() {
+    use droppedneedle::library::scan::CatalogStore as _;
+    use droppedneedle::library::tags::save::{TagEdit, save_tags};
+    use lofty::tag::ItemKey;
+
+    let (_scratch, library, music) = bare_library("lib-retag-album");
+    // No release MBID here: the album is known by its tagged names.
+    let files = [
+        plant(&music, "album/01.flac", "flac_full_02.flac"),
+        plant(&music, "album/02.flac", "flac_full_02.flac"),
+    ];
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "album/01.flac")
+        .expect("track indexed");
+    let album = library.scan_store.album_for_track(&track).expect("album");
+    library
+        .scan_store
+        .execute_batch_for_tests(&format!(
+            "INSERT INTO local_album_external_identities (local_album_id, provider, \
+             release_group_mbid, decision_source, selected_at) \
+             VALUES ('{album}', 'musicbrainz', 'rg-1', 'manual', 0);"
+        ))
+        .expect("identity seed");
+
+    for file in &files {
+        save_tags(
+            file,
+            &[TagEdit::new(
+                ItemKey::AlbumTitle,
+                vec!["Renamed".to_owned()],
+            )],
+        )
+        .expect("album retagged");
+    }
+    rescan(&library).await;
+
+    assert_eq!(
+        library.scan_store.album_for_track(&track).as_deref(),
+        Some(album.as_str()),
+        "the retagged album keeps its row"
+    );
+    assert_eq!(
+        library
+            .scan_store
+            .query_i64_for_tests(&format!(
+                "SELECT COUNT(*) FROM local_albums WHERE id = '{album}' AND title = 'Renamed'"
+            ))
+            .expect("count reads"),
+        1,
+        "the kept row takes the new name"
+    );
+    assert_eq!(
+        library
+            .scan_store
+            .query_i64_for_tests("SELECT COUNT(*) FROM local_albums")
+            .expect("count reads"),
+        1,
+        "no second album"
+    );
 }
 
 /// Identification state is durable: a job the scan queued survives a
