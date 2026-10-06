@@ -236,6 +236,8 @@ pub(crate) async fn scan_loop(setup: LibrarySetup, mut shutdown: watch::Receiver
         let setup = setup.clone();
         drive_blocking(move || async move { setup.scan_startup_recovery().await }).await;
     }
+    // Album art is refreshed once the scans go idle, and once at boot.
+    let mut artwork_due = true;
     loop {
         if *shutdown.borrow() {
             break;
@@ -249,7 +251,15 @@ pub(crate) async fn scan_loop(setup: LibrarySetup, mut shutdown: watch::Receiver
             .await
         };
         if tick == Some(true) {
+            artwork_due = true;
             continue;
+        }
+        if std::mem::take(&mut artwork_due) {
+            let (store, shutdown) = (setup.scan_store.clone(), shutdown.clone());
+            drive_blocking(
+                move || async move { store.refresh_album_artwork(&|| *shutdown.borrow()) },
+            )
+            .await;
         }
         tokio::select! {
             _ = shutdown.changed() => break,

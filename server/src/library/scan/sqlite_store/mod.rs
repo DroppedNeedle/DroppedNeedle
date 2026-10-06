@@ -526,6 +526,8 @@ fn scope_covers(existing: &ScanScope, requested_root: &str, requested: &ScanScop
         && scope_covers_path(&existing.relative_path, &requested.relative_path)
 }
 
+mod artwork;
+pub use artwork::ArtworkSweep;
 mod catalog;
 mod commit;
 mod inventory;
