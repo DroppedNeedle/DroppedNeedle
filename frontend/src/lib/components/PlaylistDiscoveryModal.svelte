@@ -14,7 +14,7 @@
 	import GenreAlbumCard from '$lib/components/GenreAlbumCard.svelte';
 	import SampleButton from '$lib/components/discover/SampleButton.svelte';
 	import { getDiscoverPlaylistSuggestionsV3Query } from '$lib/queries/discover/DiscoverV3Queries.svelte';
-	import { toHomeSection } from '$lib/queries/discover/DiscoverV3Adapters';
+	import { toHomeSection } from '$lib/queries/chartAdapters';
 	import { getPlaylistListQuery } from '$lib/queries/playlists/PlaylistQuery.svelte';
 	import { isRedactedPlaylist, type PlaylistSummary } from '$lib/api/playlists';
 	import { fetchAlbumTracks } from '$lib/api/albums';

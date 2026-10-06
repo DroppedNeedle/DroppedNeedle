@@ -1,12 +1,24 @@
 import { createInfiniteQuery } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
-import { API, CACHE_TTL } from '$lib/constants';
+import { CACHE_TTL } from '$lib/constants';
 import { authStore } from '$lib/stores/authStore.svelte';
 import type { GenreDetailResponse } from '$lib/types';
 import { GenreQueryKeyFactory } from './GenreQueryKeyFactory';
+import { toGenreDetail } from '../chartAdapters';
+import { HOME_ENDPOINTS } from '../charts/endpoints';
 
 type Getter<T> = () => T;
 const PAGE_SIZE = 50;
+
+async function fetchGenrePage(
+	genre: string,
+	artistOffset: number,
+	albumOffset: number,
+	signal: AbortSignal
+): Promise<GenreDetailResponse> {
+	const url = HOME_ENDPOINTS.genre(genre, PAGE_SIZE, artistOffset, albumOffset);
+	return toGenreDetail(await api.global.v3.GET(url, { signal }));
+}
 
 export const getGenreDetailQuery = (getGenre: Getter<string>) =>
 	createInfiniteQuery(() => ({
@@ -14,10 +26,7 @@ export const getGenreDetailQuery = (getGenre: Getter<string>) =>
 		queryKey: GenreQueryKeyFactory.artistPages(authStore.user?.id, getGenre()),
 		initialPageParam: 0,
 		enabled: getGenre().trim().length > 0,
-		queryFn: ({ pageParam = 0, signal }) =>
-			api.global.get<GenreDetailResponse>(API.homeGenre(getGenre(), PAGE_SIZE, pageParam, 0), {
-				signal
-			}),
+		queryFn: ({ pageParam = 0, signal }) => fetchGenrePage(getGenre(), pageParam, 0, signal),
 		getNextPageParam: (lastPage, allPages) =>
 			lastPage.popular?.has_more_artists ? allPages.length * PAGE_SIZE : undefined
 	}));
@@ -29,9 +38,7 @@ export const getGenreAlbumPagesQuery = (getGenre: Getter<string>, getEnabled: Ge
 		initialPageParam: PAGE_SIZE,
 		enabled: getGenre().trim().length > 0 && getEnabled(),
 		queryFn: ({ pageParam = PAGE_SIZE, signal }) =>
-			api.global.get<GenreDetailResponse>(API.homeGenre(getGenre(), PAGE_SIZE, 0, pageParam), {
-				signal
-			}),
+			fetchGenrePage(getGenre(), 0, pageParam, signal),
 		getNextPageParam: (lastPage, allPages) =>
 			lastPage.popular?.has_more_albums ? PAGE_SIZE + allPages.length * PAGE_SIZE : undefined
 	}));

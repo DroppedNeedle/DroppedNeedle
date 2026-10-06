@@ -596,16 +596,6 @@ export const API = {
 		status: () => '/api/v1/cache/sync/status',
 		cancel: () => '/api/v1/cache/sync/cancel'
 	},
-	home: () => '/api/v1/home',
-	homeGenre: (genre: string, limit = 50, artistOffset = 0, albumOffset = 0) => {
-		const params = new URLSearchParams({
-			limit: String(limit),
-			artist_offset: String(artistOffset),
-			album_offset: String(albumOffset)
-		});
-		return `/api/v1/home/genre/${encodeURIComponent(genre)}?${params.toString()}`;
-	},
-	homeIntegrationStatus: () => '/api/v1/home/integration-status',
 	discover: () => '/api/v1/discover',
 	discoverRefresh: () => '/api/v1/discover/refresh',
 	discoverActivity: () => '/api/v1/discover/activity',
@@ -634,7 +624,6 @@ export const API = {
 	discoverAlbumPreview: (artist: string, album: string) =>
 		`/api/v1/discover/album-preview?artist=${encodeURIComponent(artist)}&album=${encodeURIComponent(album)}`,
 	discoverPlaylistSuggestions: () => '/api/v1/discover/playlist-suggestions',
-	discoverGenreDetail: (tag: string) => `/api/v1/discover/genres/${encodeURIComponent(tag)}`,
 	youtube: {
 		generate: () => '/api/v1/youtube/generate',
 		link: (albumId: string) => `/api/v1/youtube/link/${albumId}`,
@@ -1047,11 +1036,6 @@ export const API = {
 		artistsIndex: () => '/api/v1/plex/artists/index',
 		genreSongs: (genre: string, limit = 50, offset = 0) =>
 			`/api/v1/plex/genres/songs?genre=${encodeURIComponent(genre)}&limit=${limit}&offset=${offset}`
-	},
-	version: {
-		info: () => '/api/v1/version',
-		checkUpdate: () => '/api/v1/version/check-update',
-		releases: () => '/api/v1/version/releases'
 	},
 	local: {
 		lyrics: (trackId: string) => `/api/v1/local/tracks/${trackId}/lyrics`,

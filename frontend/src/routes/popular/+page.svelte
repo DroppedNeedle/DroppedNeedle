@@ -36,7 +36,7 @@
 	</div>
 	<TimeRangeView
 		itemType="album"
-		endpoint="/api/v1/home/popular/albums"
+		chart="popular-albums"
 		title="Popular Right Now"
 		subtitle={`Most listened albums on ${sourceLabel}`}
 		source={validSource}

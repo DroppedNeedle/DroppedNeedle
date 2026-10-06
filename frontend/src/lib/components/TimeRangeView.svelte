@@ -1,234 +1,76 @@
 <script lang="ts">
-	import { run } from 'svelte/legacy';
-
-	import { onDestroy, onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { CACHE_KEYS, CACHE_TTL } from '$lib/constants';
 	import { withBasePath } from '$lib/utils/basePath';
 	import { albumHref, artistHref } from '$lib/utils/entityRoutes';
-	import { createLocalStorageCache } from '$lib/utils/localStorageCache';
-	import { overviewCacheSuffix } from '$lib/utils/timeRangeCache';
-	import { isAbortError } from '$lib/utils/errorHandling';
-	import { authStore } from '$lib/stores/authStore.svelte';
-	import { api } from '$lib/api/client';
 	import TimeRangeCard from './TimeRangeCard.svelte';
 	import { getTimeRangeFallbackPath } from '$lib/utils/timeRangeFallback';
-	import type { HomeAlbum, HomeArtist } from '$lib/types';
 	import { ChevronLeft, ChevronDown, CircleAlert } from 'lucide-svelte';
 	import type { ComponentType } from 'svelte';
+	import {
+		getChartOverviewQuery,
+		getChartRangeQuery,
+		type ChartItem
+	} from '$lib/queries/charts/ChartQueries.svelte';
+	import type { ChartKind, ChartRange, ChartSource } from '$lib/queries/charts/endpoints';
 
-	type TimeRangeKey = 'this_week' | 'this_month' | 'this_year' | 'all_time';
 	type ItemType = 'album' | 'artist';
-
-	interface TimeRangeData {
-		featured: HomeAlbum | HomeArtist | null;
-		items: (HomeAlbum | HomeArtist)[];
-	}
-
-	interface OverviewData {
-		this_week: TimeRangeData;
-		this_month: TimeRangeData;
-		this_year: TimeRangeData;
-		all_time: TimeRangeData;
-	}
-
-	interface RangeResponse {
-		items: (HomeAlbum | HomeArtist)[];
-		offset: number;
-		limit: number;
-		has_more: boolean;
-	}
 
 	interface Props {
 		itemType: ItemType;
-		endpoint: string;
+		chart: ChartKind;
 		title: string;
 		subtitle: string;
 		errorIcon?: ComponentType | null;
-		source?: 'listenbrainz' | 'lastfm' | null;
+		source?: ChartSource | null;
 	}
 
-	let { itemType, endpoint, title, subtitle, errorIcon = null, source = null }: Props = $props();
+	let { itemType, chart, title, subtitle, errorIcon = null, source = null }: Props = $props();
 
-	const timeRanges: { key: TimeRangeKey; label: string }[] = [
+	const timeRanges: { key: ChartRange; label: string }[] = [
 		{ key: 'this_week', label: 'This Week' },
 		{ key: 'this_month', label: 'This Month' },
 		{ key: 'this_year', label: 'This Year' },
 		{ key: 'all_time', label: 'All Time' }
 	];
 
-	let overviewData: OverviewData | null = $state(null);
-	let expandedRange: TimeRangeKey | null = $state(null);
-	let expandedData: RangeResponse | null = $state(null);
-	let loading = $state(true);
-	let loadingMore = $state(false);
-	let paginationError: string | null = $state(null);
-	let mounted = $state(false);
-	let lastSourceKey = $state('');
-	let overviewAbortController: AbortController | null = null;
-	let expandAbortController: AbortController | null = null;
-	let loadMoreAbortController: AbortController | null = null;
+	// The expanded range belongs to the source it was opened on, so switching
+	// source closes it.
+	let expanded = $state<{ source: ChartSource | null; range: ChartRange } | null>(null);
+	let expandedRange = $derived(expanded?.source === source ? expanded.range : null);
 
-	const overviewCache = createLocalStorageCache<OverviewData>(
-		CACHE_KEYS.TIME_RANGE_OVERVIEW_CACHE,
-		CACHE_TTL.TIME_RANGE_OVERVIEW,
-		{ maxEntries: 40 }
+	const overviewQuery = getChartOverviewQuery(
+		() => chart,
+		() => source
+	);
+	const rangeQuery = getChartRangeQuery(
+		() => chart,
+		() => source,
+		() => expandedRange
 	);
 
-	function getOverviewCacheSuffix(): string {
-		// Scope per user; this localStorage cache isn't covered by the TanStack reset, so it could leak across users.
-		return overviewCacheSuffix(authStore.user?.id, itemType, source, endpoint);
+	let overviewData = $derived(overviewQuery.data ?? null);
+	let loading = $derived(overviewQuery.isPending);
+	let expandedItems = $derived(rangeQuery.data?.pages.flatMap((page) => page.items) ?? null);
+	let loadingMore = $derived(rangeQuery.isFetching);
+	let paginationError = $derived(
+		rangeQuery.isFetchNextPageError ? `Failed to load more ${itemType}s.` : null
+	);
+
+	function expandRange(rangeKey: ChartRange) {
+		expanded = expandedRange === rangeKey ? null : { source, range: rangeKey };
 	}
 
-	function abortInFlightRequests() {
-		overviewAbortController?.abort();
-		expandAbortController?.abort();
-		loadMoreAbortController?.abort();
-		overviewAbortController = null;
-		expandAbortController = null;
-		loadMoreAbortController = null;
-	}
-
-	onMount(async () => {
-		mounted = true;
-		lastSourceKey = source ?? '';
-		await loadOverview();
-	});
-
-	onDestroy(() => {
-		abortInFlightRequests();
-	});
-
-	function withSource(url: string): string {
-		if (!source) return url;
-		const separator = url.includes('?') ? '&' : '?';
-		return `${url}${separator}source=${encodeURIComponent(source)}`;
-	}
-
-	async function loadOverview() {
-		const cacheSuffix = getOverviewCacheSuffix();
-		const cachedOverview = overviewCache.get(cacheSuffix);
-		const hasCachedOverview = !!cachedOverview?.data;
-		const shouldRefresh = !cachedOverview || overviewCache.isStale(cachedOverview.timestamp);
-
-		if (hasCachedOverview) {
-			overviewData = cachedOverview.data;
-			loading = false;
-		}
-
-		if (!shouldRefresh) {
-			return;
-		}
-
-		if (!hasCachedOverview) {
-			loading = true;
-		}
-
-		overviewAbortController?.abort();
-		const controller = new AbortController();
-		overviewAbortController = controller;
-
-		try {
-			const data = await api.get<OverviewData>(withSource(`${endpoint}?limit=10`), {
-				signal: controller.signal
-			});
-			if (controller.signal.aborted) {
-				return;
-			}
-			overviewData = data;
-			overviewCache.set(data, cacheSuffix);
-		} catch (error) {
-			if (isAbortError(error)) {
-				return;
-			}
-		} finally {
-			if (!controller.signal.aborted) {
-				loading = false;
-			}
-			if (overviewAbortController === controller) {
-				overviewAbortController = null;
-			}
+	function loadMore() {
+		if (rangeQuery.hasNextPage && !rangeQuery.isFetchingNextPage) {
+			void rangeQuery.fetchNextPage();
 		}
 	}
 
-	async function expandRange(rangeKey: TimeRangeKey) {
-		if (expandedRange === rangeKey) {
-			expandedRange = null;
-			expandedData = null;
-			paginationError = null;
-			return;
-		}
-
-		expandedRange = rangeKey;
-		paginationError = null;
-		loadingMore = true;
-		expandAbortController?.abort();
-		const controller = new AbortController();
-		expandAbortController = controller;
-		try {
-			const data = await api.get<RangeResponse>(
-				withSource(`${endpoint}/${rangeKey}?limit=25&offset=0`),
-				{
-					signal: controller.signal
-				}
-			);
-			if (controller.signal.aborted) {
-				return;
-			}
-			expandedData = data;
-		} catch (error) {
-			if (isAbortError(error)) {
-				return;
-			}
-		} finally {
-			if (!controller.signal.aborted) {
-				loadingMore = false;
-			}
-			if (expandAbortController === controller) {
-				expandAbortController = null;
-			}
-		}
+	function loadOverview() {
+		void overviewQuery.refetch();
 	}
 
-	async function loadMore() {
-		if (!expandedRange || !expandedData || loadingMore || !expandedData.has_more) return;
-
-		loadingMore = true;
-		paginationError = null;
-		loadMoreAbortController?.abort();
-		const controller = new AbortController();
-		loadMoreAbortController = controller;
-		try {
-			const newOffset = expandedData.offset + expandedData.limit;
-			const moreData = await api.get<RangeResponse>(
-				withSource(`${endpoint}/${expandedRange}?limit=25&offset=${newOffset}`),
-				{
-					signal: controller.signal
-				}
-			);
-			if (controller.signal.aborted) {
-				return;
-			}
-			expandedData = {
-				...moreData,
-				items: [...expandedData.items, ...moreData.items]
-			};
-		} catch (error) {
-			if (isAbortError(error)) {
-				return;
-			}
-			paginationError = `Failed to load more ${itemType}s.`;
-		} finally {
-			if (!controller.signal.aborted) {
-				loadingMore = false;
-			}
-			if (loadMoreAbortController === controller) {
-				loadMoreAbortController = null;
-			}
-		}
-	}
-
-	function getItemHref(item: HomeAlbum | HomeArtist): string | null {
+	function getItemHref(item: ChartItem): string | null {
 		if (!item.mbid) return null;
 		if (itemType === 'album') {
 			return albumHref(item.mbid);
@@ -236,35 +78,20 @@
 		return artistHref(item.mbid);
 	}
 
-	function handleItemClick(item: HomeAlbum | HomeArtist) {
-		const fallbackPath = getFallbackSearchPath(item);
+	function handleItemClick(item: ChartItem) {
+		const fallbackPath = getTimeRangeFallbackPath(itemType, item);
 		if (fallbackPath) {
 			goto(withBasePath(fallbackPath));
 		}
 	}
 
-	function getFallbackSearchPath(item: HomeAlbum | HomeArtist): string | null {
-		return getTimeRangeFallbackPath(itemType, item);
+	function getItemsForRange(rangeKey: ChartRange): ChartItem[] {
+		return overviewData?.[rangeKey]?.items ?? [];
 	}
 
-	function getItemsForRange(rangeKey: TimeRangeKey): (HomeAlbum | HomeArtist)[] {
-		if (!overviewData) return [];
-		return overviewData[rangeKey]?.items || [];
+	function getFeaturedForRange(rangeKey: ChartRange): ChartItem | null {
+		return overviewData?.[rangeKey]?.featured ?? null;
 	}
-
-	function getFeaturedForRange(rangeKey: TimeRangeKey): HomeAlbum | HomeArtist | null {
-		if (!overviewData) return null;
-		return overviewData[rangeKey]?.featured || null;
-	}
-	run(() => {
-		if (mounted && (source ?? '') !== lastSourceKey) {
-			abortInFlightRequests();
-			lastSourceKey = source ?? '';
-			expandedRange = null;
-			expandedData = null;
-			loadOverview();
-		}
-	});
 </script>
 
 <div class="container mx-auto p-4 md:p-6 lg:p-8">
@@ -351,13 +178,13 @@
 								{/each}
 							</div>
 						</div>
-					{:else if loadingMore && !expandedData}
+					{:else if loadingMore && !expandedItems}
 						<div class="flex justify-center py-8">
 							<span class="loading loading-spinner loading-lg"></span>
 						</div>
-					{:else if expandedData}
+					{:else if expandedItems}
 						<div class="grid-cards">
-							{#each expandedData.items as item, idx (idx)}
+							{#each expandedItems as item, idx (idx)}
 								{@const rank = idx + 1}
 								{@const itemHref = getItemHref(item)}
 								<TimeRangeCard
@@ -372,7 +199,7 @@
 							{/each}
 						</div>
 
-						{#if expandedData.has_more}
+						{#if rangeQuery.hasNextPage}
 							<div class="mt-6 flex justify-center">
 								<button class="btn btn-outline btn-wide" onclick={loadMore} disabled={loadingMore}>
 									{#if loadingMore}

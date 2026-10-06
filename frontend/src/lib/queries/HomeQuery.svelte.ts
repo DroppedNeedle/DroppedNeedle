@@ -1,9 +1,11 @@
 import { api } from '$lib/api/client';
-import { API, CACHE_TTL } from '$lib/constants';
+import { CACHE_TTL } from '$lib/constants';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { ttl } from '$lib/stores/cacheTtl.svelte';
 import type { HomeResponse } from '$lib/types';
 import { createQuery, queryOptions } from '@tanstack/svelte-query';
+import { toHomeResponse } from './chartAdapters';
+import { HOME_ENDPOINTS } from './charts/endpoints';
 import { HomeQueryKeyFactory } from './HomeQueryKeyFactory';
 
 function sectionCount(d: HomeResponse | null | undefined): number {
@@ -28,7 +30,9 @@ async function fetchHome(
 	userId: string | null | undefined,
 	signal?: AbortSignal
 ): Promise<HomeResponse> {
-	const fresh = await api.global.get<HomeResponse>(API.home(), { signal, timeoutMs: 15_000 });
+	const fresh = toHomeResponse(
+		await api.global.v3.GET(HOME_ENDPOINTS.home(), { signal, timeoutMs: 15_000 })
+	);
 	if (fresh.refreshing) {
 		const { queryClient } = await import('$lib/queries/QueryClient');
 		const prev = queryClient.getQueryData<HomeResponse>(HomeQueryKeyFactory.home(userId));

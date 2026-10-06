@@ -36,7 +36,7 @@
 	</div>
 	<TimeRangeView
 		itemType="album"
-		endpoint="/api/v1/home/your-top/albums"
+		chart="your-top-albums"
 		title="Your Top Albums"
 		subtitle={`Your most listened albums on ${sourceLabel}`}
 		source={validSource}

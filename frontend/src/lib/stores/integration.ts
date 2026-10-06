@@ -1,6 +1,6 @@
 import { get, writable } from 'svelte/store';
-import { API } from '$lib/constants';
 import { api } from '$lib/api/client';
+import { HOME_ENDPOINTS } from '$lib/queries/charts/endpoints';
 
 interface IntegrationStatus {
 	download_client: boolean;
@@ -60,9 +60,7 @@ function createIntegrationStore() {
 					// Usenet) - the backend integration status is the single source of truth, so a
 					// Usenet-only install isn't gated on slskd. Don't re-derive it from the slskd
 					// health check alone (that's what made disabled-slskd hide the Request buttons).
-					const status = await api.global.get<Partial<IntegrationStatus>>(
-						API.homeIntegrationStatus()
-					);
+					const status = await api.global.v3.GET(HOME_ENDPOINTS.integrationStatus());
 					update((state) => ({ ...state, ...status, loaded: true }));
 				} catch {
 					// Leave `loaded` false so a later ensureLoaded() retries. Stamping it

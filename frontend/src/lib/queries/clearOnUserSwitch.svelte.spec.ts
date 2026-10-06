@@ -7,7 +7,6 @@ import {
 } from '$lib/queries/musicbrainz/sourceScope.svelte';
 import { HomeQueryKeyFactory } from './HomeQueryKeyFactory';
 import { setQueueCachedData } from '$lib/utils/discoverQueueCache';
-import { overviewCacheSuffix } from '$lib/utils/timeRangeCache';
 import { clearUserScopedLocalCaches } from '$lib/utils/userScopedCaches';
 
 // A switch must drop both the user-keyed TanStack home cache and the localStorage caches the
@@ -37,12 +36,7 @@ describe('clear-on-user-switch (AMU-5)', () => {
 		);
 		setQueueCachedData({ items: [], currentIndex: 0, queueId: 'q-a' }, 'user-a');
 		const queueKey = `${CACHE_KEYS.DISCOVER_QUEUE}_user-a`;
-		const trKey = `${CACHE_KEYS.TIME_RANGE_OVERVIEW_CACHE}_${overviewCacheSuffix(
-			'user-a',
-			'album',
-			'listenbrainz',
-			'/api/v1/home/your-top/albums'
-		)}`;
+		const trKey = `${CACHE_KEYS.TIME_RANGE_OVERVIEW_CACHE}_user-a:album:listenbrainz`;
 		localStorage.setItem(trKey, JSON.stringify({ data: {}, timestamp: Date.now() }));
 
 		expect(localStorage.getItem(queueKey)).not.toBeNull();

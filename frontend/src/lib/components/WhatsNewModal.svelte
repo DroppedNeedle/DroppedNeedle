@@ -42,7 +42,7 @@
 		Promise.all(
 			withContent.map(async (r) => ({
 				tag: r.tag_name,
-				name: r.name,
+				name: r.name ?? null,
 				html: await renderMarkdown(r.body!)
 			}))
 		)

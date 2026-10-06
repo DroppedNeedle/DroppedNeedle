@@ -36,7 +36,7 @@
 	</div>
 	<TimeRangeView
 		itemType="artist"
-		endpoint="/api/v1/home/trending/artists"
+		chart="trending-artists"
 		title="Trending Artists"
 		subtitle={`Most listened artists on ${sourceLabel}`}
 		source={validSource}

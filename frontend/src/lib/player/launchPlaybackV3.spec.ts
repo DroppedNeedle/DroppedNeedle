@@ -5,7 +5,8 @@ vi.mock('$lib/stores/player.svelte', () => ({
 }));
 
 vi.mock('$lib/utils/errorHandling', () => ({
-	getCoverUrl: (url: string | null, albumId: string) => url || `/api/v3/covers/release-group/${albumId}`
+	getCoverUrl: (url: string | null, albumId: string) =>
+		url || `/api/v3/covers/release-group/${albumId}`
 }));
 
 import type { components } from '$lib/api/v3/openapi';
