@@ -3,7 +3,7 @@
 //!
 //! ListenBrainz answers by default (or whichever source the primary music
 //! source setting names); when it has nothing, Last.fm fills in with the
-//! user's own key, the way v2 kept these sections from going blank while
+//! user's Last.fm key or the instance key, the way v2 kept these sections from going blank while
 //! ListenBrainz popularity was switched off upstream.
 
 use std::collections::{HashMap, HashSet};
@@ -478,7 +478,7 @@ impl Catalog {
     /// `GET /albums/{album_id}/similar`: top albums of artists similar to
     /// this album's artist. ListenBrainz names the similar artists and their
     /// albums; when it has no albums for them, Last.fm's top albums for the
-    /// same artists fill in with the user's own key (v2
+    /// same artists fill in with the user's or the instance Last.fm key (v2
     /// `_similar_albums_lastfm`).
     pub async fn similar_albums(
         &self,

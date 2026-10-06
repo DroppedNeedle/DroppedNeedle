@@ -780,8 +780,9 @@ impl Catalog {
     }
 
     /// `GET /artists/{artist_mbid}/lastfm`: Last.fm biography, tags and
-    /// similar artists with the user's own key. Empty when Last.fm is off,
-    /// the user has no key, or Last.fm does not know the artist.
+    /// similar artists with the user's Last.fm key or the instance key.
+    /// Empty when Last.fm is off, no key is usable,
+    /// or Last.fm does not know the artist.
     pub async fn artist_lastfm(
         &self,
         user_id: &str,

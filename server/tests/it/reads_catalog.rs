@@ -828,6 +828,27 @@ async fn unified_search_joins_musicbrainz_with_the_library() {
 }
 
 #[tokio::test]
+async fn lastfm_reads_fall_back_to_the_instance_key() {
+    let rig = TestRig::new().unwrap();
+    let http = droppedneedle::http_client::HttpClientFactory::new().unwrap();
+    let upstream = Upstream::new(
+        &http,
+        Arc::new(Providers::unpaced()),
+        Arc::new(TestSettings {
+            mb_url: String::new(),
+        }),
+        rig.deps.clone(),
+    );
+    assert!(
+        upstream.lastfm("no-key-user").await.is_none(),
+        "no user key and no instance key"
+    );
+    let upstream = upstream.with_instance_lastfm_key(Arc::new(|| Some("instance-key".to_owned())));
+    let (_, creds) = upstream.lastfm("no-key-user").await.expect("instance key");
+    assert_eq!(creds.api_key, "instance-key");
+}
+
+#[tokio::test]
 async fn auth_matrix_rejects_anonymous_callers_and_bad_ids() {
     let fixtures = Fixtures::start().await;
     let app = app(&fixtures).await;

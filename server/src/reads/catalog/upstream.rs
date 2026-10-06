@@ -131,7 +131,14 @@ pub struct Upstream {
     settings: Arc<dyn CatalogSettings>,
     users: UsersDeps,
     endpoints: Endpoints,
+    instance_lastfm_key: InstanceLastFmKey,
 }
+
+/// Reads the instance-wide Last.fm API key, per call. Last.fm reads use a
+/// user's own key first and fall back to this one; `None` means no
+/// instance key is saved. The default has none: the settings section that
+/// stores it plugs in here through [`Upstream::with_instance_lastfm_key`].
+pub type InstanceLastFmKey = Arc<dyn Fn() -> Option<String> + Send + Sync>;
 
 impl Upstream {
     /// Assemble from the shared HTTP clients and provider deps.
@@ -148,7 +155,15 @@ impl Upstream {
             settings,
             users,
             endpoints: Endpoints::default(),
+            instance_lastfm_key: Arc::new(|| None),
         }
+    }
+
+    /// Fall back to this instance Last.fm key for users without their own.
+    #[must_use]
+    pub fn with_instance_lastfm_key(mut self, key: InstanceLastFmKey) -> Self {
+        self.instance_lastfm_key = key;
+        self
     }
 
     /// Point the non-MusicBrainz upstreams elsewhere (tests, mirrors).
@@ -210,28 +225,16 @@ impl Upstream {
         ))
     }
 
-    /// The Last.fm client with this user's own API key, or `None` when
-    /// Last.fm is switched off, the user has no key, or the key no longer
-    /// decrypts (logged). v3 has no server-wide Last.fm key.
+    /// The Last.fm client with this user's own API key, else the instance
+    /// key (as the scrobble forwarder chooses), or `None` when Last.fm is
+    /// switched off or neither key is usable.
     pub async fn lastfm(&self, user_id: &str) -> Option<(CatalogLastFm, LastFmCredentials)> {
         if !self.users.lastfm_switch.enabled() {
             return None;
         }
-        let link = match self.users.lastfm.get(user_id).await {
-            Ok(link) => link?,
-            Err(error) => {
-                tracing::warn!(?error, "last.fm link read failed; section stays empty");
-                return None;
-            }
-        };
-        let sealed = link.api_key_encrypted?;
-        let api_key = match self.users.crypto.decrypt(&sealed) {
-            Ok(key) if !key.trim().is_empty() => key,
-            Ok(_) => return None,
-            Err(error) => {
-                tracing::warn!(%error, "last.fm key does not decrypt; section stays empty");
-                return None;
-            }
+        let api_key = match self.user_lastfm_key(user_id).await {
+            Some(key) => key,
+            None => (self.instance_lastfm_key)().filter(|key| !key.trim().is_empty())?,
         };
         let pacer = CorePacer::for_source(self.providers.clone(), lastfm::SOURCE)?;
         Some((
@@ -241,6 +244,26 @@ impl Upstream {
                 ..LastFmCredentials::default()
             },
         ))
+    }
+
+    /// The user's own Last.fm API key, when they saved one that decrypts.
+    async fn user_lastfm_key(&self, user_id: &str) -> Option<String> {
+        let link = match self.users.lastfm.get(user_id).await {
+            Ok(link) => link?,
+            Err(error) => {
+                tracing::warn!(?error, "last.fm link read failed");
+                return None;
+            }
+        };
+        let sealed = link.api_key_encrypted?;
+        match self.users.crypto.decrypt(&sealed) {
+            Ok(key) if !key.trim().is_empty() => Some(key),
+            Ok(_) => None,
+            Err(error) => {
+                tracing::warn!(%error, "last.fm key does not decrypt");
+                None
+            }
+        }
     }
 
     /// The AudioDB client with the configured key and switch.

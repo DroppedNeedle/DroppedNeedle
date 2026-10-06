@@ -970,7 +970,8 @@ impl Catalog {
     }
 
     /// `GET /albums/{album_id}/lastfm`: Last.fm summary and tags with the
-    /// user's own key, looked up by id and then by names.
+    /// user's Last.fm key (or the instance key), looked up by id and then
+    /// by names.
     pub async fn album_lastfm(
         &self,
         user_id: &str,
