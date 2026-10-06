@@ -2,15 +2,8 @@ import type { components } from '$lib/api/v3/openapi';
 import type { V3Response } from '$lib/api/v3/client';
 import type { AuthUser } from '$lib/stores/authStore.svelte';
 
-// No v3 route serves this yet (the backend allowlists /api/v3/auth/providers
-// but ships no handler), so the login page keeps its own shape: the query
-// falls back to local-only tabs until the backend lands the route.
-export interface AuthProviders {
-	local: boolean;
-	plex: boolean;
-	jellyfin: boolean;
-	oidc: boolean;
-}
+/** Which sign-in methods the server has switched on. */
+export type AuthProviders = components['schemas']['AuthProvidersBody'];
 
 /** User payload returned by every endpoint that establishes a session. */
 export type AuthSessionUser = components['schemas']['UserResponse'];

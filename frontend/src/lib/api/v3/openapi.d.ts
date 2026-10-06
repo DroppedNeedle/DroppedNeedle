@@ -402,8 +402,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List Jellyfin accounts available for import. 503 until a live Jellyfin
-         *     client exists (same posture as the login flows).
+         * List Jellyfin accounts available for import. 503 when Jellyfin is off,
+         *     has no API key, or cannot be reached.
          */
         get: operations["admin_import_list_jellyfin"];
         put?: never;
@@ -422,8 +422,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List Plex accounts available for import. 503 until a live Plex client
-         *     exists (same posture as the login flows).
+         * List Plex accounts (Plex Home users and friends) available for import.
+         *     503 when no Plex token is set up or plex.tv cannot be reached.
          */
         get: operations["admin_import_list_plex"];
         put?: never;
@@ -869,9 +869,9 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Plex link completion: polls the PIN and returns the verified profile.
-         *     Requires a session (the profile carries account tokens); no login side
-         *     effects, the caller attaches the profile to its own account.
+         * Plex link completion: polls the PIN and, once authorized, stores the
+         *     verified account as the caller's Plex media link (v2 parity). Requires
+         *     a session; the answer carries the Plex user name, never its tokens.
          */
         post: operations["plex_poll_link_handler"];
         delete?: never;
@@ -914,6 +914,23 @@ export interface paths {
          *     starts 400 without a configured Plex server; login starts never gate.
          */
         post: operations["plex_start_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/auth/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Which sign-in methods are switched on (v2 `GET /auth/providers`). */
+        get: operations["providers_handler"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -6812,6 +6829,17 @@ export interface components {
          * @enum {string}
          */
         AudioFormat: "flac" | "mp3" | "opus";
+        /** @description Sign-in methods the login page offers (v2 `AuthProvidersResponse`). */
+        AuthProvidersBody: {
+            /** @description Jellyfin sign-in is switched on and the server is set up. */
+            jellyfin: boolean;
+            /** @description Username and password; always true. */
+            local: boolean;
+            /** @description OIDC sign-in is switched on with an issuer and client id. */
+            oidc: boolean;
+            /** @description Plex sign-in is switched on. */
+            plex: boolean;
+        };
         /** @description One pending auto-download request. */
         AutoDownloadApprovalItem: {
             /** @description Artist MBID. */
@@ -11262,11 +11290,15 @@ export interface components {
             /** @description Section title. */
             title: string;
         };
-        /** @description Link-completion poll answer. */
+        /**
+         * @description Link-completion poll answer. The link itself is stored server-side; the
+         *     account tokens never reach the browser.
+         */
         PlexLinkPollResult: {
-            /** @description True once the user authorized the PIN. */
+            /** @description True once the user authorized the PIN and the link is stored. */
             completed: boolean;
-            profile?: null | components["schemas"]["PlexProfileView"];
+            /** @description The linked Plex user name; present only when completed. */
+            username?: string | null;
         };
         /** @description Login-completion poll body. */
         PlexLoginPollBody: {
@@ -11297,24 +11329,6 @@ export interface components {
              * @description PIN id from the start step.
              */
             pin_id: number;
-        };
-        /**
-         * @description Verified Plex profile for the link flow. No login side effects; the
-         *     caller attaches it to its account on an authenticated route.
-         */
-        PlexProfileView: {
-            /** @description The authorized account token. */
-            auth_token: string;
-            /** @description Account display name. */
-            display_name: string;
-            /** @description Account email; empty when the API omits it. */
-            email: string;
-            /** @description Server-scoped token; empty when no server is configured. */
-            server_access_token: string;
-            /** @description Account avatar URL. */
-            thumb?: string | null;
-            /** @description Plex uuid; the provider uid. */
-            uuid: string;
         };
         /** @description Plex journey start answer. */
         PlexStartBody: {
@@ -14968,6 +14982,13 @@ export interface operations {
                     "application/json": components["schemas"]["ImportCandidateListResponse"];
                 };
             };
+            /** @description Jellyfin is not set up or unreachable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     admin_import_list_plex: {
@@ -14987,6 +15008,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ImportCandidateListResponse"];
                 };
+            };
+            /** @description Plex is not set up or unreachable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -15726,7 +15754,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Pending flag, or the verified profile */
+            /** @description Pending flag, or the linked Plex user name */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -15824,12 +15852,32 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Plex unreachable */
+            /** @description Plex login is off, or Plex is unreachable */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    providers_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Enabled sign-in methods */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthProvidersBody"];
+                };
             };
         };
     };

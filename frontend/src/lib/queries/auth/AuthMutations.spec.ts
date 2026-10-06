@@ -15,7 +15,7 @@ vi.mock('$lib/api/client', () => ({
 		global: {
 			get: vi.fn(),
 			post: vi.fn(),
-			v3: { POST: vi.fn() }
+			v3: { GET: vi.fn(), POST: vi.fn() }
 		}
 	}
 }));
@@ -23,7 +23,9 @@ vi.mock('$lib/api/client', () => ({
 import { api } from '$lib/api/client';
 import { createMutation, createQuery } from '@tanstack/svelte-query';
 
-const mockGet = vi.mocked(api.global.get);
+const mockV3Get = vi.mocked(api.global.v3.GET) as unknown as Mock<
+	(...args: unknown[]) => Promise<unknown>
+>;
 const mockPost = vi.mocked(api.global.post);
 const mockV3Post = vi.mocked(api.global.v3.POST) as unknown as Mock<
 	(...args: unknown[]) => Promise<unknown>
@@ -149,8 +151,8 @@ describe('auth mutations route through api.global', () => {
 });
 
 describe('AuthProvidersQuery', () => {
-	it('fetches the providers endpoint via api.global.get', async () => {
-		mockGet.mockResolvedValue({ local: true, plex: false, jellyfin: false, oidc: false });
+	it('fetches the providers endpoint via the typed v3 client', async () => {
+		mockV3Get.mockResolvedValue({ local: true, plex: false, jellyfin: false, oidc: false });
 		const { getAuthProvidersQuery } = await import('./AuthProvidersQuery.svelte');
 		getAuthProvidersQuery();
 
@@ -161,7 +163,7 @@ describe('AuthProvidersQuery', () => {
 		const queryFn = opts.queryFn as (ctx: { signal: AbortSignal }) => Promise<unknown>;
 		await queryFn({ signal: new AbortController().signal });
 
-		expect(mockGet).toHaveBeenCalledTimes(1);
-		expect(mockGet.mock.calls[0][0]).toBe('/api/v3/auth/providers');
+		expect(mockV3Get).toHaveBeenCalledTimes(1);
+		expect(mockV3Get.mock.calls[0][0]).toBe(AUTH_ENDPOINTS.providers);
 	});
 });

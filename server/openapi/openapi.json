@@ -541,7 +541,7 @@
         "tags": [
           "crate::auth::users::handlers"
         ],
-        "summary": "List Jellyfin accounts available for import. 503 until a live Jellyfin\nclient exists (same posture as the login flows).",
+        "summary": "List Jellyfin accounts available for import. 503 when Jellyfin is off,\nhas no API key, or cannot be reached.",
         "operationId": "admin_import_list_jellyfin",
         "responses": {
           "200": {
@@ -553,6 +553,9 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Jellyfin is not set up or unreachable"
           }
         }
       }
@@ -562,7 +565,7 @@
         "tags": [
           "crate::auth::users::handlers"
         ],
-        "summary": "List Plex accounts available for import. 503 until a live Plex client\nexists (same posture as the login flows).",
+        "summary": "List Plex accounts (Plex Home users and friends) available for import.\n503 when no Plex token is set up or plex.tv cannot be reached.",
         "operationId": "admin_import_list_plex",
         "responses": {
           "200": {
@@ -574,6 +577,9 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Plex is not set up or unreachable"
           }
         }
       }
@@ -1392,7 +1398,7 @@
         "tags": [
           "crate::auth::routes::federated"
         ],
-        "summary": "Plex link completion: polls the PIN and returns the verified profile.\nRequires a session (the profile carries account tokens); no login side\neffects, the caller attaches the profile to its own account.",
+        "summary": "Plex link completion: polls the PIN and, once authorized, stores the\nverified account as the caller's Plex media link (v2 parity). Requires\na session; the answer carries the Plex user name, never its tokens.",
         "operationId": "plex_poll_link_handler",
         "requestBody": {
           "content": {
@@ -1406,7 +1412,7 @@
         },
         "responses": {
           "200": {
-            "description": "Pending flag, or the verified profile",
+            "description": "Pending flag, or the linked Plex user name",
             "content": {
               "application/json": {
                 "schema": {
@@ -1497,7 +1503,28 @@
             "description": "Link/connect start without a configured Plex server"
           },
           "503": {
-            "description": "Plex unreachable"
+            "description": "Plex login is off, or Plex is unreachable"
+          }
+        }
+      }
+    },
+    "/api/v3/auth/providers": {
+      "get": {
+        "tags": [
+          "crate::auth::routes::federated"
+        ],
+        "summary": "Which sign-in methods are switched on (v2 `GET /auth/providers`).",
+        "operationId": "providers_handler",
+        "responses": {
+          "200": {
+            "description": "Enabled sign-in methods",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthProvidersBody"
+                }
+              }
+            }
           }
         }
       }
@@ -15178,6 +15205,34 @@
           "opus"
         ]
       },
+      "AuthProvidersBody": {
+        "type": "object",
+        "description": "Sign-in methods the login page offers (v2 `AuthProvidersResponse`).",
+        "required": [
+          "local",
+          "plex",
+          "jellyfin",
+          "oidc"
+        ],
+        "properties": {
+          "jellyfin": {
+            "type": "boolean",
+            "description": "Jellyfin sign-in is switched on and the server is set up."
+          },
+          "local": {
+            "type": "boolean",
+            "description": "Username and password; always true."
+          },
+          "oidc": {
+            "type": "boolean",
+            "description": "OIDC sign-in is switched on with an issuer and client id."
+          },
+          "plex": {
+            "type": "boolean",
+            "description": "Plex sign-in is switched on."
+          }
+        }
+      },
       "AutoDownloadApprovalItem": {
         "type": "object",
         "description": "One pending auto-download request.",
@@ -23991,25 +24046,21 @@
       },
       "PlexLinkPollResult": {
         "type": "object",
-        "description": "Link-completion poll answer.",
+        "description": "Link-completion poll answer. The link itself is stored server-side; the\naccount tokens never reach the browser.",
         "required": [
           "completed"
         ],
         "properties": {
           "completed": {
             "type": "boolean",
-            "description": "True once the user authorized the PIN."
+            "description": "True once the user authorized the PIN and the link is stored."
           },
-          "profile": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/PlexProfileView",
-                "description": "Present only when completed."
-              }
-            ]
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The linked Plex user name; present only when completed."
           }
         }
       },
@@ -24073,46 +24124,6 @@
             "type": "integer",
             "format": "int64",
             "description": "PIN id from the start step."
-          }
-        }
-      },
-      "PlexProfileView": {
-        "type": "object",
-        "description": "Verified Plex profile for the link flow. No login side effects; the\ncaller attaches it to its account on an authenticated route.",
-        "required": [
-          "uuid",
-          "email",
-          "display_name",
-          "auth_token",
-          "server_access_token"
-        ],
-        "properties": {
-          "auth_token": {
-            "type": "string",
-            "description": "The authorized account token."
-          },
-          "display_name": {
-            "type": "string",
-            "description": "Account display name."
-          },
-          "email": {
-            "type": "string",
-            "description": "Account email; empty when the API omits it."
-          },
-          "server_access_token": {
-            "type": "string",
-            "description": "Server-scoped token; empty when no server is configured."
-          },
-          "thumb": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Account avatar URL."
-          },
-          "uuid": {
-            "type": "string",
-            "description": "Plex uuid; the provider uid."
           }
         }
       },

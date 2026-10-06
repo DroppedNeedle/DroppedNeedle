@@ -89,9 +89,9 @@ const transportRules = [
 // edition conversions and re-identification, scan controls, reviews,
 // operations, repairs and identity preparations, path policy, Library
 // Management previews and recovery, system health, cache sync, YouTube, local
-// file downloads, Free Music, drop import, the download queue, held imports,
-// upgrades and the auth provider list. When a route lands,
-// its call moves onto a v3() template and its builder leaves that file.
+// file downloads, Free Music, drop import, the download queue, held imports
+// and upgrades. When a route lands, its call moves onto a v3() template and
+// its builder leaves that file.
 const WAITING_ON_BACKEND = ['src/lib/constants.ts'];
 
 // The transport itself: the api client and the page-scoped fetch it wraps.
