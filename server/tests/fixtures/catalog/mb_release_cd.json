@@ -1,0 +1,59 @@
+{
+  "id": "6b1c7d8a-5f0e-4cd3-8e8f-0c1d3a7b9f65",
+  "title": "OK Computer",
+  "status": "Official",
+  "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+  "date": "1997-05-21",
+  "country": "GB",
+  "barcode": "724385522925",
+  "asin": "B000002UJQ",
+  "packaging": "Jewel Case",
+  "packaging-id": "ec27701a-4a22-37f4-bfac-6616e0f9750a",
+  "disambiguation": "",
+  "quality": "normal",
+  "text-representation": {"language": "eng", "script": "Latn"},
+  "label-info": [
+    {"catalog-number": "NODATA 02", "label": {"id": "df7d1c7f-ef95-425f-8eef-445b3d7bcbd9", "name": "Parlophone", "sort-name": "Parlophone", "disambiguation": "", "label-code": 299}}
+  ],
+  "media": [
+    {
+      "position": 1,
+      "format": "CD",
+      "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31",
+      "title": "",
+      "track-count": 2,
+      "track-offset": 0,
+      "tracks": [
+        {
+          "id": "a1b2c3d4-0001-4e5f-8a9b-0c1d2e3f4a5b",
+          "position": 1,
+          "number": "1",
+          "title": "Airbag",
+          "length": 284000,
+          "recording": {"id": "8d3e9f0c-7b2a-4ef5-8a0b-2e3f5c9d1b87", "title": "Airbag", "length": 284026, "disambiguation": "", "video": false}
+        },
+        {
+          "id": "a1b2c3d4-0002-4e5f-8a9b-0c1d2e3f4a5b",
+          "position": 2,
+          "number": "2",
+          "title": "Paranoid Android",
+          "length": 383000,
+          "recording": {"id": "9e4f0a1d-8c3b-4fa6-9b1c-3f4a6d0e2c98", "title": "Paranoid Android", "length": 383213, "disambiguation": "", "video": false}
+        }
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "type": "amazon asin",
+      "type-id": "4f2e710d-166c-480c-a293-2e2c8d658d87",
+      "target-type": "url",
+      "direction": "forward",
+      "attributes": [],
+      "begin": null,
+      "end": null,
+      "ended": false,
+      "url": {"id": "8f9a6b0e-7c1d-4ec5-8a3b-5c6d7e8f9a0b", "resource": "https://www.amazon.co.uk/gp/product/B000002UJQ"}
+    }
+  ]
+}

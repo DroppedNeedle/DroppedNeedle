@@ -1,0 +1,65 @@
+{
+  "id": "b1392450-e666-3926-a536-22c65f834433",
+  "title": "OK Computer",
+  "primary-type": "Album",
+  "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+  "secondary-types": [],
+  "secondary-type-ids": [],
+  "first-release-date": "1997-05-21",
+  "disambiguation": "",
+  "artist-credit": [
+    {"name": "Radiohead", "joinphrase": "", "artist": {"id": "a74b1b7f-71a5-4011-9441-d0b5e4122711", "name": "Radiohead", "sort-name": "Radiohead", "disambiguation": "", "type": "Group", "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b"}}
+  ],
+  "releases": [
+    {
+      "id": "7c2d8e9b-6a1f-4de4-9f9a-1d2e4b8c0a76",
+      "title": "OK Computer",
+      "status": "Official",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "date": "1997-06-16",
+      "country": "GB",
+      "packaging": "Gatefold Cover",
+      "packaging-id": "e724a489-a7e8-30a1-a17c-30dfd6831202",
+      "barcode": "724385522918",
+      "disambiguation": "",
+      "quality": "normal",
+      "media": [
+        {"position": 1, "format": "12\" Vinyl", "format-id": "e7c3db62-8a2f-35d6-9d5c-2f5a5e9de5fd", "title": "", "track-count": 6, "track-offset": 0},
+        {"position": 2, "format": "12\" Vinyl", "format-id": "e7c3db62-8a2f-35d6-9d5c-2f5a5e9de5fd", "title": "", "track-count": 6, "track-offset": 0}
+      ]
+    },
+    {
+      "id": "6b1c7d8a-5f0e-4cd3-8e8f-0c1d3a7b9f65",
+      "title": "OK Computer",
+      "status": "Official",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "date": "1997-05-21",
+      "country": "GB",
+      "packaging": "Jewel Case",
+      "packaging-id": "ec27701a-4a22-37f4-bfac-6616e0f9750a",
+      "barcode": "724385522925",
+      "disambiguation": "",
+      "quality": "normal",
+      "media": [
+        {"position": 1, "format": "CD", "format-id": "9712d52a-4509-3d4b-a1a2-67c88c643e31", "title": "", "track-count": 12, "track-offset": 0}
+      ]
+    },
+    {
+      "id": "5a0b6c7f-4e9d-4bc2-9d7e-9b0c2f6a8e54",
+      "title": "OK Computer",
+      "status": "Official",
+      "status-id": "4e304316-386d-3409-af2e-78857eec5cfe",
+      "date": "2009-03-24",
+      "country": "XW",
+      "packaging": "None",
+      "packaging-id": "119eba76-b343-3e02-a292-f0f00644bb9b",
+      "barcode": null,
+      "disambiguation": "2009 remaster",
+      "quality": "normal",
+      "media": [
+        {"position": 1, "format": "Digital Media", "format-id": "907a28d9-b3b2-3ef6-89a8-7b18d91d4794", "title": "", "track-count": 12, "track-offset": 0}
+      ]
+    }
+  ],
+  "relations": []
+}

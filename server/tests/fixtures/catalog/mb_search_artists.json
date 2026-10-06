@@ -1,0 +1,35 @@
+{
+  "created": "2026-09-30T10:12:44.123Z",
+  "count": 3,
+  "offset": 0,
+  "artists": [
+    {
+      "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+      "type": "Group",
+      "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+      "score": 100,
+      "name": "Radiohead",
+      "sort-name": "Radiohead",
+      "country": "GB",
+      "area": {"id": "8a754a16-0027-3a29-b6d7-2b40ea0481ed", "type": "Country", "name": "United Kingdom", "sort-name": "United Kingdom"},
+      "life-span": {"begin": "1991", "ended": null},
+      "tags": [{"count": 12, "name": "rock"}]
+    },
+    {
+      "id": "89ad4ac3-39f7-470e-963a-56509c546377",
+      "type": "Other",
+      "score": 64,
+      "name": "Various Artists",
+      "sort-name": "Various Artists",
+      "disambiguation": "add compilations to this artist"
+    },
+    {
+      "id": "0bd2a2b5-1f3c-4d5e-8f6a-7b8c9d0e1f2a",
+      "type": "Group",
+      "score": 58,
+      "name": "Radiohead Tribute Band",
+      "sort-name": "Radiohead Tribute Band",
+      "disambiguation": "Polish tribute act"
+    }
+  ]
+}

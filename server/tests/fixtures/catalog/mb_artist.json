@@ -1,0 +1,103 @@
+{
+  "id": "a74b1b7f-71a5-4011-9441-d0b5e4122711",
+  "name": "Radiohead",
+  "sort-name": "Radiohead",
+  "disambiguation": "",
+  "type": "Group",
+  "type-id": "e431f5f6-b5d2-343d-8b36-72607fffb74b",
+  "country": "GB",
+  "gender": null,
+  "gender-id": null,
+  "isnis": ["0000000115475162"],
+  "ipis": [],
+  "area": {
+    "id": "8a754a16-0027-3a29-b6d7-2b40ea0481ed",
+    "name": "United Kingdom",
+    "sort-name": "United Kingdom",
+    "disambiguation": "",
+    "type": null,
+    "type-id": null,
+    "iso-3166-1-codes": ["GB"]
+  },
+  "life-span": {"begin": "1991", "end": null, "ended": false},
+  "aliases": [
+    {"name": "On a Friday", "sort-name": "On a Friday", "type": null, "type-id": null, "locale": null, "primary": null, "begin": null, "end": null, "ended": false}
+  ],
+  "tags": [
+    {"count": 5, "name": "alternative rock"},
+    {"count": 12, "name": "rock"},
+    {"count": 3, "name": "art rock"}
+  ],
+  "relations": [
+    {
+      "type": "wikidata",
+      "type-id": "689870a4-a1e4-4912-b17f-7b2664215698",
+      "target-type": "url",
+      "direction": "forward",
+      "attributes": [],
+      "attribute-ids": {},
+      "attribute-values": {},
+      "begin": null,
+      "end": null,
+      "ended": false,
+      "source-credit": "",
+      "target-credit": "",
+      "url": {"id": "2f3a0b4e-1c5d-4e6f-8a7b-9c0d1e2f3a4b", "resource": "https://www.wikidata.org/wiki/Q44190"}
+    },
+    {
+      "type": "official homepage",
+      "type-id": "fe33d22f-c3b0-4d68-bd53-a856badf2b15",
+      "target-type": "url",
+      "direction": "forward",
+      "attributes": [],
+      "begin": null,
+      "end": null,
+      "ended": false,
+      "url": {"id": "3a4b1c5f-2d6e-4f70-9b8c-0d1e2f3a4b5c", "resource": "https://www.radiohead.com/"}
+    },
+    {
+      "type": "social network",
+      "type-id": "99429741-f3f6-484b-84f8-23af51991770",
+      "target-type": "url",
+      "direction": "forward",
+      "attributes": [],
+      "begin": null,
+      "end": null,
+      "ended": false,
+      "url": {"id": "4b5c2d6a-3e7f-4a81-8c9d-1e2f3a4b5c6d", "resource": "https://www.instagram.com/radiohead/"}
+    },
+    {
+      "type": "allmusic",
+      "type-id": "6b3e3c85-0002-4f34-aca6-80ace0d7e846",
+      "target-type": "url",
+      "direction": "forward",
+      "attributes": [],
+      "begin": null,
+      "end": null,
+      "ended": false,
+      "url": {"id": "5c6d3e7b-4f8a-4b92-9d0e-2f3a4b5c6d7e", "resource": "https://www.allmusic.com/artist/mn0000326249"}
+    },
+    {
+      "type": "bandcamp",
+      "type-id": "c550166e-0548-4a18-b1d4-e2ae423a3e88",
+      "target-type": "url",
+      "direction": "forward",
+      "attributes": [],
+      "begin": null,
+      "end": null,
+      "ended": false,
+      "url": {"id": "6d7e4f8c-5a9b-4ca3-8e1f-3a4b5c6d7e8f", "resource": "https://radiohead.bandcamp.com/"}
+    },
+    {
+      "type": "purchase for mail-order",
+      "type-id": "611b1862-67af-4253-a64f-34adba305d1d",
+      "target-type": "url",
+      "direction": "forward",
+      "attributes": [],
+      "begin": null,
+      "end": null,
+      "ended": false,
+      "url": {"id": "7e8f5a9d-6b0c-4db4-9f2a-4b5c6d7e8f9a", "resource": "https://store.radiohead.com/"}
+    }
+  ]
+}

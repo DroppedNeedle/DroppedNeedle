@@ -1,0 +1,36 @@
+{
+  "created": "2026-09-30T10:12:45.456Z",
+  "count": 3,
+  "offset": 0,
+  "release-groups": [
+    {
+      "id": "b1392450-e666-3926-a536-22c65f834433",
+      "type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "score": 100,
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "count": 54,
+      "title": "OK Computer",
+      "first-release-date": "1997-05-21",
+      "primary-type": "Album",
+      "artist-credit": [{"name": "Radiohead", "artist": {"id": "a74b1b7f-71a5-4011-9441-d0b5e4122711", "name": "Radiohead", "sort-name": "Radiohead"}}],
+      "releases": [{"id": "6b1c7d8a-5f0e-4cd3-8e8f-0c1d3a7b9f65", "status-id": "4e304316-386d-3409-af2e-78857eec5cfe", "title": "OK Computer", "status": "Official"}]
+    },
+    {
+      "id": "6c1d7e8f-5a0b-4cd2-9e3f-4a5b6c7d8e9f",
+      "score": 95,
+      "title": "OK Computer OKNOTOK 1997 2017",
+      "first-release-date": "2017-06-23",
+      "primary-type": "Album",
+      "secondary-types": ["Compilation"],
+      "artist-credit": [{"name": "Radiohead", "artist": {"id": "a74b1b7f-71a5-4011-9441-d0b5e4122711", "name": "Radiohead", "sort-name": "Radiohead"}}]
+    },
+    {
+      "id": "1c6d2e3b-0a5f-4d8e-9f3a-5d6e8b2c4a10",
+      "score": 61,
+      "title": "Kid A",
+      "first-release-date": "2000-10-02",
+      "primary-type": "Album",
+      "artist-credit": [{"name": "Radiohead", "artist": {"id": "a74b1b7f-71a5-4011-9441-d0b5e4122711", "name": "Radiohead", "sort-name": "Radiohead"}}]
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "release-group-count": 6,
+  "release-group-offset": 0,
+  "release-groups": [
+    {
+      "id": "b1392450-e666-3926-a536-22c65f834433",
+      "title": "OK Computer",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-types": [],
+      "secondary-type-ids": [],
+      "first-release-date": "1997-05-21",
+      "disambiguation": "",
+      "artist-credit": [{"name": "Radiohead", "joinphrase": "", "artist": {"id": "a74b1b7f-71a5-4011-9441-d0b5e4122711", "name": "Radiohead", "sort-name": "Radiohead"}}]
+    },
+    {
+      "id": "1c6d2e3b-0a5f-4d8e-9f3a-5d6e8b2c4a10",
+      "title": "Kid A",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-types": [],
+      "secondary-type-ids": [],
+      "first-release-date": "2000-10-02",
+      "disambiguation": "",
+      "artist-credit": [{"name": "Radiohead", "joinphrase": "", "artist": {"id": "a74b1b7f-71a5-4011-9441-d0b5e4122711", "name": "Radiohead", "sort-name": "Radiohead"}}]
+    },
+    {
+      "id": "2d7e3f4c-1b6a-4e9f-8a4b-6e7f9c3d5b21",
+      "title": "I Might Be Wrong: Live Recordings",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-types": ["Live"],
+      "secondary-type-ids": ["6fd474e2-6b58-3102-9f88-d9c2a6f35e0a"],
+      "first-release-date": "2001-11-12",
+      "disambiguation": "",
+      "artist-credit": [{"name": "Radiohead", "joinphrase": "", "artist": {"id": "a74b1b7f-71a5-4011-9441-d0b5e4122711", "name": "Radiohead", "sort-name": "Radiohead"}}]
+    },
+    {
+      "id": "3e8f4a5d-2c7b-4fa0-9b5c-7f8a0d4e6c32",
+      "title": "My Iron Lung",
+      "primary-type": "EP",
+      "primary-type-id": "6d0c5bf6-7a33-3420-a519-44fc63eedebf",
+      "secondary-types": [],
+      "secondary-type-ids": [],
+      "first-release-date": "1994-09-26",
+      "disambiguation": "",
+      "artist-credit": [{"name": "Radiohead", "joinphrase": "", "artist": {"id": "a74b1b7f-71a5-4011-9441-d0b5e4122711", "name": "Radiohead", "sort-name": "Radiohead"}}]
+    },
+    {
+      "id": "4f9a5b6e-3d8c-4ab1-8c6d-8a9b1e5f7d43",
+      "title": "Creep",
+      "primary-type": "Single",
+      "primary-type-id": "d6038452-8ee0-3f68-affc-2de9a1ede0b9",
+      "secondary-types": [],
+      "secondary-type-ids": [],
+      "first-release-date": "1992-09-21",
+      "disambiguation": "",
+      "artist-credit": [{"name": "Radiohead", "joinphrase": "", "artist": {"id": "a74b1b7f-71a5-4011-9441-d0b5e4122711", "name": "Radiohead", "sort-name": "Radiohead"}}]
+    },
+    {
+      "id": "5a0b6c7f-4e9d-4bc2-8d7e-9b0c2f6a8e99",
+      "title": "Radiohead: The Best Of",
+      "primary-type": "Album",
+      "primary-type-id": "f529b476-6e62-324f-b0aa-1f3e33d313fc",
+      "secondary-types": ["Compilation"],
+      "secondary-type-ids": ["dd2a21e1-0c00-3729-a7a0-de60b84eb5d1"],
+      "first-release-date": "2008-06-02",
+      "disambiguation": "",
+      "artist-credit": [{"name": "Radiohead", "joinphrase": "", "artist": {"id": "a74b1b7f-71a5-4011-9441-d0b5e4122711", "name": "Radiohead", "sort-name": "Radiohead"}}]
+    }
+  ]
+}
