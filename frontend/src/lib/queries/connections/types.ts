@@ -1,11 +1,9 @@
 import type { components } from '$lib/api/v3/openapi';
 
-// One linked account in the connections aggregate. Mapped at runtime from
-// the per-service v3 reads (remotes connection statuses, scrobbler link
-// reads, the spotify presence probe); the encrypted secrets behind the
-// links are never sent to the client (AMU-3/AMU-6). The aggregate holds
-// linked accounts only: consumers treat presence as linked, so an unlinked
-// service has no entry at all rather than an `enabled: false` one.
+// One linked account from `/me/connections`. The encrypted secrets behind
+// the links are never sent to the client. The list holds enabled links
+// only: consumers treat presence as linked, so an unlinked service has no
+// entry at all rather than an `enabled: false` one.
 export interface ConnectionStatus {
 	service: string;
 	enabled: boolean;

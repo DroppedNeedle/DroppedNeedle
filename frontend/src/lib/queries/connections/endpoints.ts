@@ -7,13 +7,12 @@ import { v3 } from '$lib/api/v3/endpoint';
 // duplicating the template here. The current user is resolved server-side
 // from the session cookie, so no endpoint takes a user id.
 export const CONNECTIONS_ENDPOINTS = {
+	list: () => v3('/api/v3/me/connections'),
 	listenbrainz: () => v3('/api/v3/me/connections/listenbrainz'),
 	lastfm: () => v3('/api/v3/me/connections/lastfm'),
 	lastfmToken: () => v3('/api/v3/me/connections/lastfm/token'),
 	lastfmSession: () => v3('/api/v3/me/connections/lastfm/session'),
 	// Plex link pins ride the single v3 Plex flow ($lib/queries/plex).
-	// Spotify presence rides the spotify slice's playlists read (200 when
-	// linked, 400 when not); the aggregate imports it from there.
 	spotify: () => v3('/api/v3/me/connections/spotify'),
 	spotifyAuthUrl: () => v3('/api/v3/acquire/spotify/auth/url')
 } as const;

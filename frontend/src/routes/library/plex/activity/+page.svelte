@@ -30,7 +30,6 @@
 		historyLoading = true;
 		try {
 			const resp = await api.v3.GET(REMOTE_ENDPOINTS.history('plex', { limit: PAGE_SIZE, offset }));
-			// v3 history rows carry no device name; the column reads blank.
 			history = resp.items.map((item) => ({
 				rating_key: item.id,
 				track_title: item.track_title,
@@ -38,7 +37,7 @@
 				album_name: item.album_name,
 				cover_url: '',
 				viewed_at: String(item.viewed_at),
-				device_name: ''
+				device_name: item.device_name
 			}));
 			historyTotal = resp.total;
 			historyOffset = offset;

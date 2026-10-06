@@ -16,14 +16,15 @@ import { SourcePlaylistQueryKeyFactory } from './SourcePlaylistQueryKeyFactory';
 type Getter<T> = () => T;
 type PlaylistSummaryView = components['schemas']['RemotesPlaylistSummary'];
 
-// v3 does not flag smart or already-imported playlists; both read false.
 function toSummary(playlist: PlaylistSummaryView): SourcePlaylistSummary {
 	return {
 		id: playlist.id,
 		name: playlist.name,
 		track_count: playlist.track_count,
 		duration_seconds: playlist.duration_secs,
-		cover_url: playlist.image_url ?? ''
+		cover_url: playlist.image_url ?? '',
+		is_smart: playlist.is_smart,
+		is_imported: playlist.is_imported
 	};
 }
 

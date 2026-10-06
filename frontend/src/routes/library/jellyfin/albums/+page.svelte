@@ -28,6 +28,19 @@
 		return page.items.map(toJellyfinTrack);
 	}
 
+	// Year and tag chips come from the server's filter facets; studios ride
+	// the sidebar's mood slot, labelled "Studio", as in v2.
+	let filterFacets = $state<{ years: number[]; tags: string[]; studios: string[] } | null>(null);
+	let yearChips = $derived(filterFacets?.years.map((y) => String(y)) ?? []);
+	let tagChips = $derived(filterFacets?.tags ?? []);
+
+	$effect(() => {
+		api.v3
+			.GET(REMOTE_ENDPOINTS.filters('jellyfin'))
+			.then((facets) => (filterFacets = facets))
+			.catch(() => (filterFacets = null));
+	});
+
 	const adapter: LibraryAdapter<JellyfinAlbumSummary> = {
 		sourceType: 'jellyfin',
 
@@ -38,7 +51,18 @@
 		getAlbumImageUrl: (a) => a.image_url ?? null,
 		getAlbumYear: (a) => a.year,
 
-		async fetchAlbums({ limit, offset, sortBy, sortOrder, genre, search, signal }) {
+		async fetchAlbums({
+			limit,
+			offset,
+			sortBy,
+			sortOrder,
+			genre,
+			mood,
+			decade,
+			tag,
+			search,
+			signal
+		}) {
 			if (search) {
 				const data = await api.v3.GET(REMOTE_ENDPOINTS.search('jellyfin', { q: search }), {
 					signal
@@ -53,7 +77,10 @@
 					offset,
 					sort_by: sortBy,
 					sort_order: sortOrder,
-					genre
+					genre,
+					year: decade ? parseInt(decade) || undefined : undefined,
+					studios: mood || undefined,
+					tags: tag || undefined
 				},
 				signal
 			);
@@ -61,11 +88,12 @@
 		},
 
 		async fetchSidebarData(signal, current) {
-			const [recentRes, favRes, genreRes, statsRes] = await Promise.allSettled([
+			const [recentRes, favRes, genreRes, statsRes, filtersRes] = await Promise.allSettled([
 				remoteApi.recent('jellyfin', {}, signal),
 				api.v3.GET(REMOTE_ENDPOINTS.favorites('jellyfin'), { signal }),
 				remoteApi.genres('jellyfin', signal),
-				remoteApi.stats('jellyfin', signal)
+				remoteApi.stats('jellyfin', signal),
+				api.v3.GET(REMOTE_ENDPOINTS.filters('jellyfin'), { signal })
 			]);
 			const hasFreshData =
 				recentRes.status === 'fulfilled' ||
@@ -83,7 +111,7 @@
 							? favRes.value.albums.map(toJellyfinAlbum)
 							: current.favoriteAlbums,
 					genres: genreRes.status === 'fulfilled' ? genreRes.value : current.genres,
-					moods: [],
+					moods: filtersRes.status === 'fulfilled' ? filtersRes.value.studios : current.moods,
 					stats:
 						statsRes.status === 'fulfilled'
 							? (statsRes.value as unknown as Record<string, unknown>)
@@ -152,9 +180,9 @@
 		descValue: 'desc',
 		getDefaultSortOrder: (field) => (field === 'SortName' ? 'asc' : 'desc'),
 		supportsGenres: true,
-		supportsMoods: false,
-		supportsDecades: false,
-		supportsTags: false,
+		supportsMoods: true,
+		supportsDecades: true,
+		supportsTags: true,
 		supportsFavorites: true,
 		supportsShuffle: true,
 		errorMessage: "Couldn't connect to Jellyfin."
@@ -167,6 +195,9 @@
 	{ctrl}
 	headerTitle="Jellyfin Library"
 	backHref="/library/jellyfin"
+	moodLabel="Studio"
+	decades={yearChips}
+	tags={tagChips}
 	emptyTitle="No albums found"
 	emptyDescription="Make sure Jellyfin is set up and has at least one music library."
 >

@@ -41,7 +41,7 @@
 		getAlbumImageUrl: (a) => a.image_url ?? null,
 		getAlbumYear: (a) => a.year ?? null,
 
-		async fetchAlbums({ limit, offset, sortBy, sortOrder, genre, decade, search, signal }) {
+		async fetchAlbums({ limit, offset, sortBy, sortOrder, genre, mood, decade, search, signal }) {
 			if (search) {
 				const data = await api.v3.GET(REMOTE_ENDPOINTS.search('plex', { q: search }), {
 					signal
@@ -57,6 +57,7 @@
 					sort_by: sortBy,
 					sort_order: sortOrder,
 					genre,
+					mood,
 					decade
 				},
 				signal
@@ -65,15 +66,16 @@
 		},
 
 		async fetchSidebarData(signal, current) {
-			// v3 has no Plex mood list.
-			const [recentRes, genreRes, statsRes] = await Promise.allSettled([
+			const [recentRes, genreRes, moodsRes, statsRes] = await Promise.allSettled([
 				remoteApi.recent('plex', {}, signal),
 				remoteApi.genres('plex', signal),
+				api.v3.GET(REMOTE_ENDPOINTS.moods('plex'), { signal }),
 				remoteApi.stats('plex', signal)
 			]);
 			const hasFreshData =
 				recentRes.status === 'fulfilled' ||
 				genreRes.status === 'fulfilled' ||
+				moodsRes.status === 'fulfilled' ||
 				statsRes.status === 'fulfilled';
 			return {
 				data: {
@@ -83,7 +85,7 @@
 							: current.recentAlbums,
 					favoriteAlbums: current.favoriteAlbums,
 					genres: genreRes.status === 'fulfilled' ? genreRes.value : current.genres,
-					moods: [],
+					moods: moodsRes.status === 'fulfilled' ? moodsRes.value : current.moods,
 					stats:
 						statsRes.status === 'fulfilled'
 							? (statsRes.value as unknown as Record<string, unknown>)
@@ -155,7 +157,7 @@
 		descValue: 'desc',
 		getDefaultSortOrder: (field) => (field === 'name' ? 'asc' : 'desc'),
 		supportsGenres: true,
-		supportsMoods: false,
+		supportsMoods: true,
 		supportsDecades: true,
 		supportsTags: false,
 		supportsFavorites: false,

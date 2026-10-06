@@ -199,26 +199,17 @@
 		offset: number
 	): Promise<BrowseTrack[]> {
 		if (genres.length === 0) return [];
-		// The v3 genre route serves one genre per call, so multi-select fans
-		// out and merges in genre order; paging slices the merged list.
-		const pages = await Promise.all(
-			genres.map((genre) =>
-				api.global.v3.GET(
-					REMOTE_ENDPOINTS.genreSongs('navidrome', genre, { limit: limit + offset })
-				)
-			)
+		const page = await api.global.v3.GET(
+			REMOTE_ENDPOINTS.genresSongs('navidrome', genres, { limit, offset })
 		);
-		return pages
-			.flatMap((page) => page.items)
-			.slice(offset, offset + limit)
-			.map((t) => ({
-				id: t.id,
-				title: t.title,
-				artist_name: t.artist_name,
-				album_name: t.album_name,
-				duration_seconds: t.duration_secs ?? 0,
-				image_url: t.image_url ?? undefined
-			}));
+		return page.items.map((t) => ({
+			id: t.id,
+			title: t.title,
+			artist_name: t.artist_name,
+			album_name: t.album_name,
+			duration_seconds: t.duration_secs ?? 0,
+			image_url: t.image_url ?? undefined
+		}));
 	}
 
 	function buildNavidromeGenreQueue(tracks: BrowseTrack[]) {

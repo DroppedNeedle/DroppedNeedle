@@ -254,8 +254,7 @@
 		try {
 			const info = await api.v3.GET(REMOTE_ENDPOINTS.infoAlbum('navidrome', album.navidrome_id));
 			infoNotes = info.biography;
-			// v3 album info carries no Last.fm link.
-			infoLastfmUrl = '';
+			infoLastfmUrl = info.lastfm_url;
 			infoMbid = info.musicbrainz_id;
 			infoImageUrl = info.image_url;
 		} catch {

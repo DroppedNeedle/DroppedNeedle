@@ -18,6 +18,12 @@ export interface RemoteAlbumParams extends RemotePageParams {
 	genre?: string;
 	year?: number;
 	decade?: string;
+	/** Plex only. */
+	mood?: string;
+	/** Jellyfin only. */
+	tags?: string;
+	/** Jellyfin only. */
+	studios?: string;
 }
 
 export interface RemoteArtistParams extends RemotePageParams {
@@ -94,6 +100,14 @@ export const REMOTE_ENDPOINTS = {
 	analytics: (source: RemoteSource) =>
 		v3('/api/v3/remotes/{source}/analytics', { path: { source } }),
 	genres: (source: RemoteSource) => v3('/api/v3/remotes/{source}/genres', { path: { source } }),
+	moods: (source: RemoteSource) => v3('/api/v3/remotes/{source}/moods', { path: { source } }),
+	filters: (source: RemoteSource) => v3('/api/v3/remotes/{source}/filters', { path: { source } }),
+	/** Tracks of any of several genres, merged by the server. */
+	genresSongs: (source: RemoteSource, genres: string[], params: RemotePageParams = {}) =>
+		v3('/api/v3/remotes/{source}/genres/songs', {
+			path: { source },
+			query: query({ genres: genres.join(','), ...params })
+		}),
 	genreSongs: (source: RemoteSource, genre: string, params: RemotePageParams = {}) =>
 		v3('/api/v3/remotes/{source}/genres/songs', {
 			path: { source },
