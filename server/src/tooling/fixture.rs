@@ -1164,6 +1164,11 @@ const V2_LIBRARY_SCHEMA: &str = "
         track_name TEXT NOT NULL, video_id TEXT NOT NULL, artist_name TEXT NOT NULL,
         embed_url TEXT NOT NULL, created_at TEXT NOT NULL,
         PRIMARY KEY (album_id, disc_number, track_number));
+    CREATE TABLE ignored_releases (
+        user_id TEXT NOT NULL, release_group_mbid_lower TEXT NOT NULL,
+        release_group_mbid TEXT NOT NULL, artist_mbid TEXT NOT NULL,
+        release_name TEXT NOT NULL, artist_name TEXT NOT NULL, ignored_at REAL NOT NULL,
+        PRIMARY KEY (user_id, release_group_mbid_lower));
 ";
 
 /// Low-cost bcrypt for fixtures (fast, still `$2b$` shaped).

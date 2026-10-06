@@ -331,6 +331,7 @@ pub const ALL: &[&TableSection] = &[
     &compat::BOOKMARKS,
     &releases::KNOWN_RELEASES,
     &releases::NEW_RELEASE_FEED,
+    &releases::IGNORED_RELEASES,
     &youtube::ALBUM_LINKS,
     &youtube::TRACK_LINKS,
     &avatars::AVATARS,

@@ -36,13 +36,6 @@ const PRE_UPGRADE_COPIES: &[&str] = &[
 /// the landed-release index follows the carried downloads by trigger.
 const REBUILT_FROM_CARRIED: &[&str] = &["download_landed_groups"];
 
-/// Data v3 has no place to keep yet, with what the user does instead.
-const NO_V3_STORE: &[(&str, &str)] = &[(
-    "ignored_releases",
-    "releases you hid from the new-release list; v3 cannot keep them yet. Hide them \
-         again in v3 when they show up",
-)];
-
 /// Sign-in state: everyone signs in again on v3.
 const SIGN_IN_STATE: &[&str] = &["auth_oidc_states", "auth_tokens", "spotify_oauth_states"];
 
@@ -106,9 +99,7 @@ const IDENTIFY_HISTORY: &[&str] = &[
 /// Why one v2 table stays behind, and what to do about it.
 #[must_use]
 pub fn reason_for(table: &str) -> &'static str {
-    if let Some((_, reason)) = NO_V3_STORE.iter().find(|(name, _)| *name == table) {
-        reason
-    } else if PRE_UPGRADE_COPIES.contains(&table) || table.contains("__") {
+    if PRE_UPGRADE_COPIES.contains(&table) || table.contains("__") {
         "older copy from before v2's own library upgrade; v2 no longer reads it. Nothing \
          to do"
     } else if SIGN_IN_STATE.contains(&table) {

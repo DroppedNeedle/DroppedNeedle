@@ -47,6 +47,7 @@ with the same ids, and v3 checks it against your files on its first scan.
 - MusicBrainz contributions you had in progress, with their verification
   and the return link MusicBrainz calls when you save the release.
 - YouTube links you found or set for albums and tracks.
+- The releases each user hid from the discover queue.
 
 Every edition you chose in v2 stays the album's edition in v3: a manual
 match, an edition pin, or an active custom edition. v3's automatic
@@ -78,8 +79,6 @@ The export lists everything it leaves behind with a count, and so do
 - Sign-in sessions. Everyone signs in again.
 - MusicBrainz contributions that were already linked, cancelled or out of
   date. A linked album keeps its match.
-- The discover queue's ignore list. v3 has nowhere to keep it yet; hide
-  those releases again in v3.
 - Caches, which v3 fills again on its own.
 - Plugins. Install them again from Settings > Plugins; their settings come
   across.

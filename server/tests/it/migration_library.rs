@@ -199,7 +199,11 @@ fn managed_album(v2_root: &Path, alice: &str) -> PathBuf {
          INSERT INTO youtube_track_links (album_id, track_number, disc_number, album_name,
              track_name, video_id, artist_name, embed_url, created_at)
          VALUES ('rg-blue', 1, 1, 'Blue Train', 'Blue Train', 'vid-1', 'John Coltrane',
-                 'https://e/1', '2025-06-01T00:00:00Z');",
+                 'https://e/1', '2025-06-01T00:00:00Z');
+         INSERT INTO ignored_releases (user_id, release_group_mbid_lower, release_group_mbid,
+             artist_mbid, release_name, artist_name, ignored_at)
+         VALUES ('{alice}', 'rg-hidden', 'RG-HIDDEN', 'artist-hidden', 'Hidden', 'Someone',
+                 1700000800.0);",
         len = snapshot.len(),
     ))
     .expect("library rows");
@@ -300,6 +304,7 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
     assert_eq!(count("contribution_callback_token"), 1);
     assert_eq!(count("youtube_link"), 1);
     assert_eq!(count("youtube_track_link"), 1);
+    assert_eq!(count("ignored_release"), 1);
     pool.close().await;
 
     // v3 starts on the imported state and scans the carried root.

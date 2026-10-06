@@ -53,3 +53,30 @@ pub const NEW_RELEASE_FEED: TableSection = TableSection {
     user_column: None,
     left_behind: "",
 };
+
+/// Releases each user hid from the discover queue. v3's queue reads the
+/// same table, so a hidden release stays hidden after the upgrade.
+pub const IGNORED_RELEASES: TableSection = TableSection {
+    name: "ignored_release",
+    source: Source::Table {
+        table: "ignored_releases",
+        filter: "",
+        requires: &[],
+    },
+    target: Target::Table("ignored_releases"),
+    columns: &[
+        col("user_id"),
+        col("release_group_mbid_lower"),
+        col("release_group_mbid"),
+        col("artist_mbid"),
+        col("release_name"),
+        col("artist_name"),
+        col("ignored_at"),
+    ],
+    key: &["user_id", "release_group_mbid_lower"],
+    unique: &[],
+    parents: &[],
+    user_column: Some("user_id"),
+    left_behind: "hidden releases of deleted users; nothing to do, those accounts were \
+                  deleted in v2",
+};
