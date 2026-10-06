@@ -487,6 +487,14 @@ impl RunStore for SqliteScanStore {
                 return Ok(true);
             }
             guard.conn.execute(
+                "DELETE FROM library_scan_album_moves WHERE rowid IN ( \
+                 SELECT rowid FROM library_scan_album_moves WHERE run_id = ?1 LIMIT ?2)",
+                params![target, page],
+            )?;
+            if guard.conn.changes() > 0 {
+                return Ok(true);
+            }
+            guard.conn.execute(
                 "DELETE FROM library_scan_inventory WHERE rowid IN ( \
                  SELECT rowid FROM library_scan_inventory WHERE run_id = ?1 LIMIT ?2)",
                 params![target, page],

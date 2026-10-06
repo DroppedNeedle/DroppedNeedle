@@ -775,8 +775,11 @@ fn write_item(
         // Recorded now, not with the window's marks: a later item in this
         // window may empty the album this one left.
         tx.prepare_cached(
-            "UPDATE library_scan_inventory SET local_track_id = ?4, previous_album_id = ?5 \
-             WHERE run_id = ?1 AND root_id = ?2 AND relative_path = ?3",
+            "INSERT INTO library_scan_album_moves (run_id, root_id, relative_path, \
+             local_track_id, previous_album_id) VALUES (?1, ?2, ?3, ?4, ?5) \
+             ON CONFLICT (run_id, root_id, relative_path) DO UPDATE SET \
+             local_track_id = excluded.local_track_id, \
+             previous_album_id = excluded.previous_album_id",
         )?
         .execute(params![
             run_id,
@@ -807,9 +810,9 @@ fn follow_regrouped(
     }
     let destinations: Vec<String> = tx
         .prepare_cached(
-            "SELECT DISTINCT t.local_album_id FROM library_scan_inventory i \
-             JOIN local_tracks t ON t.id = i.local_track_id \
-             WHERE i.run_id = ?1 AND i.previous_album_id = ?2",
+            "SELECT DISTINCT t.local_album_id FROM library_scan_album_moves m \
+             JOIN local_tracks t ON t.id = m.local_track_id \
+             WHERE m.run_id = ?1 AND m.previous_album_id = ?2",
         )?
         .query_map(params![run_id, album_id], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
@@ -822,8 +825,8 @@ fn follow_regrouped(
     let foreign: bool = tx
         .prepare_cached(
             "SELECT EXISTS(SELECT 1 FROM local_tracks t WHERE t.local_album_id = ?2 \
-             AND NOT EXISTS (SELECT 1 FROM library_scan_inventory i WHERE i.run_id = ?1 \
-             AND i.local_track_id = t.id AND i.previous_album_id = ?3)) \
+             AND NOT EXISTS (SELECT 1 FROM library_scan_album_moves m WHERE m.run_id = ?1 \
+             AND m.local_track_id = t.id AND m.previous_album_id = ?3)) \
              OR EXISTS(SELECT 1 FROM local_album_external_identities WHERE local_album_id = ?2) \
              OR EXISTS(SELECT 1 FROM library_identify_reviews WHERE local_album_id = ?2)",
         )?

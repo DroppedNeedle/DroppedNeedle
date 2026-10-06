@@ -11,17 +11,31 @@
 -- - the old folder-based key otherwise, since names parsed from the path
 --   only mean something next to that path.
 --
+-- The key carries an album along when its files move; copies of one
+-- album in different folders still stay separate albums.
+--
 -- Existing albums get their key from their tracks here. The scan also
--- matches a file that appeared to a track whose file went away by its
--- recording MBID (or album key, disc, track number, title and duration)
--- and keeps the old track id, so it needs an index on the recording
--- MBID. library_scan_inventory.previous_album_id records which album a
--- re-indexed track left during a run, so a whole album that was retagged
--- together keeps its album row.
+-- matches a file that appeared to a track whose file went away (same
+-- album, disc and track number, plus the recording MBID or the title and
+-- duration) and keeps the old track id, so it needs an index on the
+-- recording MBID. library_scan_album_moves records which album a re-indexed track
+-- left during a run, so a whole album that was retagged together keeps
+-- its album row. It is its own table so this file stays safe to apply
+-- twice, like every migration.
 --
 -- No down migration. Rollback is restoring a pre-upgrade backup.
 
-ALTER TABLE library_scan_inventory ADD COLUMN previous_album_id TEXT;
+CREATE TABLE IF NOT EXISTS library_scan_album_moves (
+    run_id TEXT NOT NULL REFERENCES library_scan_runs(id) ON DELETE CASCADE,
+    root_id TEXT NOT NULL,
+    relative_path TEXT NOT NULL,
+    local_track_id TEXT NOT NULL,
+    previous_album_id TEXT NOT NULL,
+    PRIMARY KEY (run_id, root_id, relative_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_library_scan_album_moves_from
+    ON library_scan_album_moves(run_id, previous_album_id);
 
 UPDATE local_albums SET grouping_key = COALESCE(
     (SELECT 'mbid:' || lower(trim(t.embedded_release_mbid))

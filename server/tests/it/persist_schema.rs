@@ -59,7 +59,7 @@ async fn fresh_migrate_marks_version_and_seeds() {
         .unwrap();
     assert_eq!(applied, migration_count());
 
-    assert_eq!(table_names(&pool).await.len(), 208);
+    assert_eq!(table_names(&pool).await.len(), 209);
     let triggers: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'")
             .fetch_one(&pool)
@@ -365,6 +365,81 @@ async fn every_earlier_version_upgrades_and_keeps_data() {
                 .unwrap();
         assert_eq!(name, "Kept", "upgrade from {version}");
     }
+}
+
+/// Migration 0013 gives albums indexed before it their persistent key:
+/// the release MBID when a track carries one, the tagged names when both
+/// came from tags, and the old folder key otherwise.
+#[tokio::test]
+async fn album_keys_backfill_on_upgrade() {
+    let pool = scratch_pool().await;
+    let through = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version < 13)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    through.run(&pool).await.unwrap();
+    let artist = "00000000-0000-4000-8000-000000000002";
+    for (album, title, provenance, mbid) in [
+        ("tagged-mbid", "first", "tag", Some(" ABC-1 ")),
+        ("tagged-names", "second", "tag", None),
+        ("from-path", "third", "parsed", None),
+    ] {
+        sqlx::query(
+            "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+             album_artist_name, album_artist_name_folded, album_artist_id, grouping_source, \
+             created_at, updated_at) VALUES (?1, 'r', 'dir' || char(0) || ?2, ?2, ?2, \
+             'artist', 'artist', ?3, 'automatic', 0, 0)",
+        )
+        .bind(album)
+        .bind(title)
+        .bind(artist)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, embedded_release_mbid, file_format, \
+             ingest_source, imported_at, membership_source, album_title_provenance, \
+             album_artist_provenance) VALUES (?1, ?1, 'r', ?1, ?1, ?1, 1, 1, '1', 't', 't', \
+             ?2, ?2, ?3, 'flac', 'scan', 0, 'automatic', ?4, ?4)",
+        )
+        .bind(album)
+        .bind(title)
+        .bind(mbid)
+        .bind(provenance)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    apply_migrations(&pool).await.unwrap();
+
+    let keys: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, grouping_key FROM local_albums ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        keys,
+        vec![
+            ("from-path".to_owned(), "dir\0third".to_owned()),
+            ("tagged-mbid".to_owned(), "mbid:abc-1".to_owned()),
+            (
+                "tagged-names".to_owned(),
+                "tag:artist\u{1f}second".to_owned()
+            ),
+        ]
+    );
 }
 
 /// Each migration stamps its own number, so applying them in order on an
