@@ -134,7 +134,7 @@ A `:dev` tag (`droppedneedle/droppedneedle:dev`) is built from `main` on every p
 | Wanted | Failed and partial requests get re-searched on their own until a verified copy shows up |
 | Quality | Per-format quality floors, automatic upgrades when a better copy appears, storage caps and quotas |
 | Player | Queue, shuffle, 10-band EQ, embedded lyrics, live now-playing updates |
-| Discovery | Trending, charts, genre browsing, recommendations from your ListenBrainz and Last.fm history, and a weekly mix that can queue up to five missing albums |
+| Discovery | Trending, charts, genre browsing, recommendations from your ListenBrainz and Last.fm history, an album-by-album discover queue, and a weekly mix that can queue up to five missing albums |
 | Live events | Ticketmaster and Skiddle gig alerts for artists you follow, each user with their own cities |
 | Following | New-release radar with optional auto-download, release-type filters, and sidebar badges |
 | Library | Browse, filter, download, rescan, and remove albums; unmatched files wait in a manual-review queue |
@@ -303,8 +303,11 @@ Where things live in the UI:
 | Home layout, release types, MusicBrainz source | Settings > Preferences |
 | Users, roles, Jellyfin and Plex user import | Settings > Users |
 | Password breach checking, HSTS, who can download library files | Settings > Security |
+| Discover queue size, freshness and tuning | Settings > Advanced |
 
 Album covers come from your own files first: an image in the album folder (`cover.jpg`, `folder.png`, `front.jpg` and the like) or a picture embedded in a track. The library picks these up after each scan, and large pictures are scaled down for the grid. Albums without local art get their cover from the Cover Art Archive, cached on disk. To prefer the Cover Art Archive over your files, turn off "Prefer local cover art" under Settings > Advanced.
+
+The discover queue on the Discover page deals you albums one at a time. It is built in the background from what you listen to: artists similar to your top artists, your genres, fresh releases, artists you love on ListenBrainz and lesser-played albums by your favourites, with a couple of trending picks mixed in. Last.fm users get similar artists and charts from Last.fm instead, and your Jellyfin most played and favourite artists fill in when ListenBrainz has too little history. Without any of them the queue is trending albums. Albums already in your library are left out. Ignore an album and it stays out of every future queue for a year (the retention is under Settings > Advanced). To hide the queue, switch it off under Settings > Discover. A built queue survives a restart and counts as stale after its freshness window (24 hours by default), after which the page builds a new one.
 
 Last.fm works like this: the admin registers one Last.fm API application at last.fm/api/account/create, saves its key and shared secret under Settings > Last.fm and switches Last.fm on, once for the whole server. Each user then clicks Connect under Profile > Scrobbling & Discovery, approves DroppedNeedle on last.fm, and clicks Finish. Their scrobbles go to their own Last.fm account. Users can also bring their own API application: if the server has no key saved, Connect asks for the user's own key and secret first, and a user can always store a pair through the API (`PUT /api/v3/me/connections/lastfm`). A user's own pair replaces the server's key for that user only. The Last.fm sections on artist and album pages follow the same rule: they read with the user's own key when one is saved, and with the server's key otherwise. Last.fm charts on the home page need the server's key; "your top albums" from Last.fm read your linked account. If the admin later changes the server's key, everyone who linked with the old one has to click Connect again: Last.fm sessions belong to the key that created them. Link ListenBrainz with the token from your ListenBrainz profile. Artist pages show photos from Wikidata and AudioDB (AudioDB is on by default, free key rate limits apply), with proxying and TTLs under Settings > Advanced. Other artist thumbnails show a placeholder for now.
 
