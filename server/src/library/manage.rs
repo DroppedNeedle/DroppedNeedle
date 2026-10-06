@@ -16,7 +16,7 @@ use super::publish::{PublishError, Sandbox};
 use super::scan::fs::WriteGuard;
 use super::scan::models::EffectivePolicy;
 use super::scan::roots::RootRegistry;
-use super::scan::store::ScanStore;
+use super::scan::store::CatalogStore;
 use super::service::ServiceError;
 use super::wiring::{LibrarySetup, RootDirs};
 

@@ -77,11 +77,9 @@ pub use scheduler::{InclusionRule, ScheduleSettings, scheduled_scopes, seconds_u
 pub use seams::{ArmableDeferTagReader, NullIdentifyQueue, NullTagReader};
 pub use seams::{Checkpoint, IdentifyQueue, ScannedTags, TagReadError, TagReader};
 pub use sqlite_store::SqliteScanStore;
-#[cfg(any(test, feature = "test-support"))]
-pub use store::MemoryScanStore;
 pub use store::{
-    CatalogEntry, ClassifyInput, CommitIndexedItem, InventoryPage, RevisionKind, ScanStore,
-    ScanStoreError,
+    CatalogEntry, CatalogStore, ClassifyInput, CommitIndexedItem, InventoryPage, InventoryStore,
+    RevisionKind, RunStore, ScanStore, ScanStoreError,
 };
 pub use supervisor::SupervisorInputs;
 pub use walk::{InventoryScanner, inventory_key, is_audio_file, relativize, text_safe_posix};

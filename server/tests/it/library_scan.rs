@@ -23,18 +23,18 @@ use std::time::{Duration, Instant};
 
 use scan::{
     BlockingPool, DirtyScopes, Disposition, EffectivePolicy, FsCoordinator, IdentifyQueue,
-    LibraryRoot, LibraryScanCoordinator, MemoryScanStore, NullIdentifyQueue, NullTagReader,
-    RevisionPublisher, RevisionSource, RootRegistry, RootSeamError, ScanInventoryItem, ScanKind,
-    ScanRequest, ScanRun, ScanScope, ScanState, ScanStore, ScanTrigger, ScannedTags,
-    ScheduleSettings, StaticResolver, StreamRootSeam, TagReadError, TagReader, Verdict,
-    WatcherAction, WatcherSettings, WatcherState, WorkWakeups, counter_names, failure_codes,
-    watcher_clear_pending, watcher_poll_once, watcher_request,
+    InventoryStore, LibraryRoot, LibraryScanCoordinator, NullIdentifyQueue, NullTagReader,
+    RevisionPublisher, RevisionSource, RootRegistry, RootSeamError, RunStore, ScanInventoryItem,
+    ScanKind, ScanRequest, ScanRun, ScanScope, ScanState, ScanTrigger, ScannedTags,
+    ScheduleSettings, SqliteScanStore, StaticResolver, StreamRootSeam, TagReadError, TagReader,
+    Verdict, WatcherAction, WatcherSettings, WatcherState, WorkWakeups, counter_names,
+    failure_codes, watcher_clear_pending, watcher_poll_once, watcher_request,
 };
 use sha2::{Digest, Sha256};
 
 static SANDBOX_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-type TestCoordinator = LibraryScanCoordinator<MemoryScanStore, NullTagReader, NullIdentifyQueue>;
+type TestCoordinator = LibraryScanCoordinator<SqliteScanStore, NullTagReader, NullIdentifyQueue>;
 
 fn fixtures_dir() -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -138,7 +138,7 @@ fn rig_with_revision(root: &Path, revision: &str) -> Rig {
     let tags = Arc::new(NullTagReader::new());
     let identify = Arc::new(NullIdentifyQueue::new());
     let coordinator = LibraryScanCoordinator::new(
-        Arc::new(MemoryScanStore::new()),
+        Arc::new(SqliteScanStore::open_ephemeral().expect("scan store opens")),
         BlockingPool::new(4),
         Arc::clone(&tags),
         Arc::clone(&identify),
@@ -401,7 +401,7 @@ async fn deferred_tag_read_reoffers_next_run() {
     // F-12 end to end: exhaustion defers with a persisted marker, and the
     // file re-offers as changed on the next run despite clean stat (stat
     // comparison alone would skip it forever).
-    use scan::{ArmableDeferTagReader, LibraryScanCoordinator, MemoryScanStore, NullIdentifyQueue};
+    use scan::{ArmableDeferTagReader, LibraryScanCoordinator, NullIdentifyQueue, SqliteScanStore};
 
     let root = sandbox_root("deferred");
     plant_fixture(&root, "a.flac", "flac_full_01.flac");
@@ -417,11 +417,11 @@ async fn deferred_tag_read_reoffers_next_run() {
     );
     let tags = Arc::new(ArmableDeferTagReader::new());
     let coordinator: LibraryScanCoordinator<
-        MemoryScanStore,
+        SqliteScanStore,
         ArmableDeferTagReader,
         NullIdentifyQueue,
     > = LibraryScanCoordinator::new(
-        Arc::new(MemoryScanStore::new()),
+        Arc::new(SqliteScanStore::open_ephemeral().expect("scan store opens")),
         BlockingPool::new(2),
         Arc::clone(&tags),
         Arc::new(NullIdentifyQueue::new()),
@@ -1101,7 +1101,7 @@ fn inventory_batch_twin_rows_store_relative_paths() {
     // Direct batch writes dedup like the walk and must serve the same
     // relative path get_run hands to authed callers, never the
     // absolute server path.
-    let store = MemoryScanStore::new();
+    let store = SqliteScanStore::open_ephemeral().expect("scan store opens");
     let request = ScanRequest {
         kind: ScanKind::Incremental,
         trigger: ScanTrigger::Manual,
@@ -1166,7 +1166,7 @@ async fn fatal_tag_read_is_human_and_counted() {
         "rev-1",
     );
     let coordinator = LibraryScanCoordinator::new(
-        Arc::new(MemoryScanStore::new()),
+        Arc::new(SqliteScanStore::open_ephemeral().expect("scan store opens")),
         BlockingPool::new(4),
         Arc::new(FatalTagReader),
         Arc::new(NullIdentifyQueue::new()),

@@ -15,9 +15,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use droppedneedle::library::scan::{
-    BlockingPool, EffectivePolicy, LibraryRoot, LibraryScanCoordinator, MemoryScanStore,
-    NullIdentifyQueue, RootRegistry, ScanKind, ScanRequest, ScanScope, ScanState, ScanStore,
-    ScanTrigger, ScannedTags, StaticResolver, TagReadError, TagReader, WorkWakeups,
+    BlockingPool, CatalogStore, EffectivePolicy, LibraryRoot, LibraryScanCoordinator,
+    NullIdentifyQueue, RootRegistry, ScanKind, ScanRequest, ScanScope, ScanState, ScanTrigger,
+    ScannedTags, SqliteScanStore, StaticResolver, TagReadError, TagReader, WorkWakeups,
 };
 use tokio::sync::watch;
 
@@ -70,7 +70,7 @@ fn coordinator_with(
     root: &Path,
     tags: Arc<ShutdownOnRead>,
 ) -> (
-    LibraryScanCoordinator<MemoryScanStore, ShutdownOnRead, NullIdentifyQueue>,
+    LibraryScanCoordinator<SqliteScanStore, ShutdownOnRead, NullIdentifyQueue>,
     HashMap<String, PathBuf>,
 ) {
     let registry = RootRegistry::new(
@@ -83,7 +83,7 @@ fn coordinator_with(
         "rev-1",
     );
     let coordinator = LibraryScanCoordinator::new(
-        Arc::new(MemoryScanStore::new()),
+        Arc::new(SqliteScanStore::open_ephemeral().expect("scan store opens")),
         BlockingPool::new(4),
         tags,
         Arc::new(NullIdentifyQueue::new()),

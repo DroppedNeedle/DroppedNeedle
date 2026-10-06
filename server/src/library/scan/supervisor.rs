@@ -275,11 +275,11 @@ mod tests {
     use super::super::pool::BlockingPool;
     use super::super::roots::LibraryRoot;
     use super::super::seams::{NullIdentifyQueue, NullTagReader};
-    use super::super::store::MemoryScanStore;
+    use super::super::sqlite_store::SqliteScanStore;
     use super::*;
     use std::sync::atomic::Ordering;
 
-    fn coordinator() -> LibraryScanCoordinator<MemoryScanStore, NullTagReader, NullIdentifyQueue> {
+    fn coordinator() -> LibraryScanCoordinator<SqliteScanStore, NullTagReader, NullIdentifyQueue> {
         let registry = RootRegistry::new(
             vec![LibraryRoot::new(
                 "r1",
@@ -290,7 +290,7 @@ mod tests {
             "rev-1",
         );
         LibraryScanCoordinator::new(
-            Arc::new(MemoryScanStore::new()),
+            Arc::new(SqliteScanStore::open_ephemeral().expect("scan store opens")),
             BlockingPool::new(2),
             Arc::new(NullTagReader::new()),
             Arc::new(NullIdentifyQueue::new()),

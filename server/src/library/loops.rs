@@ -11,7 +11,7 @@ use super::identify::stores::QueueStore;
 use super::publish::PublishError;
 use super::publish::snapshots::SnapshotStore;
 use super::scan::coordinator::ResolverSource as _;
-use super::scan::store::ScanStore;
+use super::scan::store::CatalogStore;
 use super::scan::supervisor::SupervisorInputs;
 use super::scan::supervisor::{startup_recovery, supervise_once, supervise_once_with_shutdown};
 use super::scan::watcher::{

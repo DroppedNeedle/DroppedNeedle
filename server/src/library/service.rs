@@ -10,7 +10,7 @@ use super::scan::models::{
     ScanScope, ScanTrigger,
 };
 use super::scan::roots::LibraryRoot;
-use super::scan::store::ScanStore;
+use super::scan::store::{CatalogStore, InventoryStore};
 use super::wiring::LibrarySetup;
 
 /// Why a library operation failed, independent of transport. The
