@@ -13,9 +13,9 @@
 //! # Seams
 //!
 //! * Leases: the engine talks to [`TranscodeLeasePool`] / [`TranscodeLease`]
-//!   only. [`LocalTranscodeGate`] is the gate production uses (same 2 global
-//!   / 1 per-principal limits as v2); it is separate from the gateway's
-//!   direct gate.
+//!   only. [`LocalTranscodeGate`] is the gate production uses (one global
+//!   slot per CPU, two per principal so a gapless player can open the next
+//!   track early); it is separate from the gateway's direct gate.
 //! * Service: [`Transcoder`] is the trait the gateway calls,
 //!   [`FfmpegTranscoder`] the implementation, [`TranscodeBody`] /
 //!   [`TranscodeStream`] the per-request byte stream.
@@ -48,6 +48,32 @@ use std::os::unix::fs::PermissionsExt as _;
 /// Supported transcode output codecs, matching v2 `_SUPPORTED_OUT`.
 pub const SUPPORTED_OUT_FORMATS: &[&str] = &["mp3", "opus"];
 
+/// Internal format name for AAC in MPEG-TS, the segment format the
+/// Jellyfin HLS playlist serves. Not a client-facing codec choice.
+pub const HLS_SEGMENT_FORMAT: &str = "aac-ts";
+
+/// Output bitrate when the client sets no cap, per codec (Navidrome's
+/// defaults): enough for transparent playback without spending the full
+/// server ceiling on every stream. Unknown names read as MP3.
+pub fn default_bitrate_kbps(format: &str) -> i64 {
+    match format.to_ascii_lowercase().as_str() {
+        "opus" => 128,
+        "aac" | HLS_SEGMENT_FORMAT => 256,
+        _ => 192,
+    }
+}
+
+/// Output bitrate for a transcode: the client cap when it set one, else the
+/// codec default; never above the server ceiling, never below
+/// [`MIN_BITRATE_KBPS`].
+pub fn out_bitrate_kbps(format: &str, client_cap_kbps: Option<i64>, server_max_kbps: i64) -> i64 {
+    let wanted = match client_cap_kbps {
+        Some(cap) if cap > 0 => cap,
+        _ => default_bitrate_kbps(format),
+    };
+    wanted.min(server_max_kbps).max(MIN_BITRATE_KBPS)
+}
+
 /// Lowest output bitrate v2 will emit, in kbps.
 pub const MIN_BITRATE_KBPS: i64 = 64;
 
@@ -70,12 +96,20 @@ pub const TERMINATE_WAIT: Duration = Duration::from_secs(3);
 /// Bounded stderr capture for the nonzero-exit warning, v2's 2000 bytes.
 pub const STDERR_CAPTURE_BYTES: usize = 2000;
 
-/// Transcode pool limits, matching v2 `StreamConcurrencyService` defaults:
-/// 2 ffmpeg jobs globally, 1 per principal.
+/// Fewest ffmpeg jobs the server runs at once. The real global limit is
+/// one job per CPU, never below this floor (see [`transcode_global_limit`]).
 pub const TRANSCODE_GLOBAL_LIMIT: usize = 2;
-/// Transcode pool limits, matching v2 `StreamConcurrencyService` defaults:
-/// 2 ffmpeg jobs globally, 1 per principal.
-pub const TRANSCODE_PRINCIPAL_LIMIT: usize = 1;
+/// ffmpeg jobs one principal may hold: the playing track plus the next one,
+/// which gapless players (ExoPlayer/Media3, just_audio) open early.
+pub const TRANSCODE_PRINCIPAL_LIMIT: usize = 2;
+
+/// Global transcode limit for this machine: one ffmpeg job per CPU, at
+/// least [`TRANSCODE_GLOBAL_LIMIT`].
+pub fn transcode_global_limit() -> usize {
+    std::thread::available_parallelism()
+        .map_or(TRANSCODE_GLOBAL_LIMIT, usize::from)
+        .max(TRANSCODE_GLOBAL_LIMIT)
+}
 
 /// Bounded lease queue, matching v2 `max_waiters`.
 pub const TRANSCODE_MAX_WAITERS: usize = 128;
@@ -105,6 +139,19 @@ pub enum OutFormat {
     Mp3,
     /// Opus via libopus, muxed as ogg.
     Opus,
+    /// AAC muxed as MPEG-TS: the Jellyfin HLS segment format.
+    AacTs,
+}
+
+impl OutFormat {
+    /// The format name clients and the policy use.
+    pub fn name(self) -> &'static str {
+        match self {
+            OutFormat::Mp3 => "mp3",
+            OutFormat::Opus => "opus",
+            OutFormat::AacTs => HLS_SEGMENT_FORMAT,
+        }
+    }
 }
 
 /// The track fields `decide()` reads. Minimal mirror of the gateway view
@@ -211,7 +258,9 @@ impl StreamPlan {
 /// 3. A codec change triggers a transcode, except `raw`, which is never a
 ///    mismatch (Subsonic `format=raw` short-circuits to the file upstream of
 ///    `decide()`; this rule is the backstop inside it).
-/// 4. The server max is a quality ceiling applied while transcoding, never a
+/// 4. With no client cap the output takes the codec default (opus 128,
+///    mp3 192), not the server max.
+/// 5. The server max is a quality ceiling applied while transcoding, never a
 ///    trigger: a lossless file over the server cap still direct-plays when
 ///    nothing was requested (Jellify regression), while an explicit codec
 ///    request on that same file transcodes clamped to the server cap (Manet
@@ -251,11 +300,14 @@ pub fn decide(
     let out_format = match requested.as_str() {
         "mp3" => OutFormat::Mp3,
         "opus" => OutFormat::Opus,
+        HLS_SEGMENT_FORMAT => OutFormat::AacTs,
         _ => settings.default_format,
     };
-    let bitrate = client_ceiling
-        .min(settings.max_bitrate_kbps)
-        .max(MIN_BITRATE_KBPS);
+    let bitrate = out_bitrate_kbps(
+        out_format.name(),
+        max_bitrate_kbps,
+        settings.max_bitrate_kbps,
+    );
     StreamPlan::Transcode {
         out_format,
         out_bitrate_kbps: bitrate,
@@ -322,6 +374,13 @@ pub fn build_cmd(source_path: &Path, plan: &StreamPlan) -> Option<Vec<String>> {
             argv.push("-f".to_owned());
             argv.push("ogg".to_owned());
         }
+        OutFormat::AacTs => {
+            argv.push("aac".to_owned());
+            argv.push("-b:a".to_owned());
+            argv.push(format!("{out_bitrate_kbps}k"));
+            argv.push("-f".to_owned());
+            argv.push("mpegts".to_owned());
+        }
     }
     argv.push("pipe:1".to_owned());
     Some(argv)
@@ -332,6 +391,7 @@ pub fn out_media_type(out_format: &OutFormat) -> &'static str {
     match out_format {
         OutFormat::Mp3 => "audio/mpeg",
         OutFormat::Opus => "audio/ogg",
+        OutFormat::AacTs => "video/mp2t",
     }
 }
 
@@ -340,6 +400,7 @@ pub fn out_suffix(out_format: &OutFormat) -> &'static str {
     match out_format {
         OutFormat::Mp3 => "mp3",
         OutFormat::Opus => "opus",
+        OutFormat::AacTs => "ts",
     }
 }
 
@@ -486,9 +547,9 @@ struct TranscodeGateState {
     waiters: usize,
 }
 
-/// Transcode gate: 2 global slots, 1 per principal, a bounded waiter queue,
-/// and a 5s wait deadline, matching v2 `StreamConcurrencyService`
-/// transcode-pool defaults. Waiting acquirers race on a broadcast wake
+/// Transcode gate: one global slot per CPU (at least two), two per
+/// principal (current track plus a gapless prefetch), a bounded waiter
+/// queue, and a 5s wait deadline. Waiting acquirers race on a broadcast wake
 /// rather than v2's first-eligible scan; at this pool size the difference
 /// does not matter, and the gateway's direct gate bounds the reads.
 #[derive(Debug)]
@@ -502,10 +563,11 @@ pub struct LocalTranscodeGate {
 }
 
 impl LocalTranscodeGate {
-    /// Gate with the v2 transcode-pool defaults.
+    /// Gate with the production limits: one job per CPU (at least two),
+    /// two per principal.
     pub fn new() -> Self {
         Self::with_limits(
-            TRANSCODE_GLOBAL_LIMIT,
+            transcode_global_limit(),
             TRANSCODE_PRINCIPAL_LIMIT,
             TRANSCODE_MAX_WAITERS,
             TRANSCODE_WAIT_TIMEOUT,

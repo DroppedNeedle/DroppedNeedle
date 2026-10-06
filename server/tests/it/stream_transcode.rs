@@ -205,9 +205,10 @@ fn lossless_over_server_cap_still_direct_plays() {
 }
 
 #[test]
-fn codec_request_transcodes_and_clamps_to_server_cap() {
-    // Manet: /universal?AudioCodec=mp3 on a FLAC transcodes to mp3 clamped to
-    // the server ceiling even though the client gave no bitrate.
+fn codec_request_transcodes_at_codec_default_without_a_cap() {
+    // Manet: /universal?AudioCodec=mp3 on a FLAC transcodes to mp3. The
+    // client gave no bitrate, so the output takes the mp3 default (192),
+    // not the 320 server ceiling.
     let plan = decide(
         &track(Some(900), "flac"),
         Some("mp3"),
@@ -219,7 +220,17 @@ fn codec_request_transcodes_and_clamps_to_server_cap() {
     );
     let (format, bitrate, _) = transcode_parts(&plan);
     assert_eq!(format, OutFormat::Mp3);
-    assert_eq!(bitrate, 320);
+    assert_eq!(bitrate, 192);
+    let opus = decide(
+        &track(Some(900), "flac"),
+        Some("opus"),
+        None,
+        false,
+        0.0,
+        &settings(),
+        true,
+    );
+    assert_eq!(transcode_parts(&opus).1, 128);
 }
 
 #[test]
@@ -462,7 +473,8 @@ async fn scripted_stream_serves_chunks_then_frees_lease_at_eof() {
 #[tokio::test]
 async fn lease_exhaustion_returns_capacity() {
     assert_eq!(TRANSCODE_GLOBAL_LIMIT, 2);
-    assert_eq!(TRANSCODE_PRINCIPAL_LIMIT, 1);
+    // A gapless player opens the next track while the current one plays.
+    assert_eq!(TRANSCODE_PRINCIPAL_LIMIT, 2);
     assert_eq!(CAPACITY_STATUS_CODE, 429, "gateway maps capacity to 429");
     assert_eq!(RETRY_AFTER_SECONDS, 1);
 

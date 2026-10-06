@@ -637,6 +637,73 @@ async fn audio_routes_negotiate_direct_or_transcode() {
     }
 }
 
+/// Finamp 1.0.1: direct play and downloads via `/Items/{id}/File`,
+/// transcoded downloads via `/Audio/{id}/Universal` (capital U), and
+/// transcoded playback via the HLS playlist and its one segment.
+#[tokio::test]
+async fn finamp_file_universal_and_hls_routes() {
+    let fx = fixture().await;
+    let file = format!("/jellyfin/Items/{}/File?ApiKey={ALICE}", fx.track1);
+    let direct = fx.get(&file, None).await;
+    assert_eq!((direct.status, direct.body.len()), (200, 1024));
+    assert_eq!(direct.header("accept-ranges"), "bytes");
+    let head = fx.send("HEAD", &file, None, b"").await;
+    assert_eq!((head.status, head.body.len()), (200, 0));
+    assert_eq!(head.header("content-length"), "1024");
+    let anonymous = fx
+        .get(&format!("/jellyfin/Items/{}/File", fx.track1), None)
+        .await;
+    assert_eq!(anonymous.status, 401);
+
+    let audio = |tail: &str| format!("/jellyfin/Audio/{}/{tail}", fx.track1);
+    let universal = fx
+        .get(
+            &audio(&format!("Universal?Container=mp3&ApiKey={ALICE}")),
+            None,
+        )
+        .await;
+    assert_eq!((universal.status, universal.body.len()), (200, 1024));
+
+    let query = format!("audioCodec=aac&segmentContainer=ts&audioBitRate=128000&ApiKey={ALICE}");
+    let playlist = fx.get(&audio(&format!("main.m3u8?{query}")), None).await;
+    assert_eq!(playlist.status, 200);
+    assert_eq!(
+        playlist.header("content-type"),
+        "application/vnd.apple.mpegurl"
+    );
+    let text = String::from_utf8(playlist.body).expect("utf-8 playlist");
+    assert!(text.starts_with("#EXTM3U\n"), "{text}");
+    assert!(text.contains("#EXT-X-PLAYLIST-TYPE:VOD"), "{text}");
+    assert!(text.trim_end().ends_with("#EXT-X-ENDLIST"), "{text}");
+    let segment = text
+        .lines()
+        .find(|line| !line.starts_with('#'))
+        .expect("one segment line");
+    assert_eq!(segment, format!("main.ts?{query}"));
+    let ts = fx.get(&audio(segment), None).await;
+    assert_eq!(ts.status, 200);
+    assert!(
+        ts.body.starts_with(b"transcoded:aac-ts:128:"),
+        "{:?}",
+        String::from_utf8_lossy(&ts.body)
+    );
+
+    // No ffmpeg: there is no HLS to offer.
+    let off = JellyfinSettings {
+        ffmpeg_available: false,
+        ..settings()
+    };
+    let reply = send(
+        fx.app(off),
+        "GET",
+        &audio(&format!("main.m3u8?{query}")),
+        None,
+        b"",
+    )
+    .await;
+    assert_eq!(reply.status, 404);
+}
+
 /// The transcode policy shared by `/Audio` and PlaybackInfo.
 #[test]
 fn transcode_decision_rules() {

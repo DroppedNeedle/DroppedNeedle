@@ -77,7 +77,8 @@ pub struct StreamPlan {
 ///    ceiling, never a trigger. `max_bitrate <= 0`/None means unset
 ///    (Feishin sends bitrate cap 0, issues #464/#468).
 /// 3. Output is `req` when it is mp3/opus else the server default;
-///    bitrate clamps to `max(min(client, server), 32)`.
+///    bitrate is the client cap, or the codec default (opus 128, mp3 192)
+///    when the client set none, clamped to `max(min(that, server), 32)`.
 #[allow(clippy::too_many_arguments)]
 pub fn decide(
     source_format: &str,
@@ -123,9 +124,13 @@ pub fn decide(
         Some(req) if req == "mp3" || req == "opus" => req,
         _ => default_format.to_lowercase(),
     };
-    let bitrate = client_ceiling
-        .min(server_max_bitrate_kbps)
-        .max(MIN_BITRATE_KBPS);
+    // No client cap: the codec's default bitrate, not the server ceiling.
+    let wanted = if client_ceiling == UNSET_BITRATE_KBPS {
+        crate::stream::transcode::default_bitrate_kbps(&out_format)
+    } else {
+        client_ceiling
+    };
+    let bitrate = wanted.min(server_max_bitrate_kbps).max(MIN_BITRATE_KBPS);
     StreamPlan {
         transcode: true,
         out_format: Some(out_format),

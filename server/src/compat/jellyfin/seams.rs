@@ -445,9 +445,15 @@ pub fn decide(input: &DecideInput) -> StreamPlan {
     } else {
         input.default_format.to_lowercase()
     };
+    // No client cap: the codec's default bitrate, not the server ceiling.
+    let wanted = if ceiling == HUGE {
+        u32::try_from(crate::stream::transcode::default_bitrate_kbps(&out)).unwrap_or(HUGE)
+    } else {
+        ceiling
+    };
     StreamPlan::Transcode {
         format: out,
-        bitrate_kbps: ceiling.min(input.server_max_kbps).max(MIN_BITRATE_KBPS),
+        bitrate_kbps: wanted.min(input.server_max_kbps).max(MIN_BITRATE_KBPS),
         start_seconds: input.start_seconds.max(0.0),
     }
 }

@@ -504,12 +504,14 @@ fn forced_plan(
         .as_str()
     {
         "opus" => OutFormat::Opus,
+        super::transcode::HLS_SEGMENT_FORMAT => OutFormat::AacTs,
         _ => OutFormat::Mp3,
     };
-    let out_bitrate_kbps = match params.max_bitrate_kbps {
-        Some(bitrate) if bitrate > 0 => bitrate,
-        _ => settings.max_bitrate_kbps,
-    };
+    let out_bitrate_kbps = super::transcode::out_bitrate_kbps(
+        out_format.name(),
+        params.max_bitrate_kbps,
+        settings.max_bitrate_kbps,
+    );
     StreamPlan::Transcode {
         out_format,
         out_bitrate_kbps,

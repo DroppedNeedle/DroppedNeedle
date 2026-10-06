@@ -140,13 +140,212 @@ where
     // Leases count against the caller, like the native stream routes.
     let mut state = state;
     state.engine = state.engine.for_caller(&caller.principal.id);
-    if tail == "universal" {
-        return universal(&state, &headers, query.as_deref(), &item_id).await;
+    // Tails match case-insensitively: Finamp asks for `Universal`.
+    let tail = tail.to_ascii_lowercase();
+    match tail.as_str() {
+        "universal" => universal(&state, &headers, query.as_deref(), &item_id).await,
+        HLS_PLAYLIST => hls_playlist(&state, query.as_deref(), &item_id).await,
+        HLS_SEGMENT => hls_segment(&state, query.as_deref(), &item_id).await,
+        _ if is_stream_tail(&tail) => {
+            audio_stream(&state, &headers, query.as_deref(), &item_id).await
+        }
+        _ => error(StatusCode::NOT_FOUND),
     }
-    if tail == "stream" || tail.starts_with("stream.") {
-        return audio_stream(&state, &headers, query.as_deref(), &item_id).await;
+}
+
+/// `stream` or `stream.<ext>`, already lowercased.
+fn is_stream_tail(tail: &str) -> bool {
+    tail == "stream" || tail.starts_with("stream.")
+}
+
+/// HLS playlist tail (Finamp's transcoded playback).
+const HLS_PLAYLIST: &str = "main.m3u8";
+/// The playlist's one segment, relative to the playlist URL.
+const HLS_SEGMENT: &str = "main.ts";
+
+/// `GET /Audio/{id}/main.m3u8`: an HLS VOD playlist with a single segment
+/// covering the whole track. Finamp plays transcodes through HLS; one
+/// segment keeps the track gapless (no per-segment encoder priming) and
+/// needs no segment cache. The segment URL carries the request's query, so
+/// `ApiKey` and `audioBitRate` reach it. Without ffmpeg, or with
+/// transcoding off, there is nothing to serve: 404.
+pub(super) async fn hls_playlist<S, L, E, P, I>(
+    state: &JellyfinState<S, L, E, P, I>,
+    query: Option<&str>,
+    item_id: &str,
+) -> Response
+where
+    S: JellyfinPasswordStore,
+    L: LibraryRead,
+    E: StreamEngine,
+    P: PlaybackSessions,
+    I: IdMap,
+{
+    let settings = state.settings.jellyfin();
+    if !settings.transcoding_enabled || !settings.ffmpeg_available {
+        return error(StatusCode::NOT_FOUND);
     }
-    error(StatusCode::NOT_FOUND)
+    let internal = match decode_track(state, item_id).await {
+        Ok(internal) => internal,
+        Err(denied) => return denied,
+    };
+    let Some(duration) = state
+        .library
+        .track("", &internal)
+        .await
+        .and_then(|track| track.duration_seconds)
+        .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
+    else {
+        return error(StatusCode::NOT_FOUND);
+    };
+    let segment = match query.filter(|query| !query.is_empty()) {
+        Some(query) => format!("{HLS_SEGMENT}?{query}"),
+        None => HLS_SEGMENT.to_owned(),
+    };
+    let playlist = format!(
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-PLAYLIST-TYPE:VOD\n\
+         #EXT-X-TARGETDURATION:{}\n#EXT-X-MEDIA-SEQUENCE:0\n\
+         #EXTINF:{duration:.6},\n{segment}\n#EXT-X-ENDLIST\n",
+        duration.ceil() as u64
+    );
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Content-Type", "application/vnd.apple.mpegurl")
+        .header("Cache-Control", "no-store")
+        .body(Body::from(playlist))
+        .unwrap_or_else(|_| error(StatusCode::INTERNAL_SERVER_ERROR))
+}
+
+/// `GET /Audio/{id}/main.ts`: the playlist's segment, the whole track as
+/// AAC in MPEG-TS at the client's `audioBitRate` (bits per second), else
+/// the AAC default, capped by the server ceiling.
+pub(super) async fn hls_segment<S, L, E, P, I>(
+    state: &JellyfinState<S, L, E, P, I>,
+    query: Option<&str>,
+    item_id: &str,
+) -> Response
+where
+    S: JellyfinPasswordStore,
+    L: LibraryRead,
+    E: StreamEngine,
+    P: PlaybackSessions,
+    I: IdMap,
+{
+    use crate::stream::transcode::{HLS_SEGMENT_FORMAT, out_bitrate_kbps};
+
+    let settings = state.settings.jellyfin();
+    if !settings.transcoding_enabled || !settings.ffmpeg_available {
+        return error(StatusCode::NOT_FOUND);
+    }
+    let internal = match decode_track(state, item_id).await {
+        Ok(internal) => internal,
+        Err(denied) => return denied,
+    };
+    let q = CiParams::parse(query);
+    let audio_bps = params::qint(&q, "audioBitRate", 0);
+    let cap_kbps = (audio_bps > 0).then(|| (audio_bps as f64 / 1000.0).round() as i64);
+    let bitrate = out_bitrate_kbps(
+        HLS_SEGMENT_FORMAT,
+        cap_kbps,
+        i64::from(settings.transcode_max_bitrate_kbps),
+    );
+    outcome_response(
+        &state
+            .engine
+            .transcode(
+                &internal,
+                HLS_SEGMENT_FORMAT,
+                u32::try_from(bitrate).unwrap_or(u32::MAX),
+                0.0,
+            )
+            .await,
+    )
+}
+
+/// `GET /Items/{id}/File`: the original file with Range support. Finamp
+/// direct play and downloads use it.
+pub(super) async fn item_file<S, L, E, P, I>(
+    State(state): State<JellyfinState<S, L, E, P, I>>,
+    Path(item_id): Path<String>,
+    request: Request<Body>,
+) -> Response
+where
+    S: JellyfinPasswordStore,
+    L: LibraryRead,
+    E: StreamEngine,
+    P: PlaybackSessions,
+    I: IdMap,
+{
+    if let Some(denied) = gate(&state) {
+        return denied;
+    }
+    let headers = request.headers().clone();
+    let query = request.uri().query().map(str::to_owned);
+    let caller = match authed(&state.passwords, &headers, query.as_deref()).await {
+        Ok(caller) => caller,
+        Err(denied) => return denied,
+    };
+    let internal = match decode_track(&state, &item_id).await {
+        Ok(internal) => internal,
+        Err(denied) => return denied,
+    };
+    let engine = state.engine.for_caller(&caller.principal.id);
+    outcome_response(&engine.direct(&internal, header(&headers, "range")).await)
+}
+
+/// `HEAD /Items/{id}/File`: the headers GET would answer, no body, no lease.
+pub(super) async fn item_file_head<S, L, E, P, I>(
+    State(state): State<JellyfinState<S, L, E, P, I>>,
+    Path(item_id): Path<String>,
+    request: Request<Body>,
+) -> Response
+where
+    S: JellyfinPasswordStore,
+    L: LibraryRead,
+    E: StreamEngine,
+    P: PlaybackSessions,
+    I: IdMap,
+{
+    if let Some(denied) = gate(&state) {
+        return denied;
+    }
+    let headers = request.headers().clone();
+    let query = request.uri().query().map(str::to_owned);
+    if let Err(denied) = authed(&state.passwords, &headers, query.as_deref()).await {
+        return denied;
+    }
+    head_response(&state, &headers, &item_id).await
+}
+
+/// HEAD for one item: the status and headers a direct GET would answer.
+async fn head_response<S, L, E, P, I>(
+    state: &JellyfinState<S, L, E, P, I>,
+    headers: &HeaderMap,
+    item_id: &str,
+) -> Response
+where
+    S: JellyfinPasswordStore,
+    L: LibraryRead,
+    E: StreamEngine,
+    P: PlaybackSessions,
+    I: IdMap,
+{
+    let internal = match decode_track(state, item_id).await {
+        Ok(internal) => internal,
+        Err(denied) => return denied,
+    };
+    let outcome = state.engine.head(&internal, header(headers, "range")).await;
+    if outcome.status == StatusCode::NOT_FOUND.as_u16() {
+        return error(StatusCode::NOT_FOUND);
+    }
+    let status = StatusCode::from_u16(outcome.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let mut builder = Response::builder().status(status);
+    for (name, value) in &outcome.headers {
+        builder = builder.header(name.as_str(), value.as_str());
+    }
+    builder
+        .body(Body::empty())
+        .unwrap_or_else(|_| error(StatusCode::INTERNAL_SERVER_ERROR))
 }
 
 /// `HEAD /Audio/...`: the same status and headers GET would answer
@@ -168,8 +367,10 @@ where
         return denied;
     }
     // Unknown tails 404 exactly like GET (no `universal`/`stream` probe
-    // that answers 200 for a route GET would refuse).
-    if tail != "universal" && tail != "stream" && !tail.starts_with("stream.") {
+    // that answers 200 for a route GET would refuse). The HLS tails are
+    // GET-only.
+    let tail = tail.to_ascii_lowercase();
+    if tail != "universal" && !is_stream_tail(&tail) {
         return error(StatusCode::NOT_FOUND);
     }
     let headers = request.headers().clone();
@@ -177,26 +378,7 @@ where
     if let Err(denied) = authed(&state.passwords, &headers, query.as_deref()).await {
         return denied;
     }
-    let range = headers
-        .get(axum::http::header::RANGE)
-        .and_then(|value| value.to_str().ok())
-        .map(str::to_owned);
-    let internal = match decode_track(&state, &item_id).await {
-        Ok(internal) => internal,
-        Err(denied) => return denied,
-    };
-    let outcome = state.engine.head(&internal, range.as_deref()).await;
-    if outcome.status == StatusCode::NOT_FOUND.as_u16() {
-        return error(StatusCode::NOT_FOUND);
-    }
-    let status = StatusCode::from_u16(outcome.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    let mut builder = Response::builder().status(status);
-    for (name, value) in &outcome.headers {
-        builder = builder.header(name.as_str(), value.as_str());
-    }
-    builder
-        .body(Body::empty())
-        .unwrap_or_else(|_| error(StatusCode::INTERNAL_SERVER_ERROR))
+    head_response(&state, &headers, &item_id).await
 }
 
 /// `/universal` container negotiation (v2 `_universal`).
