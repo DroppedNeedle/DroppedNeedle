@@ -55,7 +55,7 @@ Search the full MusicBrainz catalogue, request the album or the single track you
 
 ## Quick start
 
-You need Docker, a music library, and a download client. The example below uses slskd; [SABnzbd](https://sabnzbd.org/) with Newznab indexers or Prowlarr works too. DroppedNeedle runs neither for you. See [slskd](#slskd) and [Usenet](#usenet).
+You need Docker, a music library, and a download client. The example below uses slskd; [SABnzbd](https://sabnzbd.org/) or [NZBGet](https://nzbget.com/) with Newznab indexers or Prowlarr works too. DroppedNeedle runs neither for you. See [slskd](#slskd) and [Usenet](#usenet).
 
 ### 1. Save this compose file
 
@@ -213,11 +213,13 @@ web:
 
 ### Usenet
 
-The second source is Usenet through SABnzbd. For searching, either add Newznab-compatible indexers one by one (NZBGeek, NZBPlanet, NZB.su, Slug, and others) or point at a Prowlarr that already has them. The engine searches your chosen side, enqueues NZBs in your SABnzbd, and imports finished files through the same scoring, verification, and quarantine pipeline as slskd.
+The second source is Usenet, through either SABnzbd or NZBGet. For searching, either add Newznab-compatible indexers one by one (NZBGeek, NZBPlanet, NZB.su, Slug, and others) or point at a Prowlarr that already has them. The engine searches your chosen side, enqueues NZBs in your download client, and imports finished files through the same scoring, verification, and quarantine pipeline as slskd.
 
-1. Expose SABnzbd's completed-downloads directory read-write, ideally under the same shared parent mount as the library so the [mount rules](#slskd) hold. In SABnzbd, point its Downloads folder setting at the matching path (e.g. `/data/sabnzbd/complete`).
-2. Under Settings > Download Client, enable Usenet and enter your SABnzbd URL and API key.
+1. Expose the client's completed-downloads directory read-write, ideally under the same shared parent mount as the library so the [mount rules](#slskd) hold. Point the client's completed folder setting at the matching path (SABnzbd's Downloads folder, or NZBGet's `DestDir`), e.g. `/data/sabnzbd/complete`.
+2. Under Settings > Download Client, enable either SABnzbd or NZBGet and fill in its connection details. SABnzbd takes the **full** API key, not the add-only NZB key. NZBGet takes the control username and password from its Settings > Security, and needs NZBGet 16 or newer.
 3. Under Settings > Indexers / Prowlarr, pick one search backend: add each indexer's URL plus API key, or enter your Prowlarr URL plus API key. Then Test and Save.
+
+Both Usenet clients can be configured, but only one handles downloads at a time. If both are enabled, SABnzbd takes precedence; disable it to hand Usenet over to NZBGet.
 
 slskd and Usenet can run side by side; the source priority control picks who goes first.
 
