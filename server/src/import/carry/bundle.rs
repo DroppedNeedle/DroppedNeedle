@@ -363,7 +363,7 @@ fn has_parent_sql(section: &TableSection, row: &str, dry_run: bool) -> String {
                 quote(parent.table),
                 matched(&format!("{row}p"))
             );
-            match section_for(parent.table).filter(|_| dry_run) {
+            let present = match section_for(parent.table).filter(|_| dry_run) {
                 Some(source) => {
                     let alias = format!("{row}q");
                     format!(
@@ -374,6 +374,18 @@ fn has_parent_sql(section: &TableSection, row: &str, dry_run: bool) -> String {
                     )
                 }
                 None => in_v3,
+            };
+            if parent.optional {
+                let empty = joined(
+                    parent
+                        .columns
+                        .iter()
+                        .map(|(own, _)| format!("{row}.{} IS NULL", quote(own))),
+                    " OR ",
+                );
+                format!("({empty} OR {present})")
+            } else {
+                present
             }
         }),
         " AND ",
@@ -425,7 +437,7 @@ fn rule_match(rule: &[&str], alias: &str, row: &str) -> String {
 fn is_new_sql(section: &TableSection, row: &str, dry_run: bool) -> String {
     let target_table = match section.target {
         Target::Table(table) => format!("main.{}", quote(table)),
-        Target::AvatarFiles => return "1".to_owned(),
+        Target::AvatarFiles | Target::HeldFiles => return "1".to_owned(),
     };
     let mut tests = vec![v3_free_sql(section, row, &target_table)];
     let earlier = format!("{row}e");

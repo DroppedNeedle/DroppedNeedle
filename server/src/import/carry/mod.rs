@@ -24,8 +24,11 @@
 //! probe), so nothing else can write between a section's read and write.
 
 pub(crate) mod avatars;
+pub(crate) mod baselines;
 pub(crate) mod bundle;
 pub(crate) mod connections;
+pub(crate) mod held;
+pub(crate) mod links;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -106,6 +109,10 @@ pub(crate) struct CarryRun<'a> {
 enum Work {
     Connections,
     Section(&'static TableSection),
+    /// Translate the carried v2 baselines (after the catalog and blobs).
+    Baselines,
+    /// Settle pending library links (last, on every import).
+    Links,
 }
 
 impl Work {
@@ -113,6 +120,8 @@ impl Work {
         match self {
             Self::Connections => connections::ENTITY,
             Self::Section(section) => section.name,
+            Self::Baselines => baselines::ENTITY,
+            Self::Links => links::ENTITY,
         }
     }
 }
@@ -180,7 +189,9 @@ async fn run_sections(
     }
     if run.bundle.is_some() {
         work.extend(ALL.iter().copied().map(Work::Section));
+        work.push(Work::Baselines);
     }
+    work.push(Work::Links);
     let mut written = 0;
     for (done, unit) in work.into_iter().enumerate() {
         written += carry_section(conn, run, &marker, unit, report).await?;
@@ -280,6 +291,8 @@ async fn apply(
         Work::Connections => {
             return connections::apply(conn, run.root, run.unsealed, run.crypto, run.dry_run).await;
         }
+        Work::Baselines => return baselines::apply(conn, run.dry_run).await,
+        Work::Links => return links::apply(conn, run.dry_run).await,
         Work::Section(section) => section,
     };
     // A section this bundle does not hold (an older exporter) is empty.
@@ -290,6 +303,7 @@ async fn apply(
     match section.target {
         Target::Table(table) => apply_table(conn, section, table, &present, run.dry_run).await,
         Target::AvatarFiles => avatars::apply(conn, run.cache_dir, run.dry_run).await,
+        Target::HeldFiles => held::apply(conn, section, &present, run.cache_dir, run.dry_run).await,
     }
 }
 

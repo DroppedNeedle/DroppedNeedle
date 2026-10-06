@@ -47,10 +47,10 @@ pub const PLAY_QUEUE_ITEMS: TableSection = TableSection {
     ],
     key: &["user_id", "item_index"],
     unique: &[],
-    parents: &[Parent {
-        table: "compat_play_queues",
-        columns: &[("user_id", "user_id")],
-    }],
+    parents: &[Parent::required(
+        "compat_play_queues",
+        &[("user_id", "user_id")],
+    )],
     user_column: Some("user_id"),
     left_behind: "queues of deleted users",
 };

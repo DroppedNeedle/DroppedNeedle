@@ -130,10 +130,7 @@ pub const DOWNLOAD_ATTEMPTS: TableSection = TableSection {
     ],
     key: &["id"],
     unique: &[],
-    parents: &[Parent {
-        table: "download_tasks",
-        columns: &[("task_id", "id")],
-    }],
+    parents: &[Parent::required("download_tasks", &[("task_id", "id")])],
     user_column: None,
     left_behind: "attempts of unfinished downloads, or still cleaning up their folder",
 };

@@ -350,7 +350,7 @@ async fn reimport_writes_nothing() {
 }
 
 /// The user data beyond accounts: every section lands with its v2 library
-/// references kept as pending links, a duplicate v2 playlist is counted
+/// references settled against the carried catalog, a duplicate v2 playlist is counted
 /// instead of breaking the import, sealed connections open under the v3
 /// key, an interrupted carry resumes where it stopped, and a repeat import
 /// writes nothing at all and brings back nothing the user deleted.
@@ -442,15 +442,19 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
     ] {
         assert_eq!(rows(table).await, expected, "{table}");
     }
-    // Library ids wait for the library carry: written as is where v3 has
-    // no foreign key, empty where it does, and recorded either way.
-    assert_eq!(rows("import_pending_links").await, 13);
+    // Library ids are settled once the catalog lands after the user data:
+    // the history row now names the carried track, and only the queued
+    // track v2 itself no longer had still waits.
+    assert_eq!(rows("import_pending_links").await, 1);
     let history: Option<String> =
         sqlx::query_scalar("SELECT local_track_id FROM library_play_history WHERE id = 'listen-1'")
             .fetch_one(&pool)
             .await
             .expect("history reads");
-    assert_eq!(history, None);
+    assert_eq!(
+        history.as_deref(),
+        Some(droppedneedle::tooling::fixture::V2_TRACK_ID)
+    );
     let cover: Vec<u8> =
         sqlx::query_scalar("SELECT image FROM playlist_covers WHERE playlist_id = ?")
             .bind(PLAYLIST_ID)

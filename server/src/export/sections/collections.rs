@@ -12,10 +12,7 @@ const LIVE_PLAYLIST: &str = "s.playlist_id IN (SELECT p.id FROM v2.library_playl
      WHERE p.user_id IS NULL OR p.user_id IN (SELECT id FROM v2.auth_users))";
 
 /// Entries and covers hang off a playlist that landed in v3.
-const ON_PLAYLIST: &[Parent] = &[Parent {
-    table: "playlists",
-    columns: &[("playlist_id", "id")],
-}];
+const ON_PLAYLIST: &[Parent] = &[Parent::required("playlists", &[("playlist_id", "id")])];
 
 /// Source types whose `track_source_id` is a v2 library id.
 const LOCAL_ENTRY: &str = "b.\"source_type\" IN ('local', 'droppedneedle-local', 'howler')";
@@ -164,14 +161,14 @@ pub const FAVORITE_NAMES: TableSection = TableSection {
     ],
     key: &["user_id", "item_kind", "item_id"],
     unique: &[],
-    parents: &[Parent {
-        table: "library_user_favorites",
-        columns: &[
+    parents: &[Parent::required(
+        "library_user_favorites",
+        &[
             ("user_id", "user_id"),
             ("item_kind", "item_kind"),
             ("item_id", "item_id"),
         ],
-    }],
+    )],
     user_column: Some("user_id"),
     left_behind: "",
 };

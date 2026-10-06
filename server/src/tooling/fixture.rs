@@ -71,15 +71,21 @@ pub struct FixtureSecrets {
     pub spotify_refresh: String,
 }
 
-/// v2 library ids the carried user rows point at. The fixture has no
-/// catalog, so every one of them waits as a pending link.
+/// v2 library ids the carried user rows point at. The catalog holds the
+/// track, its album and its artist; the second track is gone from v2, so
+/// references to it stay pending links.
 pub const V2_TRACK_ID: &str = "v2-track-1";
 /// Album of [`V2_TRACK_ID`].
 pub const V2_ALBUM_ID: &str = "v2-album-1";
 /// Artist of [`V2_TRACK_ID`].
 pub const V2_ARTIST_ID: &str = "v2-artist-1";
-/// A second track, queued after the first.
+/// A second track, queued after the first; v2 no longer has it.
 pub const V2_SECOND_TRACK_ID: &str = "v2-track-2";
+/// Id of the v2 library root (`library_settings.library_roots[0]`).
+pub const MUSIC_ROOT_ID: &str = "music";
+/// Where [`V2_TRACK_ID`] sits under the music root. The fixture does not
+/// write the audio file; a test that scans plants it.
+pub const V2_TRACK_REL: &str = "John Coltrane/Blue Train/01.flac";
 /// Alice's playlist, with a cover file.
 pub const PLAYLIST_ID: &str = "playlist-alice";
 /// A second playlist of Alice's imported from the same source. v3 keeps
@@ -115,6 +121,8 @@ pub struct V2Fixture {
     pub artist_two_mbid: String,
     /// Instance id, carried verbatim end to end.
     pub instance_id: String,
+    /// The v2 music root (created empty; tests plant files in it).
+    pub music_root: PathBuf,
 }
 
 /// Fixture build failures.
@@ -159,7 +167,8 @@ pub fn build_v2_fixture(root: &Path) -> Result<V2Fixture, FixtureError> {
     let config_dir = root.join("config");
     let cache_dir = root.join("cache");
     let plugins_dir = root.join("plugins").join("demo");
-    for dir in [&config_dir, &cache_dir, &plugins_dir] {
+    let music_root = root.join("music");
+    for dir in [&config_dir, &cache_dir, &plugins_dir, &music_root] {
         std::fs::create_dir_all(dir).map_err(|error| FixtureError::Io(error.to_string()))?;
     }
     let fernet = crate::export::fernet::FernetKey::generate()
@@ -181,7 +190,7 @@ pub fn build_v2_fixture(root: &Path) -> Result<V2Fixture, FixtureError> {
         artist_two_mbid: fresh_id(),
         instance_id: fresh_id(),
     };
-    let config = fixture_config(&fernet, &secrets, &ids)?;
+    let config = fixture_config(&fernet, &secrets, &ids, &music_root)?;
     std::fs::write(
         config_dir.join("config.json"),
         serde_json::to_string_pretty(&config)
@@ -207,6 +216,7 @@ pub fn build_v2_fixture(root: &Path) -> Result<V2Fixture, FixtureError> {
         artist_one_mbid: ids.artist_one_mbid,
         artist_two_mbid: ids.artist_two_mbid,
         instance_id: ids.instance_id,
+        music_root,
     })
 }
 
@@ -259,6 +269,7 @@ fn fixture_config(
     fernet: &crate::export::fernet::FernetKey,
     secrets: &FixtureSecrets,
     ids: &FixtureIds,
+    music_root: &Path,
 ) -> Result<Map<String, Value>, FixtureError> {
     let seal = |plaintext: &str| {
         fernet
@@ -345,6 +356,19 @@ fn fixture_config(
         }),
     );
     config.insert("wanted".to_owned(), json!({"enabled": true}));
+    config.insert(
+        "library_settings".to_owned(),
+        json!({
+            "enabled": true,
+            "library_roots": [{
+                "id": MUSIC_ROOT_ID,
+                "path": music_root.to_string_lossy(),
+                "label": "Music",
+                "policy": "automatic",
+                "rules": [],
+            }],
+        }),
+    );
     // Legacy section: excluded from the export stream, read by the
     // scan-schedule carry straight from this file.
     config.insert(
@@ -701,6 +725,7 @@ fn build_user_data(
             .map_err(|error| FixtureError::Db(error.to_string()))
     };
     run(USER_DATA_SCHEMA)?;
+    run(V2_LIBRARY_SCHEMA)?;
     let seal = |plaintext: String| {
         fernet
             .encrypt(&plaintext)
@@ -762,8 +787,36 @@ fn build_user_data(
                  'youtube', '{at}', NULL, NULL, NULL, NULL),
                 ('entry-duplicate', '{DUPLICATE_PLAYLIST_ID}', 0, 'Other', 'Someone',
                  'Elsewhere', 'yt-abc', 'youtube', '{at}', NULL, NULL, NULL, NULL);
-         INSERT INTO local_tracks (id, title) VALUES ('{V2_TRACK_ID}', 'Song');
-         INSERT INTO local_albums (id, title) VALUES ('{V2_ALBUM_ID}', 'Album');
+         INSERT INTO local_artists (id, display_name, folded_name, normalized_name, kind,
+             created_at, updated_at)
+         VALUES ('{V2_ARTIST_ID}', 'John Coltrane', 'john coltrane', 'john coltrane',
+                 'person', 1700000000.0, 1700000000.0);
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+             album_artist_name, album_artist_name_folded, album_artist_id, year,
+             grouping_source, created_at, updated_at)
+         VALUES ('{V2_ALBUM_ID}', '{MUSIC_ROOT_ID}',
+                 'John Coltrane/Blue Train' || char(0) || 'blue train' || char(0)
+                     || 'john coltrane',
+                 'Blue Train', 'blue train', 'John Coltrane', 'john coltrane',
+                 '{V2_ARTIST_ID}', 1957, 'automatic', 1700000000.0, 1700000000.0);
+         INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role,
+             credited_name)
+         VALUES ('{V2_ALBUM_ID}', 0, '{V2_ARTIST_ID}', 'main', 'John Coltrane');
+         INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path,
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, stat_revision_kind,
+             title, title_folded, artist_name, artist_name_folded, album_title,
+             album_title_folded, album_artist_name, album_artist_name_folded, disc_number,
+             track_number, year, file_format, availability, ingest_source, imported_at,
+             membership_source, title_provenance, album_title_provenance,
+             album_artist_provenance)
+         VALUES ('{V2_TRACK_ID}', '{V2_ALBUM_ID}', '{MUSIC_ROOT_ID}',
+                 '/music/{V2_TRACK_REL}', '{V2_TRACK_REL}', 'path-hash-1', 0, 0, '0:0',
+                 'exact', 'Blue Train', 'blue train', 'John Coltrane', 'john coltrane',
+                 'Blue Train', 'blue train', 'John Coltrane', 'john coltrane', 1, 1, 1957,
+                 'flac', 'indexed', 'scan', 1700000000.0, 'automatic', 'tag', 'tag', 'tag');
+         INSERT INTO local_track_artists (local_track_id, position, local_artist_id, role,
+             credited_name)
+         VALUES ('{V2_TRACK_ID}', 0, '{V2_ARTIST_ID}', 'main', 'John Coltrane');
          INSERT INTO download_attempts (id, task_id, source, candidate_index, handle_json,
              state, created_at, updated_at)
          VALUES ('attempt-done', '{FINISHED_DOWNLOAD_ID}', 'soulseek', 0, '{{}}', 'complete',
@@ -958,9 +1011,6 @@ const USER_DATA_SCHEMA: &str = "
     CREATE TABLE auth_tokens (
         token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at TEXT NOT NULL);
     CREATE TABLE youtube_links (id TEXT PRIMARY KEY, user_id TEXT NOT NULL);
-    CREATE TABLE local_tracks (id TEXT PRIMARY KEY, title TEXT NOT NULL);
-    CREATE TABLE local_albums (id TEXT PRIMARY KEY, title TEXT NOT NULL);
-    CREATE TABLE local_artists (id TEXT PRIMARY KEY, display_name TEXT NOT NULL);
     CREATE TABLE download_attempts (
         id TEXT PRIMARY KEY, task_id TEXT NOT NULL, source TEXT NOT NULL,
         candidate_index INTEGER NOT NULL, job_name TEXT NOT NULL DEFAULT '',
@@ -973,6 +1023,117 @@ const USER_DATA_SCHEMA: &str = "
         cleanup_failures INTEGER NOT NULL DEFAULT 0, next_retry_at REAL NOT NULL DEFAULT 0,
         lease_owner TEXT, lease_expires_at REAL, error_code TEXT, created_at REAL NOT NULL,
         updated_at REAL NOT NULL, completed_at REAL,
+        row_revision INTEGER NOT NULL DEFAULT 1);
+";
+
+/// v2's library catalog, identity, review, pin and Library Management
+/// tables in v2's final shape (constraints that only point at tables the
+/// fixture leaves out are dropped).
+const V2_LIBRARY_SCHEMA: &str = "
+    CREATE TABLE local_artists (
+        id TEXT PRIMARY KEY, display_name TEXT NOT NULL, sort_name TEXT,
+        folded_name TEXT NOT NULL, normalized_name TEXT NOT NULL DEFAULT '',
+        kind TEXT NOT NULL, retired_into_artist_id TEXT, created_at REAL NOT NULL,
+        updated_at REAL NOT NULL, row_revision INTEGER NOT NULL DEFAULT 1);
+    CREATE TABLE local_albums (
+        id TEXT PRIMARY KEY, root_id TEXT NOT NULL, grouping_key TEXT NOT NULL,
+        title TEXT NOT NULL, title_folded TEXT NOT NULL, album_artist_name TEXT,
+        album_artist_name_folded TEXT, tag_album_title TEXT, tag_album_artist_name TEXT,
+        album_artist_id TEXT NOT NULL, album_artist_sort_name TEXT, year INTEGER,
+        original_release_date TEXT, primary_genre TEXT,
+        is_compilation INTEGER NOT NULL DEFAULT 0, grouping_source TEXT NOT NULL,
+        grouping_locked INTEGER NOT NULL DEFAULT 0, retired_into_album_id TEXT,
+        created_at REAL NOT NULL, updated_at REAL NOT NULL,
+        row_revision INTEGER NOT NULL DEFAULT 1);
+    CREATE TABLE local_tracks (
+        id TEXT PRIMARY KEY, local_album_id TEXT NOT NULL, root_id TEXT NOT NULL,
+        file_path TEXT NOT NULL, relative_path TEXT NOT NULL, path_hash TEXT NOT NULL,
+        file_size_bytes INTEGER NOT NULL, file_mtime_ns INTEGER NOT NULL,
+        stat_revision TEXT NOT NULL, stat_revision_kind TEXT NOT NULL DEFAULT 'unclassified',
+        tag_revision TEXT, tags_read_at REAL, metadata_incomplete INTEGER NOT NULL DEFAULT 0,
+        title TEXT NOT NULL, title_folded TEXT NOT NULL, artist_name TEXT,
+        artist_name_folded TEXT, album_title TEXT NOT NULL, album_title_folded TEXT NOT NULL,
+        album_artist_name TEXT, album_artist_name_folded TEXT, tag_album_title TEXT,
+        tag_album_artist_name TEXT, disc_number INTEGER NOT NULL DEFAULT 1,
+        track_number INTEGER NOT NULL DEFAULT 0, year INTEGER, genre TEXT, genre_folded TEXT,
+        title_sort TEXT, artist_sort TEXT, album_sort TEXT, album_artist_sort TEXT,
+        disc_subtitle TEXT, is_compilation INTEGER NOT NULL DEFAULT 0,
+        embedded_release_group_mbid TEXT, embedded_release_mbid TEXT,
+        embedded_recording_mbid TEXT, embedded_release_track_mbid TEXT,
+        embedded_artist_mbid TEXT, embedded_album_artist_mbid TEXT, duration_seconds REAL,
+        file_format TEXT NOT NULL, bit_rate INTEGER, sample_rate INTEGER, bit_depth INTEGER,
+        channels INTEGER, replaygain_track_gain REAL, replaygain_album_gain REAL,
+        replaygain_track_peak REAL, replaygain_album_peak REAL,
+        availability TEXT NOT NULL DEFAULT 'indexed', missing_since REAL, excluded_at REAL,
+        ingest_source TEXT NOT NULL, download_task_id TEXT, source_path TEXT,
+        imported_at REAL NOT NULL, membership_source TEXT NOT NULL,
+        membership_locked INTEGER NOT NULL DEFAULT 0,
+        desired_policy_revision TEXT NOT NULL DEFAULT '',
+        applied_policy_revision TEXT NOT NULL DEFAULT '',
+        applied_policy TEXT NOT NULL DEFAULT 'automatic',
+        manual_excluded INTEGER NOT NULL DEFAULT 0, row_revision INTEGER NOT NULL DEFAULT 1,
+        title_provenance TEXT NOT NULL DEFAULT 'absent',
+        album_title_provenance TEXT NOT NULL DEFAULT 'absent',
+        album_artist_provenance TEXT NOT NULL DEFAULT 'absent',
+        UNIQUE(root_id, relative_path));
+    CREATE TABLE local_album_artists (
+        local_album_id TEXT NOT NULL, position INTEGER NOT NULL,
+        local_artist_id TEXT NOT NULL, role TEXT NOT NULL, credited_name TEXT,
+        join_phrase TEXT NOT NULL DEFAULT '', row_revision INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY(local_album_id, position));
+    CREATE TABLE local_track_artists (
+        local_track_id TEXT NOT NULL, position INTEGER NOT NULL,
+        local_artist_id TEXT NOT NULL, role TEXT NOT NULL, credited_name TEXT,
+        join_phrase TEXT NOT NULL DEFAULT '', row_revision INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY(local_track_id, position));
+    CREATE TABLE local_album_external_identities (
+        local_album_id TEXT NOT NULL, provider TEXT NOT NULL DEFAULT 'musicbrainz',
+        release_group_mbid TEXT NOT NULL, release_mbid TEXT, decision_source TEXT NOT NULL,
+        matcher_version TEXT, attempt_id TEXT, selected_by_user_id TEXT,
+        selected_at REAL NOT NULL, row_revision INTEGER NOT NULL DEFAULT 1,
+        provider_source_mode TEXT, provider_source_id TEXT,
+        provider_source_generation INTEGER, PRIMARY KEY(local_album_id, provider));
+    CREATE TABLE local_track_external_identities (
+        local_track_id TEXT NOT NULL, provider TEXT NOT NULL DEFAULT 'musicbrainz',
+        recording_mbid TEXT NOT NULL, release_mbid TEXT, release_track_mbid TEXT,
+        medium_position INTEGER, release_track_position INTEGER,
+        decision_source TEXT NOT NULL, attempt_id TEXT, selected_at REAL NOT NULL,
+        row_revision INTEGER NOT NULL DEFAULT 1, provider_source_mode TEXT,
+        provider_source_id TEXT, provider_source_generation INTEGER,
+        PRIMARY KEY(local_track_id, provider));
+    CREATE TABLE library_identification_reviews (
+        id TEXT PRIMARY KEY, local_album_id TEXT, local_track_id TEXT, state TEXT NOT NULL,
+        reason_code TEXT NOT NULL, attempt_id TEXT, input_revision TEXT NOT NULL,
+        decision_revision INTEGER NOT NULL DEFAULT 1, decided_by_user_id TEXT,
+        created_at REAL NOT NULL, updated_at REAL NOT NULL, decided_at REAL,
+        row_revision INTEGER NOT NULL DEFAULT 1,
+        edition_uncertain INTEGER NOT NULL DEFAULT 0,
+        ranked_edition_keys_json TEXT NOT NULL DEFAULT '[]');
+    CREATE TABLE library_album_release_pins (
+        local_album_id TEXT PRIMARY KEY, release_group_mbid TEXT NOT NULL,
+        release_mbid TEXT NOT NULL, set_by_user_id TEXT, set_at TEXT);
+    CREATE TABLE library_management_blobs (
+        sha256 TEXT PRIMARY KEY, kind TEXT NOT NULL, byte_length INTEGER NOT NULL,
+        relative_path TEXT NOT NULL, media_metadata_json TEXT NOT NULL DEFAULT '{}',
+        created_at REAL NOT NULL, row_revision INTEGER NOT NULL DEFAULT 1);
+    CREATE TABLE library_management_baselines (
+        id TEXT PRIMARY KEY, local_track_id TEXT NOT NULL UNIQUE,
+        original_root_id TEXT NOT NULL, original_relative_path TEXT NOT NULL,
+        format TEXT NOT NULL, adapter_version TEXT NOT NULL,
+        semantic_snapshot_blob_sha256 TEXT NOT NULL,
+        image_snapshot_json TEXT NOT NULL DEFAULT '[]',
+        ancillary_snapshot_json TEXT NOT NULL DEFAULT '[]', file_mtime_ns INTEGER,
+        file_mode INTEGER, stat_revision TEXT NOT NULL, tag_revision TEXT NOT NULL,
+        identity_revision INTEGER, created_at REAL NOT NULL,
+        restore_status TEXT NOT NULL DEFAULT 'available', last_verified_at REAL,
+        catalog_document_json TEXT, catalog_document_hash TEXT,
+        row_revision INTEGER NOT NULL DEFAULT 1);
+    CREATE TABLE library_track_management_state (
+        local_track_id TEXT PRIMARY KEY, baseline_id TEXT, applied_profile_id TEXT,
+        applied_profile_revision TEXT, applied_projection_hash TEXT,
+        applied_naming_script_revision TEXT, applied_override_revision TEXT,
+        last_operation_job_id TEXT, managed_root_id TEXT, managed_path_revision TEXT,
+        last_managed_at REAL, last_outcome TEXT, last_reason_code TEXT,
         row_revision INTEGER NOT NULL DEFAULT 1);
 ";
 

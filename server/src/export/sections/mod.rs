@@ -1,4 +1,5 @@
-//! Carried user-data sections: one v2 table (or one set of v2 files) each.
+//! Carried sections: one v2 table (or one set of v2 files) each, covering
+//! user data, the library catalog and the curator's decisions.
 //!
 //! The exporter copies every section into the export bundle, a SQLite file
 //! beside the export JSON; the importer applies the bundle to v3 one
@@ -16,7 +17,10 @@ pub mod avatars;
 pub mod collections;
 pub mod compat;
 pub mod downloads;
+pub mod held;
 pub mod history;
+pub mod library;
+pub mod management;
 pub mod prefs;
 pub mod releases;
 pub mod requests;
@@ -168,6 +172,12 @@ pub enum FileSet {
     PlaylistCovers,
     /// `avatars/<user id>.<ext>` of carried users.
     Avatars,
+    /// `library-management/blobs/objects/<aa>/<bb>/<sha256>.blob` of the
+    /// blob ledger rows already in the bundle, checked against their hash.
+    ManagementBlobs,
+    /// `held/<name>` named by each carried held-import row, read into the
+    /// row's `file` column.
+    HeldImports,
 }
 
 /// Where a section's rows come from in v2.
@@ -187,6 +197,16 @@ pub enum Source {
     },
     /// Files in the v2 cache dir.
     Files(FileSet),
+    /// Rows of one v2 table (as [`Source::Table`], every row of a live
+    /// user that passes `filter`), plus the file each row names.
+    TableWithFiles {
+        /// v2 table name.
+        table: &'static str,
+        /// Extra row predicate, empty for none.
+        filter: &'static str,
+        /// The files the rows name.
+        files: FileSet,
+    },
 }
 
 /// Where a section's rows land in v3.
@@ -196,6 +216,9 @@ pub enum Target {
     Table(&'static str),
     /// Avatar image files under the v3 cache dir.
     AvatarFiles,
+    /// `held_imports` rows whose files land under the v3 cache dir's
+    /// `held` folder first.
+    HeldFiles,
 }
 
 /// A v3 row a carried row hangs off (a foreign key). A carried row whose
@@ -206,6 +229,37 @@ pub struct Parent {
     pub table: &'static str,
     /// (column on the carried row, column on the parent row) pairs.
     pub columns: &'static [(&'static str, &'static str)],
+    /// A row whose reference is empty (a NULL in any of `columns`) needs
+    /// no parent: the reference is optional.
+    pub optional: bool,
+}
+
+impl Parent {
+    /// A parent every carried row must have.
+    #[must_use]
+    pub const fn required(
+        table: &'static str,
+        columns: &'static [(&'static str, &'static str)],
+    ) -> Self {
+        Self {
+            table,
+            columns,
+            optional: false,
+        }
+    }
+
+    /// A parent only rows that hold the reference need.
+    #[must_use]
+    pub const fn optional(
+        table: &'static str,
+        columns: &'static [(&'static str, &'static str)],
+    ) -> Self {
+        Self {
+            table,
+            columns,
+            optional: true,
+        }
+    }
 }
 
 /// One carried section.
@@ -246,6 +300,9 @@ impl TableSection {
 }
 
 /// Every carried bundle section in apply order: parents before children.
+/// User data comes first and the library after it, so an import that
+/// stops between the two keeps the user data; the importer's link step
+/// then points the user data's library references at the carried catalog.
 pub const ALL: &[&TableSection] = &[
     &collections::PLAYLISTS,
     &collections::PLAYLIST_TRACKS,
@@ -273,6 +330,36 @@ pub const ALL: &[&TableSection] = &[
     &releases::KNOWN_RELEASES,
     &releases::NEW_RELEASE_FEED,
     &avatars::AVATARS,
+    &library::ARTISTS,
+    &library::ALBUMS,
+    &library::ALBUM_ARTISTS,
+    &library::TRACKS,
+    &library::TRACK_ARTISTS,
+    &library::TRACK_GENRES,
+    &library::TOMBSTONES,
+    &library::SOURCE_LINKS,
+    &library::ARTIST_ALIASES,
+    &library::ALBUM_ALIASES,
+    &library::ARTIST_IDENTITIES,
+    &library::ALBUM_IDENTITIES,
+    &library::TRACK_IDENTITIES,
+    &library::REVIEW_DECISIONS,
+    &library::KEPT_TAGGED,
+    &library::REQUEUED_REVIEWS,
+    &library::ALBUM_PINS,
+    &library::IDENTIFY_PINS,
+    &library::MERGE_CANDIDATES,
+    &library::ARTIST_DISMISSALS,
+    &management::BLOBS,
+    &management::BLOB_BYTES,
+    &management::BASELINES,
+    &management::TRACK_STATE,
+    &management::EDITION_MANIFESTS,
+    &management::EDITION_TRACKS,
+    &management::EDITION_ACTIVE,
+    &management::EXCLUSIONS,
+    &management::OVERRIDES,
+    &held::HELD_IMPORTS,
 ];
 
 /// Predicate keeping only rows of users that still exist in v2.

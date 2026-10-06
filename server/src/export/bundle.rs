@@ -110,10 +110,30 @@ pub fn write_bundle(
             Source::Files(set) => {
                 copy_files(&conn, section, set, v2_cache, &mut outcome.left_behind)?
             }
+            Source::TableWithFiles {
+                table,
+                filter,
+                files,
+            } => {
+                outcome.read_tables.insert(table);
+                let source = TableSource {
+                    table,
+                    filter,
+                    requires: &[],
+                };
+                let copied = copy_table(&conn, section, &source, &mut outcome.left_behind)?;
+                if copied == 0 {
+                    0
+                } else {
+                    attach_files(&conn, section, files, v2_cache, &mut outcome.left_behind)?
+                }
+            }
         };
         index_section(&conn, section)?;
         outcome.sections.insert(section.name.to_owned(), rows);
     }
+    // Album keys in v3's form, now that albums and tracks are both in.
+    crate::export::library_keys::rekey_albums(&conn)?;
     conn.execute_batch("COMMIT").map_err(bundle_error)?;
     conn.execute_batch("DETACH DATABASE v2")
         .map_err(bundle_error)?;
@@ -289,7 +309,148 @@ fn copy_files(
     match set {
         FileSet::PlaylistCovers => copy_playlist_covers(conn, v2_cache, left_behind),
         FileSet::Avatars => copy_avatars(conn, v2_cache),
+        FileSet::ManagementBlobs => copy_management_blobs(conn, v2_cache, left_behind),
+        FileSet::HeldImports => Err(bundle_error("held files come with their rows")),
     }
+}
+
+/// Fill the file column of a table section whose rows name files. Rows
+/// whose file is gone are taken out of the bundle and listed as left
+/// behind. Returns the rows kept.
+fn attach_files(
+    conn: &Connection,
+    section: &TableSection,
+    set: FileSet,
+    v2_cache: &Path,
+    left_behind: &mut Vec<LeftBehind>,
+) -> Result<u64, ExportError> {
+    match set {
+        FileSet::HeldImports => attach_held_files(conn, section, v2_cache, left_behind),
+        FileSet::PlaylistCovers | FileSet::Avatars | FileSet::ManagementBlobs => Err(bundle_error(
+            format!("{} cannot hang off table rows", section.name),
+        )),
+    }
+}
+
+/// Where v2 kept one held file: its name under `<cache>/held` (v2 wrote
+/// absolute paths from inside its own container), else the stored path.
+fn held_file(v2_cache: &Path, stored: &str) -> Option<PathBuf> {
+    let stored = PathBuf::from(stored);
+    stored
+        .file_name()
+        .map(|name| v2_cache.join("held").join(name))
+        .filter(|path| path.is_file())
+        .or_else(|| stored.is_file().then_some(stored))
+}
+
+/// Read every carried held row's file into its `file` column.
+fn attach_held_files(
+    conn: &Connection,
+    section: &TableSection,
+    v2_cache: &Path,
+    left_behind: &mut Vec<LeftBehind>,
+) -> Result<u64, ExportError> {
+    let name = section.name;
+    let rows: Vec<(i64, String)> = {
+        let mut stmt = conn
+            .prepare(&format!("SELECT rowid, held_path FROM main.\"{name}\""))
+            .map_err(bundle_error)?;
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(bundle_error)?
+            .collect::<Result<_, _>>()
+            .map_err(bundle_error)?
+    };
+    let mut kept = 0;
+    let mut missing = 0;
+    for (rowid, stored) in rows {
+        let Some(path) = held_file(v2_cache, &stored) else {
+            conn.execute(
+                &format!("DELETE FROM main.\"{name}\" WHERE rowid = ?1"),
+                params![rowid],
+            )
+            .map_err(bundle_error)?;
+            missing += 1;
+            continue;
+        };
+        let bytes = std::fs::read(&path).map_err(bundle_error)?;
+        conn.execute(
+            &format!("UPDATE main.\"{name}\" SET file = ?1 WHERE rowid = ?2"),
+            params![bytes, rowid],
+        )
+        .map_err(bundle_error)?;
+        kept += 1;
+    }
+    if missing > 0 {
+        left_behind.push(LeftBehind {
+            table: "held import files".to_owned(),
+            rows: missing,
+            reason: "the held file is missing from the v2 cache folder".to_owned(),
+        });
+    }
+    Ok(kept)
+}
+
+/// Read the stored bytes of every blob ledger row already in the bundle
+/// from v2's blob folder. A file that is missing, or whose bytes do not
+/// hash to its name, stays out and is listed: the importer then refuses
+/// to manage the track it belonged to rather than trust a bad original.
+fn copy_management_blobs(
+    conn: &Connection,
+    v2_cache: &Path,
+    left_behind: &mut Vec<LeftBehind>,
+) -> Result<u64, ExportError> {
+    let ledger = crate::export::sections::management::BLOBS.name;
+    let hashes: Vec<String> = {
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT sha256 FROM main.\"{ledger}\" ORDER BY sha256"
+            ))
+            .map_err(bundle_error)?;
+        stmt.query_map([], |row| row.get(0))
+            .map_err(bundle_error)?
+            .collect::<Result<_, _>>()
+            .map_err(bundle_error)?
+    };
+    let root = v2_cache
+        .join("library-management")
+        .join("blobs")
+        .join("objects");
+    let mut copied = 0;
+    let mut bad = 0;
+    for sha256 in hashes {
+        let valid = sha256.len() == 64 && sha256.bytes().all(|byte| byte.is_ascii_hexdigit());
+        let path = root
+            .join(sha256.get(..2).unwrap_or_default())
+            .join(sha256.get(2..4).unwrap_or_default())
+            .join(format!("{sha256}.blob"));
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) if valid => bytes,
+            _ => {
+                bad += 1;
+                continue;
+            }
+        };
+        if format!("{:x}", Sha256::digest(&bytes)) != sha256 {
+            bad += 1;
+            continue;
+        }
+        conn.execute(
+            "INSERT INTO main.\"management_blob_bytes\" (sha256, bytes) VALUES (?1, ?2)",
+            params![sha256, bytes],
+        )
+        .map_err(bundle_error)?;
+        copied += 1;
+    }
+    if bad > 0 {
+        left_behind.push(LeftBehind {
+            table: "Library Management blob files".to_owned(),
+            rows: bad,
+            reason: "the stored file is missing from v2's blob folder or does not match \
+                     its hash"
+                .to_owned(),
+        });
+    }
+    Ok(copied)
 }
 
 fn content_type_for(path: &Path) -> Option<&'static str> {

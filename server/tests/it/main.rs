@@ -55,6 +55,7 @@ mod library_publish;
 mod library_scan;
 mod library_tags;
 mod media_journey;
+mod migration_library;
 mod migration_pipeline;
 mod persist_runtime;
 mod persist_schema;

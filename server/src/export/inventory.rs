@@ -77,6 +77,28 @@ const CACHES: &[&str] = &[
     "sync_state",
 ];
 
+/// Undo records of single v2 Library Management operations.
+const OPERATION_UNDO: &[&str] = &[
+    "library_automatic_edition_undo",
+    "library_file_mutation_journal",
+    "library_management_blob_references",
+    "library_management_import_bundles",
+    "library_management_import_journal",
+    "library_management_operation_snapshots",
+];
+
+/// Identification history and queue, and evidence v3 gathers again.
+const IDENTIFY_HISTORY: &[&str] = &[
+    "library_artist_credit_proofs",
+    "library_artist_reconciliation_state",
+    "library_enqueue_sequence",
+    "library_identification_attempts",
+    "library_identification_evidence",
+    "library_identification_jobs",
+    "library_identity_repair_findings",
+    "library_reidentification_snapshots",
+];
+
 /// Why one v2 table stays behind.
 #[must_use]
 pub fn reason_for(table: &str) -> &'static str {
@@ -91,17 +113,28 @@ pub fn reason_for(table: &str) -> &'static str {
         "sign-in sessions; everyone signs in again"
     } else if JOB_STATE.contains(&table) || table.starts_with("download_activity_") {
         "download and import job state; v3 starts with an empty queue"
-    } else if table == "held_imports" {
-        "held imports and their files; a later upgrade step carries these"
     } else if CACHES.contains(&table)
         || table.starts_with("mb_")
         || table.starts_with("discovery_")
         || table.ends_with("_mbid_index")
     {
         "cache; v3 fills it again"
+    } else if OPERATION_UNDO.contains(&table) {
+        "undo records of single v2 Library Management changes; restoring a file's \
+         original still works, because original-file baselines move"
+    } else if IDENTIFY_HISTORY.contains(&table) {
+        "identification history; v3 identifies albums again when their files change"
+    } else if table == "local_album_artwork" || table == "library_genre_artwork_revisions" {
+        "album art; v3 reads it from your files again (covers picked by hand in v2 \
+         are not carried)"
+    } else if table.starts_with("library_scan_")
+        || table.starts_with("library_policy_")
+        || table.starts_with("library_migration_")
+    {
+        "scan and housekeeping state; v3 builds its own"
     } else if table.starts_with("local_") || table.starts_with("library_") {
-        "library catalog and Library Management history; v3 rescans your files, \
-         and a later upgrade step carries these"
+        "Library Management job, preview and housekeeping history; v3 keeps its own \
+         from now on"
     } else {
         "not carried"
     }

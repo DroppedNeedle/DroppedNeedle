@@ -57,7 +57,7 @@ fn decide(dir: &Path, user_id: &str, ext: &str, image: &[u8]) -> std::io::Result
     }
 }
 
-fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write as _;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
