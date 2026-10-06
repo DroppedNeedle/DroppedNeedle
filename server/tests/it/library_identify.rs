@@ -70,7 +70,7 @@ fn rig_with_recall(recall: RecallResult) -> Rig {
     let aliases = Arc::new(MemoryAliasStore::default());
     let pins = Arc::new(MemoryPinStore::default());
     let queue = Arc::new(MemoryQueueStore::default());
-    let reviews = Arc::new(MemoryReviewStore::default());
+    let reviews = Arc::new(MemoryReviewStore::linked(identities.clone()));
     let providers = Arc::new(FakeProviders::with_recall(recall));
     let service = IdentifyService::new(IdentifyDeps {
         identities: identities.clone(),
@@ -959,10 +959,19 @@ async fn review_approve_seals_manual_and_holds() {
     assert_eq!(report.outcome, IdentificationOutcome::Ambiguous);
     let review = report.review_id.expect("review");
     // Unknown candidate keys never approve.
-    assert!(!rig.service.approve_candidate(&review, "curator-1", "nope"));
-    assert!(rig.service.approve_candidate(&review, "curator-1", "a"));
+    assert_eq!(
+        rig.service.approve_candidate(&review, "curator-1", "nope"),
+        Ok(false)
+    );
+    assert_eq!(
+        rig.service.approve_candidate(&review, "curator-1", "a"),
+        Ok(true)
+    );
     // Settling twice is a no-op.
-    assert!(!rig.service.approve_candidate(&review, "curator-1", "b"));
+    assert_eq!(
+        rig.service.approve_candidate(&review, "curator-1", "b"),
+        Ok(false)
+    );
     let stored = rig.reviews.get(&review).expect("review");
     assert_eq!(stored.state, ReviewState::Approved);
     let identity = rig.identities.album_identity("album-1").expect("identity");
@@ -1035,7 +1044,10 @@ async fn review_reject_keeps_tagged() {
     let review = report.review_id.expect("review");
     assert!(rig.service.reject_candidates(&review, "curator-1"));
     assert!(!rig.service.reject_candidates(&review, "curator-1"));
-    assert!(!rig.service.approve_candidate(&review, "curator-1", "a"));
+    assert_eq!(
+        rig.service.approve_candidate(&review, "curator-1", "a"),
+        Ok(false)
+    );
     assert_eq!(
         rig.reviews.get(&review).expect("review").state,
         ReviewState::Rejected

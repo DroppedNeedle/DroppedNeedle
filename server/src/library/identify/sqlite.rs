@@ -26,7 +26,8 @@ use super::models::{
 };
 use super::queue::PRIORITY_NEW_OR_CHANGED;
 use super::stores::{
-    AliasStore, FactsSource, IdentityStore, PinStore, ProofStore, QueueStore, ReviewStore,
+    AliasStore, Approval, FactsSource, IdentityStore, PinStore, ProofStore, QueueStore,
+    ReviewStore, StoreError,
 };
 
 const PROVIDER: &str = "musicbrainz";
@@ -1054,6 +1055,96 @@ impl ReviewStore for SqliteIdentifyStore {
         })
         .is_some_and(|changed| changed == 1)
     }
+
+    fn approve(&self, approval: &Approval) -> Result<bool, StoreError> {
+        let mut conn = self.lock();
+        let outcome = (|| {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let settled = tx.execute(
+                "UPDATE library_identify_reviews SET state = 'approved', \
+                 resolved_by_user_id = ?1, selected_candidate_key = ?2, updated_ms = ?3 \
+                 WHERE id = ?4 AND state = 'pending'",
+                params![
+                    approval.by_user_id,
+                    approval.candidate_key,
+                    now_ms(),
+                    approval.review_id
+                ],
+            )?;
+            if settled != 1 {
+                return Ok(false);
+            }
+            seal_album_identity(&tx, &approval.album)?;
+            for track in &approval.tracks {
+                seal_track_identity(&tx, track)?;
+            }
+            tx.commit()?;
+            Ok(true)
+        })();
+        outcome.map_err(|error: rusqlite::Error| StoreError {
+            cause: format!("approve review {}: {error}", approval.review_id),
+        })
+    }
+}
+
+/// Seal one album identity inside the caller's transaction. A new row
+/// starts at revision 1; an existing one moves to its revision plus one.
+fn seal_album_identity(tx: &Connection, identity: &AlbumIdentity) -> rusqlite::Result<()> {
+    let Some(group) = identity.release_group_mbid.as_deref() else {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "album identity without a release group".to_owned(),
+        ));
+    };
+    tx.execute(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, release_mbid, decision_source, selected_at, row_revision) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1) \
+         ON CONFLICT (local_album_id, provider) DO UPDATE SET \
+         release_group_mbid = excluded.release_group_mbid, \
+         release_mbid = excluded.release_mbid, \
+         decision_source = excluded.decision_source, \
+         selected_at = excluded.selected_at, \
+         row_revision = local_album_external_identities.row_revision + 1",
+        params![
+            identity.local_album_id,
+            PROVIDER,
+            group,
+            identity.release_mbid,
+            identity.decision_source.as_str(),
+            now_secs(),
+        ],
+    )?;
+    Ok(())
+}
+
+/// Seal one track identity inside the caller's transaction, revisions as
+/// for albums.
+fn seal_track_identity(tx: &Connection, identity: &TrackIdentity) -> rusqlite::Result<()> {
+    let Some(recording) = identity.recording_mbid.as_deref() else {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "track identity without a recording".to_owned(),
+        ));
+    };
+    tx.execute(
+        "INSERT INTO local_track_external_identities (local_track_id, provider, \
+         recording_mbid, release_track_mbid, decision_source, selected_at, row_revision) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1) \
+         ON CONFLICT (local_track_id, provider) DO UPDATE SET \
+         recording_mbid = excluded.recording_mbid, \
+         release_track_mbid = excluded.release_track_mbid, \
+         decision_source = excluded.decision_source, \
+         selected_at = excluded.selected_at, \
+         row_revision = local_track_external_identities.row_revision + 1",
+        params![
+            identity.local_track_id,
+            PROVIDER,
+            recording,
+            identity.release_track_mbid,
+            identity.decision_source.as_str(),
+            now_secs(),
+        ],
+    )?;
+    Ok(())
 }
 
 const REVIEW_COLUMNS: &str = "id, local_album_id, reason_code, candidates_json, state, \

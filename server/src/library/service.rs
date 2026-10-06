@@ -234,10 +234,11 @@ impl LibrarySetup {
         {
             return Err(ServiceError::NotFound);
         }
-        if !self
+        let approved = self
             .identify
             .approve_candidate(review_id, user_id, candidate_key)
-        {
+            .map_err(|error| ServiceError::internal(&error))?;
+        if !approved {
             return Err(ServiceError::Conflict {
                 message: "Review could not be approved".to_owned(),
             });

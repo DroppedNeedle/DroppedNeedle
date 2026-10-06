@@ -24,35 +24,6 @@ pub fn file_review(
     review
 }
 
-/// Approve a pending review with the curator's chosen candidate.
-/// Approving a settled review is a no-op returning false.
-pub fn approve_review(
-    store: &dyn ReviewStore,
-    review_id: &str,
-    by_user_id: &str,
-    candidate_key: &str,
-) -> bool {
-    let Some(review) = store.get(review_id) else {
-        return false;
-    };
-    if review.state != ReviewState::Pending {
-        return false;
-    }
-    if !review
-        .candidates
-        .iter()
-        .any(|c| c.candidate_key == candidate_key)
-    {
-        return false;
-    }
-    store.set_state(
-        review_id,
-        ReviewState::Approved,
-        Some(by_user_id),
-        Some(candidate_key),
-    )
-}
-
 /// Reject a pending review: the candidates are wrong, keep the album
 /// tagged as-is. Rejecting a settled review is a no-op returning false.
 pub fn reject_review(store: &dyn ReviewStore, review_id: &str, by_user_id: &str) -> bool {

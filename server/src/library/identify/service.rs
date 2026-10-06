@@ -15,14 +15,14 @@ use super::models::{
 };
 use super::providers::{IdentifyProviders, RecallOutcome};
 use super::queue::{PRIORITY_HISTORICAL_BACKLOG, PRIORITY_NEW_OR_CHANGED, PRIORITY_REVIEW_RETRY};
-use super::review::{approve_review, file_review, reject_review};
+use super::review::{file_review, reject_review};
 use super::rules::{
     EditionHint, SubstitutionCase, SubstitutionVerdict, classify_credit, classify_track,
     evaluate_overwrite, evaluate_substitution, rank_with_hint, retracts_on_contradiction,
 };
 use super::stores::{
-    AliasStore, AttemptLanding, FactsSource, IdentityStore, PinStore, ProofStore, QueueStore,
-    ReviewStore, land_job,
+    AliasStore, Approval, AttemptLanding, FactsSource, IdentityStore, PinStore, ProofStore,
+    QueueStore, ReviewStore, StoreError, land_job,
 };
 
 /// Every dependency the identify service needs, injected by constructor.
@@ -387,61 +387,58 @@ impl IdentifyService {
     }
 
     /// A curator approves a review: the chosen candidate seals as a manual
-    /// identity, which later automatic passes can never overwrite.
+    /// identity, which later automatic passes can never overwrite. The
+    /// review settles and every identity lands together or not at all.
+    /// `Ok(false)` for an unknown review or candidate, or a settled review.
     pub fn approve_candidate(
         &self,
         review_id: &str,
         by_user_id: &str,
         candidate_key: &str,
-    ) -> bool {
+    ) -> Result<bool, StoreError> {
         let Some(review) = self.deps.reviews.get(review_id) else {
-            return false;
+            return Ok(false);
         };
-        let winner = review
+        if review.state != ReviewState::Pending {
+            return Ok(false);
+        }
+        let Some(winner) = review
             .candidates
             .iter()
             .find(|c| c.candidate_key == candidate_key)
-            .cloned();
-        let Some(winner) = winner else { return false };
-        if !approve_review(
-            self.deps.reviews.as_ref(),
-            review_id,
-            by_user_id,
-            candidate_key,
-        ) {
-            return false;
-        }
-        let revision = self
-            .deps
-            .identities
-            .album_identity(&review.local_album_id)
-            .map(|row| row.row_revision + 1)
-            .unwrap_or(1);
-        self.deps.identities.save_album_identity(AlbumIdentity {
-            local_album_id: review.local_album_id.clone(),
-            provider: "musicbrainz".to_owned(),
-            release_group_mbid: Some(winner.release_group_mbid.clone()),
-            release_mbid: winner.release_mbid.clone(),
-            decision_source: DecisionSource::Manual,
-            row_revision: revision,
-        });
-        for track in &winner.track_evidence {
-            if track.classification != EvidenceClass::Supported {
-                continue;
-            }
-            let Some(recording) = track.recording_mbid.as_deref() else {
-                continue;
-            };
-            self.deps.identities.save_track_identity(TrackIdentity {
-                local_track_id: track.local_track_id.clone(),
+        else {
+            return Ok(false);
+        };
+        let tracks = winner
+            .track_evidence
+            .iter()
+            .filter(|track| track.classification == EvidenceClass::Supported)
+            .filter_map(|track| {
+                let recording = track.recording_mbid.as_deref()?;
+                Some(TrackIdentity {
+                    local_track_id: track.local_track_id.clone(),
+                    provider: "musicbrainz".to_owned(),
+                    recording_mbid: Some(recording.to_owned()),
+                    release_track_mbid: track.release_track_mbid.clone(),
+                    decision_source: DecisionSource::Manual,
+                    row_revision: 1,
+                })
+            })
+            .collect();
+        self.deps.reviews.approve(&Approval {
+            review_id: review_id.to_owned(),
+            by_user_id: by_user_id.to_owned(),
+            candidate_key: candidate_key.to_owned(),
+            album: AlbumIdentity {
+                local_album_id: review.local_album_id.clone(),
                 provider: "musicbrainz".to_owned(),
-                recording_mbid: Some(recording.to_owned()),
-                release_track_mbid: track.release_track_mbid.clone(),
+                release_group_mbid: Some(winner.release_group_mbid.clone()),
+                release_mbid: winner.release_mbid.clone(),
                 decision_source: DecisionSource::Manual,
                 row_revision: 1,
-            });
-        }
-        true
+            },
+            tracks,
+        })
     }
 
     /// A curator rejects a review: the album keeps its tags, nothing seals.

@@ -72,6 +72,31 @@ pub trait QueueStore: Send + Sync {
     fn recover(&self) -> usize;
 }
 
+/// A durable store could not complete a write. The cause is for the log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoreError {
+    pub cause: String,
+}
+
+impl std::fmt::Display for StoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "identify store failed: {}", self.cause)
+    }
+}
+
+impl std::error::Error for StoreError {}
+
+/// A curator's approval: the review it settles and the identities it
+/// seals. The album identity's row revision is the store's to set.
+#[derive(Debug, Clone)]
+pub struct Approval {
+    pub review_id: String,
+    pub by_user_id: String,
+    pub candidate_key: String,
+    pub album: AlbumIdentity,
+    pub tracks: Vec<TrackIdentity>,
+}
+
 /// Curator review queue.
 pub trait ReviewStore: Send + Sync {
     fn file(&self, review: ReviewItem);
@@ -84,6 +109,10 @@ pub trait ReviewStore: Send + Sync {
         by_user_id: Option<&str>,
         selected_key: Option<&str>,
     ) -> bool;
+    /// Settle a pending review as approved and seal the identities it
+    /// chose, all or nothing. `Ok(false)` when the review is no longer
+    /// pending. Each sealed row takes its stored revision plus one.
+    fn approve(&self, approval: &Approval) -> Result<bool, StoreError>;
 }
 
 /// States a claimed job can land in after one attempt.

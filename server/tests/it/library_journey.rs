@@ -1119,6 +1119,49 @@ async fn retagged_album_keeps_its_identity() {
     );
 }
 
+/// An approval that cannot seal its identity fails as a whole: the
+/// caller gets the error and the review stays pending.
+#[tokio::test]
+async fn failed_approval_leaves_the_review_pending() {
+    use droppedneedle::library::scan::CatalogStore as _;
+    use droppedneedle::library::service::ServiceError;
+
+    let (_scratch, library, music) = bare_library("lib-approve-fail");
+    plant(&music, "album/01.flac", "flac_full_01.flac");
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "album/01.flac")
+        .expect("track indexed");
+    let album = library.scan_store.album_for_track(&track).expect("album");
+    library
+        .test_providers
+        .as_ref()
+        .expect("scripted providers")
+        .set_recall(ambiguous_recall(&track, &track));
+    assert_eq!(library.identify_tick().await, 1);
+    let review = library.pending_reviews(&album);
+    assert_eq!(review.len(), 1);
+    library
+        .scan_store
+        .execute_batch_for_tests(
+            "CREATE TRIGGER refuse_identity BEFORE INSERT \
+             ON local_album_external_identities BEGIN SELECT RAISE(ABORT, 'refused'); END;",
+        )
+        .expect("trigger installs");
+
+    let refused = library.approve_review(&review[0].id, "curator", "rg-1:rel-1");
+    assert!(
+        matches!(refused, Err(ServiceError::Internal { .. })),
+        "a store failure is an error, not an approval"
+    );
+    assert_eq!(
+        library.pending_reviews(&album).len(),
+        1,
+        "review stays pending"
+    );
+}
+
 /// Identification state is durable: a job the scan queued survives a
 /// restart, and a curator's approval stays a manual identity after the
 /// next one.

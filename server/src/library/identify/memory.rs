@@ -2,14 +2,15 @@
 //! stores in `sqlite`.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use super::models::{
     AlbumIdentity, Alias, ArtistCredit, ArtistIdentity, CreditProof, IdentifyJob, LocalAlbumFacts,
     ReleasePin, ReviewItem, ReviewState, TrackIdentity,
 };
 use super::stores::{
-    AliasStore, FactsSource, IdentityStore, PinStore, ProofStore, QueueStore, ReviewStore,
+    AliasStore, Approval, FactsSource, IdentityStore, PinStore, ProofStore, QueueStore,
+    ReviewStore, StoreError,
 };
 
 #[derive(Debug, Default)]
@@ -388,6 +389,19 @@ impl QueueStore for MemoryQueueStore {
 #[derive(Debug, Default)]
 pub struct MemoryReviewStore {
     reviews: Mutex<HashMap<String, ReviewItem>>,
+    /// Where approvals seal their identities; unlinked stores keep only
+    /// the review state.
+    identities: Option<Arc<MemoryIdentityStore>>,
+}
+
+impl MemoryReviewStore {
+    /// A review store whose approvals seal into `identities`.
+    pub fn linked(identities: Arc<MemoryIdentityStore>) -> Self {
+        Self {
+            reviews: Mutex::default(),
+            identities: Some(identities),
+        }
+    }
 }
 
 impl ReviewStore for MemoryReviewStore {
@@ -434,5 +448,35 @@ impl ReviewStore for MemoryReviewStore {
         review.resolved_by_user_id = by_user_id.map(str::to_owned);
         review.selected_candidate_key = selected_key.map(str::to_owned);
         true
+    }
+
+    fn approve(&self, approval: &Approval) -> Result<bool, StoreError> {
+        let mut reviews = self.reviews.lock().map_err(|_| StoreError {
+            cause: "review lock poisoned".to_owned(),
+        })?;
+        let Some(review) = reviews.get_mut(&approval.review_id) else {
+            return Ok(false);
+        };
+        if review.state != ReviewState::Pending {
+            return Ok(false);
+        }
+        review.state = ReviewState::Approved;
+        review.resolved_by_user_id = Some(approval.by_user_id.clone());
+        review.selected_candidate_key = Some(approval.candidate_key.clone());
+        if let Some(identities) = &self.identities {
+            let mut album = approval.album.clone();
+            album.row_revision = identities
+                .album_identity(&album.local_album_id)
+                .map_or(1, |row| row.row_revision + 1);
+            identities.save_album_identity(album);
+            for track in &approval.tracks {
+                let mut track = track.clone();
+                track.row_revision = identities
+                    .track_identity(&track.local_track_id)
+                    .map_or(1, |row| row.row_revision + 1);
+                identities.save_track_identity(track);
+            }
+        }
+        Ok(true)
     }
 }
