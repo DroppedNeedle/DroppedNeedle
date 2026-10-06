@@ -332,9 +332,15 @@ fn resume_precommit<C: Catalog>(
                 file_path: dest.to_string_lossy().into_owned(),
                 fingerprint: journal.staged_sha256.clone(),
                 mgmt_state: mgmt.to_string(),
-                adopt: mgmt
-                    .starts_with(super::publisher::ADOPTED_STATE)
-                    .then(super::planner::Adoption::recovered),
+                adopt: mgmt.starts_with(super::publisher::ADOPTED_STATE).then(|| {
+                    let (task_id, source_path) = journal
+                        .source
+                        .as_ref()
+                        .and_then(|(root, rel)| sandbox.resolve_no_symlink(root, rel).ok())
+                        .map(|staged| crate::library::import::recovered_provenance(&staged))
+                        .unwrap_or_default();
+                    super::planner::Adoption::recovered(task_id, source_path)
+                }),
             });
         }
     }

@@ -161,14 +161,15 @@ pub struct Adoption {
 }
 
 impl Adoption {
-    /// What a resumed commit knows from the journal alone: the automatic
-    /// policy and no provenance. The next scan re-reads the policy.
-    pub fn recovered() -> Self {
+    /// What a resumed commit knows: the provenance the import recorded
+    /// next to its staged copies, and the automatic policy (the next scan
+    /// re-reads the policy).
+    pub fn recovered(download_task_id: Option<String>, source_path: Option<String>) -> Self {
         Self {
             policy: crate::library::scan::models::EffectivePolicy::Automatic,
             policy_revision: String::new(),
-            download_task_id: None,
-            source_path: None,
+            download_task_id,
+            source_path,
         }
     }
 }

@@ -282,6 +282,8 @@ impl LibrarySetup {
                     }),
                 });
             }
+            write_provenance(&staged_dir, &import.task_id, &placements)
+                .map_err(|error| fault(format!("import provenance not written: {error}")))?;
             let catalog_revision = SqliteCatalog
                 .revision(open.publisher.connection())
                 .map_err(|error| fault(error.to_string()))?;
@@ -408,6 +410,59 @@ fn safe_name(task_id: &str) -> String {
     } else {
         cleaned
     }
+}
+
+/// Name of the file in a task's import folder that says where each staged
+/// copy came from, so a commit resumed after a crash keeps provenance.
+const PROVENANCE_FILE: &str = "provenance.json";
+
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct Provenance {
+    task_id: String,
+    /// Staged file name to the downloaded file it copies.
+    sources: BTreeMap<String, String>,
+}
+
+/// Record the task and each staged copy's source, synced, before publish.
+fn write_provenance(dir: &Path, task_id: &str, placements: &[Placement]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let provenance = Provenance {
+        task_id: task_id.to_owned(),
+        sources: placements
+            .iter()
+            .filter_map(|placement| {
+                let name = Path::new(&placement.staged_rel).file_name()?;
+                Some((
+                    name.to_string_lossy().into_owned(),
+                    placement.source.to_string_lossy().into_owned(),
+                ))
+            })
+            .collect(),
+    };
+    let body = serde_json::to_vec(&provenance).map_err(std::io::Error::other)?;
+    std::fs::create_dir_all(dir)?;
+    let mut file = std::fs::File::create(dir.join(PROVENANCE_FILE))?;
+    file.write_all(&body)?;
+    file.sync_all()
+}
+
+/// The download task and source path recorded for a staged import copy
+/// (`None`s when the record is gone).
+pub(crate) fn recovered_provenance(staged: &Path) -> (Option<String>, Option<String>) {
+    let Some(dir) = staged.parent() else {
+        return (None, None);
+    };
+    let Some(provenance) = std::fs::read(dir.join(PROVENANCE_FILE))
+        .ok()
+        .and_then(|body| serde_json::from_slice::<Provenance>(&body).ok())
+    else {
+        return (None, None);
+    };
+    let source = staged
+        .file_name()
+        .and_then(|name| provenance.sources.get(name.to_string_lossy().as_ref()))
+        .cloned();
+    (Some(provenance.task_id).filter(|id| !id.is_empty()), source)
 }
 
 /// Copy one landed file into the hidden import folder, synced, hashing
