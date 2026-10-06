@@ -30,6 +30,7 @@ pub mod manage;
 pub mod matching;
 pub mod operations;
 pub mod publish;
+pub mod reconcile;
 pub mod scan;
 pub mod scans;
 pub mod service;

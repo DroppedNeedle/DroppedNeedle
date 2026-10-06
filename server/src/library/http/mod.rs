@@ -6,5 +6,6 @@ pub mod error;
 pub mod handlers;
 pub mod models;
 pub mod operations;
+pub mod reconcile;
 pub mod routes;
 pub mod scan;

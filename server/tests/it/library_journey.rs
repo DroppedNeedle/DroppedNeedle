@@ -2450,3 +2450,80 @@ async fn library_journey_undo_edition_then_reidentify() {
     let (_, found) = call(lib.router(), "GET", &finder, &headers, None).await;
     assert_eq!(found["items"][0]["is_current_release"], json!(true));
 }
+
+/// Two "Low" records with music and no MusicBrainz evidence: listed as a
+/// same-name group, opened, refused with a stale revision, then marked
+/// distinct, after which the group stays gone.
+#[tokio::test]
+async fn artist_duplicate_groups_list_open_and_dismiss() {
+    let lib = Lib::open("reconcile").await;
+    let admin = setup_admin(lib.router(), "owner", "owner-password-1").await;
+    let auth = bearer(&admin);
+    let headers = [("authorization", auth.as_str())];
+    {
+        let conn = droppedneedle::db::open_connection(&lib.db_path).expect("db opens");
+        for n in ["1", "2"] {
+            conn.execute_batch(&format!(
+                "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+                 updated_at) VALUES ('low-{n}', 'Low', 'low', 'group', {n}, {n});
+                 INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+                 album_artist_id, grouping_source, created_at, updated_at) \
+                 VALUES ('album-{n}', 'root', 'g-{n}', 'Album {n}', 'album {n}', 'low-{n}', \
+                 'manual', 0, 0);
+                 INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role) \
+                 VALUES ('album-{n}', 0, 'low-{n}', 'primary');
+                 INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+                 path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+                 album_title, album_title_folded, file_format, ingest_source, imported_at, \
+                 membership_source) VALUES ('track-{n}', 'album-{n}', 'root', '/m/{n}.flac', \
+                 '{n}.flac', 'h{n}', 1, 0, 's', 'Song', 'song', 'Album {n}', 'album {n}', \
+                 'flac', 'scan', 0, 'manual');"
+            ))
+            .expect("seed artist");
+        }
+    }
+
+    let (status, body) = call(
+        lib.router(),
+        "GET",
+        "/api/v3/library/artists/duplicate-groups?search=lo",
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], 1, "{body}");
+    let group = &body["items"][0];
+    assert_eq!(group["state"], "same_name_only");
+    assert_eq!(group["reason"]["code"], "NAME_MATCH_WITHOUT_PROVIDER_PROOF");
+    let group_id = group["id"].as_str().expect("group id").to_owned();
+    let path = format!("/api/v3/library/artists/duplicate-groups/{group_id}");
+
+    let (status, detail) = call(lib.router(), "GET", &path, &headers, None).await;
+    assert_eq!(status, StatusCode::OK, "{detail}");
+    assert_eq!(detail["releases"].as_array().map(Vec::len), Some(2));
+    let revisions = detail["member_revisions"].clone();
+
+    let dismiss = format!("{path}/dismiss");
+    let stale = json!({"expected_member_revisions": {"low-1": 1, "low-2": 9}});
+    let (status, body) = call(lib.router(), "POST", &dismiss, &headers, Some(stale)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+
+    let fresh = json!({"expected_member_revisions": revisions});
+    let (status, body) = call(lib.router(), "POST", &dismiss, &headers, Some(fresh)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["dismissed_pairs"], 1);
+
+    let (_, body) = call(
+        lib.router(),
+        "GET",
+        "/api/v3/library/artists/reconciliation",
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(body["state"], "idle", "{body}");
+    assert_eq!(body["same_name_only_count"], 0, "{body}");
+    let (status, _) = call(lib.router(), "GET", &path, &headers, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

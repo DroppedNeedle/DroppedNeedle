@@ -2101,6 +2101,27 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/library/albums/{album_id}/undo-automatic-edition",
         Posture::Admin,
     ),
+    // Artist reconciliation: admin-only, as in v2.
+    (
+        "GET",
+        "/api/v3/library/artists/reconciliation",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/library/artists/duplicate-groups",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/library/artists/duplicate-groups/{group_id}",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/artists/duplicate-groups/{group_id}/dismiss",
+        Posture::Admin,
+    ),
 ];
 
 /// Fill `{param}` segments with a dummy id.
