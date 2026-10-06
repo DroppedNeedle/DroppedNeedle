@@ -203,27 +203,6 @@ export const API = {
 		resetAlbumGrouping: (albumId: string) => `/api/v1/library/albums/${albumId}/reset-grouping`,
 		previewArtistMerge: () => '/api/v1/library/artists/merge-preview',
 		mergeArtists: () => '/api/v1/library/artists/merge',
-		artistReconciliation: () => '/api/v1/library/artists/reconciliation',
-		artistDuplicateGroups: (
-			params: {
-				limit?: number;
-				cursor?: string;
-				state?: string;
-				search?: string;
-			} = {}
-		) => {
-			const query = new URLSearchParams();
-			if (params.limit !== undefined) query.set('limit', String(params.limit));
-			if (params.cursor) query.set('cursor', params.cursor);
-			if (params.state) query.set('state', params.state);
-			if (params.search) query.set('search', params.search);
-			const suffix = query.size ? `?${query.toString()}` : '';
-			return `/api/v1/library/artists/duplicate-groups${suffix}`;
-		},
-		artistDuplicateGroup: (groupId: string) =>
-			`/api/v1/library/artists/duplicate-groups/${groupId}`,
-		dismissArtistDuplicateGroup: (groupId: string) =>
-			`/api/v1/library/artists/duplicate-groups/${groupId}/dismiss`,
 		identityRepairs: (limit?: number, cursor?: string) => {
 			const query = new URLSearchParams();
 			if (limit !== undefined) query.set('limit', String(limit));

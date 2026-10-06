@@ -137,7 +137,7 @@ A `:dev` tag (`droppedneedle/droppedneedle:dev`) is built from `main` on every p
 | Discovery | Trending, charts, genre browsing, recommendations from your ListenBrainz and Last.fm history, an album-by-album discover queue, and a weekly mix that can queue up to five missing albums |
 | Live events | Ticketmaster and Skiddle gig alerts for artists you follow, each user with their own cities |
 | Following | New-release radar with optional auto-download, release-type filters, and sidebar badges |
-| Library | Browse, filter, download, rescan, and remove albums; unmatched files wait in a manual-review queue |
+| Library | Browse, filter, download, rescan, and remove albums; unmatched files wait in a manual-review queue. Admins see artists that appear twice under the same name, with the MusicBrainz evidence for each, and can mark them as different people |
 | Free Music | Internet Archive items under Creative Commons or public-domain licences, licence shown up front, no account or API key, off with one toggle |
 | Drop imports | Drag in a zip or loose files from anywhere you buy music; identified, tagged, and shelved, or held for a manual match |
 | Playlists | Mix Jellyfin, Navidrome, Plex, local, YouTube, and Spotify imports in one place, share read-only with one toggle |

@@ -441,9 +441,8 @@
 									</div>
 									<span class="badge {stateClass(detail.state)}">{stateLabel(detail.state)}</span>
 								</div>
-								<p class="mt-2 text-sm text-base-content/60">
-									{detail.reason_code.replaceAll('_', ' ')}
-								</p>
+								<p class="mt-2 text-sm text-base-content/70">{detail.reason.message}</p>
+								<p class="mt-1 text-sm text-base-content/50">{detail.reason.action}</p>
 							</header>
 
 							<div class="space-y-5 p-4">

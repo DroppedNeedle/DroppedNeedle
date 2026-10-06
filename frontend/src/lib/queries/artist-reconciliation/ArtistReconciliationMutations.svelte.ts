@@ -1,19 +1,17 @@
 import { createMutation } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { toastStore } from '$lib/stores/toast';
 
 import { invalidateArtistReconciliation } from './ArtistReconciliationInvalidation';
-import type { ArtistDuplicateGroupDismissResponse } from './ArtistReconciliationTypes';
+import { ARTIST_RECONCILIATION_ENDPOINTS } from './endpoints';
 
 export const dismissArtistDuplicateGroup = () =>
 	createMutation(() => ({
 		mutationFn: (input: { groupId: string; expectedMemberRevisions: Record<string, number> }) =>
-			api.global.post<ArtistDuplicateGroupDismissResponse>(
-				API.library.dismissArtistDuplicateGroup(input.groupId),
-				{ expected_member_revisions: input.expectedMemberRevisions }
-			),
+			api.global.v3.POST(ARTIST_RECONCILIATION_ENDPOINTS.dismiss(input.groupId), {
+				expected_member_revisions: input.expectedMemberRevisions
+			}),
 		onSuccess: async () => {
 			await invalidateArtistReconciliation();
 			toastStore.show({ message: 'Artist records marked as distinct', type: 'success' });

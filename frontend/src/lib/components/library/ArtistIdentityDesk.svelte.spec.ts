@@ -47,6 +47,11 @@ const group: ArtistDuplicateGroupSummary = {
 	recommended_survivor_id: 'artist-1',
 	affected_reference_count: 31,
 	reason_code: 'INCOMPLETE_PROVIDER_PROOF',
+	reason: {
+		code: 'INCOMPLETE_PROVIDER_PROOF',
+		message: 'Only some of these records are matched to MusicBrainz yet.',
+		action: 'Identify the unmatched albums.'
+	},
 	resolved_at: null
 };
 
