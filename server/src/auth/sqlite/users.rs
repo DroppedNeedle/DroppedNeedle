@@ -377,6 +377,15 @@ impl UserStore for SqliteUserStore {
                 if !holders.is_empty() {
                     return Ok(UserDeletion::Referenced(holders));
                 }
+                // Discover keeps per-user rows without a foreign key (the
+                // tables predate it); they go with the account, as in v2.
+                for table in ["ignored_releases", "discovery_snapshots"] {
+                    tx.execute(
+                        &format!("DELETE FROM {table} WHERE user_id = ?"),
+                        rusqlite::params![id],
+                    )
+                    .map_err(op_error)?;
+                }
                 tx.execute("DELETE FROM auth_users WHERE id = ?", rusqlite::params![id])
                     .map_err(op_error)?;
                 Ok(UserDeletion::Deleted)
