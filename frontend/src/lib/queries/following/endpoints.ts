@@ -9,7 +9,10 @@ export const FOLLOW_ENDPOINTS = {
 	autoDownload: (mbid: string) =>
 		v3('/api/v3/artists/{artist_mbid}/auto-download', { path: { artist_mbid: mbid } }),
 	followedArtists: () => v3('/api/v3/following/artists'),
-	recentReleases: () => v3('/api/v3/following/new-releases/recent'),
+	recentReleases: (days: number, limit: number, includeOwned: boolean) =>
+		v3('/api/v3/following/new-releases/recent', {
+			query: { days, limit, include_owned: includeOwned }
+		}),
 	newReleasesUnseenCount: () => v3('/api/v3/following/new-releases/unseen-count'),
 	markNewReleasesSeen: () => v3('/api/v3/following/new-releases/seen'),
 	adminApprovals: () => v3('/api/v3/requests/auto-download-approvals'),

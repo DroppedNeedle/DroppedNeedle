@@ -41,6 +41,7 @@ export function toNewRelease(release: components['schemas']['NewReleaseItem']): 
 		artist_name: release.artist_name,
 		artist_mbid: release.artist_mbid,
 		primary_type: release.primary_type ?? null,
-		first_release_date: release.first_release_date ?? null
+		first_release_date: release.first_release_date ?? null,
+		in_library: release.in_library
 	};
 }

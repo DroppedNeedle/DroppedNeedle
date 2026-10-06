@@ -27,7 +27,6 @@ export interface NewRelease {
 	artist_mbid: string;
 	primary_type?: string | null;
 	first_release_date?: string | null;
-	// v3 does not flag owned releases yet; the log view hides the badge then.
 	in_library?: boolean;
 }
 

@@ -24,9 +24,8 @@ export const getFollowedArtistsQuery = () =>
 		}
 	}));
 
-// The release log. v3 serves one recent window without a day range, limit or
-// owned flag, so the limit applies here and the window/owned filters stay in
-// the key only to keep the page's choices cached apart.
+// The release log: the last `days` days of releases from followed artists,
+// owned albums flagged (or hidden when includeOwned is false).
 export const getRecentReleasesQuery = (
 	getDays: Getter<number>,
 	getLimit: Getter<number>,
@@ -40,8 +39,11 @@ export const getRecentReleasesQuery = (
 			getIncludeOwned()
 		),
 		queryFn: async ({ signal }): Promise<NewReleasesResponse> => {
-			const data = await api.global.v3.GET(FOLLOW_ENDPOINTS.recentReleases(), { signal });
-			return { items: data.items.slice(0, getLimit()).map(toNewRelease), total: data.total };
+			const data = await api.global.v3.GET(
+				FOLLOW_ENDPOINTS.recentReleases(getDays(), getLimit(), getIncludeOwned()),
+				{ signal }
+			);
+			return { items: data.items.map(toNewRelease), total: data.total };
 		}
 	}));
 
