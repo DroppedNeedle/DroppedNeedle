@@ -1306,6 +1306,7 @@ async fn translate_principal(
 }
 
 /// Flows bundle over the shared durable stores and live settings.
+#[allow(clippy::too_many_arguments)]
 fn flows_bundle(
     db: &AcquireDb,
     requests: &RequestsState,
