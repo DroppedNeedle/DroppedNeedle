@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { userStorageSegment } from '$lib/queries/userKeySegment';
 	import { TriangleAlert, CirclePause, CirclePlay, FolderTree, OctagonX } from 'lucide-svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getLibraryPolicyTreeQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
@@ -74,7 +75,7 @@
 				: 'Apply policy changes'
 	);
 	const storageKey = $derived(
-		`droppedneedle:identification-retry:${authStore.user?.id ?? 'anonymous'}`
+		`droppedneedle:identification-retry:${userStorageSegment(authStore.user?.id)}`
 	);
 	const retrySelection = $derived({
 		review_ids: [],

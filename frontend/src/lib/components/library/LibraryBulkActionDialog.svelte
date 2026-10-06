@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { userStorageSegment } from '$lib/queries/userKeySegment';
 	import { CirclePause, CirclePlay, OctagonX } from 'lucide-svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { getLibraryOperationQuery } from '$lib/queries/library/LibraryOperationQueries.svelte';
@@ -53,7 +54,7 @@
 	let dialogHeading: HTMLHeadingElement;
 	let opener: HTMLButtonElement | null = null;
 	const storageKey = $derived(
-		`droppedneedle:library-bulk-job:${authStore.user?.id ?? 'anonymous'}`
+		`droppedneedle:library-bulk-job:${userStorageSegment(authStore.user?.id)}`
 	);
 
 	$effect(() => {

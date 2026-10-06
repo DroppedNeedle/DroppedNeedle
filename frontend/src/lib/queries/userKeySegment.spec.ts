@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { userIdSegment } from './userKeySegment';
+import { userIdSegment, userStorageSegment } from './userKeySegment';
 
 describe('userIdSegment', () => {
 	it('normalizes a missing userId to null', () => {
@@ -16,5 +16,16 @@ describe('userIdSegment', () => {
 
 	it('gives distinct users distinct segments', () => {
 		expect(userIdSegment('user-a')).not.toBe(userIdSegment('user-b'));
+	});
+});
+
+describe('userStorageSegment', () => {
+	it('spells a missing userId as null in string keys', () => {
+		expect(userStorageSegment(undefined)).toBe('null');
+		expect(userStorageSegment(null)).toBe('null');
+	});
+
+	it('keeps the userId string', () => {
+		expect(userStorageSegment('user-a')).toBe('user-a');
 	});
 });

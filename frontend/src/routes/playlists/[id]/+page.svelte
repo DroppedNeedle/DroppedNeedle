@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { userStorageSegment } from '$lib/queries/userKeySegment';
 	import { goto } from '$app/navigation';
 	import { onDestroy, untrack } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
@@ -95,7 +96,7 @@
 	// browser never read each other's resolved sources (AMU-5).
 	const SOURCES_CACHE_PREFIX = 'droppedneedle_playlist_sources_';
 	function sourcesCacheKey(playlistId: string): string {
-		return `${SOURCES_CACHE_PREFIX}${authStore.user?.id ?? 'anon'}_${playlistId}`;
+		return `${SOURCES_CACHE_PREFIX}${userStorageSegment(authStore.user?.id)}_${playlistId}`;
 	}
 
 	function getSourcesFromCache(playlistId: string): Record<string, string[]> | null {

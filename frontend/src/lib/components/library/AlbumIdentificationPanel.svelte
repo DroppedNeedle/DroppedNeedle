@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { userStorageSegment } from '$lib/queries/userKeySegment';
 	import {
 		BadgeCheck,
 		ChevronRight,
@@ -74,11 +75,11 @@
 	let conversionPreflightToken = $state<string | null>(null);
 	let openedAutomatically = $state(false);
 	const storageKey = $derived(
-		`droppedneedle:album-identification:${authStore.user?.id ?? 'anonymous'}:${album.id}`
+		`droppedneedle:album-identification:${userStorageSegment(authStore.user?.id)}:${album.id}`
 	);
 	const conversionStorageKey = $derived(
 		conversionJobId
-			? `droppedneedle:edition-conversion-preflight:${authStore.user?.id ?? 'anonymous'}:${conversionJobId}`
+			? `droppedneedle:edition-conversion-preflight:${userStorageSegment(authStore.user?.id)}:${conversionJobId}`
 			: null
 	);
 	const attentionDescriptionId = $derived(`reidentify-attention-${album.id}`);
@@ -325,7 +326,7 @@
 		if (result.preflight_token) {
 			try {
 				sessionStorage.setItem(
-					`droppedneedle:edition-conversion-preflight:${authStore.user?.id ?? 'anonymous'}:${result.job_id}`,
+					`droppedneedle:edition-conversion-preflight:${userStorageSegment(authStore.user?.id)}:${result.job_id}`,
 					result.preflight_token
 				);
 			} catch {

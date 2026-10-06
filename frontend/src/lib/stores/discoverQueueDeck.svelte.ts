@@ -1,3 +1,4 @@
+import { userStorageSegment } from '$lib/queries/userKeySegment';
 /**
  * State machine for the always-visible Discover Queue deck.
  *
@@ -80,7 +81,7 @@ function createDiscoverQueueDeck() {
 	const isLast = $derived(currentIndex >= queue.length - 1);
 
 	function userId(): string {
-		return authStore.user?.id ?? 'anon';
+		return userStorageSegment(authStore.user?.id);
 	}
 
 	function persist(): void {

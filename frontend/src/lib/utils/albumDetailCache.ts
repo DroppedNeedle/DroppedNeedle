@@ -1,3 +1,4 @@
+import { userStorageSegment } from '$lib/queries/userKeySegment';
 import { CACHE_KEYS, CACHE_TTL } from '$lib/constants';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { getNavidromeFolderScopeRevision } from '$lib/utils/navidromeLibraryCache';
@@ -23,7 +24,7 @@ function musicBrainzCacheNamespace(): string {
 	const scope = musicBrainzSourceKey();
 	return [
 		`m-${encodeURIComponent(scope.source_mode)}`,
-		`u-${encodeURIComponent(scope.user_id ?? 'anonymous')}`,
+		`u-${encodeURIComponent(userStorageSegment(scope.user_id))}`,
 		`s-${encodeURIComponent(scope.source_id || 'legacy')}`,
 		`g-${scope.generation}`
 	].join('_');
@@ -84,7 +85,7 @@ export const albumSourceMatchCache = createLocalStorageCache<AlbumSourceMatchCac
 
 export function albumSourceMatchCacheKey(albumId: string): string {
 	return [
-		authStore.user?.id ?? 'anonymous',
+		userStorageSegment(authStore.user?.id),
 		getNavidromeFolderScopeRevision(authStore.user?.id ?? ''),
 		albumId
 	]
