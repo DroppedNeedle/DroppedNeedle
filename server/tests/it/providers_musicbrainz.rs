@@ -944,6 +944,43 @@ async fn brainzmash_binding_invalid_fails_closed_without_wire() {
     );
 }
 
+#[tokio::test]
+async fn source_fn_is_read_at_every_request() {
+    let (fake, sink) = fast_mb(vec![]);
+    let mirror_base = "http://mirror.test/ws/2";
+    for base in [musicbrainz::MB_API_BASE, mirror_base] {
+        fake.script(
+            &format!("{base}/release/{RELEASE_MBID}"),
+            Ok(musicbrainz::RawResponse::new(404, vec![], Vec::new())),
+        );
+    }
+    let use_mirror = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = use_mirror.clone();
+    let client = official_client(fake.clone(), sink).with_source_fn(Arc::new(move || {
+        if flag.load(std::sync::atomic::Ordering::SeqCst) {
+            musicbrainz::MbSource::Mirror {
+                base_url: mirror_base.to_owned(),
+                rate_per_sec: 0.0,
+            }
+        } else {
+            musicbrainz::MbSource::official()
+        }
+    }));
+    for switch in [false, true] {
+        use_mirror.store(switch, std::sync::atomic::Ordering::SeqCst);
+        client
+            .lookup_release(RELEASE_MBID, &[], musicbrainz::Criticality::BestEffort)
+            .await
+            .expect("404 resolves");
+    }
+    let urls: Vec<String> = fake.seen().into_iter().map(|request| request.url).collect();
+    assert!(urls[0].starts_with(musicbrainz::MB_API_BASE), "{urls:?}");
+    assert!(
+        urls[1].starts_with(mirror_base),
+        "a settings switch applies at once: {urls:?}"
+    );
+}
+
 #[test]
 fn brainzmash_cooldown_honors_retry_after_then_backs_off() {
     let scheduler = musicbrainz::BrainzMashCooldown::default();

@@ -93,7 +93,37 @@ impl MbSource {
     pub(crate) fn is_brainzmash(&self) -> bool {
         matches!(self, Self::BrainzMash { .. })
     }
+
+    /// The source the saved settings select. A "mirror" on a public
+    /// MusicBrainz host still obeys the official 1 req/s rule, whatever
+    /// rate was typed in.
+    pub fn from_settings(settings: &crate::runtime_config::sections::MusicBrainzSettings) -> Self {
+        use crate::runtime_config::sections::{MbSourceMode, is_mb_rate_policy_public_host};
+        match settings.source_mode {
+            MbSourceMode::Brainzmash => Self::BrainzMash {
+                binding_valid: crate::settings::musicbrainz::is_brainzmash_active_binding_valid(
+                    settings,
+                ),
+            },
+            MbSourceMode::Official => Self::official(),
+            MbSourceMode::Mirror | MbSourceMode::Community
+                if is_mb_rate_policy_public_host(&settings.api_url) =>
+            {
+                Self::Official {
+                    base_url: settings.api_url.clone(),
+                }
+            }
+            MbSourceMode::Mirror | MbSourceMode::Community => Self::Mirror {
+                base_url: settings.api_url.clone(),
+                rate_per_sec: settings.rate_limit,
+            },
+        }
+    }
 }
+
+/// Reads the configured source at each request, so a source switch in
+/// settings reaches long-lived clients without a restart.
+pub type SourceFn = std::sync::Arc<dyn Fn() -> MbSource + Send + Sync>;
 
 /// Operation class from the degradation matrix. A dead MusicBrainz fails
 /// identity-critical work with a typed error and degrades everything else

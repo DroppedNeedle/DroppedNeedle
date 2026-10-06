@@ -20,8 +20,7 @@ use crate::providers::{ProviderCache, Providers, RequestPriority};
 use crate::runtime_config::ConfigStore;
 use crate::runtime_config::secret_sections::{AdvancedSettings, ListenBrainzConnection};
 use crate::runtime_config::sections::{
-    GetIt, MbSourceMode, MusicBrainzSettings, MusicSource, PrimaryMusicSource, UserPreferences,
-    is_mb_rate_policy_public_host,
+    GetIt, MusicBrainzSettings, MusicSource, PrimaryMusicSource, UserPreferences,
 };
 
 /// The settings the catalog reads, once per call.
@@ -181,27 +180,7 @@ impl Upstream {
     /// never served as another's.
     pub fn musicbrainz(&self, priority: RequestPriority) -> (CatalogMusicBrainz, String) {
         let settings = self.settings.musicbrainz();
-        let source = match settings.source_mode {
-            MbSourceMode::Brainzmash => MbSource::BrainzMash {
-                binding_valid: crate::settings::musicbrainz::is_brainzmash_active_binding_valid(
-                    &settings,
-                ),
-            },
-            MbSourceMode::Official => MbSource::official(),
-            // A "mirror" on a public MusicBrainz host still obeys the
-            // official 1 req/s rule, whatever rate was typed in.
-            MbSourceMode::Mirror | MbSourceMode::Community
-                if is_mb_rate_policy_public_host(&settings.api_url) =>
-            {
-                MbSource::Official {
-                    base_url: settings.api_url.clone(),
-                }
-            }
-            MbSourceMode::Mirror | MbSourceMode::Community => MbSource::Mirror {
-                base_url: settings.api_url.clone(),
-                rate_per_sec: settings.rate_limit,
-            },
-        };
+        let source = MbSource::from_settings(&settings);
         let namespace = format!("{}:g{}", settings.source_id, settings.generation);
         let client = MusicBrainzClient::new(
             ReqwestMbTransport::new(self.no_redirect.clone()),

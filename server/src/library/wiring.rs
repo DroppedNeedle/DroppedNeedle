@@ -322,16 +322,22 @@ impl LibrarySetup {
         http: &crate::http_client::HttpClientFactory,
         ids: Arc<dyn IdGenerator>,
         providers: Arc<crate::providers::Providers>,
+        mb_source: crate::providers::musicbrainz::SourceFn,
         db_path: &Path,
     ) -> Result<Self, String> {
+        use crate::providers::RequestPriority;
         use crate::providers::acoustid::{AcoustIdClient, DEFAULT_BASE_URL};
         use crate::providers::adapters::{CorePacer, CoreSink};
         use crate::providers::musicbrainz::{MbPacing, MusicBrainzClient, ReqwestMbTransport};
 
+        // Identification is background work on the source settings name,
+        // read per request; user page loads go ahead of it at the limiter.
         let musicbrainz = MusicBrainzClient::official(
             ReqwestMbTransport::new(http.no_redirect().clone()),
             MbPacing::new(providers.clone()),
         )
+        .with_source_fn(mb_source)
+        .with_priority(RequestPriority::BackgroundSync)
         .with_sink(CoreSink);
         let pacer = CorePacer::for_source(providers, "acoustid")
             .ok_or_else(|| "acoustid has no verified rate row".to_owned())?;

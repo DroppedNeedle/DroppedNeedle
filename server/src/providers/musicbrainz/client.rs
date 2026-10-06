@@ -19,7 +19,7 @@ use super::redirects::{
 };
 use super::transport::{MbRequest, MbTransport, RawResponse};
 use super::{
-    Criticality, MAX_PAGE_LIMIT, MAX_REDIRECT_HOPS, MbError, MbSource,
+    Criticality, MAX_PAGE_LIMIT, MAX_REDIRECT_HOPS, MbError, MbSource, SourceFn,
     build_recording_search_query, build_release_group_search_query, build_release_search_query,
     escape_lucene_phrase, is_valid_mbid, normalize_mb_id, parse_retry_after_secs,
 };
@@ -42,6 +42,7 @@ pub struct MusicBrainzClient<T: MbTransport, S: DegradationSink = NoopSink> {
     transport: T,
     sink: S,
     source: MbSource,
+    resolve: Option<SourceFn>,
     pacing: MbPacing,
     priority: RequestPriority,
 }
@@ -54,6 +55,7 @@ impl<T: MbTransport> MusicBrainzClient<T, NoopSink> {
             transport,
             sink: NoopSink,
             source,
+            resolve: None,
             pacing,
             priority: RequestPriority::UserInitiated,
         }
@@ -79,6 +81,7 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
             transport: self.transport,
             sink,
             source: self.source,
+            resolve: self.resolve,
             pacing: self.pacing,
             priority: self.priority,
         }
@@ -92,9 +95,19 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         self
     }
 
-    /// Active source, for wiring assertions.
-    pub fn source(&self) -> &MbSource {
-        &self.source
+    /// Read the source from `resolve` at every request instead of the
+    /// one fixed at construction.
+    #[must_use]
+    pub fn with_source_fn(mut self, resolve: SourceFn) -> Self {
+        self.resolve = Some(resolve);
+        self
+    }
+
+    /// The source the next request goes to.
+    pub fn source(&self) -> MbSource {
+        self.resolve
+            .as_ref()
+            .map_or_else(|| self.source.clone(), |resolve| resolve())
     }
 
     /// Search artists by free text, the way v2's artist search asked:
@@ -489,24 +502,25 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         operation: &'static str,
         criticality: Criticality,
     ) -> Result<WireOutcome, MbError> {
-        if let MbSource::BrainzMash { binding_valid } = &self.source
+        let source = self.source();
+        if let MbSource::BrainzMash { binding_valid } = &source
             && !binding_valid
         {
             return Err(MbError::Misconfigured(
                 "brainzmash active binding is not valid".to_owned(),
             ));
         }
-        let brainzmash = self.source.is_brainzmash();
+        let brainzmash = source.is_brainzmash();
         let request_path = if brainzmash {
             validate_brainzmash_path(path)?
         } else {
             path.to_owned()
         };
-        self.pacing.acquire(&self.source, self.priority).await;
+        self.pacing.acquire(&source, self.priority).await;
         params.push(("fmt".to_owned(), "json".to_owned()));
         let url = format!(
             "{}{}",
-            self.source.base_url().trim_end_matches('/'),
+            source.base_url().trim_end_matches('/'),
             request_path
         );
         let request = MbRequest {
@@ -563,7 +577,7 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
                 Err(MbError::InvalidMbid(format!("{operation} {path}")))
             }
             300..=399 => {
-                let hop = self.redirect_hop(&url, &request_path, &response, operation)?;
+                let hop = self.redirect_hop(&source, &url, &request_path, &response, operation)?;
                 Ok(WireOutcome::Redirect {
                     hop: hop.hop,
                     next_path: hop.next_path,
@@ -573,7 +587,7 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
             _ => self.provider_dead(
                 operation,
                 criticality,
-                format!("HTTP {} from {}", response.status, self.source.base_url()),
+                format!("HTTP {} from {}", response.status, source.base_url()),
             ),
         }
     }
@@ -581,13 +595,14 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
     /// Validate one 3xx into a followable hop, or reject it.
     fn redirect_hop(
         &self,
+        source: &MbSource,
         request_url: &str,
         request_path: &str,
         response: &RawResponse,
         operation: &'static str,
     ) -> Result<FollowHop, MbError> {
         let location = response.header("location").unwrap_or("");
-        if self.source.is_brainzmash() {
+        if source.is_brainzmash() {
             if let Some(hop_path) =
                 brainzmash_redirect_path(request_url, response.status, response.header("location"))
                 && let Some(hop) = lookup_redirect_pair(request_path, &hop_path)
@@ -598,7 +613,7 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
                 });
             }
         } else if let Some(hop) =
-            official_redirect_hop(request_url, self.source.base_url(), request_path, location)
+            official_redirect_hop(request_url, source.base_url(), request_path, location)
         {
             let next_path = format!("/{}/{}", hop.entity, hop.to_mbid);
             return Ok(FollowHop { hop, next_path });

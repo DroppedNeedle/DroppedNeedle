@@ -187,11 +187,19 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
             ConnectApps::default()
         }
     };
+    let mb_settings = config_store.clone();
     let library = LibrarySetup::build(
         auth.users.clone(),
         &http,
         ids.clone(),
         providers.clone(),
+        Arc::new(move || {
+            crate::providers::musicbrainz::MbSource::from_settings(
+                &crate::reads::catalog::upstream::CatalogSettings::musicbrainz(
+                    mb_settings.as_ref(),
+                ),
+            )
+        }),
         &config.library_db_path,
     )
     .map_err(stage("library setup"))?;
