@@ -1,18 +1,11 @@
 import { createMutation } from '@tanstack/svelte-query';
 import { api, ApiError } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
 import { toTargetLibrarySettings } from './libraryAdapters';
-import type {
-	LibraryPolicyApplyPreviewResponse,
-	LibraryPolicyImpactResponse,
-	LibraryRestoreRootsRequest,
-	TargetLibrarySettingsResponse,
-	TypedLibrarySettings
-} from './LibraryOperationsTypes';
+import type { LibraryRestoreRootsRequest, TypedLibrarySettings } from './LibraryOperationsTypes';
 
 async function invalidatePolicies(): Promise<void> {
 	await Promise.all([
@@ -32,7 +25,7 @@ export function previewLibraryPolicyImpact() {
 		mutationFn: (input: {
 			settings: TypedLibrarySettings;
 			expected_policy_revision: string | null;
-		}) => api.global.post<LibraryPolicyImpactResponse>(API.library.policyImpact(), input)
+		}) => api.global.v3.POST(LibraryV3Api.policyImpact(), input)
 	}));
 }
 
@@ -56,8 +49,8 @@ export function saveTargetLibrarySettings() {
 
 export function restoreLibraryRoots() {
 	return createMutation(() => ({
-		mutationFn: (input: LibraryRestoreRootsRequest) =>
-			api.global.post<TargetLibrarySettingsResponse>(API.library.restoreRoots(), input),
+		mutationFn: async (input: LibraryRestoreRootsRequest) =>
+			toTargetLibrarySettings(await api.global.v3.POST(LibraryV3Api.restoreRoots(), input)),
 		onSuccess: async () => {
 			await invalidatePolicies();
 			toastStore.show({ message: 'Library roots restored', type: 'success' });
@@ -73,6 +66,6 @@ export function restoreLibraryRoots() {
 export function previewLibraryPolicyApply() {
 	return createMutation(() => ({
 		mutationFn: (input: { scope_ids: string[]; expected_policy_revision: string }) =>
-			api.global.post<LibraryPolicyApplyPreviewResponse>(API.library.policyApplyPreview(), input)
+			api.global.v3.POST(LibraryV3Api.policyApplyPreview(), input)
 	}));
 }

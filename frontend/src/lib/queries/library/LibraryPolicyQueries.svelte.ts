@@ -1,19 +1,9 @@
 import { createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
 import { toTargetLibrarySettings } from './libraryAdapters';
-import type {
-	LibraryPathMappingReport,
-	LibraryPolicyTreeResponse,
-	LibraryRestorableRootsResponse
-} from './LibraryOperationsTypes';
-
-// The library settings read is on v3. The policy tree, path mapping and
-// restorable roots have no v3 route yet (see the waiting-on-backend list in
-// eslint.config.js).
 
 export const getTargetLibrarySettingsQuery = (enabled: Getter<boolean> = () => true) =>
 	createQuery(() => ({
@@ -27,24 +17,19 @@ export const getLibraryRestorableRootsQuery = (enabled: Getter<boolean> = () => 
 	createQuery(() => ({
 		enabled: enabled(),
 		queryKey: LibraryQueryKeyFactory.restorableRoots(),
-		queryFn: ({ signal }) =>
-			api.global.get<LibraryRestorableRootsResponse>(API.library.restorableRoots(), {
-				signal
-			})
+		queryFn: ({ signal }) => api.global.v3.GET(LibraryV3Api.restorableRoots(), { signal })
 	}));
 
 export const getLibraryPolicyTreeQuery = (enabled: Getter<boolean> = () => true) =>
 	createQuery(() => ({
 		enabled: enabled(),
 		queryKey: LibraryQueryKeyFactory.policyTree(),
-		queryFn: ({ signal }) =>
-			api.global.get<LibraryPolicyTreeResponse>(API.library.policyTree(), { signal })
+		queryFn: ({ signal }) => api.global.v3.GET(LibraryV3Api.policyTree(), { signal })
 	}));
 
 export const getLibraryPathMappingQuery = (enabled: Getter<boolean> = () => false) =>
 	createQuery(() => ({
 		enabled: enabled(),
 		queryKey: LibraryQueryKeyFactory.pathMapping(),
-		queryFn: ({ signal }) =>
-			api.global.get<LibraryPathMappingReport>(API.library.pathMapping(), { signal })
+		queryFn: ({ signal }) => api.global.v3.GET(LibraryV3Api.pathMapping(), { signal })
 	}));

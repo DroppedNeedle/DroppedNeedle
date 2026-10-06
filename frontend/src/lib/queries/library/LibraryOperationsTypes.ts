@@ -1,3 +1,5 @@
+import type { components } from '$lib/api/v3/openapi';
+
 export type LibraryWorkState =
 	| 'queued'
 	| 'discovering'
@@ -567,75 +569,13 @@ export interface TargetLibrarySettingsResponse extends TypedLibrarySettings {
 	warnings: string[];
 }
 
-export interface LibraryPolicyTreeNode {
-	id: string;
-	kind: 'root' | 'rule';
-	label: string;
-	path: string;
-	policy: LibraryIdentificationPolicy;
-	inherited_from_id: string | null;
-	available: boolean;
-	indexed_file_count: number | null;
-	on_disk_file_count: number | null;
-	children: LibraryPolicyTreeNode[];
-}
-
-export interface LibraryPolicyTreeResponse {
-	policy_revision: string;
-	roots: LibraryPolicyTreeNode[];
-	warnings: string[];
-}
-
-export interface LibraryRestorableRoot {
-	root_id: string;
-	path: string;
-	indexed_file_count: number;
-}
-
-export interface LibraryRestorableRootsResponse {
-	policy_revision: string;
-	restorable_roots: LibraryRestorableRoot[];
-}
-
-export interface LibraryRestoreRootsRequest {
-	expected_policy_revision: string;
-	paths: Record<string, string> | null;
-}
-
-export interface LibraryPolicyImpactResponse {
-	current_policy_revision: string;
-	proposed_policy_revision: string;
-	stale: boolean;
-	reconciliation_required: boolean;
-	affected_scope_ids: string[];
-	indexed_file_count: number | null;
-	on_disk_file_count: number | null;
-	content_will_become_unavailable: boolean;
-	queued_work_will_be_cancelled: boolean;
-	warnings: string[];
-}
-
-export interface LibraryPolicyApplyPreviewResponse {
-	policy_revision: string;
-	scope_ids: string[];
-	estimated_file_count: number;
-	content_will_become_unavailable: boolean;
-	queued_work_was_cancelled_on_save: boolean;
-}
-
-export interface LibraryPathMappingReport {
-	policy_revision: string;
-	source_count: number;
-	mapped_count: number;
-	ambiguous_count: number;
-	out_of_root_count: number;
-	blocking: boolean;
-	items: Array<{
-		source_kind: 'library_file' | 'review_row';
-		source_id: string;
-		absolute_path: string;
-		root_id: string | null;
-		relative_path: string | null;
-		error: 'ambiguous' | 'out_of_root' | null;
-	}>;
-}
+// The path policy routes are on v3; their shapes come from the contract.
+type PolicySchemas = components['schemas'];
+export type LibraryPolicyTreeNode = PolicySchemas['LibraryPolicyTreeNode'];
+export type LibraryPolicyTreeResponse = PolicySchemas['LibraryPolicyTreeResponse'];
+export type LibraryRestorableRoot = PolicySchemas['LibraryRestorableRoot'];
+export type LibraryRestorableRootsResponse = PolicySchemas['LibraryRestorableRootsResponse'];
+export type LibraryRestoreRootsRequest = PolicySchemas['LibraryRestoreRootsRequest'];
+export type LibraryPolicyImpactResponse = PolicySchemas['LibraryPolicyImpactResponse'];
+export type LibraryPolicyApplyPreviewResponse = PolicySchemas['LibraryPolicyApplyPreviewResponse'];
+export type LibraryPathMappingReport = PolicySchemas['LibraryPathMappingReport'];

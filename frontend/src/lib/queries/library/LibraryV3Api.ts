@@ -89,5 +89,11 @@ export const LibraryV3Api = {
 	scanRuns: () => v3('/api/v3/library/scan/runs'),
 	scanRun: (runId: string) => v3('/api/v3/library/scan/runs/{id}', { path: { id: runId } }),
 	schedule: () => v3('/api/v3/settings/library/schedule'),
-	settings: () => v3('/api/v3/settings/library')
+	settings: () => v3('/api/v3/settings/library'),
+	policyTree: () => v3('/api/v3/settings/library/policy-tree'),
+	policyImpact: () => v3('/api/v3/settings/library/policy-impact'),
+	policyApplyPreview: () => v3('/api/v3/settings/library/policy-apply-preview'),
+	pathMapping: () => v3('/api/v3/settings/library/path-mapping'),
+	restorableRoots: () => v3('/api/v3/settings/library/restorable-roots'),
+	restoreRoots: () => v3('/api/v3/settings/library/restore-roots')
 };

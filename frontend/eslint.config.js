@@ -86,10 +86,10 @@ const transportRules = [
 // no route for yet. Their URL builders all live in lib/constants.ts (the API
 // registry), grouped by feature: the event stream, concerts, membership and
 // album status, contributions, edition conversions and re-identification,
-// scan controls, reviews, operations, repairs and identity preparations, path
-// policy, Library Management previews and recovery, system health, cache
-// sync, YouTube, local file downloads, Free Music, drop import, the download
-// queue, held imports and upgrades. When a route lands, its call moves onto a
+// scan controls, reviews, operations, repairs and identity preparations,
+// Library Management previews and recovery, system health, cache sync,
+// YouTube, local file downloads, Free Music, drop import, the download queue,
+// held imports and upgrades. When a route lands, its call moves onto a
 // v3() template and its builder leaves that file.
 const WAITING_ON_BACKEND = ['src/lib/constants.ts'];
 

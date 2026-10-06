@@ -363,12 +363,6 @@ export const API = {
 		undoAutomaticEdition: (albumId: string) =>
 			`/api/v1/library/albums/${encodeURIComponent(albumId)}/undo-automatic-edition`,
 		scanDiagnostics: (runId: string) => `/api/v1/library/scan-runs/${runId}/diagnostics`,
-		policyTree: () => '/api/v1/settings/library/policy-tree',
-		policyImpact: () => '/api/v1/settings/library/policy-impact',
-		policyApplyPreview: () => '/api/v1/settings/library/policy-apply-preview',
-		pathMapping: () => '/api/v1/settings/library/path-mapping',
-		restorableRoots: () => '/api/v1/settings/library/restorable-roots',
-		restoreRoots: () => '/api/v1/settings/library/restore-roots',
 		removeAlbum: (mbid: string) => `/api/v1/library/album/${mbid}`,
 		resolveTracks: () => '/api/v1/library/resolve-tracks'
 	},
