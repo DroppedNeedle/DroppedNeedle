@@ -24,9 +24,9 @@ use super::rules::{
 };
 use super::stores::{
     AliasStore, Approval, AttemptLanding, FactsSource, IdentityStore, PinStore, ProofStore,
-    QueueStore, ReleaseStore, ReviewStore, StoreError, land_job,
+    QueueStore, RELEASE_FRESH_SECS, ReleaseStore, ReviewStore, StoreError, land_job,
 };
-use crate::library::matching::{EditionPrefs, Release, Verdict, decide, match_release};
+use crate::library::matching::{EditionPrefs, Verdict, decide, match_release};
 
 /// Every dependency the identify service needs, injected by constructor.
 pub struct IdentifyDeps {
@@ -113,17 +113,20 @@ impl IdentifyService {
                 review_id: None,
             });
         }
-        let (scored, decision, winner) = self.score(&facts, &recall);
-        if let Some(release) = winner {
-            // The release the identity names stays on file for tagging.
-            self.deps.releases.save_release(release);
-        }
-        if matches!(decision, Decision::Ambiguous(_) | Decision::Contradictory) {
-            // A curator may approve any of these; keep their documents.
-            for release in &recall.releases {
+        // Every candidate's document stays on file: the identity's release
+        // for tagging, the others because a curator may approve them.
+        // Live recall already stored what it fetched.
+        for release in &recall.releases {
+            if self
+                .deps
+                .releases
+                .release(&release.id, Some(RELEASE_FRESH_SECS))
+                .is_none()
+            {
                 self.deps.releases.save_release(release);
             }
         }
+        let (scored, decision) = self.score(&facts, &recall);
         let report = self.apply_decision(&mut job, &facts, &scored, decision, now_ms);
         self.deps.queue.update(job);
         Some(report)
@@ -132,11 +135,11 @@ impl IdentifyService {
     /// Score every recalled release and decide. Candidates come back
     /// chosen edition first, then by distance; the pin only orders
     /// editions within one release group and never counts as evidence.
-    fn score<'a>(
+    fn score(
         &self,
         facts: &LocalAlbumFacts,
-        recall: &'a RecallResult,
-    ) -> (Vec<CandidateEvidence>, Decision, Option<&'a Release>) {
+        recall: &RecallResult,
+    ) -> (Vec<CandidateEvidence>, Decision) {
         let local = local_album(facts, &recall.fingerprint_support);
         let matches: Vec<_> = recall
             .releases
@@ -189,11 +192,7 @@ impl IdentifyService {
                 "NO_CANDIDATE".to_owned(),
             ),
         };
-        let winner = match verdict {
-            Verdict::Identified(index) => recall.releases.get(index),
-            _ => None,
-        };
-        (scored, decision, winner)
+        (scored, decision)
     }
 
     fn apply_decision(

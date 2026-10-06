@@ -29,7 +29,7 @@ use super::models::{
 use super::queue::PRIORITY_NEW_OR_CHANGED;
 use super::stores::{
     AliasStore, Approval, FactsSource, IdentityStore, PinStore, ProofStore, QueueStore,
-    ReleaseStore, ReviewStore, StoreError,
+    RELEASE_FRESH_SECS, ReleaseStore, ReviewStore, StoreError,
 };
 use crate::library::matching::Release;
 
@@ -38,8 +38,6 @@ const PROVIDER: &str = "musicbrainz";
 const RELEASE_KIND: &str = "release";
 /// Shape version of the stored document; a new shape is a new input hash.
 const RELEASE_DOCUMENT_VERSION: &str = "matching-release-v1";
-/// Documents count as fresh for recall this long.
-pub const RELEASE_FRESH_SECS: u64 = 7 * 24 * 3600;
 
 fn now_secs() -> f64 {
     SystemTime::now()

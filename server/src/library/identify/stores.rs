@@ -33,6 +33,10 @@ pub trait FactsSource: Send + Sync {
     fn album_facts(&self, local_album_id: &str) -> Option<LocalAlbumFacts>;
 }
 
+/// Release documents count as fresh for recall this long; older ones are
+/// fetched again (and kept regardless while an identity names them).
+pub const RELEASE_FRESH_SECS: u64 = 7 * 24 * 3600;
+
 /// Release documents identification fetched or sealed against. Recall
 /// reuses fresh ones instead of asking MusicBrainz again, and the
 /// publisher tags files from the one an album's identity names.
