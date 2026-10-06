@@ -243,6 +243,8 @@ impl DirtyScopes {
 pub struct WatcherState {
     baselines: HashMap<String, (String, Snapshot)>,
     pending_since: Option<f64>,
+    /// Roots that changed since the batch opened.
+    changed_roots: HashSet<String>,
 }
 
 impl WatcherState {
@@ -252,6 +254,11 @@ impl WatcherState {
 
     pub fn is_pending(&self) -> bool {
         self.pending_since.is_some()
+    }
+
+    /// Roots that changed since the batch opened.
+    pub fn changed_roots(&self) -> &HashSet<String> {
+        &self.changed_roots
     }
 }
 
@@ -317,6 +324,7 @@ pub async fn poll_once(
                         state
                             .baselines
                             .insert(root_id.clone(), (root_path.display().to_string(), snapshot));
+                        state.changed_roots.insert(root_id.clone());
                         if state.pending_since.is_none() {
                             state.pending_since = Some(now);
                         }
@@ -342,20 +350,19 @@ pub async fn poll_once(
     }
 }
 
-/// Build the watcher's scan request scopes (v2 watcher request body).
-pub fn watcher_scopes(
+/// Build the watcher's scan request: an incremental scan of the scheduled
+/// scopes of the roots that changed, so a change in one root never walks
+/// the others.
+pub fn watcher_request(
     registry: &RootRegistry,
     rules: &[InclusionRule],
-) -> Vec<super::models::ScanScope> {
-    scheduled_scopes(registry, rules)
-}
-
-/// Build the watcher's scan request (v2 watcher request body).
-pub fn watcher_request(registry: &RootRegistry, rules: &[InclusionRule]) -> Option<ScanRequest> {
-    let scopes = watcher_scopes(registry, rules);
+    changed_roots: &HashSet<String>,
+) -> Option<ScanRequest> {
+    let mut scopes = scheduled_scopes(registry, rules);
+    scopes.retain(|scope| changed_roots.contains(&scope.root_id));
     if scopes.is_empty() {
-        // No scheduled scopes: drop the pending scan (v2 debug path) and
-        // let the caller clear the batch timer.
+        // No scheduled scopes: drop the pending scan and let the caller
+        // clear the batch timer.
         return None;
     }
     Some(ScanRequest {
@@ -370,6 +377,7 @@ pub fn watcher_request(registry: &RootRegistry, rules: &[InclusionRule]) -> Opti
 /// Clear the batch timer after the scan was requested (or dropped).
 pub fn clear_pending(state: &mut WatcherState) {
     state.pending_since = None;
+    state.changed_roots.clear();
 }
 
 #[cfg(test)]
@@ -436,9 +444,12 @@ mod tests {
         // Inside the window: still batching.
         let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 20.0).await;
         assert!(matches!(action, WatcherAction::Batching { .. }));
-        // Past the window: due.
+        // Past the window: due, for the root that changed only.
         let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 71.0).await;
         assert_eq!(action, WatcherAction::Due);
+        let request = watcher_request(&registry, &[], state.changed_roots()).expect("request");
+        assert!(request.scopes.iter().all(|scope| scope.root_id == "r1"));
+        assert!(watcher_request(&registry, &[], &HashSet::new()).is_none());
     }
 
     #[tokio::test]

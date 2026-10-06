@@ -102,7 +102,7 @@ impl LibrarySetup {
         .await;
         if matches!(action, WatcherAction::Due) {
             let rules = super::settings::inclusion_rules(&registry);
-            match watcher_request(&registry, &rules) {
+            match watcher_request(&registry, &rules, state.changed_roots()) {
                 None => tracing::debug!("filesystem watcher dropping pending scan: no scopes"),
                 Some(request) => match self.coordinator.request_run(&request) {
                     Ok(result) => {
