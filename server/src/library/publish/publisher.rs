@@ -166,12 +166,14 @@ impl Catalog for SqliteCatalog {
                     track.track_id
                 )));
             }
-            // An organize into another root takes the album along; its id
-            // (and with it the identity) stays.
+            // An organize that moves a whole album into another root takes
+            // the album row along; its id (and with it the identity) stays.
             conn.execute(
                 "UPDATE local_albums SET root_id = ?2, row_revision = row_revision + 1 \
                  WHERE id = (SELECT local_album_id FROM local_tracks WHERE id = ?1) \
-                 AND root_id <> ?2",
+                 AND root_id <> ?2 AND NOT EXISTS (SELECT 1 FROM local_tracks t \
+                 WHERE t.local_album_id = local_albums.id AND t.root_id <> ?2 \
+                 AND t.availability = 'indexed')",
                 rusqlite::params![track.track_id, track.root_id],
             )?;
             conn.execute(
@@ -928,20 +930,32 @@ fn write_staged_temp(temp: &Path, bytes: &[u8]) -> Result<(), PublishError> {
             "staged temp {name} holds foreign bytes"
         )));
     }
-    std::fs::write(temp, bytes).map_err(PublishError::from)?;
-    let file = std::fs::File::open(temp).map_err(PublishError::from)?;
-    super::journal::fsync_file(&file)?;
-    drop(file);
-    let reread = paths::read_regular_file(temp)?;
-    if reread != bytes {
-        return Err(PublishError::Validation(
-            "staged temp failed re-read".into(),
-        ));
+    let written = (|| {
+        std::fs::write(temp, bytes).map_err(PublishError::from)?;
+        let file = std::fs::File::open(temp).map_err(PublishError::from)?;
+        super::journal::fsync_file(&file)?;
+        drop(file);
+        let reread = paths::read_regular_file(temp)?;
+        if reread != bytes {
+            return Err(PublishError::Validation(
+                "staged temp failed re-read".into(),
+            ));
+        }
+        if let Some(parent) = temp.parent() {
+            super::journal::fsync_dir(parent)?;
+        }
+        Ok(())
+    })();
+    if written.is_err() {
+        // A partial temp would hold foreign bytes for the retry; it is
+        // ours (just created), so it goes.
+        if let Err(error) = std::fs::remove_file(temp)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(temp = %temp.display(), %error, "partial staging temp not removed");
+        }
     }
-    if let Some(parent) = temp.parent() {
-        super::journal::fsync_dir(parent)?;
-    }
-    Ok(())
+    written
 }
 
 /// Prune newly empty source parents up to (not including) the root.
