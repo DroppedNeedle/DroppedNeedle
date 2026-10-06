@@ -12693,7 +12693,7 @@
         "tags": [
           "crate::settings::handlers"
         ],
-        "summary": "Save the typed library settings. The expected revision must match\nthe stored one or the save is a 409.",
+        "summary": "Save the typed library settings. The expected revision must match\nthe stored one or the save is a 409. Dropping every root while the\ncatalog holds tracks is a 400.",
         "operationId": "put_library",
         "requestBody": {
           "content": {
@@ -12715,6 +12715,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Invalid settings, or every root removed while the catalog holds tracks"
           },
           "409": {
             "description": "Expected revision is stale"
@@ -13185,6 +13188,30 @@
         }
       }
     },
+    "/api/v3/settings/library/path-mapping": {
+      "get": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "Dry run: map every catalog file path to a saved root.",
+        "operationId": "get_library_path_mapping",
+        "responses": {
+          "200": {
+            "description": "Path mapping report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryPathMappingReport"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Catalog reads are unwired"
+          }
+        }
+      }
+    },
     "/api/v3/settings/library/paths": {
       "post": {
         "tags": [
@@ -13219,7 +13246,7 @@
         "tags": [
           "crate::settings::handlers"
         ],
-        "summary": "Remove every library root at one path. Unknown paths are a silent\nno-op.",
+        "summary": "Remove every library root at one path. Unknown paths are a silent\nno-op; removing the last root while the catalog holds tracks is a 400.",
         "operationId": "remove_library_path",
         "parameters": [
           {
@@ -13242,6 +13269,168 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Removing the last root would orphan the catalog"
+          }
+        }
+      }
+    },
+    "/api/v3/settings/library/policy-apply-preview": {
+      "post": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "Preview a reconcile of saved policy scopes: how many catalog files\nit would revisit.",
+        "operationId": "preview_library_policy_apply",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryPolicyApplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Apply preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryPolicyApplyPreviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A scope id no longer exists"
+          },
+          "409": {
+            "description": "Expected revision is stale"
+          },
+          "503": {
+            "description": "Catalog reads are unwired"
+          }
+        }
+      }
+    },
+    "/api/v3/settings/library/policy-impact": {
+      "post": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "Preview what saving candidate library settings would change. Nothing\nis saved; a stale expected revision only sets `stale`.",
+        "operationId": "preview_library_policy_impact",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryPolicyImpactRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Impact preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryPolicyImpactResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Candidate settings are invalid"
+          }
+        }
+      }
+    },
+    "/api/v3/settings/library/policy-tree": {
+      "get": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "The saved roots and their path rules as a tree, with catalog file\ncounts per node.",
+        "operationId": "get_library_policy_tree",
+        "responses": {
+          "200": {
+            "description": "Policy tree",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryPolicyTreeResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/settings/library/restorable-roots": {
+      "get": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "Roots the catalog still holds tracks for that the settings no longer\nlist.",
+        "operationId": "get_restorable_library_roots",
+        "responses": {
+          "200": {
+            "description": "Restorable roots",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryRestorableRootsResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Catalog reads are unwired"
+          }
+        }
+      }
+    },
+    "/api/v3/settings/library/restore-roots": {
+      "post": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "Put every removed root back into the settings.",
+        "operationId": "restore_library_roots",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryRestoreRootsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved library settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibrarySettingsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Nothing to restore, or a restored path is invalid"
+          },
+          "409": {
+            "description": "Expected revision is stale"
+          },
+          "503": {
+            "description": "Catalog reads are unwired"
           }
         }
       }
@@ -23781,6 +23970,104 @@
         ],
         "description": "GET/PUT view of Library Management: the settings plus their content\nrevision (the write CAS token)."
       },
+      "LibraryPathMappingItem": {
+        "type": "object",
+        "description": "One catalog path and the root it maps to under the saved settings.",
+        "required": [
+          "source_kind",
+          "source_id",
+          "absolute_path"
+        ],
+        "properties": {
+          "absolute_path": {
+            "type": "string",
+            "description": "Absolute file path the catalog holds."
+          },
+          "error": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PathMappingError",
+                "description": "Why it did not map."
+              }
+            ]
+          },
+          "relative_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Path relative to that root, when it maps."
+          },
+          "root_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Root the path maps to, when it maps."
+          },
+          "source_id": {
+            "type": "string",
+            "description": "Track id."
+          },
+          "source_kind": {
+            "$ref": "#/components/schemas/PathMappingSource",
+            "description": "Source kind."
+          }
+        }
+      },
+      "LibraryPathMappingReport": {
+        "type": "object",
+        "description": "Dry run: does every catalog path map to exactly one saved root.",
+        "required": [
+          "policy_revision",
+          "source_count",
+          "mapped_count",
+          "ambiguous_count",
+          "out_of_root_count",
+          "blocking",
+          "items"
+        ],
+        "properties": {
+          "ambiguous_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Paths under more than one root."
+          },
+          "blocking": {
+            "type": "boolean",
+            "description": "Some path does not map."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryPathMappingItem"
+            },
+            "description": "Every checked path, ordered by track id."
+          },
+          "mapped_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Paths that map to one root."
+          },
+          "out_of_root_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Paths under no root."
+          },
+          "policy_revision": {
+            "type": "string",
+            "description": "Saved revision the report was built from."
+          },
+          "source_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Paths checked."
+          }
+        }
+      },
       "LibraryPathRequest": {
         "type": "object",
         "description": "Add-one-library-path body.",
@@ -23816,6 +24103,323 @@
             "type": "string",
             "description": "Path relative to the root.",
             "default": ""
+          }
+        }
+      },
+      "LibraryPolicyApplyPreviewResponse": {
+        "type": "object",
+        "description": "Apply preview: how many catalog files a reconcile of the chosen\nscopes would revisit.",
+        "required": [
+          "policy_revision",
+          "scope_ids",
+          "estimated_file_count",
+          "content_will_become_unavailable",
+          "queued_work_was_cancelled_on_save"
+        ],
+        "properties": {
+          "content_will_become_unavailable": {
+            "type": "boolean",
+            "description": "Some chosen scope is excluded."
+          },
+          "estimated_file_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Catalog files under the chosen scopes."
+          },
+          "policy_revision": {
+            "type": "string",
+            "description": "Saved revision the preview was built from."
+          },
+          "queued_work_was_cancelled_on_save": {
+            "type": "boolean",
+            "description": "Whether the last save cancelled queued work. Saves never cancel\nqueued work on this server, so this is always false."
+          },
+          "scope_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The scope ids as requested."
+          }
+        }
+      },
+      "LibraryPolicyApplyRequest": {
+        "type": "object",
+        "description": "Apply-preview request: which saved scopes to reconcile.",
+        "required": [
+          "scope_ids",
+          "expected_policy_revision"
+        ],
+        "properties": {
+          "expected_policy_revision": {
+            "type": "string",
+            "description": "Revision the page loaded; a mismatch is a 409."
+          },
+          "scope_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Root or rule ids; empty means every root."
+          }
+        }
+      },
+      "LibraryPolicyImpactRequest": {
+        "type": "object",
+        "description": "Impact preview request.",
+        "required": [
+          "settings"
+        ],
+        "properties": {
+          "expected_policy_revision": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Revision the page loaded, if any. A mismatch sets `stale`."
+          },
+          "settings": {
+            "$ref": "#/components/schemas/LibrarySettings",
+            "description": "Full candidate settings."
+          }
+        }
+      },
+      "LibraryPolicyImpactResponse": {
+        "type": "object",
+        "description": "Impact preview: how the candidate settings differ from the saved ones\nand how much of the catalog the change touches.",
+        "required": [
+          "current_policy_revision",
+          "proposed_policy_revision",
+          "stale",
+          "reconciliation_required",
+          "affected_scope_ids",
+          "content_will_become_unavailable",
+          "queued_work_will_be_cancelled",
+          "warnings"
+        ],
+        "properties": {
+          "affected_scope_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Root and rule ids whose effective policy changes."
+          },
+          "content_will_become_unavailable": {
+            "type": "boolean",
+            "description": "Some affected scope becomes excluded."
+          },
+          "current_policy_revision": {
+            "type": "string",
+            "description": "Saved revision."
+          },
+          "indexed_file_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Indexed catalog files under the affected scopes, when wired."
+          },
+          "on_disk_file_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Indexed plus excluded catalog files under the affected scopes,\nwhen wired."
+          },
+          "proposed_policy_revision": {
+            "type": "string",
+            "description": "Revision of the normalized candidate."
+          },
+          "queued_work_will_be_cancelled": {
+            "type": "boolean",
+            "description": "Some affected scope stops being automatic, so queued\nidentification there no longer applies."
+          },
+          "reconciliation_required": {
+            "type": "boolean",
+            "description": "Whether any root or rule changes its effective policy."
+          },
+          "stale": {
+            "type": "boolean",
+            "description": "The caller's expected revision no longer matches the saved one."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Non-blocking warnings about the candidate."
+          }
+        }
+      },
+      "LibraryPolicyTreeNode": {
+        "type": "object",
+        "description": "One policy-tree node.",
+        "required": [
+          "id",
+          "kind",
+          "label",
+          "path",
+          "policy",
+          "available",
+          "children"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "description": "Whether the path exists on disk right now."
+          },
+          "children": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryPolicyTreeNode"
+            },
+            "description": "Child rule nodes."
+          },
+          "id": {
+            "type": "string",
+            "description": "Node id (root or rule id)."
+          },
+          "indexed_file_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Indexed catalog files under the node, when the catalog is wired."
+          },
+          "inherited_from_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Id the policy comes from."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PolicyNodeKind",
+            "description": "Root or rule."
+          },
+          "label": {
+            "type": "string",
+            "description": "Display label."
+          },
+          "on_disk_file_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Indexed plus excluded catalog files under the node, when the\ncatalog is wired."
+          },
+          "path": {
+            "type": "string",
+            "description": "Absolute path for a root, the root-relative path for a rule."
+          },
+          "policy": {
+            "$ref": "#/components/schemas/IdentificationPolicy",
+            "description": "Policy set on this node."
+          }
+        }
+      },
+      "LibraryPolicyTreeResponse": {
+        "type": "object",
+        "description": "Policy-tree response.",
+        "required": [
+          "policy_revision",
+          "roots",
+          "warnings"
+        ],
+        "properties": {
+          "policy_revision": {
+            "type": "string",
+            "description": "Content revision the tree was built from."
+          },
+          "roots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryPolicyTreeNode"
+            },
+            "description": "Root nodes."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Non-blocking warnings."
+          }
+        }
+      },
+      "LibraryRestorableRoot": {
+        "type": "object",
+        "description": "A root the catalog still holds tracks for but the settings no\nlonger list.",
+        "required": [
+          "root_id",
+          "path",
+          "indexed_file_count"
+        ],
+        "properties": {
+          "indexed_file_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Catalog files under the root."
+          },
+          "path": {
+            "type": "string",
+            "description": "Root path recovered from the catalog rows."
+          },
+          "root_id": {
+            "type": "string",
+            "description": "Root id the catalog rows carry."
+          }
+        }
+      },
+      "LibraryRestorableRootsResponse": {
+        "type": "object",
+        "description": "Removed roots that can be put back.",
+        "required": [
+          "policy_revision",
+          "restorable_roots"
+        ],
+        "properties": {
+          "policy_revision": {
+            "type": "string",
+            "description": "Saved revision (the token a restore must send)."
+          },
+          "restorable_roots": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryRestorableRoot"
+            },
+            "description": "Restorable roots, sorted by id."
+          }
+        }
+      },
+      "LibraryRestoreRootsRequest": {
+        "type": "object",
+        "description": "Restore request: put every removed root back.",
+        "required": [
+          "expected_policy_revision"
+        ],
+        "properties": {
+          "expected_policy_revision": {
+            "type": "string",
+            "description": "Revision the page loaded; a mismatch is a 409."
+          },
+          "paths": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Path overrides by root id, for roots whose files moved.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           }
         }
       },
@@ -25730,6 +26334,21 @@
           }
         }
       },
+      "PathMappingError": {
+        "type": "string",
+        "description": "Why a path did not map to a root.",
+        "enum": [
+          "ambiguous",
+          "out_of_root"
+        ]
+      },
+      "PathMappingSource": {
+        "type": "string",
+        "description": "Where a mapped path came from.",
+        "enum": [
+          "library_file"
+        ]
+      },
       "PenaltyView": {
         "type": "object",
         "description": "One penalty's share of a candidate's distance.",
@@ -27233,6 +27852,14 @@
             "description": "Transferring rows (immutable under the new policy)."
           }
         }
+      },
+      "PolicyNodeKind": {
+        "type": "string",
+        "description": "Which kind of scope a policy-tree node stands for.",
+        "enum": [
+          "root",
+          "rule"
+        ]
       },
       "PolicySummaryResponse": {
         "type": "object",

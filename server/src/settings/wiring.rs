@@ -32,6 +32,8 @@ use crate::ids::IdGenerator;
 use crate::runtime_config::ConfigStore;
 use crate::settings::effects::SaveEffects;
 use crate::settings::error::SettingsError;
+use crate::settings::library_policy::LibraryPolicyCatalog;
+use crate::settings::library_policy_service::LibraryPolicyService;
 use crate::settings::management::StructuralCompiler;
 use crate::settings::management::service::LibraryManagementService;
 use crate::settings::musicbrainz::MusicBrainzLifecycle;
@@ -56,6 +58,7 @@ pub struct SettingsSetup {
     management: Arc<LibraryManagementService>,
     prefs: Option<Arc<SectionPrefsDeps>>,
     buckets: Option<Arc<dyn PolicyImpactBuckets>>,
+    policy: Arc<LibraryPolicyService>,
     /// Test bundles own their scratch config directory and remove it
     /// when the last clone drops.
     #[cfg(any(test, feature = "test-support"))]
@@ -92,11 +95,13 @@ impl SettingsSetup {
         probes: Arc<dyn VerifyProbes>,
         timezone: Option<String>,
     ) -> Self {
+        let service = Arc::new(
+            SettingsService::new(store.clone(), effects.clone(), ids.clone(), probes)
+                .with_timezone(timezone),
+        );
         Self {
-            service: Arc::new(
-                SettingsService::new(store.clone(), effects.clone(), ids.clone(), probes)
-                    .with_timezone(timezone),
-            ),
+            policy: Arc::new(LibraryPolicyService::new(service.clone(), None)),
+            service,
             users,
             lifecycle: Arc::new(MusicBrainzLifecycle::new(
                 store.clone(),
@@ -130,6 +135,16 @@ impl SettingsSetup {
     #[must_use]
     pub fn with_impact_buckets(mut self, buckets: Arc<dyn PolicyImpactBuckets>) -> Self {
         self.buckets = Some(buckets);
+        self
+    }
+
+    /// Attach the catalog reads behind the library policy routes.
+    #[must_use]
+    pub fn with_library_catalog(mut self, catalog: Arc<dyn LibraryPolicyCatalog>) -> Self {
+        self.policy = Arc::new(LibraryPolicyService::new(
+            self.service.clone(),
+            Some(catalog),
+        ));
         self
     }
 
@@ -193,6 +208,11 @@ impl SettingsSetup {
         &self.service
     }
 
+    /// The library policy routes' service.
+    pub fn library_policy(&self) -> &LibraryPolicyService {
+        &self.policy
+    }
+
     /// The MusicBrainz lifecycle.
     pub fn lifecycle(&self) -> &MusicBrainzLifecycle {
         &self.lifecycle
@@ -253,6 +273,30 @@ impl SettingsSetup {
             .route(
                 "/settings/library/paths",
                 post(h::add_library_path).delete(h::remove_library_path),
+            )
+            .route(
+                "/settings/library/policy-tree",
+                get(h::get_library_policy_tree),
+            )
+            .route(
+                "/settings/library/policy-impact",
+                post(h::preview_library_policy_impact),
+            )
+            .route(
+                "/settings/library/policy-apply-preview",
+                post(h::preview_library_policy_apply),
+            )
+            .route(
+                "/settings/library/restorable-roots",
+                get(h::get_restorable_library_roots),
+            )
+            .route(
+                "/settings/library/restore-roots",
+                post(h::restore_library_roots),
+            )
+            .route(
+                "/settings/library/path-mapping",
+                get(h::get_library_path_mapping),
             )
             .route(
                 "/settings/advanced",

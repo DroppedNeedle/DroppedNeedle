@@ -74,6 +74,7 @@ mod reads_library;
 mod reads_platform;
 mod reads_search;
 mod remotes_adapter;
+mod settings_library_policy;
 mod settings_management;
 mod settings_sections;
 mod stream_gateway;

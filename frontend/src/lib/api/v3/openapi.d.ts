@@ -5197,7 +5197,8 @@ export interface paths {
         get: operations["get_library"];
         /**
          * Save the typed library settings. The expected revision must match
-         *     the stored one or the save is a 409.
+         *     the stored one or the save is a 409. Dropping every root while the
+         *     catalog holds tracks is a 400.
          */
         put: operations["put_library"];
         post?: never;
@@ -5403,6 +5404,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/settings/library/path-mapping": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Dry run: map every catalog file path to a saved root. */
+        get: operations["get_library_path_mapping"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/settings/library/paths": {
         parameters: {
             query?: never;
@@ -5419,9 +5437,106 @@ export interface paths {
         post: operations["add_library_path"];
         /**
          * Remove every library root at one path. Unknown paths are a silent
-         *     no-op.
+         *     no-op; removing the last root while the catalog holds tracks is a 400.
          */
         delete: operations["remove_library_path"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library/policy-apply-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview a reconcile of saved policy scopes: how many catalog files
+         *     it would revisit.
+         */
+        post: operations["preview_library_policy_apply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library/policy-impact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview what saving candidate library settings would change. Nothing
+         *     is saved; a stale expected revision only sets `stale`.
+         */
+        post: operations["preview_library_policy_impact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library/policy-tree": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The saved roots and their path rules as a tree, with catalog file
+         *     counts per node.
+         */
+        get: operations["get_library_policy_tree"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library/restorable-roots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Roots the catalog still holds tracks for that the settings no longer
+         *     list.
+         */
+        get: operations["get_restorable_library_roots"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library/restore-roots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Put every removed root back into the settings. */
+        post: operations["restore_library_roots"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -10693,6 +10808,49 @@ export interface components {
             /** @description Settings content revision. */
             settings_revision: string;
         };
+        /** @description One catalog path and the root it maps to under the saved settings. */
+        LibraryPathMappingItem: {
+            /** @description Absolute file path the catalog holds. */
+            absolute_path: string;
+            error?: null | components["schemas"]["PathMappingError"];
+            /** @description Path relative to that root, when it maps. */
+            relative_path?: string | null;
+            /** @description Root the path maps to, when it maps. */
+            root_id?: string | null;
+            /** @description Track id. */
+            source_id: string;
+            /** @description Source kind. */
+            source_kind: components["schemas"]["PathMappingSource"];
+        };
+        /** @description Dry run: does every catalog path map to exactly one saved root. */
+        LibraryPathMappingReport: {
+            /**
+             * Format: int64
+             * @description Paths under more than one root.
+             */
+            ambiguous_count: number;
+            /** @description Some path does not map. */
+            blocking: boolean;
+            /** @description Every checked path, ordered by track id. */
+            items: components["schemas"]["LibraryPathMappingItem"][];
+            /**
+             * Format: int64
+             * @description Paths that map to one root.
+             */
+            mapped_count: number;
+            /**
+             * Format: int64
+             * @description Paths under no root.
+             */
+            out_of_root_count: number;
+            /** @description Saved revision the report was built from. */
+            policy_revision: string;
+            /**
+             * Format: int64
+             * @description Paths checked.
+             */
+            source_count: number;
+        };
         /** @description Add-one-library-path body. */
         LibraryPathRequest: {
             /** @description Directory to add as a library root. */
@@ -10712,6 +10870,148 @@ export interface components {
              * @default
              */
             relative_path: string;
+        };
+        /**
+         * @description Apply preview: how many catalog files a reconcile of the chosen
+         *     scopes would revisit.
+         */
+        LibraryPolicyApplyPreviewResponse: {
+            /** @description Some chosen scope is excluded. */
+            content_will_become_unavailable: boolean;
+            /**
+             * Format: int64
+             * @description Catalog files under the chosen scopes.
+             */
+            estimated_file_count: number;
+            /** @description Saved revision the preview was built from. */
+            policy_revision: string;
+            /**
+             * @description Whether the last save cancelled queued work. Saves never cancel
+             *     queued work on this server, so this is always false.
+             */
+            queued_work_was_cancelled_on_save: boolean;
+            /** @description The scope ids as requested. */
+            scope_ids: string[];
+        };
+        /** @description Apply-preview request: which saved scopes to reconcile. */
+        LibraryPolicyApplyRequest: {
+            /** @description Revision the page loaded; a mismatch is a 409. */
+            expected_policy_revision: string;
+            /** @description Root or rule ids; empty means every root. */
+            scope_ids: string[];
+        };
+        /** @description Impact preview request. */
+        LibraryPolicyImpactRequest: {
+            /** @description Revision the page loaded, if any. A mismatch sets `stale`. */
+            expected_policy_revision?: string | null;
+            /** @description Full candidate settings. */
+            settings: components["schemas"]["LibrarySettings"];
+        };
+        /**
+         * @description Impact preview: how the candidate settings differ from the saved ones
+         *     and how much of the catalog the change touches.
+         */
+        LibraryPolicyImpactResponse: {
+            /** @description Root and rule ids whose effective policy changes. */
+            affected_scope_ids: string[];
+            /** @description Some affected scope becomes excluded. */
+            content_will_become_unavailable: boolean;
+            /** @description Saved revision. */
+            current_policy_revision: string;
+            /**
+             * Format: int64
+             * @description Indexed catalog files under the affected scopes, when wired.
+             */
+            indexed_file_count?: number | null;
+            /**
+             * Format: int64
+             * @description Indexed plus excluded catalog files under the affected scopes,
+             *     when wired.
+             */
+            on_disk_file_count?: number | null;
+            /** @description Revision of the normalized candidate. */
+            proposed_policy_revision: string;
+            /**
+             * @description Some affected scope stops being automatic, so queued
+             *     identification there no longer applies.
+             */
+            queued_work_will_be_cancelled: boolean;
+            /** @description Whether any root or rule changes its effective policy. */
+            reconciliation_required: boolean;
+            /** @description The caller's expected revision no longer matches the saved one. */
+            stale: boolean;
+            /** @description Non-blocking warnings about the candidate. */
+            warnings: string[];
+        };
+        /** @description One policy-tree node. */
+        LibraryPolicyTreeNode: {
+            /** @description Whether the path exists on disk right now. */
+            available: boolean;
+            /** @description Child rule nodes. */
+            children: components["schemas"]["LibraryPolicyTreeNode"][];
+            /** @description Node id (root or rule id). */
+            id: string;
+            /**
+             * Format: int64
+             * @description Indexed catalog files under the node, when the catalog is wired.
+             */
+            indexed_file_count?: number | null;
+            /** @description Id the policy comes from. */
+            inherited_from_id?: string | null;
+            /** @description Root or rule. */
+            kind: components["schemas"]["PolicyNodeKind"];
+            /** @description Display label. */
+            label: string;
+            /**
+             * Format: int64
+             * @description Indexed plus excluded catalog files under the node, when the
+             *     catalog is wired.
+             */
+            on_disk_file_count?: number | null;
+            /** @description Absolute path for a root, the root-relative path for a rule. */
+            path: string;
+            /** @description Policy set on this node. */
+            policy: components["schemas"]["IdentificationPolicy"];
+        };
+        /** @description Policy-tree response. */
+        LibraryPolicyTreeResponse: {
+            /** @description Content revision the tree was built from. */
+            policy_revision: string;
+            /** @description Root nodes. */
+            roots: components["schemas"]["LibraryPolicyTreeNode"][];
+            /** @description Non-blocking warnings. */
+            warnings: string[];
+        };
+        /**
+         * @description A root the catalog still holds tracks for but the settings no
+         *     longer list.
+         */
+        LibraryRestorableRoot: {
+            /**
+             * Format: int64
+             * @description Catalog files under the root.
+             */
+            indexed_file_count: number;
+            /** @description Root path recovered from the catalog rows. */
+            path: string;
+            /** @description Root id the catalog rows carry. */
+            root_id: string;
+        };
+        /** @description Removed roots that can be put back. */
+        LibraryRestorableRootsResponse: {
+            /** @description Saved revision (the token a restore must send). */
+            policy_revision: string;
+            /** @description Restorable roots, sorted by id. */
+            restorable_roots: components["schemas"]["LibraryRestorableRoot"][];
+        };
+        /** @description Restore request: put every removed root back. */
+        LibraryRestoreRootsRequest: {
+            /** @description Revision the page loaded; a mismatch is a 409. */
+            expected_policy_revision: string;
+            /** @description Path overrides by root id, for roots whose files moved. */
+            paths?: {
+                [key: string]: string;
+            } | null;
         };
         /** @description One library root. */
         LibraryRoot: {
@@ -11785,6 +12085,16 @@ export interface components {
              */
             windows_legacy_path_limit: boolean;
         };
+        /**
+         * @description Why a path did not map to a root.
+         * @enum {string}
+         */
+        PathMappingError: "ambiguous" | "out_of_root";
+        /**
+         * @description Where a mapped path came from.
+         * @enum {string}
+         */
+        PathMappingSource: "library_file";
         /** @description One penalty's share of a candidate's distance. */
         PenaltyView: {
             /** @description Penalty name. */
@@ -12482,6 +12792,11 @@ export interface components {
              */
             transferring_immutable: number;
         };
+        /**
+         * @description Which kind of scope a policy-tree node stands for.
+         * @enum {string}
+         */
+        PolicyNodeKind: "root" | "rule";
         /**
          * @description Safe, signed-in-user projection of the acquisition policy: the quality
          *     summary sentence plus the source-mode label only, no admin internals.
@@ -26441,6 +26756,13 @@ export interface operations {
                     "application/json": components["schemas"]["LibrarySettingsResponse"];
                 };
             };
+            /** @description Invalid settings, or every root removed while the catalog holds tracks */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Expected revision is stale */
             409: {
                 headers: {
@@ -26809,6 +27131,33 @@ export interface operations {
             };
         };
     };
+    get_library_path_mapping: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Path mapping report */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryPathMappingReport"];
+                };
+            };
+            /** @description Catalog reads are unwired */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     add_library_path: {
         parameters: {
             query?: never;
@@ -26853,6 +27202,181 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["LibrarySettingsResponse"];
                 };
+            };
+            /** @description Removing the last root would orphan the catalog */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    preview_library_policy_apply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryPolicyApplyRequest"];
+            };
+        };
+        responses: {
+            /** @description Apply preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryPolicyApplyPreviewResponse"];
+                };
+            };
+            /** @description A scope id no longer exists */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Expected revision is stale */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Catalog reads are unwired */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    preview_library_policy_impact: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryPolicyImpactRequest"];
+            };
+        };
+        responses: {
+            /** @description Impact preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryPolicyImpactResponse"];
+                };
+            };
+            /** @description Candidate settings are invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_library_policy_tree: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Policy tree */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryPolicyTreeResponse"];
+                };
+            };
+        };
+    };
+    get_restorable_library_roots: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Restorable roots */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryRestorableRootsResponse"];
+                };
+            };
+            /** @description Catalog reads are unwired */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    restore_library_roots: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LibraryRestoreRootsRequest"];
+            };
+        };
+        responses: {
+            /** @description Saved library settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibrarySettingsResponse"];
+                };
+            };
+            /** @description Nothing to restore, or a restored path is invalid */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Expected revision is stale */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Catalog reads are unwired */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

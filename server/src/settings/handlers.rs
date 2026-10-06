@@ -21,8 +21,11 @@ use super::models::{
     LibraryManagementProfileImportPreviewResponse, LibraryManagementProfileImportRequest,
     LibraryManagementProfileImportResponse, LibraryManagementProfileMutationResponse,
     LibraryManagementProfileUpdateRequest, LibraryManagementSaveRequest,
-    LibraryManagementSettingsImpactRequest, LibraryManagementSettingsResponse, LibraryPathQuery,
-    LibraryPathRequest, LibraryScanScheduleResponse, LibrarySettingsResponse,
+    LibraryManagementSettingsImpactRequest, LibraryManagementSettingsResponse,
+    LibraryPathMappingReport, LibraryPathQuery, LibraryPathRequest,
+    LibraryPolicyApplyPreviewResponse, LibraryPolicyApplyRequest, LibraryPolicyImpactRequest,
+    LibraryPolicyImpactResponse, LibraryPolicyTreeResponse, LibraryRestorableRootsResponse,
+    LibraryRestoreRootsRequest, LibraryScanScheduleResponse, LibrarySettingsResponse,
     LibrarySettingsSaveRequest, MusicBrainzBindingRequest, MusicBrainzSettingsUpdate,
     MusicBrainzSettingsView, MusicBrainzVerifyRequest, OperationResult, PlexLibrarySectionInfo,
     PlexVerifyResponse, PolicyImpactResponse, PolicySummaryResponse, ProwlarrTestResponse,
@@ -432,13 +435,15 @@ pub async fn get_library(
 }
 
 /// Save the typed library settings. The expected revision must match
-/// the stored one or the save is a 409.
+/// the stored one or the save is a 409. Dropping every root while the
+/// catalog holds tracks is a 400.
 #[utoipa::path(
     put,
     path = "/api/v3/settings/library",
     request_body = LibrarySettingsSaveRequest,
     responses(
         (status = 200, description = "Saved library settings", body = LibrarySettingsResponse),
+        (status = 400, description = "Invalid settings, or every root removed while the catalog holds tracks"),
         (status = 409, description = "Expected revision is stale")
     )
 )]
@@ -446,7 +451,7 @@ pub async fn put_library(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<LibrarySettingsSaveRequest>,
 ) -> JsonResult<LibrarySettingsResponse> {
-    settings.service().save_library(body).await.map(Json)
+    settings.library_policy().save(body).await.map(Json)
 }
 
 /// Add one library root path. The path must be a directory on this
@@ -469,22 +474,138 @@ pub async fn add_library_path(
 }
 
 /// Remove every library root at one path. Unknown paths are a silent
-/// no-op.
+/// no-op; removing the last root while the catalog holds tracks is a 400.
 #[utoipa::path(
     delete,
     path = "/api/v3/settings/library/paths",
     params(("path" = String, Query, description = "Directory to remove")),
-    responses((status = 200, description = "Library settings", body = LibrarySettingsResponse))
+    responses(
+        (status = 200, description = "Library settings", body = LibrarySettingsResponse),
+        (status = 400, description = "Removing the last root would orphan the catalog")
+    )
 )]
 pub async fn remove_library_path(
     State(settings): State<SettingsSetup>,
     ValidQuery(query): ValidQuery<LibraryPathQuery>,
 ) -> JsonResult<LibrarySettingsResponse> {
     settings
-        .service()
-        .remove_library_path(&query.path)
+        .library_policy()
+        .remove_path(&query.path)
         .await
         .map(Json)
+}
+
+/// The saved roots and their path rules as a tree, with catalog file
+/// counts per node.
+#[utoipa::path(
+    get,
+    path = "/api/v3/settings/library/policy-tree",
+    responses((status = 200, description = "Policy tree", body = LibraryPolicyTreeResponse))
+)]
+pub async fn get_library_policy_tree(
+    State(settings): State<SettingsSetup>,
+) -> JsonResult<LibraryPolicyTreeResponse> {
+    settings.library_policy().policy_tree().await.map(Json)
+}
+
+/// Preview what saving candidate library settings would change. Nothing
+/// is saved; a stale expected revision only sets `stale`.
+#[utoipa::path(
+    post,
+    path = "/api/v3/settings/library/policy-impact",
+    request_body = LibraryPolicyImpactRequest,
+    responses(
+        (status = 200, description = "Impact preview", body = LibraryPolicyImpactResponse),
+        (status = 400, description = "Candidate settings are invalid")
+    )
+)]
+pub async fn preview_library_policy_impact(
+    State(settings): State<SettingsSetup>,
+    ValidJson(body): ValidJson<LibraryPolicyImpactRequest>,
+) -> JsonResult<LibraryPolicyImpactResponse> {
+    settings
+        .library_policy()
+        .preview_impact(body)
+        .await
+        .map(Json)
+}
+
+/// Preview a reconcile of saved policy scopes: how many catalog files
+/// it would revisit.
+#[utoipa::path(
+    post,
+    path = "/api/v3/settings/library/policy-apply-preview",
+    request_body = LibraryPolicyApplyRequest,
+    responses(
+        (status = 200, description = "Apply preview", body = LibraryPolicyApplyPreviewResponse),
+        (status = 400, description = "A scope id no longer exists"),
+        (status = 409, description = "Expected revision is stale"),
+        (status = 503, description = "Catalog reads are unwired")
+    )
+)]
+pub async fn preview_library_policy_apply(
+    State(settings): State<SettingsSetup>,
+    ValidJson(body): ValidJson<LibraryPolicyApplyRequest>,
+) -> JsonResult<LibraryPolicyApplyPreviewResponse> {
+    settings
+        .library_policy()
+        .preview_apply(body)
+        .await
+        .map(Json)
+}
+
+/// Roots the catalog still holds tracks for that the settings no longer
+/// list.
+#[utoipa::path(
+    get,
+    path = "/api/v3/settings/library/restorable-roots",
+    responses(
+        (status = 200, description = "Restorable roots", body = LibraryRestorableRootsResponse),
+        (status = 503, description = "Catalog reads are unwired")
+    )
+)]
+pub async fn get_restorable_library_roots(
+    State(settings): State<SettingsSetup>,
+) -> JsonResult<LibraryRestorableRootsResponse> {
+    settings.library_policy().restorable_roots().await.map(Json)
+}
+
+/// Put every removed root back into the settings.
+#[utoipa::path(
+    post,
+    path = "/api/v3/settings/library/restore-roots",
+    request_body = LibraryRestoreRootsRequest,
+    responses(
+        (status = 200, description = "Saved library settings", body = LibrarySettingsResponse),
+        (status = 400, description = "Nothing to restore, or a restored path is invalid"),
+        (status = 409, description = "Expected revision is stale"),
+        (status = 503, description = "Catalog reads are unwired")
+    )
+)]
+pub async fn restore_library_roots(
+    State(settings): State<SettingsSetup>,
+    ValidJson(body): ValidJson<LibraryRestoreRootsRequest>,
+) -> JsonResult<LibrarySettingsResponse> {
+    settings
+        .library_policy()
+        .restore_roots(body)
+        .await
+        .map(Json)
+}
+
+/// Dry run: map every catalog file path to a saved root.
+#[utoipa::path(
+    get,
+    path = "/api/v3/settings/library/path-mapping",
+    responses(
+        (status = 200, description = "Path mapping report", body = LibraryPathMappingReport),
+        (status = 503, description = "Catalog reads are unwired")
+    )
+)]
+pub async fn get_library_path_mapping(
+    State(settings): State<SettingsSetup>,
+) -> JsonResult<LibraryPathMappingReport> {
+    settings.library_policy().path_mapping().await.map(Json)
 }
 
 // --- advanced + cache TTLs ---------------------------------------------------------

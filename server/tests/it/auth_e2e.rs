@@ -271,6 +271,11 @@ impl E2e {
             droppedneedle::settings::services::SqliteImpactBuckets {
                 pool: self.runtime.pool().clone(),
             },
+        ))
+        .with_library_catalog(Arc::new(
+            droppedneedle::settings::library_catalog::SqliteLibraryPolicyCatalog {
+                pool: self.runtime.pool().clone(),
+            },
         ));
         let state = AppState::new(
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
@@ -1087,8 +1092,38 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ("PUT", "/api/v3/settings/lastfm", Posture::Admin),
     ("GET", "/api/v3/settings/library", Posture::Admin),
     ("PUT", "/api/v3/settings/library", Posture::Admin),
+    (
+        "GET",
+        "/api/v3/settings/library/path-mapping",
+        Posture::Admin,
+    ),
     ("POST", "/api/v3/settings/library/paths", Posture::Admin),
     ("DELETE", "/api/v3/settings/library/paths", Posture::Admin),
+    (
+        "POST",
+        "/api/v3/settings/library/policy-apply-preview",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/settings/library/policy-impact",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/settings/library/policy-tree",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/settings/library/restorable-roots",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/settings/library/restore-roots",
+        Posture::Admin,
+    ),
     ("GET", "/api/v3/settings/library/schedule", Posture::Admin),
     ("PUT", "/api/v3/settings/library/schedule", Posture::Admin),
     ("GET", "/api/v3/settings/library/sync", Posture::Admin),
