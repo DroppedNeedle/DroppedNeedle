@@ -85,6 +85,18 @@ pub struct IdentityTrack {
     pub relative_path: String,
     pub recording_mbid: Option<String>,
     pub embedded_recording_mbid: Option<String>,
+    /// The revisions that make up the album's input revision.
+    pub input: TrackInput,
+}
+
+/// Per-track revisions the contribution input revision is built from
+/// (see [`super::rules::album_input_revisions`]).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TrackInput {
+    pub tag_revision: Option<String>,
+    pub stat_revision: String,
+    pub applied_policy_revision: String,
+    pub applied_policy: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -289,6 +301,8 @@ pub struct ContributionRow {
     pub created_at: f64,
     pub updated_at: f64,
     pub row_revision: i64,
+    /// Failure code of the latest finished verification job, if any.
+    pub last_verification_failure: Option<String>,
     // Freshness join (v2 resolves these from the album row on read).
     pub album_active: bool,
     pub current_input_revision: String,

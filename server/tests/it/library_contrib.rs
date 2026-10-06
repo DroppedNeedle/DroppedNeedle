@@ -102,6 +102,7 @@ fn track(id: &str, disc: i64, number: i64, title: &str, duration: f64) -> Identi
         relative_path: format!("{id}.flac"),
         recording_mbid: None,
         embedded_recording_mbid: None,
+        input: Default::default(),
     }
 }
 
@@ -151,6 +152,7 @@ fn discogs_release() -> DiscogsRelease {
         labels: vec![DiscogsLabel {
             name: "Test Label".to_string(),
             catalogue_number: Some("TL-001".to_string()),
+            ..Default::default()
         }],
         barcode: Some("0123456789012".to_string()),
         media: vec![DiscogsMedium {
@@ -177,6 +179,7 @@ fn discogs_release() -> DiscogsRelease {
             ],
         }],
         source_fetched_at: NOW,
+        ..Default::default()
     }
 }
 
@@ -416,6 +419,7 @@ async fn brief_search_defaults_and_validates() {
             track_count: None,
             master_id: None,
             fetched_at: NOW,
+            ..Default::default()
         }]);
     let ready = to_ready(&rig).await;
     let hits = rig.service.search_discogs(&ready.id, None).await.unwrap();

@@ -8,9 +8,8 @@
 //! and memory stores. The routers nest under `/api/v3` inside the
 //! deny-by-default session gate.
 //!
-//! Store durability: roots, scan state, identification, and the publish
-//! journal live in the application database. Contribution state runs on
-//! an in-memory store.
+//! Store durability: roots, scan state, identification, contributions,
+//! and the publish journal live in the application database.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -19,15 +18,11 @@ use std::sync::Arc;
 use axum::Router;
 use tokio::sync::watch;
 
-use super::adapters::{
-    EmptyContributionIdentity, LoftyTagReader, MinimalAttachmentEvidence, NoopContributionCatalog,
-    UnavailableMusicBrainz,
-};
+use super::adapters::LoftyTagReader;
 use super::clock::now_unix;
-use super::contrib::memory::MemoryStore as ContribMemoryStore;
-use super::contrib::seams::SystemClock as ContribSystemClock;
+use super::contrib::ContribProviders;
 use super::contrib::service::ContributionService;
-use super::contrib::worker::{VerificationWorker, VerificationWorkerConfig};
+use super::contrib::worker::VerificationWorker;
 use super::identify::providers::FakeProviders;
 use super::identify::service::{IdentifyDeps, IdentifyService};
 use super::identify::sqlite::SqliteIdentifyStore;
@@ -88,6 +83,25 @@ fn scripted_factory(scripted: Arc<FakeProviders>) -> ProviderFactory {
     Box::new(move |_| scripted as Arc<dyn super::identify::providers::IdentifyProviders>)
 }
 
+/// Scripted Discogs and MusicBrainz reads behind a test bundle's
+/// contribution service; journeys script them through this handle.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Clone, Default)]
+pub struct TestContribProviders {
+    pub discogs: Arc<super::contrib::memory::ScriptedDiscogs>,
+    pub musicbrainz: Arc<super::contrib::memory::ScriptedMusicBrainz>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl TestContribProviders {
+    fn providers(&self) -> ContribProviders {
+        ContribProviders {
+            discogs: self.discogs.clone(),
+            musicbrainz: self.musicbrainz.clone(),
+        }
+    }
+}
+
 /// Startup recovery report.
 #[derive(Debug, Clone, Default)]
 pub struct LibraryRecovery {
@@ -139,6 +153,9 @@ pub struct LibrarySetup {
     pub contrib: Arc<ContributionService>,
     /// Contribution verification worker.
     pub contrib_worker: Arc<VerificationWorker>,
+    /// Scripted contribution providers (test bundles only).
+    #[cfg(any(test, feature = "test-support"))]
+    pub test_contrib: Option<TestContribProviders>,
     /// Publish cell (empty until a usable root exists).
     pub publish: Arc<std::sync::Mutex<PublishCell>>,
     /// Unsettled publish bundles, read from the journal; their tracks
@@ -179,13 +196,28 @@ impl LibrarySetup {
         // Both clients count their failures toward system health, so an
         // outage during a background lookup shows on the health dot too.
         let health = HealthSink::new(&providers);
-        let musicbrainz = MusicBrainzClient::official(
-            ReqwestMbTransport::new(http.no_redirect().clone()),
-            MbPacing::new(providers.clone()),
-        )
-        .with_source_fn(mb_source)
-        .with_priority(RequestPriority::BackgroundSync)
-        .with_sink(health.clone());
+        let mb_client = |priority: RequestPriority| {
+            MusicBrainzClient::official(
+                ReqwestMbTransport::new(http.no_redirect().clone()),
+                MbPacing::new(providers.clone()),
+            )
+            .with_source_fn(mb_source.clone())
+            .with_priority(priority)
+            .with_sink(health.clone())
+        };
+        let musicbrainz = mb_client(RequestPriority::BackgroundSync);
+        // Contributions read MusicBrainz on both lanes (the curator's page
+        // and the verification worker) and Discogs through the shared GET
+        // port.
+        let contrib = ContribProviders {
+            discogs: Arc::new(super::adapters::LiveDiscogsContrib::new(
+                crate::providers::ReqwestGet::shared(http),
+            )),
+            musicbrainz: Arc::new(super::adapters::LiveMusicBrainzContrib::new(
+                mb_client(RequestPriority::UserInitiated),
+                mb_client(RequestPriority::BackgroundSync),
+            )),
+        };
         let pacer = CorePacer::for_source(providers, "acoustid")
             .ok_or_else(|| "acoustid has no verified rate row".to_owned())?;
         let acoustid = AcoustIdClient::new(http.shared().clone(), DEFAULT_BASE_URL, pacer, health);
@@ -203,7 +235,7 @@ impl LibrarySetup {
                 fingerprints,
             ))
         });
-        Self::assemble(users, ids, make, None, db_path, config)
+        Self::assemble(users, ids, make, None, contrib, db_path, config)
     }
 
     /// Test bundle over scripted providers on a fresh scratch database
@@ -212,15 +244,18 @@ impl LibrarySetup {
     pub fn for_tests(users: UsersDeps, ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
         let scripted = Arc::new(FakeProviders::default());
         let (dir, config) = scratch_state()?;
+        let contrib = TestContribProviders::default();
         let mut setup = Self::assemble(
             users,
             ids,
             scripted_factory(scripted.clone()),
             Some(scripted),
+            contrib.providers(),
             &dir.path().join("app.db"),
             config,
         )?;
         setup.scratch = Some(dir);
+        setup.test_contrib = Some(contrib);
         Ok(setup)
     }
 
@@ -237,14 +272,18 @@ impl LibrarySetup {
         config: Arc<ConfigStore>,
     ) -> Result<Self, String> {
         let scripted = Arc::new(FakeProviders::default());
-        Self::assemble(
+        let contrib = TestContribProviders::default();
+        let mut setup = Self::assemble(
             users,
             ids,
             scripted_factory(scripted.clone()),
             Some(scripted),
+            contrib.providers(),
             db_path,
             config,
-        )
+        )?;
+        setup.test_contrib = Some(contrib);
+        Ok(setup)
     }
 
     /// Test bundle over caller-supplied identify providers. Focused
@@ -257,15 +296,18 @@ impl LibrarySetup {
         providers: Arc<dyn super::identify::providers::IdentifyProviders>,
     ) -> Result<Self, String> {
         let (dir, config) = scratch_state()?;
+        let contrib = TestContribProviders::default();
         let mut setup = Self::assemble(
             users,
             ids,
             Box::new(move |_| providers),
             None,
+            contrib.providers(),
             &dir.path().join("app.db"),
             config,
         )?;
         setup.scratch = Some(dir);
+        setup.test_contrib = Some(contrib);
         Ok(setup)
     }
 
@@ -274,6 +316,7 @@ impl LibrarySetup {
         ids: Arc<dyn IdGenerator>,
         make_providers: ProviderFactory,
         test_providers: Option<Arc<FakeProviders>>,
+        contrib_providers: ContribProviders,
         db_path: &Path,
         config: Arc<ConfigStore>,
     ) -> Result<Self, String> {
@@ -334,23 +377,7 @@ impl LibrarySetup {
             releases: identify_store.clone(),
             providers,
         }));
-        let contrib_store: Arc<ContribMemoryStore> = Arc::new(ContribMemoryStore::new());
-        let contrib_identity = Arc::new(EmptyContributionIdentity);
-        let contrib = Arc::new(
-            ContributionService::new(
-                contrib_store,
-                contrib_identity.clone(),
-                Arc::new(MinimalAttachmentEvidence),
-                Arc::new(ContribSystemClock),
-            )
-            .with_catalog(Arc::new(NoopContributionCatalog)),
-        );
-        let contrib_worker = Arc::new(VerificationWorker::new(
-            contrib.clone(),
-            Arc::new(UnavailableMusicBrainz),
-            contrib_identity,
-            VerificationWorkerConfig::default(),
-        ));
+        let (contrib, contrib_worker) = super::contrib::assemble(db_path, contrib_providers)?;
         Ok(Self {
             users,
             ids,
@@ -367,6 +394,8 @@ impl LibrarySetup {
             test_providers,
             contrib,
             contrib_worker,
+            #[cfg(any(test, feature = "test-support"))]
+            test_contrib: None,
             publish: Arc::new(std::sync::Mutex::new(PublishCell::new(db_path))),
             held_bundles: super::manage::HeldBundles::new(db_path),
             previews: Arc::new(std::sync::Mutex::new(HashMap::new())),

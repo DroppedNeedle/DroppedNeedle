@@ -215,6 +215,27 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         .await
     }
 
+    /// Search releases with a query the caller built and escaped. Library
+    /// contributions use it to OR a barcode clause onto title and artist,
+    /// as v2's duplicate search did.
+    pub async fn search_releases_query(
+        &self,
+        query: &str,
+        limit: u32,
+        criticality: Criticality,
+    ) -> Result<SearchPage<ReleaseSearchHit>, MbError> {
+        self.search_page(
+            "/release",
+            query,
+            limit,
+            0,
+            "releases",
+            "search_releases",
+            criticality,
+        )
+        .await
+    }
+
     /// Search release groups by title and artist (verified Lucene shape).
     pub async fn search_release_groups(
         &self,

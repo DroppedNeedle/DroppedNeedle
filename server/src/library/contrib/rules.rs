@@ -1152,3 +1152,45 @@ fn field(name: &str, value: &str) -> MusicBrainzSeedField {
         value: value.to_string(),
     }
 }
+
+/// The album input revision triple (tag, file, policy) over an album's
+/// indexed tracks, given as `(track id, revisions)`, exactly as v2
+/// `_album_input_revision` builds it: tracks sorted by id, each part a
+/// SHA-256 over `|`-joined per-track entries. Any tag edit, file change,
+/// or policy change moves one part.
+pub fn album_input_revisions<'a>(
+    tracks: impl IntoIterator<Item = (&'a str, &'a super::seams::TrackInput)>,
+) -> (String, String, String) {
+    use sha2::{Digest as _, Sha256};
+    let mut ordered: Vec<(&str, &super::seams::TrackInput)> = tracks.into_iter().collect();
+    ordered.sort_by(|a, b| a.0.cmp(b.0));
+    let digest = |parts: Vec<String>| -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(parts.join("|").as_bytes());
+        format!("{:x}", hasher.finalize())
+    };
+    let tag = digest(
+        ordered
+            .iter()
+            .map(|(id, input)| format!("{id}:{}", input.tag_revision.as_deref().unwrap_or("")))
+            .collect(),
+    );
+    let file = digest(
+        ordered
+            .iter()
+            .map(|(id, input)| format!("{id}:{}", input.stat_revision))
+            .collect(),
+    );
+    let policy = digest(
+        ordered
+            .iter()
+            .map(|(id, input)| {
+                format!(
+                    "{id}:{}:{}",
+                    input.applied_policy_revision, input.applied_policy
+                )
+            })
+            .collect(),
+    );
+    (tag, file, policy)
+}

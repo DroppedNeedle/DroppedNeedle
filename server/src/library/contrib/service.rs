@@ -309,7 +309,7 @@ impl ContributionService {
     ) -> Result<ContributionRecord, ContribError> {
         let current = self.get(contribution_id).await?;
         if current.row_revision != expected_row_revision {
-            return Err(ContribError::state(
+            return Err(ContribError::stale(
                 "The contribution changed before the source was selected.",
             ));
         }
@@ -375,7 +375,7 @@ impl ContributionService {
     ) -> Result<ContributionRecord, ContribError> {
         let current = self.get(contribution_id).await?;
         if current.row_revision != expected_row_revision {
-            return Err(ContribError::state(
+            return Err(ContribError::stale(
                 "The contribution changed before the source was removed.",
             ));
         }
@@ -410,7 +410,7 @@ impl ContributionService {
     ) -> Result<ContributionRecord, ContribError> {
         let current = self.get(contribution_id).await?;
         if current.row_revision != expected_row_revision {
-            return Err(ContribError::state(
+            return Err(ContribError::stale(
                 "The contribution changed before the duplicate check started.",
             ));
         }
@@ -573,7 +573,7 @@ impl ContributionService {
     ) -> Result<ContributionRecord, ContribError> {
         let current = self.get(contribution_id).await?;
         if current.row_revision != expected_row_revision {
-            return Err(ContribError::state(
+            return Err(ContribError::stale(
                 "The contribution changed before the release could be attached.",
             ));
         }
@@ -661,7 +661,7 @@ impl ContributionService {
         validate_public_base_url(public_base_url)?;
         let current = self.get(contribution_id).await?;
         if current.row_revision != expected_row_revision {
-            return Err(ContribError::state(
+            return Err(ContribError::stale(
                 "The contribution changed before the editor could be opened.",
             ));
         }
@@ -984,7 +984,7 @@ impl ContributionService {
             .await
         {
             Ok(_) => Ok(true),
-            Err(ContribError::State(_)) => Ok(false),
+            Err(ContribError::State(_) | ContribError::Stale(_)) => Ok(false),
             Err(other) => Err(other),
         }
     }
@@ -1158,9 +1158,18 @@ impl ContributionService {
             && discogs_release.is_none()
             && let (Some(source), Some(discogs)) = (discogs_ref.as_ref(), self.discogs.as_ref())
         {
-            discogs_release = discogs
+            // Display only: a Discogs outage must not hide the contribution
+            // itself, so the source shows without its release this time.
+            discogs_release = match discogs
                 .get_release(&source.external_id, RequestPriority::UserInitiated)
-                .await?;
+                .await
+            {
+                Ok(release) => release,
+                Err(error) => {
+                    tracing::warn!(%error, contribution = row.id, "Discogs release not shown");
+                    None
+                }
+            };
         }
         let issues = validate_draft(&draft, &row.local_snapshot);
         let input_is_current = !row_is_stale(&row);
@@ -1203,6 +1212,13 @@ impl ContributionService {
             input_is_current,
             validation: issues,
             next_actions: actions,
+            review_reason: (row.state == ContributionState::NeedsReview)
+                .then(|| {
+                    row.last_verification_failure
+                        .as_deref()
+                        .map(super::reasons::verification_reason)
+                })
+                .flatten(),
         })
     }
 }

@@ -7,6 +7,7 @@
 //! from accident.
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 // ---------------------------------------------------------------------------
 // Constants (v2 `library_contribution_service.py` module level)
@@ -22,7 +23,12 @@ pub const MUSICBRAINZ_RELEASE_EDITOR: &str = "https://musicbrainz.org/release/ad
 /// MB link type for a Discogs release URL attached to a seeded release.
 pub const MUSICBRAINZ_DISCOGS_RELEASE_LINK_TYPE: &str = "76";
 /// Callback path the seed's `redirect_uri` points at.
-pub const CALLBACK_PATH: &str = "/api/v1/library/contributions/musicbrainz/callback";
+/// Relative to the public base URL; v2 installs sent `/api/v1/...`, which
+/// stays served as a shim (see `library::http::contrib`).
+pub const CALLBACK_PATH: &str = "/api/v3/library/contributions/musicbrainz/callback";
+/// The v2 callback path, kept so a seed opened before the upgrade still
+/// lands somewhere real.
+pub const LEGACY_CALLBACK_PATH: &str = "/api/v1/library/contributions/musicbrainz/callback";
 /// Callback token lifetime (30m).
 pub const CALLBACK_TOKEN_SECONDS: f64 = 30.0 * 60.0;
 /// Deterministic provider-payload failure: review immediately, breaker stays
@@ -51,7 +57,7 @@ pub fn seed_edit_note(discogs_url: Option<&str>) -> String {
 // ---------------------------------------------------------------------------
 
 /// Contribution lifecycle states, v2 `ContributionState` verbatim.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ContributionState {
     Draft,
@@ -65,7 +71,7 @@ pub enum ContributionState {
 }
 
 /// Follow-up actions the UI may offer, v2 `ContributionNextAction` verbatim.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ContributionNextAction {
     EditDraft,
@@ -79,7 +85,7 @@ pub enum ContributionNextAction {
 }
 
 /// Where a draft field value came from, v2 `ContributionFieldSource`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ContributionFieldSource {
     #[default]
@@ -90,7 +96,9 @@ pub enum ContributionFieldSource {
 
 /// Duplicate evidence kinds, ordered weakest-last (v2 sort key
 /// exact_discogs_url < release_group < barcode < similar).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, ToSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DuplicateEvidenceKind {
     ExactDiscogsUrl,
@@ -100,7 +108,7 @@ pub enum DuplicateEvidenceKind {
 }
 
 /// Track alignment classes from Discogs selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AlignmentClassification {
     Exact,
@@ -114,7 +122,7 @@ pub enum AlignmentClassification {
 // Draft + snapshot documents
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ReleaseTextField {
     #[serde(default)]
     pub value: Option<String>,
@@ -144,7 +152,7 @@ impl Default for ReleaseTextField {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ReleaseTrackSnapshot {
     pub local_track_id: String,
     pub disc_number: i64,
@@ -159,7 +167,7 @@ pub struct ReleaseTrackSnapshot {
     pub duration_reliable: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ReleaseMediumSnapshot {
     pub position: i64,
     #[serde(default)]
@@ -168,7 +176,7 @@ pub struct ReleaseMediumSnapshot {
     pub tracks: Vec<ReleaseTrackSnapshot>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct LocalReleaseSnapshot {
     #[serde(default = "schema_one")]
     pub schema_version: i32,
@@ -214,7 +222,7 @@ fn unknown_kind() -> String {
     "unknown".to_string()
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ReleaseTrackDraft {
     pub local_track_id: String,
     pub disc_number: i64,
@@ -225,7 +233,7 @@ pub struct ReleaseTrackDraft {
     pub duration_seconds: Option<f64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ReleaseMediumDraft {
     pub position: i64,
     #[serde(default)]
@@ -236,7 +244,7 @@ pub struct ReleaseMediumDraft {
     pub tracks: Vec<ReleaseTrackDraft>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ReleaseDraft {
     #[serde(default = "schema_one")]
     pub schema_version: i32,
@@ -277,7 +285,7 @@ impl Default for ReleaseDraft {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct SourceReference {
     pub provider: String,
     pub entity_type: String,
@@ -287,7 +295,7 @@ pub struct SourceReference {
     pub fetched_at: Option<f64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct TrackAlignment {
     pub local_track_id: String,
     #[serde(default)]
@@ -296,7 +304,7 @@ pub struct TrackAlignment {
     pub classification: AlignmentClassification,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ContributionSourceSelection {
     #[serde(default = "schema_one")]
     pub schema_version: i32,
@@ -320,7 +328,7 @@ impl Default for ContributionSourceSelection {
 // Discogs view (trimmed to what selection/validation/seeding consume)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, ToSchema)]
 pub struct DiscogsReleaseCandidate {
     pub release_id: String,
     #[serde(default)]
@@ -338,6 +346,8 @@ pub struct DiscogsReleaseCandidate {
     #[serde(default)]
     pub catalogue_number: Option<String>,
     #[serde(default)]
+    pub format_summary: Option<String>,
+    #[serde(default)]
     pub track_count: Option<i64>,
     #[serde(default)]
     pub master_id: Option<String>,
@@ -345,25 +355,55 @@ pub struct DiscogsReleaseCandidate {
     pub fetched_at: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, ToSchema)]
 pub struct DiscogsArtistCredit {
     #[serde(default)]
     pub name: String,
     #[serde(default)]
     pub credited_name: Option<String>,
     #[serde(default)]
+    pub join_phrase: String,
+    #[serde(default)]
     pub artist_id: Option<String>,
+    #[serde(default)]
+    pub canonical_url: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, ToSchema)]
 pub struct DiscogsLabel {
     #[serde(default)]
     pub name: String,
     #[serde(default)]
     pub catalogue_number: Option<String>,
+    #[serde(default)]
+    pub label_id: Option<String>,
+    #[serde(default)]
+    pub canonical_url: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, ToSchema)]
+pub struct DiscogsIdentifier {
+    #[serde(default, rename = "type")]
+    pub kind: String,
+    #[serde(default)]
+    pub value: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, ToSchema)]
+pub struct DiscogsFormat {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub quantity: Option<i64>,
+    #[serde(default)]
+    pub descriptions: Vec<String>,
+    #[serde(default)]
+    pub text: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, ToSchema)]
 pub struct DiscogsTrack {
     #[serde(default)]
     pub source_position: Option<String>,
@@ -379,7 +419,7 @@ pub struct DiscogsTrack {
     pub artists: Vec<DiscogsArtistCredit>,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, ToSchema)]
 pub struct DiscogsMedium {
     pub position: i64,
     #[serde(default)]
@@ -390,7 +430,7 @@ pub struct DiscogsMedium {
     pub tracks: Vec<DiscogsTrack>,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, ToSchema)]
 pub struct DiscogsRelease {
     #[serde(default)]
     pub release_id: String,
@@ -405,6 +445,8 @@ pub struct DiscogsRelease {
     #[serde(default)]
     pub artist_name: String,
     #[serde(default)]
+    pub artists: Vec<DiscogsArtistCredit>,
+    #[serde(default)]
     pub released_date: Option<String>,
     #[serde(default)]
     pub year: Option<i32>,
@@ -413,14 +455,18 @@ pub struct DiscogsRelease {
     #[serde(default)]
     pub labels: Vec<DiscogsLabel>,
     #[serde(default)]
+    pub identifiers: Vec<DiscogsIdentifier>,
+    #[serde(default)]
     pub barcode: Option<String>,
+    #[serde(default)]
+    pub formats: Vec<DiscogsFormat>,
     #[serde(default)]
     pub media: Vec<DiscogsMedium>,
     #[serde(default)]
     pub source_fetched_at: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DiscogsSourceView {
     #[serde(default)]
     pub release: Option<DiscogsRelease>,
@@ -434,7 +480,7 @@ pub struct DiscogsSourceView {
 // Duplicate check + MusicBrainz verification payloads
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DuplicateCandidate {
     #[serde(default)]
     pub release_mbid: Option<String>,
@@ -451,7 +497,7 @@ pub struct DuplicateCandidate {
     pub differences: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct DuplicateCheckResult {
     #[serde(default = "schema_one")]
     pub schema_version: i32,
@@ -465,7 +511,7 @@ pub struct DuplicateCheckResult {
     pub different_edition_confirmed: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, ToSchema)]
 pub struct MusicBrainzUrlResolution {
     #[serde(default)]
     pub resource_url: String,
@@ -475,7 +521,7 @@ pub struct MusicBrainzUrlResolution {
     pub release_group_mbids: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct MusicBrainzVerifiedTrack {
     #[serde(default)]
     pub title: String,
@@ -489,7 +535,7 @@ pub struct MusicBrainzVerifiedTrack {
     pub release_track_mbid: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, ToSchema)]
 pub struct MusicBrainzVerifiedRelease {
     #[serde(default)]
     pub release_mbid: String,
@@ -519,13 +565,13 @@ pub struct MusicBrainzVerifiedRelease {
     pub tracks: Vec<MusicBrainzVerifiedTrack>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct MusicBrainzSeedField {
     pub name: String,
     pub value: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct MusicBrainzSeed {
     pub action_url: String,
     pub method: String,
@@ -534,7 +580,7 @@ pub struct MusicBrainzSeed {
     pub expires_at: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ContributionValidationIssue {
     pub code: String,
     pub field: String,
@@ -546,7 +592,7 @@ pub struct ContributionValidationIssue {
 // ---------------------------------------------------------------------------
 
 /// What the service hands back: persisted row plus derived presentation.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct ContributionRecord {
     pub id: String,
     pub local_album_id: String,
@@ -589,6 +635,18 @@ pub struct ContributionRecord {
     pub validation: Vec<ContributionValidationIssue>,
     #[serde(default)]
     pub next_actions: Vec<ContributionNextAction>,
+    /// Why the contribution needs review, when it does: a stable code, a
+    /// plain sentence, and what to do next.
+    #[serde(default)]
+    pub review_reason: Option<ContributionReason>,
+}
+
+/// One reason shown to the curator: stable code, plain sentence, action.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ContributionReason {
+    pub code: String,
+    pub message: String,
+    pub action: String,
 }
 
 /// How a verification job finished (worker outcomes, v2 string verbatim).

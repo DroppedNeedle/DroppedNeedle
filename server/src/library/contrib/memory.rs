@@ -829,7 +829,7 @@ fn editable(state: ContributionState) -> bool {
 }
 
 fn stale_revision(msg: &str) -> ContribError {
-    ContribError::State(msg.to_string())
+    ContribError::Stale(msg.to_string())
 }
 
 impl ContributionStore for MemoryStore {
@@ -900,6 +900,7 @@ impl ContributionStore for MemoryStore {
                 created_at: now,
                 updated_at: now,
                 row_revision: 1,
+                last_verification_failure: None,
                 album_active: true,
                 current_input_revision: input_revision.to_string(),
                 current_album_row_revision: album_row_revision,
@@ -1500,6 +1501,7 @@ impl ContributionStore for MemoryStore {
                 created_at: now,
                 updated_at: now,
                 row_revision: 1,
+                last_verification_failure: None,
                 album_active: true,
                 current_input_revision: input_revision.to_string(),
                 current_album_row_revision: album_row_revision,
