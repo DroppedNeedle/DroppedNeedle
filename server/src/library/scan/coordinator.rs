@@ -446,7 +446,7 @@ impl<S: ScanStore, T: TagReader + 'static> LibraryScanCoordinator<S, T> {
     }
 
     pub fn history(&self, limit: usize) -> Vec<ScanRun> {
-        self.store.list_history(limit)
+        self.store.list_history(limit, None)
     }
 
     pub fn latest_filesystem_terminal(&self) -> Option<ScanRun> {
@@ -465,17 +465,10 @@ impl<S: ScanStore, T: TagReader + 'static> LibraryScanCoordinator<S, T> {
             let terminal_at: f64 = terminal.parse().map_err(|_| ScanRequestError::BadCursor)?;
             before = Some((terminal_at, id.to_owned()));
         }
-        let mut runs = self.store.list_history(limit + 1 + 50);
-        if let Some((terminal_at, id)) = before {
-            runs.retain(|run| {
-                run.terminal_at
-                    .map(|terminal| {
-                        terminal < terminal_at || (terminal == terminal_at && run.id < id)
-                    })
-                    .unwrap_or(false)
-            });
-        }
-        let mut items: Vec<ScanRun> = runs.into_iter().take(limit + 1).collect();
+        let mut items = self.store.list_history(
+            limit + 1,
+            before.as_ref().map(|(at, id)| (*at, id.as_str())),
+        );
         let mut next_cursor = None;
         if items.len() > limit {
             items.truncate(limit);

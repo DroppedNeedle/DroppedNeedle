@@ -231,17 +231,22 @@ impl InventoryStore for SqliteScanStore {
         Ok(outcome)
     }
 
-    fn inventory_for_run(&self, run_id: &str) -> Vec<ScanInventoryItem> {
+    fn inventory_for_run(&self, run_id: &str, limit: usize) -> Vec<ScanInventoryItem> {
         let guard = self.lock();
+        // Inventory rows freeze at discovery; the track id lands in the
+        // catalog at index time, so it comes from there when missing.
         let mut stmt = match guard.conn.prepare(
             "SELECT i.root_id, i.relative_path, i.absolute_path, i.file_size_bytes, \
              i.file_mtime_ns, i.stat_revision, i.effective_policy, i.comparison_result, \
-             i.policy_revision, i.local_track_id, i.scope_relative_path \
+             i.policy_revision, COALESCE(i.local_track_id, t.id) AS local_track_id, \
+             i.scope_relative_path \
              FROM library_scan_inventory i \
              JOIN library_scan_run_scopes s ON s.run_id = i.run_id \
              AND s.root_id = i.root_id AND s.relative_path = i.scope_relative_path \
+             LEFT JOIN local_tracks t ON t.root_id = i.root_id \
+             AND t.relative_path = i.relative_path \
              WHERE i.run_id = ?1 AND s.discovery_generation = i.discovery_generation \
-             ORDER BY i.rowid",
+             ORDER BY i.rowid DESC LIMIT ?2",
         ) {
             Ok(stmt) => stmt,
             Err(error) => {
@@ -249,12 +254,15 @@ impl InventoryStore for SqliteScanStore {
                 return Vec::new();
             }
         };
-        stmt.query_map(params![run_id], map_inventory)
+        let mut rows = stmt
+            .query_map(params![run_id, limit as i64], map_inventory)
             .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
             .unwrap_or_else(|error| {
                 tracing::error!(%error, "scan inventory_for_run failed");
                 Vec::new()
-            })
+            });
+        rows.reverse();
+        rows
     }
 
     fn inventory_page(

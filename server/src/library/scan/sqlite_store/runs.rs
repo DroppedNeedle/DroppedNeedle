@@ -48,10 +48,15 @@ impl RunStore for SqliteScanStore {
             })
     }
 
-    fn list_history(&self, limit: usize) -> Vec<ScanRun> {
+    fn list_history(&self, limit: usize, before: Option<(f64, &str)>) -> Vec<ScanRun> {
         let guard = self.lock();
+        let (before_at, before_id) = match before {
+            Some((terminal_at, run_id)) => (Some(terminal_at), Some(run_id)),
+            None => (None, None),
+        };
         let mut stmt = match guard.conn.prepare(&format!(
             "SELECT {RUN_COLUMNS} FROM library_scan_runs WHERE terminal_at IS NOT NULL \
+             AND (?2 IS NULL OR terminal_at < ?2 OR (terminal_at = ?2 AND id < ?3)) \
              ORDER BY terminal_at DESC, id DESC LIMIT ?1"
         )) {
             Ok(stmt) => stmt,
@@ -60,7 +65,7 @@ impl RunStore for SqliteScanStore {
                 return Vec::new();
             }
         };
-        stmt.query_map(params![limit.max(1) as i64], map_run)
+        stmt.query_map(params![limit.max(1) as i64, before_at, before_id], map_run)
             .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
             .unwrap_or_else(|error| {
                 tracing::error!(%error, "scan list_history failed");

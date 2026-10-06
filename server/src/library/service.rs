@@ -1,7 +1,4 @@
 //! Library service: roots, scans, identification, and reviews.
-
-use std::collections::HashMap;
-
 use super::clock::now_ms;
 use super::identify::models::{AlbumIdentity, IdentifyJob, IdentifyKind};
 use super::manage::publish_error;
@@ -10,8 +7,11 @@ use super::scan::models::{
     ScanScope, ScanTrigger,
 };
 use super::scan::roots::LibraryRoot;
-use super::scan::store::{CatalogStore, InventoryStore};
+use super::scan::store::InventoryStore;
 use super::wiring::LibrarySetup;
+
+/// Inventory rows a run detail view shows: the most recent ones.
+const RUN_DETAIL_FILES: usize = 500;
 
 /// Why a library operation failed, independent of transport. The
 /// HTTP layer maps each variant to a status.
@@ -175,28 +175,7 @@ impl LibrarySetup {
                     message: other.to_string(),
                 },
             })?;
-        let mut files = self.scan_store.inventory_for_run(run_id);
-        if files.len() > 500 {
-            files = files.split_off(files.len() - 500);
-        }
-        // Inventory rows freeze at discovery; track ids assign at
-        // index time into the catalog, so join them for the view.
-        let mut catalog: HashMap<(String, String), String> = HashMap::new();
-        for scope in &scopes {
-            for (relative_path, entry) in self.scan_store.catalog_entries(&scope.root_id) {
-                catalog.insert(
-                    (scope.root_id.clone(), relative_path),
-                    entry.track_id.clone(),
-                );
-            }
-        }
-        for file in &mut files {
-            if file.local_track_id.is_none() {
-                file.local_track_id = catalog
-                    .get(&(file.root_id.clone(), file.relative_path.clone()))
-                    .cloned();
-            }
-        }
+        let files = self.scan_store.inventory_for_run(run_id, RUN_DETAIL_FILES);
         Ok((run, scopes, files))
     }
 

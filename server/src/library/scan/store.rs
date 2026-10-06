@@ -125,7 +125,9 @@ pub trait RunStore: Send + Sync {
 
     fn list_current(&self) -> Vec<ScanRun>;
 
-    fn list_history(&self, limit: usize) -> Vec<ScanRun>;
+    /// Terminal runs, newest first. `before` is a `(terminal_at, run id)`
+    /// keyset cursor: only runs strictly older are listed.
+    fn list_history(&self, limit: usize, before: Option<(f64, &str)>) -> Vec<ScanRun>;
 
     fn latest_filesystem_terminal(&self) -> Option<ScanRun>;
 
@@ -223,7 +225,9 @@ pub trait InventoryStore: Send + Sync {
         generation: u64,
     ) -> Result<(u64, usize), ScanStoreError>;
 
-    fn inventory_for_run(&self, run_id: &str) -> Vec<ScanInventoryItem>;
+    /// The run's last `limit` current-generation inventory rows in
+    /// discovery order, each with the catalog track id its path holds.
+    fn inventory_for_run(&self, run_id: &str, limit: usize) -> Vec<ScanInventoryItem>;
 
     /// One bounded page of the run's unprocessed inventory rows in
     /// `(root_id, relative_path)` order,
@@ -252,8 +256,6 @@ pub trait CatalogStore: Send + Sync {
     fn commit_window(&self, window: &IndexWindow) -> Result<WindowOutcome, ScanStoreError>;
 
     fn mark_deferred(&self, root_id: &str, relative_path: &str, deferred: bool);
-
-    fn catalog_entries(&self, root_id: &str) -> Vec<(String, CatalogEntry)>;
 
     /// Catalog album of one indexed track: the track-to-album join.
     fn album_for_track(&self, track_id: &str) -> Option<String>;

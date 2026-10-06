@@ -36,44 +36,6 @@ impl CatalogStore for SqliteScanStore {
         }
     }
 
-    fn catalog_entries(&self, root_id: &str) -> Vec<(String, CatalogEntry)> {
-        let guard = self.lock();
-        let mut stmt = match guard.conn.prepare(
-            "SELECT relative_path, id, stat_revision, stat_revision_kind, file_size_bytes, \
-             file_mtime_ns, tags_read_at FROM local_tracks \
-             WHERE root_id = ?1 AND availability = 'indexed' ORDER BY relative_path",
-        ) {
-            Ok(stmt) => stmt,
-            Err(error) => {
-                tracing::error!(%error, "scan catalog_entries failed");
-                return Vec::new();
-            }
-        };
-        stmt.query_map(params![root_id], |row| {
-            let kind: String = row.get("stat_revision_kind")?;
-            Ok((
-                row.get::<_, String>("relative_path")?,
-                CatalogEntry {
-                    track_id: row.get("id")?,
-                    revision: row.get("stat_revision")?,
-                    size_bytes: row.get::<_, i64>("file_size_bytes")? as u64,
-                    mtime_ns: row.get("file_mtime_ns")?,
-                    revision_kind: if kind == "exact" {
-                        RevisionKind::Exact
-                    } else {
-                        RevisionKind::LegacyFloat
-                    },
-                    tags_read_at: row.get("tags_read_at")?,
-                },
-            ))
-        })
-        .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
-        .unwrap_or_else(|error| {
-            tracing::error!(%error, "scan catalog_entries failed");
-            Vec::new()
-        })
-    }
-
     fn album_for_track(&self, track_id: &str) -> Option<String> {
         let guard = self.lock();
         guard
@@ -342,8 +304,8 @@ impl CatalogStore for SqliteScanStore {
     }
 }
 
-/// Bulk catalog load backing in-memory classify: same row shape as
-/// [`ScanStore::catalog_entries`], keyed for verdict lookups.
+/// Bulk catalog load backing in-memory classify: every indexed row of one
+/// root, keyed by relative path for verdict lookups.
 fn load_catalog_map(
     conn: &Connection,
     root_id: &str,
