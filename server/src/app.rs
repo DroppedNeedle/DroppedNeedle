@@ -133,11 +133,13 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
             state.auth.limits.clone(),
             rate_limit,
         ));
-    // Spotify OAuth callback: outside the session gate (state-token
-    // identified), still rate-limited like the wrapped trio.
+    // Spotify OAuth and MusicBrainz contribution callbacks: outside the
+    // session gate (token identified), still rate-limited like the
+    // wrapped trio.
     let acquire_public = Router::new()
         .nest("/api/v3", state.acquire.callback_router())
         .merge(state.acquire.legacy_callback_router())
+        .merge(state.library.contrib_callback_router())
         .layer(middleware::from_fn_with_state(
             state.auth.limits.clone(),
             rate_limit,

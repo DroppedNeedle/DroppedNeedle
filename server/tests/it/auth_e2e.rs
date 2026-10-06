@@ -1871,6 +1871,72 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "POST",
         "/api/v3/library/manage/baseline/restore",
         Posture::Curator,
+    ), // Library contributions; the release-editor callback is token identified.
+    (
+        "POST",
+        "/api/v3/library/albums/{id}/contributions",
+        Posture::Curator,
+    ),
+    ("GET", "/api/v3/library/contributions/{id}", Posture::User),
+    (
+        "PUT",
+        "/api/v3/library/contributions/{id}/draft",
+        Posture::Curator,
+    ),
+    (
+        "POST",
+        "/api/v3/library/contributions/{id}/rebuild",
+        Posture::Curator,
+    ),
+    (
+        "POST",
+        "/api/v3/library/contributions/{id}/cancel",
+        Posture::Curator,
+    ),
+    (
+        "POST",
+        "/api/v3/library/contributions/{id}/discogs/search",
+        Posture::Curator,
+    ),
+    (
+        "POST",
+        "/api/v3/library/contributions/{id}/discogs/select",
+        Posture::Curator,
+    ),
+    (
+        "POST",
+        "/api/v3/library/contributions/{id}/discogs/remove",
+        Posture::Curator,
+    ),
+    (
+        "POST",
+        "/api/v3/library/contributions/{id}/musicbrainz/duplicates",
+        Posture::Curator,
+    ),
+    (
+        "POST",
+        "/api/v3/library/contributions/{id}/musicbrainz/attach",
+        Posture::Curator,
+    ),
+    (
+        "POST",
+        "/api/v3/library/contributions/{id}/musicbrainz/seed",
+        Posture::Curator,
+    ),
+    (
+        "PUT",
+        "/api/v3/library/contributions/{id}/musicbrainz/result",
+        Posture::Curator,
+    ),
+    (
+        "POST",
+        "/api/v3/library/contributions/{id}/musicbrainz/verify",
+        Posture::Curator,
+    ),
+    (
+        "GET",
+        "/api/v3/library/contributions/musicbrainz/callback",
+        Posture::Public,
     ),
 ];
 

@@ -2201,6 +2201,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/albums/{id}/contributions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start (or reopen) the contribution for one local album. */
+        post: operations["create_contribution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/albums/{id}/copies": {
         parameters: {
             query?: never;
@@ -2297,6 +2314,235 @@ export interface paths {
         get: operations["list_artist_appearances"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/contributions/musicbrainz/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where the MusicBrainz release editor sends the curator back. Public:
+         *     the one-time token identifies the contribution. Every outcome is a 303
+         *     to the web app: the contribution page on success, the library page
+         *     with `musicbrainz=callback-error` otherwise (v2's contract).
+         */
+        get: operations["musicbrainz_callback"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/contributions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read one contribution. */
+        get: operations["get_contribution"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/contributions/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel a contribution. */
+        post: operations["cancel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/contributions/{id}/discogs/remove": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Drop the Discogs source and its values. */
+        post: operations["remove_discogs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/contributions/{id}/discogs/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Search Discogs releases for this contribution. */
+        post: operations["search_discogs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/contributions/{id}/discogs/select": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Use a Discogs release as the source. */
+        post: operations["select_discogs"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/contributions/{id}/draft": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Save the edited draft. */
+        put: operations["update_draft"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/contributions/{id}/musicbrainz/attach": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Link the album to a release already on MusicBrainz. */
+        post: operations["attach_existing"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/contributions/{id}/musicbrainz/duplicates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Check MusicBrainz for releases this would duplicate. */
+        post: operations["check_duplicates"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/contributions/{id}/musicbrainz/result": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Record the release MusicBrainz created, by hand. */
+        put: operations["record_result"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/contributions/{id}/musicbrainz/seed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Build the form that opens the seeded MusicBrainz release editor. The
+         *     browser POSTs it; MusicBrainz sends the curator back to the callback.
+         */
+        post: operations["create_seed"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/contributions/{id}/musicbrainz/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Queue the recorded release for verification again. */
+        post: operations["retry_verification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/contributions/{id}/rebuild": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rebuild a stale contribution from the album's current files. */
+        post: operations["rebuild"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7228,6 +7474,11 @@ export interface components {
              */
             year?: number | null;
         };
+        /**
+         * @description Track alignment classes from Discogs selection.
+         * @enum {string}
+         */
+        AlignmentClassification: "exact" | "partial" | "conflicting" | "unmatched";
         /** @description One row of a listening top list. */
         AnalyticsItem: {
             /** @description Artist, album, or track name. */
@@ -7747,6 +7998,16 @@ export interface components {
          * @enum {string}
          */
         ArtworkProvider: "cover_art_archive_release" | "cover_art_archive_release_group" | "local_files" | "embedded" | "audiodb";
+        /** @description Link the album to a release already on MusicBrainz. */
+        AttachExistingBody: {
+            /**
+             * Format: int64
+             * @description Row revision the caller last read.
+             */
+            expected_row_revision: number;
+            /** @description A release from the duplicate-check result. */
+            release_mbid: string;
+        };
         /**
          * @description Transcode target for remote playback.
          * @enum {string}
@@ -8428,6 +8689,94 @@ export interface components {
             /** @description Owning source. */
             source: components["schemas"]["SourceName"];
         };
+        /** @description Save an edited draft. */
+        ContributionDraftBody: {
+            /** @description The whole draft. */
+            draft: components["schemas"]["ReleaseDraft"];
+            /**
+             * Format: int64
+             * @description Row revision the caller last read.
+             */
+            expected_row_revision: number;
+        };
+        /**
+         * @description Where a draft field value came from, v2 `ContributionFieldSource`.
+         * @enum {string}
+         */
+        ContributionFieldSource: "local" | "discogs" | "entered_here";
+        /**
+         * @description Follow-up actions the UI may offer, v2 `ContributionNextAction` verbatim.
+         * @enum {string}
+         */
+        ContributionNextAction: "edit_draft" | "refresh_discogs" | "run_duplicate_check" | "attach_existing" | "seed_musicbrainz" | "retry_verification" | "rebuild" | "cancel";
+        /** @description One reason shown to the curator: stable code, plain sentence, action. */
+        ContributionReason: {
+            action: string;
+            code: string;
+            message: string;
+        };
+        /** @description What the service hands back: persisted row plus derived presentation. */
+        ContributionRecord: {
+            /** Format: int64 */
+            album_row_revision: number;
+            /** Format: double */
+            created_at?: number;
+            created_by_user_id?: string | null;
+            discogs_source?: null | components["schemas"]["DiscogsSourceView"];
+            draft: components["schemas"]["ReleaseDraft"];
+            /** Format: double */
+            duplicate_checked_at?: number | null;
+            duplicate_result?: null | components["schemas"]["DuplicateCheckResult"];
+            id: string;
+            input_is_current?: boolean;
+            input_revision: string;
+            local_album_id: string;
+            local_snapshot: components["schemas"]["LocalReleaseSnapshot"];
+            next_actions?: components["schemas"]["ContributionNextAction"][];
+            /** Format: double */
+            provider_snapshot_expires_at?: number | null;
+            /** Format: double */
+            result_received_at?: number | null;
+            result_release_mbid?: string | null;
+            result_source?: string | null;
+            review_reason?: null | components["schemas"]["ContributionReason"];
+            /** Format: int64 */
+            row_revision: number;
+            /** Format: double */
+            seeded_at?: number | null;
+            source_selection: components["schemas"]["ContributionSourceSelection"];
+            state: components["schemas"]["ContributionState"];
+            /** Format: double */
+            terminal_at?: number | null;
+            /** Format: double */
+            updated_at?: number;
+            updated_by_user_id?: string | null;
+            validation?: components["schemas"]["ContributionValidationIssue"][];
+        };
+        /** @description A revision guard alone (rebuild, cancel, remove Discogs, seed, verify). */
+        ContributionRevisionBody: {
+            /**
+             * Format: int64
+             * @description Row revision the caller last read.
+             */
+            expected_row_revision: number;
+        };
+        ContributionSourceSelection: {
+            alignments?: components["schemas"]["TrackAlignment"][];
+            /** Format: int32 */
+            schema_version?: number;
+            sources?: components["schemas"]["SourceReference"][];
+        };
+        /**
+         * @description Contribution lifecycle states, v2 `ContributionState` verbatim.
+         * @enum {string}
+         */
+        ContributionState: "draft" | "ready" | "seeded" | "verifying" | "linked" | "needs_review" | "stale" | "cancelled";
+        ContributionValidationIssue: {
+            code: string;
+            field: string;
+            message: string;
+        };
         /**
          * @description Cover-upload body. Base64 JSON instead of multipart: the app has no
          *     multipart feature and the frontend regenerates against this contract.
@@ -8503,6 +8852,111 @@ export interface components {
             label: string;
             /** @description Raw Bearer token. Shown once. */
             token: string;
+        };
+        DiscogsArtistCredit: {
+            artist_id?: string | null;
+            canonical_url?: string | null;
+            credited_name?: string | null;
+            join_phrase?: string;
+            name?: string;
+        };
+        DiscogsFormat: {
+            descriptions?: string[];
+            name?: string;
+            /** Format: int64 */
+            quantity?: number | null;
+            text?: string | null;
+        };
+        DiscogsIdentifier: {
+            description?: string | null;
+            type?: string;
+            value?: string;
+        };
+        DiscogsLabel: {
+            canonical_url?: string | null;
+            catalogue_number?: string | null;
+            label_id?: string | null;
+            name?: string;
+        };
+        DiscogsMedium: {
+            format?: string | null;
+            /** Format: int64 */
+            position: number;
+            title?: string | null;
+            tracks?: components["schemas"]["DiscogsTrack"][];
+        };
+        DiscogsRelease: {
+            artist_name?: string;
+            artists?: components["schemas"]["DiscogsArtistCredit"][];
+            barcode?: string | null;
+            canonical_master_url?: string | null;
+            canonical_release_url?: string;
+            country?: string | null;
+            formats?: components["schemas"]["DiscogsFormat"][];
+            identifiers?: components["schemas"]["DiscogsIdentifier"][];
+            labels?: components["schemas"]["DiscogsLabel"][];
+            master_id?: string | null;
+            media?: components["schemas"]["DiscogsMedium"][];
+            release_id?: string;
+            released_date?: string | null;
+            /** Format: double */
+            source_fetched_at?: number;
+            title?: string;
+            /** Format: int32 */
+            year?: number | null;
+        };
+        DiscogsReleaseCandidate: {
+            artist_name?: string;
+            canonical_url?: string;
+            catalogue_number?: string | null;
+            country?: string | null;
+            /** Format: double */
+            fetched_at?: number;
+            format_summary?: string | null;
+            label?: string | null;
+            master_id?: string | null;
+            release_id: string;
+            title?: string;
+            /** Format: int64 */
+            track_count?: number | null;
+            /** Format: int32 */
+            year?: number | null;
+        };
+        /** @description Search Discogs; an empty query searches the album's artist and title. */
+        DiscogsSearchBody: {
+            /** @description Title, artist, barcode, URL or ID. */
+            query?: string | null;
+        };
+        /** @description Discogs search results. */
+        DiscogsSearchResponse: {
+            /** @description Up to eight candidate releases. */
+            results: components["schemas"]["DiscogsReleaseCandidate"][];
+        };
+        /** @description Use one Discogs release as the contribution's source. */
+        DiscogsSelectBody: {
+            /**
+             * Format: int64
+             * @description Row revision the caller last read.
+             */
+            expected_row_revision: number;
+            /** @description Discogs release ID or release URL. */
+            release_id_or_url: string;
+        };
+        DiscogsSourceView: {
+            expired?: boolean;
+            /** Format: double */
+            expires_at?: number | null;
+            release?: null | components["schemas"]["DiscogsRelease"];
+        };
+        DiscogsTrack: {
+            artists?: components["schemas"]["DiscogsArtistCredit"][];
+            /** Format: double */
+            duration_seconds?: number | null;
+            heading?: boolean;
+            /** Format: int64 */
+            number?: number | null;
+            source_position?: string | null;
+            title?: string;
         };
         /** @description Body recording one discover interaction for personalization. */
         DiscoverActivityRequest: {
@@ -9050,6 +9504,40 @@ export interface components {
             /** @description Read-only recipe verdict: `v1`, `v2`, `non_convertible`, `invalid`. */
             quality_recipe_status: string;
         };
+        DuplicateCandidate: {
+            artist_name?: string;
+            differences?: string[];
+            evidence_kind: components["schemas"]["DuplicateEvidenceKind"];
+            exact?: boolean;
+            release_group_mbid?: string | null;
+            release_mbid?: string | null;
+            title?: string;
+        };
+        /** @description Run the MusicBrainz duplicate check. */
+        DuplicateCheckBody: {
+            /** @description The curator confirmed the similar releases are other editions. */
+            different_edition_confirmed?: boolean;
+            /**
+             * Format: int64
+             * @description Row revision the caller last read.
+             */
+            expected_row_revision: number;
+        };
+        DuplicateCheckResult: {
+            candidates?: components["schemas"]["DuplicateCandidate"][];
+            /** Format: double */
+            checked_at?: number;
+            different_edition_confirmed?: boolean;
+            input_revision?: string;
+            /** Format: int32 */
+            schema_version?: number;
+        };
+        /**
+         * @description Duplicate evidence kinds, ordered weakest-last (v2 sort key
+         *     exact_discogs_url < release_group < barcode < similar).
+         * @enum {string}
+         */
+        DuplicateEvidenceKind: "exact_discogs_url" | "release_group" | "barcode" | "similar";
         /** @description Edition-acquire outcome. */
         EditionAcquireResponse: {
             /** @description Human outcome. */
@@ -11533,6 +12021,28 @@ export interface components {
             /** @description New password, at least 12 chars. */
             new_password: string;
         };
+        LocalReleaseSnapshot: {
+            album_artist_name?: string;
+            /** Format: int64 */
+            album_row_revision?: number;
+            artist_kind?: string;
+            /** Format: double */
+            captured_at?: number;
+            input_revision?: string;
+            is_compilation?: boolean;
+            local_album_id?: string;
+            local_artist_id?: string;
+            media?: components["schemas"]["ReleaseMediumSnapshot"][];
+            musicbrainz_artist_id?: string | null;
+            musicbrainz_release_group_id?: string | null;
+            musicbrainz_release_id?: string | null;
+            release_date?: string | null;
+            /** Format: int32 */
+            schema_version?: number;
+            title?: string;
+            /** Format: int32 */
+            year?: number | null;
+        };
         /** @description Local login body. */
         LoginBody: {
             /** @description Account password. */
@@ -11826,6 +12336,31 @@ export interface components {
             generation: number;
             /** @description Proposed source identity. */
             source_id: string;
+        };
+        /** @description Record the release MusicBrainz created, by hand. */
+        MusicBrainzResultBody: {
+            /**
+             * Format: int64
+             * @description Row revision the caller last read.
+             */
+            expected_row_revision: number;
+            /** @description Release MBID or release URL. */
+            release_id_or_url: string;
+            /** @description Replace a different result already recorded. */
+            replace_existing_result?: boolean;
+        };
+        MusicBrainzSeed: {
+            action_url: string;
+            /** Format: int64 */
+            contribution_revision: number;
+            /** Format: double */
+            expires_at: number;
+            fields: components["schemas"]["MusicBrainzSeedField"][];
+            method: string;
+        };
+        MusicBrainzSeedField: {
+            name: string;
+            value: string;
         };
         /** @description MusicBrainz connection settings. */
         MusicBrainzSettings: {
@@ -13626,6 +14161,19 @@ export interface components {
          * @enum {string}
          */
         RelationshipType: "composer" | "lyricist" | "conductor" | "performer" | "arranger" | "remixer" | "producer" | "other";
+        ReleaseDraft: {
+            artist_credit?: components["schemas"]["ReleaseTextField"];
+            barcode?: components["schemas"]["ReleaseTextField"];
+            catalogue_number?: components["schemas"]["ReleaseTextField"];
+            country?: components["schemas"]["ReleaseTextField"];
+            label?: components["schemas"]["ReleaseTextField"];
+            media?: components["schemas"]["ReleaseMediumDraft"][];
+            packaging?: components["schemas"]["ReleaseTextField"];
+            release_date?: components["schemas"]["ReleaseTextField"];
+            /** Format: int32 */
+            schema_version?: number;
+            title?: components["schemas"]["ReleaseTextField"];
+        };
         /** @description One release group on an artist page. */
         ReleaseItem: {
             /** @description First release date. */
@@ -13645,6 +14193,46 @@ export interface components {
              * @description First release year.
              */
             year?: number | null;
+        };
+        ReleaseMediumDraft: {
+            format?: components["schemas"]["ReleaseTextField"];
+            /** Format: int64 */
+            position: number;
+            title?: components["schemas"]["ReleaseTextField"];
+            tracks?: components["schemas"]["ReleaseTrackDraft"][];
+        };
+        ReleaseMediumSnapshot: {
+            /** Format: int64 */
+            position: number;
+            title?: string | null;
+            tracks?: components["schemas"]["ReleaseTrackSnapshot"][];
+        };
+        ReleaseTextField: {
+            source?: components["schemas"]["ContributionFieldSource"];
+            value?: string | null;
+        };
+        ReleaseTrackDraft: {
+            artist_name: components["schemas"]["ReleaseTextField"];
+            /** Format: int64 */
+            disc_number: number;
+            /** Format: double */
+            duration_seconds?: number | null;
+            local_track_id: string;
+            title: components["schemas"]["ReleaseTextField"];
+            /** Format: int64 */
+            track_number: number;
+        };
+        ReleaseTrackSnapshot: {
+            artist_name?: string | null;
+            /** Format: int64 */
+            disc_number: number;
+            duration_reliable?: boolean;
+            /** Format: double */
+            duration_seconds?: number | null;
+            local_track_id: string;
+            title?: string;
+            /** Format: int64 */
+            track_number: number;
         };
         /** @description One page of albums. */
         RemotesAlbumPage: {
@@ -15020,6 +15608,14 @@ export interface components {
              */
             order: string[];
         };
+        SourceReference: {
+            canonical_url: string;
+            entity_type: string;
+            external_id: string;
+            /** Format: double */
+            fetched_at?: number | null;
+            provider: string;
+        };
         /**
          * @description How one optional source fared while a page was built. Sources that
          *     answered normally are left out of the map.
@@ -15382,6 +15978,11 @@ export interface components {
             songs: components["schemas"]["TopSong"][];
             /** @description Provider that answered. */
             source: components["schemas"]["DiscoverySource"];
+        };
+        TrackAlignment: {
+            classification?: components["schemas"]["AlignmentClassification"];
+            local_track_id: string;
+            provider_position?: string | null;
         };
         /** @description One artist/track pair to check against the YouTube cache. */
         TrackCacheCheckItem: {
@@ -20800,6 +21401,57 @@ export interface operations {
             };
         };
     };
+    create_contribution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The album's active contribution */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributionRecord"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Album not found or has no indexed tracks */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The album already has an exact release, or changed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     list_album_copies: {
         parameters: {
             query?: never;
@@ -21061,6 +21713,741 @@ export interface operations {
             };
             /** @description Unknown artist id */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    musicbrainz_callback: {
+        parameters: {
+            query?: {
+                /** @description The one-time token the seed carried. */
+                token?: string;
+                /** @description The release MusicBrainz created. */
+                release_mbid?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redirect to the contribution or library page */
+            303: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_contribution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Contribution id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Contribution */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributionRecord"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Contribution not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    cancel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Contribution id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContributionRevisionBody"];
+            };
+        };
+        responses: {
+            /** @description Cancelled contribution */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributionRecord"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Contribution not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Already closed, or changed since read */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    remove_discogs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Contribution id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContributionRevisionBody"];
+            };
+        };
+        responses: {
+            /** @description Updated contribution */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributionRecord"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Contribution not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Changed since read, or no longer editable */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    search_discogs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Contribution id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscogsSearchBody"];
+            };
+        };
+        responses: {
+            /** @description Candidate releases */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DiscogsSearchResponse"];
+                };
+            };
+            /** @description Query too short or too long */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Contribution not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The contribution is closed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Discogs unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    select_discogs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Contribution id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DiscogsSelectBody"];
+            };
+        };
+        responses: {
+            /** @description Updated contribution */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributionRecord"];
+                };
+            };
+            /** @description Not a Discogs release ID or URL */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Contribution or Discogs release not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Changed since read, or no longer editable */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Discogs unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    update_draft: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Contribution id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContributionDraftBody"];
+            };
+        };
+        responses: {
+            /** @description Updated contribution */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributionRecord"];
+                };
+            };
+            /** @description Invalid draft value */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Contribution not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Changed since read, or no longer editable */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    attach_existing: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Contribution id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AttachExistingBody"];
+            };
+        };
+        responses: {
+            /** @description Linked contribution */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributionRecord"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Contribution or release not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not in the duplicate result, or does not match safely */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description MusicBrainz unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    check_duplicates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Contribution id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DuplicateCheckBody"];
+            };
+        };
+        responses: {
+            /** @description Contribution with the duplicate result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributionRecord"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Contribution not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Draft incomplete, source expired, or changed since read */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description MusicBrainz unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    record_result: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Contribution id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MusicBrainzResultBody"];
+            };
+        };
+        responses: {
+            /** @description Contribution, now verifying */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributionRecord"];
+                };
+            };
+            /** @description Not a release MBID or URL */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Contribution not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not waiting for a result, or a different one exists */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    create_seed: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Contribution id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContributionRevisionBody"];
+            };
+        };
+        responses: {
+            /** @description Release editor form */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MusicBrainzSeed"];
+                };
+            };
+            /** @description The public server address is not usable */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Contribution not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Duplicate check missing or found an exact release */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description MusicBrainz unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    retry_verification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Contribution id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContributionRevisionBody"];
+            };
+        };
+        responses: {
+            /** @description Contribution, now verifying */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributionRecord"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Contribution not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Nothing to verify, or changed since read */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    rebuild: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Contribution id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContributionRevisionBody"];
+            };
+        };
+        responses: {
+            /** @description The new draft */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContributionRecord"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Contribution or album not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not stale, or changed since read */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

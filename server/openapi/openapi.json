@@ -5051,6 +5051,50 @@
         }
       }
     },
+    "/api/v3/library/albums/{id}/contributions": {
+      "post": {
+        "tags": [
+          "crate::library::http::contrib"
+        ],
+        "summary": "Start (or reopen) the contribution for one local album.",
+        "operationId": "create_contribution",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The album's active contribution",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributionRecord"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Album not found or has no indexed tracks"
+          },
+          "409": {
+            "description": "The album already has an exact release, or changed"
+          }
+        }
+      }
+    },
     "/api/v3/library/albums/{id}/copies": {
       "get": {
         "tags": [
@@ -5391,6 +5435,702 @@
           },
           "404": {
             "description": "Unknown artist id"
+          }
+        }
+      }
+    },
+    "/api/v3/library/contributions/musicbrainz/callback": {
+      "get": {
+        "tags": [
+          "crate::library::http::contrib"
+        ],
+        "summary": "Where the MusicBrainz release editor sends the curator back. Public:\nthe one-time token identifies the contribution. Every outcome is a 303\nto the web app: the contribution page on success, the library page\nwith `musicbrainz=callback-error` otherwise (v2's contract).",
+        "operationId": "musicbrainz_callback",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "description": "The one-time token the seed carried.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "release_mbid",
+            "in": "query",
+            "description": "The release MusicBrainz created.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "Redirect to the contribution or library page"
+          }
+        }
+      }
+    },
+    "/api/v3/library/contributions/{id}": {
+      "get": {
+        "tags": [
+          "crate::library::http::contrib"
+        ],
+        "summary": "Read one contribution.",
+        "operationId": "get_contribution",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Contribution id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Contribution",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributionRecord"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "Contribution not found"
+          }
+        }
+      }
+    },
+    "/api/v3/library/contributions/{id}/cancel": {
+      "post": {
+        "tags": [
+          "crate::library::http::contrib"
+        ],
+        "summary": "Cancel a contribution.",
+        "operationId": "cancel",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Contribution id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContributionRevisionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Cancelled contribution",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributionRecord"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Contribution not found"
+          },
+          "409": {
+            "description": "Already closed, or changed since read"
+          }
+        }
+      }
+    },
+    "/api/v3/library/contributions/{id}/discogs/remove": {
+      "post": {
+        "tags": [
+          "crate::library::http::contrib"
+        ],
+        "summary": "Drop the Discogs source and its values.",
+        "operationId": "remove_discogs",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Contribution id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContributionRevisionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated contribution",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributionRecord"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Contribution not found"
+          },
+          "409": {
+            "description": "Changed since read, or no longer editable"
+          }
+        }
+      }
+    },
+    "/api/v3/library/contributions/{id}/discogs/search": {
+      "post": {
+        "tags": [
+          "crate::library::http::contrib"
+        ],
+        "summary": "Search Discogs releases for this contribution.",
+        "operationId": "search_discogs",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Contribution id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscogsSearchBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Candidate releases",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscogsSearchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Query too short or too long"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Contribution not found"
+          },
+          "409": {
+            "description": "The contribution is closed"
+          },
+          "503": {
+            "description": "Discogs unavailable"
+          }
+        }
+      }
+    },
+    "/api/v3/library/contributions/{id}/discogs/select": {
+      "post": {
+        "tags": [
+          "crate::library::http::contrib"
+        ],
+        "summary": "Use a Discogs release as the source.",
+        "operationId": "select_discogs",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Contribution id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscogsSelectBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated contribution",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributionRecord"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a Discogs release ID or URL"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Contribution or Discogs release not found"
+          },
+          "409": {
+            "description": "Changed since read, or no longer editable"
+          },
+          "503": {
+            "description": "Discogs unavailable"
+          }
+        }
+      }
+    },
+    "/api/v3/library/contributions/{id}/draft": {
+      "put": {
+        "tags": [
+          "crate::library::http::contrib"
+        ],
+        "summary": "Save the edited draft.",
+        "operationId": "update_draft",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Contribution id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContributionDraftBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated contribution",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributionRecord"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid draft value"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Contribution not found"
+          },
+          "409": {
+            "description": "Changed since read, or no longer editable"
+          }
+        }
+      }
+    },
+    "/api/v3/library/contributions/{id}/musicbrainz/attach": {
+      "post": {
+        "tags": [
+          "crate::library::http::contrib"
+        ],
+        "summary": "Link the album to a release already on MusicBrainz.",
+        "operationId": "attach_existing",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Contribution id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttachExistingBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Linked contribution",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributionRecord"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Contribution or release not found"
+          },
+          "409": {
+            "description": "Not in the duplicate result, or does not match safely"
+          },
+          "503": {
+            "description": "MusicBrainz unavailable"
+          }
+        }
+      }
+    },
+    "/api/v3/library/contributions/{id}/musicbrainz/duplicates": {
+      "post": {
+        "tags": [
+          "crate::library::http::contrib"
+        ],
+        "summary": "Check MusicBrainz for releases this would duplicate.",
+        "operationId": "check_duplicates",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Contribution id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DuplicateCheckBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Contribution with the duplicate result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributionRecord"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Contribution not found"
+          },
+          "409": {
+            "description": "Draft incomplete, source expired, or changed since read"
+          },
+          "503": {
+            "description": "MusicBrainz unavailable"
+          }
+        }
+      }
+    },
+    "/api/v3/library/contributions/{id}/musicbrainz/result": {
+      "put": {
+        "tags": [
+          "crate::library::http::contrib"
+        ],
+        "summary": "Record the release MusicBrainz created, by hand.",
+        "operationId": "record_result",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Contribution id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MusicBrainzResultBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Contribution, now verifying",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributionRecord"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a release MBID or URL"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Contribution not found"
+          },
+          "409": {
+            "description": "Not waiting for a result, or a different one exists"
+          }
+        }
+      }
+    },
+    "/api/v3/library/contributions/{id}/musicbrainz/seed": {
+      "post": {
+        "tags": [
+          "crate::library::http::contrib"
+        ],
+        "summary": "Build the form that opens the seeded MusicBrainz release editor. The\nbrowser POSTs it; MusicBrainz sends the curator back to the callback.",
+        "operationId": "create_seed",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Contribution id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContributionRevisionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Release editor form",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MusicBrainzSeed"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The public server address is not usable"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Contribution not found"
+          },
+          "409": {
+            "description": "Duplicate check missing or found an exact release"
+          },
+          "503": {
+            "description": "MusicBrainz unavailable"
+          }
+        }
+      }
+    },
+    "/api/v3/library/contributions/{id}/musicbrainz/verify": {
+      "post": {
+        "tags": [
+          "crate::library::http::contrib"
+        ],
+        "summary": "Queue the recorded release for verification again.",
+        "operationId": "retry_verification",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Contribution id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContributionRevisionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Contribution, now verifying",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributionRecord"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Contribution not found"
+          },
+          "409": {
+            "description": "Nothing to verify, or changed since read"
+          }
+        }
+      }
+    },
+    "/api/v3/library/contributions/{id}/rebuild": {
+      "post": {
+        "tags": [
+          "crate::library::http::contrib"
+        ],
+        "summary": "Rebuild a stale contribution from the album's current files.",
+        "operationId": "rebuild",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Contribution id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContributionRevisionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The new draft",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContributionRecord"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Contribution or album not found"
+          },
+          "409": {
+            "description": "Not stale, or changed since read"
           }
         }
       }
@@ -16556,6 +17296,16 @@
           }
         }
       },
+      "AlignmentClassification": {
+        "type": "string",
+        "description": "Track alignment classes from Discogs selection.",
+        "enum": [
+          "exact",
+          "partial",
+          "conflicting",
+          "unmatched"
+        ]
+      },
       "AnalyticsItem": {
         "type": "object",
         "description": "One row of a listening top list.",
@@ -17618,6 +18368,25 @@
           "embedded",
           "audiodb"
         ]
+      },
+      "AttachExistingBody": {
+        "type": "object",
+        "description": "Link the album to a release already on MusicBrainz.",
+        "required": [
+          "expected_row_revision",
+          "release_mbid"
+        ],
+        "properties": {
+          "expected_row_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Row revision the caller last read."
+          },
+          "release_mbid": {
+            "type": "string",
+            "description": "A release from the duplicate-check result."
+          }
+        }
       },
       "AudioFormat": {
         "type": "string",
@@ -19067,6 +19836,295 @@
           }
         }
       },
+      "ContributionDraftBody": {
+        "type": "object",
+        "description": "Save an edited draft.",
+        "required": [
+          "expected_row_revision",
+          "draft"
+        ],
+        "properties": {
+          "draft": {
+            "$ref": "#/components/schemas/ReleaseDraft",
+            "description": "The whole draft."
+          },
+          "expected_row_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Row revision the caller last read."
+          }
+        }
+      },
+      "ContributionFieldSource": {
+        "type": "string",
+        "description": "Where a draft field value came from, v2 `ContributionFieldSource`.",
+        "enum": [
+          "local",
+          "discogs",
+          "entered_here"
+        ]
+      },
+      "ContributionNextAction": {
+        "type": "string",
+        "description": "Follow-up actions the UI may offer, v2 `ContributionNextAction` verbatim.",
+        "enum": [
+          "edit_draft",
+          "refresh_discogs",
+          "run_duplicate_check",
+          "attach_existing",
+          "seed_musicbrainz",
+          "retry_verification",
+          "rebuild",
+          "cancel"
+        ]
+      },
+      "ContributionReason": {
+        "type": "object",
+        "description": "One reason shown to the curator: stable code, plain sentence, action.",
+        "required": [
+          "code",
+          "message",
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "ContributionRecord": {
+        "type": "object",
+        "description": "What the service hands back: persisted row plus derived presentation.",
+        "required": [
+          "id",
+          "local_album_id",
+          "state",
+          "album_row_revision",
+          "input_revision",
+          "local_snapshot",
+          "draft",
+          "source_selection",
+          "row_revision"
+        ],
+        "properties": {
+          "album_row_revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "created_by_user_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "discogs_source": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DiscogsSourceView"
+              }
+            ]
+          },
+          "draft": {
+            "$ref": "#/components/schemas/ReleaseDraft"
+          },
+          "duplicate_checked_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "duplicate_result": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DuplicateCheckResult"
+              }
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "input_is_current": {
+            "type": "boolean"
+          },
+          "input_revision": {
+            "type": "string"
+          },
+          "local_album_id": {
+            "type": "string"
+          },
+          "local_snapshot": {
+            "$ref": "#/components/schemas/LocalReleaseSnapshot"
+          },
+          "next_actions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContributionNextAction"
+            }
+          },
+          "provider_snapshot_expires_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "result_received_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "result_release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "result_source": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "review_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ContributionReason",
+                "description": "Why the contribution needs review, when it does: a stable code, a\nplain sentence, and what to do next."
+              }
+            ]
+          },
+          "row_revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "seeded_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "source_selection": {
+            "$ref": "#/components/schemas/ContributionSourceSelection"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ContributionState"
+          },
+          "terminal_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "updated_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "updated_by_user_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "validation": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContributionValidationIssue"
+            }
+          }
+        }
+      },
+      "ContributionRevisionBody": {
+        "type": "object",
+        "description": "A revision guard alone (rebuild, cancel, remove Discogs, seed, verify).",
+        "required": [
+          "expected_row_revision"
+        ],
+        "properties": {
+          "expected_row_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Row revision the caller last read."
+          }
+        }
+      },
+      "ContributionSourceSelection": {
+        "type": "object",
+        "properties": {
+          "alignments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackAlignment"
+            }
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceReference"
+            }
+          }
+        }
+      },
+      "ContributionState": {
+        "type": "string",
+        "description": "Contribution lifecycle states, v2 `ContributionState` verbatim.",
+        "enum": [
+          "draft",
+          "ready",
+          "seeded",
+          "verifying",
+          "linked",
+          "needs_review",
+          "stale",
+          "cancelled"
+        ]
+      },
+      "ContributionValidationIssue": {
+        "type": "object",
+        "required": [
+          "code",
+          "field",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "field": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
       "CoverUploadBody": {
         "type": "object",
         "description": "Cover-upload body. Base64 JSON instead of multipart: the app has no\nmultipart feature and the frontend regenerates against this contract.",
@@ -19222,6 +20280,401 @@
           "token": {
             "type": "string",
             "description": "Raw Bearer token. Shown once."
+          }
+        }
+      },
+      "DiscogsArtistCredit": {
+        "type": "object",
+        "properties": {
+          "artist_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "canonical_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "credited_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "join_phrase": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "DiscogsFormat": {
+        "type": "object",
+        "properties": {
+          "descriptions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "DiscogsIdentifier": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "DiscogsLabel": {
+        "type": "object",
+        "properties": {
+          "canonical_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "catalogue_number": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "DiscogsMedium": {
+        "type": "object",
+        "required": [
+          "position"
+        ],
+        "properties": {
+          "format": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "position": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscogsTrack"
+            }
+          }
+        }
+      },
+      "DiscogsRelease": {
+        "type": "object",
+        "properties": {
+          "artist_name": {
+            "type": "string"
+          },
+          "artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscogsArtistCredit"
+            }
+          },
+          "barcode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "canonical_master_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "canonical_release_url": {
+            "type": "string"
+          },
+          "country": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "formats": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscogsFormat"
+            }
+          },
+          "identifiers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscogsIdentifier"
+            }
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscogsLabel"
+            }
+          },
+          "master_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "media": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscogsMedium"
+            }
+          },
+          "release_id": {
+            "type": "string"
+          },
+          "released_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_fetched_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "title": {
+            "type": "string"
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "DiscogsReleaseCandidate": {
+        "type": "object",
+        "required": [
+          "release_id"
+        ],
+        "properties": {
+          "artist_name": {
+            "type": "string"
+          },
+          "canonical_url": {
+            "type": "string"
+          },
+          "catalogue_number": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "country": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "fetched_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "format_summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "master_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "release_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "track_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "DiscogsSearchBody": {
+        "type": "object",
+        "description": "Search Discogs; an empty query searches the album's artist and title.",
+        "properties": {
+          "query": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Title, artist, barcode, URL or ID."
+          }
+        }
+      },
+      "DiscogsSearchResponse": {
+        "type": "object",
+        "description": "Discogs search results.",
+        "required": [
+          "results"
+        ],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscogsReleaseCandidate"
+            },
+            "description": "Up to eight candidate releases."
+          }
+        }
+      },
+      "DiscogsSelectBody": {
+        "type": "object",
+        "description": "Use one Discogs release as the contribution's source.",
+        "required": [
+          "expected_row_revision",
+          "release_id_or_url"
+        ],
+        "properties": {
+          "expected_row_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Row revision the caller last read."
+          },
+          "release_id_or_url": {
+            "type": "string",
+            "description": "Discogs release ID or release URL."
+          }
+        }
+      },
+      "DiscogsSourceView": {
+        "type": "object",
+        "properties": {
+          "expired": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "release": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DiscogsRelease"
+              }
+            ]
+          }
+        }
+      },
+      "DiscogsTrack": {
+        "type": "object",
+        "properties": {
+          "artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DiscogsArtistCredit"
+            }
+          },
+          "duration_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "heading": {
+            "type": "boolean"
+          },
+          "number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "source_position": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
           }
         }
       },
@@ -20338,6 +21791,97 @@
           }
         ],
         "description": "GET view of the acquisition policy: the stored policy plus the\nread-only recipe verdict, recomputed on every read and never saved."
+      },
+      "DuplicateCandidate": {
+        "type": "object",
+        "required": [
+          "evidence_kind"
+        ],
+        "properties": {
+          "artist_name": {
+            "type": "string"
+          },
+          "differences": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_kind": {
+            "$ref": "#/components/schemas/DuplicateEvidenceKind"
+          },
+          "exact": {
+            "type": "boolean"
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "DuplicateCheckBody": {
+        "type": "object",
+        "description": "Run the MusicBrainz duplicate check.",
+        "required": [
+          "expected_row_revision"
+        ],
+        "properties": {
+          "different_edition_confirmed": {
+            "type": "boolean",
+            "description": "The curator confirmed the similar releases are other editions."
+          },
+          "expected_row_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Row revision the caller last read."
+          }
+        }
+      },
+      "DuplicateCheckResult": {
+        "type": "object",
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DuplicateCandidate"
+            }
+          },
+          "checked_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "different_edition_confirmed": {
+            "type": "boolean"
+          },
+          "input_revision": {
+            "type": "string"
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "DuplicateEvidenceKind": {
+        "type": "string",
+        "description": "Duplicate evidence kinds, ordered weakest-last (v2 sort key\nexact_discogs_url < release_group < barcode < similar).",
+        "enum": [
+          "exact_discogs_url",
+          "release_group",
+          "barcode",
+          "similar"
+        ]
       },
       "EditionAcquireResponse": {
         "type": "object",
@@ -25340,6 +26884,81 @@
           }
         }
       },
+      "LocalReleaseSnapshot": {
+        "type": "object",
+        "properties": {
+          "album_artist_name": {
+            "type": "string"
+          },
+          "album_row_revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "artist_kind": {
+            "type": "string"
+          },
+          "captured_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "input_revision": {
+            "type": "string"
+          },
+          "is_compilation": {
+            "type": "boolean"
+          },
+          "local_album_id": {
+            "type": "string"
+          },
+          "local_artist_id": {
+            "type": "string"
+          },
+          "media": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseMediumSnapshot"
+            }
+          },
+          "musicbrainz_artist_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "musicbrainz_release_group_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "musicbrainz_release_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "release_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "title": {
+            "type": "string"
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
       "LoginBody": {
         "type": "object",
         "description": "Local login body.",
@@ -25899,6 +27518,76 @@
           "source_id": {
             "type": "string",
             "description": "Proposed source identity."
+          }
+        }
+      },
+      "MusicBrainzResultBody": {
+        "type": "object",
+        "description": "Record the release MusicBrainz created, by hand.",
+        "required": [
+          "expected_row_revision",
+          "release_id_or_url"
+        ],
+        "properties": {
+          "expected_row_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Row revision the caller last read."
+          },
+          "release_id_or_url": {
+            "type": "string",
+            "description": "Release MBID or release URL."
+          },
+          "replace_existing_result": {
+            "type": "boolean",
+            "description": "Replace a different result already recorded."
+          }
+        }
+      },
+      "MusicBrainzSeed": {
+        "type": "object",
+        "required": [
+          "action_url",
+          "method",
+          "fields",
+          "contribution_revision",
+          "expires_at"
+        ],
+        "properties": {
+          "action_url": {
+            "type": "string"
+          },
+          "contribution_revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expires_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MusicBrainzSeedField"
+            }
+          },
+          "method": {
+            "type": "string"
+          }
+        }
+      },
+      "MusicBrainzSeedField": {
+        "type": "object",
+        "required": [
+          "name",
+          "value"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string"
           }
         }
       },
@@ -29503,6 +31192,45 @@
           "other"
         ]
       },
+      "ReleaseDraft": {
+        "type": "object",
+        "properties": {
+          "artist_credit": {
+            "$ref": "#/components/schemas/ReleaseTextField"
+          },
+          "barcode": {
+            "$ref": "#/components/schemas/ReleaseTextField"
+          },
+          "catalogue_number": {
+            "$ref": "#/components/schemas/ReleaseTextField"
+          },
+          "country": {
+            "$ref": "#/components/schemas/ReleaseTextField"
+          },
+          "label": {
+            "$ref": "#/components/schemas/ReleaseTextField"
+          },
+          "media": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseMediumDraft"
+            }
+          },
+          "packaging": {
+            "$ref": "#/components/schemas/ReleaseTextField"
+          },
+          "release_date": {
+            "$ref": "#/components/schemas/ReleaseTextField"
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "title": {
+            "$ref": "#/components/schemas/ReleaseTextField"
+          }
+        }
+      },
       "ReleaseItem": {
         "type": "object",
         "description": "One release group on an artist page.",
@@ -29552,6 +31280,144 @@
             ],
             "format": "int32",
             "description": "First release year."
+          }
+        }
+      },
+      "ReleaseMediumDraft": {
+        "type": "object",
+        "required": [
+          "position"
+        ],
+        "properties": {
+          "format": {
+            "$ref": "#/components/schemas/ReleaseTextField"
+          },
+          "position": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "title": {
+            "$ref": "#/components/schemas/ReleaseTextField"
+          },
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseTrackDraft"
+            }
+          }
+        }
+      },
+      "ReleaseMediumSnapshot": {
+        "type": "object",
+        "required": [
+          "position"
+        ],
+        "properties": {
+          "position": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseTrackSnapshot"
+            }
+          }
+        }
+      },
+      "ReleaseTextField": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "$ref": "#/components/schemas/ContributionFieldSource"
+          },
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ReleaseTrackDraft": {
+        "type": "object",
+        "required": [
+          "local_track_id",
+          "disc_number",
+          "track_number",
+          "title",
+          "artist_name"
+        ],
+        "properties": {
+          "artist_name": {
+            "$ref": "#/components/schemas/ReleaseTextField"
+          },
+          "disc_number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "duration_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "local_track_id": {
+            "type": "string"
+          },
+          "title": {
+            "$ref": "#/components/schemas/ReleaseTextField"
+          },
+          "track_number": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ReleaseTrackSnapshot": {
+        "type": "object",
+        "required": [
+          "local_track_id",
+          "disc_number",
+          "track_number"
+        ],
+        "properties": {
+          "artist_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "disc_number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "duration_reliable": {
+            "type": "boolean"
+          },
+          "duration_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "local_track_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "track_number": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       },
@@ -32449,6 +34315,36 @@
           }
         }
       },
+      "SourceReference": {
+        "type": "object",
+        "required": [
+          "provider",
+          "entity_type",
+          "external_id",
+          "canonical_url"
+        ],
+        "properties": {
+          "canonical_url": {
+            "type": "string"
+          },
+          "entity_type": {
+            "type": "string"
+          },
+          "external_id": {
+            "type": "string"
+          },
+          "fetched_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "provider": {
+            "type": "string"
+          }
+        }
+      },
       "SourceStatus": {
         "type": "string",
         "description": "How one optional source fared while a page was built. Sources that\nanswered normally are left out of the map.",
@@ -33240,6 +35136,26 @@
           "source": {
             "$ref": "#/components/schemas/DiscoverySource",
             "description": "Provider that answered."
+          }
+        }
+      },
+      "TrackAlignment": {
+        "type": "object",
+        "required": [
+          "local_track_id"
+        ],
+        "properties": {
+          "classification": {
+            "$ref": "#/components/schemas/AlignmentClassification"
+          },
+          "local_track_id": {
+            "type": "string"
+          },
+          "provider_position": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

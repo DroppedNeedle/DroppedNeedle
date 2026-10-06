@@ -36,5 +36,6 @@ pub fn library_router(state: LibrarySetup) -> Router {
             "/library/manage/baseline/restore",
             post(handlers::baseline_restore),
         )
-        .with_state(state)
+        .with_state(state.clone())
+        .merge(super::contrib::router(state))
 }
