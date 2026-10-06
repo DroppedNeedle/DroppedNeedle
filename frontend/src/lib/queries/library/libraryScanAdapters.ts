@@ -5,19 +5,16 @@ import type {
 	ScanKind,
 	ScanRun,
 	ScanRunCurrentResponse,
-	ScanRunDetailResponse,
-	ScanRunRequestedResponse,
-	TargetLibrarySettingsResponse
+	ScanRunDetailResponse
 } from './LibraryOperationsTypes';
 
 type ScanRunView = components['schemas']['ScanRunView'];
-type ScanRunsResponse = components['schemas']['ScanRunsResponse'];
+type CurrentRunsView = components['schemas']['ScanRunCurrentResponse'];
 type RunDetailResponse = components['schemas']['RunDetailResponse'];
-type ScanResponse = components['schemas']['ScanResponse'];
 
-// v3 scan runs carry the state, phase, counters and timestamps. Pause,
-// resume and stop controls, coalescing and per-phase timings have no v3
-// source yet, so those read as "never requested" here.
+// The v3 run view carries every v2 run field as a plain string; these
+// adapters narrow them to the UI's unions. Diagnostics export has no v3
+// route yet, so runs say so and the export button stays hidden.
 
 export function toScanRun(view: ScanRunView): ScanRun {
 	return {
@@ -26,30 +23,28 @@ export function toScanRun(view: ScanRunView): ScanRun {
 		trigger: view.trigger as ScanRun['trigger'],
 		state: view.state as LibraryWorkState,
 		phase: view.phase as ScanRun['phase'],
-		requested_by_user_id: null,
+		requested_by_user_id: view.requested_by_user_id ?? null,
 		aggregate_scope: view.aggregate_scope,
 		queued_at: view.queued_at,
 		started_at: view.started_at ?? null,
 		updated_at: view.updated_at,
 		terminal_at: view.terminal_at ?? null,
-		resume_phase: null,
-		requested_control: 'none',
+		resume_phase: (view.resume_phase ?? null) as ScanRun['resume_phase'],
+		requested_control: view.requested_control as ScanRun['requested_control'],
 		terminal_code: view.terminal_code ?? null,
-		coalesced_request_count: 0,
-		row_revision: 0,
-		event_revision: 0,
+		coalesced_request_count: view.coalesced_request_count,
+		row_revision: view.row_revision,
+		event_revision: view.event_revision,
 		counters: view.counters,
-		phase_timings: {},
-		controls_available: false
+		phase_timings: view.phase_timings,
+		diagnostics_available: false
 	};
 }
 
-export function toCurrentRuns(runs: ScanRunsResponse): ScanRunCurrentResponse {
-	const active = runs.current.find((run) => run.state !== 'queued');
-	const queued = runs.current.find((run) => run.state === 'queued');
+export function toCurrentRuns(runs: CurrentRunsView): ScanRunCurrentResponse {
 	return {
-		active: active ? toScanRun(active) : null,
-		queued: queued ? toScanRun(queued) : null
+		active: runs.active ? toScanRun(runs.active) : null,
+		queued: runs.queued ? toScanRun(runs.queued) : null
 	};
 }
 
@@ -68,38 +63,4 @@ export function toRunDetail(detail: RunDetailResponse): ScanRunDetailResponse {
 			counters: detail.run.counters
 		}
 	};
-}
-
-export function toRunRequested(response: ScanResponse): ScanRunRequestedResponse {
-	return {
-		run_id: response.run_id,
-		disposition: response.disposition as ScanRunRequestedResponse['disposition'],
-		state: response.state as LibraryWorkState,
-		row_revision: 0,
-		queued_reason: null,
-		conflicting_kind: null,
-		estimated_file_count: null
-	};
-}
-
-// v3 scans whole roots. A scope id names a root or a path rule inside one,
-// so each id resolves to its root through the saved settings; an id the
-// settings do not know widens the request to every root (null).
-export function scanRootsFor(
-	scopeIds: string[],
-	settings: TargetLibrarySettingsResponse | undefined
-): Array<string | null> {
-	if (scopeIds.length === 0 || !settings) return [null];
-	const rootOf = new Map<string, string>();
-	for (const root of settings.library_roots) {
-		rootOf.set(root.id, root.id);
-		for (const rule of root.rules) rootOf.set(rule.id, root.id);
-	}
-	const roots = new Set<string>();
-	for (const id of scopeIds) {
-		const root = rootOf.get(id);
-		if (!root) return [null];
-		roots.add(root);
-	}
-	return [...roots].sort();
 }

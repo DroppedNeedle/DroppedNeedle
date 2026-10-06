@@ -85,9 +85,31 @@ export const LibraryV3Api = {
 		v3('/api/v3/library/reviews/{id}/approve', { path: { id: reviewId } }),
 	rejectReview: (reviewId: string) =>
 		v3('/api/v3/library/reviews/{id}/reject', { path: { id: reviewId } }),
-	scan: () => v3('/api/v3/library/scan'),
 	scanRuns: () => v3('/api/v3/library/scan/runs'),
 	scanRun: (runId: string) => v3('/api/v3/library/scan/runs/{id}', { path: { id: runId } }),
+	currentScanRuns: () => v3('/api/v3/library/scan/runs/current'),
+	scanRunHistory: (limit: number, cursor?: string) =>
+		v3('/api/v3/library/scan/runs/history', {
+			query: { limit, ...(cursor ? { cursor } : {}) }
+		}),
+	scanRunEstimate: (scopeIds: string[]) =>
+		v3('/api/v3/library/scan/runs/estimate', {
+			query: scopeIds.length ? { scope_ids: scopeIds } : {}
+		}),
+	scanRunFailures: (runId: string, limit: number, cursor?: number) =>
+		v3('/api/v3/library/scan/runs/{id}/failures', {
+			path: { id: runId },
+			query: { limit, ...(cursor !== undefined ? { cursor } : {}) }
+		}),
+	pauseScanRun: (runId: string) =>
+		v3('/api/v3/library/scan/runs/{id}/pause', { path: { id: runId } }),
+	resumeScanRun: (runId: string) =>
+		v3('/api/v3/library/scan/runs/{id}/resume', { path: { id: runId } }),
+	stopScanRun: (runId: string) =>
+		v3('/api/v3/library/scan/runs/{id}/stop', { path: { id: runId } }),
+	activity: () => v3('/api/v3/library/activity'),
+	pauseIdentification: () => v3('/api/v3/library/identification/pause'),
+	resumeIdentification: () => v3('/api/v3/library/identification/resume'),
 	schedule: () => v3('/api/v3/settings/library/schedule'),
 	settings: () => v3('/api/v3/settings/library'),
 	policyTree: () => v3('/api/v3/settings/library/policy-tree'),

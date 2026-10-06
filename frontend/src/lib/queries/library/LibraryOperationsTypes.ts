@@ -128,9 +128,8 @@ export interface ScanRun {
 	event_revision: number;
 	counters: Record<string, number>;
 	phase_timings: Record<string, number>;
-	/** False for runs read from v3: its run ids must not reach the pause,
-	 * resume, stop, failure-list or diagnostics routes, which v3 lacks. */
-	controls_available?: boolean;
+	/** False while the diagnostics export has no v3 route. */
+	diagnostics_available?: boolean;
 }
 
 export interface ScanScope {

@@ -17,11 +17,7 @@
 	const visibleRuns = $derived(showOlder ? runs : runs.slice(0, DEFAULT_VISIBLE_RUNS));
 	const olderRunCount = $derived(Math.max(0, runs.length - DEFAULT_VISIBLE_RUNS));
 	let detailRun = $state<ScanRun | null>(null);
-	// Runs read from v3 carry ids the v1 failure and diagnostics routes do not
-	// know, so those reads stay off for them.
-	const failuresQuery = getLibraryRunFailuresQuery(() =>
-		detailRun && detailRun.controls_available !== false ? detailRun.id : null
-	);
+	const failuresQuery = getLibraryRunFailuresQuery(() => detailRun?.id ?? null);
 	const failureItems = $derived(failuresQuery.data?.pages.flatMap((page) => page.items) ?? []);
 	let exportRun = $state<ScanRun | null>(null);
 	let exporting = $state(false);
@@ -265,7 +261,7 @@
 					{/each}
 				</ul>
 			{/if}
-			{#if detailRun.controls_available !== false && (detailRun.state === 'failed' || (detailRun.counters['errored_count'] ?? 0) > 0)}
+			{#if detailRun.state === 'failed' || (detailRun.counters['errored_count'] ?? 0) > 0}
 				<h3 class="mt-4 text-sm font-semibold">Failed paths</h3>
 				{#if failuresQuery.isLoading}
 					<p class="mt-2 text-sm text-base-content/55">Loading failed paths…</p>
@@ -299,7 +295,7 @@
 				{/if}
 			{/if}
 			<div class="modal-action">
-				{#if detailRun.controls_available !== false}
+				{#if detailRun.diagnostics_available !== false}
 					<button
 						class="btn btn-outline btn-sm mr-auto"
 						onclick={openDetailExport}

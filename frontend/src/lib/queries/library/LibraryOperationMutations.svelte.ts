@@ -1,18 +1,17 @@
 import { createMutation } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
-import { invalidateQueriesWithPersister, queryClient } from '$lib/queries/QueryClient';
+import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
-import { scanRootsFor, toRunRequested } from './libraryScanAdapters';
 import type {
 	IdentificationControlResponse,
+	LibraryWorkState,
 	OperationResponse,
 	ScanControlResponse,
 	ScanKind,
-	ScanRunRequestedResponse,
-	TargetLibrarySettingsResponse
+	ScanRunRequestedResponse
 } from './LibraryOperationsTypes';
 
 async function invalidateWork(): Promise<void> {
@@ -22,8 +21,6 @@ async function invalidateWork(): Promise<void> {
 	]);
 }
 
-// v3 starts one scan per root and has no scan kinds or policy-revision
-// guard: every kind runs as a plain scan over the roots the scope ids name.
 export function requestLibraryRun() {
 	return createMutation(() => ({
 		mutationFn: async (input: {
@@ -31,15 +28,16 @@ export function requestLibraryRun() {
 			scope_ids: string[];
 			expected_policy_revision: string;
 		}): Promise<ScanRunRequestedResponse> => {
-			const settings = queryClient.getQueryData<TargetLibrarySettingsResponse>(
-				LibraryQueryKeyFactory.targetSettings()
-			);
-			const responses = await Promise.all(
-				scanRootsFor(input.scope_ids, settings).map((rootId) =>
-					api.global.v3.POST(LibraryV3Api.scan(), { root_id: rootId })
-				)
-			);
-			return toRunRequested(responses[0]);
+			const response = await api.global.v3.POST(LibraryV3Api.scanRuns(), input);
+			return {
+				run_id: response.run_id,
+				disposition: response.disposition,
+				state: response.state as LibraryWorkState,
+				row_revision: response.row_revision,
+				queued_reason: response.queued_reason ?? null,
+				conflicting_kind: (response.conflicting_kind ?? null) as ScanKind | null,
+				estimated_file_count: null
+			};
 		},
 		onSuccess: async () => {
 			await invalidateWork();
@@ -51,16 +49,20 @@ export function requestLibraryRun() {
 
 export function controlLibraryRun(action: 'pause' | 'resume' | 'stop') {
 	return createMutation(() => ({
-		mutationFn: (input: { runId: string; expectedRevision: number }) => {
+		mutationFn: async (input: {
+			runId: string;
+			expectedRevision: number;
+		}): Promise<ScanControlResponse> => {
 			const url =
 				action === 'pause'
-					? API.library.pauseScanRun(input.runId)
+					? LibraryV3Api.pauseScanRun(input.runId)
 					: action === 'resume'
-						? API.library.resumeScanRun(input.runId)
-						: API.library.stopScanRun(input.runId);
-			return api.global.post<ScanControlResponse>(url, {
+						? LibraryV3Api.resumeScanRun(input.runId)
+						: LibraryV3Api.stopScanRun(input.runId);
+			const response = await api.global.v3.POST(url, {
 				expected_revision: input.expectedRevision
 			});
+			return { ...response, state: response.state as LibraryWorkState };
 		},
 		onSuccess: invalidateWork,
 		onError: () => toastStore.show({ message: `Could not ${action} the scan`, type: 'error' })
@@ -69,9 +71,11 @@ export function controlLibraryRun(action: 'pause' | 'resume' | 'stop') {
 
 export function controlIdentification(action: 'pause' | 'resume') {
 	return createMutation(() => ({
-		mutationFn: (expectedRevision: number) =>
-			api.global.post<IdentificationControlResponse>(
-				action === 'pause' ? API.library.pauseIdentification() : API.library.resumeIdentification(),
+		mutationFn: (expectedRevision: number): Promise<IdentificationControlResponse> =>
+			api.global.v3.POST(
+				action === 'pause'
+					? LibraryV3Api.pauseIdentification()
+					: LibraryV3Api.resumeIdentification(),
 				{ expected_revision: expectedRevision }
 			),
 		onSuccess: invalidateWork,

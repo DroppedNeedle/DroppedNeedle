@@ -253,9 +253,7 @@
 								· {activeRun.trigger.replaceAll('_', ' ')} · {scopeLabel}{/if}
 						</p>
 					</div>
-					{#if activeRun?.controls_available === false}
-						<!-- v3 runs have no pause, resume or stop route -->
-					{:else if activeRun?.state === 'paused'}
+					{#if activeRun?.state === 'paused'}
 						<button
 							class="btn btn-outline btn-sm"
 							disabled={resumeRun.isPending}
@@ -282,7 +280,7 @@
 							aria-label="Pause local scan"><CirclePause class="h-4 w-4" /> Pause</button
 						>
 					{/if}
-					{#if activeRun && activeRun.controls_available !== false}<button
+					{#if activeRun}<button
 							class="btn btn-ghost btn-sm text-error"
 							onclick={(event) => {
 								stopOpener = event.currentTarget;

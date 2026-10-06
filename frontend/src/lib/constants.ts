@@ -174,24 +174,6 @@ export const API = {
 			return `/api/v1/library/albums/${encodeURIComponent(albumId)}/reidentification/releases?${query.toString()}`;
 		},
 		removeTrack: (fileId: string) => `/api/v1/library/tracks/${fileId}`,
-		activity: () => '/api/v1/library/activity',
-		pauseIdentification: () => '/api/v1/library/identification/pause',
-		resumeIdentification: () => '/api/v1/library/identification/resume',
-		scanRunEstimate: (scopeIds: string[] = []) => {
-			const query = scopeIds.map((id) => `scope_ids=${encodeURIComponent(id)}`).join('&');
-			return `/api/v1/library/scan-runs/estimate${query ? `?${query}` : ''}`;
-		},
-		scanRunFailures: (runId: string, limit?: number, cursor?: number) => {
-			const query = new URLSearchParams();
-			if (limit !== undefined) query.set('limit', String(limit));
-			if (cursor !== undefined) query.set('cursor', String(cursor));
-			let url = `/api/v1/library/scan-runs/${runId}/failures`;
-			if (query.size) url += `?${query.toString()}`;
-			return url;
-		},
-		pauseScanRun: (runId: string) => `/api/v1/library/scan-runs/${runId}/pause`,
-		resumeScanRun: (runId: string) => `/api/v1/library/scan-runs/${runId}/resume`,
-		stopScanRun: (runId: string) => `/api/v1/library/scan-runs/${runId}/stop`,
 		reviews: (
 			params: {
 				cursor?: string;
