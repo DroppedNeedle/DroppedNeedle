@@ -2,6 +2,14 @@
 
 use super::*;
 
+/// The `scope_covers_path` rule in SQL for a catalog path column
+/// `relative_path` and a scope bound as `?2`: "." covers everything, else
+/// the path is the scope or extends it past a slash. Byte comparisons
+/// only: paths are case-sensitive, so no `LIKE`, and every path under
+/// "scope/" sorts between "scope/" and "scope0" ('0' follows '/').
+const IN_SCOPE: &str = "(?2 = '.' OR relative_path = ?2 \
+    OR (relative_path > ?2 || '/' AND relative_path < ?2 || '0'))";
+
 impl CatalogStore for SqliteScanStore {
     fn commit_window(&self, window: &IndexWindow) -> Result<WindowOutcome, ScanStoreError> {
         let mut guard = self.lock();
@@ -121,13 +129,14 @@ impl CatalogStore for SqliteScanStore {
         scope_relative_path: &str,
     ) -> Result<usize, ScanStoreError> {
         let guard = self.lock();
-        let prefix = format!("{}%", escape_like_prefix(scope_relative_path));
         guard
             .conn
             .query_row(
-                "SELECT COUNT(*) FROM local_tracks WHERE root_id = ?1 AND availability = 'indexed' \
-                 AND (?2 = '.' OR relative_path = ?2 OR relative_path LIKE ?3 ESCAPE '\\')",
-                params![root_id, scope_relative_path, prefix],
+                &format!(
+                    "SELECT COUNT(*) FROM local_tracks WHERE root_id = ?1 \
+                     AND availability = 'indexed' AND {IN_SCOPE}"
+                ),
+                params![root_id, scope_relative_path],
                 |row| row.get::<_, i64>(0),
             )
             .map(|count| count.max(0) as usize)
@@ -140,32 +149,28 @@ impl CatalogStore for SqliteScanStore {
         root_id: &str,
         scope_relative_path: &str,
     ) -> Vec<String> {
-        // The exact scope_covers_path rule in SQL: "." covers everything,
-        // else the path equals the scope or extends it past a slash. LIKE
-        // metacharacters in the scope escape so a literal % never widens.
         let guard = self.lock();
-        let sql = "SELECT t.relative_path FROM local_tracks t \
-             WHERE t.root_id = ?1 AND t.availability = 'indexed' \
-             AND (?2 = '.' OR t.relative_path = ?2 OR t.relative_path LIKE ?3 ESCAPE '\\') \
+        let sql = format!(
+            "SELECT t.relative_path FROM local_tracks t \
+             WHERE t.root_id = ?1 AND t.availability = 'indexed' AND {IN_SCOPE} \
              AND NOT EXISTS ( \
              SELECT 1 FROM library_scan_inventory i \
              JOIN library_scan_run_scopes s ON s.run_id = i.run_id \
              AND s.root_id = i.root_id AND s.relative_path = i.scope_relative_path \
-             WHERE i.run_id = ?4 AND i.root_id = ?1 AND i.relative_path = t.relative_path \
+             WHERE i.run_id = ?3 AND i.root_id = ?1 AND i.relative_path = t.relative_path \
              AND s.discovery_generation = i.discovery_generation) \
-             ORDER BY t.relative_path";
-        let mut stmt = match guard.conn.prepare(sql) {
+             ORDER BY t.relative_path"
+        );
+        let mut stmt = match guard.conn.prepare(&sql) {
             Ok(stmt) => stmt,
             Err(error) => {
                 tracing::error!(%error, "scan missing_catalog_paths failed");
                 return Vec::new();
             }
         };
-        let prefix = format!("{}%", escape_like_prefix(scope_relative_path));
-        stmt.query_map(
-            params![root_id, scope_relative_path, prefix, run_id],
-            |row| row.get::<_, String>(0),
-        )
+        stmt.query_map(params![root_id, scope_relative_path, run_id], |row| {
+            row.get::<_, String>(0)
+        })
         .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
         .unwrap_or_else(|error| {
             tracing::error!(%error, "scan missing_catalog_paths failed");

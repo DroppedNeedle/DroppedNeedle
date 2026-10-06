@@ -195,20 +195,6 @@ fn normalize_key(raw: &str) -> String {
     raw.nfc().collect()
 }
 
-/// Escape a scope path for a prefix `LIKE`: backslash, percent, and
-/// underscore match literally so the scope rule never widens.
-fn escape_like_prefix(scope: &str) -> String {
-    let mut escaped = String::with_capacity(scope.len() + 1);
-    for ch in scope.chars() {
-        if matches!(ch, '\\' | '%' | '_') {
-            escaped.push('\\');
-        }
-        escaped.push(ch);
-    }
-    escaped.push('/');
-    escaped
-}
-
 fn sha256_hex(value: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(value.as_bytes());
