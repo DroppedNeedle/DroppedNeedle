@@ -34,5 +34,5 @@ pub const PLAY_HISTORY: TableSection = TableSection {
     unique: &[],
     parents: &[],
     user_column: Some("user_id"),
-    left_behind: "listens of deleted users",
+    left_behind: "listens of deleted users; nothing to do, those accounts were deleted in v2",
 };

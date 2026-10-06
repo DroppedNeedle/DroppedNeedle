@@ -372,7 +372,8 @@ async fn apply_table(
             "conflict_kept_existing",
             format!(
                 "{conflicts} row(s) clash with a row already kept (same key, or the same \
-                 place another row takes); the kept row stays"
+                 place another row takes); the kept row stays. Nothing to do unless you \
+                 want the v2 version, then import into an empty V3_ROOT"
             ),
         );
     }
@@ -382,7 +383,8 @@ async fn apply_table(
             String::new(),
             "dropped_invalid",
             format!(
-                "{orphans} row(s) belong to a {} row that did not land in v3; left out",
+                "{orphans} row(s) belong to a {} row that did not land in v3; left out. \
+                 See that section's notes for why",
                 parents.join(" or ")
             ),
         );

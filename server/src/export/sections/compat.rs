@@ -26,7 +26,7 @@ pub const PLAY_QUEUES: TableSection = TableSection {
     unique: &[],
     parents: &[],
     user_column: Some("user_id"),
-    left_behind: "queues of deleted users",
+    left_behind: "queues of deleted users; nothing to do, those accounts were deleted in v2",
 };
 
 /// The tracks of each saved queue.
@@ -52,7 +52,7 @@ pub const PLAY_QUEUE_ITEMS: TableSection = TableSection {
         &[("user_id", "user_id")],
     )],
     user_column: Some("user_id"),
-    left_behind: "queues of deleted users",
+    left_behind: "queues of deleted users; nothing to do, those accounts were deleted in v2",
 };
 
 /// Resume positions.
@@ -78,5 +78,5 @@ pub const BOOKMARKS: TableSection = TableSection {
     unique: &[],
     parents: &[],
     user_column: Some("user_id"),
-    left_behind: "bookmarks of deleted users",
+    left_behind: "bookmarks of deleted users; nothing to do, those accounts were deleted in v2",
 };

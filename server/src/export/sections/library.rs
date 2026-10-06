@@ -469,7 +469,7 @@ pub const REVIEW_DECISIONS: TableSection = TableSection {
         Parent::optional("local_tracks", &[("local_track_id", "id")]),
     ],
     user_column: None,
-    left_behind: "open review questions; v3 asks again (see the identify queue)",
+    left_behind: "open review questions; nothing to do, v3 asks them again from its identify queue",
 };
 
 /// Albums a curator told v2 to keep as tagged (or excluded from
@@ -624,5 +624,5 @@ pub const ARTIST_DISMISSALS: TableSection = TableSection {
         Parent::required("local_artists", &[("right_artist_id", "id")]),
     ],
     user_column: Some("dismissed_by_user_id"),
-    left_behind: "decisions of deleted users",
+    left_behind: "decisions of deleted users; nothing to do",
 };

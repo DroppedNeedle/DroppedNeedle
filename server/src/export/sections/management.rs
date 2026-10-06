@@ -54,7 +54,7 @@ pub const BLOBS: TableSection = TableSection {
     unique: &[],
     parents: &[],
     user_column: None,
-    left_behind: "stored Library Management files only per-operation undo used",
+    left_behind: "stored files that only the undo of single v2 changes used; nothing to do",
 };
 
 /// The stored bytes of those blobs, read from v2's blob folder and
@@ -180,7 +180,7 @@ pub const EDITION_MANIFESTS: TableSection = TableSection {
     unique: &[&["local_album_id", "version"]],
     parents: &[ON_ALBUM],
     user_column: Some("sealed_by_user_id"),
-    left_behind: "custom editions sealed by deleted users",
+    left_behind: "custom editions sealed by deleted users; seal them again in v3 if you need them",
 };
 
 /// The tracks of each custom edition.
@@ -268,7 +268,7 @@ pub const EXCLUSIONS: TableSection = TableSection {
     unique: &[],
     parents: &[ON_ALBUM],
     user_column: Some("excluded_by_user_id"),
-    left_behind: "exclusions set by deleted users",
+    left_behind: "exclusions set by deleted users; exclude those albums again in v3",
 };
 
 /// Field overrides (replace, preserve or clear one field of an album or

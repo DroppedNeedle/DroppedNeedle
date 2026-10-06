@@ -59,5 +59,6 @@ pub const HELD_IMPORTS: TableSection = TableSection {
     unique: &[],
     parents: &[],
     user_column: Some("user_id"),
-    left_behind: "held downloads already imported or discarded, or of deleted users",
+    left_behind: "held downloads already imported or discarded (nothing left to \
+                  decide), or of deleted users",
 };

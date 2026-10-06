@@ -101,7 +101,13 @@ pub(crate) async fn apply(
             .await?;
         if !landed {
             result.counts.dropped_invalid += 1;
-            result.note(track, "dropped_invalid", "its track did not land in v3");
+            result.note(
+                track,
+                "dropped_invalid",
+                "its song did not come across (see the library_track counts), so there is \
+                 nothing to restore; if you need that song's original, restore it in v2 \
+                 before upgrading",
+            );
             continue;
         }
         let snapshot: Option<Vec<u8>> = sqlx::query_scalar(&format!(
@@ -116,8 +122,9 @@ pub(crate) async fn apply(
             result.note(
                 track,
                 "dropped_invalid",
-                "its tag snapshot file was missing or damaged in v2's blob folder; \
-                 v3 will not manage this track",
+                "its saved original tags were missing or damaged in v2's blob folder, \
+                 so v3 will not change this song. Restore V2_ROOT/cache/library-management \
+                 from your backup, export again and import into an empty V3_ROOT",
             );
             continue;
         };
@@ -133,7 +140,10 @@ pub(crate) async fn apply(
                 result.note(
                     track,
                     "dropped_invalid",
-                    format!("{error}; v3 will not manage this track"),
+                    format!(
+                        "{error}, so v3 will not change this song. If you need its \
+                         original, restore it in v2 before upgrading"
+                    ),
                 );
                 continue;
             }
@@ -157,8 +167,9 @@ pub(crate) async fn apply(
                 result.note(
                     track,
                     "conflict_kept_existing",
-                    "v3 already recorded an original for this track and keeps it; it may be \
-                     the state v2 had already changed",
+                    "v3 already recorded an original for this song and keeps it; it may be \
+                     the state v2 had already changed. To use v2's original instead, import \
+                     into an empty V3_ROOT",
                 );
                 continue;
             }

@@ -87,7 +87,8 @@ pub const DOWNLOAD_TASKS: TableSection = TableSection {
     unique: &[],
     parents: &[],
     user_column: Some("user_id"),
-    left_behind: "downloads that had not finished",
+    left_behind: "downloads that had not finished; let them finish in v2 before you export, or \
+                  request them again in v3",
 };
 
 /// Settled attempts of carried downloads. An attempt still cleaning up
@@ -132,7 +133,8 @@ pub const DOWNLOAD_ATTEMPTS: TableSection = TableSection {
     unique: &[],
     parents: &[Parent::required("download_tasks", &[("task_id", "id")])],
     user_column: None,
-    left_behind: "attempts of unfinished downloads, or still cleaning up their folder",
+    left_behind: "attempts of unfinished downloads, or still cleaning up their folder; let v2 \
+                  finish them before you export, or request them again in v3",
 };
 
 /// Sources v2 learned not to download from again. v3 numbers the rows

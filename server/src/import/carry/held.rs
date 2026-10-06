@@ -73,7 +73,8 @@ pub(crate) async fn apply(
             result.note(
                 String::new(),
                 "dropped_invalid",
-                "no v3 cache folder was given, so held files cannot be written",
+                "no v3 cache folder was given, so held files cannot be written; run the \
+                 import again with --cache-dir",
             );
         }
         return Ok(result);
@@ -112,7 +113,8 @@ pub(crate) async fn apply(
                 result.note(
                     id.to_string(),
                     "conflict_kept_existing",
-                    "v3 already has a different held download with this id",
+                    "v3 already has a different held download with this id and keeps it; \
+                     the v2 file stays in V2_ROOT/cache/held if you want to import it by hand",
                 );
             }
             continue;
@@ -122,7 +124,8 @@ pub(crate) async fn apply(
             result.note(
                 id.to_string(),
                 "dropped_invalid",
-                "the held file is missing",
+                "the held file is missing; restore V2_ROOT/cache/held from your backup and \
+                 export again, or request the download again in v3",
             );
             continue;
         };
@@ -139,7 +142,8 @@ pub(crate) async fn apply(
             result.note(
                 id.to_string(),
                 "dropped_invalid",
-                "the held file has no usable name",
+                "the held file has no usable name; import it by hand from \
+                 V2_ROOT/cache/held",
             );
             continue;
         };

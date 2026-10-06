@@ -41,7 +41,7 @@ pub const PLAYLISTS: TableSection = TableSection {
     unique: &[&["user_id", "source_ref"]],
     parents: &[],
     user_column: Some("user_id"),
-    left_behind: "playlists of deleted users",
+    left_behind: "playlists of deleted users; nothing to do, those accounts were deleted in v2",
 };
 
 /// Playlist entries. v3 reads the local track id from `library_file_id`.
@@ -89,7 +89,7 @@ pub const PLAYLIST_TRACKS: TableSection = TableSection {
     unique: &[&["playlist_id", "position"]],
     parents: ON_PLAYLIST,
     user_column: None,
-    left_behind: "entries of playlists that stayed behind",
+    left_behind: "entries of playlists that stayed behind; nothing to do",
 };
 
 /// Playlist cover images, read from the v2 cover files.
@@ -129,7 +129,7 @@ pub const FAVORITES: TableSection = TableSection {
     unique: &[],
     parents: &[],
     user_column: Some("user_id"),
-    left_behind: "favorites of deleted users",
+    left_behind: "favorites of deleted users; nothing to do, those accounts were deleted in v2",
 };
 
 /// The v2 library name of a favorite's item.

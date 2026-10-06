@@ -25,7 +25,7 @@ pub const LISTENING_PREFS: TableSection = TableSection {
     unique: &[],
     parents: &[],
     user_column: Some("user_id"),
-    left_behind: "preferences of deleted users",
+    left_behind: "preferences of deleted users; nothing to do, those accounts were deleted in v2",
 };
 
 /// Admin decisions on personal-mix auto requests.
@@ -49,7 +49,7 @@ pub const PERSONAL_MIX_APPROVALS: TableSection = TableSection {
     unique: &[],
     parents: &[],
     user_column: Some("user_id"),
-    left_behind: "approvals of deleted users",
+    left_behind: "approvals of deleted users; nothing to do, those accounts were deleted in v2",
 };
 
 /// Which home and page sections each user switched on.
@@ -72,7 +72,7 @@ pub const SECTION_PREFS: TableSection = TableSection {
     unique: &[],
     parents: &[],
     user_column: Some("user_id"),
-    left_behind: "preferences of deleted users",
+    left_behind: "preferences of deleted users; nothing to do, those accounts were deleted in v2",
 };
 
 /// Navidrome music folders each user picked.
@@ -95,7 +95,7 @@ pub const NAVIDROME_FOLDER_PREFS: TableSection = TableSection {
     unique: &[],
     parents: &[],
     user_column: Some("user_id"),
-    left_behind: "preferences of deleted users",
+    left_behind: "preferences of deleted users; nothing to do, those accounts were deleted in v2",
 };
 
 /// When each user last looked at the new-release feed.
@@ -112,5 +112,5 @@ pub const NEW_RELEASE_SEEN: TableSection = TableSection {
     unique: &[],
     parents: &[],
     user_column: Some("user_id"),
-    left_behind: "markers of deleted users",
+    left_behind: "markers of deleted users; nothing to do, those accounts were deleted in v2",
 };

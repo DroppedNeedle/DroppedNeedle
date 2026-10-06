@@ -56,7 +56,7 @@ pub const REQUESTS: TableSection = TableSection {
     unique: &[],
     parents: &[],
     user_column: Some("user_id"),
-    left_behind: "requests still waiting or downloading (ask again in v3)",
+    left_behind: "requests still waiting or downloading; request them again in v3",
 };
 
 /// Who asked for each finished request.
@@ -78,7 +78,7 @@ pub const REQUEST_REQUESTERS: TableSection = TableSection {
     unique: &[],
     parents: &[],
     user_column: Some("user_id"),
-    left_behind: "requesters of unfinished requests",
+    left_behind: "requesters of unfinished requests; request again in v3",
 };
 
 /// Requests a user cleared from their list.
@@ -99,7 +99,7 @@ pub const REQUEST_DISMISSALS: TableSection = TableSection {
     unique: &[],
     parents: &[],
     user_column: Some("user_id"),
-    left_behind: "dismissals of unfinished requests",
+    left_behind: "dismissals of unfinished requests; nothing to do",
 };
 
 /// Wanted watches, every state: live ones keep checking in v3.
@@ -135,7 +135,8 @@ pub const WANTED_WATCHES: TableSection = TableSection {
     unique: &[],
     parents: &[],
     user_column: Some("user_id"),
-    left_behind: "wanted watches of deleted users",
+    left_behind: "wanted watches of deleted users; nothing to do, those accounts were deleted in \
+                  v2",
 };
 
 /// Candidates a watch already saw, so they are not announced twice.
@@ -158,7 +159,7 @@ pub const WANTED_SEEN_CANDIDATES: TableSection = TableSection {
     unique: &[],
     parents: &[],
     user_column: None,
-    left_behind: "seen candidates of watches that stayed behind",
+    left_behind: "seen candidates of watches that stayed behind; nothing to do",
 };
 
 /// Per-user quota overrides.
@@ -180,5 +181,5 @@ pub const QUOTAS: TableSection = TableSection {
     unique: &[],
     parents: &[],
     user_column: Some("user_id"),
-    left_behind: "quotas of deleted users",
+    left_behind: "quotas of deleted users; nothing to do, those accounts were deleted in v2",
 };

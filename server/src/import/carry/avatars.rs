@@ -31,10 +31,15 @@ fn plain_id(user_id: &str) -> bool {
 
 fn decide(dir: &Path, user_id: &str, ext: &str, image: &[u8]) -> std::io::Result<Decision> {
     if !plain_id(user_id) {
-        return Ok(Decision::Invalid("the user id cannot be a file name"));
+        return Ok(Decision::Invalid(
+            "the user id cannot be a file name; upload the picture again from the profile page",
+        ));
     }
     if !EXTENSIONS.contains(&ext) {
-        return Ok(Decision::Invalid("v3 does not serve this image type"));
+        return Ok(Decision::Invalid(
+            "v3 does not serve this image type; upload a PNG, JPEG, GIF or WebP picture \
+             from the profile page",
+        ));
     }
     let mut existing = None;
     for known in EXTENSIONS {
@@ -101,7 +106,8 @@ pub(crate) async fn apply(
             result.note(
                 String::new(),
                 "dropped_invalid",
-                "no v3 cache folder was given, so avatars cannot be written",
+                "no v3 cache folder was given, so avatars cannot be written; run the import \
+                 again with --cache-dir",
             );
         }
         return Ok(result);
@@ -128,7 +134,8 @@ pub(crate) async fn apply(
                 result.note(
                     user_id,
                     "conflict_kept_existing",
-                    "the user already has an avatar in v3; it is kept",
+                    "the user already has an avatar in v3; it is kept. Upload the v2 picture \
+                     again from the profile page if you prefer it",
                 );
             }
             Decision::Invalid(reason) => {

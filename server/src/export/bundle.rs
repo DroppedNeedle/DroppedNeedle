@@ -384,7 +384,10 @@ fn attach_held_files(
         left_behind.push(LeftBehind {
             table: "held import files".to_owned(),
             rows: missing,
-            reason: "the held file is missing from the v2 cache folder".to_owned(),
+            reason: "the held file is missing from the v2 cache folder; restore \
+                     V2_ROOT/cache/held from your backup and export again, or request the \
+                     download again in v3"
+                .to_owned(),
         });
     }
     Ok(kept)
@@ -446,7 +449,9 @@ fn copy_management_blobs(
             table: "Library Management blob files".to_owned(),
             rows: bad,
             reason: "the stored file is missing from v2's blob folder or does not match \
-                     its hash"
+                     its hash; v3 will not change a song whose original is among them. \
+                     Restore V2_ROOT/cache/library-management from your backup and export \
+                     again"
                 .to_owned(),
         });
     }
@@ -523,7 +528,10 @@ fn copy_playlist_covers(
         left_behind.push(LeftBehind {
             table: "playlist cover files".to_owned(),
             rows: missing,
-            reason: "the cover file is missing from the v2 cache folder".to_owned(),
+            reason: "the cover file is missing from the v2 cache folder; restore \
+                     V2_ROOT/cache/covers/playlists from your backup and export again, or \
+                     pick a new cover in v3"
+                .to_owned(),
         });
     }
     Ok(copied)

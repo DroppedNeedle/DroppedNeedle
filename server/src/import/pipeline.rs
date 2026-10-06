@@ -611,7 +611,7 @@ fn stage_settings(
             "settings",
             "library_scan_schedule".to_owned(),
             "imported",
-            "r8 one-shot carry from v2 sync_frequency".to_owned(),
+            "carried once from v2's library sync frequency".to_owned(),
         );
     }
     Ok(staged)

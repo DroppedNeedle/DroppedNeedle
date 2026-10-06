@@ -108,7 +108,7 @@ pub(crate) async fn apply(
             "pending",
             format!(
                 "{waiting} reference(s) name v2 library items that were already gone in v2; \
-                 the rows keep their names"
+                 the rows keep their names. Nothing to do"
             ),
         );
     }

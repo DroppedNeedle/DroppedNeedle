@@ -36,8 +36,22 @@ const PRE_UPGRADE_COPIES: &[&str] = &[
 /// the landed-release index follows the carried downloads by trigger.
 const REBUILT_FROM_CARRIED: &[&str] = &["download_landed_groups"];
 
-/// Data v3 has no place to keep yet.
-const NO_V3_STORE: &[&str] = &["ignored_releases", "youtube_links", "youtube_track_links"];
+/// Data v3 has no place to keep yet, with what the user does instead.
+const NO_V3_STORE: &[(&str, &str)] = &[
+    (
+        "ignored_releases",
+        "releases you hid from the new-release list; v3 cannot keep them yet. Hide them \
+         again in v3 when they show up",
+    ),
+    (
+        "youtube_links",
+        "YouTube links on albums; v3 cannot keep them yet. Add them again in v3",
+    ),
+    (
+        "youtube_track_links",
+        "YouTube links on tracks; v3 cannot keep them yet. Add them again in v3",
+    ),
+];
 
 /// Sign-in state: everyone signs in again on v3.
 const SIGN_IN_STATE: &[&str] = &["auth_oidc_states", "auth_tokens", "spotify_oauth_states"];
@@ -99,44 +113,48 @@ const IDENTIFY_HISTORY: &[&str] = &[
     "library_reidentification_snapshots",
 ];
 
-/// Why one v2 table stays behind.
+/// Why one v2 table stays behind, and what to do about it.
 #[must_use]
 pub fn reason_for(table: &str) -> &'static str {
-    if PRE_UPGRADE_COPIES.contains(&table) || table.contains("__") {
-        "older copy from before v2's own library upgrade; v2 no longer reads it"
-    } else if NO_V3_STORE.contains(&table) {
-        "v3 has nowhere to keep this yet"
-    } else if table.starts_with("library_contribution_") {
-        "MusicBrainz contributions belong to v2's library albums; start them \
-         again in v3 after the first scan"
+    if let Some((_, reason)) = NO_V3_STORE.iter().find(|(name, _)| *name == table) {
+        reason
+    } else if PRE_UPGRADE_COPIES.contains(&table) || table.contains("__") {
+        "older copy from before v2's own library upgrade; v2 no longer reads it. Nothing \
+         to do"
     } else if SIGN_IN_STATE.contains(&table) {
-        "sign-in sessions; everyone signs in again"
+        "sign-in sessions. Nothing to do: everyone signs in again on v3"
     } else if JOB_STATE.contains(&table) || table.starts_with("download_activity_") {
-        "download and import job state; v3 starts with an empty queue"
+        "download and import job state; v3 starts with an empty queue. Let downloads \
+         finish in v2 before you export, or request what is missing again in v3"
     } else if CACHES.contains(&table)
         || table.starts_with("mb_")
         || table.starts_with("discovery_")
         || table.ends_with("_mbid_index")
     {
-        "cache; v3 fills it again"
+        "cache. Nothing to do: v3 fills it again"
     } else if OPERATION_UNDO.contains(&table) {
-        "undo records of single v2 Library Management changes; restoring a file's \
-         original still works, because original-file baselines move"
+        "undo records of single v2 Library Management changes. Restoring a file's \
+         original still works in v3; to undo one particular v2 change, do it in v2 \
+         before upgrading"
     } else if IDENTIFY_HISTORY.contains(&table) {
-        "identification history; v3 identifies albums again when their files change"
+        "identification history. Nothing to do: matches and decisions move, and v3 \
+         identifies albums again when their files change"
     } else if table == "local_album_artwork" || table == "library_genre_artwork_revisions" {
-        "album art; v3 reads it from your files again (covers picked by hand in v2 \
-         are not carried)"
+        "album art. v3 reads it from your files again; a cover you picked by hand in \
+         v2 has to be picked again on the album page"
     } else if table.starts_with("library_scan_")
         || table.starts_with("library_policy_")
         || table.starts_with("library_migration_")
     {
-        "scan and housekeeping state; v3 builds its own"
+        "scan and housekeeping state. Nothing to do: v3 builds its own on its first \
+         scan"
     } else if table.starts_with("local_") || table.starts_with("library_") {
-        "Library Management job, preview and housekeeping history; v3 keeps its own \
-         from now on"
+        "Library Management job, preview and housekeeping history. Nothing to do: \
+         let v2's management jobs finish before you export, and v3 keeps its own from \
+         now on"
     } else {
-        "not carried"
+        "a table this upgrade does not know, so it is not carried. Keep your v2 backup \
+         if it holds something you need"
     }
 }
 
