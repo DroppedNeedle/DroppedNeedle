@@ -54,6 +54,54 @@ fn default_disc() -> i64 {
     1
 }
 
+/// One (disc, track) position on a release, both 1-based.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TrackPosition {
+    /// Disc number.
+    pub disc: u32,
+    /// Position within the disc.
+    pub track: u32,
+}
+
+/// A reason recorded for a person to read: a stable code, a plain
+/// sentence, and what to do about it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordedReason {
+    /// Stable machine code.
+    pub code: String,
+    /// What happened, in one sentence.
+    pub message: String,
+    /// What the person can do about it.
+    pub action: String,
+}
+
+/// The album a single-track download was resolved to. The track is
+/// searched for as part of this album, and the landing checks it against
+/// this release's tracklist (`expected_tracks`) at `wanted` positions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrackAlbumContext {
+    /// Release-group MBID of the album.
+    pub release_group_mbid: String,
+    /// The exact release (edition) the track is taken from.
+    pub release_mbid: String,
+    /// Album title, as searched.
+    pub album_title: String,
+    /// Album artist, as searched.
+    pub album_artist: String,
+    /// Album year, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub year: Option<i32>,
+    /// Why this edition: `edition_pin`, `library_edition`,
+    /// `requested_release`, or `best_official`.
+    pub basis: String,
+    /// Positions of the requested recording on the release.
+    pub wanted: Vec<TrackPosition>,
+    /// Set when the track came from a lone-track share instead of an
+    /// album folder, with the reason no album source was used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lone_track_reason: Option<RecordedReason>,
+}
+
 /// Client correlation handle. Soulseek fills username plus filenames (no
 /// batch id); usenet fills the job name before enqueue so it survives a
 /// crash between enqueue and journaling.
@@ -129,6 +177,11 @@ pub struct DownloadManifest {
     /// are linked conservatively by their exact client job at startup.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attempt_id: Option<String>,
+    /// For a single-track download: the album it was resolved to and the
+    /// wanted positions on it. Absent on album downloads and on manifests
+    /// written before track resolution existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub track_album: Option<TrackAlbumContext>,
 }
 
 fn default_origin() -> String {

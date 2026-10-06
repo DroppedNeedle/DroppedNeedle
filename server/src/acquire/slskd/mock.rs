@@ -103,6 +103,8 @@ struct MockState {
     /// Concurrent in-flight searches+enqueues right now, and the observed max.
     in_flight: usize,
     max_in_flight: usize,
+    /// Peer responses every search answers instead of the canned three.
+    scripted_responses: Option<Vec<Value>>,
     /// Artificial delay (ms) applied inside search/enqueue handlers so the
     /// semaphore test can observe overlap if serialization breaks.
     handler_delay_ms: u64,
@@ -330,7 +332,10 @@ async fn start_search(
         let responses = if carries_year(search_text) {
             Vec::new()
         } else {
-            canned_responses()
+            guard
+                .scripted_responses
+                .clone()
+                .unwrap_or_else(canned_responses)
         };
         let file_count: usize = responses
             .iter()
@@ -621,6 +626,16 @@ impl MockSlskd {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .expected_api_key = key.map(str::to_owned);
+    }
+
+    /// Answer every search with these peer responses (slskd's
+    /// `/searches/{id}/responses` shape) instead of the canned three.
+    pub fn script_responses(&self, responses: Vec<Value>) {
+        self.state
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .scripted_responses = Some(responses);
     }
 
     /// The next search answers 429 once (slskd single-op limit).

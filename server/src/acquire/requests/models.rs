@@ -50,6 +50,11 @@ pub struct AlbumIntake {
     pub year: Option<i32>,
     /// Artist MBID.
     pub artist_mbid: Option<String>,
+    /// The edition (release MBID) the page showed. An album the library
+    /// holds is always fetched in its chosen edition; this fills in for
+    /// one it does not hold.
+    #[serde(default)]
+    pub release_mbid: Option<String>,
     /// Follow the artist for new releases.
     #[serde(default)]
     pub monitor_artist: bool,

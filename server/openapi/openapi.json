@@ -19089,6 +19089,13 @@
             "type": "string",
             "description": "Release-group MBID."
           },
+          "release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The edition (release MBID) the page showed. An album the library\nholds is always fetched in its chosen edition; this fills in for\none it does not hold."
+          },
           "year": {
             "type": [
               "integer",

@@ -10,6 +10,7 @@
 
 pub mod client;
 pub mod error;
+pub mod folders;
 pub mod http;
 pub mod locate;
 #[cfg(any(test, feature = "test-support"))]

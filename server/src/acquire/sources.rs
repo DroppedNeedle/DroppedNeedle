@@ -1,18 +1,18 @@
 //! Production source adapters: slskd and SABnzbd behind the downloads
 //! [`DownloadSource`](super::downloads::sources::DownloadSource) seam.
 //!
-//! Each adapter reads the task row from the shared journal, searches its
-//! own side, and enqueues one pick. slskd takes the best peer group that is
-//! neither blocklisted nor already tried for this task; Usenet takes the
-//! `candidate_index`-th release, where the index counts this source's own
-//! earlier attempts. The worker journals the returned handle and polls it;
-//! on failover it re-enqueues the task, which walks to the next peer or
-//! release.
-//!
-//! Pick quality is simple on purpose (free slots and file counts for
-//! slskd; retention, size, and password gates for Usenet). The full v2
-//! candidate matcher is not ported yet; the adapters never blocklist on
-//! local faults either way.
+//! Each adapter reads the task row from the shared journal, asks
+//! [`Targets`] what the task fetches (its edition's tracklist; for a single
+//! track, the album it is on and the wanted position), searches its own
+//! side for the album, and enqueues one pick. slskd takes the best folder
+//! against the tracklist (see [`super::slskd::folders`]) that is neither
+//! blocklisted nor from a peer already tried for this task, and for a
+//! single track enqueues only that track's file. Usenet takes the
+//! `candidate_index`-th album release in tracklist order, where the index
+//! counts this source's own earlier attempts. The worker journals the
+//! returned handle and polls it; on failover it re-enqueues the task,
+//! which walks to the next folder or release. The adapters never
+//! blocklist on local faults.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -24,8 +24,13 @@ use super::downloads::quarantine::{QUARANTINE_TTL_SECONDS, soulseek_hit_quaranti
 use super::downloads::sources::{
     DownloadSource, Materialization, OrphanOwnership, SourceError, SourceHandle, TransferProgress,
 };
+use super::downloads::TrackPosition;
 use super::downloads::store::TaskRow;
 use super::slskd::{EnqueueFile, ReqwestSlskdHttp, SlskdError, SlskdRepository};
+use super::target::reasons::TrackReason;
+use super::target::releases::order_releases;
+use super::target::soulseek::{self, SoulseekMiss};
+use super::target::{SearchTarget, TargetError, Targets};
 use super::usenet::newznab::{IndexerResult, NewznabIndexer};
 use super::usenet::policy::UsenetPolicy;
 use super::usenet::prowlarr::ProwlarrIndexer;
@@ -71,16 +76,47 @@ async fn task_row(journal: &Arc<Journal>, task_id: &str) -> Result<TaskRow, Sour
         .ok_or_else(|| SourceError::Rejected(format!("unknown download task {owned}")))
 }
 
+/// The task's search target, or why it cannot be worked out yet. Without
+/// a target service an album still searches by its names; a single track
+/// waits, since searching for it alone is what this design avoids.
+pub(super) async fn resolve_target(
+    targets: Option<&Arc<Targets>>,
+    task: &TaskRow,
+) -> Result<SearchTarget, SourceError> {
+    match targets {
+        Some(targets) => targets.target(task).await.map_err(|error| match error {
+            TargetError::Unavailable(reason) => SourceError::Unavailable(reason.to_string()),
+            TargetError::LocalFault(detail) => SourceError::LocalFault(detail),
+        }),
+        None if task.download_type == "track" => Err(SourceError::Unavailable(
+            TrackReason::AlbumLookupUnavailable.to_string(),
+        )),
+        None => Ok(SearchTarget {
+            artist: task.artist_name.clone(),
+            album_title: task.album_title.clone(),
+            year: None,
+            tracklist: Vec::new(),
+            wanted: Vec::new(),
+            track: None,
+        }),
+    }
+}
+
 /// slskd behind the fetch seam.
 pub struct SlskdSource {
     repo: Arc<SlskdRepository<ReqwestSlskdHttp>>,
     journal: Arc<Journal>,
+    targets: Option<Arc<Targets>>,
 }
 
 impl SlskdSource {
     /// Adapter over a configured repository and the shared journal.
     pub fn new(repo: Arc<SlskdRepository<ReqwestSlskdHttp>>, journal: Arc<Journal>) -> Self {
-        Self { repo, journal }
+        Self {
+            repo,
+            journal,
+            targets: None,
+        }
     }
 
     /// Where the handle's files sit on the downloads mount. Located from
@@ -112,28 +148,11 @@ impl SlskdSource {
         Ok(paths)
     }
 
-    /// Search hits grouped by peer, best group first: a free upload slot
-    /// outranks file count, ties break on username for determinism.
-    fn rank_groups(
-        hits: &[super::slskd::SearchResult],
-    ) -> Vec<(String, Vec<super::slskd::SearchResult>)> {
-        let mut groups: HashMap<String, Vec<super::slskd::SearchResult>> = HashMap::new();
-        for hit in hits {
-            groups
-                .entry(hit.username.clone())
-                .or_default()
-                .push(hit.clone());
-        }
-        let mut groups: Vec<_> = groups.into_iter().collect();
-        groups.sort_by(|a, b| {
-            let free_a = a.1.iter().any(|hit| hit.has_free_slot);
-            let free_b = b.1.iter().any(|hit| hit.has_free_slot);
-            free_b
-                .cmp(&free_a)
-                .then(b.1.len().cmp(&a.1.len()))
-                .then(a.0.cmp(&b.0))
-        });
-        groups
+    /// Rank against each task's edition and fetch single tracks as part
+    /// of their album.
+    pub fn with_targets(mut self, targets: Arc<Targets>) -> Self {
+        self.targets = Some(targets);
+        self
     }
 }
 
@@ -147,19 +166,10 @@ impl DownloadSource for SlskdSource {
             return Err(SourceError::Unavailable("slskd not configured".to_owned()));
         }
         let task = task_row(&self.journal, task_id).await?;
-        let hits = if task.download_type == "track" {
-            self.repo
-                .search_track(&task.artist_name, &task.album_title, None)
-                .await
-        } else {
-            self.repo
-                .search_album(&task.artist_name, &task.album_title, None)
-                .await
-        }
-        .map_err(slskd_error)?;
+        let target = resolve_target(self.targets.as_ref(), &task).await?;
         // Blocklisted peer/file pairs never re-enqueue, and neither does a
         // peer this task already tried: a failover walks to the best
-        // remaining group, so the list shrinking under quarantine never
+        // remaining folder, so the list shrinking under quarantine never
         // skips a candidate.
         let live = self
             .journal
@@ -180,18 +190,11 @@ impl DownloadSource for SlskdSource {
                 }
             }
         }
-        let hits: Vec<_> = hits
-            .into_iter()
-            .filter(|hit| !soulseek_hit_quarantined(&hit.username, &hit.filename, &live))
-            .filter(|hit| !tried.contains(&hit.username))
-            .collect();
-        let groups = Self::rank_groups(&hits);
-        let (_, files) = groups.first().ok_or_else(|| {
-            SourceError::Rejected(format!("slskd has no untried candidate for {task_id}"))
-        })?;
         // After a short landing, the next peer is asked only for the tracks
-        // still missing (v2 per-file failover); files whose position the
-        // name does not tell are kept.
+        // still missing (v2 per-file failover). With the edition's tracklist
+        // the folder ranker pairs files to those positions; without one,
+        // files are kept by the position their name gives, or kept when it
+        // gives none.
         let missing = self
             .journal
             .run("downloads.missing_positions", {
@@ -200,10 +203,36 @@ impl DownloadSource for SlskdSource {
             })
             .await
             .map_err(SourceError::LocalFault)?;
-        let payload: Vec<EnqueueFile> = files
+        let mut target = target;
+        let refill = target.track.is_none() && !missing.is_empty();
+        let by_name = refill && target.tracklist.is_empty();
+        if refill && !by_name {
+            target.wanted = missing
+                .iter()
+                .map(|&(disc, track)| TrackPosition { disc, track })
+                .collect();
+        }
+        let keep = |hit: &super::slskd::SearchResult| {
+            !soulseek_hit_quarantined(&hit.username, &hit.filename, &live)
+                && !tried.contains(&hit.username)
+        };
+        let choice = soulseek::choose(self.repo.as_ref(), &target, keep)
+            .await
+            .map_err(|miss| match miss {
+                SoulseekMiss::Search(error) => slskd_error(error),
+                SoulseekMiss::Nothing(reason) => {
+                    SourceError::Rejected(format!("{reason} (task {task_id})"))
+                }
+            })?;
+        if let (Some(reason), Some(targets)) = (choice.lone_reason, self.targets.as_ref()) {
+            targets.record_lone_track(&task, reason).await;
+        }
+        let payload: Vec<EnqueueFile> = choice
+            .pick
+            .files
             .iter()
             .filter(|hit| {
-                missing.is_empty()
+                !by_name
                     || crate::acquire::landing::matching::position_in_name(&hit.filename)
                         .is_none_or(|position| missing.contains(&position))
             })
@@ -324,6 +353,7 @@ pub struct SabnzbdSource {
     category: Option<String>,
     timeout: Duration,
     plugins: super::wiring::PluginSlot,
+    targets: Option<Arc<Targets>>,
 }
 
 impl SabnzbdSource {
@@ -349,7 +379,15 @@ impl SabnzbdSource {
             category,
             timeout,
             plugins: Default::default(),
+            targets: None,
         }
+    }
+
+    /// Search each task's album (a single track is fetched in its album's
+    /// release) and order releases against the edition's tracklist.
+    pub fn with_targets(mut self, targets: Arc<Targets>) -> Self {
+        self.targets = Some(targets);
+        self
     }
 
     /// Pool releases from plugin indexers that target `usenet`.
@@ -360,16 +398,26 @@ impl SabnzbdSource {
 
     /// Releases from plugin indexers that target `usenet`, as NZB hits.
     /// Results without an NZB URL cannot go to SABnzbd and are skipped.
-    async fn plugin_hits(&self, task: &TaskRow) -> Vec<IndexerResult> {
+    async fn plugin_hits(&self, query: &Query<'_>) -> Vec<IndexerResult> {
         let Some(host) = self.plugins.get() else {
             return Vec::new();
         };
-        let found = if task.download_type == "track" {
-            host.search_track("usenet", &task.artist_name, &task.album_title, None)
+        let found = match query {
+            Query::Track { artist, title } => {
+                host.search_track("usenet", artist, title, None).await
+            }
+            Query::Album(target) => {
+                host.search_album(
+                    "usenet",
+                    &target.artist,
+                    &target.album_title,
+                    target.year.map(i64::from),
+                    i64::try_from(target.tracklist.len())
+                        .ok()
+                        .filter(|count| *count > 0),
+                )
                 .await
-        } else {
-            host.search_album("usenet", &task.artist_name, &task.album_title, None, None)
-                .await
+            }
         };
         found
             .into_iter()
@@ -396,32 +444,34 @@ impl SabnzbdSource {
     /// Search the active side, then gate: an NZB URL is required, a
     /// positive password flag rejects (aggregators use negative for
     /// unknown, which never rejects), and retention plus size caps apply.
+    /// Album results are ordered against the target's tracklist.
     /// Usenet quarantine consult waits on release identity riding the
     /// handle (failover records job-name rows for audit until then);
     /// soulseek consults the live set at enqueue.
-    async fn candidates(&self, task: &TaskRow) -> Vec<IndexerResult> {
-        let hits = match self.backend {
-            UsenetBackend::Indexers => {
-                if task.download_type == "track" {
-                    self.newznab
-                        .search_track(&task.artist_name, &task.album_title, self.timeout)
-                        .await
-                } else {
-                    self.newznab
-                        .search_album(&task.artist_name, &task.album_title, None, self.timeout)
-                        .await
-                }
+    async fn candidates(&self, query: &Query<'_>) -> Vec<IndexerResult> {
+        let hits = match (self.backend, query) {
+            (UsenetBackend::Indexers, Query::Track { artist, title }) => {
+                self.newznab.search_track(artist, title, self.timeout).await
             }
-            UsenetBackend::Prowlarr => {
-                if task.download_type == "track" {
-                    self.prowlarr
-                        .search_track(&task.artist_name, &task.album_title, self.timeout)
-                        .await
-                } else {
-                    self.prowlarr
-                        .search_album(&task.artist_name, &task.album_title, self.timeout)
-                        .await
-                }
+            (UsenetBackend::Indexers, Query::Album(target)) => {
+                self.newznab
+                    .search_album(
+                        &target.artist,
+                        &target.album_title,
+                        target.year,
+                        self.timeout,
+                    )
+                    .await
+            }
+            (UsenetBackend::Prowlarr, Query::Track { artist, title }) => {
+                self.prowlarr
+                    .search_track(artist, title, self.timeout)
+                    .await
+            }
+            (UsenetBackend::Prowlarr, Query::Album(target)) => {
+                self.prowlarr
+                    .search_album(&target.artist, &target.album_title, self.timeout)
+                    .await
             }
         };
         // Pool plugin releases after the configured side; the first copy
@@ -429,7 +479,7 @@ impl SabnzbdSource {
         let mut seen = std::collections::HashSet::new();
         let hits: Vec<IndexerResult> = hits
             .into_iter()
-            .chain(self.plugin_hits(task).await)
+            .chain(self.plugin_hits(query).await)
             .filter(|hit| {
                 seen.insert(super::usenet::newznab::usenet_identity(
                     &hit.usenet.title,
@@ -438,13 +488,65 @@ impl SabnzbdSource {
             })
             .collect();
         let now = now_unix_f64();
-        hits.into_iter()
+        let hits = hits
+            .into_iter()
             .filter(|hit| !hit.usenet.nzb_url.is_empty())
             .filter(|hit| hit.usenet.password <= 0)
             .filter(|hit| self.policy.within_retention(hit.usenet.usenet_date, now))
             .filter(|hit| self.policy.within_size_cap(hit.usenet.size_bytes))
-            .collect()
+            .collect();
+        match query {
+            Query::Album(target) => order_releases(hits, target),
+            Query::Track { .. } => hits,
+        }
     }
+
+    /// The `index`-th release for a task. Usenet has no folder search, so
+    /// a single track is fetched as part of an album release; only when
+    /// every album release is used up does the walk go on to releases
+    /// found for the track alone, with the reason recorded.
+    async fn pick(
+        &self,
+        task: &TaskRow,
+        target: &SearchTarget,
+        index: usize,
+    ) -> Option<IndexerResult> {
+        let albums = if target.has_album() {
+            self.candidates(&Query::Album(target)).await
+        } else {
+            Vec::new()
+        };
+        let album_count = albums.len();
+        if let Some(pick) = albums.into_iter().nth(index) {
+            return Some(pick);
+        }
+        let track = target.track.as_ref()?;
+        let lone = self
+            .candidates(&Query::Track {
+                artist: &track.artist,
+                title: &track.title,
+            })
+            .await
+            .into_iter()
+            .nth(index - album_count)?;
+        let reason = match (track.no_album, album_count) {
+            (Some(reason), _) => reason,
+            (None, 0) => TrackReason::NoAlbumRelease,
+            (None, _) => TrackReason::AlbumReleasesExhausted,
+        };
+        if let Some(targets) = self.targets.as_ref() {
+            targets.record_lone_track(task, reason).await;
+        }
+        Some(lone)
+    }
+}
+
+/// What one Usenet search asks for.
+enum Query<'a> {
+    /// The target's album.
+    Album(&'a SearchTarget),
+    /// A single track on its own (the last resort).
+    Track { artist: &'a str, title: &'a str },
 }
 
 impl SabnzbdSource {
@@ -511,8 +613,8 @@ impl DownloadSource for SabnzbdSource {
             }
             Err(error) => return Err(sab_error(error)),
         }
-        let picks = self.candidates(&task).await;
-        let pick = picks.get(index).ok_or_else(|| {
+        let target = resolve_target(self.targets.as_ref(), &task).await?;
+        let pick = self.pick(&task, &target, index).await.ok_or_else(|| {
             SourceError::Rejected(format!(
                 "usenet has no candidate {candidate_index} for {task_id}"
             ))

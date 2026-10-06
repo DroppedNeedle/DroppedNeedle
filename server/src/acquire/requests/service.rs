@@ -35,6 +35,8 @@ use super::sqlite::{
     EditionStore, FollowApprovalStore, PersonalMixStore, RequestStore, WantedStore, WatchChange,
 };
 use super::{RequestsState, dispatch::DownloadDispatch};
+use crate::acquire::db::AcquireDb;
+use crate::acquire::edition::{chosen_edition, local_names};
 
 /// Batch row cap (v2 `BatchAlbumRequest` schema `max_length=500`).
 const BATCH_MAX_ITEMS: usize = 500;
@@ -59,6 +61,8 @@ pub struct RequestsService {
     mixes: Arc<PersonalMixStore>,
     /// In-flight edition acquires.
     editions: EditionStore,
+    /// The application database (library edition and names).
+    library: AcquireDb,
     /// Verdict sink into the collections follow rows, when wired.
     follow_sink: Option<Arc<dyn FollowDecisionSink>>,
     /// Plugin host for `request_created` events, when attached.
@@ -76,6 +80,7 @@ impl RequestsService {
             follows: state.follows.clone(),
             mixes: state.mixes.clone(),
             editions: state.editions.clone(),
+            library: state.library.clone(),
             follow_sink: state.follow_sink.clone(),
             plugins: state.plugins.clone(),
         }
@@ -141,6 +146,15 @@ impl RequestsService {
             .check_storage_admission(&principal.user_id, role, DispatchOrigin::User)
             .await?;
 
+        // The library's chosen edition wins for an album it holds; the
+        // edition the page showed fills in for one it does not.
+        let asked = body
+            .release_mbid
+            .as_deref()
+            .map(validate_mbid)
+            .transpose()?
+            .map(|release| release.to_lowercase());
+        let release_mbid = self.chosen_release(&mbid).await.or(asked);
         let needs_approval = !role.auto_approves();
         let record = self.new_album_record(
             principal,
@@ -148,6 +162,7 @@ impl RequestsService {
             body,
             &artist_name,
             &album_title,
+            release_mbid,
             needs_approval,
             now,
         );
@@ -414,6 +429,7 @@ impl RequestsService {
 
         let mut records = Vec::with_capacity(resolvable.len());
         for (mbid, item, artist_name, album_title) in &resolvable {
+            let release_mbid = self.chosen_release(mbid).await;
             records.push(RequestRecord {
                 key: mbid.to_lowercase(),
                 kind: RequestKind::Album,
@@ -422,7 +438,7 @@ impl RequestsService {
                 album_title: album_title.clone(),
                 artist_mbid: item.artist_mbid.clone(),
                 year: item.year,
-                release_mbid: None,
+                release_mbid,
                 track_title: None,
                 duration_seconds: None,
                 track_release_group_mbid: None,
@@ -1581,14 +1597,25 @@ impl RequestsService {
         self.quota
             .check_storage_admission(&principal.user_id, principal.role, DispatchOrigin::Edition)
             .await?;
+        // The search needs the album's names, and the fetch its chosen
+        // edition: both come from the library's copy of the album.
+        let Some((artist_name, title)) = local_names(self.library.pool(), &mbid)
+            .await
+            .map_err(|error| RequestsError::internal(&error))?
+        else {
+            return Err(RequestsError::InvalidInput {
+                message: "This album is not in your library yet. Request the album instead."
+                    .to_owned(),
+            });
+        };
         let request = DispatchRequest {
             user_id: principal.user_id.clone(),
             kind: "edition".to_owned(),
             key: mbid.clone(),
-            artist_name: String::new(),
-            title: String::new(),
+            artist_name,
+            title,
             origin: DispatchOrigin::Edition,
-            release_mbid: None,
+            release_mbid: self.chosen_release(&mbid).await,
             // No stable per-decision key exists (marks clear on terminal,
             // so a key would pin re-acquires to the old task); the
             // in-progress mark above owns double-submit dedup.
@@ -1748,6 +1775,18 @@ impl RequestsService {
         })
     }
 
+    /// The edition the library has chosen for one album, when it holds
+    /// the album. A read failure only loses the edition, never the ask.
+    async fn chosen_release(&self, release_group_mbid: &str) -> Option<String> {
+        match chosen_edition(self.library.pool(), release_group_mbid).await {
+            Ok(chosen) => chosen.map(|edition| edition.release_mbid),
+            Err(error) => {
+                tracing::warn!(release_group_mbid, %error, "chosen edition unreadable");
+                None
+            }
+        }
+    }
+
     /// Build a fresh album row for the claim.
     #[allow(clippy::too_many_arguments)]
     fn new_album_record(
@@ -1757,6 +1796,7 @@ impl RequestsService {
         body: &AlbumIntake,
         artist_name: &str,
         album_title: &str,
+        release_mbid: Option<String>,
         needs_approval: bool,
         now: u64,
     ) -> RequestRecord {
@@ -1768,7 +1808,7 @@ impl RequestsService {
             album_title: album_title.to_owned(),
             artist_mbid: body.artist_mbid.clone(),
             year: body.year,
-            release_mbid: None,
+            release_mbid,
             track_title: None,
             duration_seconds: None,
             track_release_group_mbid: None,

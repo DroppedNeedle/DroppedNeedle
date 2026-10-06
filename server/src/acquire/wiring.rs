@@ -63,6 +63,8 @@ use super::settings::{
 };
 use super::slskd::{DownloadPolicy as SlskdPolicy, ReqwestSlskdHttp, SlskdClient, SlskdRepository};
 use super::sources::{SabnzbdSource, SlskdSource};
+use super::target::Targets;
+use super::target::lookup::AlbumLookup;
 use super::usenet::newznab::{NewznabClient, NewznabIndexer, NewznabIndexerEntry};
 use super::usenet::policy::{QualityTier, UsenetPolicy};
 use super::usenet::prowlarr::{ProwlarrClient, ProwlarrIndexer};
@@ -194,6 +196,7 @@ pub struct LiveClients {
     journal: Arc<Journal>,
     built: Mutex<Option<(ClientSettings, Arc<ClientSet>)>>,
     plugins: PluginSlot,
+    targets: Arc<Targets>,
 }
 
 /// The plugin host, set once boot has built it. Plugin sources and
@@ -208,6 +211,7 @@ impl LiveClients {
         settings: Arc<dyn Fn() -> ClientSettings + Send + Sync>,
         slskd_downloads: PathBuf,
         journal: Arc<Journal>,
+        targets: Arc<Targets>,
     ) -> Self {
         Self {
             http,
@@ -216,7 +220,13 @@ impl LiveClients {
             journal,
             built: Mutex::new(None),
             plugins: Arc::new(std::sync::OnceLock::new()),
+            targets,
         }
+    }
+
+    /// What each task fetches, shared by every source.
+    pub fn targets(&self) -> &Arc<Targets> {
+        &self.targets
     }
 
     /// The slot the plugin host goes into.
@@ -248,7 +258,8 @@ impl LiveClients {
                     key,
                     self.journal.clone(),
                     release_policy.clone(),
-                ),
+                )
+                .with_targets(self.targets.clone()),
             )));
         }
         Arc::new(sources)
@@ -289,10 +300,9 @@ impl LiveClients {
         if let Some(repo) = slskd_repo.clone()
             && settings.slskd.enabled
         {
-            sources.push(Source::Slskd(Arc::new(SlskdSource::new(
-                repo,
-                self.journal.clone(),
-            ))));
+            sources.push(Source::Slskd(Arc::new(
+                SlskdSource::new(repo, self.journal.clone()).with_targets(self.targets.clone()),
+            )));
         }
         if let Some(queue) = sab_queue.clone()
             && settings.sabnzbd.sabnzbd.enabled
@@ -308,7 +318,8 @@ impl LiveClients {
                     Some(settings.sabnzbd.sabnzbd.category.clone()),
                     Duration::from_secs(30),
                 )
-                .with_plugins(self.plugins.clone()),
+                .with_plugins(self.plugins.clone())
+                .with_targets(self.targets.clone()),
             )));
         }
         let probe_inputs = Arc::new(ProbeInputs {
@@ -654,7 +665,8 @@ impl AcquireSetup {
             http.clone(),
             Arc::new(move || ClientSettings::read(&settings_store)),
             config.slskd_downloads_path.clone(),
-            journal_for_clients,
+            journal_for_clients.clone(),
+            Arc::new(Targets::new(journal_for_clients, staging_root.clone())),
         ));
         let search: Arc<dyn CandidateSearch> = Arc::new(LiveSearch {
             clients: clients.clone(),
@@ -840,6 +852,15 @@ impl AcquireSetup {
         self
     }
 
+    /// Let acquisition read MusicBrainz: edition tracklists, and the album
+    /// a single track is on. Boot calls this once with the live client.
+    pub fn with_album_lookup(self, lookup: Arc<dyn AlbumLookup>) -> Self {
+        if self.clients.targets().lookup_slot().set(lookup).is_err() {
+            tracing::warn!("MusicBrainz lookups were already attached to acquisition");
+        }
+        self
+    }
+
     /// Let enabled plugins act as download sources and feed usenet. Boot
     /// calls this once with the plugin host.
     pub fn with_plugins(self, host: Arc<crate::plugins::host::PluginHost>) -> Self {
@@ -881,6 +902,10 @@ impl AcquireSetup {
             Arc::new(ClientSettings::default),
             staging_root.clone(),
             Arc::new(Journal::new(db.clone())),
+            Arc::new(Targets::new(
+                Arc::new(Journal::new(db.clone())),
+                staging_root.clone(),
+            )),
         ));
         let events = EventSink::default();
         let core = core(

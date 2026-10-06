@@ -81,6 +81,7 @@ fn manifest(task_id: &str) -> DownloadManifest {
         origin: "user".to_string(),
         requested_by_user_id: None,
         attempt_id: Some("a1".to_string()),
+        track_album: None,
     }
 }
 

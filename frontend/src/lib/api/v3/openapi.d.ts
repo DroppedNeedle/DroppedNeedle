@@ -8138,6 +8138,12 @@ export interface components {
             /** @description Release-group MBID. */
             musicbrainz_id: string;
             /**
+             * @description The edition (release MBID) the page showed. An album the library
+             *     holds is always fetched in its chosen edition; this fills in for
+             *     one it does not hold.
+             */
+            release_mbid?: string | null;
+            /**
              * Format: int32
              * @description Release year.
              */

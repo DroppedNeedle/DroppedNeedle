@@ -26,6 +26,7 @@ use super::downloads::store::{
     StoreError, TaskDetails, TaskRow, task_from_sqlx,
 };
 use super::downloads::watchdog::RetryPolicy;
+use super::edition::chosen_edition;
 use super::flows::seams as flows;
 use super::requests::dispatch as requests;
 use crate::db::{DbError, Lane, OpError};
@@ -251,6 +252,20 @@ impl UnifiedDispatch {
     ) -> Result<String, String> {
         let task_id = self.mint_task_id();
         let now = now_unix_f64();
+        // An album ask without a release fetches the edition the library
+        // has chosen for that album (a single track resolves its album
+        // when it is searched for).
+        let chosen = match release_mbid {
+            None if !is_track => match chosen_edition(self.journal.db().pool(), key).await {
+                Ok(chosen) => chosen.map(|edition| edition.release_mbid),
+                Err(error) => {
+                    tracing::warn!(key, %error, "chosen edition unreadable; dispatching the album");
+                    None
+                }
+            },
+            _ => None,
+        };
+        let release_mbid = release_mbid.or(chosen.as_deref());
         let (release_group_mbid, recording_mbid) = if is_track {
             (String::new(), key.to_owned())
         } else {
@@ -342,6 +357,7 @@ impl UnifiedDispatch {
             origin: origin.to_owned(),
             requested_by_user_id: None,
             attempt_id: None,
+            track_album: None,
         };
         let staging_root = self.staging_root.clone();
         let task_id = task_id.to_owned();
@@ -513,7 +529,8 @@ impl requests::DownloadDispatch for UnifiedDispatch {
                  FROM download_tasks t WHERE t.id = ?1 AND t.origin != 'upgrade' \
                  AND NOT EXISTS (SELECT 1 FROM download_tasks n \
                    WHERE n.user_id = t.user_id AND n.download_type = t.download_type \
-                     AND n.release_group_mbid = t.release_group_mbid \
+                     AND (t.download_type = 'track' \
+                          OR n.release_group_mbid = t.release_group_mbid) \
                      AND COALESCE(n.recording_mbid, '') = COALESCE(t.recording_mbid, '') \
                      AND n.origin != 'upgrade' \
                      AND (n.created_at > t.created_at \
@@ -566,7 +583,8 @@ impl UnifiedDispatch {
         sqlx::query_scalar(
             "SELECT id FROM download_tasks WHERE user_id = ?1 \
              AND ((?2 = 'track' AND recording_mbid = ?3) \
-                  OR (?2 != 'track' AND release_group_mbid = ?3)) \
+                  OR (?2 != 'track' AND download_type = 'album' \
+                      AND release_group_mbid = ?3)) \
              AND created_at >= ?4 ORDER BY created_at DESC, rowid DESC LIMIT 1",
         )
         .bind(owner)
@@ -633,7 +651,7 @@ impl flows::DownloadDispatch for UnifiedDispatch {
         Box::pin(async move {
             let row: Option<(String, String, String)> = sqlx::query_as(
                 "SELECT id, status, release_group_mbid FROM download_tasks \
-                 WHERE release_group_mbid = ?1 \
+                 WHERE release_group_mbid = ?1 AND download_type = 'album' \
                    AND status IN ('queued', 'downloading', 'processing') \
                  ORDER BY created_at DESC, rowid DESC LIMIT 1",
             )

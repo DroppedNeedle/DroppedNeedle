@@ -12,6 +12,7 @@ mod acquire_journey;
 mod acquire_landing;
 mod acquire_requests;
 mod acquire_slskd;
+mod acquire_track_album;
 mod acquire_usenet;
 mod admin_backups;
 mod admin_routes;

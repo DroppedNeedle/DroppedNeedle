@@ -271,7 +271,21 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         &mut reads.collections,
     )
     .map_err(stage("acquire setup"))?
-    .with_plugins(plugin_host.clone());
+    .with_plugins(plugin_host.clone())
+    .with_album_lookup({
+        let mb_settings = config_store.clone();
+        Arc::new(crate::acquire::target::lookup::live_albums(
+            &http,
+            providers.clone(),
+            Arc::new(move || {
+                crate::providers::musicbrainz::MbSource::from_settings(
+                    &crate::reads::catalog::upstream::CatalogSettings::musicbrainz(
+                        mb_settings.as_ref(),
+                    ),
+                )
+            }),
+        ))
+    });
     // Finished downloads reach the library through its import seam.
     let acquire = match library.releases.clone() {
         Some(releases) => acquire.with_library(Arc::new(

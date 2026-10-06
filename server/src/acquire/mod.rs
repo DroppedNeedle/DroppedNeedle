@@ -11,6 +11,9 @@
 //! - [`imports`] serves Lidarr/Spotify import plus the health smoke.
 //! - [`landing`] verifies a finished download, matches it to the
 //!   requested release, and publishes it into the library or holds it.
+//! - [`target`] works out what a task fetches (its edition, tracklist and
+//!   wanted tracks; a single track is fetched as part of its album), with
+//!   [`edition`] answering which edition the library has chosen.
 //!
 //! The `db`, `dispatch`, `search`, `sources`, `settings`, `probes`,
 //! `worker`, and `wiring` modules unify the per-area seams onto one
@@ -22,6 +25,7 @@
 pub mod db;
 pub mod dispatch;
 pub mod downloads;
+pub mod edition;
 pub mod flows;
 pub mod imports;
 pub mod landing;
@@ -33,6 +37,7 @@ pub mod search;
 pub mod settings;
 pub mod slskd;
 pub mod sources;
+pub mod target;
 pub mod usenet;
 pub mod wiring;
 pub mod worker;

@@ -30,6 +30,9 @@ pub struct RequestsState {
     pub mixes: Arc<PersonalMixStore>,
     /// In-flight edition acquires.
     pub editions: EditionStore,
+    /// The application database, for the library's chosen edition and
+    /// album names.
+    pub library: AcquireDb,
     /// Verdict sink into the collections follow rows. `None` in tests that
     /// run the routes alone; wiring connects the collections store.
     pub follow_sink: Option<Arc<dyn FollowDecisionSink>>,
@@ -53,6 +56,7 @@ impl RequestsState {
             follows: FollowApprovalStore::new(db.clone()),
             mixes: Arc::new(PersonalMixStore::new(db.clone())),
             editions: EditionStore::new(db.clone()),
+            library: db.clone(),
             follow_sink: None,
             plugins: Default::default(),
         }

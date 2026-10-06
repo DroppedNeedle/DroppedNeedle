@@ -158,7 +158,11 @@ flowchart LR
     Q -. excluded next time .-> B
 ```
 
-The engine searches your client, ranks candidates, and auto-accepts a confident match. Close calls park for review instead of guessing. Every finished download is checked before it touches the library: the files must be readable audio of the right album and edition, inside your quality range, and match a release of the album you asked for track by track. Files that pass are tagged, named by your naming template and filed in the library. Files that don't fit well enough are held for you to look at, and bad sources get quarantined so they stop winning.
+The engine searches your client, ranks candidates, and auto-accepts a confident match. Close calls park for review instead of guessing.
+
+Downloads follow the edition you chose. If the album is already in your library, a request, an "acquire this edition", or an upgrade fetches the edition you picked by hand, else the one you pinned, else the one that best fits your files. For an album you don't have yet, it fetches the edition the album page showed you. Candidates are ranked against that edition's tracklist: first by how many of its tracks a folder holds, then by how close the track lengths are, then by quality, then by speed.
+
+A single track is fetched the way you would do it by hand. DroppedNeedle looks up which album the track is on (the edition you chose for it if you own that album, else the release you asked from, else the main official album rather than a compilation or a live set), searches for that album, picks the peer sharing the most complete album folder, and downloads only the track you asked for. The file is then checked against that album's tracklist. A peer sharing just the one song is only used when nobody shares the album with it; when that happens the download records why. On Usenet, which can't download single files, the album release is fetched and only your track is imported. Every finished download is checked before it touches the library: the files must be readable audio of the right album and edition, inside your quality range, and match a release of the album you asked for track by track. Files that pass are tagged, named by your naming template and filed in the library. Files that don't fit well enough are held for you to look at, and bad sources get quarantined so they stop winning.
 
 | Direction | What plugs in |
 |-|-|

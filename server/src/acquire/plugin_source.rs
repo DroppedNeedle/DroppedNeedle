@@ -22,6 +22,8 @@ use super::downloads::quarantine::QUARANTINE_TTL_SECONDS;
 use super::downloads::sources::{
     DownloadSource, Materialization, SourceError, SourceHandle, TransferProgress,
 };
+use super::target::Targets;
+use super::target::reasons::TrackReason;
 use super::usenet::policy::{QualityTier, UsenetPolicy};
 use crate::plugins::capabilities::acquisition::{
     PluginEnqueue, PluginSearchResult, PluginTaskHandle,
@@ -163,6 +165,7 @@ pub struct PluginDownloadSource {
     key: String,
     journal: Arc<Journal>,
     policy: ReleasePolicy,
+    targets: Option<Arc<Targets>>,
 }
 
 impl PluginDownloadSource {
@@ -178,7 +181,15 @@ impl PluginDownloadSource {
             key,
             journal,
             policy,
+            targets: None,
         }
+    }
+
+    /// Search each task's album: a single track is fetched as part of
+    /// its album's release, and a lone-track release is the last resort.
+    pub fn with_targets(mut self, targets: Arc<Targets>) -> Self {
+        self.targets = Some(targets);
+        self
     }
 
     /// The source key (`plugin:<name>`).
@@ -219,15 +230,7 @@ impl DownloadSource for PluginDownloadSource {
             .await
             .map_err(SourceError::LocalFault)?
             .ok_or_else(|| SourceError::Rejected(format!("unknown download task {task_id}")))?;
-        let results = if task.download_type == "track" {
-            self.host
-                .search_track(&self.key, &task.artist_name, &task.album_title, None)
-                .await
-        } else {
-            self.host
-                .search_album(&self.key, &task.artist_name, &task.album_title, None, None)
-                .await
-        };
+        let target = super::sources::resolve_target(self.targets.as_ref(), &task).await?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|elapsed| elapsed.as_secs_f64())
@@ -242,17 +245,60 @@ impl DownloadSource for PluginDownloadSource {
             .map(|(_, identity)| identity)
             .collect();
         let index = candidate_index.max(0) as usize;
-        let ranked = rank_plugin_releases(results, &self.policy, &quarantined);
-        let pick = ranked
+        let automatic = |results: Vec<PluginSearchResult>| -> Vec<ScoredRelease> {
+            rank_plugin_releases(results, &self.policy, &quarantined)
+                .into_iter()
+                .filter(|release| release.band == Band::Auto)
+                .collect()
+        };
+        let albums = if target.has_album() {
+            automatic(
+                self.host
+                    .search_album(
+                        &self.key,
+                        &target.artist,
+                        &target.album_title,
+                        target.year.map(i64::from),
+                        i64::try_from(target.tracklist.len())
+                            .ok()
+                            .filter(|count| *count > 0),
+                    )
+                    .await,
+            )
+        } else {
+            Vec::new()
+        };
+        let album_count = albums.len();
+        let mut pick = albums.into_iter().nth(index);
+        if pick.is_none()
+            && let Some(track) = target.track.as_ref()
+        {
+            // Every album release is used up: a release of the lone track
+            // is the last resort, and the reason is recorded.
+            pick = automatic(
+                self.host
+                    .search_track(&self.key, &track.artist, &track.title, None)
+                    .await,
+            )
             .into_iter()
-            .filter(|release| release.band == Band::Auto)
-            .nth(index)
-            .ok_or_else(|| {
-                SourceError::Rejected(format!(
-                    "{} has no automatic candidate {candidate_index} for {task_id}",
-                    self.key
-                ))
-            })?;
+            .nth(index - album_count);
+            if pick.is_some()
+                && let Some(targets) = self.targets.as_ref()
+            {
+                let reason = match (track.no_album, album_count) {
+                    (Some(reason), _) => reason,
+                    (None, 0) => TrackReason::NoAlbumRelease,
+                    (None, _) => TrackReason::AlbumReleasesExhausted,
+                };
+                targets.record_lone_track(&task, reason).await;
+            }
+        }
+        let pick = pick.ok_or_else(|| {
+            SourceError::Rejected(format!(
+                "{} has no automatic candidate {candidate_index} for {task_id}",
+                self.key
+            ))
+        })?;
         let handle = self
             .host
             .enqueue_download(&PluginEnqueue {

@@ -121,7 +121,8 @@ pub(crate) const RETRYABLE_SQL: &str = "SELECT * FROM download_tasks t \
                  SELECT 1 FROM download_tasks n \
                  WHERE n.user_id = t.user_id \
                    AND n.download_type = t.download_type \
-                   AND n.release_group_mbid = t.release_group_mbid \
+                   AND (t.download_type = 'track' \
+                        OR n.release_group_mbid = t.release_group_mbid) \
                    AND COALESCE(n.recording_mbid, '') = COALESCE(t.recording_mbid, '') \
                    AND n.origin != 'upgrade' \
                    AND (n.created_at > t.created_at \
@@ -218,6 +219,29 @@ pub struct TaskDetails {
     pub year: Option<i32>,
     /// Track title for exact-track rows.
     pub track_title: Option<String>,
+}
+
+/// The album a single-track task resolved to, as task columns.
+#[derive(Debug, Clone, Default)]
+pub struct TrackAlbumColumns {
+    /// Release group of the album.
+    pub release_group_mbid: String,
+    /// The edition the track is taken from.
+    pub release_mbid: String,
+    /// Album title.
+    pub album_title: String,
+    /// Release-track MBID of the wanted track.
+    pub release_track_mbid: Option<String>,
+    /// Position of the wanted track on its disc.
+    pub track_number: i64,
+    /// Disc of the wanted track.
+    pub disc_number: i64,
+    /// Tracks on the edition.
+    pub track_count: i64,
+    /// Canonical length of the wanted track in seconds.
+    pub duration_seconds: Option<f64>,
+    /// Album year.
+    pub year: Option<i32>,
 }
 
 /// Fields for a brand-new task row.
@@ -382,7 +406,7 @@ impl<'conn> DownloadStore<'conn> {
         self.conn
             .query_row(
                 "SELECT * FROM download_tasks \
-                 WHERE release_group_mbid = ? \
+                 WHERE release_group_mbid = ? AND download_type = 'album' \
                    AND status IN ('queued', 'downloading', 'processing') \
                  ORDER BY created_at DESC, rowid DESC LIMIT 1",
                 rusqlite::params![release_group_mbid],
@@ -413,6 +437,40 @@ impl<'conn> DownloadStore<'conn> {
                 details.artist_mbid,
                 details.year,
                 details.track_title,
+                now,
+                task_id,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Record the album a single-track task was resolved to: the release
+    /// group and edition it is fetched as part of, the album title, and
+    /// the track's place on that edition. The landing reads these to check
+    /// the file against the album's tracklist.
+    pub fn set_track_album(
+        &self,
+        task_id: &str,
+        album: &TrackAlbumColumns,
+        now: f64,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE download_tasks \
+             SET release_group_mbid = ?, release_mbid = ?, album_title = ?, \
+                 release_track_mbid = ?, track_number = ?, disc_number = ?, \
+                 track_count = ?, track_duration_seconds = COALESCE(?, track_duration_seconds), \
+                 year = COALESCE(?, year), updated_at = ? \
+             WHERE id = ? AND download_type = 'track'",
+            rusqlite::params![
+                album.release_group_mbid,
+                album.release_mbid,
+                album.album_title,
+                album.release_track_mbid,
+                album.track_number,
+                album.disc_number,
+                album.track_count,
+                album.duration_seconds,
+                album.year,
                 now,
                 task_id,
             ],

@@ -886,6 +886,7 @@ impl DownloadWorker {
                 origin: task.origin.clone(),
                 requested_by_user_id: None,
                 attempt_id: None,
+                track_album: None,
             });
         manifest.handle = Some(super::downloads::manifest::TaskHandle {
             source: handle.source.clone(),

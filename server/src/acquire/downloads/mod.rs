@@ -33,7 +33,10 @@ pub mod watchdog;
 #[cfg(any(test, feature = "test-support"))]
 pub use http::downloads_router;
 pub use http::{ReimportResponse, downloads_core_routes};
-pub use manifest::{DownloadManifest, ExpectedFile, ExpectedTrack, ManifestCodec, TaskHandle};
+pub use manifest::{
+    DownloadManifest, ExpectedFile, ExpectedTrack, ManifestCodec, RecordedReason, TaskHandle,
+    TrackAlbumContext, TrackPosition,
+};
 pub use orphans::{
     OrphanDecision, OrphanEvidence, OrphanPolicy, RecycleBin, evaluate_orphan, job_name_parts,
 };
