@@ -16,12 +16,12 @@ The httpx client is INJECTED (AUD-12). The full ``apikey`` is required (the add-
 
 import asyncio
 import logging
-import re
 from typing import Any
 
 import httpx
 
-from core.exceptions import ExternalServiceError, NewznabApiError
+from core.exceptions import ExternalServiceError
+from repositories.nzb_fetch import fetch_nzb, redact_query_secrets
 
 from .sabnzbd_models import (
     SabnzbdAddResponse,
@@ -35,15 +35,9 @@ logger = logging.getLogger(__name__)
 # addurl embeds the Newznab enclosure URL - which carries the indexer's apikey - in
 # the SABnzbd request, and SABnzbd may echo the submitted URL in an error body.
 # Scrub credential-looking query values from anything raised past this client so
-# indexer secrets never reach logs via the strategy's exception logging. Covers both
-# Newznab credential forms: ``apikey=`` and DrunkenSlug-style ``r=`` (the per-user
-# key); the ``r`` alternative is anchored so innocent words like ``error=`` don't
-# match, and the ``i=`` user id is left visible (an identifier, not a credential).
-_QUERY_SECRET_RE = re.compile(r"(?i)((?:apikey|api_key|(?<![A-Za-z0-9_])r)=)[^&\s'\"]+")
-
-
-def _redact_query_secrets(text: str) -> str:
-    return _QUERY_SECRET_RE.sub(r"\1***", text)
+# indexer secrets never reach logs via the strategy's exception logging. The scrubber
+# and the NZB fetch itself are shared with the NZBGet client (repositories/nzb_fetch).
+_redact_query_secrets = redact_query_secrets
 
 
 class SabnzbdApiError(ExternalServiceError):
@@ -263,40 +257,10 @@ class SabnzbdClient:
         return _ok(data)
 
     async def fetch_nzb(self, url: str, *, timeout: float = 60.0) -> bytes:
-        """GET the release's NZB URL (the Newznab enclosure, apikey already embedded)
-        and validate the bytes are a real NZB (XML), not an indexer error page."""
-        try:
-            response = await self._request_with_retry(
-                "GET", url, timeout=timeout, follow_redirects=True
-            )
-        except httpx.HTTPError as exc:
-            error = NewznabApiError(f"NZB fetch failed: {exc}")
-            # No-response transport failure (DNS/refused/timeout - cf.
-            # content_rejection below): the enqueue path falls back to addurl on
-            # this marker. A definitive indexer HTTP error carries neither marker.
-            error.transport_failure = True
-            raise error from exc
-        if response.status_code >= 400:
-            raise NewznabApiError(
-                f"NZB fetch returned HTTP {response.status_code}", details=response.text[:200]
-            )
-        content = response.content
-        head = content[:512].lstrip().lower()
-        if not (head.startswith(b"<?xml") or head.startswith(b"<nzb") or b"<nzb" in head):
-            error = NewznabApiError(
-                "indexer returned a non-NZB body (likely an error/limit page), not an NZB",
-                details={
-                    "status": response.status_code,
-                    "content_type": response.headers.get("content-type"),
-                    "snippet": response.text[:200],
-                },
-                code=response.status_code,
-            )
-            # Deterministic content rejection (an indexer error/limit page, not a
-            # transport failure): the Usenet enqueue path blocklists on this marker.
-            error.content_rejection = True
-            raise error
-        return content
+        """GET and validate the release's NZB. Shared with the NZBGet client; see
+        ``repositories/nzb_fetch`` for the ``transport_failure`` /
+        ``content_rejection`` markers the enqueue path branches on."""
+        return await fetch_nzb(self._request_with_retry, url, timeout=timeout)
 
     async def _get(self, extra: dict[str, str], *, timeout: float) -> Any:
         try:

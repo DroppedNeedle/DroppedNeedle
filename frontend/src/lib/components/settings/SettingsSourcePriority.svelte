@@ -9,6 +9,8 @@
 	} from 'lucide-svelte';
 
 	import {
+		getNzbgetConfigQuery,
+		getSabnzbdConfigQuery,
 		getSourcePriorityQuery,
 		saveSourcePriority
 	} from '$lib/queries/downloads/DownloadClientsQueries.svelte';
@@ -18,10 +20,21 @@
 	const priorityQuery = getSourcePriorityQuery();
 	const reorder = saveSourcePriority();
 	const sourcesQuery = getPluginSourcesQuery();
+	const sabnzbdQuery = getSabnzbdConfigQuery();
+	const nzbgetQuery = getNzbgetConfigQuery();
+
+	// Usenet is one source served by one of two clients, so name whichever is actually
+	// enabled. SABnzbd takes precedence when both are, matching the backend's choice.
+	const usenetClient = $derived(
+		sabnzbdQuery.data?.enabled
+			? 'SABnzbd'
+			: nzbgetQuery.data?.enabled
+				? 'NZBGet'
+				: 'SABnzbd or NZBGet'
+	);
 
 	const META: Record<string, { label: string; sub: string; icon: typeof Rss }> = {
-		soulseek: { label: 'Soulseek', sub: 'slskd', icon: HardDriveDownload },
-		usenet: { label: 'Usenet', sub: 'SABnzbd', icon: Rss }
+		soulseek: { label: 'Soulseek', sub: 'slskd', icon: HardDriveDownload }
 	};
 
 	const pluginLabels = $derived(
@@ -43,6 +56,8 @@
 	const order = $derived([...savedOrder, ...knownKeys.filter((key) => !savedOrder.includes(key))]);
 
 	function metaFor(source: string) {
+		if (source === 'usenet')
+			return { label: 'Usenet', sub: usenetClient, icon: Rss, missing: false };
 		const base = META[source];
 		if (base) return { ...base, missing: false };
 		if (pluginLabels[source])

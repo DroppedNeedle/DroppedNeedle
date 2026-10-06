@@ -2787,13 +2787,24 @@ def get_acquisition_cleanup_service() -> "AcquisitionCleanupService":
         get_download_store(),
         get_native_library_store(),
         _client_for_source,
-        lambda: Path(
-            get_preferences_service().get_sabnzbd_connection_raw().downloads_mount
-        ),
-        sab_category_getter=lambda: (
-            get_preferences_service().get_sabnzbd_connection_raw().category
-        ),
+        lambda: Path(_active_usenet_connection().downloads_mount),
+        sab_category_getter=lambda: _active_usenet_connection().category,
     )
+
+
+def _active_usenet_connection():
+    """Settings of whichever Usenet client is enabled (see ``usenet_client_type``).
+
+    The enqueue category, priority and downloads mount all have to come from the SAME
+    client that will receive the job, so they are read together rather than defaulting
+    to SABnzbd's.
+    """
+    from .repo_providers import usenet_client_type
+
+    preferences = get_preferences_service()
+    if usenet_client_type() == "nzbget":
+        return preferences.get_nzbget_connection_raw()
+    return preferences.get_sabnzbd_connection_raw()
 
 
 def _select_usenet_primary(selector: str, newznab, prowlarr):
@@ -2862,7 +2873,7 @@ def _build_download_orchestrator(
     from .repo_providers import (
         get_download_client_repository,
         get_download_store,
-        get_sabnzbd_download_client,
+        get_download_client_for_source,
         get_slskd_indexer,
         get_wanted_store,
     )
@@ -2871,6 +2882,7 @@ def _build_download_orchestrator(
     policy = prefs.get_download_policy()
     dc = prefs.get_download_client_settings_raw()
     sab = prefs.get_sabnzbd_connection_raw()
+    usenet = _active_usenet_connection()
     usenet_enabled = prefs.is_usenet_ready()
     # manifest is metadata only (audio lands in the client's dir), so staging need not be
     # on the library filesystem; default it under cache_dir
@@ -2910,14 +2922,15 @@ def _build_download_orchestrator(
         request_history=get_request_history_store(),
         on_import_callback=on_import_callback,
         usenet_indexer=usenet_indexer,
-        usenet_client=get_sabnzbd_download_client(),
+        usenet_client=get_download_client_for_source("usenet"),
         usenet_scorer=get_newznab_release_scorer(),
         usenet_enabled=usenet_enabled,
         soulseek_enabled=dc.enabled,
         source_priority=prefs.get_source_priority(),
         album_service=album_service,
-        usenet_category=sab.category,
-        usenet_priority=sab.priority,
+        usenet_category=usenet.category,
+        usenet_priority=usenet.priority,
+        # SABnzbd's pp level. NZBGet has no per-job equivalent and ignores it.
         usenet_post_processing=sab.post_processing,
         usenet_min_release_age_minutes=policy.usenet_min_release_age_minutes,
         # Fresh reader (not the snapshot above) so an automatic re-dispatch re-gates a

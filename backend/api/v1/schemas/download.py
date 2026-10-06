@@ -71,6 +71,22 @@ class SabnzbdTestResponse(AppStruct):
     mount_message: str | None = None
 
 
+class NzbgetTestResponse(AppStruct):
+    """Result of testing NZBGet: same shape as ``SabnzbdTestResponse`` so the settings
+    UI can treat the two clients identically. ``complete_dir`` is NZBGet's ``DestDir``
+    with its ``${MainDir}`` reference already expanded."""
+
+    valid: bool
+    version: str | None = None
+    message: str = ""
+    categories: list[str] = msgspec.field(default_factory=list)
+    complete_dir: str | None = None
+    mount_has_files: bool | None = None
+    resolvable_downloads: int | None = None
+    sampled_downloads: int | None = None
+    mount_message: str | None = None
+
+
 class IndexerReorderRequest(AppStruct):
     ordered_ids: list[str]
 

@@ -19,9 +19,10 @@ signatures).
 
 import asyncio
 import logging
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from core.exceptions import NewznabApiError
+from repositories.download_mount import DownloadsMount, dir_has_file
 from models.common import ServiceStatus
 from repositories.protocols.download_client import (
     DownloadMaterialization,
@@ -36,27 +37,10 @@ from .sabnzbd_models import SabnzbdHistorySlot, SabnzbdQueueSlot
 
 logger = logging.getLogger(__name__)
 
-# Mirror of library_manager._AUDIO_SUFFIXES (the importer's accepted set). Kept local
-# so this repository doesn't import from services/native (layering).
-_AUDIO_SUFFIXES = {".flac", ".mp3", ".m4a", ".m4b", ".mp4", ".ogg", ".oga", ".opus", ".wav"}
-
 # SABnzbd queue states that move 0 bytes (NOT active transfers). Everything else in the
 # queue that isn't true "Downloading" is post-processing -> "processing".
 _QUEUE_NOT_ACTIVE = {"queued", "grabbing", "propagating", "paused"}
 _HISTORY_LIMIT = 50
-# Bound for the failure-path-only suffix walk below (same order as the slskd
-# walk budget; a correct mount never walks, so this only prices misconfig).
-_REMAP_WALK_BUDGET = 10_000
-
-
-def _posix_norm(value: str) -> str:
-    """Fold SABnzbd-reported separators to posix before any remap. A
-    Windows-native SAB reports backslash paths, which ``PurePosixPath`` would
-    otherwise treat as one opaque segment (the same folding the slskd path
-    handling applies)."""
-    return value.replace("\\", "/")
-
-
 class SabnzbdDownloadClient:
     _DIAGNOSIS_SAMPLE = 3
 
@@ -72,6 +56,9 @@ class SabnzbdDownloadClient:
         self._api_key = api_key
         self._mount = Path(downloads_mount)
         self._complete_dir_cache: str | None = None
+        self._paths = DownloadsMount(
+            self._mount, self._complete_dir, client_name="sabnzbd"
+        )
 
     @property
     def client_name(self) -> str:
@@ -257,7 +244,7 @@ class SabnzbdDownloadClient:
         resolvable = 0
         for slot in sample:
             local = await self._local_storage(slot.storage)
-            if await asyncio.to_thread(_dir_has_file, local):
+            if await asyncio.to_thread(dir_has_file, local):
                 resolvable += 1
         has_files = await asyncio.to_thread(self._mount_has_any_file)
         return MountDiagnosis(
@@ -320,24 +307,9 @@ class SabnzbdDownloadClient:
         return matches[0] if matches else None
 
     async def downloads_mount_healthy(self) -> bool:
-        """Whether DroppedNeedle's downloads MOUNT itself is usable. False ONLY when the
-        configured mount root is missing or unreadable (a real environment fault - failing
-        over or blocklisting can't fix it). A healthy mount whose per-job folder is merely
-        empty/absent is a RELEASE problem (garbage / incomplete NZB), NOT a mount fault, so
-        this returns True and lets the orchestrator blocklist the bad release. (Checking the
-        per-job dir was wrong: a malformed NZB that SABnzbd marks Completed with an empty
-        folder looked identical to a broken mount.)"""
-
-        def _ok() -> bool:
-            try:
-                if not self._mount.is_dir():
-                    return False
-                next(self._mount.iterdir(), None)  # force a readdir; raises if unreadable
-                return True
-            except OSError:
-                return False
-
-        return await asyncio.to_thread(_ok)
+        """Whether DroppedNeedle's downloads MOUNT itself is usable (see
+        ``DownloadsMount.healthy``)."""
+        return await self._paths.healthy()
 
     async def _complete_dir(self) -> str:
         # Cache only a NON-EMPTY value: a transient get_config failure (or an empty result)
@@ -355,156 +327,16 @@ class SabnzbdDownloadClient:
         return value
 
     async def _local_storage(self, storage: str) -> Path:
-        """Remap SABnzbd's ``storage`` (its namespace) onto the DroppedNeedle mount by
-        stripping the SABnzbd ``complete_dir`` prefix; fall back to the job-folder
-        basename when the prefix doesn't match.
-
-        Two deterministic breakages are repaired before the fallback (#245): a
-        Windows-native SAB reports backslash paths (normalised first), and a
-        ``downloads_mount`` pointed at a category subfolder (``complete_dir`` +
-        ``/music``) resolves via a bounded suffix walk of the mount. A remap that
-        still fails logs a WARNING with the SAB path, ``complete_dir``, and the
-        mount - user config paths, never secrets."""
-        complete_dir = await self._complete_dir()
-        remote = PurePosixPath(_posix_norm(storage))
-        if complete_dir:
-            complete = PurePosixPath(_posix_norm(complete_dir))
-            try:
-                rel = remote.relative_to(complete)
-            except ValueError:
-                rel = None
-            if rel is not None:
-                if not rel.parts:
-                    return self._mount
-                direct = self._mount / Path(*rel.parts)
-                try:
-                    if direct.is_dir():
-                        return direct
-                except OSError:
-                    pass
-                walked = await asyncio.to_thread(self._suffix_walk, rel)
-                if walked is not None:
-                    return walked
-            logger.warning(
-                "sabnzbd storage remap failed: SAB path %s (complete_dir %s) does not "
-                "resolve under mount %s; falling back to basename %s",
-                storage,
-                complete_dir,
-                str(self._mount),
-                remote.name,
-            )
-        return self._mount / remote.name
-
-    def _suffix_walk(self, rel: PurePosixPath) -> Path | None:
-        """Bounded walk for a directory under the mount whose path ends with the
-        storage-relative suffix (the category-subfolder mount: the mount IS
-        ``complete_dir/<cat>``, so the stripped remainder still carries the
-        category component). Longest suffix wins; failure-path only. Sync
-        filesystem I/O - the caller offloads it off the event loop."""
-        try:
-            mount = self._mount.resolve()
-        except OSError:
-            return None
-        suffixes = ["/".join(rel.parts[i:]) for i in range(len(rel.parts))]
-        best: Path | None = None
-        best_len = -1
-        seen_dirs: set[Path] = set()
-        stack = [mount]
-        seen = 0
-        while stack:
-            try:
-                current = stack.pop().resolve()
-            except OSError:
-                continue
-            if not current.is_relative_to(mount) or current in seen_dirs:
-                continue
-            seen_dirs.add(current)
-            dir_rel = current.relative_to(mount).as_posix()
-            for suffix in suffixes:
-                if dir_rel == suffix or dir_rel.endswith("/" + suffix):
-                    if len(suffix) > best_len:
-                        best, best_len = current, len(suffix)
-                    break
-            try:
-                entries = list(current.iterdir())
-            except OSError:
-                continue
-            for entry in entries:
-                seen += 1
-                if seen > _REMAP_WALK_BUDGET:
-                    return best
-                try:
-                    if entry.is_dir():
-                        stack.append(entry)
-                except OSError:
-                    continue
-        return best
+        return await self._paths.local_storage(storage)
 
     async def _exact_local_storage(self, storage: str) -> Path | None:
-        """Map cleanup evidence only when SAB's complete root is known exactly."""
-
-        complete_dir = await self._complete_dir()
-        if not complete_dir:
-            return None
-        try:
-            relative = PurePosixPath(_posix_norm(storage)).relative_to(
-                PurePosixPath(_posix_norm(complete_dir))
-            )
-        except ValueError:
-            return None
-        return self._mount / Path(*relative.parts)
+        return await self._paths.exact_local_storage(storage)
 
     def _enumerate_audio(self, folder: Path) -> list[Path]:
-        """Audio files under the finished job folder (bounded DFS), confined to the
-        mount. Sync filesystem I/O - the caller offloads it off the event loop."""
-        mount = self._mount.resolve()
-        try:
-            root = folder.resolve()
-        except OSError:
-            return []
-        if not root.is_relative_to(mount) or not root.is_dir():
-            return []
-        out: list[Path] = []
-        stack = [root]
-        seen = 0
-        while stack:
-            try:
-                entries = list(stack.pop().iterdir())
-            except OSError:
-                continue
-            for entry in entries:
-                seen += 1
-                if seen > 10000:
-                    return out
-                if entry.is_dir():
-                    stack.append(entry)
-                elif entry.is_file() and entry.suffix.lower() in _AUDIO_SUFFIXES:
-                    out.append(entry)
-        return out
+        return self._paths.enumerate_audio(folder)
 
     def _mount_has_any_file(self) -> bool:
-        try:
-            stack = [self._mount]
-            seen = 0
-            while stack:
-                for entry in stack.pop().iterdir():
-                    seen += 1
-                    if seen > 5000:
-                        return True
-                    if entry.is_file():
-                        return True
-                    if entry.is_dir():
-                        stack.append(entry)
-        except OSError:
-            return False
-        return False
-
-
-def _dir_has_file(folder: Path) -> bool:
-    try:
-        return folder.is_dir() and any(p.is_file() for p in folder.iterdir())
-    except OSError:
-        return False
+        return self._paths.has_any_file()
 
 
 def _queue_status(slot: SabnzbdQueueSlot) -> DownloadTaskStatus:
