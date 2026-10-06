@@ -23,7 +23,9 @@ use std::sync::Arc;
 
 use super::evidence::local_album;
 use super::models::{LocalAlbumFacts, RecallResult};
-use super::sources::{FingerprintSource, ReleaseHit, ReleaseSource, SourceError};
+use super::sources::{
+    EditionPage, EditionQuery, FingerprintSource, ReleaseHit, ReleaseSource, SourceError,
+};
 use super::stores::{ReleaseStore, fresh_release, keep_releases};
 use crate::library::matching::decide::STRONG;
 use crate::library::matching::strings::fold;
@@ -50,6 +52,26 @@ pub trait IdentifyProviders: Send + Sync {
         &self,
         facts: &LocalAlbumFacts,
     ) -> std::pin::Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>>;
+
+    /// Recall the one release an administrator named for the album. The
+    /// default finds nothing, so a provider without this lane reads as "no
+    /// such release".
+    fn recall_release(
+        &self,
+        _facts: &LocalAlbumFacts,
+        _release_mbid: &str,
+    ) -> std::pin::Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>> {
+        Box::pin(async { RecallOutcome::default() })
+    }
+
+    /// One page of releases for a curator looking for an exact edition.
+    /// The default lists nothing.
+    fn search_editions(
+        &self,
+        _query: EditionQuery,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<EditionPage, SourceError>> + Send + '_>> {
+        Box::pin(async { Ok(EditionPage::default()) })
+    }
 }
 
 /// Recall result with the criticality each call ran under.
@@ -140,6 +162,23 @@ impl<R: ReleaseSource, F: FingerprintSource> LiveProviders<R, F> {
         })
     }
 
+    /// Recall for an exact release: that release alone, plus the merged
+    /// recording ids its files need. No search and no fingerprints.
+    async fn recall_exact(
+        &self,
+        facts: &LocalAlbumFacts,
+        release_mbid: &str,
+    ) -> Result<RecallResult, SourceError> {
+        let local = local_album(facts, &HashMap::new());
+        let releases: Vec<Release> = self.release(release_mbid).await?.into_iter().collect();
+        let recording_aliases = self.resolve_aliases(&local, &releases).await?;
+        Ok(RecallResult {
+            releases,
+            recording_aliases,
+            ..RecallResult::default()
+        })
+    }
+
     /// A release from the store when fresh, else from the source.
     async fn release(&self, mbid: &str) -> Result<Option<Release>, SourceError> {
         if let Some(stored) = fresh_release(&self.store, mbid).await {
@@ -199,11 +238,7 @@ impl<R: ReleaseSource, F: FingerprintSource> IdentifyProviders for LiveProviders
                 Ok(result) => result,
                 Err(SourceError(error)) => {
                     tracing::info!(album = facts.local_album_id, %error, "identify recall deferred");
-                    RecallResult {
-                        provider_deferred: true,
-                        failure_code: Some("musicbrainz_unavailable".to_owned()),
-                        ..RecallResult::default()
-                    }
+                    deferred()
                 }
             };
             RecallOutcome {
@@ -211,6 +246,44 @@ impl<R: ReleaseSource, F: FingerprintSource> IdentifyProviders for LiveProviders
                 recall_criticality: Some(Criticality::IdentityCritical),
             }
         })
+    }
+
+    fn recall_release(
+        &self,
+        facts: &LocalAlbumFacts,
+        release_mbid: &str,
+    ) -> std::pin::Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>> {
+        let facts = facts.clone();
+        let release_mbid = release_mbid.to_owned();
+        Box::pin(async move {
+            let result = match self.recall_exact(&facts, &release_mbid).await {
+                Ok(result) => result,
+                Err(SourceError(error)) => {
+                    tracing::info!(album = facts.local_album_id, %error, "exact release recall deferred");
+                    deferred()
+                }
+            };
+            RecallOutcome {
+                result,
+                recall_criticality: Some(Criticality::IdentityCritical),
+            }
+        })
+    }
+
+    fn search_editions(
+        &self,
+        query: EditionQuery,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<EditionPage, SourceError>> + Send + '_>> {
+        Box::pin(async move { self.releases.search_editions(&query).await })
+    }
+}
+
+/// The recall answer when MusicBrainz could not be reached.
+fn deferred() -> RecallResult {
+    RecallResult {
+        provider_deferred: true,
+        failure_code: Some("musicbrainz_unavailable".to_owned()),
+        ..RecallResult::default()
     }
 }
 
@@ -314,6 +387,8 @@ fn common_releases(heard: &HashMap<String, Vec<String>>, printed: usize) -> Vec<
 #[derive(Debug, Default)]
 pub struct FakeProviders {
     pub recall: std::sync::Mutex<Option<RecallResult>>,
+    /// Scripted edition search page.
+    pub editions: std::sync::Mutex<Option<EditionPage>>,
 }
 
 impl FakeProviders {
@@ -321,7 +396,23 @@ impl FakeProviders {
     pub fn with_recall(result: RecallResult) -> Self {
         Self {
             recall: std::sync::Mutex::new(Some(result)),
+            editions: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Replace the scripted edition search page.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_editions(&self, page: EditionPage) {
+        if let Ok(mut slot) = self.editions.lock() {
+            *slot = Some(page);
+        }
+    }
+
+    fn scripted(&self) -> RecallResult {
+        self.recall
+            .lock()
+            .map(|slot| slot.clone().unwrap_or_default())
+            .unwrap_or_default()
     }
 
     /// Replace the scripted recall. Test wiring uses this to
@@ -339,16 +430,41 @@ impl IdentifyProviders for FakeProviders {
         &self,
         _facts: &LocalAlbumFacts,
     ) -> std::pin::Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>> {
-        let result = self
-            .recall
-            .lock()
-            .map(|slot| slot.clone().unwrap_or_default())
-            .unwrap_or_default();
+        let result = self.scripted();
         Box::pin(async move {
             RecallOutcome {
                 result,
                 recall_criticality: Some(Criticality::IdentityCritical),
             }
         })
+    }
+
+    fn recall_release(
+        &self,
+        _facts: &LocalAlbumFacts,
+        release_mbid: &str,
+    ) -> std::pin::Pin<Box<dyn Future<Output = RecallOutcome> + Send + '_>> {
+        let mut result = self.scripted();
+        result
+            .releases
+            .retain(|release| release.answers_to(release_mbid));
+        Box::pin(async move {
+            RecallOutcome {
+                result,
+                recall_criticality: Some(Criticality::IdentityCritical),
+            }
+        })
+    }
+
+    fn search_editions(
+        &self,
+        _query: EditionQuery,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<EditionPage, SourceError>> + Send + '_>> {
+        let page = self
+            .editions
+            .lock()
+            .map(|slot| slot.clone().unwrap_or_default())
+            .unwrap_or_default();
+        Box::pin(async move { Ok(page) })
     }
 }

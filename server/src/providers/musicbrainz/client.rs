@@ -236,6 +236,29 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         .await
     }
 
+    /// One page of releases by title and artist, for a curator choosing
+    /// an exact edition (v2 `search_release_editions`).
+    pub async fn search_release_editions(
+        &self,
+        title: &str,
+        artist: &str,
+        limit: u32,
+        offset: u32,
+        criticality: Criticality,
+    ) -> Result<SearchPage<ReleaseSearchHit>, MbError> {
+        let query = build_release_search_query(title, artist);
+        self.search_page(
+            "/release",
+            &query,
+            limit,
+            offset,
+            "releases",
+            "search_release_editions",
+            criticality,
+        )
+        .await
+    }
+
     /// Search release groups by title and artist (verified Lucene shape).
     pub async fn search_release_groups(
         &self,

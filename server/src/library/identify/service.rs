@@ -12,8 +12,8 @@ use std::sync::Arc;
 use super::evidence::{candidate_evidence, local_album};
 use super::models::{
     AlbumIdentity, Alias, AliasKind, Appearance, CandidateEvidence, CreditProof, DecisionSource,
-    EvidenceClass, IdentificationOutcome, IdentifyJob, IdentifyKind, IdentityBrief, JobState,
-    LocalAlbumFacts, RecallResult, ReviewState, TrackIdentity,
+    EditionUndo, EvidenceClass, IdentificationOutcome, IdentifyJob, IdentifyKind, IdentityBrief,
+    JobState, LocalAlbumFacts, RecallResult, ReviewState, TrackIdentity,
 };
 use super::providers::{IdentifyProviders, RecallOutcome};
 use super::queue::{PRIORITY_HISTORICAL_BACKLOG, PRIORITY_NEW_OR_CHANGED, PRIORITY_REVIEW_RETRY};
@@ -22,11 +22,14 @@ use super::rules::{
     SubstitutionCase, SubstitutionVerdict, classify_credit, evaluate_overwrite,
     evaluate_substitution, retracts_on_contradiction,
 };
+use super::sources::{EditionPage, EditionQuery, SourceError};
 use super::stores::{
     AliasStore, Approval, AttemptLanding, FactsSource, IdentityStore, PinStore, ProofStore,
     QueueStore, ReleaseStore, ReviewStore, StoreError, keep_releases, land_job,
 };
-use crate::library::matching::{EditionPrefs, Support, Verdict, decide, match_release};
+use crate::library::matching::{
+    EditionPrefs, LocalAlbum, ReleaseMatch, Support, Verdict, decide, match_release,
+};
 
 /// Every dependency the identify service needs, injected by constructor.
 pub struct IdentifyDeps {
@@ -123,6 +126,37 @@ impl IdentifyService {
         Some(report)
     }
 
+    /// Recall candidates for one album outside the queue: every release
+    /// the usual recall finds, or only `exact_release` when an
+    /// administrator named one. Fetched documents stay on file, as for a
+    /// queued attempt.
+    pub async fn recall(
+        &self,
+        facts: &LocalAlbumFacts,
+        exact_release: Option<&str>,
+    ) -> RecallResult {
+        let outcome = match exact_release {
+            Some(mbid) => self.deps.providers.recall_release(facts, mbid).await,
+            None => self.deps.providers.recall_candidates(facts).await,
+        };
+        if !outcome.result.provider_deferred {
+            keep_releases(&self.deps.releases, outcome.result.releases.clone()).await;
+        }
+        outcome.result
+    }
+
+    /// One page of MusicBrainz releases for a curator choosing an edition.
+    pub async fn search_editions(&self, query: EditionQuery) -> Result<EditionPage, SourceError> {
+        self.deps.providers.search_editions(query).await
+    }
+
+    /// Score every recalled release and decide, the way a queued attempt
+    /// does, without sealing anything.
+    pub fn rank(&self, facts: &LocalAlbumFacts, recall: &RecallResult) -> Ranking {
+        let (ranking, _) = self.ranked(facts, recall);
+        ranking
+    }
+
     /// Score every recalled release and decide. Candidates come back
     /// chosen edition first, then by distance; the pin only orders
     /// editions within one release group and never counts as evidence.
@@ -131,6 +165,11 @@ impl IdentifyService {
         facts: &LocalAlbumFacts,
         recall: &RecallResult,
     ) -> (Vec<CandidateEvidence>, Decision) {
+        let (ranking, decision) = self.ranked(facts, recall);
+        (ranking.candidates, decision)
+    }
+
+    fn ranked(&self, facts: &LocalAlbumFacts, recall: &RecallResult) -> (Ranking, Decision) {
         let local = local_album(facts, &recall.fingerprint_support);
         let matches: Vec<_> = recall
             .releases
@@ -183,7 +222,16 @@ impl IdentifyService {
                 "NO_CANDIDATE".to_owned(),
             ),
         };
-        (scored, decision)
+        let ranking = Ranking {
+            local,
+            order,
+            matches,
+            candidates: scored,
+            outcome: decision.outcome(),
+            reason_code: decision.reason_code(),
+            lead_identified: matches!(decision, Decision::Identified(_)),
+        };
+        (ranking, decision)
     }
 
     fn apply_decision(
@@ -324,14 +372,16 @@ impl IdentifyService {
     }
 
     /// Seal an automatic win: album row, supported track rows (skipping
-    /// curator-protected tracks), and fresh credit proof rows.
+    /// curator-protected tracks), and fresh credit proof rows. An exact
+    /// edition keeps what it replaced, so an administrator can undo it.
     fn seal_automatic(&self, facts: &LocalAlbumFacts, winner: &CandidateEvidence) {
-        let revision = self
-            .deps
-            .identities
-            .album_identity(&facts.local_album_id)
-            .map(|row| row.row_revision + 1)
-            .unwrap_or(1);
+        let prior = self.deps.identities.album_identity(&facts.local_album_id);
+        let prior_tracks: Vec<TrackIdentity> = facts
+            .tracks
+            .iter()
+            .filter_map(|track| self.deps.identities.track_identity(&track.local_track_id))
+            .collect();
+        let revision = prior.as_ref().map(|row| row.row_revision + 1).unwrap_or(1);
         self.deps.identities.save_album_identity(AlbumIdentity {
             local_album_id: facts.local_album_id.clone(),
             provider: "musicbrainz".to_owned(),
@@ -359,6 +409,14 @@ impl IdentifyService {
                 release_track_mbid: track.release_track_mbid.clone(),
                 decision_source: DecisionSource::Automatic,
                 row_revision: 1,
+            });
+        }
+        if winner.release_mbid.is_some() {
+            self.deps.identities.record_automatic_edition(&EditionUndo {
+                local_album_id: facts.local_album_id.clone(),
+                prior,
+                prior_tracks,
+                identity_revision: revision,
             });
         }
         self.bank_proofs(facts, winner);
@@ -643,6 +701,45 @@ enum Decision {
     Ambiguous(String),
     EditionUncertain,
     Terminal(IdentificationOutcome, String),
+}
+
+impl Decision {
+    fn outcome(&self) -> IdentificationOutcome {
+        match self {
+            Decision::Identified(_) => IdentificationOutcome::Identified,
+            Decision::Contradictory => IdentificationOutcome::Contradictory,
+            Decision::Ambiguous(_) => IdentificationOutcome::Ambiguous,
+            Decision::EditionUncertain => IdentificationOutcome::EditionUncertain,
+            Decision::Terminal(outcome, _) => *outcome,
+        }
+    }
+
+    fn reason_code(&self) -> String {
+        match self {
+            Decision::Identified(_) => "SUPPORTED".to_owned(),
+            Decision::Contradictory => "CONFLICTING_TRACK_EVIDENCE".to_owned(),
+            Decision::Ambiguous(reason) | Decision::Terminal(_, reason) => reason.clone(),
+            Decision::EditionUncertain => "EDITION_UNCERTAIN".to_owned(),
+        }
+    }
+}
+
+/// Every recalled release scored against one album, best first, with the
+/// verdict an automatic attempt would reach. Nothing is sealed.
+#[derive(Debug, Clone)]
+pub struct Ranking {
+    /// The matcher's view of the album.
+    pub local: LocalAlbum,
+    /// Indexes into the recalled releases, in candidate order.
+    pub order: Vec<usize>,
+    /// One match per recalled release, in recall order.
+    pub matches: Vec<ReleaseMatch>,
+    /// The candidates, in `order`.
+    pub candidates: Vec<CandidateEvidence>,
+    pub outcome: IdentificationOutcome,
+    pub reason_code: String,
+    /// True when the first candidate would seal on its own.
+    pub lead_identified: bool,
 }
 
 /// One attempt's report: where the job landed and why.

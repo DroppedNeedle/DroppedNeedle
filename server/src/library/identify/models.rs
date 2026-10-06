@@ -124,6 +124,18 @@ pub struct TrackIdentity {
     pub row_revision: u64,
 }
 
+/// What an automatic exact-edition seal replaced: the album and track
+/// identity rows before it, and the album identity revision it wrote. An
+/// administrator can put these back while nothing else touched the album.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EditionUndo {
+    pub local_album_id: String,
+    pub prior: Option<AlbumIdentity>,
+    pub prior_tracks: Vec<TrackIdentity>,
+    /// Album identity revision the seal wrote.
+    pub identity_revision: u64,
+}
+
 /// The durable artist identity row.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArtistIdentity {

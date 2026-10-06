@@ -23,8 +23,8 @@ use sha2::{Digest as _, Sha256};
 
 use super::models::{
     AlbumIdentity, Alias, AliasKind, ArtistCredit, ArtistIdentity, CandidateEvidence, CreditProof,
-    DecisionSource, IdentifyJob, IdentifyKind, JobState, LocalAlbumFacts, LocalTrackFacts,
-    ReleasePin, ReviewItem, ReviewState, TrackIdentity,
+    DecisionSource, EditionUndo, IdentifyJob, IdentifyKind, JobState, LocalAlbumFacts,
+    LocalTrackFacts, ReleasePin, ReviewItem, ReviewState, TrackIdentity,
 };
 use super::queue::PRIORITY_NEW_OR_CHANGED;
 use super::stores::{
@@ -301,6 +301,14 @@ impl SqliteIdentifyStore {
             album_input_revision(conn, local_album_id)
         })
     }
+
+    /// Run `op` on the store's connection. Library operations keep their
+    /// jobs in the same database and share this connection, so their
+    /// transactions never contend with identification for a write lock.
+    /// `op` must not block on anything but SQLite.
+    pub(crate) fn with_connection<T>(&self, op: impl FnOnce(&mut Connection) -> T) -> T {
+        op(&mut self.lock())
+    }
 }
 
 impl IdentityStore for SqliteIdentifyStore {
@@ -552,6 +560,50 @@ impl IdentityStore for SqliteIdentifyStore {
             .optional()
         })
         .flatten()
+    }
+
+    fn record_automatic_edition(&self, undo: &EditionUndo) {
+        let prior = match undo.prior.as_ref().map(serde_json::to_string).transpose() {
+            Ok(prior) => prior,
+            Err(error) => {
+                tracing::warn!(%error, album = undo.local_album_id, "edition undo not recorded");
+                return;
+            }
+        };
+        let tracks = match serde_json::to_string(&undo.prior_tracks) {
+            Ok(tracks) => tracks,
+            Err(error) => {
+                tracing::warn!(%error, album = undo.local_album_id, "edition undo not recorded");
+                return;
+            }
+        };
+        self.write("record automatic edition", |tx| {
+            // One live undo per album: a later automatic seal replaces it.
+            tx.execute(
+                "INSERT INTO library_automatic_edition_undo (id, local_album_id, \
+                 prior_identity_json, prior_track_identities_json, \
+                 expected_post_album_revision, expected_post_identity_revision, reason_code, \
+                 created_at) \
+                 SELECT ?1, id, ?2, ?3, row_revision, ?4, 'AUTOMATIC_EXACT_EDITION', ?5 \
+                 FROM local_albums WHERE id = ?6 \
+                 ON CONFLICT (local_album_id) DO UPDATE SET id = excluded.id, \
+                 job_id = NULL, evidence_id = NULL, \
+                 prior_identity_json = excluded.prior_identity_json, \
+                 prior_track_identities_json = excluded.prior_track_identities_json, \
+                 expected_post_album_revision = excluded.expected_post_album_revision, \
+                 expected_post_identity_revision = excluded.expected_post_identity_revision, \
+                 reason_code = excluded.reason_code, created_at = excluded.created_at, \
+                 consumed_at = NULL, consumed_action_id = NULL",
+                params![
+                    uuid::Uuid::new_v4().to_string(),
+                    prior,
+                    tracks,
+                    undo.identity_revision.max(1) as i64,
+                    now_secs(),
+                    undo.local_album_id,
+                ],
+            )
+        });
     }
 }
 

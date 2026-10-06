@@ -17,6 +17,7 @@ use futures_util::future::BoxFuture;
 
 use super::models::LocalTrackFacts;
 use super::stores::FingerprintStore;
+use crate::library::matching::model::credit_text;
 use crate::library::matching::{CreditedArtist, Release, ReleaseMedium, ReleaseTrack};
 use crate::library::scan::pool::BlockingPool;
 use crate::library::scan::roots::RootRegistry;
@@ -24,7 +25,8 @@ use crate::providers::acoustid::{AcoustIdClient, BatchQuery};
 use crate::providers::degradation::DegradationSink;
 use crate::providers::limiter::Pacer;
 use crate::providers::musicbrainz::{
-    ArtistCreditName, Criticality, MbRelease, MbTransport, MusicBrainzClient, hit_score,
+    ArtistCreditName, Criticality, MbRelease, MbTransport, MusicBrainzClient, ReleaseSearchHit,
+    hit_score,
 };
 use crate::runtime_config::ConfigStore;
 use crate::runtime_config::secret_sections::TypedLibrary;
@@ -41,6 +43,45 @@ pub struct ReleaseHit {
     pub score: i64,
     /// Total tracks over all media, when the index knows every count.
     pub track_count: Option<u32>,
+}
+
+/// A curator's release search: one page of editions for a title and
+/// (unless blank) an artist.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditionQuery {
+    pub title: String,
+    pub artist: String,
+    pub limit: u32,
+    pub offset: u32,
+}
+
+/// One MusicBrainz release as the edition finder lists it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Edition {
+    pub release_mbid: String,
+    pub release_group_mbid: String,
+    pub artist_name: String,
+    pub title: String,
+    pub date: Option<String>,
+    pub country: Option<String>,
+    pub status: Option<String>,
+    pub packaging: Option<String>,
+    pub media_formats: Vec<String>,
+    pub disc_count: u32,
+    pub track_count: u32,
+    pub label: Option<String>,
+    pub catalogue_number: Option<String>,
+    pub barcode: Option<String>,
+    pub disambiguation: Option<String>,
+    pub score: i64,
+}
+
+/// One page of editions plus the index's total.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EditionPage {
+    pub items: Vec<Edition>,
+    pub total: u64,
+    pub offset: u64,
 }
 
 pub trait ReleaseSource: Send + Sync {
@@ -61,6 +102,15 @@ pub trait ReleaseSource: Send + Sync {
         &'a self,
         mbid: &'a str,
     ) -> BoxFuture<'a, Result<Option<String>, SourceError>>;
+
+    /// One page of releases for a curator choosing an exact edition. A
+    /// source without a search index answers with an empty page.
+    fn search_editions<'a>(
+        &'a self,
+        _query: &'a EditionQuery,
+    ) -> BoxFuture<'a, Result<EditionPage, SourceError>> {
+        Box::pin(async { Ok(EditionPage::default()) })
+    }
 }
 
 /// Search hits per query.
@@ -133,6 +183,70 @@ impl<T: MbTransport, S: DegradationSink> ReleaseSource for MusicBrainzClient<T, 
                 .map_err(|error| SourceError(error.to_string()))
         })
     }
+
+    fn search_editions<'a>(
+        &'a self,
+        query: &'a EditionQuery,
+    ) -> BoxFuture<'a, Result<EditionPage, SourceError>> {
+        Box::pin(async move {
+            // A dead index is an error the curator sees, not an empty list.
+            let page = self
+                .search_release_editions(
+                    &query.title,
+                    &query.artist,
+                    query.limit,
+                    query.offset,
+                    Criticality::IdentityCritical,
+                )
+                .await
+                .map_err(|error| SourceError(error.to_string()))?;
+            Ok(EditionPage {
+                total: page.count,
+                offset: page.offset,
+                items: page
+                    .items
+                    .into_iter()
+                    .filter_map(edition_from_hit)
+                    .collect(),
+            })
+        })
+    }
+}
+
+/// An edition-finder row from a release search hit; hits without a
+/// release group are skipped, as v2 did.
+fn edition_from_hit(hit: ReleaseSearchHit) -> Option<Edition> {
+    let release_group_mbid = hit.release_group.as_ref()?.id.to_ascii_lowercase();
+    let label = hit.label_info.first();
+    let mut media_formats: Vec<String> = Vec::new();
+    for format in hit.media.iter().filter_map(|medium| medium.format.clone()) {
+        if !media_formats.contains(&format) {
+            media_formats.push(format);
+        }
+    }
+    let blank_none = |value: Option<String>| value.filter(|value| !value.trim().is_empty());
+    Some(Edition {
+        score: hit_score(hit.score, hit.ext_score),
+        artist_name: credit_text(&credits(&hit.artist_credit)),
+        title: hit.title.clone().unwrap_or_default(),
+        date: blank_none(hit.date.clone()),
+        country: blank_none(hit.country.clone()),
+        status: blank_none(hit.status.clone()),
+        packaging: blank_none(hit.packaging.clone()),
+        disc_count: hit.media.len() as u32,
+        track_count: hit
+            .media
+            .iter()
+            .filter_map(|medium| medium.track_count)
+            .sum(),
+        media_formats,
+        label: blank_none(label.and_then(|info| info.label.as_ref()?.name.clone())),
+        catalogue_number: blank_none(label.and_then(|info| info.catalog_number.clone())),
+        barcode: blank_none(hit.barcode.clone()),
+        disambiguation: blank_none(hit.disambiguation.clone()),
+        release_mbid: hit.id.to_ascii_lowercase(),
+        release_group_mbid,
+    })
 }
 
 /// The matcher's release from the MusicBrainz wire shape. A release

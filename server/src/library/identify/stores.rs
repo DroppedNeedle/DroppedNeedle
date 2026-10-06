@@ -2,8 +2,8 @@
 //! tests may bind the memory fakes (`memory`).
 
 use super::models::{
-    AlbumIdentity, Alias, ArtistCredit, ArtistIdentity, CreditProof, IdentifyJob, JobState,
-    LocalAlbumFacts, ReleasePin, ReviewItem, ReviewState, TrackIdentity,
+    AlbumIdentity, Alias, ArtistCredit, ArtistIdentity, CreditProof, EditionUndo, IdentifyJob,
+    JobState, LocalAlbumFacts, ReleasePin, ReviewItem, ReviewState, TrackIdentity,
 };
 use crate::library::matching::Release;
 
@@ -25,6 +25,9 @@ pub trait IdentityStore: Send + Sync {
     fn accepted_release_mbid_for_artist(&self, _source_local_artist_id: &str) -> Option<String> {
         None
     }
+    /// Keep what an automatic exact-edition seal replaced, so an
+    /// administrator can undo it. Stores without undo support ignore it.
+    fn record_automatic_edition(&self, _undo: &EditionUndo) {}
 }
 
 /// Local album facts the matcher reads. Production answers from the
