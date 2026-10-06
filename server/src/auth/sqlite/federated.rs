@@ -141,6 +141,11 @@ impl FederatedUserStore for SqliteFederatedStore {
             return Err(store_unavailable("auth federated store is not wired"));
         };
         let id = self.ids.new_id();
+        let binding_id = self.ids.new_id();
+        let sealed = self
+            .crypto
+            .encrypt(&user.token_json)
+            .map_err(|error| store_unavailable(format!("cannot seal provider tokens: {error}")))?;
         let created = to_iso(AuthDb::now_unix());
         let row = user.clone();
         let row_id = id.clone();
@@ -165,6 +170,19 @@ impl FederatedUserStore for SqliteFederatedStore {
                         created,
                         row.username,
                         row.username_display,
+                    ],
+                )
+                .map_err(op_error)?;
+                tx.execute(
+                    "INSERT INTO auth_providers (id, user_id, provider, provider_uid, \
+                     provider_data, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    rusqlite::params![
+                        binding_id,
+                        row_id,
+                        row.provider,
+                        row.provider_uid,
+                        sealed,
+                        created,
                     ],
                 )
                 .map_err(op_error)?;

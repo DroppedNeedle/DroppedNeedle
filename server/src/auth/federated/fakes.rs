@@ -128,6 +128,17 @@ impl FederatedUserStore for FakeUserStore {
             rows.by_email.insert(email, stored.id.clone());
         }
         rows.by_id.insert(stored.id.clone(), stored.clone());
+        rows.next_provider += 1;
+        let binding = ProviderBinding {
+            id: format!("provider-{}", rows.next_provider),
+            user_id: stored.id.clone(),
+            provider: user.provider.clone(),
+            provider_uid: user.provider_uid.clone(),
+        };
+        rows.provider_tokens
+            .insert(binding.id.clone(), user.token_json);
+        rows.providers
+            .insert((user.provider, user.provider_uid), binding);
         Ok(stored)
     }
 

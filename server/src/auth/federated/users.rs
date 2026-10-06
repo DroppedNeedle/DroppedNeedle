@@ -7,11 +7,13 @@
 //! is empty, `user` otherwise) with an auto-derived username so a local
 //! password can be set later without a choose-username step.
 //!
-//! Two rules tighten v2: an email links accounts (and is stored) only when
+//! Three rules tighten v2: an email links accounts (and is stored) only when
 //! the provider says it verified it, so nobody can claim an existing
-//! account by typing its address into an IdP profile; and the store decides
+//! account by typing its address into an IdP profile; the store decides
 //! the first-user admin role inside the insert, so two first logins racing
-//! on an empty instance cannot both become admin.
+//! on an empty instance cannot both become admin; and a new user is written
+//! together with its provider binding, so a crash between the two cannot
+//! leave an account the next sign-in would not find.
 
 use super::FederatedError;
 
@@ -62,11 +64,18 @@ pub struct ProviderBinding {
     pub provider_uid: String,
 }
 
-/// Fields for creating a user from a federated profile. The store picks
-/// the role: [`ROLE_ADMIN`] when the instance has no users at insert time,
-/// else [`ROLE_USER`].
+/// Fields for creating a user from a federated profile, with the provider
+/// binding written in the same transaction. The store picks the role:
+/// [`ROLE_ADMIN`] when the instance has no users at insert time, else
+/// [`ROLE_USER`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewFederatedUser {
+    /// `oidc`, `jellyfin`, or `plex`.
+    pub provider: String,
+    /// Provider-side user id.
+    pub provider_uid: String,
+    /// Plaintext token JSON; the store seals it before writing.
+    pub token_json: String,
     /// Display name from the provider.
     pub display_name: String,
     /// Lowercased, provider-verified email, when there is one.
@@ -126,9 +135,10 @@ pub trait FederatedUserStore: Clone + Send + Sync + 'static {
         username: &str,
     ) -> impl Future<Output = Result<Option<StoredUser>, FederatedError>> + Send;
 
-    /// Insert a user, making it admin when no user exists yet (decided in
-    /// the same transaction as the insert). Maps a unique-username race to
-    /// [`FederatedError::UsernameTaken`] so the caller re-derives.
+    /// Insert a user and its provider binding in one transaction, making
+    /// the user admin when no user exists yet. Maps a uniqueness race (the
+    /// username, or the same provider account signing in twice at once) to
+    /// [`FederatedError::UsernameTaken`] so the caller looks again.
     fn create_user(
         &self,
         user: NewFederatedUser,
@@ -187,6 +197,9 @@ pub async fn find_or_create_federated_user<S: FederatedUserStore>(
             derive_username(store, profile.email.as_deref(), &profile.display_name).await?;
         let created = store
             .create_user(NewFederatedUser {
+                provider: provider.to_owned(),
+                provider_uid: profile.provider_uid.clone(),
+                token_json: profile.token_json.clone(),
                 display_name: profile.display_name.clone(),
                 email: email.map(str::to_owned),
                 avatar_url: profile.avatar_url.clone(),
@@ -195,18 +208,19 @@ pub async fn find_or_create_federated_user<S: FederatedUserStore>(
             })
             .await;
         match created {
-            Ok(user) => {
-                store
-                    .create_provider(
-                        &user.id,
-                        provider,
-                        &profile.provider_uid,
-                        &profile.token_json,
-                    )
-                    .await?;
-                return Ok(user);
+            Ok(user) => return Ok(user),
+            Err(FederatedError::UsernameTaken) => {
+                // The same account signing in twice at once: the other
+                // request created it, so this one signs into that user.
+                if let Some(binding) = store.get_provider(provider, &profile.provider_uid).await? {
+                    return store
+                        .get_user_by_id(&binding.user_id)
+                        .await?
+                        .ok_or_else(|| {
+                            FederatedError::Authentication("Linked account not found".to_owned())
+                        });
+                }
             }
-            Err(FederatedError::UsernameTaken) => continue,
             Err(other) => return Err(other),
         }
     }
