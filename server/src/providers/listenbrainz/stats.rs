@@ -288,7 +288,7 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
             Ok(Body::NoContent | Body::InvalidJson) => Ok(None),
             Err(RequestFailure::Outcome(outcome)) => Err(outcome),
             Err(RequestFailure::Accepted(_)) => {
-                Err(self.recorded(None, "ListenBrainz gave an unexpected reply"))
+                Err(self.shape_error("ListenBrainz gave an unexpected reply"))
             }
         }
     }

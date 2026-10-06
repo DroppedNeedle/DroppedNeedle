@@ -171,12 +171,11 @@ impl<P: Pacer, S: DegradationSink> AcoustIdClient<P, S> {
             // retried and never counted toward the breaker.
             return self.unrecorded(format!("AcoustID rejected the lookup ({status})"));
         }
+        self.sink.succeeded(SOURCE);
         let payload: serde_json::Value = match response.text().await {
             Ok(text) => match serde_json::from_str(&text) {
                 Ok(payload) => payload,
-                Err(_) => {
-                    return self.recorded(None, "malformed AcoustID response".to_owned());
-                }
+                Err(_) => return self.malformed(),
             },
             Err(error) => {
                 return self.recorded(None, format!("AcoustID response body unreadable: {error}"));
@@ -239,12 +238,13 @@ impl<P: Pacer, S: DegradationSink> AcoustIdClient<P, S> {
                     .record(SOURCE, format!("AcoustID batch lookup answered {status}"));
                 continue;
             }
+            self.sink.succeeded(SOURCE);
             let body = response.text().await.unwrap_or_default();
             let payload = match serde_json::from_str::<serde_json::Value>(&body) {
                 Ok(payload) => payload,
                 Err(_) => {
                     self.sink
-                        .record(SOURCE, "malformed AcoustID batch response".to_owned());
+                        .record_quiet(SOURCE, "malformed AcoustID batch response".to_owned());
                     continue;
                 }
             };
@@ -265,29 +265,28 @@ impl<P: Pacer, S: DegradationSink> AcoustIdClient<P, S> {
     /// Fold a lookup payload into an outcome, following v2 `_parse_response`
     /// branch for branch.
     fn parse_lookup(&self, payload: serde_json::Value) -> Outcome<FingerprintMatch> {
-        let malformed = || "malformed AcoustID response".to_owned();
         let body = match payload.as_object() {
             Some(body) => body,
-            None => return self.recorded(None, malformed()),
+            None => return self.malformed(),
         };
         match body.get("status").and_then(serde_json::Value::as_str) {
             Some("ok") => {}
             Some(other) => return self.recorded(None, other.to_owned()),
-            None => return self.recorded(None, malformed()),
+            None => return self.malformed(),
         }
         // A missing or null `results` reads as "no results" (v2); only a
         // non-list value is malformed.
         let results = match body.get("results") {
             None | Some(serde_json::Value::Null) => Vec::new(),
             Some(serde_json::Value::Array(results)) => results.clone(),
-            Some(_) => return self.recorded(None, malformed()),
+            Some(_) => return self.malformed(),
         };
         if results.is_empty() {
             return Outcome::Missing;
         }
         let best = match results.first().and_then(serde_json::Value::as_object) {
             Some(best) => best,
-            None => return self.recorded(None, malformed()),
+            None => return self.malformed(),
         };
         // A missing score reads as 0.0 and falls below the threshold (v2);
         // only a present-but-unusable score is malformed. JSON booleans must
@@ -296,9 +295,9 @@ impl<P: Pacer, S: DegradationSink> AcoustIdClient<P, S> {
             None | Some(serde_json::Value::Null) => 0.0,
             Some(serde_json::Value::Number(number)) => match number.as_f64() {
                 Some(score) if score.is_finite() => score,
-                _ => return self.recorded(None, malformed()),
+                _ => return self.malformed(),
             },
-            Some(_) => return self.recorded(None, malformed()),
+            Some(_) => return self.malformed(),
         };
         if score < MIN_SCORE {
             return Outcome::Missing;
@@ -306,7 +305,7 @@ impl<P: Pacer, S: DegradationSink> AcoustIdClient<P, S> {
         let recordings = match best.get("recordings") {
             None | Some(serde_json::Value::Null) => Vec::new(),
             Some(serde_json::Value::Array(recordings)) => recordings.clone(),
-            Some(_) => return self.recorded(None, malformed()),
+            Some(_) => return self.malformed(),
         };
         let mut recording_ids: Vec<String> = Vec::new();
         let mut seen: Vec<String> = Vec::new();
@@ -373,6 +372,18 @@ impl<P: Pacer, S: DegradationSink> AcoustIdClient<P, S> {
         self.sink.record(SOURCE, message.clone());
         Outcome::Unavailable {
             retry_after_secs,
+            message,
+            recorded: true,
+        }
+    }
+
+    /// A reply that did not decode: recorded for the request, kept out of
+    /// service health (the service answered).
+    fn malformed(&self) -> Outcome<FingerprintMatch> {
+        let message = "malformed AcoustID response".to_owned();
+        self.sink.record_quiet(SOURCE, message.clone());
+        Outcome::Unavailable {
+            retry_after_secs: None,
             message,
             recorded: true,
         }

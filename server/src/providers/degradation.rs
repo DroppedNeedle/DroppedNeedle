@@ -279,8 +279,29 @@ pub fn degraded_none<T>(
 /// request context. `source` is the lowercase provider key the matrix joins
 /// on; callers fold any operation detail into `message`.
 pub trait DegradationSink: Send + Sync {
-    /// Record one note that this optional source failed.
+    /// Record one note that this optional source failed. The failure
+    /// counts toward the source's service health.
     fn record(&self, source: &'static str, message: String);
+
+    /// Record a failure that says nothing about the service's health: a
+    /// local pacing decline, or an answer whose shape did not decode. The
+    /// request still sees it; the service health registry does not.
+    fn record_quiet(&self, source: &'static str, message: String) {
+        self.record(source, message);
+    }
+
+    /// Record a failure under `source` that counts toward a different
+    /// health entry, such as a BrainzMash mirror failure recorded as
+    /// `musicbrainz` but reported as `musicbrainz-brainzmash`.
+    fn record_as(&self, source: &'static str, health_source: &'static str, message: String) {
+        let _ = health_source;
+        self.record(source, message);
+    }
+
+    /// The service answered. Clears its run of failures.
+    fn succeeded(&self, health_source: &'static str) {
+        let _ = health_source;
+    }
 }
 
 /// A sink that drops every record. Handy until the wiring lands, and for

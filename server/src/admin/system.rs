@@ -22,11 +22,11 @@ pub struct ServiceHealthItem {
     pub service: String,
     /// What is affected, e.g. `metadata`.
     pub capability: String,
-    /// `degraded` or `down`.
+    /// Always `degraded`; v2 also defined `down` but never sent it.
     pub severity: String,
     /// One user-facing line.
     pub message: String,
-    /// Service used instead, when there is one.
+    /// Service used instead. No v3 source names one yet, so it is null.
     pub fallback: Option<String>,
     /// Seconds since the service was first seen degraded.
     pub degraded_seconds: u64,
@@ -35,11 +35,11 @@ pub struct ServiceHealthItem {
 impl From<DegradedService> for ServiceHealthItem {
     fn from(entry: DegradedService) -> Self {
         Self {
-            service: entry.service,
-            capability: entry.capability,
-            severity: entry.severity.as_str().to_owned(),
-            message: entry.message,
-            fallback: entry.fallback,
+            service: entry.service.to_owned(),
+            capability: entry.capability.to_owned(),
+            severity: "degraded".to_owned(),
+            message: entry.message.to_owned(),
+            fallback: None,
             degraded_seconds: entry.degraded_for.as_secs(),
         }
     }

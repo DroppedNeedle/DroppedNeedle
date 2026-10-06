@@ -118,10 +118,30 @@ impl HealthSink {
     }
 }
 
+impl HealthSink {
+    /// The service answered: its run of failures starts over.
+    pub fn record_success(&self, source: &str) {
+        self.health.record_success(source);
+    }
+}
+
 impl DegradationSink for HealthSink {
     fn record(&self, source: &'static str, message: String) {
         CoreSink.record(source, message);
         self.health.record_failure(source, Instant::now());
+    }
+
+    fn record_quiet(&self, source: &'static str, message: String) {
+        CoreSink.record(source, message);
+    }
+
+    fn record_as(&self, source: &'static str, health_source: &'static str, message: String) {
+        CoreSink.record(source, message);
+        self.health.record_failure(health_source, Instant::now());
+    }
+
+    fn succeeded(&self, health_source: &'static str) {
+        self.record_success(health_source);
     }
 }
 
@@ -229,6 +249,23 @@ mod tests {
         );
         let empty = DegradationContext::new();
         assert!(!empty.has_degradation());
+    }
+
+    #[test]
+    fn health_sink_counts_wire_failures_only() {
+        let providers = Providers::with_memory_cache();
+        let sink = HealthSink::new(&providers);
+        for _ in 0..5 {
+            sink.record_quiet("lastfm", "invalid JSON".to_owned());
+            sink.record_as(
+                "musicbrainz",
+                "musicbrainz-brainzmash",
+                "mirror 503".to_owned(),
+            );
+        }
+        let live = providers.health.current(std::time::Instant::now());
+        let services: Vec<&str> = live.iter().map(|entry| entry.service).collect();
+        assert_eq!(services, ["musicbrainz-brainzmash"]);
     }
 
     #[tokio::test]

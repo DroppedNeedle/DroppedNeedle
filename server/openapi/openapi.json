@@ -31405,7 +31405,7 @@
               "string",
               "null"
             ],
-            "description": "Service used instead, when there is one."
+            "description": "Service used instead. No v3 source names one yet, so it is null."
           },
           "message": {
             "type": "string",
@@ -31417,7 +31417,7 @@
           },
           "severity": {
             "type": "string",
-            "description": "`degraded` or `down`."
+            "description": "Always `degraded`; v2 also defined `down` but never sent it."
           }
         }
       },

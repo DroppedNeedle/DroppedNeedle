@@ -282,7 +282,7 @@ impl<P: Pacer, S: DegradationSink> LastFmClient<P, S> {
             Some(token) if !token.is_empty() => Outcome::Found(AuthToken {
                 token: token.to_owned(),
             }),
-            _ => self.recorded(None, "Last.fm auth.getToken response missing 'token'"),
+            _ => self.shape_error("Last.fm auth.getToken response missing 'token'"),
         }
     }
 
@@ -314,10 +314,8 @@ impl<P: Pacer, S: DegradationSink> LastFmClient<P, S> {
         let session = match session {
             Some(session) => session,
             None => {
-                return self.recorded(
-                    None,
-                    "Last.fm auth.getSession response missing 'name' or 'key'",
-                );
+                return self
+                    .shape_error("Last.fm auth.getSession response missing 'name' or 'key'");
             }
         };
         let name = session
@@ -329,10 +327,7 @@ impl<P: Pacer, S: DegradationSink> LastFmClient<P, S> {
             .and_then(serde_json::Value::as_str)
             .unwrap_or("");
         if name.is_empty() || key.is_empty() {
-            return self.recorded(
-                None,
-                "Last.fm auth.getSession response missing 'name' or 'key'",
-            );
+            return self.shape_error("Last.fm auth.getSession response missing 'name' or 'key'");
         }
         Outcome::Found(Session {
             name: name.to_owned(),
@@ -362,7 +357,7 @@ impl<P: Pacer, S: DegradationSink> LastFmClient<P, S> {
         };
         match parse_artist_info(&payload) {
             Some(info) => Outcome::Found(info),
-            None => self.recorded(None, "Last.fm artist.getInfo response missing 'name'"),
+            None => self.shape_error("Last.fm artist.getInfo response missing 'name'"),
         }
     }
 
@@ -388,7 +383,7 @@ impl<P: Pacer, S: DegradationSink> LastFmClient<P, S> {
         };
         match parse_album_info(&payload) {
             Some(info) => Outcome::Found(info),
-            None => self.recorded(None, "Last.fm album.getInfo response missing 'name'"),
+            None => self.shape_error("Last.fm album.getInfo response missing 'name'"),
         }
     }
 
@@ -720,11 +715,12 @@ impl<P: Pacer, S: DegradationSink> LastFmClient<P, S> {
                 return Err(self.recorded(None, &format!("Last.fm request failed ({status})")));
             }
         }
+        self.sink.succeeded(SOURCE);
         let payload: serde_json::Value = match response.text().await {
             Ok(text) => match serde_json::from_str(&text) {
                 Ok(payload) => payload,
                 Err(_) => {
-                    return Err(self.recorded(None, "Last.fm returned invalid JSON"));
+                    return Err(self.shape_error("Last.fm returned invalid JSON"));
                 }
             },
             Err(error) => {
@@ -804,6 +800,17 @@ impl<P: Pacer, S: DegradationSink> LastFmClient<P, S> {
         self.sink.record(SOURCE, message.to_owned());
         Outcome::Unavailable {
             retry_after_secs,
+            message: message.to_owned(),
+            recorded: true,
+        }
+    }
+
+    /// A reply that did not decode: recorded for the request, kept out of
+    /// service health (the service answered).
+    fn shape_error<T>(&self, message: &str) -> Outcome<T> {
+        self.sink.record_quiet(SOURCE, message.to_owned());
+        Outcome::Unavailable {
+            retry_after_secs: None,
             message: message.to_owned(),
             recorded: true,
         }

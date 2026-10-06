@@ -523,10 +523,13 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
                     retry_after_secs: Some(secs),
                 });
             }
+            // A local pacing decline: the mirror said nothing, so it does
+            // not count toward its health.
             return self.provider_dead(
                 operation,
                 criticality,
                 format!("brainzmash cooling down {secs:.1}s"),
+                Health::Quiet,
             );
         }
         params.push(("fmt".to_owned(), "json".to_owned()));
@@ -540,15 +543,25 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
             query: params,
             headers: Vec::new(),
         };
+        let wire = if brainzmash {
+            Health::Counts(BRAINZMASH_HEALTH)
+        } else {
+            Health::Counts(OFFICIAL_HEALTH)
+        };
         let response = match self.transport.get(&request).await {
             Ok(response) => response,
-            Err(error) => return self.provider_dead(operation, criticality, error.0),
+            Err(error) => return self.provider_dead(operation, criticality, error.0, wire),
         };
         if brainzmash {
             self.note_brainzmash_status(&response);
         }
         match response.status {
-            200 => Ok(WireOutcome::Found(response.body)),
+            200 => {
+                if let Health::Counts(health_source) = wire {
+                    self.sink.succeeded(health_source);
+                }
+                Ok(WireOutcome::Found(response.body))
+            }
             404 => Ok(WireOutcome::Missing),
             429 | 503 => {
                 let retry_after_secs = parse_retry_after_secs(response.header("Retry-After"));
@@ -560,6 +573,7 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
                         operation,
                         criticality,
                         format!("brainzmash rate limited; cooling down {selected:.1}s"),
+                        wire,
                     );
                 }
                 if brainzmash && response.status == 503 {
@@ -569,6 +583,7 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
                         operation,
                         criticality,
                         "brainzmash unavailable (HTTP 503)".to_owned(),
+                        wire,
                     );
                 }
                 if criticality == Criticality::BestEffort {
@@ -600,6 +615,7 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
                 operation,
                 criticality,
                 format!("HTTP {} from {}", response.status, source.base_url()),
+                wire,
             ),
         }
     }
@@ -651,16 +667,35 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         operation: &'static str,
         criticality: Criticality,
         cause: String,
+        health: Health,
     ) -> Result<WireOutcome, MbError> {
         if criticality == Criticality::IdentityCritical {
             return Err(MbError::Unavailable(cause));
         }
-        self.sink.record(
-            "musicbrainz",
-            format!("{operation}: musicbrainz unavailable: {cause}"),
-        );
+        let message = format!("{operation}: musicbrainz unavailable: {cause}");
+        match health {
+            Health::Counts(health_source) => {
+                self.sink.record_as("musicbrainz", health_source, message);
+            }
+            Health::Quiet => self.sink.record_quiet("musicbrainz", message),
+        }
         Ok(WireOutcome::Degraded)
     }
+}
+
+/// Health entry the official service's wire failures count toward.
+const OFFICIAL_HEALTH: &str = "musicbrainz";
+/// Health entry a BrainzMash mirror's wire failures count toward (v2's
+/// separate breaker).
+const BRAINZMASH_HEALTH: &str = "musicbrainz-brainzmash";
+
+/// Whether a recorded failure counts toward service health.
+#[derive(Debug, Clone, Copy)]
+enum Health {
+    /// A wire failure: counts toward this health entry.
+    Counts(&'static str),
+    /// A local decline: the request sees it, service health does not.
+    Quiet,
 }
 
 /// One wire attempt's classified result.

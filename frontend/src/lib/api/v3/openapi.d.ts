@@ -14478,13 +14478,13 @@ export interface components {
              * @description Seconds since the service was first seen degraded.
              */
             degraded_seconds: number;
-            /** @description Service used instead, when there is one. */
+            /** @description Service used instead. No v3 source names one yet, so it is null. */
             fallback?: string | null;
             /** @description One user-facing line. */
             message: string;
             /** @description Lowercase service key, e.g. `musicbrainz`. */
             service: string;
-            /** @description `degraded` or `down`. */
+            /** @description Always `degraded`; v2 also defined `down` but never sent it. */
             severity: string;
         };
         /** @description A card nudging the user to connect a service. */

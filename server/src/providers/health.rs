@@ -3,14 +3,15 @@
 //! Ports v2's `ServiceHealthRegistry`: one answer to "is this service
 //! having trouble right now?", read by `GET /api/v3/system/health` to drive
 //! the header status dot. Entries expire on their own after a TTL that each
-//! fresh signal slides forward, so a service heals without a reset or a
+//! fresh failure slides forward, so a service heals without a reset or a
 //! sweeper once the failures stop.
 //!
 //! v2 fed it from circuit breakers that opened after several consecutive
-//! failures. The provider clients here report failures only (through the
-//! [`DegradationSink`](super::degradation::DegradationSink)), so the same
-//! rule becomes "N failures inside a short window": one blip never flags a
-//! service, a run of them does.
+//! failures. Here the provider clients report through the
+//! [`DegradationSink`](super::degradation::DegradationSink): each wire
+//! failure counts, each answered request clears the count, and a run of
+//! failures inside a short window marks the service. One blip never flags
+//! a service; a sustained outage does.
 
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -18,7 +19,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// How long a degraded entry lives after its latest signal (v2 default).
+/// How long a degraded entry lives after its latest failure (v2 default).
 pub const ENTRY_TTL: Duration = Duration::from_secs(300);
 /// The window the failure threshold counts inside (v2 breaker timeout).
 pub const FAILURE_WINDOW: Duration = Duration::from_secs(60);
@@ -37,6 +38,13 @@ const WATCHED: &[Watched] = &[
         source: "musicbrainz",
         capability: "metadata",
         message: "MusicBrainz, our main source for music data, is having trouble - \
+                  search and album or artist details may be incomplete for now.",
+        threshold: 5,
+    },
+    Watched {
+        source: "musicbrainz-brainzmash",
+        capability: "metadata",
+        message: "BrainzMash, our community source for music data, is having trouble - \
                   search and album or artist details may be incomplete for now.",
         threshold: 5,
     },
@@ -68,73 +76,36 @@ const WATCHED: &[Watched] = &[
     },
 ];
 
-/// How bad a degraded entry is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Severity {
-    /// Working with gaps or a fallback.
-    Degraded,
-    /// Not answering at all.
-    Down,
-}
-
-impl Severity {
-    /// The wire spelling (v2 strings).
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Degraded => "degraded",
-            Self::Down => "down",
-        }
-    }
-}
-
-/// One signal that a service capability is degraded.
-#[derive(Debug, Clone)]
-pub struct Degradation {
-    /// Lowercase service key, e.g. `listenbrainz`.
-    pub service: String,
-    /// What is affected, e.g. `music data`.
-    pub capability: String,
-    /// One user-facing line.
-    pub message: String,
-    /// What is used instead, when anything is.
-    pub fallback: Option<String>,
-    /// How bad it is.
-    pub severity: Severity,
-    /// How long the entry lives without a fresh signal.
-    pub ttl: Duration,
-}
-
 /// A live degraded entry, as the health route reports it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DegradedService {
     /// Lowercase service key.
-    pub service: String,
+    pub service: &'static str,
     /// What is affected.
-    pub capability: String,
-    /// How bad it is.
-    pub severity: Severity,
+    pub capability: &'static str,
     /// One user-facing line.
-    pub message: String,
-    /// What is used instead, when anything is.
-    pub fallback: Option<String>,
+    pub message: &'static str,
     /// How long it has been degraded.
     pub degraded_for: Duration,
 }
 
 #[derive(Debug)]
 struct Entry {
-    severity: Severity,
-    message: String,
-    fallback: Option<String>,
+    watched: &'static Watched,
     since: Instant,
     until: Instant,
 }
 
 #[derive(Debug, Default)]
 struct State {
-    degraded: BTreeMap<(String, String), Entry>,
+    degraded: BTreeMap<&'static str, Entry>,
     failures: HashMap<&'static str, VecDeque<Instant>>,
+}
+
+impl std::fmt::Debug for Watched {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.source)
+    }
 }
 
 /// The registry. One per process, held by the shared provider deps.
@@ -150,73 +121,63 @@ impl ServiceHealth {
         Self::default()
     }
 
-    /// Record or refresh a degraded capability. The first signal sets the
-    /// start time; every signal slides the expiry forward.
-    pub fn mark_degraded(&self, signal: Degradation, now: Instant) {
-        let mut state = self.lock();
-        let key = (signal.service, signal.capability);
-        let since = state.degraded.get(&key).map_or(now, |entry| entry.since);
-        state.degraded.insert(
-            key,
-            Entry {
-                severity: signal.severity,
-                message: signal.message,
-                fallback: signal.fallback,
-                since,
-                until: now + signal.ttl,
-            },
-        );
-    }
-
     /// Count one failed call to `source`. Once the source's threshold is
-    /// reached inside [`FAILURE_WINDOW`], it is marked degraded, and each
-    /// further failure keeps it so. Sources nobody watches are ignored.
+    /// reached inside [`FAILURE_WINDOW`], it is marked degraded for
+    /// [`ENTRY_TTL`], and each further failure keeps it so. Sources nobody
+    /// watches are ignored.
     pub fn record_failure(&self, source: &str, now: Instant) {
         let Some(watched) = WATCHED.iter().find(|watched| watched.source == source) else {
             return;
         };
-        let sustained = {
-            let mut state = self.lock();
-            let recent = state.failures.entry(watched.source).or_default();
-            recent.push_back(now);
-            while recent.len() > watched.threshold {
-                recent.pop_front();
-            }
-            recent.len() == watched.threshold
-                && recent
-                    .front()
-                    .is_some_and(|first| now.saturating_duration_since(*first) <= FAILURE_WINDOW)
-        };
+        let mut state = self.lock();
+        let recent = state.failures.entry(watched.source).or_default();
+        recent.push_back(now);
+        while recent.len() > watched.threshold {
+            recent.pop_front();
+        }
+        let sustained = recent.len() == watched.threshold
+            && recent
+                .front()
+                .is_some_and(|first| now.saturating_duration_since(*first) <= FAILURE_WINDOW);
         if sustained {
-            self.mark_degraded(
-                Degradation {
-                    service: watched.source.to_owned(),
-                    capability: watched.capability.to_owned(),
-                    message: watched.message.to_owned(),
-                    fallback: None,
-                    severity: Severity::Degraded,
-                    ttl: ENTRY_TTL,
+            let since = state
+                .degraded
+                .get(watched.source)
+                .map_or(now, |entry| entry.since);
+            state.degraded.insert(
+                watched.source,
+                Entry {
+                    watched,
+                    since,
+                    until: now + ENTRY_TTL,
                 },
-                now,
             );
         }
     }
 
-    /// Live degraded entries, sorted by service then capability. Expired
-    /// entries are dropped as a side effect.
+    /// `source` answered: its run of failures starts over. A live entry
+    /// stays until its TTL runs out, so one lucky call does not hide an
+    /// outage.
+    pub fn record_success(&self, source: &str) {
+        let mut state = self.lock();
+        if let Some(recent) = state.failures.get_mut(source) {
+            recent.clear();
+        }
+    }
+
+    /// Live degraded entries, sorted by service. Expired entries are
+    /// dropped as a side effect.
     #[must_use]
     pub fn current(&self, now: Instant) -> Vec<DegradedService> {
         let mut state = self.lock();
         state.degraded.retain(|_, entry| entry.until >= now);
         state
             .degraded
-            .iter()
-            .map(|((service, capability), entry)| DegradedService {
-                service: service.clone(),
-                capability: capability.clone(),
-                severity: entry.severity,
-                message: entry.message.clone(),
-                fallback: entry.fallback.clone(),
+            .values()
+            .map(|entry| DegradedService {
+                service: entry.watched.source,
+                capability: entry.watched.capability,
+                message: entry.watched.message,
                 degraded_for: now.saturating_duration_since(entry.since),
             })
             .collect()
@@ -253,15 +214,21 @@ mod tests {
         assert_eq!(live[0].degraded_for, Duration::from_secs(1));
 
         let later = start + Duration::from_secs(4) + ENTRY_TTL + Duration::from_secs(1);
-        assert!(health.current(later).is_empty(), "heals once signals stop");
+        assert!(health.current(later).is_empty(), "heals once failures stop");
     }
 
     #[test]
-    fn spread_out_failures_never_degrade() {
+    fn spread_out_or_interrupted_failures_never_degrade() {
         let health = ServiceHealth::new();
         let start = Instant::now();
-        for minute in 0..10 {
-            health.record_failure("musicbrainz", start + Duration::from_secs(minute * 30));
+        for step in 0..10 {
+            health.record_failure("musicbrainz", start + Duration::from_secs(step * 30));
+        }
+        for second in 0..8 {
+            if second == 4 {
+                health.record_success("audiodb");
+            }
+            health.record_failure("audiodb", start + Duration::from_secs(second));
         }
         assert!(health.current(start + Duration::from_secs(300)).is_empty());
     }

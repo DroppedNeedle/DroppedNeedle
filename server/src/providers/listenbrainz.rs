@@ -281,7 +281,7 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
             }
             Err(RequestFailure::Outcome(outcome)) => return outcome,
             Err(RequestFailure::Accepted(_)) => {
-                return self.recorded(None, "ListenBrainz gave an unexpected reply");
+                return self.shape_error("ListenBrainz gave an unexpected reply");
             }
         };
         match payload {
@@ -386,7 +386,7 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
             Ok(payload) => payload,
             Err(RequestFailure::Outcome(outcome)) => return outcome,
             Err(RequestFailure::Accepted(_)) => {
-                return self.recorded(None, "ListenBrainz gave an unexpected reply");
+                return self.shape_error("ListenBrainz gave an unexpected reply");
             }
         };
         // An empty answer reads as no listens (v2 returns `[]` when the
@@ -439,7 +439,7 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
                 Body::Json(payload) => match payload.as_object() {
                     Some(payload) => payload.clone(),
                     None => {
-                        self.sink.record(
+                        self.sink.record_quiet(
                             SOURCE,
                             "ListenBrainz returned no recording metadata".to_owned(),
                         );
@@ -447,7 +447,7 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
                     }
                 },
                 Body::NoContent | Body::InvalidJson => {
-                    self.sink.record(
+                    self.sink.record_quiet(
                         SOURCE,
                         "ListenBrainz returned no recording metadata".to_owned(),
                     );
@@ -514,7 +514,7 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
                 Ok(payload) => payload,
                 Err(RequestFailure::Outcome(outcome)) => return Ok(outcome),
                 Err(RequestFailure::Accepted(_)) => {
-                    return Ok(self.recorded(None, "ListenBrainz gave an unexpected reply"));
+                    return Ok(self.shape_error("ListenBrainz gave an unexpected reply"));
                 }
             };
             // No payload at all is an upstream failure, not an empty answer
@@ -524,10 +524,8 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
                 Body::Json(payload) => match payload.as_object() {
                     Some(payload) => payload.clone(),
                     None => {
-                        return Ok(self.recorded(
-                            None,
-                            "ListenBrainz returned invalid release-group metadata.",
-                        ));
+                        return Ok(self
+                            .shape_error("ListenBrainz returned invalid release-group metadata."));
                     }
                 },
                 Body::NoContent => {
@@ -631,7 +629,7 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
             Ok(payload) => payload,
             Err(RequestFailure::Outcome(outcome)) => return outcome,
             Err(RequestFailure::Accepted(_)) => {
-                return self.recorded(None, "ListenBrainz gave an unexpected reply");
+                return self.shape_error("ListenBrainz gave an unexpected reply");
             }
         };
         let items = match payload {
@@ -706,7 +704,7 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
             Ok(Body::NoContent | Body::InvalidJson) => return Outcome::Found(Vec::new()),
             Err(RequestFailure::Outcome(outcome)) => return outcome,
             Err(RequestFailure::Accepted(_)) => {
-                return self.recorded(None, "ListenBrainz gave an unexpected reply");
+                return self.shape_error("ListenBrainz gave an unexpected reply");
             }
         };
         let Some(entries) = payload.as_object() else {
@@ -754,7 +752,7 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
             Ok(_) => Ok(Vec::new()),
             Err(RequestFailure::Outcome(outcome)) => Err(outcome),
             Err(RequestFailure::Accepted(_)) => {
-                Err(self.recorded(None, "ListenBrainz gave an unexpected reply"))
+                Err(self.shape_error("ListenBrainz gave an unexpected reply"))
             }
         }
     }
@@ -807,7 +805,7 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
             .map_err(|failure| match failure {
                 RequestFailure::Outcome(outcome) => outcome,
                 RequestFailure::Accepted(_) => {
-                    self.recorded(None, "ListenBrainz gave an unexpected reply")
+                    self.shape_error("ListenBrainz gave an unexpected reply")
                 }
             })?;
         self.pacer.acquire().await;
@@ -834,7 +832,7 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
             Ok(payload) => Ok(payload),
             Err(RequestFailure::Outcome(outcome)) => Err(outcome),
             Err(RequestFailure::Accepted(_)) => {
-                Err(self.recorded(None, "ListenBrainz gave an unexpected reply"))
+                Err(self.shape_error("ListenBrainz gave an unexpected reply"))
             }
         }
     }
@@ -905,6 +903,9 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
     ) -> Result<Body, RequestFailure<T>> {
         let status = response.status().as_u16();
         let category = endpoint_category(endpoint);
+        if status == 200 || status == 204 {
+            self.sink.succeeded(SOURCE);
+        }
         if status == 204 {
             return Ok(Body::NoContent);
         }
@@ -928,12 +929,15 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
             // 2026-07 when ListenBrainz began gating anonymous popularity
             // calls.
             if is_policy_block(status, &body) {
-                return Err(RequestFailure::Outcome(self.recorded(
-                    None,
-                    &format!(
-                        "ListenBrainz {method} {category} endpoint unavailable upstream ({status})"
-                    ),
-                )));
+                let message = format!(
+                    "ListenBrainz {method} {category} endpoint unavailable upstream ({status})"
+                );
+                self.sink.record_quiet(SOURCE, message.clone());
+                return Err(RequestFailure::Outcome(Outcome::Unavailable {
+                    retry_after_secs: None,
+                    message,
+                    recorded: true,
+                }));
             }
             if status == 401 || status == 403 {
                 return Err(RequestFailure::Outcome(self.unrecorded(&format!(
@@ -952,7 +956,7 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
                 // than raising; each caller below then applies its own
                 // empty-answer rule.
                 Err(_) => {
-                    self.sink.record(
+                    self.sink.record_quiet(
                         SOURCE,
                         format!("ListenBrainz returned invalid JSON for {method} {category}"),
                     );
@@ -971,6 +975,17 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
         self.sink.record(SOURCE, message.to_owned());
         Outcome::Unavailable {
             retry_after_secs,
+            message: message.to_owned(),
+            recorded: true,
+        }
+    }
+
+    /// A reply whose shape did not decode: recorded for the request, kept
+    /// out of service health (the service answered).
+    fn shape_error<T>(&self, message: &str) -> Outcome<T> {
+        self.sink.record_quiet(SOURCE, message.to_owned());
+        Outcome::Unavailable {
+            retry_after_secs: None,
             message: message.to_owned(),
             recorded: true,
         }

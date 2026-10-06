@@ -291,10 +291,18 @@ impl<P: Pacer, S: DegradationSink> AudioDbClient<P, S> {
         if status != 200 {
             return Err(self.unavailable(None, format!("AudioDB request failed ({status})")));
         }
+        self.sink.succeeded(SOURCE);
         match response.text().await {
             Ok(text) => match serde_json::from_str(&text) {
                 Ok(payload) => Ok(payload),
-                Err(_) => Err(self.unavailable(None, "AudioDB returned invalid JSON".to_owned())),
+                Err(_) => {
+                    let message = "AudioDB returned invalid JSON".to_owned();
+                    self.sink.record_quiet(SOURCE, message.clone());
+                    Err(Outcome::Unavailable {
+                        retry_after_secs: None,
+                        message,
+                    })
+                }
             },
             Err(error) => {
                 Err(self.unavailable(None, format!("AudioDB response body unreadable: {error}")))
@@ -321,8 +329,10 @@ impl<P: Pacer, S: DegradationSink> AudioDbClient<P, S> {
             Some(item) => match serde_json::from_value(item) {
                 Ok(decoded) => Outcome::Found(decoded),
                 Err(error) => {
+                    // A shape problem, not an outage: kept out of service
+                    // health.
                     let message = format!("Schema error for {what}: {error}");
-                    self.sink.record(SOURCE, message.clone());
+                    self.sink.record_quiet(SOURCE, message.clone());
                     Outcome::Unavailable {
                         retry_after_secs: None,
                         message,

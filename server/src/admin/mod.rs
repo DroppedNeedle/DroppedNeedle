@@ -212,7 +212,7 @@ async fn signed_in_user(
         Ok(Some(user)) => Ok(user),
         Ok(None) => Err(missing()),
         Err(error) => Err(AdminHttpError(AdminError::internal(&format_args!(
-            "admin gate lookup failed: {error}"
+            "session user lookup failed: {error}"
         )))),
     }
 }
