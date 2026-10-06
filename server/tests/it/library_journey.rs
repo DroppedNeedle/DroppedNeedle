@@ -1624,3 +1624,208 @@ fn release_documents_answer_to_merged_ids() {
     }
     assert!(store.release("rel-other", None).is_none());
 }
+
+/// Contribution journey through the real routes and the SQLite store:
+/// draft, duplicate check, seeded editor, the release editor coming back
+/// on the v1 callback path, verification, and the album linked.
+#[tokio::test]
+async fn library_contribution_seed_callback_verify_links_album() {
+    use droppedneedle::library::contrib::models::{
+        MusicBrainzVerifiedRelease, MusicBrainzVerifiedTrack, VerificationOutcome,
+    };
+
+    const RELEASE: &str = "11111111-1111-4111-8111-111111111111";
+    const GROUP: &str = "22222222-2222-4222-8222-222222222222";
+    const ARTIST_MBID: &str = "33333333-3333-4333-8333-333333333333";
+
+    let lib = Lib::open("contrib").await;
+    let admin = setup_admin(lib.router(), "owner", "owner-password-1").await;
+    let auth = bearer(&admin);
+    let headers = [("authorization", auth.as_str())];
+
+    // One indexed two-track album, as a scan leaves it.
+    let db = rusqlite::Connection::open(&lib.db_path).expect("db opens");
+    db.execute_batch(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('artist-1', 'Test Artist', 'test artist', 'person', 1, 1); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_name, album_artist_id, year, grouping_source, created_at, updated_at) \
+         VALUES ('album-1', 'music', 'k', 'Test Album', 'test album', 'Test Artist', \
+         'artist-1', 2024, 'automatic', 1, 1);",
+    )
+    .expect("album seeds");
+    for (id, number, title) in [("t1", 1, "First Song"), ("t2", 2, "Second Song")] {
+        db.execute(
+            "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, tag_revision, title, \
+             title_folded, artist_name, album_title, album_title_folded, track_number, \
+             duration_seconds, file_format, ingest_source, imported_at, membership_source) \
+             VALUES (?1, 'album-1', 'music', ?2, ?2, ?1, 1, 1, ?1, ?1, ?3, lower(?3), \
+             'Test Artist', 'Test Album', 'test album', ?4, 200.0, 'flac', 'scan', 1, \
+             'automatic')",
+            rusqlite::params![id, format!("album/{id}.flac"), title, number],
+        )
+        .expect("track seeds");
+    }
+
+    let (status, created) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/albums/album-1/contributions",
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    assert_eq!(created["state"], json!("draft"));
+    let id = created["id"].as_str().expect("contribution id").to_owned();
+    let (status, ready) = call(
+        lib.router(),
+        "PUT",
+        &format!("/api/v3/library/contributions/{id}/draft"),
+        &headers,
+        Some(json!({"expected_row_revision": created["row_revision"], "draft": created["draft"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{ready}");
+    assert_eq!(ready["state"], json!("ready"));
+
+    // A stale revision answers with a code, a sentence and an action.
+    let (status, stale) = call(
+        lib.router(),
+        "POST",
+        &format!("/api/v3/library/contributions/{id}/musicbrainz/duplicates"),
+        &headers,
+        Some(json!({"expected_row_revision": created["row_revision"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{stale}");
+    assert_eq!(stale["error"]["code"], json!("CONTRIBUTION_CHANGED"));
+    assert!(stale["error"]["details"]["action"].is_string());
+
+    let (status, checked) = call(
+        lib.router(),
+        "POST",
+        &format!("/api/v3/library/contributions/{id}/musicbrainz/duplicates"),
+        &headers,
+        Some(json!({"expected_row_revision": ready["row_revision"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{checked}");
+    assert_eq!(checked["state"], json!("ready"));
+
+    let origin = [
+        ("authorization", auth.as_str()),
+        ("origin", "https://music.example"),
+    ];
+    let (status, seed) = call(
+        lib.router(),
+        "POST",
+        &format!("/api/v3/library/contributions/{id}/musicbrainz/seed"),
+        &origin,
+        Some(json!({"expected_row_revision": checked["row_revision"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{seed}");
+    let redirect = seed["fields"]
+        .as_array()
+        .expect("seed fields")
+        .iter()
+        .find(|field| field["name"] == json!("redirect_uri"))
+        .and_then(|field| field["value"].as_str())
+        .expect("redirect uri")
+        .to_owned();
+    let token = redirect
+        .strip_prefix(
+            "https://music.example/api/v3/library/contributions/musicbrainz/callback?token=",
+        )
+        .expect("callback points at this server")
+        .to_owned();
+
+    // The editor sends the browser back, here to the v1 path, signed out.
+    let back = |token: &str| {
+        Request::builder()
+            .uri(format!(
+                "/api/v1/library/contributions/musicbrainz/callback?token={token}&release_mbid={RELEASE}"
+            ))
+            .header("host", HOST)
+            .body(Body::empty())
+            .expect("request builds")
+    };
+    let response = lib.router().oneshot(back(&token)).await.expect("responds");
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(
+        response.headers()["location"],
+        format!("/library/contributions/{id}?musicbrainz=returned").as_str()
+    );
+    let reused = lib.router().oneshot(back(&token)).await.expect("responds");
+    assert_eq!(
+        reused.headers()["location"],
+        "/library?musicbrainz=callback-error"
+    );
+
+    // The worker confirms the release and links the album.
+    let providers = lib
+        .library
+        .test_contrib
+        .as_ref()
+        .expect("scripted providers");
+    providers.musicbrainz.insert_verification(
+        RELEASE,
+        Ok(Some(MusicBrainzVerifiedRelease {
+            release_mbid: RELEASE.to_owned(),
+            release_group_mbid: GROUP.to_owned(),
+            title: "Test Album".to_owned(),
+            artist_name: "Test Artist".to_owned(),
+            artist_mbid: Some(ARTIST_MBID.to_owned()),
+            tracks: vec![MusicBrainzVerifiedTrack {
+                title: "First Song".to_owned(),
+                position: 1,
+                disc_number: 1,
+                duration_seconds: Some(200.0),
+                recording_mbid: None,
+                release_track_mbid: None,
+            }],
+            ..Default::default()
+        })),
+    );
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs_f64();
+    let outcome = lib
+        .library
+        .contrib_worker
+        .run_once(now)
+        .await
+        .expect("worker runs");
+    assert_eq!(outcome, Some(VerificationOutcome::Linked));
+    let (status, linked) = call(
+        lib.router(),
+        "GET",
+        &format!("/api/v3/library/contributions/{id}"),
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{linked}");
+    assert_eq!(linked["state"], json!("linked"));
+    let identity: (String, String, String) = db
+        .query_row(
+            "SELECT release_mbid, release_group_mbid, decision_source \
+             FROM local_album_external_identities WHERE local_album_id = 'album-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("album identity committed");
+    assert_eq!(identity, (RELEASE.into(), GROUP.into(), "manual".into()));
+    let artist: String = db
+        .query_row(
+            "SELECT provider_artist_id FROM local_artist_external_identities \
+             WHERE local_artist_id = 'artist-1'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("artist identity committed");
+    assert_eq!(artist, ARTIST_MBID);
+}
