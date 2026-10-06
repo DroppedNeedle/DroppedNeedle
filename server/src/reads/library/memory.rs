@@ -11,8 +11,8 @@ use std::sync::Mutex;
 #[cfg(any(test, feature = "test-support"))]
 use super::stores::{
     AlbumFilter, AlbumRecord, AlbumSort, ArtistListing, ArtistRecord, ArtistScope, ArtistSort,
-    DecadeRecord, FavoriteReads, GenreRecord, LibraryCatalog, StatsRecord, TrackFilter,
-    TrackRecord, TrackSort,
+    DecadeRecord, FavoriteReads, GenreRecord, LibraryCatalog, LibraryLookups, StatsExtras,
+    StatsRecord, TrackFilter, TrackRecord, TrackSort,
 };
 use super::stores::{BoxFuture, LyricDoc, LyricsPort, StoreError};
 
@@ -333,6 +333,12 @@ impl LibraryCatalog for MemoryCatalog {
                 ArtistSort::AlbumCount => records.sort_by(|a, b| {
                     a.album_count
                         .cmp(&b.album_count)
+                        .then(a.name.cmp(&b.name))
+                        .then(a.id.cmp(&b.id))
+                }),
+                ArtistSort::AppearanceCount => records.sort_by(|a, b| {
+                    a.appearance_album_count
+                        .cmp(&b.appearance_album_count)
                         .then(a.name.cmp(&b.name))
                         .then(a.id.cmp(&b.id))
                 }),
@@ -777,5 +783,53 @@ impl LyricsPort for FailingLyrics {
         _track_id: &'a str,
     ) -> BoxFuture<'a, Result<Option<LyricDoc>, StoreError>> {
         Box::pin(async move { Err(fail()) })
+    }
+}
+
+/// Lookups over an empty library: nothing owned, requested or resolvable,
+/// and zero stats extras.
+#[derive(Debug, Default)]
+#[cfg(any(test, feature = "test-support"))]
+pub struct EmptyLookups;
+
+#[cfg(any(test, feature = "test-support"))]
+impl LibraryLookups for EmptyLookups {
+    fn stats_extras<'a>(&'a self) -> BoxFuture<'a, Result<StatsExtras, StoreError>> {
+        Box::pin(async move { Ok(StatsExtras::default()) })
+    }
+
+    fn owned_albums<'a>(
+        &'a self,
+        _mbids: &'a [String],
+    ) -> BoxFuture<'a, Result<HashSet<String>, StoreError>> {
+        Box::pin(async move { Ok(HashSet::new()) })
+    }
+
+    fn requested_albums<'a>(
+        &'a self,
+        _mbids: &'a [String],
+    ) -> BoxFuture<'a, Result<HashSet<String>, StoreError>> {
+        Box::pin(async move { Ok(HashSet::new()) })
+    }
+
+    fn resolve_albums<'a>(
+        &'a self,
+        _identifiers: &'a [String],
+    ) -> BoxFuture<'a, Result<HashMap<String, String>, StoreError>> {
+        Box::pin(async move { Ok(HashMap::new()) })
+    }
+
+    fn status_albums<'a>(
+        &'a self,
+        _identifier: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<String>, StoreError>> {
+        Box::pin(async move { Ok(Vec::new()) })
+    }
+
+    fn album_tracks_batch<'a>(
+        &'a self,
+        _album_ids: &'a [String],
+    ) -> BoxFuture<'a, Result<Vec<TrackRecord>, StoreError>> {
+        Box::pin(async move { Ok(Vec::new()) })
     }
 }

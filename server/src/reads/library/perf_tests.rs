@@ -179,18 +179,32 @@ const LEGACY_TRACK_COLUMNS: &str = "t.id AS id, t.title AS title, \
     COALESCE(t.artist_name, '') AS artist_name, \
     ta.local_artist_id AS artist_id, \
     COALESCE(t.album_artist_name, '') AS album_artist_name, \
+    tal.album_artist_id AS album_artist_id, \
+    tri.recording_mbid AS recording_mbid, tgi.release_group_mbid AS release_group_mbid, \
+    tai.provider_artist_id AS artist_mbid, tbi.provider_artist_id AS album_artist_mbid, \
     t.disc_number AS disc_number, t.track_number AS track_number, t.year AS year, \
     COALESCE((SELECT g.name FROM local_track_genres g \
      WHERE g.local_track_id = t.id ORDER BY g.position LIMIT 1), t.genre) AS genre, \
     t.duration_seconds AS duration_seconds, t.file_format AS format, \
     t.bit_rate AS bit_rate, t.sample_rate AS sample_rate, \
+    t.bit_depth AS bit_depth, t.channels AS channels, \
     t.file_size_bytes AS file_size_bytes, t.imported_at AS date_added, \
     (w.local_album_id IS NOT NULL) AS cover_available";
 
 const LEGACY_TRACK_JOINS: &str = "FROM local_tracks t \
     LEFT JOIN local_track_artists ta \
         ON ta.local_track_id = t.id AND ta.position = 0 \
-    LEFT JOIN local_album_artwork w ON w.local_album_id = t.local_album_id";
+    LEFT JOIN local_album_artwork w ON w.local_album_id = t.local_album_id \
+    LEFT JOIN local_albums tal ON tal.id = t.local_album_id \
+    LEFT JOIN local_track_external_identities tri \
+        ON tri.local_track_id = t.id AND tri.provider = 'musicbrainz' \
+    LEFT JOIN local_album_external_identities tgi \
+        ON tgi.local_album_id = t.local_album_id AND tgi.provider = 'musicbrainz' \
+    LEFT JOIN local_artist_external_identities tai \
+        ON tai.local_artist_id = COALESCE(ta.local_artist_id, tal.album_artist_id) \
+        AND tai.provider = 'musicbrainz' \
+    LEFT JOIN local_artist_external_identities tbi \
+        ON tbi.local_artist_id = tal.album_artist_id AND tbi.provider = 'musicbrainz'";
 
 const LEGACY_TRACK_FILTER: &str = "t.availability = 'indexed' \
     AND (? IS NULL OR t.title_folded LIKE ? ESCAPE '\\' \
@@ -260,6 +274,12 @@ fn legacy_artist_order(sort: ArtistSort, descending: bool) -> &'static str {
         (ArtistSort::Name, true) => "r.folded_name DESC, r.id ASC",
         (ArtistSort::AlbumCount, false) => "album_count ASC, r.folded_name ASC, r.id ASC",
         (ArtistSort::AlbumCount, true) => "album_count DESC, r.folded_name ASC, r.id ASC",
+        (ArtistSort::AppearanceCount, false) => {
+            "appearance_album_count ASC, r.folded_name ASC, r.id ASC"
+        }
+        (ArtistSort::AppearanceCount, true) => {
+            "appearance_album_count DESC, r.folded_name ASC, r.id ASC"
+        }
         (ArtistSort::DateAdded, false) => "r.created_at ASC, r.id ASC",
         (ArtistSort::DateAdded, true) => "r.created_at DESC, r.id ASC",
     }
@@ -318,6 +338,11 @@ fn map_track(row: &sqlx::sqlite::SqliteRow) -> TrackRecord {
         artist_name: row.get("artist_name"),
         artist_id: row.get("artist_id"),
         album_artist_name: row.get("album_artist_name"),
+        album_artist_id: row.get("album_artist_id"),
+        recording_mbid: row.get("recording_mbid"),
+        release_group_mbid: row.get("release_group_mbid"),
+        artist_mbid: row.get("artist_mbid"),
+        album_artist_mbid: row.get("album_artist_mbid"),
         disc_number: row.get("disc_number"),
         track_number: row.get("track_number"),
         year: row.get("year"),
@@ -326,6 +351,8 @@ fn map_track(row: &sqlx::sqlite::SqliteRow) -> TrackRecord {
         format: row.get("format"),
         bit_rate: row.get("bit_rate"),
         sample_rate: row.get("sample_rate"),
+        bit_depth: row.get("bit_depth"),
+        channels: row.get("channels"),
         file_size_bytes: row.get("file_size_bytes"),
         date_added: row.get("date_added"),
         cover_available: row.get("cover_available"),

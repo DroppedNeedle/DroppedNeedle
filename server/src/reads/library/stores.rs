@@ -51,6 +51,8 @@ pub enum ArtistSort {
     Name,
     /// Album-artist album count.
     AlbumCount,
+    /// Albums the artist appears on without leading.
+    AppearanceCount,
     /// First import time.
     DateAdded,
 }
@@ -181,6 +183,17 @@ pub struct TrackRecord {
     pub artist_id: Option<String>,
     /// Album artist display name.
     pub album_artist_name: String,
+    /// Local album-artist id of the owning album.
+    pub album_artist_id: Option<String>,
+    /// Linked MusicBrainz recording, when identified.
+    pub recording_mbid: Option<String>,
+    /// Linked release group of the owning album, when identified.
+    pub release_group_mbid: Option<String>,
+    /// Linked MusicBrainz id of the track artist (the album artist when
+    /// the track has no credit), when identified.
+    pub artist_mbid: Option<String>,
+    /// Linked MusicBrainz id of the album artist, when identified.
+    pub album_artist_mbid: Option<String>,
     /// Disc number.
     pub disc_number: i64,
     /// Track number within the disc.
@@ -193,10 +206,14 @@ pub struct TrackRecord {
     pub duration_seconds: Option<f64>,
     /// Container or codec label.
     pub format: String,
-    /// Bit rate, when probed.
+    /// Bit rate in kbit/s, when probed.
     pub bit_rate: Option<i64>,
     /// Sample rate, when probed.
     pub sample_rate: Option<i64>,
+    /// Bit depth, when probed (lossless and PCM files).
+    pub bit_depth: Option<i64>,
+    /// Channel count, when probed.
+    pub channels: Option<i64>,
     /// File size, bytes.
     pub file_size_bytes: i64,
     /// Import time, unix seconds.
@@ -219,6 +236,33 @@ pub struct StatsRecord {
     /// Streamable-track counts by format label.
     pub format_breakdown: HashMap<String, u64>,
 }
+
+/// Library totals that live outside the catalog tables: the review
+/// queue, unidentified albums and the last finished scan.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct StatsExtras {
+    /// Identification reviews waiting on a person.
+    pub review_count: u64,
+    /// Albums with streamable tracks and no MusicBrainz identity.
+    pub local_only_count: u64,
+    /// When the last scan finished successfully, unix seconds.
+    pub last_scan_at: Option<f64>,
+}
+
+/// The upgrade settings album status judges tracks against, read from the
+/// download policy on every call.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct UpgradePolicy {
+    /// Tier a track must reach before it stops counting as an upgrade
+    /// candidate, e.g. `lossless`.
+    pub quality_cutoff: Option<String>,
+    /// Whether upgrades are switched on at all.
+    pub upgrade_allowed: bool,
+}
+
+/// Reads the current upgrade settings. A closure so production can read the
+/// config store per call and tests can pin a value.
+pub type UpgradePolicySource = std::sync::Arc<dyn Fn() -> UpgradePolicy + Send + Sync>;
 
 /// One genre with streamable-only counts.
 #[derive(Debug, Clone, PartialEq)]
@@ -429,4 +473,51 @@ pub trait FavoriteReads: Send + Sync {
 pub trait LyricsPort: Send + Sync {
     /// Stored lyrics for one streamable track id.
     fn get<'a>(&'a self, track_id: &'a str) -> BoxFuture<'a, Result<Option<LyricDoc>, StoreError>>;
+}
+
+/// Identity lookups behind membership, album status, track resolution and
+/// the stats extras.
+///
+/// Identifiers here are what a catalog page holds: a local album id, a
+/// legacy alias, or a MusicBrainz release-group or release id (compared
+/// case-insensitively). Retired (merged) albums resolve to the album they
+/// merged into. Absence is an empty answer, never failure.
+pub trait LibraryLookups: Send + Sync {
+    /// Review, local-only and last-scan totals.
+    fn stats_extras<'a>(&'a self) -> BoxFuture<'a, Result<StatsExtras, StoreError>>;
+
+    /// The MusicBrainz album ids (lowercase) the library holds with at
+    /// least one streamable track.
+    fn owned_albums<'a>(
+        &'a self,
+        mbids: &'a [String],
+    ) -> BoxFuture<'a, Result<HashSet<String>, StoreError>>;
+
+    /// The album ids (lowercase) with an open acquisition request.
+    fn requested_albums<'a>(
+        &'a self,
+        mbids: &'a [String],
+    ) -> BoxFuture<'a, Result<HashSet<String>, StoreError>>;
+
+    /// The one live local album each identifier names. Identifiers that
+    /// name nothing, or a MusicBrainz id held by more than one album, are
+    /// left out rather than guessed.
+    fn resolve_albums<'a>(
+        &'a self,
+        identifiers: &'a [String],
+    ) -> BoxFuture<'a, Result<HashMap<String, String>, StoreError>>;
+
+    /// Every live local album an identifier covers for the album status
+    /// view: the album a local id or alias names, else every album holding
+    /// the MusicBrainz release group (or release). Ordered by id.
+    fn status_albums<'a>(
+        &'a self,
+        identifier: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<String>, StoreError>>;
+
+    /// Streamable tracks of the albums, ordered by album id, disc, track.
+    fn album_tracks_batch<'a>(
+        &'a self,
+        album_ids: &'a [String],
+    ) -> BoxFuture<'a, Result<Vec<TrackRecord>, StoreError>>;
 }

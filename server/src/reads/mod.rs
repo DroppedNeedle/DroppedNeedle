@@ -67,6 +67,7 @@ impl ReadsSetup {
         inputs: ReadsInputs,
         enrichment: Option<enrichment::live::ProductionEnrichment>,
     ) -> Self {
+        let inputs_config = inputs.config.clone();
         let discover = discover::adapters::production_deps(
             discover::adapters::DiscoverInputs {
                 pool: pool.clone(),
@@ -103,6 +104,8 @@ impl ReadsSetup {
             catalog,
             favorites: Arc::new(library::sqlite::SqliteFavorites::new(&library_db)),
             lyrics,
+            lookups: Arc::new(library::lookups::SqliteLookups::new(&library_db)),
+            upgrade_policy: upgrade_policy_source(inputs_config.clone()),
             auth: users.clone(),
             ids: ids.clone(),
         };
@@ -137,6 +140,8 @@ impl ReadsSetup {
                 catalog: Arc::new(library::memory::MemoryCatalog::new()),
                 favorites: Arc::new(library::memory::MemoryFavorites::new()),
                 lyrics: Arc::new(library::memory::MemoryLyrics::new()),
+                lookups: Arc::new(library::memory::EmptyLookups),
+                upgrade_policy: Arc::new(library::stores::UpgradePolicy::default),
                 auth: users,
                 ids: ids.clone(),
             },
@@ -204,6 +209,26 @@ impl ReadsSetup {
     pub fn wrapped_router(&self) -> Router {
         platform::wrapped_router(&self.platform)
     }
+}
+
+/// The upgrade cutoff from the download policy, read on every call so a
+/// settings change applies at once. A section that fails to read is
+/// logged and treated as upgrades off.
+fn upgrade_policy_source(
+    config: Arc<crate::runtime_config::ConfigStore>,
+) -> library::stores::UpgradePolicySource {
+    Arc::new(
+        move || match config.get::<crate::runtime_config::sections::DownloadPolicy>() {
+            Ok(policy) => library::stores::UpgradePolicy {
+                quality_cutoff: Some(policy.quality_cutoff),
+                upgrade_allowed: policy.upgrade_allowed,
+            },
+            Err(error) => {
+                tracing::warn!(%error, "download policy unreadable; album status shows no upgrades");
+                library::stores::UpgradePolicy::default()
+            }
+        },
+    )
 }
 
 /// Test discover deps: every port runs its fake.

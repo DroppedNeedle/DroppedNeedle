@@ -148,7 +148,8 @@ pub struct ArtistQuery {
     pub limit: Option<i64>,
     /// Page start. Default 0.
     pub offset: Option<i64>,
-    /// `name`, `album_count`, or `date_added`. Default `name`.
+    /// `name`, `album_count`, `appearance_count`, or `date_added`.
+    /// Default `name`.
     pub sort: Option<String>,
     /// `asc` or `desc`. Default `asc`.
     pub order: Option<String>,
@@ -176,6 +177,17 @@ pub struct TrackView {
     pub artist_id: Option<String>,
     /// Album artist display name.
     pub album_artist_name: String,
+    /// Local album-artist id of the owning album.
+    pub album_artist_id: Option<String>,
+    /// Linked MusicBrainz recording, when identified.
+    pub recording_mbid: Option<String>,
+    /// Linked release group of the owning album, when identified.
+    pub release_group_mbid: Option<String>,
+    /// Linked MusicBrainz id of the track artist (the album artist when
+    /// the track carries no credit), when identified.
+    pub artist_mbid: Option<String>,
+    /// Linked MusicBrainz id of the album artist, when identified.
+    pub album_artist_mbid: Option<String>,
     /// Disc number.
     pub disc_number: i64,
     /// Track number within the disc.
@@ -188,10 +200,14 @@ pub struct TrackView {
     pub duration_seconds: Option<f64>,
     /// Container or codec label, e.g. `flac`.
     pub format: String,
-    /// Bit rate, when probed.
+    /// Bit rate in kbit/s, when probed.
     pub bit_rate: Option<i64>,
     /// Sample rate, when probed.
     pub sample_rate: Option<i64>,
+    /// Bit depth, when probed (lossless and PCM files).
+    pub bit_depth: Option<i64>,
+    /// Channel count, when probed.
+    pub channels: Option<i64>,
     /// File size, bytes.
     pub file_size_bytes: i64,
     /// Import time, unix seconds.
@@ -256,6 +272,12 @@ pub struct StatsView {
     pub favorite_artists: u64,
     /// Tracks the caller favorited.
     pub favorite_tracks: u64,
+    /// Identification reviews waiting on a person.
+    pub review_count: u64,
+    /// Albums with streamable tracks and no MusicBrainz identity.
+    pub local_only_count: u64,
+    /// When the last library scan finished successfully, unix seconds.
+    pub last_scan_at: Option<f64>,
 }
 
 /// One genre with streamable-only counts.
@@ -441,4 +463,103 @@ pub struct LyricsView {
     pub is_synced: bool,
     /// Lyric lines in order.
     pub lines: Vec<LyricLine>,
+}
+
+/// Which of these MusicBrainz album ids the library holds or has an open
+/// request for. Ids compare case-insensitively.
+#[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+pub struct LibraryMembershipRequest {
+    /// Release-group (or release) ids, at most 500 after de-duplication.
+    #[serde(default)]
+    pub album_ids: Vec<String>,
+}
+
+/// Membership answer. Both lists are lowercase and sorted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct LibraryMembershipResponse {
+    /// Asked ids the library holds with at least one streamable track.
+    pub owned_ids: Vec<String>,
+    /// Asked ids with an open acquisition request.
+    pub requested_ids: Vec<String>,
+}
+
+/// One held track on the album status view, judged against the upgrade
+/// settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct LibraryStatusTrack {
+    /// The track.
+    #[serde(flatten)]
+    pub track: TrackView,
+    /// Quality tier of the file: `lossless`, `mp3_320`, `mp3_256`,
+    /// `mp3_192`, or `low`.
+    pub current_tier: String,
+    /// True when upgrades are on and the file sits below the cutoff tier.
+    pub below_cutoff: bool,
+}
+
+/// What the library holds for one album, by local id or MusicBrainz id.
+/// Unknown albums answer with `in_library` false, never 404.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct LibraryAlbumStatus {
+    /// True when at least one streamable track is held.
+    pub in_library: bool,
+    /// The local album id holding the tracks, or the asked id when none.
+    pub album_id: String,
+    /// Held streamable tracks.
+    pub track_count: u64,
+    /// Held tracks by album, disc and track.
+    pub tracks: Vec<LibraryStatusTrack>,
+}
+
+/// One track position to look up in the library.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ResolveTrackItem {
+    /// MusicBrainz release group (or release, or local album id) the track
+    /// belongs to.
+    #[serde(default)]
+    pub release_group_mbid: Option<String>,
+    /// Disc number; absent reads as disc 1.
+    #[serde(default)]
+    pub disc_number: Option<i64>,
+    /// Track number within the disc.
+    #[serde(default)]
+    pub track_number: Option<i64>,
+}
+
+/// Track positions to resolve to playable local files. At most the first
+/// 200 items are answered.
+#[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+pub struct ResolveTracksRequest {
+    /// Positions in the caller's order.
+    #[serde(default)]
+    pub items: Vec<ResolveTrackItem>,
+}
+
+/// One answered position. The `source` fields are set only when a local
+/// file holds the position.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ResolvedTrack {
+    /// Echo of the asked album id.
+    pub release_group_mbid: Option<String>,
+    /// Echo of the asked disc.
+    pub disc_number: Option<i64>,
+    /// Echo of the asked track number.
+    pub track_number: Option<i64>,
+    /// `local` when a library file holds the position.
+    pub source: Option<String>,
+    /// Local track id to stream.
+    pub track_source_id: Option<String>,
+    /// Stream path for the local track.
+    pub stream_url: Option<String>,
+    /// Container or codec label of the file.
+    pub format: Option<String>,
+    /// Duration of the file, seconds.
+    pub duration: Option<f64>,
+}
+
+/// Resolved positions, in the asked order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ResolveTracksResponse {
+    /// One answer per asked position (first 200).
+    pub items: Vec<ResolvedTrack>,
 }

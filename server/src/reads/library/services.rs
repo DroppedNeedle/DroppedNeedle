@@ -7,13 +7,15 @@ use std::collections::HashSet;
 use super::LibraryDeps;
 use super::models::{
     AlbumCard, AlbumCardPage, AlbumPage, AlbumQuery, AlbumView, ArtistPage, ArtistQuery,
-    ArtistView, BrowseQuery, DecadeShelf, DecadesResponse, GenreList, GenreView, LyricLine,
-    LyricsView, PageQuery, RecentQuery, SearchQuery, SearchResults, StatsView, SuggestionTrack,
-    SuggestionsQuery, SuggestionsResponse, TrackPage, TrackQuery, TrackView,
+    ArtistView, BrowseQuery, DecadeShelf, DecadesResponse, GenreList, GenreView,
+    LibraryAlbumStatus, LibraryMembershipRequest, LibraryMembershipResponse, LibraryStatusTrack,
+    LyricLine, LyricsView, PageQuery, RecentQuery, ResolveTracksRequest, ResolveTracksResponse,
+    ResolvedTrack, SearchQuery, SearchResults, StatsView, SuggestionTrack, SuggestionsQuery,
+    SuggestionsResponse, TrackPage, TrackQuery, TrackView,
 };
 use super::stores::{
     AlbumFilter, AlbumRecord, AlbumSort, ArtistRecord, ArtistScope, ArtistSort, StoreError,
-    TrackFilter, TrackRecord, TrackSort,
+    TrackFilter, TrackRecord, TrackSort, UpgradePolicy,
 };
 
 /// Domain failures. Handlers convert these; nothing here names HTTP.
@@ -92,9 +94,10 @@ fn artist_sort(sort: Option<&str>) -> Result<ArtistSort, LibraryFailure> {
     match sort {
         None | Some("name") => Ok(ArtistSort::Name),
         Some("album_count") => Ok(ArtistSort::AlbumCount),
+        Some("appearance_count") => Ok(ArtistSort::AppearanceCount),
         Some("date_added") => Ok(ArtistSort::DateAdded),
         Some(other) => Err(LibraryFailure::InvalidInput(format!(
-            "unknown sort '{other}': want name, album_count, or date_added"
+            "unknown sort '{other}': want name, album_count, appearance_count, or date_added"
         ))),
     }
 }
@@ -214,6 +217,11 @@ fn track_view(record: &TrackRecord, favorite: bool) -> TrackView {
         artist_name: record.artist_name.clone(),
         artist_id: record.artist_id.clone(),
         album_artist_name: record.album_artist_name.clone(),
+        album_artist_id: record.album_artist_id.clone(),
+        recording_mbid: record.recording_mbid.clone(),
+        release_group_mbid: record.release_group_mbid.clone(),
+        artist_mbid: record.artist_mbid.clone(),
+        album_artist_mbid: record.album_artist_mbid.clone(),
         disc_number: record.disc_number,
         track_number: record.track_number,
         year: record.year,
@@ -222,6 +230,8 @@ fn track_view(record: &TrackRecord, favorite: bool) -> TrackView {
         format: record.format.clone(),
         bit_rate: record.bit_rate,
         sample_rate: record.sample_rate,
+        bit_depth: record.bit_depth,
+        channels: record.channels,
         file_size_bytes: record.file_size_bytes,
         date_added: record.date_added,
         cover_available: record.cover_available,
@@ -542,9 +552,11 @@ pub async fn get_track(
     Ok(track_view(&record, favorites.contains(&record.id)))
 }
 
-/// Library totals plus the caller's favorite counts.
+/// Library totals plus the caller's favorite counts, the review queue,
+/// unidentified albums and the last finished scan.
 pub async fn stats(deps: &LibraryDeps, user_id: &str) -> Result<StatsView, LibraryFailure> {
     let record = deps.catalog.stats().await?;
+    let extras = deps.lookups.stats_extras().await?;
     let (albums, artists, tracks) = deps.favorites.favorite_counts(user_id).await?;
     Ok(StatsView {
         total_albums: record.total_albums,
@@ -555,6 +567,9 @@ pub async fn stats(deps: &LibraryDeps, user_id: &str) -> Result<StatsView, Libra
         favorite_albums: albums,
         favorite_artists: artists,
         favorite_tracks: tracks,
+        review_count: extras.review_count,
+        local_only_count: extras.local_only_count,
+        last_scan_at: extras.last_scan_at,
     })
 }
 
@@ -789,9 +804,238 @@ pub async fn lyrics(deps: &LibraryDeps, track_id: &str) -> Result<LyricsView, Li
     })
 }
 
+/// Most album ids one membership check accepts (v2's cap).
+const MEMBERSHIP_MAX_IDS: usize = 500;
+
+/// Most positions one track resolution answers (v2's cap).
+const RESOLVE_MAX_ITEMS: usize = 200;
+
+/// Which asked album ids the library holds and which have an open request.
+/// Ids are trimmed, lowercased and de-duplicated before the cap applies.
+pub async fn membership(
+    deps: &LibraryDeps,
+    request: &LibraryMembershipRequest,
+) -> Result<LibraryMembershipResponse, LibraryFailure> {
+    let mut seen = HashSet::new();
+    let ids: Vec<String> = request
+        .album_ids
+        .iter()
+        .map(|id| id.trim().to_lowercase())
+        .filter(|id| !id.is_empty() && seen.insert(id.clone()))
+        .collect();
+    if ids.len() > MEMBERSHIP_MAX_IDS {
+        return Err(LibraryFailure::InvalidInput(format!(
+            "Library membership accepts at most {MEMBERSHIP_MAX_IDS} album ids."
+        )));
+    }
+    if ids.is_empty() {
+        return Ok(LibraryMembershipResponse {
+            owned_ids: Vec::new(),
+            requested_ids: Vec::new(),
+        });
+    }
+    let asked: HashSet<&str> = ids.iter().map(String::as_str).collect();
+    let keep = |found: HashSet<String>| {
+        let mut kept: Vec<String> = found
+            .into_iter()
+            .filter(|id| asked.contains(id.as_str()))
+            .collect();
+        kept.sort();
+        kept
+    };
+    let owned = deps.lookups.owned_albums(&ids).await?;
+    let requested = deps.lookups.requested_albums(&ids).await?;
+    Ok(LibraryMembershipResponse {
+        owned_ids: keep(owned),
+        requested_ids: keep(requested),
+    })
+}
+
+/// Lossless containers by extension (v2 `_LOSSLESS_EXT`).
+const LOSSLESS_FORMATS: [&str; 5] = ["flac", "alac", "wav", "ape", "wv"];
+
+/// MP4-family containers: lossless only with bit-depth evidence (ALAC),
+/// otherwise lossy AAC on the bitrate bands.
+const MP4_FORMATS: [&str; 3] = ["m4a", "mp4", "mov"];
+
+/// Quality tier of one file, the same reading the acquisition side uses
+/// (v2 `quality_tiers.tier_for`): lossless containers, then lossy bitrate
+/// bands whatever the codec.
+pub fn tier_for(format: &str, bit_rate_kbps: Option<i64>, bit_depth: Option<i64>) -> &'static str {
+    let format = format.trim().trim_start_matches('.').to_lowercase();
+    if LOSSLESS_FORMATS.contains(&format.as_str())
+        || (MP4_FORMATS.contains(&format.as_str()) && bit_depth.is_some())
+    {
+        return "lossless";
+    }
+    match bit_rate_kbps.unwrap_or(0) {
+        rate if rate >= 320 => "mp3_320",
+        rate if rate >= 256 => "mp3_256",
+        rate if rate >= 192 => "mp3_192",
+        _ => "low",
+    }
+}
+
+/// True when upgrades are on and `tier` ranks below a known cutoff tier.
+fn below_cutoff(tier: &str, policy: &UpgradePolicy) -> bool {
+    let Some(cutoff) = policy.quality_cutoff.as_deref() else {
+        return false;
+    };
+    let rank = |label: &str| crate::runtime_config::sections::tier_rank(label);
+    policy.upgrade_allowed
+        && rank(cutoff).is_some_and(|cutoff_rank| rank(tier).unwrap_or(0) < cutoff_rank)
+}
+
+/// What the library holds for one album: by local id or alias, else every
+/// live album holding the MusicBrainz release group (or release). Each
+/// track carries its quality tier and whether it sits below the upgrade
+/// cutoff. An album the library lacks answers `in_library: false`.
+pub async fn album_status(
+    deps: &LibraryDeps,
+    user_id: &str,
+    identifier: &str,
+) -> Result<LibraryAlbumStatus, LibraryFailure> {
+    let identifier = identifier.trim();
+    if identifier.is_empty() {
+        return Err(LibraryFailure::InvalidInput(
+            "album id must not be blank".to_owned(),
+        ));
+    }
+    let album_ids = deps.lookups.status_albums(identifier).await?;
+    let records = if album_ids.is_empty() {
+        Vec::new()
+    } else {
+        deps.lookups.album_tracks_batch(&album_ids).await?
+    };
+    let ids: Vec<String> = records.iter().map(|record| record.id.clone()).collect();
+    let favorites = favorites_for(deps, user_id, "track", &ids).await?;
+    let policy = (deps.upgrade_policy)();
+    let tracks: Vec<LibraryStatusTrack> = records
+        .iter()
+        .map(|record| {
+            let tier = tier_for(&record.format, record.bit_rate, record.bit_depth);
+            LibraryStatusTrack {
+                track: track_view(record, favorites.contains(&record.id)),
+                current_tier: tier.to_owned(),
+                below_cutoff: below_cutoff(tier, &policy),
+            }
+        })
+        .collect();
+    let album_id = records
+        .first()
+        .map(|record| record.album_id.clone())
+        .or_else(|| album_ids.first().cloned())
+        .unwrap_or_else(|| identifier.to_owned());
+    Ok(LibraryAlbumStatus {
+        in_library: !tracks.is_empty(),
+        album_id,
+        track_count: tracks.len() as u64,
+        tracks,
+    })
+}
+
+/// Resolve track positions (album id, disc, track) to playable local
+/// files, for lists like an artist's top songs. Positions without an album
+/// or track number, albums the library lacks, and MusicBrainz ids several
+/// local albums hold all answer unresolved. Two lookups serve the whole
+/// batch whatever its size.
+pub async fn resolve_tracks(
+    deps: &LibraryDeps,
+    request: &ResolveTracksRequest,
+) -> Result<ResolveTracksResponse, LibraryFailure> {
+    let asked = &request.items[..request.items.len().min(RESOLVE_MAX_ITEMS)];
+    let mut items: Vec<ResolvedTrack> = asked
+        .iter()
+        .map(|item| ResolvedTrack {
+            release_group_mbid: item.release_group_mbid.clone(),
+            disc_number: item.disc_number,
+            track_number: item.track_number,
+            source: None,
+            track_source_id: None,
+            stream_url: None,
+            format: None,
+            duration: None,
+        })
+        .collect();
+    let identifiers: Vec<String> = asked
+        .iter()
+        .filter(|item| item.track_number.is_some())
+        .filter_map(|item| item.release_group_mbid.clone())
+        .filter(|id| !id.trim().is_empty())
+        .collect();
+    if identifiers.is_empty() {
+        return Ok(ResolveTracksResponse { items });
+    }
+    let canonical = deps.lookups.resolve_albums(&identifiers).await?;
+    let mut album_ids: Vec<String> = canonical.values().cloned().collect();
+    album_ids.sort();
+    album_ids.dedup();
+    if album_ids.is_empty() {
+        return Ok(ResolveTracksResponse { items });
+    }
+    let tracks = deps.lookups.album_tracks_batch(&album_ids).await?;
+    // First file wins per position: albums sort by disc, track, then id.
+    let mut by_position: std::collections::HashMap<(&str, i64, i64), &TrackRecord> =
+        std::collections::HashMap::new();
+    for track in &tracks {
+        by_position
+            .entry((
+                track.album_id.as_str(),
+                track.disc_number,
+                track.track_number,
+            ))
+            .or_insert(track);
+    }
+    for (item, answer) in asked.iter().zip(items.iter_mut()) {
+        let (Some(identifier), Some(track_number)) =
+            (item.release_group_mbid.as_ref(), item.track_number)
+        else {
+            continue;
+        };
+        let Some(album_id) = canonical.get(identifier) else {
+            continue;
+        };
+        let disc = item.disc_number.unwrap_or(1);
+        if let Some(track) = by_position.get(&(album_id.as_str(), disc, track_number)) {
+            answer.source = Some("local".to_owned());
+            answer.track_source_id = Some(track.id.clone());
+            answer.stream_url = Some(format!("/api/v3/stream/local/{}", track.id));
+            answer.format = Some(track.format.clone());
+            answer.duration = track.duration_seconds;
+        }
+    }
+    Ok(ResolveTracksResponse { items })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tiers_follow_the_acquisition_bands() {
+        assert_eq!(tier_for("FLAC", None, None), "lossless");
+        assert_eq!(tier_for("m4a", Some(256), Some(16)), "lossless");
+        assert_eq!(tier_for("m4a", Some(256), None), "mp3_256");
+        assert_eq!(tier_for("mp3", Some(320), None), "mp3_320");
+        assert_eq!(tier_for("opus", Some(192), None), "mp3_192");
+        assert_eq!(tier_for("mp3", None, None), "low");
+        let on = UpgradePolicy {
+            quality_cutoff: Some("lossless".to_owned()),
+            upgrade_allowed: true,
+        };
+        assert!(below_cutoff("mp3_320", &on));
+        assert!(!below_cutoff("lossless", &on));
+        let off = UpgradePolicy {
+            upgrade_allowed: false,
+            ..on.clone()
+        };
+        assert!(!below_cutoff("low", &off));
+        let unknown = UpgradePolicy {
+            quality_cutoff: Some("bogus".to_owned()),
+            ..on
+        };
+        assert!(!below_cutoff("low", &unknown));
+    }
 
     #[test]
     fn page_defaults_and_caps() {

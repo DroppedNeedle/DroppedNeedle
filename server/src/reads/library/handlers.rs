@@ -20,9 +20,10 @@ use super::LibraryDeps;
 use super::error::LibraryError;
 use super::models::{
     AlbumCardPage, AlbumPage, AlbumQuery, AlbumView, ArtistPage, ArtistQuery, ArtistView,
-    BrowseQuery, DecadesResponse, GenreList, LyricsView, PageQuery, RecentQuery, SearchQuery,
-    SearchResults, StatsView, SuggestionsQuery, SuggestionsResponse, TrackPage, TrackQuery,
-    TrackView,
+    BrowseQuery, DecadesResponse, GenreList, LibraryAlbumStatus, LibraryMembershipRequest,
+    LibraryMembershipResponse, LyricsView, PageQuery, RecentQuery, ResolveTracksRequest,
+    ResolveTracksResponse, SearchQuery, SearchResults, StatsView, SuggestionsQuery,
+    SuggestionsResponse, TrackPage, TrackQuery, TrackView,
 };
 use super::services::{self, LibraryFailure};
 
@@ -559,6 +560,88 @@ pub async fn list_suggestions(
     ValidQuery(query): ValidQuery<SuggestionsQuery>,
 ) -> Result<Json<SuggestionsResponse>, LibraryError> {
     services::suggestions(&deps, &query)
+        .await
+        .map(Json)
+        .map_err(|failure| failed(failure, &deps))
+}
+
+/// JSON body extractor that renders failures in the shared envelope.
+pub struct ValidJson<T>(pub T);
+
+impl<T: DeserializeOwned, S: Send + Sync> axum::extract::FromRequest<S> for ValidJson<T> {
+    type Rejection = LibraryError;
+
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        Json::<T>::from_request(req, state)
+            .await
+            .map(|Json(value)| Self(value))
+            .map_err(|cause| LibraryError::InvalidInput {
+                message: format!("Invalid request body: {cause}"),
+            })
+    }
+}
+
+/// Which MusicBrainz album ids the library holds or has requested.
+#[utoipa::path(
+    post,
+    path = "/api/v3/library/membership",
+    request_body = LibraryMembershipRequest,
+    responses(
+        (status = 200, description = "Owned and requested ids", body = LibraryMembershipResponse),
+        (status = 400, description = "Bad body or more than 500 ids"),
+        (status = 401, description = "Not authenticated"),
+    )
+)]
+pub async fn membership(
+    State(deps): State<LibraryDeps>,
+    LibraryUser(_ctx): LibraryUser,
+    ValidJson(body): ValidJson<LibraryMembershipRequest>,
+) -> Result<Json<LibraryMembershipResponse>, LibraryError> {
+    services::membership(&deps, &body)
+        .await
+        .map(Json)
+        .map_err(|failure| failed(failure, &deps))
+}
+
+/// What the library holds for one album, by local id or MusicBrainz id,
+/// with each track's quality tier against the upgrade cutoff.
+#[utoipa::path(
+    get,
+    path = "/api/v3/library/albums/{id}/status",
+    params(("id" = String, Path, description = "Local album id, or a release-group or release mbid")),
+    responses(
+        (status = 200, description = "Album status", body = LibraryAlbumStatus),
+        (status = 401, description = "Not authenticated"),
+    )
+)]
+pub async fn album_status(
+    State(deps): State<LibraryDeps>,
+    LibraryUser(ctx): LibraryUser,
+    Path(id): Path<String>,
+) -> Result<Json<LibraryAlbumStatus>, LibraryError> {
+    services::album_status(&deps, &ctx.user_id, &id)
+        .await
+        .map(Json)
+        .map_err(|failure| failed(failure, &deps))
+}
+
+/// Resolve track positions to playable local files.
+#[utoipa::path(
+    post,
+    path = "/api/v3/library/resolve-tracks",
+    request_body = ResolveTracksRequest,
+    responses(
+        (status = 200, description = "Resolved positions", body = ResolveTracksResponse),
+        (status = 400, description = "Bad body"),
+        (status = 401, description = "Not authenticated"),
+    )
+)]
+pub async fn resolve_tracks(
+    State(deps): State<LibraryDeps>,
+    LibraryUser(_ctx): LibraryUser,
+    ValidJson(body): ValidJson<ResolveTracksRequest>,
+) -> Result<Json<ResolveTracksResponse>, LibraryError> {
+    services::resolve_tracks(&deps, &body)
         .await
         .map(Json)
         .map_err(|failure| failed(failure, &deps))

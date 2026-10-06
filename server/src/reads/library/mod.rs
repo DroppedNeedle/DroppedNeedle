@@ -2,8 +2,9 @@
 //!
 //! Clean-slate `/api/v3` read handlers over the
 //! 0001 baseline `local_*` tables plus `library_user_favorites` for the
-//! caller's favorite flags. These routes read existing tables
-//! only, and every route is a GET behind the caller's session.
+//! caller's favorite flags. These routes read existing tables only and
+//! sit behind the caller's session; membership and track resolution are
+//! POSTs only because their id lists ride in a body.
 //!
 //! Layout mirrors the users routes: `handlers` are thin, `services` hold the
 //! domain logic and return [`services::LibraryFailure`], `stores` defines
@@ -16,6 +17,7 @@
 
 pub mod error;
 pub mod handlers;
+pub mod lookups;
 pub mod memory;
 pub mod models;
 #[cfg(test)]
@@ -29,9 +31,12 @@ use std::sync::Arc;
 
 use crate::auth::users::UsersDeps;
 use crate::ids::IdGenerator;
-use axum::{Router, routing::get};
+use axum::{
+    Router,
+    routing::{get, post},
+};
 
-use stores::{FavoriteReads, LibraryCatalog, LyricsPort};
+use stores::{FavoriteReads, LibraryCatalog, LibraryLookups, LyricsPort, UpgradePolicySource};
 
 /// Every dependency the library reads need, injected by constructor.
 #[derive(Clone)]
@@ -42,6 +47,10 @@ pub struct LibraryDeps {
     pub favorites: Arc<dyn FavoriteReads>,
     /// Stored-lyrics reads; the provider fetch sits behind this port too.
     pub lyrics: Arc<dyn LyricsPort>,
+    /// Membership, album status, track resolution and stats extras.
+    pub lookups: Arc<dyn LibraryLookups>,
+    /// Upgrade cutoff for album status, read per call.
+    pub upgrade_policy: UpgradePolicySource,
     /// Auth bundle, used only to resolve the caller for favorite flags.
     pub auth: UsersDeps,
     /// Fresh ids for 5xx error ids.
@@ -50,11 +59,15 @@ pub struct LibraryDeps {
 
 /// Authenticated read routes. The session middleware authenticates before
 /// these run; every handler takes the library user extractor, so every
-/// route 401s anonymously and admits any signed-in role.
+/// route 401s anonymously and admits any signed-in role. The two POSTs
+/// (membership, resolve-tracks) are reads that take their ids in a body.
 pub fn library_router(deps: LibraryDeps) -> Router {
     Router::new()
         .route("/library/albums", get(handlers::list_albums))
         .route("/library/albums/{id}", get(handlers::get_album))
+        .route("/library/albums/{id}/status", get(handlers::album_status))
+        .route("/library/membership", post(handlers::membership))
+        .route("/library/resolve-tracks", post(handlers::resolve_tracks))
         .route(
             "/library/albums/{id}/tracks",
             get(handlers::list_album_tracks),

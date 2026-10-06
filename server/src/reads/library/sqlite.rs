@@ -65,11 +65,11 @@ impl LibraryDb {
     }
 }
 
-fn internal(op: &str, error: sqlx::Error) -> StoreError {
+pub(crate) fn internal(op: &str, error: sqlx::Error) -> StoreError {
     StoreError::Internal(crate::db::map_sqlx_busy(op, error).to_string())
 }
 
-fn unwired_store() -> StoreError {
+pub(crate) fn unwired_store() -> StoreError {
     StoreError::Internal("library store is not wired".to_owned())
 }
 
@@ -86,7 +86,7 @@ fn like_pattern(raw: &str) -> String {
 
 /// `?, ?, ...` placeholders for an id IN-list. Callers skip empty lists:
 /// `IN ()` is a syntax error.
-fn in_placeholders(len: usize) -> String {
+pub(crate) fn in_placeholders(len: usize) -> String {
     vec!["?"; len].join(", ")
 }
 
@@ -261,19 +261,37 @@ pub(crate) const TRACK_COLUMNS: &str = "t.id AS id, t.title AS title, \
     COALESCE(t.artist_name, '') AS artist_name, \
     ta.local_artist_id AS artist_id, \
     COALESCE(t.album_artist_name, '') AS album_artist_name, \
+    tal.album_artist_id AS album_artist_id, \
+    tri.recording_mbid AS recording_mbid, tgi.release_group_mbid AS release_group_mbid, \
+    tai.provider_artist_id AS artist_mbid, tbi.provider_artist_id AS album_artist_mbid, \
     t.disc_number AS disc_number, t.track_number AS track_number, t.year AS year, \
     COALESCE((SELECT g.name FROM local_track_genres g \
      WHERE g.local_track_id = t.id ORDER BY g.position LIMIT 1), t.genre) AS genre, \
     t.duration_seconds AS duration_seconds, t.file_format AS format, \
     t.bit_rate AS bit_rate, t.sample_rate AS sample_rate, \
+    t.bit_depth AS bit_depth, t.channels AS channels, \
     t.file_size_bytes AS file_size_bytes, t.imported_at AS date_added, \
     (w.local_album_id IS NOT NULL) AS cover_available";
 
 /// Joins shared by every track SELECT. Callers add the streamability filter.
+/// Every join after the first credit is a primary-key lookup per output
+/// row, so pages keep walking their driving index. The track artist's
+/// MusicBrainz id falls back to the album artist's when the track carries
+/// no credit, as v2 did.
 pub(crate) const TRACK_JOINS: &str = "FROM local_tracks t \
     LEFT JOIN local_track_artists ta \
         ON ta.local_track_id = t.id AND ta.position = 0 \
-    LEFT JOIN local_album_artwork w ON w.local_album_id = t.local_album_id";
+    LEFT JOIN local_album_artwork w ON w.local_album_id = t.local_album_id \
+    LEFT JOIN local_albums tal ON tal.id = t.local_album_id \
+    LEFT JOIN local_track_external_identities tri \
+        ON tri.local_track_id = t.id AND tri.provider = 'musicbrainz' \
+    LEFT JOIN local_album_external_identities tgi \
+        ON tgi.local_album_id = t.local_album_id AND tgi.provider = 'musicbrainz' \
+    LEFT JOIN local_artist_external_identities tai \
+        ON tai.local_artist_id = COALESCE(ta.local_artist_id, tal.album_artist_id) \
+        AND tai.provider = 'musicbrainz' \
+    LEFT JOIN local_artist_external_identities tbi \
+        ON tbi.local_artist_id = tal.album_artist_id AND tbi.provider = 'musicbrainz'";
 
 /// Filters shared by the track list and its count.
 pub(crate) const TRACK_FILTER: &str = "t.availability = 'indexed' \
@@ -329,7 +347,7 @@ pub(crate) fn track_order(sort: TrackSort, descending: bool) -> &'static str {
     }
 }
 
-fn map_track(row: &sqlx::sqlite::SqliteRow) -> TrackRecord {
+pub(crate) fn map_track(row: &sqlx::sqlite::SqliteRow) -> TrackRecord {
     TrackRecord {
         id: row.get("id"),
         title: row.get("title"),
@@ -338,6 +356,11 @@ fn map_track(row: &sqlx::sqlite::SqliteRow) -> TrackRecord {
         artist_name: row.get("artist_name"),
         artist_id: row.get("artist_id"),
         album_artist_name: row.get("album_artist_name"),
+        album_artist_id: row.get("album_artist_id"),
+        recording_mbid: row.get("recording_mbid"),
+        release_group_mbid: row.get("release_group_mbid"),
+        artist_mbid: row.get("artist_mbid"),
+        album_artist_mbid: row.get("album_artist_mbid"),
         disc_number: row.get("disc_number"),
         track_number: row.get("track_number"),
         year: row.get("year"),
@@ -346,6 +369,8 @@ fn map_track(row: &sqlx::sqlite::SqliteRow) -> TrackRecord {
         format: row.get("format"),
         bit_rate: row.get("bit_rate"),
         sample_rate: row.get("sample_rate"),
+        bit_depth: row.get("bit_depth"),
+        channels: row.get("channels"),
         file_size_bytes: row.get("file_size_bytes"),
         date_added: row.get("date_added"),
         cover_available: row.get("cover_available"),
@@ -380,6 +405,21 @@ pub(crate) const ARTIST_CREDIT_COUNTS: &str = "SELECT ata.local_artist_id AS id,
     WHERE ata.local_artist_id IN ({placeholders}) AND at.availability = 'indexed' \
     GROUP BY 1";
 
+/// Albums led per artist, for the album-count sort.
+const ALBUM_COUNT_BY_ARTIST: &str =
+    "SELECT album_artist_id AS aid, COUNT(*) AS c FROM local_albums GROUP BY aid";
+
+/// Appearance albums per artist, for the appearance-count sort: distinct
+/// albums led by someone else where the artist is credited on a streamable
+/// track, the same definition [`ARTIST_CREDIT_COUNTS`] reports.
+const APPEARANCE_COUNT_BY_ARTIST: &str = "SELECT ata.local_artist_id AS aid, \
+    COUNT(DISTINCT at.local_album_id) AS c \
+    FROM local_track_artists ata \
+    JOIN local_tracks at ON at.id = ata.local_track_id \
+    JOIN local_albums aa ON aa.id = at.local_album_id \
+    WHERE at.availability = 'indexed' AND aa.album_artist_id != ata.local_artist_id \
+    GROUP BY 1";
+
 /// Artists leading at least one album.
 pub(crate) const LED_PREDICATE: &str =
     "EXISTS (SELECT 1 FROM local_albums la WHERE la.album_artist_id = r.id)";
@@ -406,6 +446,8 @@ pub(crate) fn artist_order(sort: ArtistSort, descending: bool) -> &'static str {
         (ArtistSort::Name, true) => "r.folded_name DESC, r.id ASC",
         (ArtistSort::AlbumCount, false) => "album_count ASC, r.folded_name ASC, r.id ASC",
         (ArtistSort::AlbumCount, true) => "album_count DESC, r.folded_name ASC, r.id ASC",
+        (ArtistSort::AppearanceCount, false) => "appearance_count ASC, r.folded_name ASC, r.id ASC",
+        (ArtistSort::AppearanceCount, true) => "appearance_count DESC, r.folded_name ASC, r.id ASC",
         (ArtistSort::DateAdded, false) => "r.created_at ASC, r.id ASC",
         (ArtistSort::DateAdded, true) => "r.created_at DESC, r.id ASC",
     }
@@ -755,14 +797,18 @@ impl LibraryCatalog for SqliteCatalog {
                 .replace("(LED)", LED_PREDICATE)
                 .replace("(CREDITED)", CREDITED_PREDICATE);
             // Page the ids first; counts aggregate over the page below.
-            // Album-count sort joins pre-aggregated leader counts, with
-            // COALESCE so artists without albums sort as zero, as before.
-            let ids: Vec<String> = if matches!(sort, ArtistSort::AlbumCount) {
+            // Count sorts join pre-aggregated per-artist counts, with
+            // COALESCE so artists without any sort as zero.
+            let counted = match sort {
+                ArtistSort::AlbumCount => Some(ALBUM_COUNT_BY_ARTIST),
+                ArtistSort::AppearanceCount => Some(APPEARANCE_COUNT_BY_ARTIST),
+                ArtistSort::Name | ArtistSort::DateAdded => None,
+            };
+            let ids: Vec<String> = if let Some(counts) = counted {
                 let direction = if descending { "DESC" } else { "ASC" };
                 sqlx::query_scalar(&format!(
                     "SELECT r.id FROM local_artists r \
-                     LEFT JOIN (SELECT album_artist_id AS aid, COUNT(*) AS c \
-                     FROM local_albums GROUP BY aid) ac ON ac.aid = r.id \
+                     LEFT JOIN ({counts}) ac ON ac.aid = r.id \
                      WHERE r.retired_into_artist_id IS NULL AND ({scope_sql}) \
                      AND (? IS NULL OR r.folded_name LIKE ? ESCAPE '\\') \
                      ORDER BY COALESCE(ac.c, 0) {direction}, \
