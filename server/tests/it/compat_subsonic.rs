@@ -106,13 +106,11 @@ async fn envelopes_are_byte_exact() {
             "application/xml",
             format!("{ok}><license valid=\"true\"/></subsonic-response>"),
         ),
-        // Extensions are public; `transcoding` is served but not advertised.
+        // Extensions are public and list every served extension.
         (
             request("getOpenSubsonicExtensions", &[], false),
             "application/xml",
-            format!(
-                "{ok}><openSubsonicExtensions name=\"apiKeyAuthentication\"><versions>1</versions></openSubsonicExtensions><openSubsonicExtensions name=\"formPost\"><versions>1</versions></openSubsonicExtensions><openSubsonicExtensions name=\"transcodeOffset\"><versions>1</versions></openSubsonicExtensions></subsonic-response>"
-            ),
+            format!("{ok}><openSubsonicExtensions name=\"apiKeyAuthentication\"><versions>1</versions></openSubsonicExtensions><openSubsonicExtensions name=\"formPost\"><versions>1</versions></openSubsonicExtensions><openSubsonicExtensions name=\"transcodeOffset\"><versions>1</versions></openSubsonicExtensions><openSubsonicExtensions name=\"songLyrics\"><versions>1</versions></openSubsonicExtensions><openSubsonicExtensions name=\"playbackReport\"><versions>1</versions></openSubsonicExtensions><openSubsonicExtensions name=\"indexBasedQueue\"><versions>1</versions></openSubsonicExtensions><openSubsonicExtensions name=\"transcoding\"><versions>1</versions></openSubsonicExtensions></subsonic-response>"),
         ),
         (
             request("ping", &[], false),

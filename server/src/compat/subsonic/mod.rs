@@ -70,10 +70,9 @@
 //!   {10,40,41,42,43,44,50} render `text/plain` (70 -> 404, else 404).
 //! - Transcode hints on song children only when transcoding is enabled
 //!   and ffmpeg is present.
-//! - Served-but-unadvertised extensions (songLyrics, playbackReport,
-//!   indexBasedQueue, transcoding, all v1) stay out of
-//!   getOpenSubsonicExtensions (the matrix wins over the router: 3
-//!   advertised, `transcoding` served but unadvertised).
+//! - getOpenSubsonicExtensions lists every served extension (all v1):
+//!   apiKeyAuthentication, formPost, transcodeOffset, songLyrics,
+//!   playbackReport, indexBasedQueue, transcoding.
 //!
 //! # Seams (implemented elsewhere, bound in `compat::setup`)
 //!
