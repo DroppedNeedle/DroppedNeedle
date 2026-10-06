@@ -139,6 +139,15 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
             state.auth.limits.clone(),
             rate_limit,
         ));
+    // The OIDC callback at its v2 path, so a migrated identity provider
+    // keeps redirecting somewhere real. Public like the v3 one.
+    let oidc_legacy = state
+        .auth
+        .legacy_oidc_router()
+        .layer(middleware::from_fn_with_state(
+            state.auth.limits.clone(),
+            rate_limit,
+        ));
     let app = Router::new()
         .route(
             "/health",
@@ -148,6 +157,7 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
         .merge(v3)
         .merge(wrapped)
         .merge(acquire_public)
+        .merge(oidc_legacy)
         .merge(state.compat.router());
     // Dev-only tooling routes (covers-debug). The debug-build gate
     // compiles this mount out of release binaries entirely, so no

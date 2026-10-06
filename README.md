@@ -327,6 +327,7 @@ Things worth knowing:
 - DroppedNeedle checks the signature, audience, expiry and nonce of every login token against the keys your provider publishes, so the server needs to reach your provider directly, not only your browser.
 - A sign-in only joins an existing DroppedNeedle account when the provider says the email address is verified. Otherwise it creates a new account.
 - The first account on a fresh install becomes the admin, whichever way it signs in.
+- Coming from v2? The old callback, `/api/v1/auth/oidc/callback`, still works, so the provider needs no change after the upgrade.
 
 </details>
 

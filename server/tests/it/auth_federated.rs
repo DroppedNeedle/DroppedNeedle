@@ -237,11 +237,11 @@ fn oidc_router(mock: Arc<OidcMock>) -> Router {
 }
 
 /// Start a login, act as the browser at the provider, and return the
-/// callback response.
+/// response of the callback at `callback`.
 async fn oidc_callback(
     app: &Router,
     mock: &OidcMock,
-    code: &str,
+    callback: &str,
 ) -> (StatusCode, HeaderMap, String) {
     let (status, body, _) = call(
         app.clone(),
@@ -262,10 +262,7 @@ async fn oidc_callback(
     let (status, _, headers) = call(
         app.clone(),
         "GET",
-        &format!(
-            "/api/v3/auth/oidc/callback?code={code}&state={}",
-            form_encode(&state)
-        ),
+        &format!("{callback}?code={OIDC_CODE}&state={}", form_encode(&state)),
         &[],
         None,
     )
@@ -310,7 +307,7 @@ async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
 
     // One app throughout: the one-time exchange codes live in its memory.
     let app = e2e.router();
-    let (status, headers, url) = oidc_callback(&app, &mock, OIDC_CODE).await;
+    let (status, headers, url) = oidc_callback(&app, &mock, "/api/v3/auth/oidc/callback").await;
     assert_eq!(status, StatusCode::FOUND);
     let location = headers["location"].to_str().expect("ascii");
     let exchange_code = location
@@ -393,6 +390,15 @@ async fn oidc_sign_in_verifies_the_id_token_and_creates_the_first_admin() {
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // Providers set up for v2 redirect to its callback path; it still works.
+    let (status, headers, _) = oidc_callback(&app, &mock, "/api/v1/auth/oidc/callback").await;
+    assert_eq!(status, StatusCode::FOUND);
+    assert!(
+        headers["location"]
+            .to_str()
+            .is_ok_and(|location| location.starts_with("/auth/callback?code="))
+    );
 }
 
 // ---------------------------------------------------------------------------

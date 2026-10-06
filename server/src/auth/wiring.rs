@@ -388,6 +388,22 @@ impl AuthSetup {
             .merge(plex_router(self.plex.clone()))
     }
 
+    /// The OIDC callback at its v2 path. v2 registered
+    /// `/api/v1/auth/oidc/callback` with identity providers and the import
+    /// keeps that redirect URI, so serving it here keeps a migrated SSO
+    /// login working without touching the provider. Mounted outside
+    /// `/api/v3`; like every OIDC step it needs no session.
+    pub fn legacy_oidc_router(&self) -> axum::Router {
+        use super::routes::federated::oidc_callback_handler;
+
+        axum::Router::new()
+            .route(
+                "/api/v1/auth/oidc/callback",
+                axum::routing::get(oidc_callback_handler),
+            )
+            .with_state(self.oidc.clone())
+    }
+
     /// Test bundle over unwired adapters. Nothing here touches a database:
     /// every SQLite adapter fails closed until wired, which is exactly what
     /// non-auth tests need (the middleware passes non-v3 paths through;
