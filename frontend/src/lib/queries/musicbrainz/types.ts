@@ -1,6 +1,5 @@
-// Hand-mirrors the MusicBrainz settings response and action payloads in
-// backend/api/v1/schemas/settings.py. Response types intentionally describe the
-// stable fields the UI consumes; additive backend fields remain forward-compatible.
+// Page model for the MusicBrainz settings. The v3 view is adapted into it in
+// MusicBrainzAdapters.ts; the request bodies match the generated schemas.
 
 export type MusicBrainzSourceMode = 'brainzmash' | 'official' | 'mirror' | 'community';
 

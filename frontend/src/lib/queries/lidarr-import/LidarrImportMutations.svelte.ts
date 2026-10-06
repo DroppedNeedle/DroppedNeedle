@@ -1,7 +1,6 @@
 import { createMutation } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
@@ -9,13 +8,14 @@ import { FollowQueryKeyFactory } from '$lib/queries/following/FollowQueryKeyFact
 import { notifyPendingApprovalCountChanged } from '$lib/utils/requestsApi';
 
 import { LidarrImportQueryKeyFactory } from './LidarrImportQueryKeyFactory';
+import { LIDARR_IMPORT_ENDPOINTS } from './endpoints';
 import type { LidarrImportConnection, LidarrImportResult, LidarrTestResult } from './types';
 
 // The connection form renders errors inline, so save/test don't toast here.
 export const saveLidarrConfigMutation = () =>
 	createMutation(() => ({
 		mutationFn: (connection: LidarrImportConnection) =>
-			api.global.put<LidarrImportConnection>(API.lidarrImport.config(), connection),
+			api.global.put<LidarrImportConnection>(LIDARR_IMPORT_ENDPOINTS.config(), connection),
 		onSuccess: async () => {
 			await invalidateQueriesWithPersister({ queryKey: LidarrImportQueryKeyFactory.config() });
 		}
@@ -24,13 +24,13 @@ export const saveLidarrConfigMutation = () =>
 export const testLidarrMutation = () =>
 	createMutation(() => ({
 		mutationFn: (connection: LidarrImportConnection) =>
-			api.global.post<LidarrTestResult>(API.lidarrImport.test(), connection)
+			api.global.post<LidarrTestResult>(LIDARR_IMPORT_ENDPOINTS.test(), connection)
 	}));
 
 export const importFromLidarrMutation = () =>
 	createMutation(() => ({
 		mutationFn: (selectedMbids: string[]) =>
-			api.global.post<LidarrImportResult>(API.lidarrImport.import(), {
+			api.global.post<LidarrImportResult>(LIDARR_IMPORT_ENDPOINTS.import(), {
 				selected_mbids: selectedMbids
 			}),
 		onSuccess: async () => {

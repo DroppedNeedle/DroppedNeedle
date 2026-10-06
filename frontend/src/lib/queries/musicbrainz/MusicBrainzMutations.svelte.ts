@@ -1,12 +1,13 @@
 import { createMutation } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { setQueryDataWithPersister } from '$lib/queries/QueryClient';
 import { setMusicBrainzSourceScope } from './sourceScope.svelte';
 
 import { MusicBrainzQueryKeyFactory } from './MusicBrainzQueryKeyFactory';
+import { MUSICBRAINZ_ENDPOINTS } from './endpoints';
+import { toMusicBrainzSettings } from './MusicBrainzAdapters';
 import type {
 	BrainzMashBinding,
 	MusicBrainzSettingsResponse,
@@ -51,18 +52,17 @@ const cacheSettingsResponse = async (
 
 export const saveMusicBrainzSettings = () =>
 	createMutation(() => ({
-		mutationFn: (settings: MusicBrainzSettingsUpdate) =>
-			api.global.put<MusicBrainzSettingsResponse>(API.settingsMusicbrainz(), settings),
+		mutationFn: async (settings: MusicBrainzSettingsUpdate) =>
+			toMusicBrainzSettings(await api.global.v3.PUT(MUSICBRAINZ_ENDPOINTS.settings(), settings)),
 		onMutate: captureMusicBrainzUser,
 		onSuccess: cacheSettingsResponse
 	}));
 
 export const consentBrainzMash = () =>
 	createMutation(() => ({
-		mutationFn: (binding: BrainzMashBinding) =>
-			api.global.post<MusicBrainzSettingsResponse>(
-				API.settingsMusicbrainzBrainzMashConsent(),
-				binding
+		mutationFn: async (binding: BrainzMashBinding) =>
+			toMusicBrainzSettings(
+				await api.global.v3.POST(MUSICBRAINZ_ENDPOINTS.brainzMashConsent(), binding)
 			),
 		onMutate: captureMusicBrainzUser,
 		onSuccess: cacheSettingsResponse
@@ -70,24 +70,24 @@ export const consentBrainzMash = () =>
 
 export const testMusicBrainzConnection = () =>
 	createMutation(() => ({
-		mutationFn: (request: BrainzMashBinding | MusicBrainzSettingsUpdate) =>
-			api.global.post<MusicBrainzSettingsResponse>(API.settingsMusicbrainzVerify(), request),
+		mutationFn: async (request: BrainzMashBinding | MusicBrainzSettingsUpdate) =>
+			toMusicBrainzSettings(await api.global.v3.POST(MUSICBRAINZ_ENDPOINTS.verify(), request)),
 		onMutate: captureMusicBrainzUser,
 		onSuccess: cacheSettingsResponse
 	}));
 
 export const stageBrainzMash = () =>
 	createMutation(() => ({
-		mutationFn: () =>
-			api.global.post<MusicBrainzSettingsResponse>(API.settingsMusicbrainzBrainzMashStage()),
+		mutationFn: async () =>
+			toMusicBrainzSettings(await api.global.v3.POST(MUSICBRAINZ_ENDPOINTS.brainzMashStage())),
 		onMutate: captureMusicBrainzUser,
 		onSuccess: cacheSettingsResponse
 	}));
 
 export const activateBrainzMash = () =>
 	createMutation(() => ({
-		mutationFn: (binding: BrainzMashBinding) =>
-			api.global.post<MusicBrainzSettingsResponse>(API.settingsMusicbrainzActivate(), binding),
+		mutationFn: async (binding: BrainzMashBinding) =>
+			toMusicBrainzSettings(await api.global.v3.POST(MUSICBRAINZ_ENDPOINTS.activate(), binding)),
 		onMutate: captureMusicBrainzUser,
 		onSuccess: cacheSettingsResponse
 	}));

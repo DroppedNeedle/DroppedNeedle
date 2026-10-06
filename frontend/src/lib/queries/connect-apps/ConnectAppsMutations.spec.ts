@@ -7,7 +7,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() } }
+	api: { global: { v3: { GET: vi.fn(), POST: vi.fn(), PUT: vi.fn(), DELETE: vi.fn() } } }
 }));
 
 vi.mock('$lib/queries/QueryClient', () => ({
@@ -22,9 +22,9 @@ import { api } from '$lib/api/client';
 import { createMutation } from '@tanstack/svelte-query';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 
-const mockPut = vi.mocked(api.global.put);
-const mockPost = vi.mocked(api.global.post);
-const mockDelete = vi.mocked(api.global.delete);
+const mockPut = vi.mocked(api.global.v3.PUT) as unknown as ReturnType<typeof vi.fn>;
+const mockPost = vi.mocked(api.global.v3.POST) as unknown as ReturnType<typeof vi.fn>;
+const mockDelete = vi.mocked(api.global.v3.DELETE) as unknown as ReturnType<typeof vi.fn>;
 const mockCreateMutation = vi.mocked(createMutation);
 const mockInvalidate = vi.mocked(invalidateQueriesWithPersister);
 
@@ -58,7 +58,7 @@ describe('saveConnectAppsSettings', () => {
 		saveConnectAppsSettings();
 		const opts = lastMutationOpts();
 		await (opts.mutationFn as (v: unknown) => Promise<unknown>)({ subsonic_enabled: true });
-		expect(mockPut).toHaveBeenCalledWith('/api/v1/connect-apps/settings', {
+		expect(mockPut).toHaveBeenCalledWith('/api/v3/settings/connect-apps', {
 			subsonic_enabled: true
 		});
 		await (opts.onSuccess as () => Promise<unknown>)();
@@ -75,7 +75,7 @@ describe('createAppPassword', () => {
 		createAppPassword();
 		const opts = lastMutationOpts();
 		await (opts.mutationFn as (v: string) => Promise<unknown>)('Symfonium (phone)');
-		expect(mockPost).toHaveBeenCalledWith('/api/v1/connect-apps/app-passwords', {
+		expect(mockPost).toHaveBeenCalledWith('/api/v3/me/app-passwords', {
 			name: 'Symfonium (phone)'
 		});
 		await (opts.onSuccess as () => Promise<unknown>)();
@@ -92,7 +92,7 @@ describe('revokeAppPassword', () => {
 		revokeAppPassword();
 		const opts = lastMutationOpts();
 		await (opts.mutationFn as (v: string) => Promise<unknown>)('ap-1');
-		expect(mockDelete).toHaveBeenCalledWith('/api/v1/connect-apps/app-passwords/ap-1');
+		expect(mockDelete).toHaveBeenCalledWith('/api/v3/me/app-passwords/ap-1');
 		await (opts.onSuccess as () => Promise<unknown>)();
 		expect(mockInvalidate).toHaveBeenCalledWith({
 			queryKey: ConnectAppsQueryKeyFactory.appPasswords('user-1')
@@ -110,7 +110,7 @@ describe('adminRevokeAppPassword', () => {
 			id: 'ap-9',
 			userId: 'user-bob'
 		});
-		expect(mockDelete).toHaveBeenCalledWith('/api/v1/connect-apps/admin/app-passwords/ap-9');
+		expect(mockDelete).toHaveBeenCalledWith('/api/v3/admin/app-passwords/ap-9');
 		(opts.onSuccess as (d: unknown, v: { id: string; userId: string }) => void)(undefined, {
 			id: 'ap-9',
 			userId: 'user-bob'

@@ -59,7 +59,8 @@
 			transcode_max_bitrate_kbps: transcodeMaxKbps ?? 320,
 			advertise_server_name: settingsQuery.data?.advertise_server_name ?? 'DroppedNeedle',
 			advertise_server_version: settingsQuery.data?.advertise_server_version ?? '10.10.6',
-			discover_mode: discoverMode
+			discover_mode: discoverMode,
+			exact_track_approval_supported: settingsQuery.data?.exact_track_approval_supported ?? false
 		};
 	}
 
@@ -85,13 +86,12 @@
 		}
 	}
 
-	function formatDate(iso: string | null): string {
-		if (!iso) return 'Never';
-		const d = new Date(iso);
-		return Number.isNaN(d.getTime()) ? '-' : d.toLocaleDateString();
+	function formatDate(unixSeconds: number | null | undefined): string {
+		if (!unixSeconds) return 'Never';
+		return new Date(unixSeconds * 1000).toLocaleDateString();
 	}
 
-	const rosterCount = $derived(rosterQuery.data?.active_count ?? 0);
+	const rosterCount = $derived(rosterQuery.data?.length ?? 0);
 </script>
 
 <section class="flex flex-col gap-6">
@@ -243,7 +243,7 @@
 					<span>Could not load the app-password list.</span>
 					<button class="btn btn-sm" onclick={() => void rosterQuery.refetch()}>Try again</button>
 				</div>
-			{:else if rosterQuery.data && rosterQuery.data.items.length > 0}
+			{:else if rosterQuery.data && rosterQuery.data.length > 0}
 				<div class="overflow-x-auto">
 					<table class="table table-sm">
 						<thead>
@@ -257,7 +257,7 @@
 							</tr>
 						</thead>
 						<tbody>
-							{#each rosterQuery.data.items as pw (pw.id)}
+							{#each rosterQuery.data as pw (pw.id)}
 								<tr>
 									<td>
 										<span class="font-medium">{pw.owner_display_name}</span>

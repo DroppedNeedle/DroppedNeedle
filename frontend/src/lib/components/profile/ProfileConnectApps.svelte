@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { APP_PASSWORD_CAP } from '$lib/queries/connect-apps/endpoints';
 	import { Copy, Plus, Trash2, TriangleAlert, Waypoints } from 'lucide-svelte';
 
 	import { getApiUrl } from '$lib/api/api-utils';
@@ -48,8 +49,8 @@
 	const jellyfinOn = $derived(settingsQuery.data?.jellyfin_enabled ?? false);
 	const bothOff = $derived(!subsonicOn && !jellyfinOn);
 
-	const cap = $derived(passwordsQuery.data?.cap ?? 25);
-	const activeCount = $derived(passwordsQuery.data?.active_count ?? 0);
+	const cap = APP_PASSWORD_CAP;
+	const activeCount = $derived(passwordsQuery.data?.length ?? 0);
 	const atCap = $derived(activeCount >= cap);
 
 	const SUGGESTED_NAMES = [
@@ -73,7 +74,7 @@
 		try {
 			const result = await create.mutateAsync(name);
 			revealedSecret = result.secret;
-			revealedName = result.app_password.name;
+			revealedName = result.name;
 			newName = '';
 		} catch (err) {
 			const status = (err as { status?: number })?.status;
@@ -107,10 +108,9 @@
 		}
 	}
 
-	function formatDate(iso: string | null): string {
-		if (!iso) return 'Never';
-		const d = new Date(iso);
-		return Number.isNaN(d.getTime()) ? '-' : d.toLocaleDateString();
+	function formatDate(unixSeconds: number | null | undefined): string {
+		if (!unixSeconds) return 'Never';
+		return new Date(unixSeconds * 1000).toLocaleDateString();
 	}
 </script>
 
@@ -187,7 +187,7 @@
 					private. Use a different one per device, and revoke it any time.
 				</p>
 
-				{#if passwordsQuery.data && passwordsQuery.data.items.length > 0}
+				{#if passwordsQuery.data && passwordsQuery.data.length > 0}
 					<div class="overflow-x-auto">
 						<table class="table table-sm">
 							<thead>
@@ -200,7 +200,7 @@
 								</tr>
 							</thead>
 							<tbody>
-								{#each passwordsQuery.data.items as pw (pw.id)}
+								{#each passwordsQuery.data as pw (pw.id)}
 									<tr>
 										<td class="font-medium">{pw.name}</td>
 										<td>{formatDate(pw.created_at)}</td>

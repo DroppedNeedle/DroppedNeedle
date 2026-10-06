@@ -1,12 +1,12 @@
 import { createQuery } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { setMusicBrainzSourceScope } from './sourceScope.svelte';
 
 import { MusicBrainzQueryKeyFactory } from './MusicBrainzQueryKeyFactory';
-import type { MusicBrainzSettingsResponse } from './types';
+import { MUSICBRAINZ_ENDPOINTS } from './endpoints';
+import { toMusicBrainzSettings } from './MusicBrainzAdapters';
 
 export const getMusicBrainzSettingsQuery = () =>
 	createQuery(() => {
@@ -15,9 +15,9 @@ export const getMusicBrainzSettingsQuery = () =>
 		return {
 			queryKey,
 			queryFn: async ({ signal }) => {
-				const data = await api.global.get<MusicBrainzSettingsResponse>(API.settingsMusicbrainz(), {
-					signal
-				});
+				const data = toMusicBrainzSettings(
+					await api.global.v3.GET(MUSICBRAINZ_ENDPOINTS.settings(), { signal })
+				);
 				if ((authStore.user?.id ?? null) === userId) {
 					setMusicBrainzSourceScope(data, userId);
 				}

@@ -5,12 +5,16 @@ vi.mock('@tanstack/svelte-query', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { get: vi.fn() } }
+	api: {
+		global: (() => {
+			const g = { get: vi.fn() };
+			return { ...g, v3: { GET: g.get } };
+		})()
+	}
 }));
 vi.mock('$app/environment', () => ({ browser: true }));
 
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { authStore, type AuthUser } from '$lib/stores/authStore.svelte';
 import { getMusicBrainzSettingsQuery } from './MusicBrainzQueries.svelte';
 import { MusicBrainzQueryKeyFactory } from './MusicBrainzQueryKeyFactory';
@@ -98,7 +102,7 @@ describe('getMusicBrainzSettingsQuery', () => {
 		expect(MusicBrainzQueryKeyFactory.settings()[2]).toEqual(
 			expect.objectContaining({ source_id: 'source-a', generation: 1 })
 		);
-		expect(mockGet).toHaveBeenCalledWith(API.settingsMusicbrainz(), { signal });
+		expect(mockGet).toHaveBeenCalledWith('/api/v3/settings/musicbrainz', { signal });
 	});
 	it('does not publish a response to a different active user', async () => {
 		persistScope('user-b', 'community', 'community-b', 9);

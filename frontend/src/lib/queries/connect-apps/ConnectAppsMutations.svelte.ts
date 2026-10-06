@@ -1,12 +1,12 @@
 import { createMutation } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
-import type { AppPasswordCreateResponse, ConnectAppsSettings } from '$lib/types';
+import type { ConnectAppsSettings } from '$lib/types';
 
 import { ConnectAppsQueryKeyFactory } from './ConnectAppsQueryKeyFactory';
+import { CONNECT_APPS_ENDPOINTS } from './endpoints';
 
 const invalidateOwnAppPasswords = () =>
 	invalidateQueriesWithPersister({
@@ -16,7 +16,7 @@ const invalidateOwnAppPasswords = () =>
 export function saveConnectAppsSettings() {
 	return createMutation(() => ({
 		mutationFn: (settings: ConnectAppsSettings) =>
-			api.global.put<ConnectAppsSettings>(API.connectApps.settings(), settings),
+			api.global.v3.PUT(CONNECT_APPS_ENDPOINTS.settings(), settings),
 		onSuccess: () =>
 			invalidateQueriesWithPersister({ queryKey: ConnectAppsQueryKeyFactory.settings() })
 	}));
@@ -25,7 +25,7 @@ export function saveConnectAppsSettings() {
 export function createAppPassword() {
 	return createMutation(() => ({
 		mutationFn: (name: string) =>
-			api.global.post<AppPasswordCreateResponse>(API.connectApps.appPasswords(), { name }),
+			api.global.v3.POST(CONNECT_APPS_ENDPOINTS.appPasswords(), { name }),
 		// returned secret stays in component state for the one-time reveal, never cached
 		onSuccess: invalidateOwnAppPasswords
 	}));
@@ -33,7 +33,7 @@ export function createAppPassword() {
 
 export function revokeAppPassword() {
 	return createMutation(() => ({
-		mutationFn: (id: string) => api.global.delete<void>(API.connectApps.appPassword(id)),
+		mutationFn: (id: string) => api.global.v3.DELETE(CONNECT_APPS_ENDPOINTS.appPassword(id)),
 		onSuccess: invalidateOwnAppPasswords
 	}));
 }
@@ -45,7 +45,7 @@ export function revokeAppPassword() {
 export function adminRevokeAppPassword() {
 	return createMutation(() => ({
 		mutationFn: (vars: { id: string; userId: string }) =>
-			api.global.delete<void>(API.connectApps.adminAppPassword(vars.id)),
+			api.global.v3.DELETE(CONNECT_APPS_ENDPOINTS.adminAppPassword(vars.id)),
 		onSuccess: (_data: void, vars: { id: string; userId: string }) => {
 			invalidateQueriesWithPersister({
 				queryKey: ConnectAppsQueryKeyFactory.adminAppPasswords()

@@ -5,7 +5,12 @@ vi.mock('@tanstack/svelte-query', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { post: vi.fn(), put: vi.fn() } }
+	api: {
+		global: (() => {
+			const g = { post: vi.fn(), put: vi.fn() };
+			return { ...g, v3: { POST: g.post, PUT: g.put } };
+		})()
+	}
 }));
 
 vi.mock('$app/environment', () => ({ browser: true }));
@@ -16,7 +21,6 @@ vi.mock('$lib/queries/QueryClient', () => ({
 }));
 
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { authStore, type AuthUser } from '$lib/stores/authStore.svelte';
 import { saveMusicBrainzSettings } from './MusicBrainzMutations.svelte';
 import { getMusicBrainzSourceScope, resetMusicBrainzSourceScope } from './sourceScope.svelte';
@@ -121,7 +125,7 @@ describe('MusicBrainz settings mutations', () => {
 		const result = await request;
 		await options.onSuccess?.(result, update, userAContext);
 
-		expect(mockPut).toHaveBeenCalledWith(API.settingsMusicbrainz(), update);
+		expect(mockPut).toHaveBeenCalledWith('/api/v3/settings/musicbrainz', update);
 		expect(getMusicBrainzSourceScope()).toEqual({
 			userId: 'user-b',
 			sourceMode: 'community',

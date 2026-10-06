@@ -1,11 +1,10 @@
 import { createQuery } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { authStore } from '$lib/stores/authStore.svelte';
 
 import { LidarrImportQueryKeyFactory } from './LidarrImportQueryKeyFactory';
-import type { LidarrArtistList, LidarrImportConnection } from './types';
+import { LIDARR_IMPORT_ENDPOINTS } from './endpoints';
 
 type Getter<T> = () => T;
 
@@ -13,8 +12,7 @@ type Getter<T> = () => T;
 export const getLidarrImportConfigQuery = (getEnabled: Getter<boolean> = () => true) =>
 	createQuery(() => ({
 		queryKey: LidarrImportQueryKeyFactory.config(),
-		queryFn: ({ signal }) =>
-			api.global.get<LidarrImportConnection>(API.lidarrImport.config(), { signal }),
+		queryFn: ({ signal }) => api.global.v3.GET(LIDARR_IMPORT_ENDPOINTS.config(), { signal }),
 		enabled: getEnabled()
 	}));
 
@@ -23,7 +21,6 @@ export const getLidarrImportConfigQuery = (getEnabled: Getter<boolean> = () => t
 export const getLidarrImportCandidatesQuery = (getEnabled: Getter<boolean>) =>
 	createQuery(() => ({
 		queryKey: LidarrImportQueryKeyFactory.candidates(authStore.user?.id),
-		queryFn: ({ signal }) =>
-			api.global.get<LidarrArtistList>(API.lidarrImport.artists(), { signal }),
+		queryFn: ({ signal }) => api.global.v3.GET(LIDARR_IMPORT_ENDPOINTS.artists(), { signal }),
 		enabled: getEnabled()
 	}));

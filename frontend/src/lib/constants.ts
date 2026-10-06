@@ -602,18 +602,9 @@ export const API = {
 	settingsPlex: () => '/api/v1/settings/plex',
 	settingsPlexVerify: () => '/api/v1/settings/plex/verify',
 	settingsPlexLibraries: () => '/api/v1/settings/plex/libraries',
-	settingsMusicbrainz: () => '/api/v1/settings/musicbrainz',
-	settingsMusicbrainzBrainzMashStage: () => '/api/v1/settings/musicbrainz/brainzmash/stage',
-	settingsMusicbrainzBrainzMashConsent: () => '/api/v1/settings/musicbrainz/brainzmash/consent',
-	settingsMusicbrainzVerify: () => '/api/v1/settings/musicbrainz/verify',
-	settingsMusicbrainzActivate: () => '/api/v1/settings/musicbrainz/activate',
 	// profile + connections + spotify builders lived here until the profile
 	// seam migration moved them onto the v3 registry (their endpoints.ts
 	// files); only stragglers with out-of-scope consumers remain.
-	me: {
-		sectionPrefs: () => '/api/v1/me/section-prefs',
-		navidromeMusicFolderPreferences: () => '/api/v1/me/navidrome/music-folder-preferences'
-	},
 	playlists: {
 		list: () => '/api/v1/playlists',
 		create: () => '/api/v1/playlists',
@@ -672,12 +663,6 @@ export const API = {
 		config: () => '/api/v1/prowlarr/config',
 		test: () => '/api/v1/prowlarr/test'
 	},
-	lidarrImport: {
-		config: () => '/api/v1/lidarr-import/config',
-		test: () => '/api/v1/lidarr-import/test',
-		artists: () => '/api/v1/lidarr-import/artists',
-		import: () => '/api/v1/lidarr-import/import'
-	},
 	freeMusic: {
 		tasks: (all: boolean = false) => `/api/v1/free-music/tasks${all ? '?all=true' : ''}`,
 		task: (id: string) => `/api/v1/free-music/tasks/${id}`,
@@ -703,13 +688,6 @@ export const API = {
 		policyImpact: () => '/api/v1/download-clients/policy/impact',
 		sourcePriority: () => '/api/v1/download-clients/source-priority',
 		wanted: () => '/api/v1/download-clients/wanted'
-	},
-	connectApps: {
-		settings: () => '/api/v1/connect-apps/settings',
-		appPasswords: () => '/api/v1/connect-apps/app-passwords',
-		appPassword: (id: string) => `/api/v1/connect-apps/app-passwords/${id}`,
-		adminAppPasswords: () => '/api/v1/connect-apps/admin/app-passwords',
-		adminAppPassword: (id: string) => `/api/v1/connect-apps/admin/app-passwords/${id}`
 	},
 	downloads: {
 		activitySummary: () => '/api/v1/downloads/activity-summary',
