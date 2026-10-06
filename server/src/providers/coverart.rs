@@ -491,6 +491,44 @@ pub fn upgrade_artwork_url(url: &str) -> Result<String, CaaError> {
     Ok(format!("https://coverartarchive.org{path}"))
 }
 
+/// Redirect hops [`CaaClient::fetch_front`] follows before giving up.
+pub const MAX_REDIRECT_HOPS: usize = 5;
+
+/// Validate one artwork redirect and return the https URL to fetch next.
+/// Only the archive itself and the Internet Archive (`archive.org` and its
+/// subdomains) may serve covers; no credentials, default ports only.
+/// Relative locations resolve against the current URL's origin.
+pub fn check_redirect_hop(current: &str, location: &str) -> Result<String, CaaError> {
+    let absolute = if location.starts_with('/') {
+        let (scheme, authority, _) = split_artwork_url(current).ok_or(CaaError::RejectedUrl)?;
+        format!("{scheme}://{authority}{location}")
+    } else {
+        location.to_owned()
+    };
+    let (scheme, authority, path) = split_artwork_url(&absolute).ok_or(CaaError::RejectedUrl)?;
+    if scheme != "http" && scheme != "https" {
+        return Err(CaaError::RejectedUrl);
+    }
+    if authority.contains('@') || !path.starts_with('/') {
+        return Err(CaaError::RejectedUrl);
+    }
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port_text)) => {
+            let port: u16 = port_text.parse().map_err(|_| CaaError::RejectedUrl)?;
+            (host, Some(port))
+        }
+        None => (authority, None),
+    };
+    let host = host.to_ascii_lowercase();
+    let allowed =
+        host == "coverartarchive.org" || host == "archive.org" || host.ends_with(".archive.org");
+    if !allowed || !matches!(port, None | Some(80) | Some(443)) {
+        return Err(CaaError::RejectedUrl);
+    }
+    let path = path.split('#').next().unwrap_or("/");
+    Ok(format!("https://{host}{path}"))
+}
+
 /// Split a URL into (scheme, authority, path+query+fragment). A bare
 /// origin has no path, and artwork locations always carry one, so the
 /// empty path stays empty for the caller to reject (v2 requires
@@ -711,6 +749,87 @@ impl<T: CaaTransport> CaaClient<T> {
             bytes: response.body,
             content_type,
         })
+    }
+
+    /// Fetch the front cover of a release or release group at one size,
+    /// the way v2 served covers: `/{entity}/{mbid}/front-{size}`, which the
+    /// archive renders at 250, 500 and 1200 pixels, so nothing is resized
+    /// here. The archive answers with a redirect to archive.org; each hop
+    /// passes [`check_redirect_hop`] before it is followed. `None` means the
+    /// archive has no front cover (404), which is authoritative.
+    pub async fn fetch_front(
+        &self,
+        entity: EntityKind,
+        mbid: &str,
+        size: DownloadSize,
+        maximum_bytes: usize,
+    ) -> Result<Option<ArtworkBytes>, CaaError> {
+        let normalized = mbid.trim().to_ascii_lowercase();
+        if !is_valid_mbid(&normalized) {
+            return Err(CaaError::InvalidMbid(format!("invalid {entity:?} MBID")));
+        }
+        let suffix = match size {
+            DownloadSize::Full => String::new(),
+            other => format!("-{}", other.label()),
+        };
+        let mut url = format!(
+            "{COVER_ART_ARCHIVE_BASE}/{}/{normalized}/front{suffix}",
+            entity.path()
+        );
+        let mut response = self.get(&url).await?;
+        let mut hops = 0;
+        while matches!(response.status, 301 | 302 | 303 | 307 | 308) {
+            hops += 1;
+            if hops > MAX_REDIRECT_HOPS {
+                return Err(CaaError::Contract("too many artwork redirects".to_owned()));
+            }
+            let location = response.header("location").ok_or_else(|| {
+                CaaError::Contract("artwork redirect without a location".to_owned())
+            })?;
+            url = check_redirect_hop(&url, location)?;
+            // Hops land on the archive.org CDN, which the archive pacing
+            // does not cover; only the first request is paced.
+            response = self
+                .transport
+                .get(&CaaRequest {
+                    url: url.clone(),
+                    headers: Vec::new(),
+                })
+                .await
+                .map_err(|error| CaaError::Unavailable(error.0))?;
+            if response.status == 429 || response.status == 503 {
+                return Err(CaaError::RateLimited {
+                    retry_after_secs: parse_retry_after_secs(response.header("Retry-After")),
+                });
+            }
+            if (500..600).contains(&response.status) {
+                return Err(CaaError::Unavailable(format!("HTTP {}", response.status)));
+            }
+        }
+        if response.status == 404 {
+            return Ok(None);
+        }
+        if response.status != 200 {
+            return Err(CaaError::Rejected(response.status));
+        }
+        if response.body.len() > maximum_bytes {
+            return Err(CaaError::Contract(
+                "artwork body exceeded the byte limit".to_owned(),
+            ));
+        }
+        let declared = response.header("content-type").unwrap_or("").to_owned();
+        let content_type = match sniff_image_content_type(&response.body) {
+            Some(sniffed) => sniffed.to_owned(),
+            None => {
+                return Err(CaaError::Contract(format!(
+                    "artwork is not a raster image ({declared})"
+                )));
+            }
+        };
+        Ok(Some(ArtworkBytes {
+            bytes: response.body,
+            content_type,
+        }))
     }
 
     /// One paced GET with a single backoff retry on 429/503.
