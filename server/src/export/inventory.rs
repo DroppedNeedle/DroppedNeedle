@@ -82,8 +82,11 @@ const CACHES: &[&str] = &[
 pub fn reason_for(table: &str) -> &'static str {
     if PRE_UPGRADE_COPIES.contains(&table) || table.contains("__") {
         "older copy from before v2's own library upgrade; v2 no longer reads it"
-    } else if NO_V3_STORE.contains(&table) || table.starts_with("library_contribution_") {
+    } else if NO_V3_STORE.contains(&table) {
         "v3 has nowhere to keep this yet"
+    } else if table.starts_with("library_contribution_") {
+        "MusicBrainz contributions belong to v2's library albums; start them \
+         again in v3 after the first scan"
     } else if SIGN_IN_STATE.contains(&table) {
         "sign-in sessions; everyone signs in again"
     } else if JOB_STATE.contains(&table) || table.starts_with("download_activity_") {
