@@ -116,7 +116,7 @@ impl E2e {
             self.runtime.pool(),
             auth.users.clone(),
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
-            crate::common::platform_inputs(
+            crate::common::reads_inputs(
                 Arc::clone(&self.store),
                 self.db_path.parent().expect("db dir"),
             ),

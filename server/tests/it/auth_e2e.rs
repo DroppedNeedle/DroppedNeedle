@@ -162,7 +162,7 @@ impl E2e {
             self.runtime.pool(),
             auth.users.clone(),
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
-            crate::common::platform_inputs(
+            crate::common::reads_inputs(
                 Arc::clone(&self.store),
                 self.db_path.parent().expect("db dir"),
             ),
@@ -1506,6 +1506,7 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ),
     ("GET", "/api/v3/covers/release/{release_id}", Posture::User),
     ("GET", "/api/v3/covers/artist/{artist_id}", Posture::User),
+    ("GET", "/api/v3/library/albums/{id}/artwork", Posture::User),
     ("GET", "/api/v3/version", Posture::User),
     ("GET", "/api/v3/version/check-update", Posture::User),
     ("GET", "/api/v3/version/releases", Posture::User),

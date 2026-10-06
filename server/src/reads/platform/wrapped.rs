@@ -5,19 +5,16 @@
 //! contract is preserved exactly (see [`check_key`]): exact header name,
 //! exact value match with no trimming, 401 on missing/wrong/unconfigured,
 //! and the v2 rejection message verbatim. Year-in-review data comes from the
-//! [`WrappedData`] port; only [`FakeWrappedData`] exists so far, since the
-//! ListenBrainz-backed aggregation is not built.
+//! [`WrappedData`] port; production runs
+//! [`ListenBrainzWrapped`](super::listenbrainz_wrapped::ListenBrainzWrapped).
 //!
 //! Unknown users answer 200 with an empty `has_data: false` payload (v2
 //! `get_user_wrapped` rule kept, display name falls back to the user id) -
 //! never 404. These routes take no session: the shared secret is the only
 //! credential, so they mount outside the session middleware.
 //!
-//! Self-contained on purpose: no `crate::` imports, so this module compiles
-//! both inside the wired tree and standalone in the tests. The error
-//! envelope mirrors `crate::error` exactly.
+//! The error envelope mirrors `crate::error` exactly.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
@@ -166,8 +163,7 @@ pub struct ServerWrappedResponse {
     pub top_album_sitewide: Option<WrappedAlbum>,
 }
 
-/// Wrapped-data port. A ListenBrainz aggregation belongs here; for now
-/// everything runs against [`FakeWrappedData`].
+/// Wrapped-data port.
 pub trait WrappedData: Send + Sync + 'static {
     /// Year the stats cover.
     fn current_year(&self) -> i32;
@@ -179,22 +175,55 @@ pub trait WrappedData: Send + Sync + 'static {
     fn server_wrapped(&self) -> BoxFuture<'_, ServerWrappedResponse>;
 }
 
-/// Fake wrapped data.
+/// Wrapped without a data source: no users and empty summaries.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoWrappedData;
+
+impl WrappedData for NoWrappedData {
+    fn current_year(&self) -> i32 {
+        time::OffsetDateTime::now_utc().year()
+    }
+
+    fn list_users(&self) -> BoxFuture<'_, Vec<WrappedUserSummary>> {
+        Box::pin(async { Vec::new() })
+    }
+
+    fn user_wrapped(&self, _user_id: &str) -> BoxFuture<'_, Option<UserWrappedResponse>> {
+        Box::pin(async { None })
+    }
+
+    fn server_wrapped(&self) -> BoxFuture<'_, ServerWrappedResponse> {
+        let year = self.current_year();
+        Box::pin(async move {
+            ServerWrappedResponse {
+                year,
+                total_users_tracked: 0,
+                total_listens_estimated: 0,
+                leaderboard: Vec::new(),
+                top_artist_sitewide: None,
+                top_album_sitewide: None,
+            }
+        })
+    }
+}
+
+/// Scripted wrapped data for tests.
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Clone)]
 pub struct FakeWrappedData {
     year: i32,
     users: Vec<WrappedUserSummary>,
-    per_user: HashMap<String, UserWrappedResponse>,
+    per_user: std::collections::HashMap<String, UserWrappedResponse>,
     server: ServerWrappedResponse,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl FakeWrappedData {
     /// Build a fake from its parts.
-    #[cfg(any(test, feature = "test-support"))]
     pub fn new(
         year: i32,
         users: Vec<WrappedUserSummary>,
-        per_user: HashMap<String, UserWrappedResponse>,
+        per_user: std::collections::HashMap<String, UserWrappedResponse>,
         server: ServerWrappedResponse,
     ) -> Self {
         Self {
@@ -210,7 +239,7 @@ impl FakeWrappedData {
         Self {
             year,
             users: Vec::new(),
-            per_user: HashMap::new(),
+            per_user: std::collections::HashMap::new(),
             server: ServerWrappedResponse {
                 year,
                 total_users_tracked: 0,
@@ -223,6 +252,7 @@ impl FakeWrappedData {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl WrappedData for FakeWrappedData {
     fn current_year(&self) -> i32 {
         self.year

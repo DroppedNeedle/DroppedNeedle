@@ -28,14 +28,11 @@ use axum::{Router, extract::Request, middleware::Next, response::Response};
 
 use crate::{
     auth::{
-        session::{middleware::CurrentSession, store::now_unix},
+        session::middleware::CurrentSession,
         users::{UsersDeps, stores::StoreError},
     },
     ids::IdGenerator,
 };
-
-/// Seconds in a mean Gregorian year, for the wrapped-year stamp.
-const SECS_PER_YEAR: i64 = 31_556_952;
 
 /// Everything `create_app` needs to mount the reads routes, built once.
 #[derive(Clone)]
@@ -44,7 +41,7 @@ pub struct ReadsSetup {
     pub library: library::LibraryDeps,
     /// Unified search deps (SQLite search over the reader pool).
     pub search: search::SearchDeps,
-    /// Discover/home/queue/radio deps (still the fakes; no providers wired).
+    /// Discover/home/queue/radio deps.
     pub discover: discover::ReadsDeps,
     /// Collections state. Unwired until [`ReadsSetup::with_collections`]
     /// hands it the database.
@@ -52,24 +49,36 @@ pub struct ReadsSetup {
     /// Artist and album pages. Unmounted until [`ReadsSetup::with_catalog`]
     /// hands them their upstreams.
     pub catalog: Option<catalog::CatalogDeps>,
-    /// Covers/version/wrapped states (still the fakes; no providers wired).
+    /// Covers/version/wrapped states.
     pub platform: platform::PlatformState,
 }
 
 impl ReadsSetup {
     /// Build the production bundle. `pool` serves library and search reads;
     /// `users` resolves library favorites and collections roles;
-    /// `platform` carries what cover art, the version check and wrapped
-    /// read from the composition root; `enrichment`
+    /// `inputs` carries what cover art, the version check, wrapped and
+    /// discover read from the composition root; `enrichment`
     /// carries the live provider pair (`None` keeps the
     /// unconfigured ports: bare enrichment echoes and empty lyrics).
     pub fn build(
         pool: &sqlx::SqlitePool,
         users: UsersDeps,
         ids: Arc<dyn IdGenerator>,
-        platform: PlatformInputs,
+        inputs: ReadsInputs,
         enrichment: Option<enrichment::live::ProductionEnrichment>,
     ) -> Self {
+        let discover = discover::adapters::production_deps(
+            discover::adapters::DiscoverInputs {
+                pool: pool.clone(),
+                config: inputs.config.clone(),
+                http: inputs.http.clone(),
+                providers: inputs.providers.clone(),
+                listenbrainz_links: inputs.listenbrainz_links.clone(),
+                youtube_quota_path: inputs.youtube_quota_path.clone(),
+            },
+            ids.clone(),
+        );
+        let platform = platform_state(pool, &users, inputs);
         let library_db = library::sqlite::LibraryDb::new(pool);
         let catalog: Arc<dyn library::stores::LibraryCatalog> =
             Arc::new(library::sqlite::SqliteCatalog::new(&library_db));
@@ -92,7 +101,7 @@ impl ReadsSetup {
             catalog,
             favorites: Arc::new(library::sqlite::SqliteFavorites::new(&library_db)),
             lyrics,
-            auth: users,
+            auth: users.clone(),
             ids: ids.clone(),
         };
         let search_enrichment: Arc<dyn search::ports::EnrichmentPort> = match &enrichment {
@@ -107,10 +116,10 @@ impl ReadsSetup {
         Self {
             library,
             search,
-            discover: discover_deps(ids.clone()),
+            discover,
             collections: collections::CollectionsState::unwired(),
             catalog: None,
-            platform: platform_state(pool, platform),
+            platform,
         }
     }
 
@@ -134,7 +143,7 @@ impl ReadsSetup {
                 Arc::new(search::ports::UnconfiguredEnrichment),
                 ids.clone(),
             ),
-            discover: discover_deps(ids.clone()),
+            discover: test_discover_deps(ids.clone()),
             collections: collections::CollectionsState::unwired(),
             catalog: None,
             platform: test_platform_state(),
@@ -195,16 +204,15 @@ impl ReadsSetup {
     }
 }
 
-/// Discover deps: every port still runs its fake. Clocks pin at build time
-/// (fakes stamp from them) while staleness reads the system clock. Real
-/// providers and stores would replace the ports here.
-fn discover_deps(ids: Arc<dyn IdGenerator>) -> discover::ReadsDeps {
+/// Test discover deps: every port runs its fake.
+#[cfg(any(test, feature = "test-support"))]
+fn test_discover_deps(ids: Arc<dyn IdGenerator>) -> discover::ReadsDeps {
     use discover::fakes::{
         FakeBatches, FakeCharts, FakeContent, FakeNowPlaying, FakePreviews, FakeQueues, FakeRadio,
         FakeYouTube, ManualClock,
     };
 
-    let clock = ManualClock::new(now_unix());
+    let clock = ManualClock::new(0);
     discover::ReadsDeps {
         content: Arc::new(FakeContent::new(clock.clone())),
         queues: Arc::new(FakeQueues::new(clock.clone())),
@@ -219,10 +227,10 @@ fn discover_deps(ids: Arc<dyn IdGenerator>) -> discover::ReadsDeps {
     }
 }
 
-/// What the platform reads take from the composition root.
-pub struct PlatformInputs {
-    /// Runtime settings: the wrapped key and the local-art preference are
-    /// read from here per request.
+/// What the reads take from the composition root beyond the database.
+pub struct ReadsInputs {
+    /// Runtime settings, read per request (wrapped key, local-art
+    /// preference, YouTube and integration settings).
     pub config: Arc<crate::runtime_config::ConfigStore>,
     /// Root of the cover cache (`<cache_dir>/covers`).
     pub covers_dir: std::path::PathBuf,
@@ -232,19 +240,32 @@ pub struct PlatformInputs {
     pub http: reqwest::Client,
     /// The factory's no-redirect client (cover fetches check each hop).
     pub no_redirect: reqwest::Client,
+    /// Shared provider limiters.
+    pub providers: Arc<crate::providers::Providers>,
+    /// Users' ListenBrainz links (your-top charts, wrapped).
+    pub listenbrainz_links: Arc<dyn crate::plugins::scrobble::ListenBrainzLinkStore>,
+    /// The YouTube quota file (`<cache_dir>/youtube_quota.json`).
+    pub youtube_quota_path: std::path::PathBuf,
 }
 
 /// Production platform states: local and Cover Art Archive art through
-/// the disk cache, GitHub releases for the version check, and wrapped
-/// behind the configured key.
-fn platform_state(pool: &sqlx::SqlitePool, inputs: PlatformInputs) -> platform::PlatformState {
+/// the disk cache, GitHub releases for the version check, and wrapped from
+/// ListenBrainz behind the configured key.
+fn platform_state(
+    pool: &sqlx::SqlitePool,
+    users: &UsersDeps,
+    inputs: ReadsInputs,
+) -> platform::PlatformState {
+    use crate::providers::adapters::{CorePacer, CoreSink};
     use crate::providers::coverart::ReqwestCaaTransport;
     use crate::providers::github::GitHubClient;
+    use crate::providers::listenbrainz::{DEFAULT_BASE_URL, ListenBrainzClient};
     use platform::{
         artwork::{ArtworkService, cache::ArtworkCache, local::LocalArtwork, remote::cover_client},
         covers::CoversState,
+        listenbrainz_wrapped::ListenBrainzWrapped,
         version::{GitHubReleases, VersionState},
-        wrapped::{ConfigWrappedKey, FakeWrappedData, WrappedState},
+        wrapped::{ConfigWrappedKey, WrappedData, WrappedState},
     };
 
     let config = inputs.config.clone();
@@ -265,16 +286,24 @@ fn platform_state(pool: &sqlx::SqlitePool, inputs: PlatformInputs) -> platform::
         )))),
         prefer_local,
     );
-    let year = (1970 + now_unix() / SECS_PER_YEAR) as i32;
+    let wrapped: Arc<dyn WrappedData> =
+        match CorePacer::for_source(inputs.providers.clone(), "listenbrainz") {
+            Some(pacer) => Arc::new(ListenBrainzWrapped::new(
+                users.users.clone(),
+                inputs.listenbrainz_links,
+                ListenBrainzClient::new(inputs.http.clone(), DEFAULT_BASE_URL, pacer, CoreSink),
+            )),
+            None => {
+                tracing::error!("no listenbrainz rate limit row; wrapped has no data source");
+                Arc::new(platform::wrapped::NoWrappedData)
+            }
+        };
     platform::PlatformState::new(
         CoversState::new(Arc::new(artwork)),
         VersionState::new(Arc::new(GitHubReleases::new(GitHubClient::new(
             inputs.http,
         )))),
-        WrappedState::new(
-            ConfigWrappedKey::new(inputs.config),
-            Arc::new(FakeWrappedData::empty(year)),
-        ),
+        WrappedState::new(ConfigWrappedKey::new(inputs.config), wrapped),
     )
 }
 

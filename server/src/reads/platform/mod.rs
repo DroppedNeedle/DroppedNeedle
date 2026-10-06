@@ -11,6 +11,7 @@
 
 pub mod artwork;
 pub mod covers;
+pub mod listenbrainz_wrapped;
 pub mod version;
 pub mod wrapped;
 

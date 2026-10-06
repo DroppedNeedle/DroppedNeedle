@@ -276,19 +276,28 @@ impl Drop for ScratchDir {
     }
 }
 
-/// Platform inputs for production-shaped rigs: covers cached under `dir`,
-/// settings from `config`. Nothing dials out unless a test asks for a cover.
-pub fn platform_inputs(
+/// Reads inputs for production-shaped rigs: covers and the YouTube quota
+/// under `dir`, settings from `config`, no linked ListenBrainz accounts.
+/// Nothing dials out unless a test asks for a cover or a chart.
+pub fn reads_inputs(
     config: Arc<droppedneedle::runtime_config::ConfigStore>,
     dir: &Path,
-) -> droppedneedle::reads::PlatformInputs {
+) -> droppedneedle::reads::ReadsInputs {
     let http = test_http();
-    droppedneedle::reads::PlatformInputs {
+    droppedneedle::reads::ReadsInputs {
         config,
         covers_dir: dir.join("covers"),
         cover_cache_max_bytes: 16 * 1024 * 1024,
         http: http.shared().clone(),
         no_redirect: http.no_redirect().clone(),
+        providers: Arc::new(droppedneedle::providers::Providers::with_memory_cache()),
+        listenbrainz_links: Arc::new(
+            droppedneedle::plugins::scrobble::MemoryListenBrainzLinkStore::new(Arc::new(
+                droppedneedle::runtime_config::Crypto::from_key_bytes(&[7u8; 32])
+                    .expect("test key"),
+            )),
+        ),
+        youtube_quota_path: dir.join("youtube_quota.json"),
     }
 }
 

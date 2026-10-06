@@ -30,10 +30,10 @@ use crate::{
     jobs::{media::MediaJobs, wiring::JobsSetup},
     library::wiring::LibrarySetup,
     media::MediaSetup,
-    plugins::wiring::PluginsSetup,
+    plugins::{scrobble::SqliteListenBrainzLinkStore, wiring::PluginsSetup},
     providers::{InMemoryProviderCache, Providers},
     reads::{
-        PlatformInputs, ReadsSetup,
+        ReadsInputs, ReadsSetup,
         catalog::{
             Catalog,
             library::LocalCatalog,
@@ -46,6 +46,7 @@ use crate::{
     runtime_config::{
         ConfigStore, Crypto,
         crypto::CryptoError,
+        quota::QUOTA_FILE_NAME,
         secret_sections::ListenBrainzConnection,
         sections::{ConnectApps, LyricsSettings},
     },
@@ -172,12 +173,19 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         runtime.pool(),
         auth.users.clone(),
         ids.clone(),
-        PlatformInputs {
+        ReadsInputs {
             config: config_store.clone(),
             covers_dir: config.cache_dir.join("covers"),
             cover_cache_max_bytes: config.cover_cache_max_bytes,
             http: http.shared().clone(),
             no_redirect: http.no_redirect().clone(),
+            providers: providers.clone(),
+            listenbrainz_links: Arc::new(SqliteListenBrainzLinkStore::new(
+                runtime.pool().clone(),
+                runtime.lane().clone(),
+                crypto.clone(),
+            )),
+            youtube_quota_path: config.cache_dir.join(QUOTA_FILE_NAME),
         },
         Some(enrichment),
     )

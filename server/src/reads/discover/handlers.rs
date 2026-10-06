@@ -204,6 +204,7 @@ pub async fn get_discover(
     user: AuthenticatedUser,
 ) -> Result<Json<DiscoverResponse>, ReadsError> {
     services::discover(&deps, &user.user_id)
+        .await
         .map(Json)
         .map_err(|error| map(error, &deps))
 }
@@ -222,6 +223,7 @@ pub async fn refresh_discover(
     user: AuthenticatedUser,
 ) -> Result<(StatusCode, Json<RefreshResponse>), ReadsError> {
     services::refresh_discover(&deps, &user.user_id)
+        .await
         .map(|body| (StatusCode::ACCEPTED, Json(body)))
         .map_err(|error| map(error, &deps))
 }
@@ -243,6 +245,7 @@ pub async fn record_activity(
     ValidJson(body): ValidJson<DiscoverActivityRequest>,
 ) -> Result<Json<DiscoverActivityResponse>, ReadsError> {
     services::record_activity(&deps, &user.user_id, &body)
+        .await
         .map(Json)
         .map_err(|error| map(error, &deps))
 }
@@ -264,6 +267,7 @@ pub async fn discover_radio(
     ValidJson(body): ValidJson<RadioRequest>,
 ) -> Result<Json<ChartSection>, ReadsError> {
     services::radio_shelf(&deps, &body)
+        .await
         .map(Json)
         .map_err(|error| map(error, &deps))
 }
@@ -285,6 +289,7 @@ pub async fn radio_plan(
     ValidJson(body): ValidJson<RadioPlanRequest>,
 ) -> Result<Json<RadioPlanResponse>, ReadsError> {
     services::radio_plan(&deps, &user.user_id, &body)
+        .await
         .map(Json)
         .map_err(|error| map(error, &deps))
 }
@@ -306,6 +311,7 @@ pub async fn playlist_suggestions(
     ValidJson(body): ValidJson<PlaylistSuggestionsRequest>,
 ) -> Result<Json<PlaylistSuggestionsResponse>, ReadsError> {
     services::playlist_suggestions(&deps, &user.user_id, &body)
+        .await
         .map(Json)
         .map_err(|error| map(error, &deps))
 }
@@ -331,6 +337,7 @@ pub async fn get_queue(
     ValidQuery(query): ValidQuery<QueueQuery>,
 ) -> Result<Json<DiscoverQueueResponse>, ReadsError> {
     services::queue(&deps, &user.user_id, query.count)
+        .await
         .map(Json)
         .map_err(|error| map(error, &deps))
 }
@@ -387,6 +394,7 @@ pub async fn enrich_queue_item(
     Path(release_group_mbid): Path<String>,
 ) -> Result<Json<QueueEnrichment>, ReadsError> {
     services::enrich_queue_item(&deps, &release_group_mbid)
+        .await
         .map(Json)
         .map_err(|error| map(error, &deps))
 }
@@ -408,6 +416,7 @@ pub async fn preview_queue_item(
     Path(release_group_mbid): Path<String>,
 ) -> Result<Json<DiscoverQueuePreview>, ReadsError> {
     services::preview_queue_item(&deps, &release_group_mbid)
+        .await
         .map(Json)
         .map_err(|error| map(error, &deps))
 }
@@ -429,6 +438,7 @@ pub async fn ignore_queue_item(
     ValidJson(body): ValidJson<QueueIgnoreRequest>,
 ) -> Result<StatusCode, ReadsError> {
     services::ignore_queue_item(&deps, &user.user_id, &body)
+        .await
         .map(|()| StatusCode::NO_CONTENT)
         .map_err(|error| map(error, &deps))
 }
@@ -466,6 +476,7 @@ pub async fn validate_queue(
     ValidJson(body): ValidJson<QueueValidateRequest>,
 ) -> Result<Json<QueueValidateResponse>, ReadsError> {
     services::validate_queue(&deps, &body)
+        .await
         .map(Json)
         .map_err(|error| map(error, &deps))
 }
@@ -490,6 +501,7 @@ pub async fn youtube_search(
     ValidQuery(query): ValidQuery<YouTubeAlbumQuery>,
 ) -> Result<Json<YouTubeSearchResponse>, ReadsError> {
     services::youtube_search(&deps, &query.artist, &query.album)
+        .await
         .map(Json)
         .map_err(|error| map(error, &deps))
 }
@@ -514,6 +526,7 @@ pub async fn youtube_track_search(
     ValidQuery(query): ValidQuery<YouTubeTrackQuery>,
 ) -> Result<Json<YouTubeSearchResponse>, ReadsError> {
     services::youtube_track_search(&deps, &query.artist, &query.track)
+        .await
         .map(Json)
         .map_err(|error| map(error, &deps))
 }
@@ -533,6 +546,7 @@ pub async fn youtube_quota(
     _user: AuthenticatedUser,
 ) -> Result<Json<YouTubeQuotaResponse>, ReadsError> {
     services::youtube_quota(&deps)
+        .await
         .map(Json)
         .map_err(|error| map(error, &deps))
 }
@@ -578,6 +592,7 @@ pub async fn track_preview(
     ValidQuery(query): ValidQuery<TrackPreviewQuery>,
 ) -> Result<Json<TrackPreviewResponse>, ReadsError> {
     services::track_preview(&deps, &query.artist, &query.track)
+        .await
         .map(Json)
         .map_err(|error| map(error, &deps))
 }
@@ -603,6 +618,7 @@ pub async fn album_preview(
     ValidQuery(query): ValidQuery<AlbumPreviewQuery>,
 ) -> Result<Json<AlbumPreviewResponse>, ReadsError> {
     services::album_preview(&deps, &query.artist, &query.album, query.count)
+        .await
         .map(Json)
         .map_err(|error| map(error, &deps))
 }
@@ -718,6 +734,7 @@ pub async fn get_home(
     user: AuthenticatedUser,
 ) -> Result<Json<HomeResponse>, ReadsError> {
     services::home(&deps, &user.user_id)
+        .await
         .map(Json)
         .map_err(|error| map(error, &deps))
 }
@@ -736,6 +753,7 @@ pub async fn integration_status(
     _user: AuthenticatedUser,
 ) -> Result<Json<IntegrationStatus>, ReadsError> {
     services::integration_status(&deps)
+        .await
         .map(Json)
         .map_err(|error| map(error, &deps))
 }
@@ -769,6 +787,7 @@ pub async fn genre_detail(
         query.artist_offset,
         query.album_offset,
     )
+    .await
     .map(Json)
     .map_err(|error| map(error, &deps))
 }
@@ -802,6 +821,7 @@ pub async fn trending_artists(
         query.offset,
         query.source.as_deref(),
     )
+    .await
     .map(Json)
     .map_err(|error| map(error, &deps))
 }
@@ -834,6 +854,7 @@ pub async fn popular_albums(
         query.offset,
         query.source.as_deref(),
     )
+    .await
     .map(Json)
     .map_err(|error| map(error, &deps))
 }
@@ -867,6 +888,7 @@ pub async fn your_top_albums(
         query.offset,
         query.source.as_deref(),
     )
+    .await
     .map(Json)
     .map_err(|error| map(error, &deps))
 }
