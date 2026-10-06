@@ -44,6 +44,7 @@ pub mod revision;
 pub mod roots;
 pub mod scheduler;
 pub mod seams;
+pub mod selection;
 pub mod sqlite_store;
 pub mod store;
 pub mod supervisor;

@@ -376,6 +376,37 @@ impl CatalogStore for SqliteScanStore {
         }
         verdicts
     }
+    fn estimate_scopes(&self, scopes: &[ScanScope]) -> Result<u64, ScanStoreError> {
+        if scopes.is_empty() {
+            return Ok(0);
+        }
+        // One count over the union, so nested or repeated scopes never
+        // count a track twice. Each scope binds its root and path.
+        let clauses: Vec<String> = (0..scopes.len())
+            .map(|index| {
+                let root = 2 * index + 1;
+                let path = root + 1;
+                format!(
+                    "(root_id = ?{root} AND (?{path} = '.' OR relative_path = ?{path} \
+                     OR (relative_path > ?{path} || '/' AND relative_path < ?{path} || '0')))"
+                )
+            })
+            .collect();
+        let sql = format!(
+            "SELECT COUNT(*) FROM local_tracks WHERE {}",
+            clauses.join(" OR ")
+        );
+        let values: Vec<&str> = scopes
+            .iter()
+            .flat_map(|scope| [scope.root_id.as_str(), scope.relative_path.as_str()])
+            .collect();
+        let guard = self.lock();
+        let count: i64 = guard
+            .conn
+            .query_row(&sql, params_from_iter(values), |row| row.get(0))
+            .map_err(internal)?;
+        Ok(count.max(0) as u64)
+    }
 }
 
 /// The catalog revision every catalog writer bumps (0 before the first).

@@ -481,18 +481,22 @@ impl<S: ScanStore, T: TagReader + 'static> LibraryScanCoordinator<S, T> {
         Ok((items, next_cursor))
     }
 
+    /// One page of a run's failures (v2 `scan_run_failures`). An unknown
+    /// run is not-found, never an empty page.
     pub fn scan_run_failures(
         &self,
         run_id: &str,
         limit: usize,
-    ) -> Result<Vec<ScanFailureRecord>, ScanStoreError> {
+        after: Option<i64>,
+    ) -> Result<(Vec<ScanFailureRecord>, Option<i64>), ScanStoreError> {
         self.store.get_run(run_id)?;
-        Ok(self
-            .store
-            .failures(run_id)
-            .into_iter()
-            .take(limit.max(1))
-            .collect())
+        self.store.failures_page(run_id, limit, after)
+    }
+
+    /// Approximate file count for the scopes plus when it was taken (v2
+    /// `estimate`).
+    pub fn estimate(&self, scopes: &[ScanScope]) -> Result<(u64, f64), ScanStoreError> {
+        Ok((self.store.estimate_scopes(scopes)?, self.now()))
     }
 
     /// Pause, resume, or stop a run (v2 `control`).
@@ -530,6 +534,14 @@ impl<S: ScanStore, T: TagReader + 'static> LibraryScanCoordinator<S, T> {
             if let Some(fs) = &self.fs {
                 fs.forget_scan(&run.id);
             }
+        }
+        // A resumed run, or a stop that freed the worker for a queued
+        // run, has work for the supervisor now rather than at its idle
+        // ceiling.
+        if (resume || run.terminal_at.is_some())
+            && let Some(wakeups) = &self.wakeups
+        {
+            wakeups.notify("scan");
         }
         self.log_progress(&run, event, true);
         Ok((run, stream_revision))

@@ -230,6 +230,38 @@ impl RunStore for SqliteScanStore {
             })
     }
 
+    fn failures_page(
+        &self,
+        run_id: &str,
+        limit: usize,
+        after: Option<i64>,
+    ) -> Result<(Vec<ScanFailureRecord>, Option<i64>), ScanStoreError> {
+        let limit = limit.max(1);
+        let guard = self.lock();
+        let mut stmt = guard
+            .conn
+            .prepare(
+                "SELECT rowid, root_id, relative_path, failure_code, recorded_at, \
+                 failure_detail, phase FROM library_scan_failures \
+                 WHERE run_id = ?1 AND (?2 IS NULL OR rowid > ?2) ORDER BY rowid LIMIT ?3",
+            )
+            .map_err(internal)?;
+        let mut rows = stmt
+            .query_map(params![run_id, after, (limit + 1) as i64], |row| {
+                Ok((row.get::<_, i64>("rowid")?, map_failure(row)?))
+            })
+            .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
+            .map_err(internal)?;
+        let more = rows.len() > limit;
+        rows.truncate(limit);
+        let next = if more {
+            rows.last().map(|(rowid, _)| *rowid)
+        } else {
+            None
+        };
+        Ok((rows.into_iter().map(|(_, failure)| failure).collect(), next))
+    }
+
     fn add_counter(&self, run_id: &str, name: &str, delta: i64) {
         let Some(column) = counter_column(name) else {
             return;
