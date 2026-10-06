@@ -15,8 +15,11 @@
 	import SampleButton from '$lib/components/discover/SampleButton.svelte';
 	import { getDiscoverPlaylistSuggestionsV3Query } from '$lib/queries/discover/DiscoverV3Queries.svelte';
 	import { toHomeSection } from '$lib/queries/chartAdapters';
-	import { getPlaylistListQuery } from '$lib/queries/playlists/PlaylistQuery.svelte';
-	import { isRedactedPlaylist, type PlaylistSummary } from '$lib/api/playlists';
+	import {
+		getPlaylistListV3Query,
+		isRedactedPlaylistV3
+	} from '$lib/queries/playlists/PlaylistV3Queries.svelte';
+	import type { components } from '$lib/api/v3/openapi';
 	import { fetchAlbumTracks } from '$lib/api/albums';
 	import { ApiError } from '$lib/api/client';
 	import { formatDuration } from '$lib/utils/formatting';
@@ -48,10 +51,11 @@
 	const activePlaylistId = $derived(isPreselected ? playlistId : selectedPlaylistId);
 	const activePlaylistName = $derived(isPreselected ? playlistName : selectedPlaylistName);
 
-	const playlistListQuery = getPlaylistListQuery(() => open && !isPreselected);
+	type PlaylistSummary = components['schemas']['PlaylistSummary'];
+	const playlistListQuery = getPlaylistListV3Query(() => open && !isPreselected);
 	const playlists = $derived(
 		(playlistListQuery.data ?? []).filter(
-			(p): p is PlaylistSummary => !isRedactedPlaylist(p) && p.is_owner
+			(p): p is PlaylistSummary => !isRedactedPlaylistV3(p) && 'is_owner' in p && p.is_owner
 		)
 	);
 	const playlistsLoading = $derived(playlistListQuery.isLoading);

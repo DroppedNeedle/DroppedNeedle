@@ -2,15 +2,9 @@ import { createMutation } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
-import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { authStore } from '$lib/stores/authStore.svelte';
-import {
-	FavoriteQueryKeyFactory,
-	PlaylistQueryKeyFactory,
-	type FavoriteV3Kind,
-	type PlaylistV3UserId
-} from './PlaylistQueryKeyFactory';
+import { PlaylistQueryKeyFactory, type PlaylistV3UserId } from './PlaylistQueryKeyFactory';
 import { PlaylistV3Api } from './PlaylistV3Api';
 
 export type CreatePlaylistBodyV3 = components['schemas']['CreatePlaylistBody'];
@@ -28,17 +22,15 @@ export type CheckTracksBodyV3 = components['schemas']['CheckTracksBody'];
 export type CheckTracksResponseV3 = components['schemas']['CheckTracksResponse'];
 export type ResolveSourcesResponseV3 = components['schemas']['ResolveSourcesResponse'];
 export type TrackInputV3 = components['schemas']['TrackInput'];
-export type FavoriteStatusResponseV3 = components['schemas']['FavoriteStatusResponse'];
-
 function invalidateList(userId: PlaylistV3UserId): Promise<unknown> {
 	return invalidateQueriesWithPersister({
-		queryKey: PlaylistQueryKeyFactory.v3.list(userId)
+		queryKey: PlaylistQueryKeyFactory.list(userId)
 	});
 }
 
 function invalidateDetail(userId: PlaylistV3UserId, id: string): Promise<unknown> {
 	return invalidateQueriesWithPersister({
-		queryKey: PlaylistQueryKeyFactory.v3.detail(userId, id)
+		queryKey: PlaylistQueryKeyFactory.detail(userId, id)
 	});
 }
 
@@ -168,31 +160,4 @@ export const resolvePlaylistSourcesV3 = () =>
 	createMutation(() => ({
 		// Pure read: source answers are never cached, so no invalidation.
 		mutationFn: (id: string) => api.global.v3.POST(PlaylistV3Api.resolveSources(id))
-	}));
-
-export interface SetFavoriteV3Variables {
-	kind: FavoriteV3Kind;
-	itemId: string;
-	favorited: boolean;
-	name?: string | null;
-}
-
-export const setFavoriteV3 = () =>
-	createMutation(() => ({
-		mutationFn: (vars: SetFavoriteV3Variables) =>
-			api.global.v3.PUT(PlaylistV3Api.favorite(vars.kind, vars.itemId), {
-				favorited: vars.favorited,
-				...(vars.name !== undefined ? { name: vars.name } : {})
-			}),
-		// The flag lives in two places: the favorites ledger and the
-		// favorite-bearing library views, so both sweep together.
-		onSuccess: async () => {
-			const userId = authStore.user?.id;
-			await invalidateQueriesWithPersister({
-				queryKey: FavoriteQueryKeyFactory.user(userId)
-			});
-			await invalidateQueriesWithPersister({
-				queryKey: LibraryQueryKeyFactory.v3.root(userId)
-			});
-		}
 	}));

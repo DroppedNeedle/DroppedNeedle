@@ -1,4 +1,12 @@
 <script lang="ts">
+	import { REMOTE_ENDPOINTS } from '$lib/queries/remotes/endpoints';
+	import { remoteApi } from '$lib/queries/remotes/remoteApi';
+	import {
+		toJellyfinTrack,
+		toNavidromeTrack,
+		toPlexTrack
+	} from '$lib/queries/remotes/remoteAdapters';
+	import { fetchLocalAlbumMatch } from '$lib/queries/albumMatch';
 	import { Shuffle, Play, X, ListPlus, ListStart, ListMusic, Info, Download } from 'lucide-svelte';
 	import { goto } from '$app/navigation';
 	import { API } from '$lib/constants';
@@ -35,12 +43,9 @@
 	import { Radio } from 'lucide-svelte';
 	import type {
 		JellyfinTrackInfo,
-		LocalAlbumMatch,
 		LocalTrackInfo,
 		NavidromeTrackInfo,
 		PlexTrackInfo,
-		NavidromeAlbumDetail,
-		PlexAlbumDetail,
 		JellyfinAlbumSummary,
 		LocalAlbumSummary,
 		NavidromeAlbumSummary,
@@ -159,30 +164,24 @@
 		try {
 			if (sourceType === 'jellyfin') {
 				const jfAlbum = album as JellyfinAlbumSummary;
-				const data = await api.global.get<JellyfinTrackInfo[]>(
-					API.jellyfinLibrary.albumTracks(jfAlbum.jellyfin_id)
-				);
+				const page = await remoteApi.albumTracks('jellyfin', jfAlbum.jellyfin_id, { limit: 500 });
 				if (id !== fetchId) return;
-				jellyfinTracks = data;
+				jellyfinTracks = page.items.map(toJellyfinTrack);
 			} else if (sourceType === 'navidrome') {
 				const ndAlbum = album as NavidromeAlbumSummary;
-				const detail = await api.global.get<NavidromeAlbumDetail>(
-					API.navidromeLibrary.albumDetail(ndAlbum.navidrome_id)
-				);
+				const page = await remoteApi.albumTracks('navidrome', ndAlbum.navidrome_id, {
+					limit: 500
+				});
 				if (id !== fetchId) return;
-				navidromeTracks = detail.tracks ?? [];
+				navidromeTracks = page.items.map(toNavidromeTrack);
 			} else if (sourceType === 'plex') {
 				const plexAlbum = album as PlexAlbumSummary;
-				const detail = await api.global.get<PlexAlbumDetail>(
-					API.plexLibrary.albumDetail(plexAlbum.plex_id)
-				);
+				const page = await remoteApi.albumTracks('plex', plexAlbum.plex_id, { limit: 500 });
 				if (id !== fetchId) return;
-				plexTracks = detail.tracks ?? [];
+				plexTracks = page.items.map(toPlexTrack);
 			} else {
 				const localAlbum = album as LocalAlbumSummary;
-				const match = await api.global.get<LocalAlbumMatch>(
-					API.local.albumMatch(localAlbum.musicbrainz_id)
-				);
+				const match = await fetchLocalAlbumMatch(localAlbum.musicbrainz_id);
 				if (id !== fetchId) return;
 				localTracks = match.tracks;
 			}
@@ -222,22 +221,22 @@
 		if (sourceType !== 'jellyfin' || !album || !('jellyfin_id' in album)) return;
 		mixLoading = true;
 		try {
-			const tracks = await api.get<JellyfinTrackInfo[]>(
-				API.jellyfinLibrary.instantMix(album.jellyfin_id)
+			const mix = await api.v3.GET(
+				REMOTE_ENDPOINTS.mix('jellyfin', album.jellyfin_id, { limit: 50 })
 			);
-			if (tracks.length > 0) {
-				const items: QueueItem[] = tracks.map((t) => ({
-					trackSourceId: t.jellyfin_id,
+			if (mix.items.length > 0) {
+				const items: QueueItem[] = mix.items.map((t) => ({
+					trackSourceId: t.id,
 					trackName: t.title,
 					artistName: t.artist_name,
-					trackNumber: t.track_number,
+					trackNumber: t.track_number ?? 0,
 					discNumber: normalizeDiscNumber(t.disc_number),
 					albumId: t.album_id || '',
 					albumName: t.album_name,
-					coverUrl: t.album_id ? `/api/v1/jellyfin/image/${t.album_id}` : null,
+					coverUrl: t.image_url ?? null,
 					sourceType: 'jellyfin' as const,
-					streamUrl: gatewayStreamUrl('jellyfin', t.jellyfin_id),
-					format: normalizeCodec(t.codec)
+					streamUrl: gatewayStreamUrl('jellyfin', t.id),
+					format: normalizeCodec(undefined)
 				}));
 				playerStore.playQueue(items, 0, false);
 			}
@@ -253,14 +252,10 @@
 		infoLoading = true;
 		infoOpen = true;
 		try {
-			const info = await api.get<{
-				notes: string;
-				musicbrainz_id: string;
-				lastfm_url: string;
-				image_url: string;
-			}>(API.navidromeLibrary.albumInfo(album.navidrome_id));
-			infoNotes = info.notes;
-			infoLastfmUrl = info.lastfm_url;
+			const info = await api.v3.GET(REMOTE_ENDPOINTS.infoAlbum('navidrome', album.navidrome_id));
+			infoNotes = info.biography;
+			// v3 album info carries no Last.fm link.
+			infoLastfmUrl = '';
 			infoMbid = info.musicbrainz_id;
 			infoImageUrl = info.image_url;
 		} catch {

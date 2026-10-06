@@ -23,7 +23,7 @@ vi.mock('../QueryClient', () => ({
 
 import { authStore } from '$lib/stores/authStore.svelte';
 import { invalidateQueriesWithPersister } from '../QueryClient';
-import { createImportRemotePlaylistMutation } from './RemoteMutations.svelte';
+import { createSourcePlaylistImportMutation } from '../source-playlists/SourcePlaylistMutations.svelte';
 
 const mockInvalidate = vi.mocked(invalidateQueriesWithPersister);
 
@@ -46,13 +46,12 @@ beforeEach(() => {
 	setUser({ id: 'userA' });
 });
 
-describe('createImportRemotePlaylistMutation', () => {
+describe('createSourcePlaylistImportMutation', () => {
 	it('skips invalidation when the user changed mid-flight', async () => {
-		const mutation = createImportRemotePlaylistMutation() as unknown as MutationResult<{
-			source: 'plex';
-			id: string;
-		}>;
-		await mutation.onSuccess?.({}, { source: 'plex', id: 'pl1' }, { userId: 'userB' });
+		const mutation = createSourcePlaylistImportMutation(
+			() => 'plex'
+		) as unknown as MutationResult<string>;
+		await mutation.onSuccess?.({}, 'pl1', { userId: 'userB' });
 		expect(mockInvalidate).not.toHaveBeenCalled();
 	});
 });

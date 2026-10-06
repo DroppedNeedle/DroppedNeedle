@@ -34,7 +34,7 @@ export const createImportSpotifyPlaylistMutation = () =>
 			api.global.v3.POST(SPOTIFY_ENDPOINTS.importPlaylist(input.id)),
 		onSuccess: () => {
 			invalidateQueriesWithPersister({
-				queryKey: PlaylistQueryKeyFactory.list(authStore.user?.id)
+				queryKey: PlaylistQueryKeyFactory.root(authStore.user?.id)
 			});
 			invalidateQueriesWithPersister({
 				queryKey: SPOTIFY_PLAYLISTS_KEY(authStore.user?.id)

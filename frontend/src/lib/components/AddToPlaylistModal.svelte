@@ -33,7 +33,7 @@
 	// track counts; invalidate the user-scoped list query so /playlists reflects it.
 	function invalidatePlaylistList() {
 		void invalidateQueriesWithPersister({
-			queryKey: PlaylistQueryKeyFactory.v3.list(authStore.user?.id)
+			queryKey: PlaylistQueryKeyFactory.list(authStore.user?.id)
 		});
 	}
 

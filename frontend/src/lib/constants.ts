@@ -132,9 +132,6 @@ export const STATUS_COLORS = {
 } as const;
 
 export const YOUTUBE_PLAYER_ELEMENT_ID = 'yt-player-embed';
-const requestKindQuery = (requestKind: RequestKind = 'album') =>
-	`?request_kind=${encodeURIComponent(requestKind)}`;
-
 export const API = {
 	// Auth rides the v3 endpoints module ($lib/queries/auth/endpoints); no v1
 	// auth builders remain.

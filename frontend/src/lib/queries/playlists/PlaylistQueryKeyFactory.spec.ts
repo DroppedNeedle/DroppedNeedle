@@ -1,25 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { FavoriteQueryKeyFactory, PlaylistQueryKeyFactory } from './PlaylistQueryKeyFactory';
 
-describe('PlaylistQueryKeyFactory.v3', () => {
-	it('roots user-scoped v3 keys under the playlists prefix', () => {
-		expect(PlaylistQueryKeyFactory.v3.root('user-a')).toEqual(['playlists', 'v3', 'user-a']);
+describe('PlaylistQueryKeyFactory', () => {
+	it('nests the list and every detail under the user root', () => {
+		const root = PlaylistQueryKeyFactory.root('user-a');
+		expect(PlaylistQueryKeyFactory.list('user-a').slice(0, root.length)).toEqual(root);
+		expect(PlaylistQueryKeyFactory.detail('user-a', 'pl-1').slice(0, root.length)).toEqual(root);
 	});
 
 	it('differs per user (no cross-user collision)', () => {
-		expect(PlaylistQueryKeyFactory.v3.list('user-a')).not.toEqual(
-			PlaylistQueryKeyFactory.v3.list('user-b')
+		expect(PlaylistQueryKeyFactory.root('user-a')).not.toEqual(
+			PlaylistQueryKeyFactory.root('user-b')
 		);
-	});
-
-	it('scopes detail keys by playlist id', () => {
-		expect(PlaylistQueryKeyFactory.v3.detail('user-a', 'pl-1')).toEqual([
-			'playlists',
-			'v3',
-			'user-a',
-			'detail',
-			'pl-1'
-		]);
+		expect(PlaylistQueryKeyFactory.root(undefined)).toEqual(['playlists', null]);
 	});
 });
 

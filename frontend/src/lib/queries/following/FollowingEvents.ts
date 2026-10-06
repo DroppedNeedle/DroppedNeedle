@@ -69,11 +69,9 @@ export function createFollowingEvents(mux: MuxEventStream = muxEventStream) {
 		if (!playlistId || (eventId && importsSeen.has(eventId))) return;
 		if (eventId) importsSeen.add(eventId);
 		// import finished populating - refresh the open detail view and the list count
-		const userId = authStore.user?.id;
 		void invalidateQueriesWithPersister({
-			queryKey: PlaylistQueryKeyFactory.detail(userId, playlistId)
+			queryKey: PlaylistQueryKeyFactory.root(authStore.user?.id)
 		});
-		void invalidateQueriesWithPersister({ queryKey: PlaylistQueryKeyFactory.list(userId) });
 	}
 
 	function handlePersonalMixRefreshed(event: Event): void {
@@ -89,14 +87,9 @@ export function createFollowingEvents(mux: MuxEventStream = muxEventStream) {
 			mixSeen.add(eventId);
 			persistSeen(MIX_SEEN_KEY, mixSeen);
 		}
-		const userId = authStore.user?.id;
-		const playlistId = typeof data.playlist_id === 'string' ? data.playlist_id : '';
-		if (playlistId) {
-			void invalidateQueriesWithPersister({
-				queryKey: PlaylistQueryKeyFactory.detail(userId, playlistId)
-			});
-		}
-		void invalidateQueriesWithPersister({ queryKey: PlaylistQueryKeyFactory.list(userId) });
+		void invalidateQueriesWithPersister({
+			queryKey: PlaylistQueryKeyFactory.root(authStore.user?.id)
+		});
 		if (data.skipped === true) {
 			const reason = typeof data.reason === 'string' ? data.reason : '';
 			toastStore.show({
@@ -156,11 +149,7 @@ export function createFollowingEvents(mux: MuxEventStream = muxEventStream) {
 		void invalidateQueriesWithPersister({
 			queryKey: FollowQueryKeyFactory.concertsUnseen(userId)
 		});
-		// user-scoped parent, not list(): detail keys are not prefixed by list,
-		// so invalidate the parent to cascade to an open detail view too
-		void invalidateQueriesWithPersister({
-			queryKey: [...PlaylistQueryKeyFactory.prefix, userId ?? 'anon']
-		});
+		void invalidateQueriesWithPersister({ queryKey: PlaylistQueryKeyFactory.root(userId) });
 		void invalidateQueriesWithPersister({
 			queryKey: FollowQueryKeyFactory.concerts(userId)
 		});

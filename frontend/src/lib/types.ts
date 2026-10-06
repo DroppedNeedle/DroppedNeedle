@@ -1329,13 +1329,6 @@ export type SourcePlaylistDetail = {
 	tracks: SourcePlaylistTrack[];
 };
 
-export type SourceImportResult = {
-	droppedneedle_playlist_id: string;
-	tracks_imported: number;
-	tracks_failed: number;
-	already_imported: boolean;
-};
-
 export type PlexSessionInfo = {
 	session_id: string;
 	user_name: string;

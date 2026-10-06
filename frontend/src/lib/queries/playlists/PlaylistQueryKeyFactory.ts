@@ -2,23 +2,18 @@ import { userIdSegment } from '../userKeySegment';
 
 export type PlaylistV3UserId = string | null | undefined;
 
+// The one key factory for the caller's playlists. Every key sits under the
+// user's root, so a mutation or event that changes playlists invalidates
+// `root(userId)` and the list and every open detail refresh together. The
+// user id keeps one account's playlists from showing for another on a
+// shared browser.
 export const PlaylistQueryKeyFactory = {
 	prefix: ['playlists'] as const,
-	// Keys carry the current user id so personalized playlist data never leaks across
-	// a user switch on a shared browser (AMU-5).
-	list: (userId: string | undefined) =>
-		[...PlaylistQueryKeyFactory.prefix, userId ?? 'anon', 'list'] as const,
-	detail: (userId: string | undefined, id: string) =>
-		[...PlaylistQueryKeyFactory.prefix, userId ?? 'anon', 'detail', id] as const,
-	// v3 playlist keys, nested under the same prefix for prefix invalidation.
-	v3: {
-		root: (userId: PlaylistV3UserId) =>
-			[...PlaylistQueryKeyFactory.prefix, 'v3', userIdSegment(userId)] as const,
-		list: (userId: PlaylistV3UserId) =>
-			[...PlaylistQueryKeyFactory.v3.root(userId), 'list'] as const,
-		detail: (userId: PlaylistV3UserId, id: string) =>
-			[...PlaylistQueryKeyFactory.v3.root(userId), 'detail', id] as const
-	}
+	root: (userId: PlaylistV3UserId) =>
+		[...PlaylistQueryKeyFactory.prefix, userIdSegment(userId)] as const,
+	list: (userId: PlaylistV3UserId) => [...PlaylistQueryKeyFactory.root(userId), 'list'] as const,
+	detail: (userId: PlaylistV3UserId, id: string) =>
+		[...PlaylistQueryKeyFactory.root(userId), 'detail', id] as const
 };
 
 export type FavoriteV3UserId = string | null | undefined;

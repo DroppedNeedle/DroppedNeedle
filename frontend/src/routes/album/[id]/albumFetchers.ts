@@ -13,6 +13,12 @@ import type {
 import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
 import { compareDiscTrack } from '$lib/player/queueHelpers';
+import {
+	fetchJellyfinAlbumMatch,
+	fetchLocalAlbumMatch,
+	fetchNavidromeAlbumMatch,
+	fetchPlexAlbumMatch
+} from '$lib/queries/albumMatch';
 
 export { fetchAlbumTracks } from '$lib/api/albums';
 
@@ -67,36 +73,31 @@ export async function fetchJellyfinMatch(
 	albumId: string,
 	signal?: AbortSignal
 ): Promise<JellyfinAlbumMatch | null> {
-	return api.get<JellyfinAlbumMatch>(API.jellyfinLibrary.albumMatch(albumId), { signal });
+	return fetchJellyfinAlbumMatch(albumId, signal);
 }
 
 export async function fetchLocalMatch(
 	albumId: string,
 	signal?: AbortSignal
 ): Promise<LocalAlbumMatch | null> {
-	return api.get<LocalAlbumMatch>(API.local.albumMatch(albumId), { signal });
+	return fetchLocalAlbumMatch(albumId, signal);
 }
 
 export async function fetchNavidromeMatch(
 	albumId: string,
-	opts: { albumTitle?: string; artistName?: string },
+	_opts: { albumTitle?: string; artistName?: string },
 	signal?: AbortSignal
 ): Promise<NavidromeAlbumMatch | null> {
-	const matchUrl = new URL(API.navidromeLibrary.albumMatch(albumId), window.location.origin);
-	if (opts.albumTitle) matchUrl.searchParams.set('name', opts.albumTitle);
-	if (opts.artistName) matchUrl.searchParams.set('artist', opts.artistName);
-	return api.get<NavidromeAlbumMatch>(matchUrl.toString(), { signal });
+	// v3 matches by MusicBrainz id only; the title and artist hints are unused.
+	return fetchNavidromeAlbumMatch(albumId, signal);
 }
 
 export async function fetchPlexMatch(
 	albumId: string,
-	opts: { albumTitle?: string; artistName?: string },
+	_opts: { albumTitle?: string; artistName?: string },
 	signal?: AbortSignal
 ): Promise<PlexAlbumMatch | null> {
-	const matchUrl = new URL(API.plexLibrary.albumMatch(albumId), window.location.origin);
-	if (opts.albumTitle) matchUrl.searchParams.set('name', opts.albumTitle);
-	if (opts.artistName) matchUrl.searchParams.set('artist', opts.artistName);
-	return api.get<PlexAlbumMatch>(matchUrl.toString(), { signal });
+	return fetchPlexAlbumMatch(albumId, signal);
 }
 
 export async function fetchLastFm(

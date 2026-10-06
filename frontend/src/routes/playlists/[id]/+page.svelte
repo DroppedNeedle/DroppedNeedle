@@ -189,7 +189,7 @@
 				if (hasUsableSourcesForPlaylist(sources, ids)) {
 					setSourcesCache(playlistId, sources);
 					await invalidateQueriesWithPersister({
-						queryKey: PlaylistQueryKeyFactory.v3.detail(authStore.user?.id, playlistId)
+						queryKey: PlaylistQueryKeyFactory.detail(authStore.user?.id, playlistId)
 					});
 				}
 			}
@@ -282,7 +282,7 @@
 		try {
 			await deleteMutation.mutateAsync(playlist.id);
 			await invalidateQueriesWithPersister({
-				queryKey: PlaylistQueryKeyFactory.v3.list(authStore.user?.id)
+				queryKey: PlaylistQueryKeyFactory.list(authStore.user?.id)
 			});
 			toastStore.show({ message: 'Playlist deleted', type: 'success' });
 			await goto(withBasePath('/playlists'));
