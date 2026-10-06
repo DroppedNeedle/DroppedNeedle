@@ -110,10 +110,11 @@ pub struct AlbumIdentificationContext {
 /// Reads the album identification context. Implemented against the real
 /// library store; contributions only consume it.
 pub trait ContributionIdentity: Send + Sync {
+    /// `Ok(None)` when the album is gone; `Err` when it could not be read.
     fn album_context<'a>(
         &'a self,
         album_id: &'a str,
-    ) -> BoxFuture<'a, Option<AlbumIdentificationContext>>;
+    ) -> BoxFuture<'a, Result<Option<AlbumIdentificationContext>, ContribError>>;
 
     /// Input revisions owned by scan and identify (v2 `album_input_revisions`):
     /// tag, file, policy. The contribution input revision is the
@@ -179,6 +180,20 @@ pub struct AttachmentDecision {
     pub reason_code: Option<String>,
     pub selected_candidate_key: Option<String>,
     pub candidates: Vec<AttachmentCandidate>,
+    /// The file-to-track pairing behind an identified decision; empty when
+    /// the release needs review.
+    pub tracks: Vec<TrackEvidence>,
+}
+
+/// One local file paired with one track of the verified release. A link
+/// writes it as the file's MusicBrainz track identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrackEvidence {
+    pub local_track_id: String,
+    pub recording_mbid: String,
+    pub release_track_mbid: Option<String>,
+    pub medium_position: Option<i64>,
+    pub track_position: Option<i64>,
 }
 
 /// Decides whether a verified MusicBrainz release safely matches the current
@@ -377,12 +392,15 @@ pub trait ContributionStore: Send + Sync {
         now: f64,
     ) -> BoxFuture<'a, Result<ContributionRow, ContribError>>;
 
-    fn get<'a>(&'a self, contribution_id: &'a str) -> BoxFuture<'a, Option<ContributionRow>>;
+    fn get<'a>(
+        &'a self,
+        contribution_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<ContributionRow>, ContribError>>;
 
     fn get_active_for_album<'a>(
         &'a self,
         album_id: &'a str,
-    ) -> BoxFuture<'a, Option<ContributionRow>>;
+    ) -> BoxFuture<'a, Result<Option<ContributionRow>, ContribError>>;
 
     /// Optimistic-lock helper: runs `update` against the current row; the
     /// store rejects stale `expected_row_revision` reads.
@@ -488,6 +506,8 @@ pub struct FinishIdentities {
     pub release_mbid: Option<String>,
     pub release_group_mbid: Option<String>,
     pub artist_mbid: Option<String>,
+    /// Per-file track identities the link writes.
+    pub tracks: Vec<TrackEvidence>,
 }
 
 /// Store-side mutation applied under the row-revision guard.
@@ -515,6 +535,7 @@ pub enum ContributionUpdate {
         release_group_mbid: String,
         artist_mbid: Option<String>,
         attempt: ContributionVerificationAttempt,
+        tracks: Vec<TrackEvidence>,
     },
     PrepareSeed {
         token_hash: String,

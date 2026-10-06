@@ -1636,6 +1636,8 @@ async fn library_contribution_seed_callback_verify_links_album() {
 
     const RELEASE: &str = "11111111-1111-4111-8111-111111111111";
     const GROUP: &str = "22222222-2222-4222-8222-222222222222";
+    // Same title and artist, a different tracklist.
+    const WRONG: &str = "44444444-4444-4444-8444-444444444444";
     const ARTIST_MBID: &str = "33333333-3333-4333-8333-333333333333";
 
     let lib = Lib::open("contrib").await;
@@ -1758,7 +1760,7 @@ async fn library_contribution_seed_callback_verify_links_album() {
     let back = |token: &str| {
         Request::builder()
             .uri(format!(
-                "/api/v1/library/contributions/musicbrainz/callback?token={token}&release_mbid={RELEASE}"
+                "/api/v1/library/contributions/musicbrainz/callback?token={token}&release_mbid={WRONG}"
             ))
             .header("host", HOST)
             .body(Body::empty())
@@ -1776,39 +1778,93 @@ async fn library_contribution_seed_callback_verify_links_album() {
         "/library?musicbrainz=callback-error"
     );
 
-    // The worker confirms the release and links the album.
     let providers = lib
         .library
         .test_contrib
         .as_ref()
         .expect("scripted providers");
-    providers.musicbrainz.insert_verification(
-        RELEASE,
-        Ok(Some(MusicBrainzVerifiedRelease {
-            release_mbid: RELEASE.to_owned(),
-            release_group_mbid: GROUP.to_owned(),
-            title: "Test Album".to_owned(),
-            artist_name: "Test Artist".to_owned(),
-            artist_mbid: Some(ARTIST_MBID.to_owned()),
-            tracks: vec![MusicBrainzVerifiedTrack {
-                title: "First Song".to_owned(),
-                position: 1,
+    let release = |mbid: &str, titles: [&str; 2]| MusicBrainzVerifiedRelease {
+        release_mbid: mbid.to_owned(),
+        release_group_mbid: GROUP.to_owned(),
+        title: "Test Album".to_owned(),
+        artist_name: "Test Artist".to_owned(),
+        artist_mbid: Some(ARTIST_MBID.to_owned()),
+        tracks: titles
+            .iter()
+            .enumerate()
+            .map(|(index, title)| MusicBrainzVerifiedTrack {
+                title: (*title).to_owned(),
+                position: index as i64 + 1,
                 disc_number: 1,
                 duration_seconds: Some(200.0),
-                recording_mbid: None,
-                release_track_mbid: None,
-            }],
-            ..Default::default()
-        })),
+                recording_mbid: Some(format!("{mbid}-rec-{index}")),
+                release_track_mbid: Some(format!("{mbid}-track-{index}")),
+            })
+            .collect(),
+        ..Default::default()
+    };
+    let now = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_secs_f64()
+    };
+
+    // The returned release shares the title but not the tracklist: the
+    // matcher refuses it and says why.
+    providers.musicbrainz.insert_verification(
+        WRONG,
+        Ok(Some(release(
+            WRONG,
+            ["Somebody Else", "Another Tune Entirely"],
+        ))),
     );
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_secs_f64();
     let outcome = lib
         .library
         .contrib_worker
-        .run_once(now)
+        .run_once(now())
+        .await
+        .expect("worker runs");
+    assert_eq!(outcome, Some(VerificationOutcome::NeedsReview));
+    let (status, review) = call(
+        lib.router(),
+        "GET",
+        &format!("/api/v3/library/contributions/{id}"),
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{review}");
+    assert_eq!(review["state"], json!("needs_review"));
+    assert_eq!(
+        review["review_reason"]["code"],
+        json!("ATTACHMENT_WEAK_FIT")
+    );
+    assert!(review["review_reason"]["action"].is_string());
+
+    // The curator records the right release; it fits and links.
+    let (status, verifying) = call(
+        lib.router(),
+        "PUT",
+        &format!("/api/v3/library/contributions/{id}/musicbrainz/result"),
+        &headers,
+        Some(json!({
+            "expected_row_revision": review["row_revision"],
+            "release_id_or_url": RELEASE,
+            "replace_existing_result": true,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{verifying}");
+    assert_eq!(verifying["state"], json!("verifying"));
+    providers.musicbrainz.insert_verification(
+        RELEASE,
+        Ok(Some(release(RELEASE, ["First Song", "Second Song"]))),
+    );
+    let outcome = lib
+        .library
+        .contrib_worker
+        .run_once(now())
         .await
         .expect("worker runs");
     assert_eq!(outcome, Some(VerificationOutcome::Linked));
@@ -1840,4 +1896,43 @@ async fn library_contribution_seed_callback_verify_links_album() {
         )
         .expect("artist identity committed");
     assert_eq!(artist, ARTIST_MBID);
+    // Every file took its track on the release.
+    let tracks: Vec<(String, String, String, i64, i64)> = db
+        .prepare(
+            "SELECT local_track_id, recording_mbid, release_track_mbid, medium_position, \
+             release_track_position FROM local_track_external_identities \
+             WHERE decision_source = 'manual' ORDER BY local_track_id",
+        )
+        .expect("query prepares")
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })
+        .expect("query runs")
+        .collect::<Result<_, _>>()
+        .expect("rows read");
+    assert_eq!(
+        tracks,
+        vec![
+            (
+                "t1".into(),
+                format!("{RELEASE}-rec-0"),
+                format!("{RELEASE}-track-0"),
+                1,
+                1
+            ),
+            (
+                "t2".into(),
+                format!("{RELEASE}-rec-1"),
+                format!("{RELEASE}-track-1"),
+                1,
+                2
+            ),
+        ]
+    );
 }

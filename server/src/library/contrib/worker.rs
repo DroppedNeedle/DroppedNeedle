@@ -227,6 +227,11 @@ impl VerificationWorker {
             artist_mbid: selected
                 .and_then(|c| c.artist_mbid.clone())
                 .or_else(|| verified.artist_mbid.clone()),
+            tracks: if identified {
+                decision.tracks.clone()
+            } else {
+                Vec::new()
+            },
         };
         let expected_album_revision = context.album.as_ref().map(|a| a.row_revision).unwrap_or(0);
         let result = self
@@ -294,7 +299,7 @@ impl VerificationWorker {
         let context = match self
             .identity
             .album_context(&contribution.local_album_id)
-            .await
+            .await?
         {
             Some(context) if context.album.is_some() => context,
             _ => return Ok(VerificationOutcome::SubjectMissing),

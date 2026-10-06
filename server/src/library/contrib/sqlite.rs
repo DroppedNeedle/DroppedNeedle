@@ -647,6 +647,7 @@ struct LinkIdentity<'a> {
     artist_mbid: Option<&'a str>,
     attempt: &'a ContributionVerificationAttempt,
     selected_by: Option<&'a str>,
+    tracks: &'a [TrackEvidence],
 }
 
 /// Commit the album identity (and the artist identity when free) as manual
@@ -726,6 +727,39 @@ fn commit_link(conn: &Connection, link: &LinkIdentity<'_>, now: f64) -> Result<i
             }
             None => {}
         }
+    }
+    // Each paired file takes its track identity on the release, as v2 wrote
+    // it: recording, release track and position, a manual decision. Only
+    // files of this album are touched.
+    for track in link.tracks {
+        let positive = |value: Option<i64>| value.filter(|position| *position > 0);
+        conn.prepare_cached(
+            "INSERT INTO local_track_external_identities (local_track_id, provider, \
+             recording_mbid, release_mbid, release_track_mbid, medium_position, \
+             release_track_position, decision_source, attempt_id, selected_at) \
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, 'manual', ?8, ?9 \
+             WHERE EXISTS (SELECT 1 FROM local_tracks WHERE id = ?1 AND local_album_id = ?10) \
+             ON CONFLICT (local_track_id, provider) DO UPDATE SET \
+             recording_mbid = excluded.recording_mbid, release_mbid = excluded.release_mbid, \
+             release_track_mbid = excluded.release_track_mbid, \
+             medium_position = excluded.medium_position, \
+             release_track_position = excluded.release_track_position, \
+             decision_source = excluded.decision_source, attempt_id = excluded.attempt_id, \
+             selected_at = excluded.selected_at, \
+             row_revision = local_track_external_identities.row_revision + 1",
+        )?
+        .execute(params![
+            track.local_track_id,
+            PROVIDER,
+            track.recording_mbid,
+            link.release_mbid,
+            track.release_track_mbid,
+            positive(track.medium_position),
+            positive(track.track_position),
+            link.attempt.id,
+            now,
+            link.album_id,
+        ])?;
     }
     // An identify review left open for this album is settled by the link.
     conn.prepare_cached(
@@ -868,6 +902,7 @@ fn apply_update(
                 release_group_mbid,
                 artist_mbid,
                 attempt,
+                tracks,
             } => {
                 if !row.album_active {
                     return Err(ContribError::ContributionNotFound);
@@ -947,6 +982,7 @@ fn apply_update(
                         artist_mbid: artist_mbid.as_deref(),
                         attempt: &attempt,
                         selected_by: Some(actor_user_id),
+                        tracks: &tracks,
                     },
                     now,
                 )?;
@@ -1179,33 +1215,26 @@ impl ContributionStore for SqliteContributions {
         }))
     }
 
-    fn get<'a>(&'a self, contribution_id: &'a str) -> BoxFuture<'a, Option<ContributionRow>> {
+    fn get<'a>(
+        &'a self,
+        contribution_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<ContributionRow>, ContribError>> {
         let id = contribution_id.to_owned();
-        Box::pin(async move {
-            self.read("get contribution", move |conn| load_row(conn, &id))
-                .await
-                .ok()
-                .flatten()
-        })
+        Box::pin(self.read("get contribution", move |conn| load_row(conn, &id)))
     }
 
     fn get_active_for_album<'a>(
         &'a self,
         album_id: &'a str,
-    ) -> BoxFuture<'a, Option<ContributionRow>> {
+    ) -> BoxFuture<'a, Result<Option<ContributionRow>, ContribError>> {
         let album = album_id.to_owned();
-        Box::pin(async move {
-            self.read(
-                "active contribution",
-                move |conn| match active_id_for_album(conn, &album)? {
-                    Some(id) => Ok(load_row(conn, &id)?.filter(|row| row.album_active)),
-                    None => Ok(None),
-                },
-            )
-            .await
-            .ok()
-            .flatten()
-        })
+        Box::pin(self.read(
+            "active contribution",
+            move |conn| match active_id_for_album(conn, &album)? {
+                Some(id) => Ok(load_row(conn, &id)?.filter(|row| row.album_active)),
+                None => Ok(None),
+            },
+        ))
     }
 
     fn compare_and_set<'a>(
@@ -1658,6 +1687,7 @@ impl ContributionStore for SqliteContributions {
                         artist_mbid: identities.artist_mbid.as_deref(),
                         attempt: &attempt,
                         selected_by: attempt.requested_by_user_id.as_deref(),
+                        tracks: &identities.tracks,
                     },
                     now,
                 )?;
@@ -1835,22 +1865,11 @@ impl ContributionIdentity for SqliteContributions {
     fn album_context<'a>(
         &'a self,
         album_id: &'a str,
-    ) -> BoxFuture<'a, Option<AlbumIdentificationContext>> {
+    ) -> BoxFuture<'a, Result<Option<AlbumIdentificationContext>, ContribError>> {
         let album = album_id.to_owned();
-        Box::pin(async move {
-            match self
-                .read("album identification context", move |conn| {
-                    album_context(conn, &album)
-                })
-                .await
-            {
-                Ok(context) => context,
-                Err(error) => {
-                    tracing::warn!(%error, album = album_id, "album context unreadable");
-                    None
-                }
-            }
-        })
+        Box::pin(self.read("album identification context", move |conn| {
+            album_context(conn, &album)
+        }))
     }
 
     fn input_revisions(&self, tracks: &[IdentityTrack]) -> (String, String, String) {

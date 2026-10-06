@@ -104,13 +104,14 @@ impl ContributionIdentity for MemoryIdentity {
     fn album_context<'a>(
         &'a self,
         album_id: &'a str,
-    ) -> BoxFuture<'a, Option<AlbumIdentificationContext>> {
+    ) -> BoxFuture<'a, Result<Option<AlbumIdentificationContext>, ContribError>> {
         Box::pin(async move {
-            self.contexts
+            Ok(self
+                .contexts
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .get(album_id)
-                .cloned()
+                .cloned())
         })
     }
 
@@ -232,6 +233,7 @@ impl ScriptedEvidence {
             reason_code: Some("EXACT".to_string()),
             selected_candidate_key: Some(candidate.key()),
             candidates: vec![candidate],
+            tracks: Vec::new(),
         }
     }
 
@@ -241,6 +243,7 @@ impl ScriptedEvidence {
             reason_code: Some(reason.to_string()),
             selected_candidate_key: None,
             candidates: Vec::new(),
+            tracks: Vec::new(),
         }
     }
 
@@ -911,27 +914,30 @@ impl ContributionStore for MemoryStore {
         })
     }
 
-    fn get<'a>(&'a self, contribution_id: &'a str) -> BoxFuture<'a, Option<ContributionRow>> {
+    fn get<'a>(
+        &'a self,
+        contribution_id: &'a str,
+    ) -> BoxFuture<'a, Result<Option<ContributionRow>, ContribError>> {
         Box::pin(async move {
             let inner = self
                 .inner
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            inner
+            Ok(inner
                 .contributions
                 .get(contribution_id)
                 .cloned()
                 .map(|mut row| {
                     MemoryStore::refresh_locked(&inner, &mut row);
                     row
-                })
+                }))
         })
     }
 
     fn get_active_for_album<'a>(
         &'a self,
         album_id: &'a str,
-    ) -> BoxFuture<'a, Option<ContributionRow>> {
+    ) -> BoxFuture<'a, Result<Option<ContributionRow>, ContribError>> {
         Box::pin(async move {
             let inner = self
                 .inner
@@ -946,10 +952,10 @@ impl ContributionStore for MemoryStore {
             if let Some(row) = best.as_mut() {
                 MemoryStore::refresh_locked(&inner, row);
                 if !row.album_active {
-                    return None;
+                    return Ok(None);
                 }
             }
-            best
+            Ok(best)
         })
     }
 
@@ -1105,6 +1111,7 @@ impl ContributionStore for MemoryStore {
                     release_group_mbid,
                     artist_mbid,
                     attempt,
+                    ..
                 } => {
                     if !row.album_active {
                         return Err(ContribError::ContributionNotFound);

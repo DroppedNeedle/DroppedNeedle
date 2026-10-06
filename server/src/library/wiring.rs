@@ -377,7 +377,13 @@ impl LibrarySetup {
             releases: identify_store.clone(),
             providers,
         }));
-        let (contrib, contrib_worker) = super::contrib::assemble(db_path, contrib_providers)?;
+        let (contrib, contrib_worker) = super::contrib::assemble(
+            db_path,
+            contrib_providers,
+            Arc::new(super::adapters::IdentifyFollowUp::new(
+                identify_store.clone(),
+            )),
+        )?;
         Ok(Self {
             users,
             ids,

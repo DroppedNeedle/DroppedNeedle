@@ -1,9 +1,9 @@
 //! Seam implementations between the library modules.
 //!
 //! Each adapter is narrow by design: it translates at a module boundary
-//! and owns no domain logic. The contribution provider adapters read live
-//! MusicBrainz and Discogs; the catalog port stays a traced no-op while
-//! reads serve straight from SQLite.
+//! and owns no domain logic. The contribution adapters read live
+//! MusicBrainz and Discogs, decide attachments with the library matcher,
+//! and follow a link up through identification.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -16,12 +16,16 @@ use super::contrib::error::ContribError;
 use super::contrib::models::{
     ContributionRecord, DiscogsArtistCredit, DiscogsFormat, DiscogsIdentifier, DiscogsLabel,
     DiscogsMedium, DiscogsRelease, DiscogsReleaseCandidate, DiscogsTrack, MusicBrainzUrlResolution,
-    MusicBrainzVerifiedRelease, MusicBrainzVerifiedTrack,
+    MusicBrainzVerifiedRelease, MusicBrainzVerifiedTrack, ReleaseTrackDraft,
 };
 use super::contrib::seams::{
     AttachmentCandidate, AttachmentDecision, AttachmentEvidence, AttachmentOutcome,
     ContributionCatalog, DiscogsContrib, DuplicateSearchFacts, MusicBrainzContrib, ProviderFailure,
-    UrlRelation,
+    TrackEvidence, UrlRelation,
+};
+use super::matching::decide::{ACCEPT_ALBUM, ACCEPT_TRACK};
+use super::matching::{
+    CreditedArtist, LocalAlbum, LocalTrack, Release, ReleaseMedium, ReleaseTrack, match_release,
 };
 use super::publish::PublishError;
 use super::publish::planner::SpaceProbe;
@@ -119,13 +123,27 @@ fn free_bytes_for(dir: &Path) -> Result<u64, PublishError> {
 // Contrib ports.
 // ---------------------------------------------------------------------------
 
-/// Contribution catalog port. Reads serve straight from SQLite with
-/// no identity-bearing cache to invalidate and no reindex hook to
-/// fire, so all three calls are no-ops (traced, so a future
-/// cache lands its invalidation here).
-pub struct NoopContributionCatalog;
+/// Contribution catalog port over identification. Reads serve straight
+/// from SQLite, so there is no identity-bearing cache to invalidate (both
+/// invalidations are traced no-ops). A link asks identification to take
+/// the album again now, so its credits and release document catch up with
+/// the new manual identity (identify never overwrites a manual decision).
+///
+/// Library Management (WI-21) hooks auto-management of a newly linked
+/// album here, at `after_identified`, the same place v2's `on_identified`
+/// callback fired.
+pub struct IdentifyFollowUp {
+    identify: Arc<super::identify::sqlite::SqliteIdentifyStore>,
+}
 
-impl ContributionCatalog for NoopContributionCatalog {
+impl IdentifyFollowUp {
+    /// Follow links up through `identify`.
+    pub fn new(identify: Arc<super::identify::sqlite::SqliteIdentifyStore>) -> Self {
+        Self { identify }
+    }
+}
+
+impl ContributionCatalog for IdentifyFollowUp {
     fn invalidate_identity_scope<'a>(
         &'a self,
         album_mbids: &'a [String],
@@ -155,27 +173,42 @@ impl ContributionCatalog for NoopContributionCatalog {
     ) -> BoxFuture<'a, ()> {
         let album = local_album_id.to_owned();
         let policy = input_policy_revision.to_owned();
+        let identify = self.identify.clone();
         Box::pin(async move {
-            tracing::debug!(
-                album,
-                policy,
-                "contribution linked: no reindex hook registered"
-            );
+            let offered = {
+                let album = album.clone();
+                tokio::task::spawn_blocking(move || identify.offer(&album)).await
+            };
+            match offered {
+                Ok(Some(queued)) => {
+                    tracing::info!(album, policy, queued, "linked album offered to identify")
+                }
+                Ok(None) => tracing::warn!(
+                    album,
+                    "linked album could not be offered to identify; the next scan will"
+                ),
+                Err(error) => tracing::warn!(%error, album, "identify follow-up did not run"),
+            }
         })
     }
 }
 
-/// Attachment evidence: contradiction-only check in the v2 shape
-/// (curator-verified release, no lone quorum). An empty verified
-/// MBID or a title that disagrees with the draft after casefolding
-/// needs review; anything else attaches. The full evidence engine
-/// port stays a follow-up; this never invents a match, it only
-/// refuses to contradict the curator silently.
-pub struct MinimalAttachmentEvidence;
+/// Attachment evidence over the library matcher: the album's files, as
+/// the contribution describes them (draft titles where the curator edited,
+/// snapshot positions and lengths, the files' recording MBIDs), are scored
+/// against the verified release's tracklist with the same pairing,
+/// distances and title, artist and length gates identification uses.
+///
+/// v2 decided attachments with its evidence engine minus the lone-release
+/// quorum (the curator named this exact release), so this does the same:
+/// accept only a clean fit, and send everything else to review with a
+/// catalogued reason. An accepted decision carries the file-to-track
+/// pairing, which the link writes as track identities.
+pub struct MatchingAttachmentEvidence;
 
-impl AttachmentEvidence for MinimalAttachmentEvidence {
+impl AttachmentEvidence for MatchingAttachmentEvidence {
     fn matcher_version(&self) -> String {
-        "v3-minimal-1".to_owned()
+        "v3-matching-1".to_owned()
     }
 
     fn decide_attachment<'a>(
@@ -185,47 +218,178 @@ impl AttachmentEvidence for MinimalAttachmentEvidence {
         recording_mbids: &'a HashMap<String, Option<String>>,
         _relative_paths: &'a HashMap<String, String>,
     ) -> BoxFuture<'a, AttachmentDecision> {
-        let candidate = AttachmentCandidate {
-            release_group_mbid: verified.release_group_mbid.clone(),
-            release_mbid: Some(verified.release_mbid.clone()),
-            artist_mbid: verified.artist_mbid.clone(),
-        };
-        let key = candidate.key();
-        let decision = if verified.release_mbid.trim().is_empty() {
-            AttachmentDecision {
-                outcome: AttachmentOutcome::NeedsReview,
-                reason_code: Some("VERIFIED_MBID_MISSING".to_owned()),
-                selected_candidate_key: None,
-                candidates: vec![candidate],
-            }
-        } else if !titles_agree(
-            contribution.draft.title.value.as_deref().unwrap_or(""),
-            &verified.title,
-        ) || recording_mbids
-            .values()
-            .any(|mbid| mbid.as_deref().is_some_and(|mbid| mbid.trim().is_empty()))
-        {
-            AttachmentDecision {
-                outcome: AttachmentOutcome::NeedsReview,
-                reason_code: Some("ATTACHMENT_CONTRADICTION".to_owned()),
-                selected_candidate_key: None,
-                candidates: vec![candidate],
-            }
-        } else {
-            AttachmentDecision {
-                outcome: AttachmentOutcome::Identified,
-                reason_code: None,
-                selected_candidate_key: Some(key),
-                candidates: vec![candidate],
-            }
-        };
+        let decision = attachment_decision(contribution, verified, recording_mbids);
         Box::pin(async move { decision })
     }
 }
 
-fn titles_agree(draft: &str, verified: &str) -> bool {
-    let fold = |value: &str| caseless::default_case_fold_str(&value.trim().to_lowercase());
-    draft.trim().is_empty() || verified.trim().is_empty() || fold(draft) == fold(verified)
+fn attachment_decision(
+    contribution: &ContributionRecord,
+    verified: &MusicBrainzVerifiedRelease,
+    recording_mbids: &HashMap<String, Option<String>>,
+) -> AttachmentDecision {
+    let candidate = AttachmentCandidate {
+        release_group_mbid: verified.release_group_mbid.clone(),
+        release_mbid: Some(verified.release_mbid.clone()),
+        artist_mbid: verified.artist_mbid.clone(),
+    };
+    let review = |code: &str, candidate: AttachmentCandidate| AttachmentDecision {
+        outcome: AttachmentOutcome::NeedsReview,
+        reason_code: Some(code.to_owned()),
+        selected_candidate_key: None,
+        candidates: vec![candidate],
+        tracks: Vec::new(),
+    };
+    if verified.release_mbid.trim().is_empty() {
+        return review("VERIFIED_MBID_MISSING", candidate);
+    }
+    let local = local_album(contribution, recording_mbids);
+    let release = matching_release(verified);
+    let matched = match_release(&local, &release, &HashMap::new());
+    if !matched.conflicts.is_empty() {
+        return review("ATTACHMENT_CONTRADICTION", candidate);
+    }
+    if !matched.names_agree {
+        return review("ATTACHMENT_NAME_MISMATCH", candidate);
+    }
+    let unmatched_limit = if local.tracks.len() <= 20 { 1 } else { 2 };
+    if matched.pairs.is_empty()
+        || matched.library_distance() > ACCEPT_ALBUM
+        || matched.worst_track() > ACCEPT_TRACK
+        || matched.unmatched.len() > unmatched_limit
+    {
+        return review("ATTACHMENT_WEAK_FIT", candidate);
+    }
+    let tracks = matched
+        .pairs
+        .iter()
+        .filter_map(|pair| {
+            let file = local.tracks.get(pair.local)?;
+            let track = release.tracks.get(pair.track)?;
+            (!track.recording_id.is_empty()).then(|| TrackEvidence {
+                local_track_id: file.id.clone(),
+                recording_mbid: track.recording_id.clone(),
+                release_track_mbid: Some(track.id.clone()).filter(|id| !id.is_empty()),
+                medium_position: Some(i64::from(track.disc)),
+                track_position: Some(i64::from(track.position)),
+            })
+        })
+        .collect();
+    AttachmentDecision {
+        outcome: AttachmentOutcome::Identified,
+        reason_code: None,
+        selected_candidate_key: Some(candidate.key()),
+        candidates: vec![candidate],
+        tracks,
+    }
+}
+
+/// The album as the contribution describes it (v2 `_attachment_evidence`):
+/// draft values where present, the snapshot otherwise.
+fn local_album(
+    contribution: &ContributionRecord,
+    recording_mbids: &HashMap<String, Option<String>>,
+) -> LocalAlbum {
+    let draft_tracks: HashMap<&str, &ReleaseTrackDraft> = contribution
+        .draft
+        .media
+        .iter()
+        .flat_map(|medium| medium.tracks.iter())
+        .map(|track| (track.local_track_id.as_str(), track))
+        .collect();
+    let text = |value: Option<&String>, fallback: &str| {
+        value
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+            .unwrap_or(fallback)
+            .to_owned()
+    };
+    let snapshot = &contribution.local_snapshot;
+    let tracks = snapshot
+        .media
+        .iter()
+        .flat_map(|medium| medium.tracks.iter())
+        .map(|track| {
+            let draft = draft_tracks.get(track.local_track_id.as_str());
+            LocalTrack {
+                id: track.local_track_id.clone(),
+                title: text(draft.and_then(|d| d.title.value.as_ref()), &track.title),
+                artist: text(
+                    draft.and_then(|d| d.artist_name.value.as_ref()),
+                    track.artist_name.as_deref().unwrap_or(""),
+                ),
+                track_number: u32::try_from(track.track_number).unwrap_or(0),
+                disc_number: u32::try_from(track.disc_number.max(1)).unwrap_or(1),
+                duration_secs: track.duration_seconds.filter(|_| track.duration_reliable),
+                recording_mbid: recording_mbids
+                    .get(&track.local_track_id)
+                    .cloned()
+                    .flatten(),
+                ..LocalTrack::default()
+            }
+        })
+        .collect();
+    LocalAlbum {
+        title: text(contribution.draft.title.value.as_ref(), &snapshot.title),
+        artist: text(
+            contribution.draft.artist_credit.value.as_ref(),
+            &snapshot.album_artist_name,
+        ),
+        year: snapshot.year,
+        is_compilation: snapshot.is_compilation,
+        tracks,
+    }
+}
+
+/// The verified release in the matcher's shape.
+fn matching_release(verified: &MusicBrainzVerifiedRelease) -> Release {
+    let mut media: Vec<ReleaseMedium> = Vec::new();
+    for track in &verified.tracks {
+        let disc = u32::try_from(track.disc_number.max(1)).unwrap_or(1);
+        match media.iter_mut().find(|medium| medium.position == disc) {
+            Some(medium) => medium.track_count += 1,
+            None => media.push(ReleaseMedium {
+                position: disc,
+                track_count: 1,
+                ..ReleaseMedium::default()
+            }),
+        }
+    }
+    Release {
+        id: verified.release_mbid.clone(),
+        release_group_id: verified.release_group_mbid.clone(),
+        title: verified.title.clone(),
+        artists: vec![CreditedArtist {
+            id: verified.artist_mbid.clone().unwrap_or_default(),
+            name: verified.artist_name.clone(),
+            sort_name: None,
+            join: String::new(),
+        }],
+        date: verified.date.clone(),
+        country: verified.country.clone(),
+        status: verified.status.clone(),
+        barcode: verified.barcode.clone(),
+        media,
+        tracks: verified
+            .tracks
+            .iter()
+            .enumerate()
+            .map(|(index, track)| ReleaseTrack {
+                id: track.release_track_mbid.clone().unwrap_or_default(),
+                recording_id: track.recording_mbid.clone().unwrap_or_default(),
+                title: track.title.clone(),
+                artists: Vec::new(),
+                disc: u32::try_from(track.disc_number.max(1)).unwrap_or(1),
+                position: u32::try_from(track.position.max(0)).unwrap_or(0),
+                absolute_position: u32::try_from(index + 1).unwrap_or(u32::MAX),
+                length_ms: track
+                    .duration_seconds
+                    .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
+                    .map(|seconds| (seconds * 1000.0).round() as u64),
+            })
+            .collect(),
+        ..Release::default()
+    }
 }
 
 /// A small expiring map for provider answers. Bounded: when it fills, the
@@ -603,15 +767,23 @@ const DISCOGS_SPACING: Duration = Duration::from_millis(2_400);
 const DISCOGS_CACHE: Duration = Duration::from_secs(6 * 60 * 60);
 /// v2 retried a failed Discogs call up to three times, waiting 1-4s.
 const DISCOGS_ATTEMPTS: u32 = 3;
+/// The longest Retry-After a user call waits out in place; a longer one
+/// fails the call and holds every call until it passes.
+const DISCOGS_MAX_INLINE_WAIT: Duration = Duration::from_secs(4);
 
 /// Live Discogs reads for contributions over the shared catalog GET port:
 /// paced at 25 a minute, retried briefly, cached six hours. Only
 /// contribution metadata crosses this boundary (see `providers::discogs`).
 /// An outage surfaces as "Discogs is unavailable" with a retry hint
 /// rather than v2's silent "not found".
+///
+/// A 429's Retry-After is honoured: nothing goes to Discogs before it
+/// passes. Display reads (the `PrefetchVisible` lane) make one attempt and
+/// never wait, so a slow Discogs cannot hold up the contribution page.
 pub struct LiveDiscogsContrib {
     http: ReqwestGet,
     next_slot: tokio::sync::Mutex<Instant>,
+    blocked_until: Mutex<Option<Instant>>,
     releases: TtlCache<Option<DiscogsRelease>>,
     searches: TtlCache<Vec<DiscogsReleaseCandidate>>,
 }
@@ -622,6 +794,7 @@ impl LiveDiscogsContrib {
         Self {
             http,
             next_slot: tokio::sync::Mutex::new(Instant::now()),
+            blocked_until: Mutex::new(None),
             releases: TtlCache::new(DISCOGS_CACHE),
             searches: TtlCache::new(DISCOGS_CACHE),
         }
@@ -637,31 +810,75 @@ impl LiveDiscogsContrib {
         *next = Instant::now() + DISCOGS_SPACING;
     }
 
-    /// Run one paced call with v2's short retry on outages and 429s.
-    async fn with_retry<T, F, Fut>(&self, call: F) -> Result<T, ContribError>
+    /// The time a Retry-After told us to wait until, while it holds.
+    fn blocked(&self) -> Option<Instant> {
+        let guard = self
+            .blocked_until
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.filter(|until| *until > Instant::now())
+    }
+
+    fn block_for(&self, wait: Duration) {
+        *self
+            .blocked_until
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Instant::now() + wait);
+    }
+
+    /// Run one paced call with v2's short retry on outages and 429s. The
+    /// display lane gets one attempt and no waiting.
+    async fn with_retry<T, F, Fut>(
+        &self,
+        priority: RequestPriority,
+        call: F,
+    ) -> Result<T, ContribError>
     where
         F: Fn() -> Fut,
         Fut: std::future::Future<Output = Result<T, discogs::FetchError>>,
     {
+        let display = priority == RequestPriority::PrefetchVisible;
+        let attempts = if display { 1 } else { DISCOGS_ATTEMPTS };
         let mut attempt = 0;
         loop {
-            self.pace().await;
+            if let Some(until) = self.blocked() {
+                let wait = until.saturating_duration_since(Instant::now());
+                if display || wait > DISCOGS_MAX_INLINE_WAIT {
+                    return Err(ContribError::DiscogsUnavailable);
+                }
+                tokio::time::sleep(wait).await;
+            }
+            if display {
+                // Never queue behind the pacer on the display lane.
+                match self.next_slot.try_lock() {
+                    Ok(mut next) if *next <= Instant::now() => {
+                        *next = Instant::now() + DISCOGS_SPACING;
+                    }
+                    _ => return Err(ContribError::DiscogsUnavailable),
+                }
+            } else {
+                self.pace().await;
+            }
             let wait = match call().await {
                 Ok(value) => return Ok(value),
                 Err(discogs::FetchError::Unusable) => {
                     tracing::warn!("Discogs answered with data it could not use");
-                    return Err(ContribError::Missing(
-                        "Discogs did not return usable data for that release.".into(),
-                    ));
+                    return Err(ContribError::DiscogsUnusable);
                 }
                 Err(discogs::FetchError::RateLimited { retry_after_secs }) => {
-                    Duration::from_secs_f64(retry_after_secs.clamp(1.0, 4.0))
+                    let wait = Duration::from_secs_f64(retry_after_secs.max(1.0));
+                    self.block_for(wait);
+                    if wait > DISCOGS_MAX_INLINE_WAIT {
+                        tracing::warn!(?wait, "Discogs asked us to wait; holding calls until then");
+                        return Err(ContribError::DiscogsUnavailable);
+                    }
+                    wait
                 }
                 Err(discogs::FetchError::Transport) => Duration::from_secs(1 << attempt.min(2)),
             };
             attempt += 1;
-            if attempt >= DISCOGS_ATTEMPTS {
-                tracing::warn!("Discogs unavailable after {DISCOGS_ATTEMPTS} attempts");
+            if attempt >= attempts {
+                tracing::warn!(attempts, "Discogs unavailable");
                 return Err(ContribError::DiscogsUnavailable);
             }
             tokio::time::sleep(wait).await;
@@ -748,7 +965,7 @@ impl DiscogsContrib for LiveDiscogsContrib {
         &'a self,
         query: &'a str,
         limit: usize,
-        _priority: RequestPriority,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, Result<Vec<DiscogsReleaseCandidate>, ContribError>> {
         Box::pin(async move {
             let bounded = limit.clamp(1, 10) as u32;
@@ -757,7 +974,7 @@ impl DiscogsContrib for LiveDiscogsContrib {
                 return Ok(hit);
             }
             let candidates = self
-                .with_retry(|| async {
+                .with_retry(priority, || async {
                     discogs::DiscogsClient::new(&self.http)
                         .search_releases(query, bounded, now_seconds())
                         .await
@@ -788,14 +1005,14 @@ impl DiscogsContrib for LiveDiscogsContrib {
     fn get_release<'a>(
         &'a self,
         release_id: &'a str,
-        _priority: RequestPriority,
+        priority: RequestPriority,
     ) -> BoxFuture<'a, Result<Option<DiscogsRelease>, ContribError>> {
         Box::pin(async move {
             if let Some(hit) = self.releases.get(release_id) {
                 return Ok(hit);
             }
             let release = self
-                .with_retry(|| async {
+                .with_retry(priority, || async {
                     discogs::DiscogsClient::new(&self.http)
                         .get_release(release_id, now_seconds())
                         .await

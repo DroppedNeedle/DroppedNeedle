@@ -145,8 +145,12 @@ impl IntoResponse for ContribHttpError {
             ContribError::ProviderUnavailable | ContribError::DiscogsUnavailable => {
                 StatusCode::SERVICE_UNAVAILABLE
             }
-            ContribError::ProviderUnmappable => StatusCode::BAD_GATEWAY,
-            ContribError::Data(_) | ContribError::Storage(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            ContribError::ProviderUnmappable | ContribError::DiscogsUnusable => {
+                StatusCode::BAD_GATEWAY
+            }
+            ContribError::Data(_) | ContribError::Storage(_) | ContribError::TokenUnavailable => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
         };
         let mut details = json!({ "action": error.action() });
         if status.is_server_error() {

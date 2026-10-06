@@ -42,6 +42,10 @@ pub enum ContribError {
     ProviderUnavailable,
     #[error("Discogs is temporarily unavailable.")]
     DiscogsUnavailable,
+    #[error("Discogs sent release data DroppedNeedle could not read.")]
+    DiscogsUnusable,
+    #[error("The server could not create a secure one-time token.")]
+    TokenUnavailable,
     #[error("The provider payload could not be mapped.")]
     ProviderUnmappable,
     /// The contribution store failed. The cause goes to the log only.
@@ -78,6 +82,8 @@ impl ContribError {
             Self::Data(_) => "CONTRIBUTION_DATA_UNREADABLE",
             Self::ProviderUnavailable => "MUSICBRAINZ_UNAVAILABLE",
             Self::DiscogsUnavailable => "DISCOGS_UNAVAILABLE",
+            Self::DiscogsUnusable => "DISCOGS_DATA_UNUSABLE",
+            Self::TokenUnavailable => "CONTRIBUTION_TOKEN_FAILED",
             Self::ProviderUnmappable => "PROVIDER_DATA_UNREADABLE",
             Self::Storage(_) => "CONTRIBUTION_STORAGE_FAILED",
         }
@@ -111,6 +117,12 @@ impl ContribError {
             }
             Self::ProviderUnavailable => "Wait a minute and try again.",
             Self::DiscogsUnavailable => "Wait a minute and try again.",
+            Self::DiscogsUnusable => {
+                "Pick another Discogs release, or continue without a Discogs source."
+            }
+            Self::TokenUnavailable => {
+                "Try again. If it keeps failing, check that the server has a working random source."
+            }
             Self::ProviderUnmappable => {
                 "Try again later. If it keeps failing, report it so the app can be updated."
             }

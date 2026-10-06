@@ -118,7 +118,7 @@ impl ContributionService {
         let row = self
             .store
             .get(contribution_id)
-            .await
+            .await?
             .ok_or(ContribError::ContributionNotFound)?;
         // Quirk (v2): terminal rows never transition; stale input on an
         // active row flips it to stale on read.
@@ -140,7 +140,7 @@ impl ContributionService {
         &self,
         album_id: &str,
     ) -> Result<Option<ContributionRecord>, ContribError> {
-        let row = match self.store.get_active_for_album(album_id).await {
+        let row = match self.store.get_active_for_album(album_id).await? {
             Some(row) => row,
             None => return Ok(None),
         };
@@ -632,6 +632,7 @@ impl ContributionService {
                     release_group_mbid: verified.release_group_mbid.clone(),
                     artist_mbid: verified.artist_mbid.clone(),
                     attempt,
+                    tracks: decision.tracks.clone(),
                 },
             )
             .await?;
@@ -710,7 +711,7 @@ impl ContributionService {
                 ));
             }
         }
-        let token = callback_token();
+        let token = callback_token()?;
         let token_hash = sha256_hex(token.as_bytes());
         let now = self.now();
         let expires_at = now + CALLBACK_TOKEN_SECONDS;
@@ -721,7 +722,7 @@ impl ContributionService {
         let context = self
             .identity
             .album_context(&current.local_album_id)
-            .await
+            .await?
             .unwrap_or_default();
         let recording_ids: HashMap<String, String> = context
             .tracks
@@ -863,7 +864,7 @@ impl ContributionService {
         let context = self
             .identity
             .album_context(&contribution.local_album_id)
-            .await
+            .await?
             .ok_or(ContribError::AlbumNotFound)?;
         if context.album.is_none() {
             return Err(ContribError::AlbumNotFound);
@@ -945,7 +946,7 @@ impl ContributionService {
         contribution_id: &str,
         now: f64,
     ) -> Result<bool, ContribError> {
-        let row = match self.store.get(contribution_id).await {
+        let row = match self.store.get(contribution_id).await? {
             Some(row) => row,
             None => return Ok(false),
         };
@@ -958,7 +959,7 @@ impl ContributionService {
         now: f64,
     ) -> Result<ContributionRow, ContribError> {
         if self.purge_row(row, now).await?
-            && let Some(fresh) = self.store.get(&row.id).await
+            && let Some(fresh) = self.store.get(&row.id).await?
         {
             return Ok(fresh);
         }
@@ -1044,7 +1045,7 @@ impl ContributionService {
         let context = self
             .identity
             .album_context(album_id)
-            .await
+            .await?
             .ok_or(ContribError::AlbumNotFound)?;
         let album = context.album.clone().ok_or(ContribError::AlbumNotFound)?;
         if !album.active {
@@ -1160,8 +1161,9 @@ impl ContributionService {
         {
             // Display only: a Discogs outage must not hide the contribution
             // itself, so the source shows without its release this time.
+            // The display lane: one attempt, no waiting out a rate limit.
             discogs_release = match discogs
-                .get_release(&source.external_id, RequestPriority::UserInitiated)
+                .get_release(&source.external_id, RequestPriority::PrefetchVisible)
                 .await
             {
                 Ok(release) => release,
@@ -1212,13 +1214,13 @@ impl ContributionService {
             input_is_current,
             validation: issues,
             next_actions: actions,
-            review_reason: (row.state == ContributionState::NeedsReview)
-                .then(|| {
+            review_reason: (row.state == ContributionState::NeedsReview).then(|| {
+                super::reasons::verification_reason(
                     row.last_verification_failure
                         .as_deref()
-                        .map(super::reasons::verification_reason)
-                })
-                .flatten(),
+                        .unwrap_or(super::reasons::REVIEW_REASON_DEFAULT),
+                )
+            }),
         })
     }
 }
@@ -1265,11 +1267,16 @@ fn validate_public_base_url(base_url: &str) -> Result<(), ContribError> {
     Ok(())
 }
 
-fn callback_token() -> String {
+/// A one-time callback token: 32 bytes from the OS random source. A token
+/// is never made without real randomness.
+fn callback_token() -> Result<String, ContribError> {
     use base64::Engine as _;
     let mut bytes = [0u8; 32];
-    getrandom::fill(&mut bytes).unwrap_or_default();
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+    getrandom::fill(&mut bytes).map_err(|error| {
+        tracing::error!(%error, "no secure random source for a callback token");
+        ContribError::TokenUnavailable
+    })?;
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {

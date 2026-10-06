@@ -48,6 +48,7 @@ pub struct ContribProviders {
 pub fn assemble(
     db_path: &Path,
     providers: ContribProviders,
+    catalog: Arc<dyn seams::ContributionCatalog>,
 ) -> Result<
     (
         Arc<service::ContributionService>,
@@ -63,12 +64,12 @@ pub fn assemble(
         service::ContributionService::new(
             store.clone(),
             store.clone(),
-            Arc::new(super::adapters::MinimalAttachmentEvidence),
+            Arc::new(super::adapters::MatchingAttachmentEvidence),
             Arc::new(seams::SystemClock),
         )
         .with_discogs(providers.discogs)
         .with_musicbrainz(providers.musicbrainz.clone())
-        .with_catalog(Arc::new(super::adapters::NoopContributionCatalog)),
+        .with_catalog(catalog),
     );
     let worker = Arc::new(worker::VerificationWorker::new(
         service.clone(),
