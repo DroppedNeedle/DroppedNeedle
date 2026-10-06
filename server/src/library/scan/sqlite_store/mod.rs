@@ -122,8 +122,8 @@ impl SqliteScanStore {
     }
 
     /// Raw SQL for tests: seeds rows no store method writes (legacy
-    /// revisions). Production has no use for this.
-    #[cfg(test)]
+    /// revisions, bare catalog albums). Production has no use for this.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn execute_batch_for_tests(&self, sql: &str) -> rusqlite::Result<()> {
         self.lock().conn.execute_batch(sql)
     }

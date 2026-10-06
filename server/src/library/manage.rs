@@ -269,10 +269,10 @@ impl LibrarySetup {
 
     /// Album id for one track through the scan-fed join.
     fn track_album(&self, track_id: &str) -> Result<String, ServiceError> {
-        self.track_albums
+        self.scan_store
             .album_for_track(track_id)
             .ok_or_else(|| ServiceError::Conflict {
-                message: format!("Track {track_id} was never scanned into an album"),
+                message: format!("Track {track_id} is not in the catalog"),
             })
     }
 
@@ -286,11 +286,14 @@ impl LibrarySetup {
         use super::identify::stores::IdentityStore;
 
         let missing = |message: String| ServiceError::Conflict { message };
-        let album = self.identities.album_identity(album_id).ok_or_else(|| {
-            missing(format!(
-                "Album {album_id} has no accepted identity; identify it first"
-            ))
-        })?;
+        let album = self
+            .identify_store
+            .album_identity(album_id)
+            .ok_or_else(|| {
+                missing(format!(
+                    "Album {album_id} has no accepted identity; identify it first"
+                ))
+            })?;
         let release_mbid = album.release_mbid.clone().ok_or_else(|| {
             missing(format!(
                 "Album {album_id} has no accepted exact release; approve an exact edition"
@@ -301,7 +304,7 @@ impl LibrarySetup {
             .clone()
             .ok_or_else(|| missing(format!("Album {album_id} has no accepted release group")))?;
         let track = self
-            .identities
+            .identify_store
             .track_identity(track_id)
             .ok_or_else(|| missing(format!("Track {track_id} has no accepted mapping")))?;
         let recording_mbid = track
@@ -325,10 +328,7 @@ impl LibrarySetup {
     /// Scan-assigned track id for one catalog file.
     fn scan_track(&self, root_id: &str, rel_path: &str) -> Result<String, ServiceError> {
         self.scan_store
-            .catalog_entries(root_id)
-            .into_iter()
-            .find(|(relative_path, _)| relative_path == rel_path)
-            .map(|(_, entry)| entry.track_id)
+            .track_at(root_id, rel_path)
             .ok_or_else(|| ServiceError::Conflict {
                 message: format!("{root_id}/{rel_path} is not indexed; scan the root first"),
             })
@@ -421,14 +421,12 @@ impl LibrarySetup {
         };
         // Accepted album identity first: without an exact release the
         // whole bundle blocks before any file is touched.
-        let album =
-            self.identities
-                .album_identity(album_id)
-                .ok_or_else(|| ServiceError::Conflict {
-                    message: format!(
-                        "Album {album_id} has no accepted identity; identify it first"
-                    ),
-                })?;
+        let album = self
+            .identify_store
+            .album_identity(album_id)
+            .ok_or_else(|| ServiceError::Conflict {
+                message: format!("Album {album_id} has no accepted identity; identify it first"),
+            })?;
         if album.release_mbid.is_none() {
             return Err(ServiceError::Conflict {
                 message: format!(

@@ -19,7 +19,6 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::Router;
 use axum::body::Body;
@@ -35,6 +34,7 @@ use droppedneedle::ids::{IdGenerator, UuidGenerator};
 use droppedneedle::library::identify::models::{
     CandidateEvidence, EvidenceClass, RecallResult, TrackEvidence,
 };
+use droppedneedle::library::scratch::ScratchDir;
 use droppedneedle::library::wiring::LibrarySetup;
 use droppedneedle::runtime_config::sections::SecuritySettings;
 use droppedneedle::runtime_config::{
@@ -50,9 +50,6 @@ const HOST: &str = "e2e.test";
 /// Wrapped shared secret saved into every scratch config.
 const TEST_WRAPPED_KEY: &str = "lib-journey-wrapped-key-1";
 
-/// Scratch-dir sequence so parallel tests never share a database.
-static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
-
 /// One scratch deployment: migrated database, production adapters,
 /// library test bundle, and the app router over them.
 struct Lib {
@@ -67,17 +64,16 @@ struct Lib {
     ids: Arc<UuidGenerator>,
     clock: Arc<SystemClock>,
     dir: PathBuf,
+    /// Dropped last: the scratch directory goes away with the test.
+    _scratch: ScratchDir,
     db_path: PathBuf,
     library: LibrarySetup,
 }
 
 impl Lib {
     async fn open(tag: &str) -> Self {
-        let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "droppedneedle-lib-journey-{tag}-{}-{seq}",
-            std::process::id()
-        ));
+        let scratch = ScratchDir::new(&format!("lib-journey-{tag}")).expect("scratch dir");
+        let dir = scratch.path().to_path_buf();
         let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
             .await
             .expect("scratch runtime opens");
@@ -139,6 +135,7 @@ impl Lib {
             ids,
             clock,
             dir,
+            _scratch: scratch,
             db_path,
             library,
         }
@@ -513,21 +510,28 @@ async fn library_journey_scan_identify_review_organize_undo() {
     assert_eq!(read_title(&file_a), title_a_before);
     assert_eq!(read_title(&file_b), title_b_before);
 
+    // Identification keys on the catalog album the reads API serves.
+    let (status, body) = call(
+        lib.router(),
+        "GET",
+        &format!("/api/v3/library/tracks/{track_a}"),
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let album_id = body["album_id"].as_str().expect("album id").to_owned();
+    let album_key = album_id.as_str();
+
     // Scripted providers tie two candidates: the scan-enqueued job
     // must file an ambiguous review, never guess.
-    let album_key = "music::album-a";
     lib.library
         .test_providers
         .as_ref()
         .expect("scripted providers")
         .set_recall(ambiguous_recall(&track_a, &track_b));
-    let pool_done = lib.library.pool.completed();
     let attempted = lib.library.identify_tick().await;
     assert_eq!(attempted, 1, "scan-enqueued job runs once");
-    assert!(
-        lib.library.pool.completed() > pool_done,
-        "identify tag reads ride the blocking pool"
-    );
     // Purity extends past identify: tag reads and probes wrote zero
     // media bytes too.
     assert_eq!(
@@ -685,7 +689,17 @@ async fn library_journey_retag_apply_baseline_restore() {
         .to_owned();
 
     // Identify through a tied review, then approve the winner.
-    let album_key = "music::album-b";
+    let (status, body) = call(
+        lib.router(),
+        "GET",
+        &format!("/api/v3/library/tracks/{track_id}"),
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let album_id = body["album_id"].as_str().expect("album id").to_owned();
+    let album_key = album_id.as_str();
     lib.library
         .test_providers
         .as_ref()
@@ -803,12 +817,8 @@ async fn library_loops_start_and_stop() {
 async fn library_roots_survive_a_restart() {
     use droppedneedle::library::scan::{EffectivePolicy, ScanKind, ScanRequest, ScanTrigger};
 
-    let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!(
-        "droppedneedle-lib-restart-{}-{seq}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let scratch = ScratchDir::new("lib-restart").expect("scratch dir");
+    let dir = scratch.path().to_path_buf();
     let db_path = dir.join("app.db");
     let connection = droppedneedle::db::open_connection(&db_path).expect("scratch db opens");
     droppedneedle::schema::apply_migrations_blocking(&connection).expect("migrations apply");
@@ -879,4 +889,81 @@ async fn library_roots_survive_a_restart() {
     let (run, _, _) = second.coordinator.snapshot(&result.run_id).expect("run");
     assert_eq!(run.counters.get("new_count").copied(), Some(0));
     assert_eq!(run.counters.get("unchanged_count").copied(), Some(1));
+}
+
+/// Identification state is durable: a job the scan queued survives a
+/// restart, and a curator's approval stays a manual identity after the
+/// next one.
+#[tokio::test]
+async fn identification_survives_restarts() {
+    use droppedneedle::library::identify::models::DecisionSource;
+    use droppedneedle::library::identify::stores::IdentityStore as _;
+    use droppedneedle::library::scan::{CatalogStore as _, EffectivePolicy};
+
+    let scratch = ScratchDir::new("lib-identify-restart").expect("scratch dir");
+    let dir = scratch.path().to_path_buf();
+    let db_path = dir.join("app.db");
+    let connection = droppedneedle::db::open_connection(&db_path).expect("scratch db opens");
+    droppedneedle::schema::apply_migrations_blocking(&connection).expect("migrations apply");
+    drop(connection);
+    let config = Arc::new(
+        ConfigStore::open(
+            &dir.join("config.json"),
+            Crypto::from_key_bytes(&[7u8; 32]).expect("test key"),
+        )
+        .expect("config opens"),
+    );
+    let bundle = || {
+        LibrarySetup::for_tests_at(
+            droppedneedle::auth::wiring::AuthSetup::for_tests()
+                .expect("test auth builds")
+                .users,
+            Arc::new(UuidGenerator) as Arc<dyn IdGenerator>,
+            &db_path,
+            Arc::clone(&config),
+        )
+        .expect("bundle builds")
+    };
+    let music = dir.join("music");
+    plant(&music, "album/01.flac", "flac_full_01.flac");
+
+    let first = bundle();
+    first
+        .add_root(
+            Some("music".to_owned()),
+            music.to_string_lossy().into_owned(),
+            EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+    drain_scans(&first).await;
+    let track = first
+        .scan_store
+        .track_at("music", "album/01.flac")
+        .expect("track indexed");
+    let album = first.scan_store.album_for_track(&track).expect("album");
+    drop(first);
+
+    // The scan-queued job is still there after a restart.
+    let second = bundle();
+    second.run_recovery().await.expect("recovery runs");
+    second
+        .test_providers
+        .as_ref()
+        .expect("scripted providers")
+        .set_recall(ambiguous_recall(&track, &track));
+    assert_eq!(second.identify_tick().await, 1, "queued job survives");
+    let review = second.pending_reviews(&album);
+    assert_eq!(review.len(), 1);
+    second
+        .approve_review(&review[0].id, "curator", "rg-1:rel-1")
+        .expect("review approves");
+    drop(second);
+
+    let third = bundle();
+    let identity = third
+        .identify_store
+        .album_identity(&album)
+        .expect("identity survives");
+    assert_eq!(identity.decision_source, DecisionSource::Manual);
+    assert_eq!(identity.release_mbid.as_deref(), Some("rel-1"));
 }

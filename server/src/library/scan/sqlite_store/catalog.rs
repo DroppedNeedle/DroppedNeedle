@@ -99,6 +99,40 @@ impl CatalogStore for SqliteScanStore {
         })
     }
 
+    fn album_for_track(&self, track_id: &str) -> Option<String> {
+        let guard = self.lock();
+        guard
+            .conn
+            .query_row(
+                "SELECT local_album_id FROM local_tracks \
+                 WHERE id = ?1 AND availability = 'indexed'",
+                params![track_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .unwrap_or_else(|error| {
+                tracing::error!(%error, "scan album_for_track failed");
+                None
+            })
+    }
+
+    fn track_at(&self, root_id: &str, relative_path: &str) -> Option<String> {
+        let guard = self.lock();
+        guard
+            .conn
+            .query_row(
+                "SELECT id FROM local_tracks \
+                 WHERE root_id = ?1 AND relative_path = ?2 AND availability = 'indexed'",
+                params![root_id, relative_path],
+                |row| row.get(0),
+            )
+            .optional()
+            .unwrap_or_else(|error| {
+                tracing::error!(%error, "scan track_at failed");
+                None
+            })
+    }
+
     fn remove_catalog(&self, root_id: &str, relative_path: &str) {
         let mut guard = self.lock();
         let outcome = retry_on_busy("remove_catalog", || {

@@ -146,14 +146,10 @@ pub struct RunDetailResponse {
 /// Enqueue one album for identification.
 #[derive(Debug, Clone, Deserialize, ToSchema)]
 pub struct IdentifyBody {
-    /// Local album id (scan album keys read `root::directory`).
+    /// Catalog album id, as `GET /library/albums` lists it.
     pub album_id: String,
     /// Job kind: `automatic`, `manual`, `historical` (default: `manual`).
     pub kind: Option<String>,
-    /// Album title hint for albums the scan never saw.
-    pub title: Option<String>,
-    /// Album artist hint for albums the scan never saw.
-    pub artist: Option<String>,
 }
 
 /// Enqueue answer.

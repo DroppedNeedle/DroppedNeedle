@@ -302,6 +302,7 @@ pub async fn get_run(
         (status = 400, description = "Bad album id or kind"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Curator role required"),
+        (status = 404, description = "Unknown album id"),
     )
 )]
 pub async fn enqueue_identify(
@@ -315,13 +316,7 @@ pub async fn enqueue_identify(
         });
     }
     let kind = parse_identify_kind(body.kind.as_deref())?;
-    let job = state.enqueue_identify(
-        &body.album_id,
-        kind,
-        body.title.as_deref(),
-        body.artist.as_deref(),
-        &caller.0.user_id,
-    );
+    let job = state.enqueue_identify(&body.album_id, kind, &caller.0.user_id)?;
     let state_label: String = match job.state {
         JobState::Queued => "queued".to_owned(),
         other => snake(&other),
@@ -354,11 +349,9 @@ pub async fn list_reviews(
             message: "Query needs album_id".to_owned(),
         });
     };
-    use crate::library::identify::stores::ReviewStore;
     Ok(Json(ReviewsResponse {
         reviews: state
-            .reviews
-            .pending_for_album(album_id)
+            .pending_reviews(album_id)
             .iter()
             .map(review_view)
             .collect(),

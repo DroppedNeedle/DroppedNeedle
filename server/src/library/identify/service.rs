@@ -21,13 +21,14 @@ use super::rules::{
     evaluate_overwrite, evaluate_substitution, rank_with_hint, retracts_on_contradiction,
 };
 use super::stores::{
-    AliasStore, AttemptLanding, IdentityStore, PinStore, ProofStore, QueueStore, ReviewStore,
-    land_job,
+    AliasStore, AttemptLanding, FactsSource, IdentityStore, PinStore, ProofStore, QueueStore,
+    ReviewStore, land_job,
 };
 
 /// Every dependency the identify service needs, injected by constructor.
 pub struct IdentifyDeps {
     pub identities: Arc<dyn IdentityStore>,
+    pub facts: Arc<dyn FactsSource>,
     pub proofs: Arc<dyn ProofStore>,
     pub aliases: Arc<dyn AliasStore>,
     pub pins: Arc<dyn PinStore>,
@@ -55,7 +56,7 @@ impl IdentifyService {
         input_revision: &str,
         requested_by_user_id: Option<&str>,
         now_ms: u64,
-    ) -> IdentifyJob {
+    ) -> Option<IdentifyJob> {
         let priority = match kind {
             IdentifyKind::Automatic => PRIORITY_NEW_OR_CHANGED,
             IdentifyKind::Manual => PRIORITY_REVIEW_RETRY,
@@ -73,22 +74,24 @@ impl IdentifyService {
             requested_by_user_id: requested_by_user_id.map(str::to_owned),
             failure_code: None,
         };
-        self.deps.queue.enqueue(job.clone());
-        job
-    }
-
-    /// Files moved or tags re-read: facts update, identity rows stand.
-    /// Protected rows survive by construction; automatic rows wait for
-    /// the next attempt to re-evaluate them.
-    pub fn relink_files(&self, facts: LocalAlbumFacts) {
-        self.deps.identities.save_album_facts(facts);
+        self.deps.queue.enqueue(job)
     }
 
     /// Run one claimed job to a terminal landing. Async only because the
     /// provider seam is async; every rule inside is sync and pure.
     pub async fn run_claimed_job(&self, job_id: &str, now_ms: u64) -> Option<AttemptReport> {
         let mut job = self.deps.queue.job(job_id)?;
-        let facts = self.deps.identities.album_facts(&job.local_album_id)?;
+        let Some(facts) = self.deps.facts.album_facts(&job.local_album_id) else {
+            // The album left the catalog: nothing to identify.
+            land_job(&mut job, AttemptLanding::Failed, now_ms, Some("ALBUM_GONE"));
+            self.deps.queue.update(job.clone());
+            return Some(AttemptReport {
+                job,
+                outcome: IdentificationOutcome::Failed,
+                reason_code: "ALBUM_GONE".to_owned(),
+                review_id: None,
+            });
+        };
         let RecallOutcome { result: recall, .. } =
             self.deps.providers.recall_candidates(&facts, 10).await;
         if recall.provider_deferred {

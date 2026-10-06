@@ -28,7 +28,7 @@ use droppedneedle::library::identify::models::{
     IdentifyKind, JobState, LocalAlbumFacts, RecallResult,
 };
 use droppedneedle::library::identify::providers::{IdentifyProviders, RecallOutcome};
-use droppedneedle::library::identify::stores::{IdentityStore, QueueStore};
+use droppedneedle::library::identify::stores::QueueStore;
 use droppedneedle::library::wiring::LibrarySetup;
 use droppedneedle::providers::musicbrainz::Criticality;
 use droppedneedle::runtime_config::{ConfigStore, Crypto};
@@ -177,15 +177,26 @@ impl Lib {
     }
 }
 
-/// Seed `count` due jobs with facts, so no disk reads slow the drain.
+/// Seed `count` catalog albums, each with one due job.
 fn seed_jobs(library: &LibrarySetup, count: usize) {
+    library
+        .scan_store
+        .execute_batch_for_tests(
+            "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, \
+             updated_at) VALUES ('artist', 'Artist', 'artist', 'unknown', 0, 0);",
+        )
+        .expect("artist seeds");
     for n in 0..count {
         let album = format!("album-{n}");
-        library.identities.save_album_facts(LocalAlbumFacts {
-            local_album_id: album.clone(),
-            title: format!("Album {n}"),
-            ..LocalAlbumFacts::default()
-        });
+        library
+            .scan_store
+            .execute_batch_for_tests(&format!(
+                "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+                 album_artist_id, grouping_source, created_at, updated_at) \
+                 VALUES ('{album}', 'r', '{album}', 'Album {n}', 'album {n}', 'artist', \
+                 'automatic', 0, 0);"
+            ))
+            .expect("album seeds");
         library.identify.enqueue_album(
             &format!("job-{n}"),
             &album,
@@ -199,7 +210,7 @@ fn seed_jobs(library: &LibrarySetup, count: usize) {
 
 fn job_state(library: &LibrarySetup, job_id: &str) -> JobState {
     library
-        .identify_queue
+        .identify_store
         .job(job_id)
         .unwrap_or_else(|| panic!("{job_id} present"))
         .state
@@ -235,7 +246,7 @@ async fn identify_tick_abandons_drain_after_mid_attempt_shutdown() {
     for n in 1..5 {
         let job = lib
             .library
-            .identify_queue
+            .identify_store
             .job(&format!("job-{n}"))
             .unwrap_or_else(|| panic!("job-{n} present"));
         assert_eq!(job.state, JobState::Queued);

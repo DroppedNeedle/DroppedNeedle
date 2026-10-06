@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use super::clock::now_ms;
-use super::identify::models::{AlbumIdentity, IdentifyJob, IdentifyKind, LocalAlbumFacts};
+use super::identify::models::{AlbumIdentity, IdentifyJob, IdentifyKind};
 use super::manage::publish_error;
 use super::scan::models::{
     EffectivePolicy, ScanInventoryItem, ScanKind, ScanRequest, ScanRequestResult, ScanRun,
@@ -199,31 +199,33 @@ impl LibrarySetup {
         Ok((run, scopes, files))
     }
 
-    /// Enqueue one album for identification, seeding title/artist
-    /// facts when the scan never saw the album.
+    /// Enqueue one catalog album (a `local_albums.id`) for
+    /// identification. An album the catalog does not hold is a 404; a
+    /// live job on the same album revision comes back instead of a twin.
     pub fn enqueue_identify(
         &self,
         album_id: &str,
         kind: IdentifyKind,
-        title: Option<&str>,
-        artist: Option<&str>,
         user_id: &str,
-    ) -> IdentifyJob {
-        use super::identify::stores::IdentityStore;
+    ) -> Result<IdentifyJob, ServiceError> {
+        use super::identify::stores::FactsSource as _;
 
-        if self.identities.album_facts(album_id).is_none() {
-            self.identities.save_album_facts(LocalAlbumFacts {
-                local_album_id: album_id.to_owned(),
-                title: title.unwrap_or_default().to_owned(),
-                album_artist_name: artist.unwrap_or_default().to_owned(),
-                tracks: Vec::new(),
-                locked_track_ids: Vec::new(),
-                is_compilation: false,
-            });
+        if self.identify_store.album_facts(album_id).is_none() {
+            return Err(ServiceError::NotFound);
         }
+        let revision = self
+            .identify_store
+            .input_revision(album_id)
+            .ok_or_else(|| ServiceError::internal(&"album revision unreadable"))?;
         let job_id = self.ids.new_id();
         self.identify
-            .enqueue_album(&job_id, album_id, kind, &job_id, Some(user_id), now_ms())
+            .enqueue_album(&job_id, album_id, kind, &revision, Some(user_id), now_ms())
+            .ok_or_else(|| ServiceError::internal(&"identify job not recorded"))
+    }
+
+    /// Pending reviews for one album, oldest first.
+    pub fn pending_reviews(&self, album_id: &str) -> Vec<super::identify::models::ReviewItem> {
+        self.identify.pending_reviews(album_id)
     }
 
     /// Approve a pending review with the curator's chosen candidate,
@@ -237,7 +239,7 @@ impl LibrarySetup {
     ) -> Result<(super::identify::models::ReviewItem, Option<AlbumIdentity>), ServiceError> {
         use super::identify::stores::{IdentityStore, ReviewStore};
 
-        let Some(review) = self.reviews.get(review_id) else {
+        let Some(review) = self.identify_store.get(review_id) else {
             return Err(ServiceError::NotFound);
         };
         if review.state != super::identify::models::ReviewState::Pending {
@@ -260,8 +262,8 @@ impl LibrarySetup {
                 message: "Review could not be approved".to_owned(),
             });
         }
-        let settled = self.reviews.get(review_id).unwrap_or(review);
-        let identity = self.identities.album_identity(&settled.local_album_id);
+        let settled = self.identify_store.get(review_id).unwrap_or(review);
+        let identity = self.identify_store.album_identity(&settled.local_album_id);
         Ok((settled, identity))
     }
 
@@ -273,7 +275,7 @@ impl LibrarySetup {
     ) -> Result<super::identify::models::ReviewItem, ServiceError> {
         use super::identify::stores::ReviewStore;
 
-        let Some(review) = self.reviews.get(review_id) else {
+        let Some(review) = self.identify_store.get(review_id) else {
             return Err(ServiceError::NotFound);
         };
         if review.state != super::identify::models::ReviewState::Pending {
@@ -286,6 +288,6 @@ impl LibrarySetup {
                 message: "Review could not be rejected".to_owned(),
             });
         }
-        Ok(self.reviews.get(review_id).unwrap_or(review))
+        Ok(self.identify_store.get(review_id).unwrap_or(review))
     }
 }

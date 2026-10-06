@@ -1,4 +1,5 @@
-//! In-memory identify stores for tests and unwired runtimes.
+//! In-memory identify stores for tests. Production runs the SQLite
+//! stores in `sqlite`.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -7,7 +8,9 @@ use super::models::{
     AlbumIdentity, Alias, ArtistCredit, ArtistIdentity, CreditProof, IdentifyJob, LocalAlbumFacts,
     ReleasePin, ReviewItem, ReviewState, TrackIdentity,
 };
-use super::stores::{AliasStore, IdentityStore, PinStore, ProofStore, QueueStore, ReviewStore};
+use super::stores::{
+    AliasStore, FactsSource, IdentityStore, PinStore, ProofStore, QueueStore, ReviewStore,
+};
 
 #[derive(Debug, Default)]
 pub struct MemoryIdentityStore {
@@ -21,7 +24,13 @@ pub struct MemoryIdentityStore {
 }
 
 impl MemoryIdentityStore {
-    #[cfg(any(test, feature = "test-support"))]
+    /// Seed the facts the matcher reads for one album.
+    pub fn save_album_facts(&self, facts: LocalAlbumFacts) {
+        if let Ok(mut all) = self.facts.lock() {
+            all.insert(facts.local_album_id.clone(), facts);
+        }
+    }
+
     pub fn seed_accepted_release(&self, source_local_artist_id: &str, release_mbid: &str) {
         if let Ok(mut accepted) = self.accepted.lock() {
             accepted.insert(source_local_artist_id.to_owned(), release_mbid.to_owned());
@@ -66,16 +75,6 @@ impl IdentityStore for MemoryIdentityStore {
         }
     }
 
-    fn album_facts(&self, local_album_id: &str) -> Option<LocalAlbumFacts> {
-        self.facts.lock().ok()?.get(local_album_id).cloned()
-    }
-
-    fn save_album_facts(&self, facts: LocalAlbumFacts) {
-        if let Ok(mut all) = self.facts.lock() {
-            all.insert(facts.local_album_id.clone(), facts);
-        }
-    }
-
     fn owned_artist_by_mbid(&self, artist_mbid: &str) -> Option<String> {
         self.owned
             .lock()
@@ -113,6 +112,12 @@ impl IdentityStore for MemoryIdentityStore {
     }
 }
 
+impl FactsSource for MemoryIdentityStore {
+    fn album_facts(&self, local_album_id: &str) -> Option<LocalAlbumFacts> {
+        self.facts.lock().ok()?.get(local_album_id).cloned()
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct MemoryProofStore {
     proofs: Mutex<Vec<CreditProof>>,
@@ -121,14 +126,12 @@ pub struct MemoryProofStore {
 }
 
 impl MemoryProofStore {
-    #[cfg(any(test, feature = "test-support"))]
     pub fn set_album_revision(&self, local_album_id: &str, revision: u64) {
         if let Ok(mut revisions) = self.album_revisions.lock() {
             revisions.insert(local_album_id.to_owned(), revision);
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn set_track_revision(&self, local_track_id: &str, revision: u64) {
         if let Ok(mut revisions) = self.track_revisions.lock() {
             revisions.insert(local_track_id.to_owned(), revision);
@@ -182,26 +185,22 @@ pub struct MemoryAliasStore {
 }
 
 impl MemoryAliasStore {
-    #[cfg(any(test, feature = "test-support"))]
     pub fn add_playlist_ref(&self, playlist_id: &str, album_id: &str) {
         if let Ok(mut playlists) = self.playlists.lock() {
             playlists.insert(playlist_id.to_owned(), album_id.to_owned());
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn playlist_ref(&self, playlist_id: &str) -> Option<String> {
         self.playlists.lock().ok()?.get(playlist_id).cloned()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn add_history_ref(&self, row_id: &str, album_id: &str) {
         if let Ok(mut history) = self.history.lock() {
             history.insert(row_id.to_owned(), album_id.to_owned());
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn history_ref(&self, row_id: &str) -> Option<String> {
         self.history.lock().ok()?.get(row_id).cloned()
     }
@@ -312,13 +311,14 @@ pub struct MemoryQueueStore {
 }
 
 impl QueueStore for MemoryQueueStore {
-    fn enqueue(&self, job: IdentifyJob) {
+    fn enqueue(&self, job: IdentifyJob) -> Option<IdentifyJob> {
         if let Ok(mut order) = self.order.lock() {
             order.push(job.id.clone());
         }
         if let Ok(mut jobs) = self.jobs.lock() {
-            jobs.insert(job.id.clone(), job);
+            jobs.insert(job.id.clone(), job.clone());
         }
+        Some(job)
     }
 
     fn claim(&self, now_ms: u64, _lease_ms: u64) -> Option<IdentifyJob> {
@@ -368,6 +368,20 @@ impl QueueStore for MemoryQueueStore {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    fn recover(&self) -> usize {
+        let Ok(mut jobs) = self.jobs.lock() else {
+            return 0;
+        };
+        let mut recovered = 0;
+        for job in jobs.values_mut() {
+            if job.state == super::models::JobState::Running {
+                job.state = super::models::JobState::Queued;
+                recovered += 1;
+            }
+        }
+        recovered
     }
 }
 

@@ -230,6 +230,12 @@ pub trait CatalogStore: Send + Sync {
 
     fn catalog_entries(&self, root_id: &str) -> Vec<(String, CatalogEntry)>;
 
+    /// Catalog album of one indexed track: the track-to-album join.
+    fn album_for_track(&self, track_id: &str) -> Option<String>;
+
+    /// Indexed track at one path.
+    fn track_at(&self, root_id: &str, relative_path: &str) -> Option<String>;
+
     fn remove_catalog(&self, root_id: &str, relative_path: &str);
 
     /// Catalog paths under `scope_relative_path` that the run's current

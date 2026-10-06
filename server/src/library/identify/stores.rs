@@ -1,5 +1,5 @@
-//! Ports identify needs. Small traits, with memory fakes beside them; no
-//! durable adapters exist yet.
+//! Ports identify needs. Production binds them to SQLite (`sqlite`);
+//! tests may bind the memory fakes (`memory`).
 
 use super::models::{
     AlbumIdentity, Alias, ArtistCredit, ArtistIdentity, CreditProof, IdentifyJob, JobState,
@@ -15,8 +15,6 @@ pub trait IdentityStore: Send + Sync {
     fn save_track_identity(&self, identity: TrackIdentity);
     fn artist_identity(&self, local_artist_id: &str) -> Option<ArtistIdentity>;
     fn save_artist_identity(&self, identity: ArtistIdentity);
-    fn album_facts(&self, local_album_id: &str) -> Option<LocalAlbumFacts>;
-    fn save_album_facts(&self, facts: LocalAlbumFacts);
     fn owned_artist_by_mbid(&self, artist_mbid: &str) -> Option<String>;
     fn save_owned_artist(&self, artist_mbid: &str, local_artist_id: &str);
     fn track_credits(&self, local_track_id: &str) -> Vec<ArtistCredit>;
@@ -26,6 +24,12 @@ pub trait IdentityStore: Send + Sync {
     fn accepted_release_mbid_for_artist(&self, _source_local_artist_id: &str) -> Option<String> {
         None
     }
+}
+
+/// Local album facts the matcher reads. Production answers from the
+/// catalog the scan writes; `None` means the album does not exist.
+pub trait FactsSource: Send + Sync {
+    fn album_facts(&self, local_album_id: &str) -> Option<LocalAlbumFacts>;
 }
 
 /// Durable credit proof rows.
@@ -55,11 +59,17 @@ pub trait PinStore: Send + Sync {
 
 /// Durable identification queue.
 pub trait QueueStore: Send + Sync {
-    fn enqueue(&self, job: IdentifyJob);
+    /// Store a job. When a live job already holds the same album and
+    /// input revision, that job comes back instead; `None` means the
+    /// store could not record anything.
+    fn enqueue(&self, job: IdentifyJob) -> Option<IdentifyJob>;
     fn claim(&self, now_ms: u64, lease_ms: u64) -> Option<IdentifyJob>;
     fn update(&self, job: IdentifyJob);
     fn job(&self, job_id: &str) -> Option<IdentifyJob>;
     fn jobs_for_album(&self, local_album_id: &str) -> Vec<IdentifyJob>;
+    /// Boot recovery: jobs a previous process left running go back to
+    /// the queue. Returns how many.
+    fn recover(&self) -> usize;
 }
 
 /// Curator review queue.

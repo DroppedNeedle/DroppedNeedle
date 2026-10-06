@@ -6,12 +6,10 @@ use std::time::Duration;
 use tokio::sync::watch;
 
 use super::clock::{now_ms, now_unix, today_day};
-use super::identify::models::{IdentifyJob, LocalAlbumFacts, LocalTrackFacts};
 use super::identify::stores::QueueStore;
 use super::publish::PublishError;
 use super::publish::snapshots::SnapshotStore;
 use super::scan::coordinator::ResolverSource as _;
-use super::scan::store::CatalogStore;
 use super::scan::supervisor::SupervisorInputs;
 use super::scan::supervisor::{startup_recovery, supervise_once, supervise_once_with_shutdown};
 use super::scan::watcher::{
@@ -146,9 +144,9 @@ impl LibrarySetup {
     /// the whole queue at one MusicBrainz gate slot per attempt. The
     /// signal is checked before each claim, before each gated
     /// attempt, and across the attempt itself, so SIGTERM mid-drain
-    /// yields promptly. Claimed-but-unfinished jobs stay Running in
-    /// memory; a restart clears them, same as any mid-drain crash
-    /// today.
+    /// yields promptly. A claimed-but-unfinished job keeps its lease;
+    /// boot recovery (or the lease running out) puts it back in the
+    /// queue.
     pub async fn identify_tick_with_shutdown(&self, shutdown: &watch::Receiver<bool>) -> usize {
         let mut attempted = 0;
         let mut shutdown = shutdown.clone();
@@ -157,13 +155,9 @@ impl LibrarySetup {
                 break;
             }
             let claimed = self
-                .identify_queue
+                .identify_store
                 .claim(now_ms(), super::identify::queue::LEASE_SECONDS * 1000);
             let Some(job) = claimed else { break };
-            self.fill_facts(&job).await;
-            if *shutdown.borrow() {
-                break;
-            }
             let attempt = self.identify.run_claimed_job(&job.id, now_ms());
             tokio::select! {
                 biased;
@@ -212,154 +206,6 @@ impl LibrarySetup {
         drop(cell);
         self.sweep_previews();
         Ok(purged)
-    }
-
-    /// Fill missing album facts from the scan catalog plus live disk
-    /// tag reads. Scan keys read `root::directory`; anything else
-    /// keeps its seeded facts (HTTP manual enqueue always seeds).
-    /// Albums with no surviving files seed empty facts so the job
-    /// reaches a terminal outcome instead of sticking.
-    ///
-    /// Tag reads and probes ride the blocking pool: a full decode on
-    /// a slow disk must never stall the async runtime.
-    async fn fill_facts(&self, job: &IdentifyJob) {
-        use super::identify::stores::IdentityStore;
-
-        if self.identities.album_facts(&job.local_album_id).is_some() {
-            return;
-        }
-        let Some((root_id, parent)) = job.local_album_id.split_once("::") else {
-            return;
-        };
-        let dirs = (self.root_dirs)();
-        let Some(root_dir) = dirs.get(root_id) else {
-            self.identities.save_album_facts(LocalAlbumFacts {
-                local_album_id: job.local_album_id.clone(),
-                ..LocalAlbumFacts::default()
-            });
-            return;
-        };
-        let prefix = if parent == "." {
-            String::new()
-        } else {
-            format!("{parent}/")
-        };
-        // Memory-only fan-out first; every disk read below rides the pool.
-        let wanted: Vec<(String, String)> = self
-            .scan_store
-            .catalog_entries(root_id)
-            .into_iter()
-            .filter(|(relative_path, _)| relative_path.starts_with(&prefix))
-            .map(|(relative_path, entry)| (relative_path, entry.track_id))
-            .collect();
-        let mut tracks = Vec::new();
-        for (relative_path, track_id) in wanted {
-            let file = root_dir.join(&relative_path);
-            let pool = self.pool.clone();
-            let facts = pool.run(move || read_track_facts(&file)).await;
-            tracks.push(LocalTrackFacts {
-                local_track_id: track_id,
-                title: facts.title,
-                artist_name: facts.artist,
-                track_number: facts.track_number,
-                disc_number: facts.disc_number,
-                duration_secs: facts.duration_secs,
-                recording_mbid: facts.recording,
-                release_track_mbid: facts.release_track,
-                release_mbid: facts.release,
-                release_group_mbid: facts.group,
-                fingerprint: None,
-            });
-        }
-        // Album title and artist from the first tagged track; empty
-        // when nothing survived, which still terminates.
-        let first_tagged = tracks
-            .iter()
-            .find(|track| !track.title.is_empty())
-            .map(|track| (track.local_track_id.clone(), track.artist_name.clone()));
-        let (title, artist) = match first_tagged {
-            Some((track_id, artist)) => {
-                let file =
-                    root_dir.join(self.track_relative(root_id, &track_id).unwrap_or_default());
-                let pool = self.pool.clone();
-                let album = pool
-                    .run(move || {
-                        super::tags::format_for_path(&file)
-                            .ok()
-                            .and_then(|format| super::tags::read::read_tag_only(&file, format).ok())
-                            .map(|tag| tag.album)
-                            .unwrap_or_default()
-                    })
-                    .await;
-                (album, artist)
-            }
-            None => (String::new(), String::new()),
-        };
-        self.identities.save_album_facts(LocalAlbumFacts {
-            local_album_id: job.local_album_id.clone(),
-            title,
-            album_artist_name: artist,
-            tracks,
-            locked_track_ids: Vec::new(),
-            is_compilation: false,
-        });
-    }
-
-    /// Relative path for one catalog track id, if still present.
-    fn track_relative(&self, root_id: &str, track_id: &str) -> Option<String> {
-        self.scan_store
-            .catalog_entries(root_id)
-            .into_iter()
-            .find(|(_, entry)| entry.track_id == track_id)
-            .map(|(relative_path, _)| relative_path)
-    }
-}
-
-/// Disk facts for one catalog file: tag-only read plus probe.
-/// Blocking (a probe fully decodes); always runs on the pool.
-struct DiskTrackFacts {
-    title: String,
-    artist: String,
-    track_number: u32,
-    disc_number: u32,
-    duration_secs: Option<u64>,
-    recording: Option<String>,
-    release_track: Option<String>,
-    release: Option<String>,
-    group: Option<String>,
-}
-
-fn read_track_facts(file: &std::path::Path) -> DiskTrackFacts {
-    let (title, artist, track_number, disc_number, recording, release_track, release, group) =
-        match super::tags::format_for_path(file)
-            .ok()
-            .and_then(|format| super::tags::read::read_tag_only(file, format).ok())
-        {
-            Some(tag) => (
-                tag.title,
-                tag.artist,
-                tag.track_number,
-                tag.disc_number,
-                tag.musicbrainz_recording_id,
-                tag.musicbrainz_release_track_id,
-                tag.musicbrainz_release_id,
-                tag.musicbrainz_release_group_id,
-            ),
-            None => (String::new(), String::new(), 0, 0, None, None, None, None),
-        };
-    let duration_secs = super::tags::probe(file)
-        .ok()
-        .map(|info| info.duration_seconds as u64);
-    DiskTrackFacts {
-        title,
-        artist,
-        track_number,
-        disc_number,
-        duration_secs,
-        recording,
-        release_track,
-        release,
-        group,
     }
 }
 

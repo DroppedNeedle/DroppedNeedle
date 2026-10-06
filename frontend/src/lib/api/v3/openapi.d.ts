@@ -9617,14 +9617,10 @@ export interface components {
         IdentificationPolicy: "local_metadata" | "automatic" | "excluded";
         /** @description Enqueue one album for identification. */
         IdentifyBody: {
-            /** @description Local album id (scan album keys read `root::directory`). */
+            /** @description Catalog album id, as `GET /library/albums` lists it. */
             album_id: string;
-            /** @description Album artist hint for albums the scan never saw. */
-            artist?: string | null;
             /** @description Job kind: `automatic`, `manual`, `historical` (default: `manual`). */
             kind?: string | null;
-            /** @description Album title hint for albums the scan never saw. */
-            title?: string | null;
         };
         /** @description Enqueue answer. */
         IdentifyResponse: {
@@ -20015,6 +20011,13 @@ export interface operations {
             };
             /** @description Curator role required */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album id */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

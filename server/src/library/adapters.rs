@@ -9,8 +9,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
 
@@ -23,12 +22,9 @@ use super::contrib::seams::{
     AttachmentOutcome, ContributionCatalog, ContributionIdentity, DuplicateSearchFacts,
     MusicBrainzContrib, ProviderFailure, UrlRelation,
 };
-use super::identify::models::IdentifyKind;
-use super::identify::stores::QueueStore;
 use super::publish::PublishError;
 use super::publish::planner::SpaceProbe;
 use super::scan::seams::{IdentifyQueue, ScannedTags, TagReadError, TagReader};
-use crate::ids::IdGenerator;
 
 // ---------------------------------------------------------------------------
 // Scan -> tags: read-only tag access over the tags module.
@@ -167,125 +163,40 @@ fn map_tag_read_error(error: super::tags::TagsError) -> TagReadError {
 }
 
 // ---------------------------------------------------------------------------
-// Scan -> identify: fire-and-forget enqueue plus the track/album index.
+// Scan -> identify: offer changed albums to the durable queue.
 // ---------------------------------------------------------------------------
 
-/// Track-to-album index fed by scan enqueue. The identify stores key
-/// everything by album while management plans by track; this map is
-/// the join until a durable catalog owns it.
-#[derive(Debug, Default)]
-pub struct TrackAlbumMap {
-    inner: Mutex<MapInner>,
-}
-
-#[derive(Debug, Default)]
-struct MapInner {
-    /// Track ids are UUIDs in production; the 128-bit form drops the
-    /// 36-byte string plus its allocation at 100k scale.
-    by_track: HashMap<u128, Arc<str>>,
-    /// Non-UUID ids (tests, foreign callers) keep exact semantics here.
-    overflow: HashMap<String, Arc<str>>,
-    /// One shared copy of each album key: tracks outnumber albums ten
-    /// to one, so sharing saves most of the value bytes at 100k scale.
-    keys: HashMap<String, Arc<str>>,
-}
-
-impl TrackAlbumMap {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn record(&self, album_key: &str, track_ids: &[String]) {
-        let mut inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let shared = inner
-            .keys
-            .entry(album_key.to_owned())
-            .or_insert_with(|| Arc::from(album_key))
-            .clone();
-        for track_id in track_ids {
-            match uuid::Uuid::parse_str(track_id) {
-                Ok(id) => {
-                    inner.by_track.insert(id.as_u128(), shared.clone());
-                }
-                Err(_) => {
-                    inner.overflow.insert(track_id.clone(), shared.clone());
-                }
-            }
-        }
-    }
-
-    pub fn album_for_track(&self, track_id: &str) -> Option<String> {
-        let inner = self
-            .inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        match uuid::Uuid::parse_str(track_id) {
-            Ok(id) => inner.by_track.get(&id.as_u128()),
-            Err(_) => inner.overflow.get(track_id),
-        }
-        .map(|shared| shared.to_string())
-    }
-}
-
-/// Fire-and-forget identify enqueue over an [`IdentifyService`]-shaped
-/// queue. Scan offers album keys with fresh track ids; the adapter
-/// records the track/album join and enqueues one automatic job per
-/// album. Facts are filled later from the scan catalog plus disk tag
-/// reads (see the identify loop), so enqueue stays synchronous.
+/// Scan-side identify offers over the durable queue. The scan names the
+/// tracks it just committed; each track's catalog album (the same
+/// `local_albums.id` the reads API serves) gets one offer, and the queue
+/// keeps one live job per album revision.
 pub struct IdentifyEnqueue {
-    queue: Arc<dyn QueueStore>,
-    map: Arc<TrackAlbumMap>,
-    ids: Arc<dyn IdGenerator>,
+    catalog: Arc<super::scan::sqlite_store::SqliteScanStore>,
+    queue: Arc<super::identify::sqlite::SqliteIdentifyStore>,
 }
 
 impl IdentifyEnqueue {
     pub fn new(
-        queue: Arc<dyn QueueStore>,
-        map: Arc<TrackAlbumMap>,
-        ids: Arc<dyn IdGenerator>,
+        catalog: Arc<super::scan::sqlite_store::SqliteScanStore>,
+        queue: Arc<super::identify::sqlite::SqliteIdentifyStore>,
     ) -> Self {
-        Self { queue, map, ids }
-    }
-
-    pub fn map(&self) -> &Arc<TrackAlbumMap> {
-        &self.map
+        Self { catalog, queue }
     }
 }
 
 impl IdentifyQueue for IdentifyEnqueue {
-    fn enqueue(&self, album_key: &str, track_ids: &[String]) -> usize {
-        self.map.record(album_key, track_ids);
-        let now_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|span| span.as_millis() as u64)
-            .unwrap_or(0);
-        // Duplicate offers across runs are harmless: the queue holds
-        // one job per album per input revision, and the scan revision
-        // is the album key itself.
-        let already = self
-            .queue
-            .jobs_for_album(album_key)
-            .into_iter()
-            .any(|job| job.input_revision == album_key);
-        if already {
-            return track_ids.len();
-        }
-        self.queue.enqueue(super::identify::models::IdentifyJob {
-            id: self.ids.new_id(),
-            local_album_id: album_key.to_owned(),
-            kind: IdentifyKind::Automatic,
-            priority: super::identify::queue::PRIORITY_NEW_OR_CHANGED,
-            state: super::identify::models::JobState::Queued,
-            attempts: 0,
-            not_before_ms: now_ms,
-            input_revision: album_key.to_owned(),
-            requested_by_user_id: None,
-            failure_code: None,
-        });
-        track_ids.len()
+    fn enqueue(&self, _album_key: &str, track_ids: &[String]) -> usize {
+        use super::scan::store::CatalogStore as _;
+        let mut albums: Vec<String> = track_ids
+            .iter()
+            .filter_map(|track_id| self.catalog.album_for_track(track_id))
+            .collect();
+        albums.sort();
+        albums.dedup();
+        albums
+            .iter()
+            .filter(|album_id| self.queue.offer(album_id) == Some(true))
+            .count()
     }
 }
 
@@ -579,29 +490,5 @@ mod tests {
             reader.read_tags(Path::new("/nonexistent-missing-file.aac")),
             Err(TagReadError::Deferred)
         );
-    }
-
-    /// The track/album join records every offer and re-recording one
-    /// album replaces its tracks' keys without disturbing the rest.
-    /// UUID and non-UUID ids share the same semantics.
-    #[test]
-    fn track_album_map_records_and_replaces() {
-        let map = TrackAlbumMap::new();
-        let uuid_a = "123e4567-e89b-12d3-a456-426614174000";
-        let uuid_b = "123e4567-e89b-12d3-a456-426614174001";
-        map.record("r::a1", &[uuid_a.to_owned(), "t2".to_owned()]);
-        map.record("r::a2", &[uuid_b.to_owned()]);
-        assert_eq!(map.album_for_track(uuid_a).as_deref(), Some("r::a1"));
-        assert_eq!(map.album_for_track("t2").as_deref(), Some("r::a1"));
-        assert_eq!(map.album_for_track(uuid_b).as_deref(), Some("r::a2"));
-        assert_eq!(map.album_for_track("missing"), None);
-        assert_eq!(
-            map.album_for_track("123e4567-e89b-12d3-a456-426614179999"),
-            None
-        );
-        map.record("r::a1", &[uuid_a.to_owned(), "t4".to_owned()]);
-        assert_eq!(map.album_for_track(uuid_a).as_deref(), Some("r::a1"));
-        assert_eq!(map.album_for_track("t4").as_deref(), Some("r::a1"));
-        assert_eq!(map.album_for_track(uuid_b).as_deref(), Some("r::a2"));
     }
 }

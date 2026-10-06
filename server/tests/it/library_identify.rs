@@ -74,6 +74,7 @@ fn rig_with_recall(recall: RecallResult) -> Rig {
     let providers = Arc::new(FakeProviders::with_recall(recall));
     let service = IdentifyService::new(IdentifyDeps {
         identities: identities.clone(),
+        facts: identities.clone(),
         proofs: proofs.clone(),
         aliases: aliases.clone(),
         pins: pins.clone(),
@@ -309,8 +310,8 @@ async fn manual_survives_rescan() {
         row_revision: 3,
     });
     // A rescan re-reads the files, then a fresh automatic pass disagrees.
-    rig.service
-        .relink_files(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    rig.identities
+        .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
     rig.service.enqueue_album(
         "job-1",
         "album-1",
@@ -357,8 +358,8 @@ async fn legacy_import_survives_rescan() {
         decision_source: DecisionSource::LegacyImport,
         row_revision: 1,
     });
-    rig.service
-        .relink_files(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
+    rig.identities
+        .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
     rig.service.enqueue_album(
         "job-1",
         "album-1",
@@ -1415,4 +1416,64 @@ fn artist_identity_rows_round_trip() {
     let stored = rig.identities.artist_identity("artist-1").expect("artist");
     assert_eq!(stored.provider_artist_mbid.as_deref(), Some(ARTIST_MBID));
     assert!(!stored.decision_source.automatic_may_overwrite());
+}
+
+/// Migration 0011 adds the identify tables on a fresh database and on one
+/// migrated through 0010, keeping the catalog rows already there.
+#[tokio::test]
+async fn identify_state_migration_upgrades_in_place() {
+    use droppedneedle::schema::{MIGRATOR, apply_migrations};
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .expect("pool opens");
+    let through_0010 = sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            MIGRATOR
+                .migrations
+                .iter()
+                .filter(|migration| migration.version <= 10)
+                .cloned()
+                .collect(),
+        ),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    };
+    through_0010.run(&pool).await.expect("0001-0010 apply");
+    sqlx::query(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('artist', 'Artist', 'artist', 'unknown', 0, 0); \
+         INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) \
+         VALUES ('album', 'r', 'k', 'Album', 'album', 'artist', 'automatic', 0, 0);",
+    )
+    .execute(&pool)
+    .await
+    .expect("catalog seeds");
+
+    apply_migrations(&pool).await.expect("0011 applies");
+    let albums: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM local_albums")
+        .fetch_one(&pool)
+        .await
+        .expect("albums count");
+    assert_eq!(albums, 1);
+    for table in [
+        "library_identify_jobs",
+        "library_identify_reviews",
+        "library_identify_credit_proofs",
+        "library_identify_track_credits",
+        "local_track_aliases",
+    ] {
+        let found: Option<String> =
+            sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1")
+                .bind(table)
+                .fetch_optional(&pool)
+                .await
+                .expect("schema reads");
+        assert_eq!(found.as_deref(), Some(table));
+    }
 }

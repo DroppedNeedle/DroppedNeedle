@@ -24,19 +24,16 @@ use tokio::sync::watch;
 
 use super::adapters::{
     EmptyContributionIdentity, IdentifyEnqueue, LoftyTagReader, MinimalAttachmentEvidence,
-    NoopContributionCatalog, TrackAlbumMap, UnavailableMusicBrainz,
+    NoopContributionCatalog, UnavailableMusicBrainz,
 };
 use super::clock::now_unix;
 use super::contrib::memory::MemoryStore as ContribMemoryStore;
 use super::contrib::seams::SystemClock as ContribSystemClock;
 use super::contrib::service::ContributionService;
 use super::contrib::worker::{VerificationWorker, VerificationWorkerConfig};
-use super::identify::memory::{
-    MemoryAliasStore, MemoryIdentityStore, MemoryPinStore, MemoryProofStore, MemoryQueueStore,
-    MemoryReviewStore,
-};
 use super::identify::providers::FakeProviders;
 use super::identify::service::{IdentifyDeps, IdentifyService};
+use super::identify::sqlite::SqliteIdentifyStore;
 use super::loops::{identify_loop, publish_loop, scan_loop, watcher_loop};
 use super::manage::{PreviewEntry, PublishCell};
 use super::scan::coordinator::{
@@ -51,20 +48,19 @@ use crate::auth::users::UsersDeps;
 use crate::ids::IdGenerator;
 use crate::runtime_config::ConfigStore;
 
-/// Scratch database (every migration applied) plus config store under
-/// a fresh temp dir, for the test bundles.
+/// Scratch database (every migration applied) plus config store in a
+/// directory that goes away when the last bundle clone drops.
 #[cfg(any(test, feature = "test-support"))]
-fn scratch_state() -> Result<(PathBuf, Arc<ConfigStore>), String> {
-    let dir = std::env::temp_dir().join(format!("droppedneedle-library-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).map_err(|error| format!("scratch dir: {error}"))?;
-    let db_path = dir.join("app.db");
+fn scratch_state() -> Result<(Arc<super::scratch::ScratchDir>, Arc<ConfigStore>), String> {
+    let dir = super::scratch::ScratchDir::new("library").map_err(|error| error.to_string())?;
+    let db_path = dir.path().join("app.db");
     let connection = crate::db::open_connection(&db_path).map_err(|error| error.to_string())?;
     crate::schema::apply_migrations_blocking(&connection).map_err(|error| error.to_string())?;
     let crypto = crate::runtime_config::Crypto::from_key_bytes(&[7u8; 32])
         .map_err(|error| error.to_string())?;
-    let config =
-        ConfigStore::open(&dir.join("config.json"), crypto).map_err(|error| error.to_string())?;
-    Ok((db_path, Arc::new(config)))
+    let config = ConfigStore::open(&dir.path().join("config.json"), crypto)
+        .map_err(|error| error.to_string())?;
+    Ok((Arc::new(dir), Arc::new(config)))
 }
 
 /// Scan coordinator over the wired seams.
@@ -118,14 +114,9 @@ pub struct LibrarySetup {
     pub dirty: DirtyScopes,
     /// Work wakeups shared by the supervisor and the watcher.
     pub wakeups: WorkWakeups,
-    /// Track-to-album join fed by scan enqueue.
-    pub track_albums: Arc<TrackAlbumMap>,
-    /// Identify stores.
-    pub identities: Arc<MemoryIdentityStore>,
-    /// Identify queue store.
-    pub identify_queue: Arc<MemoryQueueStore>,
-    /// Review store.
-    pub reviews: Arc<MemoryReviewStore>,
+    /// Durable identify state: queue, identities, reviews, pins,
+    /// aliases, and the catalog-backed album facts.
+    pub identify_store: Arc<SqliteIdentifyStore>,
     /// Identify service.
     pub identify: Arc<IdentifyService>,
     /// Scripted providers (test bundles only).
@@ -142,6 +133,9 @@ pub struct LibrarySetup {
     pub watcher_state: Arc<std::sync::Mutex<WatcherState>>,
     /// Shared root-directory lookup.
     pub root_dirs: RootDirs,
+    /// Scratch state of a test bundle, removed with the last clone.
+    #[cfg(any(test, feature = "test-support"))]
+    pub scratch: Option<Arc<super::scratch::ScratchDir>>,
 }
 
 impl LibrarySetup {
@@ -193,15 +187,17 @@ impl LibrarySetup {
     #[cfg(any(test, feature = "test-support"))]
     pub fn for_tests(users: UsersDeps, ids: Arc<dyn IdGenerator>) -> Result<Self, String> {
         let scripted = Arc::new(FakeProviders::default());
-        let (db_path, config) = scratch_state()?;
-        Self::assemble(
+        let (dir, config) = scratch_state()?;
+        let mut setup = Self::assemble(
             users,
             ids,
             scripted.clone() as Arc<dyn super::identify::providers::IdentifyProviders>,
             Some(scripted),
-            &db_path,
+            &dir.path().join("app.db"),
             config,
-        )
+        )?;
+        setup.scratch = Some(dir);
+        Ok(setup)
     }
 
     /// Test bundle over scripted providers on an existing application
@@ -236,8 +232,17 @@ impl LibrarySetup {
         ids: Arc<dyn IdGenerator>,
         providers: Arc<dyn super::identify::providers::IdentifyProviders>,
     ) -> Result<Self, String> {
-        let (db_path, config) = scratch_state()?;
-        Self::assemble(users, ids, providers, None, &db_path, config)
+        let (dir, config) = scratch_state()?;
+        let mut setup = Self::assemble(
+            users,
+            ids,
+            providers,
+            None,
+            &dir.path().join("app.db"),
+            config,
+        )?;
+        setup.scratch = Some(dir);
+        Ok(setup)
     }
 
     fn assemble(
@@ -261,12 +266,13 @@ impl LibrarySetup {
             let registry = registry.clone();
             Arc::new(move || registry.resolver().registry().root_paths())
         };
-        let track_albums = Arc::new(TrackAlbumMap::new());
-        let identify_queue = Arc::new(MemoryQueueStore::default());
+        let identify_store = Arc::new(
+            SqliteIdentifyStore::open(db_path)
+                .map_err(|error| format!("identify store: {error}"))?,
+        );
         let enqueue = Arc::new(IdentifyEnqueue::new(
-            identify_queue.clone(),
-            track_albums.clone(),
-            ids.clone(),
+            scan_store.clone(),
+            identify_store.clone(),
         ));
         let pool = BlockingPool::new(4);
         let wakeups = WorkWakeups::new();
@@ -289,18 +295,14 @@ impl LibrarySetup {
                 );
             }))),
         );
-        let identities = Arc::new(MemoryIdentityStore::default());
-        let proofs = Arc::new(MemoryProofStore::default());
-        let aliases = Arc::new(MemoryAliasStore::default());
-        let pins = Arc::new(MemoryPinStore::default());
-        let reviews = Arc::new(MemoryReviewStore::default());
         let identify = Arc::new(IdentifyService::new(IdentifyDeps {
-            identities: identities.clone(),
-            proofs,
-            aliases,
-            pins,
-            queue: identify_queue.clone(),
-            reviews: reviews.clone(),
+            identities: identify_store.clone(),
+            facts: identify_store.clone(),
+            proofs: identify_store.clone(),
+            aliases: identify_store.clone(),
+            pins: identify_store.clone(),
+            queue: identify_store.clone(),
+            reviews: identify_store.clone(),
             providers,
         }));
         let contrib_store: Arc<ContribMemoryStore> = Arc::new(ContribMemoryStore::new());
@@ -332,10 +334,7 @@ impl LibrarySetup {
             pool,
             dirty: DirtyScopes::new(),
             wakeups,
-            track_albums,
-            identities,
-            identify_queue,
-            reviews,
+            identify_store,
             identify,
             test_providers,
             contrib,
@@ -344,6 +343,8 @@ impl LibrarySetup {
             previews: Arc::new(std::sync::Mutex::new(HashMap::new())),
             watcher_state: Arc::new(std::sync::Mutex::new(WatcherState::new())),
             root_dirs,
+            #[cfg(any(test, feature = "test-support"))]
+            scratch: None,
         })
     }
 
@@ -417,6 +418,13 @@ impl LibrarySetup {
             cell.refresh(&registry, &self.root_dirs)
                 .map_err(|error| format!("publish recovery: {error}"))?
         };
+        let requeued = {
+            use super::identify::stores::QueueStore as _;
+            self.identify_store.recover()
+        };
+        if requeued > 0 {
+            tracing::info!(requeued, "identify jobs from the previous run requeued");
+        }
         let recovered = self.contrib_worker.recover(now_unix()).await;
         Ok(LibraryRecovery {
             publish_recoveries: recoveries

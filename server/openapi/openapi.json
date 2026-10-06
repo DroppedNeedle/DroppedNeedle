@@ -5062,6 +5062,9 @@
           },
           "403": {
             "description": "Curator role required"
+          },
+          "404": {
+            "description": "Unknown album id"
           }
         }
       }
@@ -21478,14 +21481,7 @@
         "properties": {
           "album_id": {
             "type": "string",
-            "description": "Local album id (scan album keys read `root::directory`)."
-          },
-          "artist": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Album artist hint for albums the scan never saw."
+            "description": "Catalog album id, as `GET /library/albums` lists it."
           },
           "kind": {
             "type": [
@@ -21493,13 +21489,6 @@
               "null"
             ],
             "description": "Job kind: `automatic`, `manual`, `historical` (default: `manual`)."
-          },
-          "title": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Album title hint for albums the scan never saw."
           }
         }
       },
