@@ -25,6 +25,7 @@ pub mod config;
 pub mod db;
 pub mod docs;
 pub mod error;
+pub mod events;
 pub mod export;
 pub mod handlers;
 pub mod http_client;

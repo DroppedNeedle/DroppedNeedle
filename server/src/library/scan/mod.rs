@@ -1,11 +1,12 @@
 //! Library scan: roots, discovery, scheduling, and supervision.
 //!
 //! Owns the library root registry, the filesystem walk, scan runs, the
-//! rolling scheduler, the filesystem watcher, worker supervision, and the
-//! library-revision poller. Ported from v2's native library services
+//! rolling scheduler, the filesystem watcher and worker supervision. The
+//! library-revision poller behind `activity.changed` lives in
+//! `crate::events`. Ported from v2's native library services
 //! (inventory scanner, scan coordinator, scheduler, supervisor, filesystem
-//! watcher and coordinator, revision poller, indexer, reconciler, file
-//! revision, scan events) plus the scan half of its library store and work
+//! watcher and coordinator, indexer, reconciler, file revision, scan
+//! events) plus the scan half of its library store and work
 //! models.
 //!
 //! ## Boundary
@@ -38,7 +39,6 @@ pub mod coordinator;
 pub mod fs;
 pub mod models;
 pub mod naming;
-pub mod poller;
 pub mod pool;
 pub mod revision;
 pub mod roots;
@@ -62,10 +62,6 @@ pub use models::{
     ScanInventoryItem, ScanKind, ScanPhase, ScanRequest, ScanRequestResult, ScanRun, ScanScope,
     ScanState, ScanTrigger, ScopeDiscoveryState, Verdict, counter_names, failure_codes,
     scope_covers_path,
-};
-pub use poller::{
-    PollerState, RevisionPublisher, RevisionSource, poll_once as poll_revisions_once,
-    revision_event_id,
 };
 pub use pool::BlockingPool;
 pub use revision::{exact_stat_revision, legacy_mtime_eps_seconds, mtime_ns_from_metadata};
