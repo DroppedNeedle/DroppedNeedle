@@ -19,9 +19,6 @@ pub struct ConcertsNew {
     pub new_events: usize,
 }
 
-/// Name of the event on the user's stream.
-pub const CONCERTS_NEW: &str = "concerts_new";
-
 /// Where `concerts_new` events go. Delivery is best-effort: a sink must
 /// not block the sweep and has no way to fail it.
 pub trait ConcertsEvents: Send + Sync + 'static {

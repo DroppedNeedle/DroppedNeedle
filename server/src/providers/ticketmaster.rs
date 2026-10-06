@@ -267,6 +267,43 @@ struct TmEventsResponse {
     page: Option<TmPage>,
 }
 
+/// One decoded page of events plus the server's page count.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TmEventsPage {
+    /// Events on this page.
+    pub events: Vec<TmEvent>,
+    /// Total pages available (1 when the answer carries no page block).
+    pub total_pages: u32,
+}
+
+/// Follow an attraction's pages through `fetch_page`, up to [MAX_PAGES].
+/// A deeper result set is truncated with a warning, never silently.
+/// Callers that retry pass a fetcher that retries one page at a time.
+pub async fn collect_event_pages<F, Fut, E>(
+    attraction_id: &str,
+    mut fetch_page: F,
+) -> Result<Vec<TmEvent>, E>
+where
+    F: FnMut(u32) -> Fut,
+    Fut: Future<Output = Result<TmEventsPage, E>>,
+{
+    let mut events = Vec::new();
+    for page_number in 0..MAX_PAGES {
+        let page = fetch_page(page_number).await?;
+        events.extend(page.events);
+        if page_number + 1 >= page.total_pages {
+            return Ok(events);
+        }
+    }
+    tracing::warn!(
+        attraction_id,
+        MAX_PAGES,
+        event_count = events.len(),
+        "ticketmaster events truncated at page cap",
+    );
+    Ok(events)
+}
+
 /// What can go wrong on a Ticketmaster call. Only
 /// [TicketmasterError::Transport] and [TicketmasterError::RateLimited] are
 /// retriable; API and decode failures are deterministic for the call.
@@ -354,48 +391,41 @@ impl TicketmasterClient {
             .unwrap_or_default())
     }
 
-    /// All upcoming events for one attraction, worldwide, oldest first.
-    ///
-    /// Follows pagination up to [MAX_PAGES]; a deeper result set is
-    /// truncated with a warning, never silently.
+    /// All upcoming events for one attraction, worldwide, oldest first,
+    /// through [collect_event_pages].
     pub async fn events_for_attraction(
         &self,
         attraction_id: &str,
     ) -> Result<Vec<TmEvent>, TicketmasterError> {
-        let mut events = Vec::new();
-        for page_number in 0..MAX_PAGES {
-            let body = self
-                .fetch(
-                    "/events.json",
-                    &[
-                        ("attractionId", attraction_id.to_owned()),
-                        ("sort", "date,asc".to_owned()),
-                        ("size", PAGE_SIZE.to_string()),
-                        ("page", page_number.to_string()),
-                    ],
-                )
-                .await?;
-            let decoded: TmEventsResponse = serde_json::from_slice(&body)
-                .map_err(|error| TicketmasterError::Decode(error.to_string()))?;
-            if let Some(inner) = decoded.embedded {
-                events.extend(inner.events);
-            }
-            let total_pages = decoded
-                .page
-                .as_ref()
-                .map(|page| page.total_pages)
-                .unwrap_or(1);
-            if page_number + 1 >= total_pages {
-                return Ok(events);
-            }
-        }
-        tracing::warn!(
-            attraction_id,
-            MAX_PAGES,
-            event_count = events.len(),
-            "ticketmaster events truncated at page cap",
-        );
-        Ok(events)
+        collect_event_pages(attraction_id, |page| self.events_page(attraction_id, page)).await
+    }
+
+    /// One page (zero-based) of an attraction's upcoming events.
+    pub async fn events_page(
+        &self,
+        attraction_id: &str,
+        page: u32,
+    ) -> Result<TmEventsPage, TicketmasterError> {
+        let body = self
+            .fetch(
+                "/events.json",
+                &[
+                    ("attractionId", attraction_id.to_owned()),
+                    ("sort", "date,asc".to_owned()),
+                    ("size", PAGE_SIZE.to_string()),
+                    ("page", page.to_string()),
+                ],
+            )
+            .await?;
+        let decoded: TmEventsResponse = serde_json::from_slice(&body)
+            .map_err(|error| TicketmasterError::Decode(error.to_string()))?;
+        Ok(TmEventsPage {
+            events: decoded
+                .embedded
+                .map(|inner| inner.events)
+                .unwrap_or_default(),
+            total_pages: decoded.page.map(|page| page.total_pages).unwrap_or(1),
+        })
     }
 
     /// True iff the configured key can reach the Discovery API. Like v2,

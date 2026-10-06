@@ -143,7 +143,15 @@ impl ConcertsSweep {
         let artists = self.sweep_set(active.scope, skip_recent_hours).await?;
         summary.artists_swept = artists.len();
         for (index, artist) in artists.iter().enumerate() {
-            match self.process_artist(artist, &active, &horizon).await {
+            let outcome = tokio::select! {
+                biased;
+                () = stop.notified() => {
+                    tracing::info!(?summary, "events sweep stopped mid-artist");
+                    return Ok((SweepEnd::Stopped, summary));
+                }
+                outcome = self.process_artist(artist, &active, &horizon) => outcome,
+            };
+            match outcome {
                 Ok(new_events) => summary.events_new += new_events,
                 Err(ArtistError::Source(cause)) => {
                     tracing::warn!(artist = %artist.mbid_lower, %cause, "events source unavailable");
@@ -220,11 +228,11 @@ impl ConcertsSweep {
         let mut collected = Vec::new();
         let mut swept = HashSet::new();
         if let Some(key) = &active.ticketmaster {
-            collected.extend(timed(self.fetch_ticketmaster(artist, key)).await?);
+            collected.extend(timed(self.fetch_ticketmaster(artist, key.expose())).await?);
             swept.insert(EventSource::Ticketmaster);
         }
         if let Some(key) = &active.skiddle {
-            collected.extend(timed(self.fetch_skiddle(artist, key)).await?);
+            collected.extend(timed(self.fetch_skiddle(artist, key.expose())).await?);
             swept.insert(EventSource::Skiddle);
         }
         collected.retain(|row| row.local_date.as_str() <= horizon);

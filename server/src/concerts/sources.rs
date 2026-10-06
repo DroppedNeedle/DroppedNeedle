@@ -1,7 +1,8 @@
 //! The three outside services the concerts feature calls, with v2's
-//! resilience around each: a token bucket per service, three attempts with
-//! backoff on retriable failures (transport, 429, 5xx), and a circuit
-//! breaker that fails fast for a minute after five failed calls in a row.
+//! resilience around each request: a token bucket per service, three
+//! attempts with backoff on retriable failures (transport, 429, 5xx), and a
+//! circuit breaker that fails fast for a minute after five failed calls in
+//! a row. Ticketmaster's paged events retry one page at a time.
 //!
 //! The buckets and breakers live as long as the server, so a burst of
 //! settings kicks or city searches shares one budget. API keys are not
@@ -172,16 +173,23 @@ impl Sources {
             .await
     }
 
-    /// Upcoming Ticketmaster events for one attraction.
+    /// Upcoming Ticketmaster events for one attraction, every page.
     pub async fn tm_events(
         &self,
         key: &str,
         attraction_id: &str,
     ) -> Result<Vec<TmEvent>, ProviderError> {
         let client = self.tm_client(key);
-        self.ticketmaster
-            .call(|| client.events_for_attraction(attraction_id))
-            .await
+        // Retry and the breaker apply per page, as v2's per-request `_get` did.
+        ticketmaster::collect_event_pages(attraction_id, |page| {
+            let client = &client;
+            async move {
+                self.ticketmaster
+                    .call(|| client.events_page(attraction_id, page))
+                    .await
+            }
+        })
+        .await
     }
 
     /// Skiddle acts matching a name.

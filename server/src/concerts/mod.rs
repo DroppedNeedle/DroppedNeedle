@@ -34,8 +34,8 @@ use sqlx::SqlitePool;
 
 use crate::db::{DbRuntime, WriteLane};
 use crate::http_client::HttpClientFactory;
-use crate::runtime_config::ConfigStore;
 use crate::runtime_config::secret_sections::{EventsSettings, EventsSweepScope};
+use crate::runtime_config::{ConfigStore, Secret};
 
 pub use events::{ConcertsEvents, ConcertsNew, NoEventStream};
 pub use service::ConcertsService;
@@ -116,9 +116,9 @@ impl ConcertsSetup {
 #[derive(Debug, Clone)]
 pub(crate) struct ActiveSources {
     /// Ticketmaster key when that source is on and keyed.
-    pub ticketmaster: Option<String>,
+    pub ticketmaster: Option<Secret>,
     /// Skiddle key when that source is on and keyed.
-    pub skiddle: Option<String>,
+    pub skiddle: Option<Secret>,
     /// Which artists the sweep covers.
     pub scope: EventsSweepScope,
 }
@@ -131,13 +131,10 @@ impl ActiveSources {
         if !settings.enabled {
             return None;
         }
-        let keyed = |on: bool, key: &str| (on && !key.is_empty()).then(|| key.to_owned());
+        let keyed = |on: bool, key: Secret| (on && !key.is_empty()).then_some(key);
         let active = Self {
-            ticketmaster: keyed(
-                settings.ticketmaster_enabled,
-                settings.ticketmaster_api_key.expose(),
-            ),
-            skiddle: keyed(settings.skiddle_enabled, settings.skiddle_api_key.expose()),
+            ticketmaster: keyed(settings.ticketmaster_enabled, settings.ticketmaster_api_key),
+            skiddle: keyed(settings.skiddle_enabled, settings.skiddle_api_key),
             scope: settings.sweep_scope,
         };
         (active.ticketmaster.is_some() || active.skiddle.is_some()).then_some(active)
@@ -154,7 +151,7 @@ impl ActiveSources {
 fn read_settings(config: &ConfigStore) -> Option<EventsSettings> {
     config
         .get_raw::<EventsSettings>()
-        .inspect_err(|error| tracing::warn!(%error, "cannot read events settings; concerts off"))
+        .inspect_err(|error| tracing::debug!(%error, "cannot read events settings; concerts off"))
         .ok()
 }
 
