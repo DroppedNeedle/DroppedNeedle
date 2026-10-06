@@ -441,6 +441,10 @@ fn file_name_parts(file: &LandedFile) -> (Option<u32>, String) {
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_default();
+    number_and_title(&stem)
+}
+
+fn number_and_title(stem: &str) -> (Option<u32>, String) {
     let trimmed = stem.trim_start();
     let digits: String = trimmed.chars().take_while(char::is_ascii_digit).collect();
     if digits.is_empty() || digits.len() > 3 {
@@ -454,13 +458,11 @@ fn file_name_parts(file: &LandedFile) -> (Option<u32>, String) {
 
 /// A disc number from the containing folder ("CD2", "Disc 3").
 fn disc_folder(file: &LandedFile) -> Option<u32> {
-    let folder = file
-        .path
-        .parent()?
-        .file_name()?
-        .to_string_lossy()
-        .to_lowercase();
-    let words = super::specs::words(&folder);
+    disc_in_folder(&file.path.parent()?.file_name()?.to_string_lossy())
+}
+
+fn disc_in_folder(folder: &str) -> Option<u32> {
+    let words = super::specs::words(&folder.to_lowercase());
     for (index, word) in words.iter().enumerate() {
         for prefix in ["cd", "disc", "disk"] {
             if let Some(number) = word.strip_prefix(prefix)
@@ -474,6 +476,21 @@ fn disc_folder(file: &LandedFile) -> Option<u32> {
         }
     }
     None
+}
+
+/// The `(disc, track)` a client file name gives, from its leading number
+/// and a disc folder: `Album\CD2\03 - Title.flac` is `(2, 3)`. `None`
+/// when the name carries no track number.
+pub fn position_in_name(filename: &str) -> Option<(u32, u32)> {
+    let normalized = filename.replace('\\', "/");
+    let path = std::path::Path::new(&normalized);
+    let (track, _) = number_and_title(&path.file_stem()?.to_string_lossy());
+    let disc = path
+        .parent()
+        .and_then(std::path::Path::file_name)
+        .and_then(|name| disc_in_folder(&name.to_string_lossy()))
+        .unwrap_or(1);
+    Some((disc, track?))
 }
 
 fn clean(value: Option<&str>) -> Option<String> {
@@ -500,4 +517,19 @@ fn most_common<'a>(values: impl Iterator<Item = &'a str>) -> Option<String> {
 
 fn is_various(name: &str) -> bool {
     matches!(fold(name).as_str(), "variousartists" | "various" | "va")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::position_in_name;
+
+    #[test]
+    fn positions_come_from_names_and_disc_folders() {
+        assert_eq!(
+            position_in_name(r"@@peer\Album\CD2\03 - Title.flac"),
+            Some((2, 3))
+        );
+        assert_eq!(position_in_name("Album/07. Song.mp3"), Some((1, 7)));
+        assert_eq!(position_in_name("Album/cover.jpg"), None);
+    }
 }

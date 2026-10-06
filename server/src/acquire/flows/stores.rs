@@ -400,14 +400,15 @@ impl QuarantineStore {
     }
 }
 
-/// Library presence: the release groups (or releases) the library holds,
-/// so the wanted watcher and status sync never re-want an owned album.
-/// Production reads the catalog (an album identified as the group with at
-/// least one indexed file); tests mark MBIDs by hand.
+/// Library presence: the release groups the library holds, so the wanted
+/// watcher and status sync never re-want an owned album. Production reads
+/// the catalog the same way the download landing does (an indexed file on
+/// an album identified as the group, or whose own tags name the group);
+/// tests mark MBIDs by hand.
 #[derive(Debug, Default)]
 pub struct LibraryPresence {
     mbids: Mutex<HashSet<String>>,
-    catalog: Option<crate::reads::catalog::library::LocalCatalog>,
+    catalog: Option<sqlx::SqlitePool>,
 }
 
 impl LibraryPresence {
@@ -416,8 +417,8 @@ impl LibraryPresence {
         Self::default()
     }
 
-    /// Presence read from the library catalog.
-    pub fn over_catalog(catalog: crate::reads::catalog::library::LocalCatalog) -> Self {
+    /// Presence read from the library catalog over the reader pool.
+    pub fn over_catalog(catalog: sqlx::SqlitePool) -> Self {
         Self {
             mbids: Mutex::new(HashSet::new()),
             catalog: Some(catalog),
@@ -448,8 +449,16 @@ impl LibraryPresence {
         let Some(catalog) = &self.catalog else {
             return false;
         };
-        match catalog.owned_albums(&[mbid.to_ascii_lowercase()]).await {
-            Ok(owned) => !owned.is_empty(),
+        let sql = format!(
+            "SELECT EXISTS (SELECT 1 {})",
+            crate::acquire::landing::library::OWNED_TRACKS_FROM
+        );
+        match sqlx::query_scalar::<_, bool>(&sql)
+            .bind(mbid.trim().to_ascii_lowercase())
+            .fetch_one(catalog)
+            .await
+        {
+            Ok(owned) => owned,
             Err(error) => {
                 tracing::warn!(mbid, %error, "library presence unreadable");
                 false

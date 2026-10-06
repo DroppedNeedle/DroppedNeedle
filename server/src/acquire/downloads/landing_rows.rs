@@ -60,7 +60,18 @@ pub struct ImportDecisionRow {
     pub files_held: i64,
     /// Every check's verdict, as JSON.
     pub checks_json: String,
+    /// `[disc, track]` positions still missing after the landing, as JSON.
+    pub missing_positions: String,
     pub decided_at: f64,
+}
+
+/// What a task's landings did so far.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LandingHistory {
+    /// Files imported over every landing of the task.
+    pub files_imported: i64,
+    /// The newest hold's reason, when the newest landing held files.
+    pub held_detail: Option<String>,
 }
 
 impl DownloadStore<'_> {
@@ -125,7 +136,8 @@ impl DownloadStore<'_> {
         self.conn.execute(
             "INSERT INTO download_import_decisions (task_id, attempt_id, outcome, reason_code, \
              detail, release_mbid, distance, files_total, files_imported, files_held, \
-             checks_json, decided_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             checks_json, missing_positions, decided_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             params![
                 row.task_id,
                 row.attempt_id,
@@ -138,8 +150,55 @@ impl DownloadStore<'_> {
                 row.files_imported,
                 row.files_held,
                 row.checks_json,
+                row.missing_positions,
                 row.decided_at,
             ],
+        )?;
+        Ok(())
+    }
+
+    /// What the task's landings imported and held so far.
+    pub fn landing_history(&self, task_id: &str) -> Result<LandingHistory, StoreError> {
+        let files_imported: i64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(files_imported), 0) FROM download_import_decisions \
+             WHERE task_id = ?",
+            params![task_id],
+            |row| row.get(0),
+        )?;
+        let held_detail = self
+            .latest_import_decision(task_id)?
+            .filter(|row| row.outcome == "held")
+            .map(|row| row.detail.unwrap_or_default());
+        Ok(LandingHistory {
+            files_imported,
+            held_detail,
+        })
+    }
+
+    /// The release positions the newest landing found missing, when it
+    /// landed short: a failover asks the next source for these only.
+    pub fn missing_positions(&self, task_id: &str) -> Result<Vec<(u32, u32)>, StoreError> {
+        let Some(row) = self.latest_import_decision(task_id)? else {
+            return Ok(Vec::new());
+        };
+        if row.outcome != "partial" {
+            return Ok(Vec::new());
+        }
+        Ok(serde_json::from_str(&row.missing_positions).unwrap_or_default())
+    }
+
+    /// v2's wrong-product verdict: the album's files all named different
+    /// content. The first verdict stands.
+    pub fn record_wrong_product_verdict(
+        &self,
+        task_id: &str,
+        detail: &str,
+        now: f64,
+    ) -> Result<(), StoreError> {
+        self.conn.execute(
+            "UPDATE download_tasks SET wrong_product_verdict_at = ?, wrong_product_detail = ? \
+             WHERE id = ? AND wrong_product_verdict_at IS NULL",
+            params![now, detail, task_id],
         )?;
         Ok(())
     }
@@ -152,7 +211,8 @@ impl DownloadStore<'_> {
         self.conn
             .query_row(
                 "SELECT task_id, attempt_id, outcome, reason_code, detail, release_mbid, \
-                 distance, files_total, files_imported, files_held, checks_json, decided_at \
+                 distance, files_total, files_imported, files_held, checks_json, \
+                 missing_positions, decided_at \
                  FROM download_import_decisions WHERE task_id = ? \
                  ORDER BY decided_at DESC, id DESC LIMIT 1",
                 params![task_id],
@@ -169,7 +229,8 @@ impl DownloadStore<'_> {
                         files_imported: row.get(8)?,
                         files_held: row.get(9)?,
                         checks_json: row.get(10)?,
-                        decided_at: row.get(11)?,
+                        missing_positions: row.get(11)?,
+                        decided_at: row.get(12)?,
                     })
                 },
             )

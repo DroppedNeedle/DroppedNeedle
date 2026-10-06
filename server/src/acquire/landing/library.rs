@@ -2,7 +2,8 @@
 //! MusicBrainz release source, what the catalog already holds (read over
 //! the shared database), and the library's import seam for publishing.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use futures_util::future::BoxFuture;
@@ -14,19 +15,26 @@ use crate::library::import::{DownloadImport, ImportError, ImportSource};
 use crate::library::matching::Release;
 use crate::library::wiring::LibrarySetup;
 
-/// Indexed tracks of one release group, with what the library knows of
-/// each: its release track and recording (sealed identity first, then
-/// the file's own tags) and its quality facts.
-const GROUP_TRACKS_SQL: &str = "SELECT \
-     lower(COALESCE(ti.release_track_mbid, t.embedded_release_track_mbid, '')), \
-     lower(COALESCE(ti.recording_mbid, t.embedded_recording_mbid, '')), \
-     t.file_format, t.bit_rate, t.bit_depth \
-     FROM local_tracks t \
+/// Indexed library tracks with their album's identity and their own,
+/// the one notion of "the library holds it" the landing and the wanted
+/// watcher share: an album identified as the group, or (not identified
+/// yet) a file whose own tags name the group.
+pub(crate) const OWNED_TRACKS_FROM: &str = "FROM local_tracks t \
      JOIN local_albums b ON b.id = t.local_album_id AND b.retired_into_album_id IS NULL \
      LEFT JOIN local_album_external_identities ai ON ai.local_album_id = b.id \
      LEFT JOIN local_track_external_identities ti ON ti.local_track_id = t.id \
      WHERE t.availability = 'indexed' \
        AND (lower(ai.release_group_mbid) = ?1 OR lower(t.embedded_release_group_mbid) = ?1)";
+
+/// Indexed tracks of one release group: release track and recording
+/// (sealed identity first, then the file's own tags) and quality facts.
+fn group_tracks_sql() -> String {
+    format!(
+        "SELECT lower(COALESCE(ti.release_track_mbid, t.embedded_release_track_mbid, '')), \
+         lower(COALESCE(ti.recording_mbid, t.embedded_recording_mbid, '')), \
+         t.file_format, t.bit_rate, t.bit_depth {OWNED_TRACKS_FROM}"
+    )
+}
 
 type GroupTrack = (String, String, String, Option<i64>, Option<i64>);
 
@@ -49,7 +57,7 @@ impl LibraryLanding {
     }
 
     async fn group_tracks(&self, release_group_mbid: &str) -> Vec<GroupTrack> {
-        match sqlx::query_as::<_, GroupTrack>(GROUP_TRACKS_SQL)
+        match sqlx::query_as::<_, GroupTrack>(&group_tracks_sql())
             .bind(release_group_mbid.to_ascii_lowercase())
             .fetch_all(&self.pool)
             .await
@@ -108,6 +116,27 @@ impl LandingLibrary for LibraryLanding {
         })
     }
 
+    fn fingerprints(
+        &self,
+        files: Vec<(String, PathBuf)>,
+    ) -> BoxFuture<'_, HashMap<String, Vec<String>>> {
+        Box::pin(async move {
+            match &self.library.fingerprints {
+                Some(source) => source.identify_files(&files).await,
+                None => HashMap::new(),
+            }
+        })
+    }
+
+    fn library_dirs(&self) -> Vec<PathBuf> {
+        self.library
+            .live_registry()
+            .roots()
+            .iter()
+            .map(|root| root.path.clone())
+            .collect()
+    }
+
     fn import(
         &self,
         request: ImportRequest,
@@ -136,6 +165,7 @@ impl LandingLibrary for LibraryLanding {
                     bundle_id: album.bundle_id,
                     album_id: album.album_id,
                     paths: album.paths,
+                    skipped: album.skipped,
                 }),
                 Err(ImportError::LocalFault(detail)) => Err(ImportFailure::LocalFault(detail)),
                 Err(ImportError::Occupied(detail)) => Err(ImportFailure::Occupied(detail)),

@@ -272,6 +272,7 @@ impl DownloadSource for PluginDownloadSource {
             job_name: handle.job_name,
             nzo_id: handle.nzo_id,
             plugin_token: handle.plugin_token,
+            sizes: Vec::new(),
         })
     }
 
@@ -311,13 +312,65 @@ impl DownloadSource for PluginDownloadSource {
     }
 
     async fn discard(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
+        self.discard_records(handle).await
+    }
+
+    async fn abort(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
+        self.abort_job(handle).await
+    }
+}
+
+impl PluginDownloadSource {
+    /// The files a finished plugin download produced, for import. Plugins
+    /// are trusted code, but their paths are still confined: every file
+    /// must resolve inside the workspace the plugin reports, and without a
+    /// workspace nothing is imported.
+    pub async fn landed_paths(&self, handle: &SourceHandle) -> Result<Vec<PathBuf>, SourceError> {
+        let seen = self
+            .host
+            .download_inspect(&Self::plugin_handle(handle))
+            .await
+            .map_err(source_error)?;
+        let workspace = PathBuf::from(&seen.workspace_path);
+        let Ok(workspace) = workspace.canonicalize() else {
+            tracing::warn!(
+                plugin = %self.key,
+                "plugin download names no usable workspace; nothing imported"
+            );
+            return Ok(Vec::new());
+        };
+        if seen.file_paths.is_empty() {
+            return Ok(vec![workspace]);
+        }
+        let mut paths = Vec::with_capacity(seen.file_paths.len());
+        for reported in &seen.file_paths {
+            match PathBuf::from(reported).canonicalize() {
+                Ok(path) if path.starts_with(&workspace) => paths.push(path),
+                Ok(_) => tracing::warn!(
+                    plugin = %self.key,
+                    "plugin reported a file outside its workspace; ignored"
+                ),
+                // Not there (yet): kept only when it would sit inside.
+                Err(_) if PathBuf::from(reported).starts_with(&workspace) => {
+                    paths.push(PathBuf::from(reported));
+                }
+                Err(_) => tracing::warn!(
+                    plugin = %self.key,
+                    "plugin reported a missing file outside its workspace; ignored"
+                ),
+            }
+        }
+        Ok(paths)
+    }
+
+    async fn discard_records(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
         self.host
             .download_discard(&Self::plugin_handle(handle))
             .await
             .map_err(source_error)
     }
 
-    async fn abort(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
+    async fn abort_job(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
         self.host
             .download_abort(&Self::plugin_handle(handle))
             .await

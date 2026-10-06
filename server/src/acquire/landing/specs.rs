@@ -7,14 +7,17 @@
 //! import side, as pure functions over a [`Subject`]:
 //!
 //! - file checks run on what the probe read, before any lookup, cheapest
-//!   and most decisive first: files present, audio present, samples, wrong
-//!   edition, wrong album, quality range, upgrade floor;
+//!   and most decisive first: files present and whole on disk, audio
+//!   present, a walk that finished, samples, wrong edition, wrong album,
+//!   quality range, upgrade floor;
 //! - match checks run on the closest release the matching engine found:
 //!   a release found, ids that agree, a close album match, files the
 //!   release accounts for, the right track for a track download.
 //!
 //! Every check is recorded (accept, hold, or reject with its reason), so
 //! the views can say why a download was held or failed over.
+
+use std::collections::HashMap;
 
 use serde::Serialize;
 
@@ -116,6 +119,10 @@ pub struct Target {
     pub origin: String,
     /// The last-resort re-pull: hold a wrong track instead of failing over.
     pub hold_on_wrong_track: bool,
+    /// Byte sizes the client advertised, by lowercase file name.
+    pub expected_sizes: HashMap<String, u64>,
+    /// Files may still appear: a missing file is worth another pass.
+    pub wait_for_files: bool,
 }
 
 /// The quality policy a landing is judged against.
@@ -156,7 +163,9 @@ pub trait ImportSpec: Send + Sync {
 pub fn file_specs() -> Vec<Box<dyn ImportSpec>> {
     vec![
         Box::new(FilesPresent),
+        Box::new(SizesMatch),
         Box::new(HasAudio),
+        Box::new(WalkFinished),
         Box::new(NotSample),
         Box::new(WrongEdition),
         Box::new(WrongAlbum),
@@ -217,19 +226,96 @@ impl ImportSpec for FilesPresent {
     }
 
     fn check(&self, subject: &Subject<'_>) -> Verdict {
-        if subject.landing.nothing_found() {
+        let landing = subject.landing;
+        let patient = subject.target.wait_for_files;
+        if landing.nothing_found() {
             return Verdict::reject(
                 "files_missing",
-                Disposition::LocalFault,
+                if patient {
+                    Disposition::Temporary
+                } else {
+                    Disposition::LocalFault
+                },
                 None,
                 "downloaded files not found on the downloads mount",
             );
         }
-        if !subject.landing.missing.is_empty() {
+        if !landing.missing.is_empty() {
+            if patient {
+                return Verdict::reject(
+                    "files_missing",
+                    Disposition::Temporary,
+                    None,
+                    format!(
+                        "{} reported file(s) not on the mount yet",
+                        landing.missing.len()
+                    ),
+                );
+            }
             return Verdict::note(format!(
                 "{} reported file(s) not found",
-                subject.landing.missing.len()
+                landing.missing.len()
             ));
+        }
+        Verdict::accept()
+    }
+}
+
+/// Each file holds the bytes the client advertised (v2 `SIZE_MISMATCH`):
+/// a short file is a partial write or a stale copy on our side, so it is
+/// a local fault that never blocklists the peer.
+struct SizesMatch;
+
+impl ImportSpec for SizesMatch {
+    fn name(&self) -> &'static str {
+        "sizes_match"
+    }
+
+    fn check(&self, subject: &Subject<'_>) -> Verdict {
+        let sizes = &subject.target.expected_sizes;
+        if sizes.is_empty() {
+            return Verdict::accept();
+        }
+        let wrong = subject.landing.audio.iter().find(|file| {
+            sizes
+                .get(&file.file_name().to_lowercase())
+                .is_some_and(|expected| *expected != file.size_bytes)
+        });
+        match wrong {
+            Some(file) => Verdict::reject(
+                "size_mismatch",
+                Disposition::LocalFault,
+                None,
+                format!(
+                    "{} has {} bytes on disk, not the {} advertised",
+                    file.file_name(),
+                    file.size_bytes,
+                    sizes
+                        .get(&file.file_name().to_lowercase())
+                        .copied()
+                        .unwrap_or_default()
+                ),
+            ),
+            None => Verdict::accept(),
+        }
+    }
+}
+
+/// The probe stops at a few thousand files; a landing that big is not one
+/// album, so it waits for a person instead of importing what was read.
+struct WalkFinished;
+
+impl ImportSpec for WalkFinished {
+    fn name(&self) -> &'static str {
+        "walk_finished"
+    }
+
+    fn check(&self, subject: &Subject<'_>) -> Verdict {
+        if subject.landing.truncated {
+            return Verdict::hold(
+                "too_many_files",
+                "the download holds more files than one release can",
+            );
         }
         Verdict::accept()
     }
@@ -753,8 +839,46 @@ impl ImportSpec for NotAlreadyImported {
 }
 
 // ---------------------------------------------------------------------------
+// Fingerprints.
+// ---------------------------------------------------------------------------
+
+/// v2's `_fingerprint_disagrees`, for the ids our lookup returns: AcoustID
+/// confidently heard recordings, none of them the expected one, and the
+/// file's length does not vouch for the expected track (within
+/// `max(15 s, 10%)`). A length that agrees outranks a conflicting
+/// fingerprint, and no answer never holds anything.
+pub fn fingerprint_disagrees(
+    heard: &[String],
+    expected_recording: &str,
+    file_seconds: Option<f64>,
+    expected_seconds: Option<f64>,
+) -> bool {
+    if heard.is_empty() || expected_recording.is_empty() {
+        return false;
+    }
+    if heard
+        .iter()
+        .any(|recording| recording.eq_ignore_ascii_case(expected_recording))
+    {
+        return false;
+    }
+    let length_agrees = match (file_seconds, expected_seconds) {
+        (Some(file), Some(expected)) if expected > 0.0 => {
+            (file - expected).abs() <= (0.10 * expected).max(15.0)
+        }
+        _ => false,
+    };
+    !length_agrees
+}
+
+// ---------------------------------------------------------------------------
 // Text helpers.
 // ---------------------------------------------------------------------------
+
+/// The last part of a client file name, split on backslash or slash.
+pub fn base_name(filename: &str) -> &str {
+    filename.rsplit(['\\', '/']).next().unwrap_or(filename)
+}
 
 /// Lowercase words, splitting on anything that is not a letter or digit
 /// (underscores and dots included, so `Live_EP` and `Box.Set` read right).
@@ -796,6 +920,21 @@ mod tests {
         assert!(has_phrase(&text, "live"));
         assert!(has_phrase(&text, "box set"));
         assert!(!has_phrase(&words("Alive"), "live"));
+    }
+
+    #[test]
+    fn fingerprints_hold_only_a_confident_other_recording() {
+        let other = vec!["b".to_owned()];
+        assert!(fingerprint_disagrees(&other, "a", Some(200.0), Some(260.0)));
+        assert!(!fingerprint_disagrees(
+            &other,
+            "a",
+            Some(255.0),
+            Some(260.0)
+        ));
+        assert!(!fingerprint_disagrees(&["A".to_owned()], "a", None, None));
+        assert!(!fingerprint_disagrees(&[], "a", Some(1.0), Some(260.0)));
+        assert_eq!(base_name(r"@@peer\Music\01.flac"), "01.flac");
     }
 
     #[test]

@@ -10,6 +10,8 @@
 -- held_imports (0001) already carries the per-file holds; this table is the
 -- per-landing summary next to them. Rows are append-only history: a reimport
 -- or a resumed landing adds a row instead of rewriting the old one.
+-- missing_positions lists the release's [disc, track] positions still
+-- missing after a landing, so a failover asks the next source only for those.
 --
 -- No down migration. Rollback is restoring a pre-upgrade backup.
 
@@ -27,6 +29,7 @@ CREATE TABLE IF NOT EXISTS download_import_decisions (
     files_imported INTEGER NOT NULL DEFAULT 0,
     files_held INTEGER NOT NULL DEFAULT 0,
     checks_json TEXT NOT NULL DEFAULT '[]',
+    missing_positions TEXT NOT NULL DEFAULT '[]',
     decided_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_download_import_decisions_task

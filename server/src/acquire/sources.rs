@@ -91,10 +91,11 @@ impl SlskdSource {
         let repo_handle =
             super::slskd::repository::TaskHandle::new(&handle.username, handle.filenames.clone());
         let mut paths = Vec::new();
-        for filename in &handle.filenames {
+        for (index, filename) in handle.filenames.iter().enumerate() {
+            let size = handle.sizes.get(index).copied().filter(|size| *size > 0);
             if let Some(path) = self
                 .repo
-                .get_file_path(&repo_handle, filename, None)
+                .get_file_path(&repo_handle, filename, size)
                 .await
                 .map_err(slskd_error)?
             {
@@ -181,16 +182,47 @@ impl DownloadSource for SlskdSource {
         let (_, files) = groups.first().ok_or_else(|| {
             SourceError::Rejected(format!("slskd has no untried candidate for {task_id}"))
         })?;
+        // After a short landing, the next peer is asked only for the tracks
+        // still missing (v2 per-file failover); files whose position the
+        // name does not tell are kept.
+        let missing = self
+            .journal
+            .run("downloads.missing_positions", {
+                let task_id = task_id.to_owned();
+                move |store| store.missing_positions(&task_id)
+            })
+            .await
+            .map_err(SourceError::LocalFault)?;
         let payload: Vec<EnqueueFile> = files
             .iter()
+            .filter(|hit| {
+                missing.is_empty()
+                    || crate::acquire::landing::matching::position_in_name(&hit.filename)
+                        .is_none_or(|position| missing.contains(&position))
+            })
             .map(|hit| EnqueueFile {
                 username: hit.username.clone(),
                 filename: hit.filename.clone(),
                 size: hit.size,
             })
             .collect();
+        if payload.is_empty() {
+            return Err(SourceError::Rejected(format!(
+                "slskd's best remaining peer has none of the missing tracks for {task_id}"
+            )));
+        }
+        let advertised: HashMap<&str, i64> = payload
+            .iter()
+            .map(|file| (file.filename.as_str(), file.size))
+            .collect();
         let handle = self.repo.enqueue(&payload).await.map_err(slskd_error)?;
+        let sizes = handle
+            .filenames
+            .iter()
+            .map(|name| advertised.get(name.as_str()).copied().unwrap_or(0))
+            .collect();
         Ok(SourceHandle {
+            sizes,
             source: "soulseek".to_owned(),
             username: handle.username,
             filenames: handle.filenames,
@@ -461,6 +493,7 @@ impl DownloadSource for SabnzbdSource {
                     job_name,
                     nzo_id,
                     plugin_token: String::new(),
+                    sizes: Vec::new(),
                 });
             }
             Ok(_) => {}
@@ -511,6 +544,7 @@ impl DownloadSource for SabnzbdSource {
             job_name: handle.job_name,
             nzo_id: handle.nzo_id,
             plugin_token: String::new(),
+            sizes: Vec::new(),
         })
     }
 

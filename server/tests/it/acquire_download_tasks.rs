@@ -289,14 +289,14 @@ async fn failed_retry_insert_retries_next_pass() {
     .await
     .unwrap();
     let staging = staging_for(&journal);
-    let worker = DownloadWorker::fixed(
+    let worker = Arc::new(DownloadWorker::fixed(
         journal,
         Vec::new(),
         WorkerConfig {
             staging_root: staging,
             ..WorkerConfig::default()
         },
-    );
+    ));
 
     worker.run_once(1).await;
     assert_eq!(

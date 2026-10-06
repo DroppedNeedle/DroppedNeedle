@@ -5,7 +5,7 @@
 //! bundle (MusicBrainz through the identify release source, the catalog,
 //! and the staged publisher); tests bind a scripted fake.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use futures_util::future::BoxFuture;
@@ -46,8 +46,12 @@ pub struct ImportReceipt {
     pub bundle_id: String,
     /// The library album the files joined.
     pub album_id: String,
-    /// Where each file now lives, in request order.
+    /// Where each imported file now lives.
     pub paths: Vec<PathBuf>,
+    /// Request files the library did not take, by index, with the
+    /// reason: two files bound for one destination, or a destination
+    /// already occupied. They are held; the rest imported.
+    pub skipped: Vec<(usize, String)>,
 }
 
 /// Why an import did not happen.
@@ -88,6 +92,16 @@ pub trait LandingLibrary: Send + Sync {
     /// The worst tier the library holds for a release group, for the
     /// upgrade floor. `None` when it holds nothing.
     fn held_tier<'a>(&'a self, release_group_mbid: &'a str) -> BoxFuture<'a, Option<String>>;
+
+    /// AcoustID recordings heard in each file, by the caller's key. Empty
+    /// when no AcoustID key is set or nothing could be looked up.
+    fn fingerprints(
+        &self,
+        files: Vec<(String, PathBuf)>,
+    ) -> BoxFuture<'_, HashMap<String, Vec<String>>>;
+
+    /// The library root folders; landed paths inside them are refused.
+    fn library_dirs(&self) -> Vec<PathBuf>;
 
     /// Publish verified files into the library.
     fn import(&self, request: ImportRequest)

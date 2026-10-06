@@ -104,12 +104,12 @@ fn unknown_value(column: &str, value: String) -> rusqlite::Error {
 }
 
 /// Reimport guard: a failed or partial task with an attempt whose handle
-/// still names its files.
+/// still names its files and whose cleanup has not run.
 pub(crate) const REIMPORTABLE_SQL: &str = "SELECT EXISTS (SELECT 1 FROM download_tasks t \
      WHERE t.id = ?1 AND t.status IN ('failed', 'partial') \
        AND EXISTS (SELECT 1 FROM download_attempts a WHERE a.task_id = t.id \
          AND a.handle_json != '' \
-         AND a.state IN ('preserved', 'cleanup_pending', 'complete')))";
+         AND a.state IN ('preserved', 'cleanup_pending')))";
 
 /// Retryable tasks: failed or partial, under the retry ceiling, with no
 /// newer task for the same ask (the successor check).

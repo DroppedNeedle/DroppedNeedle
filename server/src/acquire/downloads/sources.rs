@@ -32,6 +32,11 @@ pub struct SourceHandle {
     /// handed back on every call. Empty for built-in sources.
     #[serde(default)]
     pub plugin_token: String,
+    /// Advertised byte size of each file in `filenames` (same order), for
+    /// locating the right copy and the size check at import. Empty when
+    /// the source does not advertise sizes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sizes: Vec<i64>,
 }
 
 /// One poll's view of a transfer batch.

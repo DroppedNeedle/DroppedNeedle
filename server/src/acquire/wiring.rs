@@ -1279,9 +1279,7 @@ fn flows_bundle(
     let follows = FlowsFollowStore::new(db.clone());
     let worklist = UpgradeWorklist::new(db.clone());
     let quarantine = QuarantineStore::new(db.clone());
-    let library = Arc::new(LibraryPresence::over_catalog(
-        crate::reads::catalog::library::LocalCatalog::new(db.pool().clone()),
-    ));
+    let library = Arc::new(LibraryPresence::over_catalog(db.pool().clone()));
     let admins = Arc::new(AdminDirectory::new());
     let handoff = Arc::new(MemoryHandoff::new());
     let ops = OpStore::new(db.clone());

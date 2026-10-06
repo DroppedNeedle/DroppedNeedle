@@ -1,8 +1,9 @@
 //! Download import journey: a finished download is verified, matched to
 //! the requested release, published into the library, and its request
 //! resolved; a download whose files are not the release is held for
-//! review instead. Real worker, landing, publisher and catalog over one
-//! scratch database; MusicBrainz is a scripted release source.
+//! review, fails over to the next candidate, and settles held once the
+//! candidates run out. Real worker, landing, publisher and catalog over
+//! one scratch database; MusicBrainz is a scripted release source.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -254,16 +255,18 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
         pool,
     )));
     let worker = |paths: Vec<PathBuf>| {
-        DownloadWorker::fixed(
-            acquire.journal.clone(),
-            vec![Source::Fixed(Arc::new(FixedSource::new(paths)))],
-            WorkerConfig {
-                staging_root: acquire.staging_root.clone(),
-                ..WorkerConfig::default()
-            },
+        Arc::new(
+            DownloadWorker::fixed(
+                acquire.journal.clone(),
+                vec![Source::Fixed(Arc::new(FixedSource::new(paths)))],
+                WorkerConfig {
+                    staging_root: acquire.staging_root.clone(),
+                    ..WorkerConfig::default()
+                },
+            )
+            .with_landing(acquire.landing.clone())
+            .with_settled(settled_hook(acquire.flows.clone())),
         )
-        .with_landing(acquire.landing.clone())
-        .with_settled(settled_hook(acquire.flows.clone()))
     };
 
     // The good download, with the album request it serves.
@@ -288,7 +291,9 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
         })
         .await
         .expect("request");
-    worker(good.clone()).run_once(1).await;
+    let good_worker = worker(good.clone());
+    good_worker.run_once(1).await;
+    good_worker.wait_for_landings().await;
 
     let task = acquire.journal.read_task("t-good").await.unwrap().unwrap();
     assert_eq!(
@@ -342,7 +347,17 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
         })
         .await
         .expect("task");
-    worker(bad.clone()).run_once(2).await;
+    // Each candidate lands the same files and is held; once the failover
+    // attempts are spent the task settles held.
+    let bad_worker = worker(bad.clone());
+    for pass in 2..10 {
+        bad_worker.run_once(pass).await;
+        bad_worker.wait_for_landings().await;
+        let task = acquire.journal.read_task("t-bad").await.unwrap().unwrap();
+        if task.status.is_terminal() {
+            break;
+        }
+    }
 
     let task = acquire.journal.read_task("t-bad").await.unwrap().unwrap();
     assert_eq!(task.status, TaskStatus::Failed);
@@ -362,11 +377,12 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
     .expect("held rows");
     assert_eq!(held.len(), 2);
     assert!(held.iter().all(|path| Path::new(path).is_file()));
-    let outcome: String =
+    let outcomes: Vec<String> =
         sqlx::query_scalar("SELECT outcome FROM download_import_decisions WHERE task_id = 't-bad'")
-            .fetch_one(acquire.db.pool())
+            .fetch_all(acquire.db.pool())
             .await
-            .expect("decision");
-    assert_eq!(outcome, "held");
+            .expect("decisions");
+    assert!(outcomes.len() > 1, "failed over: {outcomes:?}");
+    assert!(outcomes.iter().all(|outcome| outcome == "held"));
     assert!(!acquire.flows.library.contains(BAD_GROUP).await);
 }

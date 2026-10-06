@@ -43,11 +43,14 @@ use super::downloads::sources::{DownloadSource, SourceError, SourceHandle};
 use super::downloads::state::{AttemptState, TaskStatus};
 use super::downloads::store::{AttemptRow, NewTask, StoreError, TaskRow};
 use super::downloads::watchdog::{PollSample, RetryPolicy, Watchdog, WatchdogConfig};
-use super::landing::specs::Disposition;
-use super::landing::{LandingReport, LandingResult, LandingService};
+use super::landing::LandingService;
 use super::plugin_source::PluginDownloadSource;
 use super::sources::{JournalOwnership, SabnzbdSource, SlskdSource};
 use crate::db::{DurableWorkWakeups, JobKind, JobState, WriteLane};
+
+mod landings;
+
+pub use landings::ReimportError;
 
 /// Registry name for the worker loop.
 pub const DOWNLOAD_WORKER_JOB: &str = "download-worker";
@@ -113,6 +116,31 @@ pub async fn run_startup_recovery(
                     .map(|attempts| attempts.iter().any(|attempt| attempt.id == linked))
             }
         };
+        if task.status == TaskStatus::Processing
+            && let Ok(attempts) = {
+                let task_id = task.id.clone();
+                journal
+                    .run("downloads.recovery.landing", move |store| {
+                        store.list_attempts(&task_id)
+                    })
+                    .await
+            }
+            && attempts.iter().any(|attempt| {
+                matches!(
+                    attempt.state,
+                    AttemptState::Acquiring
+                        | AttemptState::InUse
+                        | AttemptState::Preserved
+                        | AttemptState::CleanupPending
+                )
+            })
+        {
+            // Processing means a landing was running: it resumes on the
+            // first poll pass from the files its attempt names, whether
+            // or not the manifest survived. Never a fresh download.
+            report.resumed += 1;
+            continue;
+        }
         match classify_startup(StartupCtx {
             status: task.status,
             manifest_present: manifest.is_some(),
@@ -266,7 +294,7 @@ impl Source {
         match self {
             Self::Slskd(source) => source.locate_files(handle).await,
             Self::Sab(source) => source.inspect(handle).await.map(|seen| seen.paths),
-            Self::Plugin(source) => source.inspect(handle).await.map(|seen| seen.paths),
+            Self::Plugin(source) => source.landed_paths(handle).await,
             #[cfg(any(test, feature = "test-support"))]
             Self::Fixed(source) => Ok(source.paths.clone()),
         }
@@ -419,16 +447,17 @@ pub struct DownloadWorker {
     landing: Option<Arc<LandingService>>,
     landing_waits: Mutex<HashMap<String, u32>>,
     settled: Option<SettledHook>,
+    /// Tasks whose landing runs right now, off the pass. The poll and
+    /// enqueue passes leave them alone.
+    in_flight: Arc<Mutex<HashSet<String>>>,
+    /// Spawned landings, awaited on shutdown.
+    landing_tasks: Mutex<Vec<tokio::task::JoinHandle<()>>>,
 }
 
 /// Called after a landing settles a task, so its requests and wanted
 /// watches resolve right away instead of on the next status sync.
 pub type SettledHook =
     Arc<dyn Fn(TaskRow, TaskStatus) -> futures_util::future::BoxFuture<'static, ()> + Send + Sync>;
-
-/// Passes a landing may wait on files that are not ready before the task
-/// fails (about five minutes at the 30-second cadence).
-const MAX_LANDING_WAITS: u32 = 10;
 
 impl DownloadWorker {
     /// Wire the worker over the shared journal plus live source and config
@@ -447,6 +476,8 @@ impl DownloadWorker {
             landing: None,
             landing_waits: Mutex::new(HashMap::new()),
             settled: None,
+            in_flight: Arc::new(Mutex::new(HashSet::new())),
+            landing_tasks: Mutex::new(Vec::new()),
         }
     }
 
@@ -481,8 +512,10 @@ impl DownloadWorker {
     }
 
     /// Run every steady-state pass once, in order. The orphan sweep only
-    /// runs when `pass` hits its hourly slot.
-    pub async fn run_once(&self, pass: u64) {
+    /// runs when `pass` hits its hourly slot. Landings the poll pass
+    /// starts run on their own tasks; [`Self::wait_for_landings`] awaits
+    /// them.
+    pub async fn run_once(self: &Arc<Self>, pass: u64) {
         let config = (self.config)();
         let pass_ctx = Pass {
             watchdog: Watchdog::new(config.watchdog.clone()),
@@ -583,6 +616,9 @@ impl DownloadWorker {
     /// Enqueue one queued task. Answers whether a fetch started.
     async fn enqueue_one(&self, pass: &Pass, task: &TaskRow) -> bool {
         let now = pass.now;
+        if self.landing_in_flight(&task.id) {
+            return false;
+        }
         if task.artist_name.trim().is_empty() && task.album_title.trim().is_empty() {
             // Edition asks carry no searchable names until the catalog
             // port lands; warn once per task and leave the row queued.
@@ -688,28 +724,59 @@ impl DownloadWorker {
         false
     }
 
-    /// Fail a task no source can serve, keeping its last attempt.
+    /// Settle a task no source can serve any more, keeping its last
+    /// attempt. Earlier landings decide how: tracks imported along the way
+    /// make it partial, held files make it a failure held for review
+    /// (v2 `_settle_incomplete`), else no source could serve it.
     async fn fail_unserved(&self, task: &TaskRow, attempts: &[Attempt], now: f64) {
         let task_id = task.id.clone();
-        let last_attempt = attempts.last().map(|attempt| attempt.row.id.clone());
-        self.step("downloads.fail_unserved", move |store| {
-            store.finalize_task_and_attempt(
-                &task_id,
-                TaskStatus::Failed,
-                now,
-                Some("no source could serve this release"),
-                last_attempt.as_deref(),
-                true,
+        let history = self
+            .step("downloads.landing_history", move |store| {
+                store.landing_history(&task_id)
+            })
+            .await
+            .unwrap_or_default();
+        let (status, error) = if history.files_imported > 0 {
+            (
+                TaskStatus::Partial,
+                "imported what was found; no source had the rest".to_owned(),
             )
-        })
-        .await;
-        super::plugin_events::download_event(
-            &self.plugins,
-            crate::plugins::runtime::EventKind::DownloadFailed,
-            task,
-            &task.source,
-            "failed",
-        );
+        } else if let Some(detail) = history.held_detail {
+            (TaskStatus::Failed, format!("Held for review: {detail}"))
+        } else {
+            (
+                TaskStatus::Failed,
+                "no source could serve this release".to_owned(),
+            )
+        };
+        let task_id = task.id.clone();
+        let last_attempt = attempts.last().map(|attempt| attempt.row.id.clone());
+        let settled = self
+            .step("downloads.fail_unserved", move |store| {
+                store.finalize_task_and_attempt(
+                    &task_id,
+                    status,
+                    now,
+                    Some(&error),
+                    last_attempt.as_deref(),
+                    true,
+                )
+            })
+            .await;
+        let (kind, outcome) = if status == TaskStatus::Partial {
+            (
+                crate::plugins::runtime::EventKind::DownloadCompleted,
+                "partial",
+            )
+        } else {
+            (crate::plugins::runtime::EventKind::DownloadFailed, "failed")
+        };
+        super::plugin_events::download_event(&self.plugins, kind, task, &task.source, outcome);
+        if settled.is_some()
+            && let Some(hook) = &self.settled
+        {
+            hook(task.clone(), status).await;
+        }
     }
 
     /// Journal one successful enqueue: the attempt row plus the
@@ -820,17 +887,18 @@ impl DownloadWorker {
             job_name: handle.job_name.clone(),
         });
         manifest.attempt_id = Some(attempt_id.to_owned());
-        if manifest.target_files.is_empty() {
-            manifest.target_files = handle
-                .filenames
-                .iter()
-                .map(|filename| ExpectedFile {
-                    filename: filename.clone(),
-                    size: 0,
-                    duration: None,
-                })
-                .collect();
-        }
+        // Each attempt's files, with the sizes the chosen candidate
+        // advertised: the import's size check reads them.
+        manifest.target_files = handle
+            .filenames
+            .iter()
+            .enumerate()
+            .map(|(index, filename)| ExpectedFile {
+                filename: filename.clone(),
+                size: handle.sizes.get(index).copied().unwrap_or(0),
+                duration: None,
+            })
+            .collect();
         let task_id = task.id.clone();
         let written =
             tokio::task::spawn_blocking(move || ManifestCodec.write(&staging_root, &manifest))
@@ -854,7 +922,7 @@ impl DownloadWorker {
     }
 
     /// Poll every live task through the watchdog.
-    async fn poll_pass(&self, pass: &Pass) {
+    async fn poll_pass(self: &Arc<Self>, pass: &Pass) {
         let Some(tasks) = self
             .step("downloads.live", |store| {
                 store.list_active(&[TaskStatus::Downloading, TaskStatus::Processing])
@@ -875,12 +943,24 @@ impl DownloadWorker {
     /// Poll one live task: judge the sample, then complete, fail over, or
     /// keep waiting. Poll errors never fail the task directly; the stall
     /// math ages a dead client out into failover instead.
-    async fn poll_one(&self, pass: &Pass, task: &TaskRow) {
+    async fn poll_one(self: &Arc<Self>, pass: &Pass, task: &TaskRow) {
         let now = pass.now;
+        if self.landing_in_flight(&task.id) {
+            return;
+        }
         let Some(attempts) = self.attempts(&task.id).await else {
             // A read failure is not "no attempt": leave the task alone.
             return;
         };
+        if task.status == TaskStatus::Processing
+            && live_attempt(&attempts).is_none()
+            && self.resume_landing(pass, task, &attempts).await
+        {
+            // A landing the last process left running (a reimport whose
+            // attempt is no longer live) picks up again instead of the
+            // task being requeued for a fresh download.
+            return;
+        }
         let Some(attempt) = live_attempt(&attempts).cloned() else {
             // No pollable attempt: back to queued for a fresh enqueue.
             let task_id = task.id.clone();
@@ -926,7 +1006,7 @@ impl DownloadWorker {
             }
             Err(SourceError::Rejected(detail)) => {
                 self.fail_over(
-                    pass,
+                    now,
                     task,
                     &attempt.row,
                     source,
@@ -974,7 +1054,7 @@ impl DownloadWorker {
     /// Apply one watchdog verdict to its task and attempt.
     #[allow(clippy::too_many_arguments)]
     async fn apply_verdict(
-        &self,
+        self: &Arc<Self>,
         pass: &Pass,
         task: &TaskRow,
         attempt: &AttemptRow,
@@ -995,8 +1075,7 @@ impl DownloadWorker {
                 return;
             }
             WatchdogOutcome::Completed if self.landing.is_some() => {
-                self.land_finished(pass, task, attempt, source, handle)
-                    .await;
+                self.start_landing(task, attempt, source, handle, now).await;
                 return;
             }
             WatchdogOutcome::Completed => {
@@ -1037,7 +1116,7 @@ impl DownloadWorker {
             WatchdogOutcome::Deadline => "poll deadline hit".to_owned(),
         };
         self.fail_over(
-            pass,
+            now,
             task,
             attempt,
             source,
@@ -1055,7 +1134,7 @@ impl DownloadWorker {
     #[allow(clippy::too_many_arguments)]
     async fn fail_over(
         &self,
-        pass: &Pass,
+        now: f64,
         task: &TaskRow,
         attempt: &AttemptRow,
         source: &Source,
@@ -1063,7 +1142,6 @@ impl DownloadWorker {
         reason: &str,
         quarantine: Option<QuarantineReason>,
     ) {
-        let now = pass.now;
         if let Some(quarantine) = quarantine {
             self.quarantine_failed(task, attempt, handle, reason, quarantine, now)
                 .await;
@@ -1142,304 +1220,6 @@ impl DownloadWorker {
             Ok(())
         })
         .await;
-    }
-
-    /// A finished transfer: hand the files to the landing, then settle the
-    /// task by what it decided. The task shows `processing` meanwhile.
-    async fn land_finished(
-        &self,
-        pass: &Pass,
-        task: &TaskRow,
-        attempt: &AttemptRow,
-        source: &Source,
-        handle: &SourceHandle,
-    ) {
-        let Some(landing) = self.landing.clone() else {
-            return;
-        };
-        let now = pass.now;
-        if task.status != TaskStatus::Processing {
-            let task_id = task.id.clone();
-            self.step("downloads.processing", move |store| {
-                store.transition_task(&task_id, TaskStatus::Processing, now, None)
-            })
-            .await;
-        }
-        let paths = match source.landed_paths(handle).await {
-            Ok(paths) => paths,
-            Err(error) => {
-                let detail = format!("the download client could not list the files: {error}");
-                self.wait_or_fail(task, attempt, &detail, now).await;
-                return;
-            }
-        };
-        let manifest = read_manifest(&pass.config.staging_root, &task.id).await;
-        let report = landing
-            .land(task, Some(&attempt.id), manifest.as_ref(), paths)
-            .await;
-        match report.result {
-            LandingResult::Rejected(rejection)
-                if rejection.disposition == Disposition::Permanent =>
-            {
-                self.forget_landing(&task.id);
-                self.fail_over(
-                    pass,
-                    task,
-                    attempt,
-                    source,
-                    handle,
-                    &rejection.detail,
-                    rejection.quarantine,
-                )
-                .await;
-            }
-            LandingResult::Rejected(rejection)
-                if rejection.disposition == Disposition::Temporary =>
-            {
-                self.wait_or_fail(task, attempt, &rejection.detail, now)
-                    .await;
-            }
-            _ => self.settle_landing(task, attempt, report, now).await,
-        }
-    }
-
-    /// Settle a task from its landing report: imported files complete or
-    /// short-land it, held files fail it (the held gate pauses retries),
-    /// and a local fault fails it with the files kept for a reimport.
-    async fn settle_landing(
-        &self,
-        task: &TaskRow,
-        attempt: &AttemptRow,
-        report: LandingReport,
-        now: f64,
-    ) {
-        match report.result {
-            LandingResult::Imported { complete } => {
-                let status = if complete {
-                    TaskStatus::Completed
-                } else {
-                    TaskStatus::Partial
-                };
-                self.settle(task, &attempt.id, status, None, false, now)
-                    .await;
-            }
-            LandingResult::Held { detail, .. } => {
-                let error = format!("Held for review: {detail}");
-                self.settle(
-                    task,
-                    &attempt.id,
-                    TaskStatus::Failed,
-                    Some(&error),
-                    false,
-                    now,
-                )
-                .await;
-            }
-            LandingResult::Rejected(rejection) => {
-                // A rejection the caller could not fail over (a reimport)
-                // or our own fault: keep the files for another try.
-                self.settle(
-                    task,
-                    &attempt.id,
-                    TaskStatus::Failed,
-                    Some(&rejection.detail),
-                    true,
-                    now,
-                )
-                .await;
-            }
-        }
-    }
-
-    /// Wait another pass for files that are not ready, up to
-    /// [`MAX_LANDING_WAITS`]; then fail with the files kept.
-    async fn wait_or_fail(&self, task: &TaskRow, attempt: &AttemptRow, detail: &str, now: f64) {
-        let waited = self
-            .landing_waits
-            .lock()
-            .map(|mut waits| {
-                let count = waits.entry(task.id.clone()).or_insert(0);
-                *count += 1;
-                *count
-            })
-            .unwrap_or(MAX_LANDING_WAITS);
-        if waited < MAX_LANDING_WAITS {
-            tracing::info!(task_id = %task.id, waited, detail, "landing waits for the next pass");
-            let task_id = task.id.clone();
-            self.step("downloads.touch_poll", move |store| {
-                store.touch_poll(&task_id, now)
-            })
-            .await;
-            return;
-        }
-        self.settle(
-            task,
-            &attempt.id,
-            TaskStatus::Failed,
-            Some(detail),
-            true,
-            now,
-        )
-        .await;
-    }
-
-    /// Finalize one landed task and its attempt, announce it, and resolve
-    /// its requests.
-    async fn settle(
-        &self,
-        task: &TaskRow,
-        attempt_id: &str,
-        status: TaskStatus,
-        error: Option<&str>,
-        preserve_attempt: bool,
-        now: f64,
-    ) {
-        self.forget_landing(&task.id);
-        let task_id = task.id.clone();
-        let attempt_id = attempt_id.to_owned();
-        let error = error.map(str::to_owned);
-        let settled = self
-            .step("downloads.settle_landing", move |store| {
-                store.finalize_task_and_attempt(
-                    &task_id,
-                    status,
-                    now,
-                    error.as_deref(),
-                    Some(&attempt_id),
-                    preserve_attempt,
-                )
-            })
-            .await;
-        if settled.is_none() {
-            return;
-        }
-        let (kind, outcome) = match status {
-            TaskStatus::Completed => (
-                crate::plugins::runtime::EventKind::DownloadCompleted,
-                "completed",
-            ),
-            TaskStatus::Partial => (
-                crate::plugins::runtime::EventKind::DownloadCompleted,
-                "partial",
-            ),
-            _ => (crate::plugins::runtime::EventKind::DownloadFailed, "failed"),
-        };
-        super::plugin_events::download_event(&self.plugins, kind, task, &task.source, outcome);
-        if let Some(hook) = &self.settled {
-            hook(task.clone(), status).await;
-        }
-    }
-
-    /// Drop a task's poll memory and landing waits.
-    fn forget_landing(&self, task_id: &str) {
-        if let Ok(mut cache) = self.poll_cache.lock() {
-            cache.remove(task_id);
-        }
-        if let Ok(mut waits) = self.landing_waits.lock() {
-            waits.remove(task_id);
-        }
-    }
-
-    /// Import a failed or short-landed task's files again, right away
-    /// (v2 `reimport_task`): the files of its last attempt go through the
-    /// landing as if the transfer had just finished, without a new search
-    /// or download. `Ok(None)` when the task is missing or not
-    /// reimportable; the returned row is the task after the landing.
-    pub async fn reimport(&self, task_id: &str) -> Result<Option<TaskRow>, ReimportError> {
-        let Some(landing) = self.landing.clone() else {
-            return Err(ReimportError::Unavailable(
-                "imports are not available yet".to_owned(),
-            ));
-        };
-        let Some(task) = self
-            .journal
-            .read_task(task_id)
-            .await
-            .map_err(ReimportError::Journal)?
-        else {
-            return Ok(None);
-        };
-        if !matches!(task.status, TaskStatus::Failed | TaskStatus::Partial) {
-            return Ok(None);
-        }
-        let Some(attempts) = self.attempts(task_id).await else {
-            return Err(ReimportError::Journal(
-                "download attempts unreadable".to_owned(),
-            ));
-        };
-        let Some(attempt) = attempts.iter().rev().find(|attempt| {
-            attempt.handle.is_some()
-                && matches!(
-                    attempt.row.state,
-                    AttemptState::Preserved | AttemptState::CleanupPending | AttemptState::Complete
-                )
-        }) else {
-            return Ok(None);
-        };
-        let Some(handle) = attempt.handle.clone() else {
-            return Ok(None);
-        };
-        let sources = (self.sources)();
-        let Some(source) = sources
-            .iter()
-            .find(|source| source.journal_source() == attempt.row.source)
-            .cloned()
-        else {
-            return Err(ReimportError::Unavailable(format!(
-                "the {} download client is not configured",
-                attempt.row.source
-            )));
-        };
-        let now = now_unix_f64();
-        let begun = {
-            let task_id = task_id.to_owned();
-            self.journal
-                .run_foreground("downloads.reimport", move |store| {
-                    store.begin_reimport(&task_id, now)
-                })
-                .await
-                .map_err(ReimportError::Journal)?
-        };
-        if !begun {
-            return Ok(None);
-        }
-        let task = self
-            .journal
-            .read_task(task_id)
-            .await
-            .map_err(ReimportError::Journal)?
-            .unwrap_or(task);
-        // The attempt row moved since it was read only if another writer
-        // touched it; re-read it so the settle's revision check holds.
-        let row = self
-            .attempts(task_id)
-            .await
-            .and_then(|fresh| {
-                fresh
-                    .into_iter()
-                    .find(|fresh| fresh.row.id == attempt.row.id)
-            })
-            .map(|fresh| fresh.row)
-            .unwrap_or_else(|| attempt.row.clone());
-        match source.landed_paths(&handle).await {
-            Ok(paths) => {
-                let staging_root = (self.config)().staging_root;
-                let manifest = read_manifest(&staging_root, &task.id).await;
-                let report = landing
-                    .land(&task, Some(&row.id), manifest.as_ref(), paths)
-                    .await;
-                self.settle_landing(&task, &row, report, now).await;
-            }
-            Err(error) => {
-                let detail = format!("the download client could not list the files: {error}");
-                self.settle(&task, &row.id, TaskStatus::Failed, Some(&detail), true, now)
-                    .await;
-            }
-        }
-        self.journal
-            .read_task(task_id)
-            .await
-            .map_err(ReimportError::Journal)
     }
 
     /// Spawn successors for terminal tasks whose retry backoff elapsed.
@@ -1578,6 +1358,7 @@ impl DownloadWorker {
             job_name: attempt.job_name.clone(),
             nzo_id: String::new(),
             plugin_token: String::new(),
+            sizes: Vec::new(),
         });
         let Some(source) = pass.source_for(&attempt.source) else {
             // No adapter for this source: defer with backoff rather than
@@ -1716,6 +1497,7 @@ impl DownloadWorker {
             job_name: job_name.to_owned(),
             nzo_id: String::new(),
             plugin_token: String::new(),
+            sizes: Vec::new(),
         };
         // Soulseek handles need the peer plus filenames, which the folder
         // name does not carry: without them the client check cannot run,
@@ -1787,6 +1569,7 @@ impl DownloadWorker {
             job_name: job_name.to_owned(),
             nzo_id: String::new(),
             plugin_token: String::new(),
+            sizes: Vec::new(),
         };
         if let Err(error) = source.discard(&handle).await {
             tracing::warn!(task_id, %error, "orphan client discard failed; folder kept");
@@ -1798,15 +1581,6 @@ impl DownloadWorker {
             tracing::info!(task_id, path = %path.display(), "orphan folder removed");
         }
     }
-}
-
-/// Why a reimport could not run.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReimportError {
-    /// Imports or the task's download client are not set up.
-    Unavailable(String),
-    /// The journal could not be read or written.
-    Journal(String),
 }
 
 /// Newest attempt with a client handle that is still acquiring or in use.
@@ -1891,6 +1665,9 @@ pub async fn spawn_download_worker(
                 break;
             }
         }
+        // A landing mid-publish finishes (or reaches a durable step)
+        // before the worker reports stopped.
+        worker.wait_for_landings().await;
         mark(&wakeups, &lane, JobState::Stopped).await;
     });
     Ok(task)
