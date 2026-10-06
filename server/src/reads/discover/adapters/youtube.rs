@@ -57,10 +57,12 @@ impl LiveYouTube {
             SearchKind::Track => self.client.search_track(artist, title).await,
         };
         found.map_err(|error| match error {
-            YoutubeError::NotConfigured(_) => ProviderFailure::not_available("YouTube search"),
-            YoutubeError::QuotaExhausted => {
-                ProviderFailure::not_available("YouTube search (today's quota is used up)")
-            }
+            YoutubeError::NotConfigured(_) => ProviderFailure::not_configured(
+                "YouTube search needs an API key under Settings > YouTube.",
+            ),
+            YoutubeError::QuotaExhausted => ProviderFailure::Exhausted(
+                "Today's YouTube search quota is used up; it resets at midnight UTC.".to_owned(),
+            ),
             other => ProviderFailure::failed(other.to_string()),
         })
     }

@@ -23,10 +23,15 @@ use crate::reads::discover::models::{
 pub enum ProviderFailure {
     /// A provider or store failed. The string is a log-only cause.
     Failed(String),
-    /// The feature has no working source on this server (not configured,
-    /// or its builder is not ported yet). The string says which, for the
-    /// user.
-    NotAvailable(String),
+    /// The feature needs setup first (a key, an account). The string is a
+    /// full sentence for the user.
+    NotConfigured(String),
+    /// The feature is not built in this version yet. The string is a full
+    /// sentence for the user.
+    NotBuilt(String),
+    /// A usage limit is spent for now. The string is a full sentence for
+    /// the user.
+    Exhausted(String),
 }
 
 impl ProviderFailure {
@@ -35,9 +40,14 @@ impl ProviderFailure {
         Self::Failed(cause.into())
     }
 
-    /// A feature without a working source.
-    pub fn not_available(what: impl Into<String>) -> Self {
-        Self::NotAvailable(what.into())
+    /// A feature that needs setup first; `sentence` tells the user.
+    pub fn not_configured(sentence: impl Into<String>) -> Self {
+        Self::NotConfigured(sentence.into())
+    }
+
+    /// A feature not built yet; `sentence` tells the user.
+    pub fn not_built(sentence: impl Into<String>) -> Self {
+        Self::NotBuilt(sentence.into())
     }
 }
 
@@ -45,7 +55,9 @@ impl std::fmt::Display for ProviderFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Failed(cause) => f.write_str(cause),
-            Self::NotAvailable(what) => write!(f, "{what} is not available"),
+            Self::NotConfigured(sentence)
+            | Self::NotBuilt(sentence)
+            | Self::Exhausted(sentence) => f.write_str(sentence),
         }
     }
 }

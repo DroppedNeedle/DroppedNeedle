@@ -106,7 +106,9 @@ impl BatchStore for UnavailableBatches {
         _source_section: &str,
         _items: Vec<BatchItemRow>,
     ) -> Result<BatchRow, ProviderFailure> {
-        Err(ProviderFailure::not_available("Discovery batches"))
+        Err(ProviderFailure::not_built(
+            "Discovery batches are not built in this version yet.",
+        ))
     }
 
     fn list_for_user(&self, _owner_id: &str) -> Vec<BatchRow> {
@@ -140,7 +142,11 @@ impl RadioPlanner for UnavailableRadio {
         _count: i64,
         _exclude: &'a [String],
     ) -> BoxFuture<'a, Result<RadioPlanResponse, ProviderFailure>> {
-        Box::pin(async { Err(ProviderFailure::not_available("Radio")) })
+        Box::pin(async {
+            Err(ProviderFailure::not_built(
+                "Radio is not built in this version yet.",
+            ))
+        })
     }
 
     fn shelf<'a>(
@@ -150,7 +156,11 @@ impl RadioPlanner for UnavailableRadio {
         _count: i64,
         _source: ChartSource,
     ) -> BoxFuture<'a, Result<ChartSection, ProviderFailure>> {
-        Box::pin(async { Err(ProviderFailure::not_available("Radio")) })
+        Box::pin(async {
+            Err(ProviderFailure::not_built(
+                "Radio is not built in this version yet.",
+            ))
+        })
     }
 
     fn playlist_suggestions<'a>(
@@ -160,7 +170,11 @@ impl RadioPlanner for UnavailableRadio {
         _count: i64,
         _source: ChartSource,
     ) -> BoxFuture<'a, Result<PlaylistSuggestionsResponse, ProviderFailure>> {
-        Box::pin(async { Err(ProviderFailure::not_available("Playlist suggestions")) })
+        Box::pin(async {
+            Err(ProviderFailure::not_built(
+                "Playlist suggestions are not built in this version yet.",
+            ))
+        })
     }
 }
 
@@ -184,7 +198,11 @@ impl ChartsSource for UnavailableCharts {
         _offset: i64,
         _source: ChartSource,
     ) -> BoxFuture<'_, Result<TrendingArtistsPage, ProviderFailure>> {
-        Box::pin(async { Err(ProviderFailure::not_available("Charts")) })
+        Box::pin(async {
+            Err(ProviderFailure::not_built(
+                "Charts are not available: the ListenBrainz client could not start.",
+            ))
+        })
     }
 
     fn popular_albums(
@@ -194,7 +212,11 @@ impl ChartsSource for UnavailableCharts {
         _offset: i64,
         _source: ChartSource,
     ) -> BoxFuture<'_, Result<PopularAlbumsPage, ProviderFailure>> {
-        Box::pin(async { Err(ProviderFailure::not_available("Charts")) })
+        Box::pin(async {
+            Err(ProviderFailure::not_built(
+                "Charts are not available: the ListenBrainz client could not start.",
+            ))
+        })
     }
 
     fn your_top_albums<'a>(
@@ -205,7 +227,11 @@ impl ChartsSource for UnavailableCharts {
         _offset: i64,
         _source: ChartSource,
     ) -> BoxFuture<'a, Result<PopularAlbumsPage, ProviderFailure>> {
-        Box::pin(async { Err(ProviderFailure::not_available("Charts")) })
+        Box::pin(async {
+            Err(ProviderFailure::not_built(
+                "Charts are not available: the ListenBrainz client could not start.",
+            ))
+        })
     }
 
     fn genre_detail<'a>(
@@ -215,7 +241,11 @@ impl ChartsSource for UnavailableCharts {
         _artist_offset: i64,
         _album_offset: i64,
     ) -> BoxFuture<'a, Result<GenreDetailResponse, ProviderFailure>> {
-        Box::pin(async { Err(ProviderFailure::not_available("Genre pages")) })
+        Box::pin(async {
+            Err(ProviderFailure::not_built(
+                "Genre pages are not built in this version yet.",
+            ))
+        })
     }
 }
 
@@ -232,7 +262,11 @@ impl YouTubeSource for UnavailableYouTube {
         _artist: &'a str,
         _album: &'a str,
     ) -> BoxFuture<'a, Result<Option<String>, ProviderFailure>> {
-        Box::pin(async { Err(ProviderFailure::not_available("YouTube search")) })
+        Box::pin(async {
+            Err(ProviderFailure::not_configured(
+                "YouTube search is off: its quota file could not be read.",
+            ))
+        })
     }
 
     fn search_track<'a>(
@@ -240,7 +274,11 @@ impl YouTubeSource for UnavailableYouTube {
         _artist: &'a str,
         _track: &'a str,
     ) -> BoxFuture<'a, Result<Option<String>, ProviderFailure>> {
-        Box::pin(async { Err(ProviderFailure::not_available("YouTube search")) })
+        Box::pin(async {
+            Err(ProviderFailure::not_configured(
+                "YouTube search is off: its quota file could not be read.",
+            ))
+        })
     }
 
     fn is_cached(&self, _artist: &str, _name: &str, _track: bool) -> bool {

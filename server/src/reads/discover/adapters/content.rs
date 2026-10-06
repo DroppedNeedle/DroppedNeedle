@@ -187,28 +187,44 @@ impl DiscoverContent for UnbuiltContent {
         _section: Option<&'a str>,
         _provider: Option<&'a str>,
     ) -> BoxFuture<'a, Result<DiscoverActivityResponse, ProviderFailure>> {
-        Box::pin(async { Err(ProviderFailure::not_available("Discover personalization")) })
+        Box::pin(async {
+            Err(ProviderFailure::not_built(
+                "Discover personalization is not built in this version yet.",
+            ))
+        })
     }
 
     fn trigger_refresh<'a>(
         &'a self,
         _user_id: &'a str,
     ) -> BoxFuture<'a, Result<(), ProviderFailure>> {
-        Box::pin(async { Err(ProviderFailure::not_available("Discover refresh")) })
+        Box::pin(async {
+            Err(ProviderFailure::not_built(
+                "Refreshing discover is not built in this version yet.",
+            ))
+        })
     }
 
     fn enrich_queue_item<'a>(
         &'a self,
         _release_group_mbid: &'a str,
     ) -> BoxFuture<'a, Result<QueueEnrichment, ProviderFailure>> {
-        Box::pin(async { Err(ProviderFailure::not_available("Discover queue enrichment")) })
+        Box::pin(async {
+            Err(ProviderFailure::not_built(
+                "Discover queue details are not built in this version yet.",
+            ))
+        })
     }
 
     fn preview_queue_item<'a>(
         &'a self,
         _release_group_mbid: &'a str,
     ) -> BoxFuture<'a, Result<DiscoverQueuePreview, ProviderFailure>> {
-        Box::pin(async { Err(ProviderFailure::not_available("Discover queue previews")) })
+        Box::pin(async {
+            Err(ProviderFailure::not_built(
+                "Discover queue previews are not built in this version yet.",
+            ))
+        })
     }
 
     fn validate_queue_mbids<'a>(

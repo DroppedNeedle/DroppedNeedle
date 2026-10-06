@@ -55,8 +55,12 @@ pub enum ServiceError {
     Upstream(String),
     /// The store failed; the cause is log-only.
     Internal(String),
-    /// The feature has no working source; the reason is shown.
-    NotAvailable(String),
+    /// The feature needs setup first; the sentence is shown.
+    NotConfigured(String),
+    /// The feature is not built yet; the sentence is shown.
+    NotBuilt(String),
+    /// A usage limit is spent for now; the sentence is shown.
+    Exhausted(String),
 }
 
 impl ServiceError {
@@ -67,9 +71,9 @@ impl ServiceError {
             Self::InvalidInput(message) => ReadsError::InvalidInput { message },
             Self::Upstream(cause) => ReadsError::upstream(&cause, ids),
             Self::Internal(cause) => ReadsError::internal(&cause, ids),
-            Self::NotAvailable(what) => ReadsError::NotAvailable {
-                message: format!("{what} is not available on this server yet"),
-            },
+            Self::NotConfigured(message) => ReadsError::NotConfigured { message },
+            Self::NotBuilt(message) => ReadsError::NotBuilt { message },
+            Self::Exhausted(message) => ReadsError::Exhausted { message },
         }
     }
 }
@@ -78,7 +82,7 @@ impl From<ProviderFailure> for ServiceError {
     fn from(failure: ProviderFailure) -> Self {
         match failure {
             ProviderFailure::Failed(cause) => Self::Upstream(cause),
-            ProviderFailure::NotAvailable(what) => Self::NotAvailable(what),
+            other => owned_store_failure(other),
         }
     }
 }
@@ -88,7 +92,9 @@ impl From<ProviderFailure> for ServiceError {
 fn owned_store_failure(failure: ProviderFailure) -> ServiceError {
     match failure {
         ProviderFailure::Failed(cause) => ServiceError::Internal(cause),
-        ProviderFailure::NotAvailable(what) => ServiceError::NotAvailable(what),
+        ProviderFailure::NotConfigured(sentence) => ServiceError::NotConfigured(sentence),
+        ProviderFailure::NotBuilt(sentence) => ServiceError::NotBuilt(sentence),
+        ProviderFailure::Exhausted(sentence) => ServiceError::Exhausted(sentence),
     }
 }
 
@@ -406,8 +412,11 @@ pub async fn ignore_queue_item(
         &body.artist_name,
     );
     deps.queues.start_build(user_id, true);
-    deps.content.trigger_refresh(user_id).await?;
-    Ok(())
+    match deps.content.trigger_refresh(user_id).await {
+        // No discover builder yet: the ignore still stands, nothing to rebuild.
+        Ok(()) | Err(ProviderFailure::NotBuilt(_)) => Ok(()),
+        Err(other) => Err(other.into()),
+    }
 }
 
 /// The user's ignore ledger.

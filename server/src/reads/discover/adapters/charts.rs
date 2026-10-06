@@ -4,7 +4,7 @@
 //! albums from the sitewide stats, "your top albums" from the user's own
 //! stats through their linked ListenBrainz account, one row more than asked
 //! for to learn whether another page follows, and every row marked when the
-//! library holds it. As in v2, artists without an MBID are dropped (they
+//! library holds it (best effort: a failed lookup leaves rows unmarked). As in v2, artists without an MBID are dropped (they
 //! cannot link anywhere) and a user without a linked account gets an empty
 //! page.
 //!
@@ -75,7 +75,7 @@ impl ListenBrainzCharts {
             })
             .collect();
         let mbids: Vec<&str> = artists.iter().filter_map(|a| a.mbid.as_deref()).collect();
-        let owned = owned_artists(&self.pool, &mbids).await?;
+        let owned = best_effort(owned_artists(&self.pool, &mbids).await);
         for artist in &mut artists {
             if let Some(local) = artist
                 .mbid
@@ -122,7 +122,7 @@ impl ListenBrainzCharts {
             })
             .collect();
         let mbids: Vec<&str> = albums.iter().filter_map(|a| a.mbid.as_deref()).collect();
-        let owned = owned_albums(&self.pool, &mbids).await?;
+        let owned = best_effort(owned_albums(&self.pool, &mbids).await);
         for album in &mut albums {
             if let Some(local) = album
                 .mbid
@@ -146,6 +146,17 @@ impl ListenBrainzCharts {
     }
 }
 
+/// Ownership marks are a nicety: a failed lookup is logged and the page
+/// renders unmarked, as in v2.
+fn best_effort(
+    owned: Result<std::collections::HashMap<String, String>, ProviderFailure>,
+) -> std::collections::HashMap<String, String> {
+    owned.unwrap_or_else(|failure| {
+        tracing::warn!(%failure, "chart ownership lookup failed; rows stay unmarked");
+        std::collections::HashMap::new()
+    })
+}
+
 /// One row past the page tells whether another page follows (v2).
 fn window(limit: i64, offset: i64) -> (u32, u32) {
     (
@@ -164,7 +175,9 @@ fn rows<T>(outcome: Outcome<Vec<T>>) -> Result<Vec<T>, ProviderFailure> {
 }
 
 fn lastfm_unavailable<T>() -> Result<T, ProviderFailure> {
-    Err(ProviderFailure::not_available("Last.fm charts"))
+    Err(ProviderFailure::not_configured(
+        "Last.fm charts need the instance Last.fm API key, which this version does not hold yet. Use ListenBrainz charts.",
+    ))
 }
 
 impl ChartsSource for ListenBrainzCharts {
@@ -244,6 +257,10 @@ impl ChartsSource for ListenBrainzCharts {
         _artist_offset: i64,
         _album_offset: i64,
     ) -> BoxFuture<'a, Result<GenreDetailResponse, ProviderFailure>> {
-        Box::pin(async { Err(ProviderFailure::not_available("Genre pages")) })
+        Box::pin(async {
+            Err(ProviderFailure::not_built(
+                "Genre pages are not built in this version yet.",
+            ))
+        })
     }
 }

@@ -24,8 +24,12 @@ pub const NOT_FOUND: &str = "NOT_FOUND";
 pub const INVALID_INPUT: &str = "INVALID_INPUT";
 /// A downstream provider failed. Body is fixed; the cause stays in the log.
 pub const UPSTREAM_ERROR: &str = "UPSTREAM_ERROR";
-/// The feature has no working source on this server (503).
+/// The feature needs setup first: a key, an account (503).
+pub const NOT_CONFIGURED: &str = "NOT_CONFIGURED";
+/// The feature is not built in this version yet (503).
 pub const NOT_AVAILABLE: &str = "NOT_AVAILABLE";
+/// A usage limit is spent for now (429).
+pub const RATE_LIMITED: &str = "RATE_LIMITED";
 
 /// Fixed 502 message. Never carries cause text, hosts, or paths.
 pub const FIXED_UPSTREAM_MESSAGE: &str = "Upstream service error";
@@ -58,10 +62,19 @@ pub enum ReadsError {
         /// Ties the wire response to the server log line.
         error_id: String,
     },
-    /// The feature has no working source here: not configured, or not
-    /// built yet. The message names the feature for the user.
-    NotAvailable {
-        /// What is unavailable.
+    /// The feature needs setup first. The message tells the user what.
+    NotConfigured {
+        /// Full sentence for the user.
+        message: String,
+    },
+    /// The feature is not built in this version yet.
+    NotBuilt {
+        /// Full sentence for the user.
+        message: String,
+    },
+    /// A usage limit is spent for now.
+    Exhausted {
+        /// Full sentence for the user.
         message: String,
     },
 }
@@ -88,7 +101,8 @@ impl ReadsError {
             Self::InvalidInput { .. } => StatusCode::BAD_REQUEST,
             Self::Upstream { .. } => StatusCode::BAD_GATEWAY,
             Self::Internal { .. } => StatusCode::INTERNAL_SERVER_ERROR,
-            Self::NotAvailable { .. } => StatusCode::SERVICE_UNAVAILABLE,
+            Self::NotConfigured { .. } | Self::NotBuilt { .. } => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Exhausted { .. } => StatusCode::TOO_MANY_REQUESTS,
         }
     }
 
@@ -111,7 +125,9 @@ impl ReadsError {
                 crate::error::FIXED_INTERNAL_MESSAGE.to_owned(),
                 Some(json!({ "error_id": error_id })),
             ),
-            Self::NotAvailable { message } => (NOT_AVAILABLE.to_owned(), message.clone(), None),
+            Self::NotConfigured { message } => (NOT_CONFIGURED.to_owned(), message.clone(), None),
+            Self::NotBuilt { message } => (NOT_AVAILABLE.to_owned(), message.clone(), None),
+            Self::Exhausted { message } => (RATE_LIMITED.to_owned(), message.clone(), None),
         };
         ErrorEnvelope {
             error: ErrorBody {

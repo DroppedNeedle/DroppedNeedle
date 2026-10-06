@@ -197,6 +197,7 @@ pub struct RemoveBatchQuery {
     responses(
         (status = 200, description = "Discover shelves", body = DiscoverResponse),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn get_discover(
@@ -216,6 +217,7 @@ pub async fn get_discover(
     responses(
         (status = 202, description = "Refresh triggered", body = RefreshResponse),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn refresh_discover(
@@ -237,6 +239,7 @@ pub async fn refresh_discover(
         (status = 200, description = "Personalization cursor", body = DiscoverActivityResponse),
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn record_activity(
@@ -259,6 +262,7 @@ pub async fn record_activity(
         (status = 200, description = "Radio shelf", body = ChartSection),
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn discover_radio(
@@ -281,6 +285,7 @@ pub async fn discover_radio(
         (status = 200, description = "Radio plan", body = RadioPlanResponse),
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn radio_plan(
@@ -303,6 +308,7 @@ pub async fn radio_plan(
         (status = 200, description = "Playlist suggestions", body = PlaylistSuggestionsResponse),
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn playlist_suggestions(
@@ -329,6 +335,7 @@ pub async fn playlist_suggestions(
         (status = 200, description = "Queue deck", body = DiscoverQueueResponse),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn get_queue(
@@ -386,6 +393,7 @@ pub async fn queue_generate(
         (status = 200, description = "Card enrichment", body = QueueEnrichment),
         (status = 400, description = "Bad release-group id"),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn enrich_queue_item(
@@ -408,6 +416,7 @@ pub async fn enrich_queue_item(
         (status = 200, description = "Card preview", body = DiscoverQueuePreview),
         (status = 400, description = "Bad release-group id"),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn preview_queue_item(
@@ -468,6 +477,7 @@ pub async fn ignored_releases(
         (status = 200, description = "Library membership", body = QueueValidateResponse),
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn validate_queue(
@@ -493,6 +503,8 @@ pub async fn validate_queue(
         (status = 200, description = "Resolved video", body = YouTubeSearchResponse),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
+        (status = 429, description = "YouTube search quota used up for today (RATE_LIMITED)", body = crate::error::ErrorEnvelope),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn youtube_search(
@@ -518,6 +530,8 @@ pub async fn youtube_search(
         (status = 200, description = "Resolved video", body = YouTubeSearchResponse),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
+        (status = 429, description = "YouTube search quota used up for today (RATE_LIMITED)", body = crate::error::ErrorEnvelope),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn youtube_track_search(
@@ -584,6 +598,7 @@ pub async fn youtube_cache_check(
         (status = 200, description = "Track preview", body = TrackPreviewResponse),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn track_preview(
@@ -610,6 +625,7 @@ pub async fn track_preview(
         (status = 200, description = "Album samples", body = AlbumPreviewResponse),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn album_preview(
@@ -636,6 +652,7 @@ pub async fn album_preview(
         (status = 202, description = "Batch created", body = DiscoveryBatchDetail),
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn create_batch(
@@ -727,6 +744,7 @@ pub async fn remove_batch(
     responses(
         (status = 200, description = "Home shelves", body = HomeResponse),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn get_home(
@@ -746,6 +764,7 @@ pub async fn get_home(
     responses(
         (status = 200, description = "Integration availability", body = IntegrationStatus),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn integration_status(
@@ -772,6 +791,7 @@ pub async fn integration_status(
         (status = 200, description = "Genre detail", body = GenreDetailResponse),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn genre_detail(
@@ -807,6 +827,7 @@ pub async fn genre_detail(
         (status = 200, description = "Trending artists page", body = TrendingArtistsPage),
         (status = 400, description = "Bad range or source"),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn trending_artists(
@@ -840,6 +861,7 @@ pub async fn trending_artists(
         (status = 200, description = "Popular albums page", body = PopularAlbumsPage),
         (status = 400, description = "Bad range or source"),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn popular_albums(
@@ -873,6 +895,7 @@ pub async fn popular_albums(
         (status = 200, description = "Your-top albums page", body = PopularAlbumsPage),
         (status = 400, description = "Bad range or source"),
         (status = 401, description = "Not authenticated"),
+        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn your_top_albums(
