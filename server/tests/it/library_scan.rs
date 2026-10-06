@@ -352,26 +352,32 @@ async fn a_refused_inventory_row_costs_that_file_only() {
 }
 
 /// Symlinks never lead out of a root: the walk audits them and the stream
-/// seam refuses them.
+/// seam refuses them. A root reached through a symlink still treats its
+/// own in-root links as inside.
 #[tokio::test]
 async fn symlinks_never_escape_a_root() {
     use std::os::unix::fs::symlink;
 
     let scratch = ScratchDir::new("scan-links");
+    let real = scratch.join("real");
+    std::fs::create_dir_all(&real).expect("real root");
     let root = scratch.join("music");
+    symlink(&real, &root).expect("root symlink");
     plant(&root, "good.flac", "flac_full_01.flac");
+    symlink(root.join("good.flac"), root.join("alias.flac")).expect("in-root symlink");
     symlink("/etc/hostname", root.join("escape.flac")).expect("symlink");
     let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
     coordinator.request_run(&request(&root)).expect("requested");
     let run = coordinator.run_once(&paths).await.expect("driven");
     assert_eq!(count(&run, counter_names::INDEXED), 1);
-    assert!(
-        coordinator
-            .store()
-            .failures(&run.id)
-            .iter()
-            .any(|failure| failure.failure_code == failure_codes::SYMLINK_ESCAPE_OUT)
-    );
+    let escapes: Vec<String> = coordinator
+        .store()
+        .failures(&run.id)
+        .into_iter()
+        .filter(|failure| failure.failure_code == failure_codes::SYMLINK_ESCAPE_OUT)
+        .map(|failure| failure.relative_path)
+        .collect();
+    assert_eq!(escapes, vec!["escape.flac".to_owned()]);
     let seam = StreamRootSeam::new(RootRegistry::new(
         vec![LibraryRoot::new(
             "music",

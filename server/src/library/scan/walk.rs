@@ -1185,6 +1185,10 @@ fn produce_inventory(
     heartbeat: &WalkHeartbeat,
 ) {
     let mut stack = vec![selected.to_owned()];
+    // Symlink targets resolve to canonical paths; compare them against the
+    // canonical root so a root reached through a symlink (`/music` ->
+    // `/mnt/nas/music`) still recognizes its own files.
+    let canonical_root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_owned());
     // Unreadable directories are collected and reported instead of
     // aborting the walk.
     let mut walk_errors: Vec<WalkErrorInfo> = Vec::new();
@@ -1267,7 +1271,19 @@ fn produce_inventory(
             // followed into the library).
             let resolved = if file_type.is_symlink() {
                 match std::fs::canonicalize(&path) {
-                    Ok(resolved) => resolved,
+                    Ok(target) => match target.strip_prefix(&canonical_root) {
+                        // Re-expressed under the configured root, so its
+                        // inventory key matches a plain file's.
+                        Ok(inside) => root.join(inside),
+                        Err(_) => {
+                            let relative = path
+                                .strip_prefix(root)
+                                .map(text_safe_posix)
+                                .unwrap_or_else(|_| text_safe_posix(&path));
+                            skips.push((relative, failure_codes::SYMLINK_ESCAPE_OUT.to_owned()));
+                            continue;
+                        }
+                    },
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                     Err(error) => {
                         inspected.push(Err(WalkErrorInfo {
@@ -1281,14 +1297,6 @@ fn produce_inventory(
             } else {
                 path.clone()
             };
-            if file_type.is_symlink() && !resolved.starts_with(root) {
-                let relative = path
-                    .strip_prefix(root)
-                    .map(text_safe_posix)
-                    .unwrap_or_else(|_| text_safe_posix(&path));
-                skips.push((relative, failure_codes::SYMLINK_ESCAPE_OUT.to_owned()));
-                continue;
-            }
             let meta = match std::fs::metadata(&resolved) {
                 Ok(meta) => meta,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
