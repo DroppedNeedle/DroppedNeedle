@@ -111,6 +111,7 @@ pub fn write_bundle(
                 copy_files(&conn, section, set, v2_cache, &mut outcome.left_behind)?
             }
         };
+        index_section(&conn, section)?;
         outcome.sections.insert(section.name.to_owned(), rows);
     }
     conn.execute_batch("COMMIT").map_err(bundle_error)?;
@@ -118,6 +119,24 @@ pub fn write_bundle(
         .map_err(bundle_error)?;
     conn.close().map_err(|(_, error)| bundle_error(error))?;
     Ok(outcome)
+}
+
+/// Index a filled section on its key and its unique rule, so the
+/// importer's look-ups (an earlier row on the same rule, a parent row on a
+/// dry run) probe an index instead of scanning the section once per row.
+/// Built after the rows go in, which is cheaper than keeping it up to date.
+fn index_section(conn: &Connection, section: &TableSection) -> Result<(), ExportError> {
+    let indexes = std::iter::once(("key", section.key))
+        .chain(section.unique.iter().map(|rule| ("unique", *rule)));
+    for (kind, columns) in indexes {
+        conn.execute_batch(&format!(
+            "CREATE INDEX main.\"{name}__{kind}\" ON \"{name}\" ({cols})",
+            name = section.name,
+            cols = quoted_list(columns, ""),
+        ))
+        .map_err(bundle_error)?;
+    }
+    Ok(())
 }
 
 /// Columns of one v2 table; empty when the table does not exist.
@@ -193,7 +212,8 @@ fn copy_table(
         .iter()
         .filter_map(|column| v2_sql(column, &available).map(|sql| (column.name, sql)))
         .collect();
-    for key in section.key {
+    let rules = section.unique.iter().flat_map(|rule| rule.iter());
+    for key in section.key.iter().chain(rules) {
         if !present.iter().any(|(name, _)| name == key) {
             return Err(ExportError::V2Database {
                 table: table.to_owned(),

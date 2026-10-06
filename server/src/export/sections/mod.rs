@@ -221,10 +221,11 @@ pub struct TableSection {
     pub columns: &'static [Column],
     /// Columns naming one row in v3; the conflict identity.
     pub key: &'static [&'static str],
-    /// Other v3 uniqueness rules on the target. A row that would break one
-    /// counts as a conflict (the existing or first row is kept). Columns
-    /// compare with `=`, so a row with a NULL in one never clashes, as in
-    /// SQLite.
+    /// Other v3 uniqueness rules on the target, at most one per section. A
+    /// row that would break it counts as a conflict (the existing or first
+    /// landing row is kept). Columns compare with `=`, so a row with a NULL
+    /// in one never clashes, as in SQLite. The exporter indexes the rule's
+    /// columns in the bundle.
     pub unique: &'static [&'static [&'static str]],
     /// Rows this section's rows hang off in v3.
     pub parents: &'static [Parent],
@@ -293,6 +294,8 @@ mod tests {
             for key in section.key {
                 assert!(lands(key), "{}: key {key}", section.name);
             }
+            // The importer's clash test relies on one rule at most.
+            assert!(section.unique.len() <= 1, "{}", section.name);
             for rule in section.unique {
                 assert!(rule.iter().all(|name| lands(name)), "{}", section.name);
             }

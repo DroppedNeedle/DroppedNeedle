@@ -181,7 +181,8 @@ pub(crate) async fn check(
             }
             continue;
         }
-        for key in section.key {
+        let rules = section.unique.iter().flat_map(|rule| rule.iter());
+        for key in section.key.iter().chain(rules) {
             if !present.iter().any(|column| column.name == *key) {
                 return Err(BundleRejection::Invalid(format!(
                     "BUNDLE_SECTION_MISSING: {} lacks its {key} column",
@@ -380,14 +381,9 @@ fn has_parent_sql(section: &TableSection, row: &str, dry_run: bool) -> String {
 }
 
 /// SQL that is true when bundle row `row` clashes with no v3 row on its
-/// key or another unique rule, nor with an earlier bundle row on such a
-/// rule (the first one wins). Unique columns compare with `=`: rows
+/// key or another unique rule. Unique columns compare with `=`: rows
 /// holding a NULL there never clash, as in SQLite.
-fn is_new_sql(section: &TableSection, row: &str) -> String {
-    let target_table = match section.target {
-        Target::Table(table) => format!("main.{}", quote(table)),
-        Target::AvatarFiles => return "1".to_owned(),
-    };
+fn v3_free_sql(section: &TableSection, row: &str, target_table: &str) -> String {
     let key_match = joined(
         section
             .key
@@ -399,21 +395,48 @@ fn is_new_sql(section: &TableSection, row: &str) -> String {
         "NOT EXISTS (SELECT 1 FROM {target_table} {row}m WHERE {key_match})"
     )];
     for rule in section.unique {
-        let against = |alias: &str| {
-            joined(
-                rule.iter()
-                    .map(|name| format!("{alias}.{0} = {row}.{0}", quote(name))),
-                " AND ",
-            )
-        };
         tests.push(format!(
             "NOT EXISTS (SELECT 1 FROM {target_table} {row}m WHERE {})",
-            against(&format!("{row}m"))
+            rule_match(rule, &format!("{row}m"), row)
         ));
+    }
+    tests.join(" AND ")
+}
+
+/// `alias` and `row` hold the same values on every column of `rule`.
+fn rule_match(rule: &[&str], alias: &str, row: &str) -> String {
+    joined(
+        rule.iter()
+            .map(|name| format!("{alias}.{0} = {row}.{0}", quote(name))),
+        " AND ",
+    )
+}
+
+/// SQL that is true when bundle row `row` clashes with no v3 row on its
+/// key or another unique rule, nor with an earlier bundle row on such a
+/// rule that lands itself (the first landing row wins). The exporter
+/// indexes every rule's columns in the bundle, so the earlier-row look-up
+/// is an index probe, not a scan.
+///
+/// "Lands itself" checks the earlier row's parents and its clashes with
+/// v3, not its own clashes with rows before it: each section has at most
+/// one unique rule, so a row before it on that rule shares the same
+/// values and clashes with this row too.
+fn is_new_sql(section: &TableSection, row: &str, dry_run: bool) -> String {
+    let target_table = match section.target {
+        Target::Table(table) => format!("main.{}", quote(table)),
+        Target::AvatarFiles => return "1".to_owned(),
+    };
+    let mut tests = vec![v3_free_sql(section, row, &target_table)];
+    let earlier = format!("{row}e");
+    for rule in section.unique {
         tests.push(format!(
-            "NOT EXISTS (SELECT 1 FROM {SCHEMA}.{} {row}e WHERE {row}e.rowid < {row}.rowid AND {})",
-            quote(section.name),
-            against(&format!("{row}e"))
+            "NOT EXISTS (SELECT 1 FROM {SCHEMA}.{name} {earlier} WHERE {matched} \
+             AND {earlier}.rowid < {row}.rowid AND ({parents}) AND {free})",
+            name = quote(section.name),
+            matched = rule_match(rule, &earlier, row),
+            parents = has_parent_sql(section, &earlier, dry_run),
+            free = v3_free_sql(section, &earlier, &target_table),
         ));
     }
     tests.join(" AND ")
@@ -425,7 +448,7 @@ fn lands_sql(section: &TableSection, row: &str, dry_run: bool) -> String {
     format!(
         "({}) AND {}",
         has_parent_sql(section, row, dry_run),
-        is_new_sql(section, row)
+        is_new_sql(section, row, dry_run)
     )
 }
 
@@ -450,7 +473,7 @@ pub(crate) fn section_sql(
             .map(|column| format!("m.{} IS {}", quote(column.name), value_sql(column))),
         " AND ",
     );
-    let is_new = is_new_sql(section, "b");
+    let is_new = is_new_sql(section, "b", dry_run);
     let has_parent = has_parent_sql(section, "b", dry_run);
     let identical = format!("EXISTS (SELECT 1 FROM {target_table} m WHERE {all_match})");
     let count = format!(
