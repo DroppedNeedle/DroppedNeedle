@@ -147,13 +147,17 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
                 false
             })
     });
-    let lyrics_enabled = match config_store.get::<LyricsSettings>() {
-        Ok(settings) => settings.enabled,
-        Err(error) => {
-            tracing::warn!(%error, "cannot read lyrics settings; lyrics enrichment disabled");
-            false
-        }
-    };
+    // Read per call so turning lyrics on or off takes effect at once.
+    let lyrics_store = config_store.clone();
+    let lyrics_enabled: crate::providers::adapters::Switch = Arc::new(move || {
+        lyrics_store
+            .get::<LyricsSettings>()
+            .map(|settings| settings.enabled)
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "cannot read lyrics settings; lyrics enrichment off");
+                false
+            })
+    });
     let enrichment = production_enrichment(
         http.shared(),
         &providers,

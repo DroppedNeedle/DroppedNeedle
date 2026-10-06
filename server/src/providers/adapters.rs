@@ -539,9 +539,38 @@ pub struct ProductionEnrichment {
     /// Search enrichment behind the reads `EnrichmentPort`.
     pub search: Arc<enrich::AggregatingEnrichment>,
     /// Live lyrics role behind the reads `LyricsPort` (via
-    /// `ProviderLyrics`), or `None` when lyrics are disabled, in which case
-    /// reads stay on the empty memory port and touch no network.
-    pub lyrics: Option<Arc<LiveLrclib>>,
+    /// `ProviderLyrics`).
+    pub lyrics: Arc<LiveLrclib>,
+    /// The lyrics setting, read per call: while it reads false, lyrics
+    /// read as absent and touch no network.
+    pub lyrics_enabled: Switch,
+}
+
+/// The live lyrics role behind a per-call switch: while the switch reads
+/// false it answers as [`UnconfiguredLyrics`] without touching the wire.
+pub struct SwitchedLyrics {
+    live: Arc<LiveLrclib>,
+    enabled: Switch,
+}
+
+impl SwitchedLyrics {
+    /// `live` while `enabled` reads true.
+    pub fn new(live: Arc<LiveLrclib>, enabled: Switch) -> Self {
+        Self { live, enabled }
+    }
+}
+
+impl enrich::LyricsClient for SwitchedLyrics {
+    fn exact_lyrics<'a>(
+        &'a self,
+        query: &'a enrich::LyricsQuery,
+    ) -> enrich::BoxFuture<'a, Result<enrich::LyricsLookup, enrich::ProviderError>> {
+        if (self.enabled)() {
+            self.live.exact_lyrics(query)
+        } else {
+            UnconfiguredLyrics.exact_lyrics(query)
+        }
+    }
 }
 
 /// Lyrics role when the integration is disabled: every call fails so the
@@ -566,8 +595,8 @@ impl enrich::LyricsClient for UnconfiguredLyrics {
 
 /// Build the production enrichment pair over the shared HTTP client and
 /// provider deps. ListenBrainz popularity serves only while the live
-/// `listenbrainz_enabled` switch reads true, and lyrics serve only when
-/// `lyrics_enabled` holds;
+/// `listenbrainz_enabled` switch reads true, and lyrics serve only while
+/// the `lyrics_enabled` switch does;
 /// Last.fm stays unconfigured (per-user credentials), the events feed stays
 /// unconfigured (no persistence), and MusicBrainz identity stays
 /// unconfigured (no route serves it).
@@ -575,7 +604,7 @@ pub fn production_enrichment(
     http: &reqwest::Client,
     providers: &Arc<Providers>,
     listenbrainz_enabled: Switch,
-    lyrics_enabled: bool,
+    lyrics_enabled: Switch,
 ) -> ProductionEnrichment {
     let lb: Arc<dyn enrich::ListenBrainzClient> =
         match CorePacer::for_source(providers.clone(), "listenbrainz") {
@@ -584,12 +613,11 @@ pub fn production_enrichment(
             ),
             None => Arc::new(UnconfiguredListenBrainz),
         };
-    let live_lyrics =
-        lyrics_enabled.then(|| Arc::new(LiveLrclib::new(ReqwestGet::new(http.clone()))));
-    let lyrics_role: Arc<dyn enrich::LyricsClient> = match &live_lyrics {
-        Some(live) => live.clone(),
-        None => Arc::new(UnconfiguredLyrics),
-    };
+    let live_lyrics = Arc::new(LiveLrclib::new(ReqwestGet::new(http.clone())));
+    let lyrics_role: Arc<dyn enrich::LyricsClient> = Arc::new(SwitchedLyrics::new(
+        live_lyrics.clone(),
+        lyrics_enabled.clone(),
+    ));
     let aggregator = enrich::EnrichmentAggregator::new(
         Arc::new(UnconfiguredMusicBrainz),
         lb,
@@ -600,6 +628,7 @@ pub fn production_enrichment(
     ProductionEnrichment {
         search: Arc::new(enrich::AggregatingEnrichment::new(Arc::new(aggregator))),
         lyrics: live_lyrics,
+        lyrics_enabled,
     }
 }
 
@@ -886,7 +915,12 @@ mod tests {
 
         let http = HttpClientFactory::new().unwrap();
         let providers = Arc::new(Providers::with_memory_cache());
-        let pair = production_enrichment(http.shared(), &providers, Arc::new(|| false), false);
+        let pair = production_enrichment(
+            http.shared(),
+            &providers,
+            Arc::new(|| false),
+            Arc::new(|| false),
+        );
         let response = pair
             .search
             .enrich_batch(EnrichmentBatchRequest {
@@ -910,13 +944,31 @@ mod tests {
         assert_eq!(response.albums[0].listen_count, None);
     }
 
-    #[test]
-    fn production_enrichment_gates_live_lyrics_on_the_flag() {
+    #[tokio::test]
+    async fn switched_lyrics_follow_the_setting_per_call() {
+        use enrich::LyricsClient;
+        use std::sync::atomic::{AtomicBool, Ordering};
         let http = HttpClientFactory::new().unwrap();
-        let providers = Arc::new(Providers::with_memory_cache());
-        let off = production_enrichment(http.shared(), &providers, Arc::new(|| false), false);
-        assert!(off.lyrics.is_none(), "disabled lyrics wire no live client");
-        let on = production_enrichment(http.shared(), &providers, Arc::new(|| false), true);
-        assert!(on.lyrics.is_some(), "enabled lyrics wire the live role");
+        let live = Arc::new(LiveLrclib::with_base(
+            ReqwestGet::new(http.shared().clone()),
+            "http://127.0.0.1:9",
+        ));
+        let flag = Arc::new(AtomicBool::new(false));
+        let reader = flag.clone();
+        let role = SwitchedLyrics::new(live, Arc::new(move || reader.load(Ordering::SeqCst)));
+        let query = enrich::LyricsQuery {
+            artist: "Radiohead".to_owned(),
+            title: "Airbag".to_owned(),
+            album: None,
+            duration_secs: Some(284.0),
+        };
+        let off = role.exact_lyrics(&query).await.unwrap_err();
+        assert_eq!(off.message, "lrclib is not configured");
+        flag.store(true, Ordering::SeqCst);
+        let on = role.exact_lyrics(&query).await.unwrap_err();
+        assert_ne!(
+            on.message, "lrclib is not configured",
+            "switching on dials out"
+        );
     }
 }

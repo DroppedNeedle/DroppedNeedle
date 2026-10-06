@@ -1450,6 +1450,7 @@ pub struct ProviderLyrics {
     catalog: Arc<dyn LibraryCatalog>,
     lyrics: Arc<dyn LyricsClient>,
     budgets: SourceBudgets,
+    enabled: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 }
 
 impl ProviderLyrics {
@@ -1463,7 +1464,16 @@ impl ProviderLyrics {
             catalog,
             lyrics,
             budgets,
+            enabled: None,
         }
+    }
+
+    /// Serve only while `enabled` reads true; otherwise lyrics read as
+    /// absent without a catalog read or a provider call.
+    #[must_use]
+    pub fn with_switch(mut self, enabled: Arc<dyn Fn() -> bool + Send + Sync>) -> Self {
+        self.enabled = Some(enabled);
+        self
     }
 }
 
@@ -1473,6 +1483,9 @@ impl LyricsPort for ProviderLyrics {
         track_id: &'a str,
     ) -> crate::reads::library::stores::BoxFuture<'a, Result<Option<LyricDoc>, StoreError>> {
         Box::pin(async move {
+            if self.enabled.as_ref().is_some_and(|enabled| !enabled()) {
+                return Ok(None);
+            }
             let track = self
                 .catalog
                 .get_track(track_id)

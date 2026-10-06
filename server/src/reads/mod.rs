@@ -74,17 +74,17 @@ impl ReadsSetup {
             Arc::new(library::sqlite::SqliteCatalog::new(&library_db));
         // No stored-lyrics table exists in the schema, so without the
         // provider pair lyrics reads stay on the empty port (404s); with
-        // it, catalog tracks resolve through live LRCLIB when
-        // lyrics are enabled, and stay on the empty port otherwise.
+        // it, catalog tracks resolve through live LRCLIB while the lyrics
+        // setting (read per call) is on, and read as absent while it is off.
         let lyrics: Arc<dyn library::stores::LyricsPort> = match &enrichment {
-            Some(pair) => match pair.lyrics.clone() {
-                Some(live) => Arc::new(crate::providers::enrich::ProviderLyrics::new(
+            Some(pair) => Arc::new(
+                crate::providers::enrich::ProviderLyrics::new(
                     catalog.clone(),
-                    live,
+                    pair.lyrics.clone(),
                     crate::providers::enrich::SourceBudgets::default(),
-                )),
-                None => Arc::new(library::memory::MemoryLyrics::new()),
-            },
+                )
+                .with_switch(pair.lyrics_enabled.clone()),
+            ),
             None => Arc::new(library::memory::MemoryLyrics::new()),
         };
         let library = library::LibraryDeps {
