@@ -39,6 +39,8 @@ use std::time::Duration;
 
 use super::{DegradationSink, Pacer};
 
+pub mod stats;
+
 /// Default API host (v2 `LISTENBRAINZ_API_URL`).
 pub const DEFAULT_BASE_URL: &str = "https://api.listenbrainz.org";
 /// Pacing the wiring must configure: 1 call/second (the documented limit; v2 paced
