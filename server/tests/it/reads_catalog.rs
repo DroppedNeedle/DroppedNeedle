@@ -246,6 +246,7 @@ impl CatalogSettings for TestSettings {
         MusicBrainzSettings {
             source_mode: MbSourceMode::Mirror,
             api_url: self.mb_url.clone(),
+            rate_limit: 0.0,
             source_id: "test-source".to_owned(),
             generation: 1,
             ..MusicBrainzSettings::default()

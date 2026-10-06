@@ -502,7 +502,7 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         } else {
             path.to_owned()
         };
-        self.pacing.acquire(brainzmash, self.priority).await;
+        self.pacing.acquire(&self.source, self.priority).await;
         params.push(("fmt".to_owned(), "json".to_owned()));
         let url = format!(
             "{}{}",

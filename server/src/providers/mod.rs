@@ -104,7 +104,7 @@ pub use slots::{RequestPriority, SlotError, SlotManager, SlotStats, USER_QUIET_W
 
 /// The shared provider dependencies, built once at boot and cloned into
 /// every provider client: the verified limiters, the three slot lanes, the
-/// byte cache, and the BrainzMash cooldown.
+/// byte cache, and the MusicBrainz pacing state.
 #[derive(Debug)]
 pub struct Providers {
     /// One token bucket per verified policy row.
@@ -113,8 +113,9 @@ pub struct Providers {
     pub slots: SlotManager,
     /// Shared byte cache behind every client's cache-aside reads.
     pub cache: Arc<dyn ProviderCache>,
-    /// BrainzMash 429 cooldown, shared by every MusicBrainz client.
-    pub brainzmash_cooldown: musicbrainz::BrainzMashCooldown,
+    /// MusicBrainz pacing state (BrainzMash cooldown, mirror limiter),
+    /// shared by every MusicBrainz client.
+    pub musicbrainz: musicbrainz::MbPacingState,
 }
 
 impl Providers {
@@ -125,7 +126,7 @@ impl Providers {
             limiters: LimiterSet::new(),
             slots: SlotManager::new(),
             cache,
-            brainzmash_cooldown: musicbrainz::BrainzMashCooldown::default(),
+            musicbrainz: musicbrainz::MbPacingState::default(),
         }
     }
 

@@ -1,24 +1,53 @@
 //! Process-wide MusicBrainz pacing.
 //!
-//! Every MusicBrainz client in the process paces through the one shared
-//! limiter set in [`Providers`]: the official service and self-hosted
-//! mirrors take the `musicbrainz` row (1 req/s, no burst), BrainzMash takes
-//! its own `brainzmash` row (10 req/s). Two clients built from the same
-//! [`MbPacing`] can never exceed the policy together, which a private gate
-//! per client could not promise.
+//! Every MusicBrainz client in the process paces through state shared in
+//! [`Providers`]: the official service takes the `musicbrainz` row of the
+//! limiter table (1 req/s, no burst), BrainzMash takes its own
+//! `brainzmash` row (10 req/s), and a self-hosted mirror takes the rate its
+//! owner set in Settings (`0` means unpaced, as the mirror guide says).
+//! Two clients built from the same [`MbPacing`] can never exceed the policy
+//! together, which a private gate per client could not promise.
 //!
 //! BrainzMash also cools down after a 429: the cooldown honors
-//! `Retry-After` or backs off exponentially with jitter, and the state is
-//! shared through [`Providers`] the same way (v2 `_BrainzMashScheduler`).
+//! `Retry-After` or backs off exponentially with jitter (v2
+//! `_BrainzMashScheduler`).
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use super::BRAINZMASH_MAX_COOLDOWN_SECS;
+use super::{BRAINZMASH_MAX_COOLDOWN_SECS, MbSource};
+use crate::providers::limiter::{RateLimiter, RatePolicy};
 use crate::providers::{Providers, RequestPriority};
 
 /// BrainzMash cooldown base (v2 `_BRAINZMASH_COOLDOWN_BASE_SECONDS`).
 const BRAINZMASH_COOLDOWN_BASE_SECS: f64 = 1.0;
+
+/// MusicBrainz pacing state shared by every client: the BrainzMash
+/// cooldown and the limiter for the configured mirror.
+#[derive(Debug, Default)]
+pub struct MbPacingState {
+    cooldown: BrainzMashCooldown,
+    /// The mirror limiter and the rate it was built for; rebuilt when the
+    /// owner changes the rate.
+    mirror: Mutex<Option<(f64, Arc<RateLimiter>)>>,
+}
+
+impl MbPacingState {
+    fn mirror_limiter(&self, rate_per_sec: f64) -> Arc<RateLimiter> {
+        let mut slot = self
+            .mirror
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        match slot.as_ref() {
+            Some((rate, limiter)) if *rate == rate_per_sec => limiter.clone(),
+            _ => {
+                let limiter = Arc::new(RateLimiter::new(RatePolicy::new(rate_per_sec, 1)));
+                *slot = Some((rate_per_sec, limiter.clone()));
+                limiter
+            }
+        }
+    }
+}
 
 /// Pacing handle shared by every MusicBrainz client. Clone is cheap.
 #[derive(Debug, Clone)]
@@ -33,31 +62,45 @@ impl MbPacing {
         Self { providers }
     }
 
-    /// Wait for one slot: the BrainzMash cooldown first when that source is
-    /// active, then one token from the source's limiter at `priority`.
-    pub async fn acquire(&self, brainzmash: bool, priority: RequestPriority) {
-        let source = if brainzmash {
-            let wait = self.cooldown().remaining();
-            if !wait.is_zero() {
-                tokio::time::sleep(wait).await;
+    /// Wait for one slot on `source` at `priority`.
+    pub async fn acquire(&self, source: &MbSource, priority: RequestPriority) {
+        match source {
+            MbSource::Official { .. } => {
+                take(self.providers.limiter("musicbrainz"), priority).await;
             }
-            "brainzmash"
-        } else {
-            "musicbrainz"
-        };
-        if let Some(limiter) = self.providers.limiter(source)
-            && let Err(error) = limiter.acquire_with_priority(1, priority).await
-        {
-            // One token never exceeds a burst of one or more; log rather
-            // than send unpaced if the table is ever misconfigured.
-            tracing::error!(%error, source, "musicbrainz pacing refused a token");
+            MbSource::BrainzMash { .. } => {
+                let wait = self.cooldown().remaining();
+                if !wait.is_zero() {
+                    tokio::time::sleep(wait).await;
+                }
+                take(self.providers.limiter("brainzmash"), priority).await;
+            }
+            MbSource::Mirror { rate_per_sec, .. }
+                if rate_per_sec.is_finite() && *rate_per_sec > 0.0 =>
+            {
+                let limiter = self.providers.musicbrainz.mirror_limiter(*rate_per_sec);
+                take(Some(&limiter), priority).await;
+            }
+            // Rate 0 is the owner's "unlimited" for their own mirror.
+            MbSource::Mirror { .. } => {}
         }
     }
 
     /// The shared BrainzMash cooldown.
     #[must_use]
     pub fn cooldown(&self) -> &BrainzMashCooldown {
-        &self.providers.brainzmash_cooldown
+        &self.providers.musicbrainz.cooldown
+    }
+}
+
+/// Take one token, when the source is paced at all.
+async fn take(limiter: Option<&RateLimiter>, priority: RequestPriority) {
+    if let Some(limiter) = limiter
+        && let Err(error) = limiter.acquire_with_priority(1, priority).await
+    {
+        // One token never exceeds a burst of one or more; log rather than
+        // fail the call if the table is ever misconfigured.
+        tracing::error!(%error, "musicbrainz pacing refused a token");
     }
 }
 

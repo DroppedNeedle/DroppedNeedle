@@ -21,6 +21,7 @@ use crate::runtime_config::ConfigStore;
 use crate::runtime_config::secret_sections::{AdvancedSettings, ListenBrainzConnection};
 use crate::runtime_config::sections::{
     GetIt, MbSourceMode, MusicBrainzSettings, MusicSource, PrimaryMusicSource, UserPreferences,
+    is_mb_rate_policy_public_host,
 };
 
 /// The settings the catalog reads, once per call.
@@ -187,8 +188,18 @@ impl Upstream {
                 ),
             },
             MbSourceMode::Official => MbSource::official(),
-            MbSourceMode::Mirror | MbSourceMode::Community => MbSource::Official {
+            // A "mirror" on a public MusicBrainz host still obeys the
+            // official 1 req/s rule, whatever rate was typed in.
+            MbSourceMode::Mirror | MbSourceMode::Community
+                if is_mb_rate_policy_public_host(&settings.api_url) =>
+            {
+                MbSource::Official {
+                    base_url: settings.api_url.clone(),
+                }
+            }
+            MbSourceMode::Mirror | MbSourceMode::Community => MbSource::Mirror {
                 base_url: settings.api_url.clone(),
+                rate_per_sec: settings.rate_limit,
             },
         };
         let namespace = format!("{}:g{}", settings.source_id, settings.generation);

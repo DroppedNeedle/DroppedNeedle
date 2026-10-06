@@ -30,7 +30,7 @@ pub mod transport;
 
 pub use client::{Lookup, MusicBrainzClient};
 pub use models::*;
-pub use pacing::{BrainzMashCooldown, MbPacing};
+pub use pacing::{BrainzMashCooldown, MbPacing, MbPacingState};
 pub use redirects::{
     BRAINZMASH_HOST, RedirectHop, brainzmash_redirect_path, lookup_redirect_pair,
     official_redirect_hop, validate_brainzmash_path, validate_brainzmash_request_url,
@@ -54,10 +54,18 @@ pub const MAX_PAGE_LIMIT: u32 = 100;
 /// Which upstream answers: official MusicBrainz or a BrainzMash binding.
 #[derive(Debug, Clone)]
 pub enum MbSource {
-    /// Official service, or a self-hosted mirror at its own base URL.
+    /// Official service (paced at its 1 req/s rule). A base other than
+    /// [`MB_API_BASE`] serves public-host aliases and test instances.
     Official {
         /// API root; production uses [`MB_API_BASE`].
         base_url: String,
+    },
+    /// A self-hosted or community mirror, paced at the rate its owner set.
+    Mirror {
+        /// API root, ending in `/ws/2`.
+        base_url: String,
+        /// Requests per second; zero or less means unpaced.
+        rate_per_sec: f64,
     },
     /// Community mirror behind the pinned endpoint and lifecycle gate.
     BrainzMash {
@@ -77,7 +85,7 @@ impl MbSource {
     /// API root for request building.
     pub fn base_url(&self) -> &str {
         match self {
-            Self::Official { base_url } => base_url,
+            Self::Official { base_url } | Self::Mirror { base_url, .. } => base_url,
             Self::BrainzMash { .. } => BRAINZMASH_API_BASE,
         }
     }
