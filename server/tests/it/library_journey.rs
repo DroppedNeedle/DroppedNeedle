@@ -985,12 +985,10 @@ async fn library_journey_scan_controls_and_activity() {
         .policy_revision;
     let post = |uri: String, body: Value| {
         let app = lib.router();
-        let headers = headers;
         async move { call(app, "POST", &uri, &headers, Some(body)).await }
     };
     let get = |uri: String| {
         let app = lib.router();
-        let headers = headers;
         async move { call(app, "GET", &uri, &headers, None).await }
     };
 
@@ -1090,7 +1088,11 @@ async fn library_journey_scan_controls_and_activity() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["state"], json!("paused"));
     let paused_at = body["row_revision"].as_u64().expect("revision");
-    assert_eq!(lib.library.identify_tick().await, 0, "paused queue claims nothing");
+    assert_eq!(
+        lib.library.identify_tick().await,
+        0,
+        "paused queue claims nothing"
+    );
     let (status, _) = post(
         "/api/v3/library/identification/resume".into(),
         json!({"expected_revision": control}),
