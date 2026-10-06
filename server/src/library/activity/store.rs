@@ -194,10 +194,16 @@ pub fn identification_snapshot(
         control_revision: control.row_revision,
         ..IdentificationSnapshot::default()
     };
+    let now_ms = (now * 1000.0) as i64;
     {
-        let mut stmt =
-            conn.prepare("SELECT state, COUNT(*) FROM library_identify_jobs GROUP BY state")?;
-        let rows = stmt.query_map([], |row| {
+        // A running job whose lease ran out is not running: its worker is
+        // gone and the next claim picks it up again, so it counts as queued.
+        let mut stmt = conn.prepare(
+            "SELECT CASE WHEN state = 'running' AND NOT (lease_expires_ms > ?1) \
+             THEN 'queued' ELSE state END AS live_state, COUNT(*) \
+             FROM library_identify_jobs GROUP BY live_state",
+        )?;
+        let rows = stmt.query_map(params![now_ms], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
         })?;
         for row in rows {
@@ -214,12 +220,11 @@ pub fn identification_snapshot(
             }
         }
     }
-    let now_ms = (now * 1000.0) as i64;
     let (started, updated, deferred, claimable) = conn.query_row(
         "SELECT MIN(created_ms), MAX(updated_ms), \
          SUM(CASE WHEN failure_code IS NOT NULL THEN 1 ELSE 0 END), \
-         SUM(CASE WHEN state IN ('queued','deferred') AND not_before_ms <= ?1 \
-             THEN 1 ELSE 0 END) \
+         SUM(CASE WHEN (state IN ('queued','deferred') AND not_before_ms <= ?1) \
+             OR (state = 'running' AND NOT (lease_expires_ms > ?1)) THEN 1 ELSE 0 END) \
          FROM library_identify_jobs WHERE state IN ('queued','running','deferred')",
         params![now_ms],
         |row| {
@@ -239,8 +244,9 @@ pub fn identification_snapshot(
         .query_row(
             "SELECT priority FROM library_identify_jobs \
              WHERE state IN ('queued','running','deferred') \
-             ORDER BY state = 'running' DESC, priority, created_ms, rowid LIMIT 1",
-            [],
+             ORDER BY (state = 'running' AND lease_expires_ms > ?1) DESC, \
+             priority, created_ms, rowid LIMIT 1",
+            params![now_ms],
             |row| row.get::<_, i64>(0),
         )
         .optional()?;
