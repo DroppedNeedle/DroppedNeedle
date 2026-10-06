@@ -1,13 +1,5 @@
 import { userIdSegment } from '../userKeySegment';
-import type {
-	RemoteAlbumParams,
-	RemoteArtistParams,
-	RemoteLyricsParams,
-	RemoteMixParams,
-	RemotePageParams,
-	RemoteRandomParams,
-	RemoteTrackParams
-} from './endpoints';
+import type { RemoteMixParams, RemotePageParams, RemoteRandomParams } from './endpoints';
 import type { RemoteSource } from './types';
 
 type UserId = string | null | undefined;

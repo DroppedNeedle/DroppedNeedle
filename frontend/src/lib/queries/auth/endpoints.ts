@@ -5,13 +5,9 @@ import { v3 } from '$lib/api/v3/endpoint';
  * survive page navigation; both clients share `createClient` and send the
  * session cookie alike, so this is about request lifetime, not credentials.
  * The `adminImport*` endpoints are post-session admin actions and use the
- * navigation-scoped `api` client instead. `providers` is
- * the one plain string: the backend allowlists the route but ships no
- * handler or spec entry yet, so it cannot go through the typed builder
- * (the coverage gate would fail); it 404s until the backend lands it, and
- * the login page falls back to local-only tabs meanwhile. */
+ * navigation-scoped `api` client instead. The provider list has no spec
+ * entry yet; its builder waits in lib/constants.ts. */
 export const AUTH_ENDPOINTS = {
-	providers: '/api/v3/auth/providers',
 	login: v3('/api/v3/auth/login'),
 	jellyfinLogin: v3('/api/v3/auth/jellyfin/login'),
 	setup: v3('/api/v3/auth/setup'),

@@ -1,5 +1,6 @@
 import { api } from '$lib/api/client';
 import type { components } from '$lib/api/v3/openapi';
+import { streamPath } from '$lib/api/stream';
 import { v3 } from '$lib/api/v3/endpoint';
 
 export type GatewaySource = 'local' | 'jellyfin' | 'navidrome' | 'plex';
@@ -22,13 +23,8 @@ export interface StreamHints {
 }
 
 // Gateway URLs, built through the typed registry (player call sites import
-// from here so a route rename touches this file only), except `stream`:
-// the backend route is an Axum wildcard (/stream/{source}/{*key} in
-// server/src/stream/routes.rs) while the spec spells a single-segment
-// {key}, because OpenAPI cannot express the wildcard. Plex part keys carry
-// their own slashes, so the key always travels raw and the typed builder's
-// path encoding would corrupt it. That one row stays a hand-built string by
-// necessity and sits outside the contract-coverage gate.
+// from here so a route rename touches this file only), except `stream`,
+// whose wildcard key the typed builder cannot carry (see streamPath).
 export const GATEWAY_ENDPOINTS = {
 	stream: (source: GatewaySource, key: string, hints: StreamHints = {}) => {
 		const search = new URLSearchParams();
@@ -37,10 +33,7 @@ export const GATEWAY_ENDPOINTS = {
 		if (hints.estimate_content_length !== undefined) {
 			search.set('estimate_content_length', String(hints.estimate_content_length));
 		}
-		const query = search.toString();
-		// Plex part keys carry their own slashes and the route is a wildcard,
-		// so the key always travels raw, never encoded.
-		return `/api/v3/stream/${source}/${key}${query ? `?${query}` : ''}`;
+		return streamPath(source, key, search);
 	},
 	playbackStart: () => v3('/api/v3/playback/start'),
 	playbackProgress: () => v3('/api/v3/playback/progress'),

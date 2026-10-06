@@ -10,6 +10,73 @@ import svelteConfig from './svelte.config.js';
 
 const gitignorePath = fileURLToPath(new URL('./.gitignore', import.meta.url));
 
+// Writes to the query cache must go through the persister helpers.
+const queryClientRules = [
+	// Ensure not to call queryClient.setQueriesData or queryClient.setQueryData directly, as this will bypass the persister and lead to data loss on page refresh.
+	{
+		selector:
+			"CallExpression[callee.object.name='queryClient'][callee.property.name='setQueriesData']",
+		message:
+			"Direct use of 'queryClient.setQueriesData' is forbidden. Please use 'setQueryDataWithPersister' per matching query key instead (no plural helper exists)."
+	},
+	{
+		selector:
+			"CallExpression[callee.object.name='queryClient'][callee.property.name='setQueryData']",
+		message:
+			"Direct use of 'queryClient.setQueryData' is forbidden. Please use the 'setQueryDataWithPersister' function instead."
+	},
+	{
+		selector:
+			"CallExpression[callee.object.name='queryClient'][callee.property.name='invalidateQueries']",
+		message:
+			"Direct use of 'queryClient.invalidateQueries' is forbidden. Please use the custom 'invalidateQueriesWithPersister' hook instead."
+	}
+];
+
+// Server calls go through the transport in src/lib/api/: URLs come from v3()
+// registry templates, requests from the api client. An API path literal or a
+// raw fetch anywhere else skips the contract check, so both are errors outside
+// the transport. A path literal is allowed only as the template argument of
+// v3() and as a type argument naming a contract path. Module specifiers such
+// as '$lib/api/client' are not paths and do not match.
+const API_PATH = '/(^|[^\\w$.])\\/api\\//';
+const transportRules = [
+	{
+		selector: `Literal[value=${API_PATH}]:not(CallExpression[callee.name='v3'] > Literal.arguments):not(TSLiteralType > Literal)`,
+		message:
+			'API paths belong in a v3() registry template, or on the waiting-on-backend list in eslint.config.js.'
+	},
+	{
+		selector: `TemplateElement[value.raw=${API_PATH}]`,
+		message:
+			'API paths belong in a v3() registry template, or on the waiting-on-backend list in eslint.config.js.'
+	},
+	{
+		selector: "CallExpression[callee.name='fetch']",
+		message: 'Use the api client from $lib/api/client instead of a raw fetch.'
+	},
+	{
+		selector:
+			"CallExpression[callee.object.name=/^(window|globalThis|self)$/][callee.property.name='fetch']",
+		message: 'Use the api client from $lib/api/client instead of a raw fetch.'
+	}
+];
+
+// The one exception list for the transport rules: the calls the v3 server has
+// no route for yet. Their URL builders all live in lib/constants.ts (the API
+// registry), grouped by feature: artist and album pages, purchase options,
+// the event stream, concerts, membership and album status, contributions,
+// edition conversions and re-identification, scan controls, reviews,
+// operations, repairs and identity preparations, path policy, Library
+// Management previews and recovery, system health, cache sync, YouTube, local
+// file downloads, Free Music, drop import, the download queue, held imports,
+// upgrades, Plex analytics and the auth provider list. When a route lands,
+// its call moves onto a v3() template and its builder leaves that file.
+const WAITING_ON_BACKEND = ['src/lib/constants.ts'];
+
+// The transport itself: the api client and the page-scoped fetch it wraps.
+const TRANSPORT = ['src/lib/api/**', 'src/lib/utils/navigationAbort.ts'];
+
 export default defineConfig(
 	includeIgnoreFile(gitignorePath),
 	js.configs.recommended,
@@ -48,28 +115,20 @@ export default defineConfig(
 	},
 	{
 		rules: {
-			'no-restricted-syntax': [
-				'error',
-				// Ensure not to call queryClient.setQueriesData or queryClient.setQueryData directly, as this will bypass the persister and lead to data loss on page refresh.
-				{
-					selector:
-						"CallExpression[callee.object.name='queryClient'][callee.property.name='setQueriesData']",
-					message:
-						"Direct use of 'queryClient.setQueriesData' is forbidden. Please use 'setQueryDataWithPersister' per matching query key instead (no plural helper exists)."
-				},
-				{
-					selector:
-						"CallExpression[callee.object.name='queryClient'][callee.property.name='setQueryData']",
-					message:
-						"Direct use of 'queryClient.setQueryData' is forbidden. Please use the 'setQueryDataWithPersister' function instead."
-				},
-				{
-					selector:
-						"CallExpression[callee.object.name='queryClient'][callee.property.name='invalidateQueries']",
-					message:
-						"Direct use of 'queryClient.invalidateQueries' is forbidden. Please use the custom 'invalidateQueriesWithPersister' hook instead."
-				}
-			]
+			'no-restricted-syntax': ['error', ...queryClientRules]
+		}
+	},
+	{
+		files: ['src/**/*.ts', 'src/**/*.js', 'src/**/*.svelte'],
+		ignores: [
+			...TRANSPORT,
+			...WAITING_ON_BACKEND,
+			'src/**/*.spec.ts',
+			'src/**/*.test.ts',
+			'src/**/*.d.ts'
+		],
+		rules: {
+			'no-restricted-syntax': ['error', ...queryClientRules, ...transportRules]
 		}
 	}
 );

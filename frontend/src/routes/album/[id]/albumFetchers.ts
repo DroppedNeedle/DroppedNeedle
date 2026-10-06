@@ -26,7 +26,7 @@ export async function fetchAlbumBasic(
 	albumId: string,
 	signal?: AbortSignal
 ): Promise<AlbumBasicInfo> {
-	return api.get<AlbumBasicInfo>(`/api/v1/albums/${albumId}/basic`, { signal });
+	return api.get<AlbumBasicInfo>(API.album.basic(albumId), { signal });
 }
 
 export async function fetchDiscovery(
@@ -39,14 +39,10 @@ export async function fetchDiscovery(
 }> {
 	const [moreByArtist, similarAlbums] = await Promise.all([
 		api
-			.get<MoreByArtistResponse>(`/api/v1/albums/${albumId}/more-by-artist?artist_id=${artistId}`, {
-				signal
-			})
+			.get<MoreByArtistResponse>(API.album.moreByArtist(albumId, artistId), { signal })
 			.catch(() => null),
 		api
-			.get<SimilarAlbumsResponse>(`/api/v1/albums/${albumId}/similar?artist_id=${artistId}`, {
-				signal
-			})
+			.get<SimilarAlbumsResponse>(API.album.similar(albumId, artistId), { signal })
 			.catch(() => null)
 	]);
 	return { moreByArtist, similarAlbums };
@@ -105,13 +101,10 @@ export async function fetchLastFm(
 	opts: { artistName: string; albumName: string },
 	signal?: AbortSignal
 ): Promise<LastFmAlbumEnrichment | null> {
-	const params = new URLSearchParams({
-		artist_name: opts.artistName,
-		album_name: opts.albumName
-	});
-	return api.get<LastFmAlbumEnrichment>(`/api/v1/albums/${albumId}/lastfm?${params.toString()}`, {
-		signal
-	});
+	return api.get<LastFmAlbumEnrichment>(
+		API.album.lastFm(albumId, opts.artistName, opts.albumName),
+		{ signal }
+	);
 }
 
 export async function refreshAlbum(
@@ -119,6 +112,6 @@ export async function refreshAlbum(
 	signal?: AbortSignal
 ): Promise<AlbumBasicInfo | null> {
 	return api
-		.post<AlbumBasicInfo>(`/api/v1/albums/${albumId}/refresh`, undefined, { signal })
+		.post<AlbumBasicInfo>(API.album.refresh(albumId), undefined, { signal })
 		.catch(() => null);
 }

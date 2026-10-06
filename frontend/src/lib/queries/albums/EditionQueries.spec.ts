@@ -32,6 +32,12 @@ vi.mock('$lib/api/client', () => ({
 }));
 
 vi.mock('$lib/constants', () => ({
+	API: {
+		album: {
+			editions: (mbid: string) => `/api/v1/albums/${encodeURIComponent(mbid)}/editions`,
+			editionPin: (mbid: string) => `/api/v1/albums/${encodeURIComponent(mbid)}/edition`
+		}
+	},
 	CACHE_TTL: { ALBUM_DETAIL_EDITIONS: 60_000 }
 }));
 

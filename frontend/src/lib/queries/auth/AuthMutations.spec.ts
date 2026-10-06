@@ -162,6 +162,6 @@ describe('AuthProvidersQuery', () => {
 		await queryFn({ signal: new AbortController().signal });
 
 		expect(mockGet).toHaveBeenCalledTimes(1);
-		expect(mockGet.mock.calls[0][0]).toBe(AUTH_ENDPOINTS.providers);
+		expect(mockGet.mock.calls[0][0]).toBe('/api/v3/auth/providers');
 	});
 });

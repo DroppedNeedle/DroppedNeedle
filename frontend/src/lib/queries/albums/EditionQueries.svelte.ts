@@ -3,7 +3,7 @@ import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
 import { v3 } from '$lib/api/v3/endpoint';
-import { CACHE_TTL } from '$lib/constants';
+import { API, CACHE_TTL } from '$lib/constants';
 import { DownloadQueryKeyFactory } from '$lib/queries/downloads/DownloadQueryKeyFactory';
 import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
@@ -14,11 +14,11 @@ import type { AlbumEditionsResponse } from '$lib/types';
 
 // CollectionManagement Feature E: the picker is an admin/trusted surface,
 // viewing the list is open to any authenticated user. The release-group
-// edition list and pin have no v3 route yet (see the waiting-on-backend list
-// in eslint.config.js); acquire and the per-copy pin are on v3.
+// edition list and pin have no v3 route yet (their builders wait in
+// lib/constants.ts); acquire and the per-copy pin are on v3.
 
-const editionsUrl = (mbid: string) => `/api/v1/albums/${encodeURIComponent(mbid)}/editions`;
-const pinUrl = (mbid: string) => `/api/v1/albums/${encodeURIComponent(mbid)}/edition`;
+const editionsUrl = API.album.editions;
+const pinUrl = API.album.editionPin;
 
 type EditionUserId = string | null | undefined;
 

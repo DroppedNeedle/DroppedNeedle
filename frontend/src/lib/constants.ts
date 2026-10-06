@@ -132,9 +132,15 @@ export const STATUS_COLORS = {
 } as const;
 
 export const YOUTUBE_PLAYER_ELEMENT_ID = 'yt-player-embed';
+// URL builders for calls the v3 server has no route for yet. This file is
+// the waiting-on-backend exception to the transport lint rule
+// (eslint.config.js): a builder leaves when its route lands and the call
+// moves onto a typed v3 registry template.
 export const API = {
-	// Auth rides the v3 endpoints module ($lib/queries/auth/endpoints); no v1
-	// auth builders remain.
+	auth: {
+		// The backend allowlists this path but ships no handler or spec entry.
+		providers: () => '/api/v3/auth/providers'
+	},
 	artist: {
 		basic: (id: string) => `/api/v1/artists/${id}`,
 		extended: (id: string) => `/api/v1/artists/${id}/extended`,
@@ -167,7 +173,19 @@ export const API = {
 		markConcertsSeen: () => '/api/v1/following/concerts/seen'
 	},
 	album: {
-		purchaseOptions: (id: string) => `/api/v1/albums/${id}/purchase-options`
+		purchaseOptions: (id: string) => `/api/v1/albums/${id}/purchase-options`,
+		basic: (id: string) => `/api/v1/albums/${id}/basic`,
+		tracks: (id: string) => `/api/v1/albums/${id}/tracks`,
+		moreByArtist: (id: string, artistId: string) =>
+			`/api/v1/albums/${id}/more-by-artist?artist_id=${artistId}`,
+		similar: (id: string, artistId: string) => `/api/v1/albums/${id}/similar?artist_id=${artistId}`,
+		lastFm: (id: string, artistName: string, albumName: string) => {
+			const params = new URLSearchParams({ artist_name: artistName, album_name: albumName });
+			return `/api/v1/albums/${id}/lastfm?${params.toString()}`;
+		},
+		refresh: (id: string) => `/api/v1/albums/${id}/refresh`,
+		editions: (mbid: string) => `/api/v1/albums/${encodeURIComponent(mbid)}/editions`,
+		editionPin: (mbid: string) => `/api/v1/albums/${encodeURIComponent(mbid)}/edition`
 	},
 	library: {
 		membership: () => '/api/v1/library/membership',

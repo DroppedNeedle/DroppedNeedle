@@ -10,11 +10,9 @@ import {
 import type {
 	RemoteAlbum,
 	RemoteAlbumPage,
-	RemoteArtist,
 	RemoteArtistPage,
 	RemoteLyrics,
 	RemoteMatch,
-	RemoteSessions,
 	RemoteSource,
 	RemoteStats,
 	RemoteTrackPage

@@ -5,6 +5,7 @@
 		type DiscographyRelease
 	} from '$lib/stores/discographyDownload.svelte';
 	import { api } from '$lib/api/client';
+	import { API } from '$lib/constants';
 	import { toastStore } from '$lib/stores/toast';
 
 	interface Props {
@@ -27,7 +28,7 @@
 				albums: DiscographyRelease[];
 				eps: DiscographyRelease[];
 				singles: DiscographyRelease[];
-			}>(`/api/v1/artists/${artistMbid}/releases?offset=0&limit=200`);
+			}>(API.artist.releases(artistMbid, 0, 200));
 
 			const allReleases: DiscographyRelease[] = [
 				...(data.albums || []).map((r) => ({ ...r, type: r.type ?? 'Album' })),

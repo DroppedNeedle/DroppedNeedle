@@ -12,8 +12,5 @@ export const PROFILE_ENDPOINTS = {
 	updateEmail: () => v3('/api/v3/me/email'),
 	changePassword: () => v3('/api/v3/me/password'),
 	setPassword: () => v3('/api/v3/me/local-password'),
-	avatarUpload: () => v3('/api/v3/me/avatar'),
-	// Plain string by necessity: raw image bytes for an <img> src, not a
-	// typed JSON call. No v1 fallback; the old profile avatar route is gone.
-	avatar: (userId: string) => `/api/v3/users/${encodeURIComponent(userId)}/avatar`
+	avatarUpload: () => v3('/api/v3/me/avatar')
 } as const;
