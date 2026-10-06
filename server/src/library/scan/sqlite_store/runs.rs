@@ -203,9 +203,10 @@ impl RunStore for SqliteScanStore {
             }
             tx.commit()
         })();
-        match outcome {
-            Ok(()) => guard.catalog_dirty = true,
-            Err(error) => tracing::error!(%error, "scan record_failures failed"),
+        // Failure rows are run bookkeeping, not catalog content: they
+        // leave the catalog revision (and every read cache) alone.
+        if let Err(error) = outcome {
+            tracing::error!(%error, "scan record_failures failed");
         }
     }
 
