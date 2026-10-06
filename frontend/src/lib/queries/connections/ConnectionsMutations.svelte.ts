@@ -39,6 +39,15 @@ async function invalidateConnectionAndPlaylists(service?: string): Promise<void>
 	}
 }
 
+// v3 keeps Last.fm app credentials per user: the user saves their own API
+// key and shared secret before the OAuth steps below can run.
+export const createSetLastFmCredentialsMutation = () =>
+	createMutation(() => ({
+		mutationFn: (vars: components['schemas']['LastFmCredentialsSet']) =>
+			api.global.v3.PUT(CONNECTIONS_ENDPOINTS.lastfm(), vars),
+		onSuccess: invalidateConnections
+	}));
+
 // OAuth step 1: request a desktop token (no state change yet)
 export const createLastFmRequestTokenMutation = () =>
 	createMutation(() => ({

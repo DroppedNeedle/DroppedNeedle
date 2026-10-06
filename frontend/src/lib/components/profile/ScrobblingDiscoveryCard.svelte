@@ -14,7 +14,8 @@
 		createConnectListenBrainzMutation,
 		createDisconnectMutation,
 		createLastFmExchangeSessionMutation,
-		createLastFmRequestTokenMutation
+		createLastFmRequestTokenMutation,
+		createSetLastFmCredentialsMutation
 	} from '$lib/queries/connections/ConnectionsMutations.svelte';
 	import { getScrobblePreferencesQuery } from '$lib/queries/scrobble-preferences/ScrobblePreferencesQuery.svelte';
 	import {
@@ -44,6 +45,7 @@
 
 	const requestTokenMutation = createLastFmRequestTokenMutation();
 	const exchangeSessionMutation = createLastFmExchangeSessionMutation();
+	const setLastFmCredentialsMutation = createSetLastFmCredentialsMutation();
 	const connectLbMutation = createConnectListenBrainzMutation();
 	const disconnectMutation = createDisconnectMutation();
 	const updatePrefsMutation = createUpdateScrobblePreferencesMutation();
@@ -63,6 +65,9 @@
 
 	let lfmPendingToken = $state<string | null>(null);
 	let lfmError = $state<string | null>(null);
+	let lfmCredentialsOpen = $state(false);
+	let lfmApiKey = $state('');
+	let lfmSecret = $state('');
 
 	// optimistic mirror so toggles feel instant; re-synced whenever the query settles
 	let scrobbleLastfm = $state(false);
@@ -110,7 +115,28 @@
 			lfmPendingToken = data.token;
 			window.open(data.auth_url, '_blank', 'popup=yes,noopener,noreferrer');
 		} catch (e) {
+			// 409 means this user has no Last.fm app credentials saved yet.
+			if (e instanceof ApiError && e.status === 409) {
+				lfmCredentialsOpen = true;
+				return;
+			}
 			lfmError = errorMessage(e, 'Could not start Last.fm sign-in.');
+		}
+	}
+
+	async function saveLastFmCredentials() {
+		lfmError = null;
+		try {
+			await setLastFmCredentialsMutation.mutateAsync({
+				api_key: lfmApiKey.trim(),
+				shared_secret: lfmSecret.trim()
+			});
+			lfmCredentialsOpen = false;
+			lfmApiKey = '';
+			lfmSecret = '';
+			await startLastFm();
+		} catch (e) {
+			lfmError = errorMessage(e, 'Could not save your Last.fm credentials.');
 		}
 	}
 
@@ -357,6 +383,57 @@
 						{/if}
 					</div>
 				</div>
+				{#if !lfm && lfmCredentialsOpen}
+					<div
+						class="mt-2 space-y-2 rounded-xl border border-base-300/40 bg-base-100/40 p-3 animate-fade-in-up"
+					>
+						<p class="text-xs text-base-content/60">
+							Enter the API key and shared secret of your own
+							<a
+								href="https://www.last.fm/api/account/create"
+								target="_blank"
+								rel="noopener noreferrer"
+								class="link">Last.fm API account</a
+							>, then connect.
+						</p>
+						<input
+							type="text"
+							class="input input-sm input-soft w-full"
+							placeholder="API key"
+							bind:value={lfmApiKey}
+							autocomplete="off"
+						/>
+						<input
+							type="password"
+							class="input input-sm input-soft w-full"
+							placeholder="Shared secret"
+							bind:value={lfmSecret}
+							autocomplete="off"
+						/>
+						<div class="flex justify-end gap-2">
+							<button
+								type="button"
+								class="btn btn-ghost btn-xs rounded-full"
+								onclick={() => (lfmCredentialsOpen = false)}
+							>
+								Cancel
+							</button>
+							<button
+								type="button"
+								class="btn btn-primary btn-xs gap-1 rounded-full"
+								onclick={saveLastFmCredentials}
+								disabled={setLastFmCredentialsMutation.isPending ||
+									!lfmApiKey.trim() ||
+									!lfmSecret.trim()}
+							>
+								{#if setLastFmCredentialsMutation.isPending}
+									<LoaderCircle class="h-3.5 w-3.5 animate-spin" />
+								{/if}
+								Save and connect
+							</button>
+						</div>
+					</div>
+				{/if}
 				{#if lfmPendingToken && !lfm}
 					<p class="mt-2 px-1 text-xs text-base-content/60 animate-fade-in-up">
 						Approve DroppedNeedle in the Last.fm window that opened, then choose Finish.
