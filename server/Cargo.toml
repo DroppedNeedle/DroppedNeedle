@@ -40,7 +40,7 @@ thiserror = "2"
 unicode-normalization = "0.1"
 tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 tower = { version = "0.5", features = ["util"] }
-tower-http = { version = "0.6", features = ["cors"] }
+tower-http = { version = "0.6", features = ["cors", "compression-br", "compression-gzip"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 utoipa = "5"

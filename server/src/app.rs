@@ -31,6 +31,7 @@
 //! the base get the 404 envelope.
 
 use axum::{Router, extract::Request, middleware, response::IntoResponse, routing::get};
+use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
 
 use crate::{
     auth::session::{middleware::require_session, rate_limit::rate_limit},
@@ -248,6 +249,26 @@ fn base_relative_app(state: AppState, web: Option<WebUi>) -> Router {
     app.fallback(fallback_404)
         .method_not_allowed_fallback(fallback_405)
         .layer(middleware::from_fn_with_state(state, request_scope))
+        .layer(compression_layer())
+}
+
+/// Response compression (brotli or gzip, as the client accepts) for API,
+/// Subsonic and Jellyfin bodies: a 500-song sync page is several hundred KB
+/// of JSON or XML and shrinks about tenfold. Media is never compressed:
+/// audio and images are already compressed, ranged and sized, and
+/// transcodes stream live. Responses that already carry a
+/// `Content-Encoding` (the web UI's precompressed assets, audio's
+/// `identity`) pass through untouched, as do bodies under 32 bytes and
+/// event streams.
+fn compression_layer() -> tower_http::compression::CompressionLayer<impl Predicate + Clone> {
+    let predicate = DefaultPredicate::new()
+        .and(NotForContentType::const_new("audio/"))
+        .and(NotForContentType::const_new("video/"))
+        .and(NotForContentType::const_new("application/ogg"))
+        .and(NotForContentType::const_new("application/octet-stream"))
+        .and(NotForContentType::const_new("application/zip"))
+        .and(NotForContentType::const_new("application/gzip"));
+    tower_http::compression::CompressionLayer::new().compress_when(predicate)
 }
 
 /// Debug-only CORS layer over the pinned localhost list. Production never
