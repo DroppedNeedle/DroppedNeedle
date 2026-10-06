@@ -60,10 +60,11 @@ impl LibrarySetup {
         path: String,
         policy: EffectivePolicy,
     ) -> Result<(LibraryRoot, String), ServiceError> {
-        let dir =
-            super::settings::clean_absolute(&path).ok_or_else(|| ServiceError::InvalidInput {
+        let dir = crate::settings::library_policy::clean_absolute(&path).ok_or_else(|| {
+            ServiceError::InvalidInput {
                 message: "Root path must be absolute".to_owned(),
-            })?;
+            }
+        })?;
         let meta = std::fs::symlink_metadata(&dir).map_err(|_| ServiceError::InvalidInput {
             message: "Root path does not exist".to_owned(),
         })?;

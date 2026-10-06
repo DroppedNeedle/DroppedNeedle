@@ -6,7 +6,7 @@
 //! supervisor and watcher tick, so a saved change takes effect without a
 //! restart, and the roots survive restarts with the config file.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::Path;
 
 use super::scan::models::EffectivePolicy;
 use super::scan::roots::{LibraryRoot, PolicyRule, RootRegistry, fingerprint_roots};
@@ -18,6 +18,8 @@ use crate::runtime_config::secret_sections::{
     IdentificationPolicy, LibraryRoot as StoredRoot, TypedLibrary,
 };
 use crate::runtime_config::sections::{FilesystemWatcher, LibraryScanSchedule, ScanFrequency};
+use crate::settings::error::SettingsError;
+use crate::settings::library_policy::{self, clean_absolute};
 
 /// Timezone daily schedules resolve against. The scheduler has no tz
 /// database, so daily times read as UTC.
@@ -37,28 +39,6 @@ fn stored_policy(policy: EffectivePolicy) -> IdentificationPolicy {
         EffectivePolicy::LocalMetadata => IdentificationPolicy::LocalMetadata,
         EffectivePolicy::Excluded => IdentificationPolicy::Excluded,
     }
-}
-
-/// Lexically clean an absolute path: collapse `.`, `..`, and repeated
-/// separators without touching the filesystem. `None` for a relative path.
-pub fn clean_absolute(path: &str) -> Option<PathBuf> {
-    let candidate = Path::new(path.trim());
-    if !candidate.is_absolute() {
-        return None;
-    }
-    let mut clean = PathBuf::new();
-    for component in candidate.components() {
-        match component {
-            Component::RootDir => clean.push(Component::RootDir),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                clean.pop();
-            }
-            Component::Normal(part) => clean.push(part),
-            Component::Prefix(prefix) => clean.push(prefix.as_os_str()),
-        }
-    }
-    Some(clean)
 }
 
 /// True when two root paths are the same directory or one holds the other.
@@ -186,9 +166,10 @@ pub fn watcher(config: &ConfigStore) -> WatcherSettings {
     }
 }
 
-/// Add one root to the stored settings. The path must be absolute and
-/// must not equal, hold, or sit inside another root; the id must be new.
-/// The label is the directory name, made unique against the other roots.
+/// Add one root to the stored settings. The id must be new; the settings
+/// resolver the settings page saves through then refuses a path that
+/// equals, holds, or sits inside another root (or staging). The label is
+/// the directory name, made unique against the other roots.
 pub fn add_root(config: &ConfigStore, root: &LibraryRoot) -> Result<(), ServiceError> {
     let mut settings = config
         .get_masked::<TypedLibrary>()
@@ -202,15 +183,6 @@ pub fn add_root(config: &ConfigStore, root: &LibraryRoot) -> Result<(), ServiceE
         return Err(ServiceError::Conflict {
             message: "Root id already exists".to_owned(),
         });
-    }
-    for stored in &settings.library_roots {
-        if let Some(path) = clean_absolute(&stored.path)
-            && overlaps(&path, &root.path)
-        {
-            return Err(ServiceError::Conflict {
-                message: format!("Root path overlaps library root {}", stored.id),
-            });
-        }
     }
     let base = root
         .path
@@ -237,9 +209,15 @@ pub fn add_root(config: &ConfigStore, root: &LibraryRoot) -> Result<(), ServiceE
         policy: stored_policy(root.policy),
         rules: Vec::new(),
     });
+    let resolved = library_policy::resolve(&settings).map_err(|error| match error {
+        SettingsError::InvalidInput { message } | SettingsError::Conflict { message } => {
+            ServiceError::Conflict { message }
+        }
+        other => ServiceError::internal(&format!("{other:?}")),
+    })?;
     // The masked AcoustID key resolves back to the stored one on save.
     config
-        .save_secret(settings)
+        .save_secret(resolved.settings)
         .map(|_| ())
         .map_err(|error| ServiceError::internal(&error))
 }

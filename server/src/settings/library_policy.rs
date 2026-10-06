@@ -118,7 +118,7 @@ pub fn stable_hash(value: &serde_json::Value) -> String {
 
 /// Lexically clean an absolute path (normpath equivalent): collapse
 /// `.`/`..`/duplicate separators without touching the filesystem.
-fn clean_absolute(path: &str) -> Option<PathBuf> {
+pub fn clean_absolute(path: &str) -> Option<PathBuf> {
     let candidate = Path::new(path.trim());
     if !candidate.is_absolute() {
         return None;
