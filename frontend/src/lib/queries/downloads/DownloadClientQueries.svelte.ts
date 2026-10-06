@@ -13,17 +13,10 @@ export type DownloadClientConfig = components['schemas']['SlskdConnection'];
 export type DownloadClientStatusResponse = components['schemas']['SlskdStatusResponse'];
 export type TestConnectionResult = components['schemas']['TestConnectionResponse'];
 
-// v3 serves only the client half of the old status (configured, reachable,
-// version, message); the mount half has no v3 endpoint yet, so mount fields
-// stay undefined until the backend restores them. The settings UI keeps its
-// mount guidance against this view, and the live probe maps onto the old
-// client shape so the connection display is unchanged.
-export interface SlskdMountView {
-	ok: boolean;
-	move_supported: boolean;
-	reason: string;
-	path: string | null;
-}
+// The live probe maps onto the old client shape so the connection display is
+// unchanged. The mount half is filled by the server's periodic probe pass, so
+// it is absent until the first pass after a restart.
+export type SlskdMountView = components['schemas']['DownloadsMountView'];
 
 export interface DownloadClientStatus {
 	configured: boolean;
@@ -47,7 +40,11 @@ function toStatusView(status: DownloadClientStatusResponse): DownloadClientStatu
 			status: status.reachable ? 'ok' : 'error',
 			version: status.version ?? null,
 			message: status.message
-		}
+		},
+		mount: status.mount ?? null,
+		mount_advisory: status.mount_advisory ?? null,
+		slskd_downloads_dir: status.slskd_downloads_dir ?? null,
+		effective_downloads_path: status.effective_downloads_path ?? null
 	};
 }
 

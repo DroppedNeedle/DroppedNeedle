@@ -76,12 +76,10 @@
 		...(slskdConfigured
 			? [
 					{
-						// v3 serves no mount probe yet, so this never verifies; optional
-						// guidance until the backend restores the mount half.
 						label: "Mount slskd's downloads folder",
 						done: mountOk,
-						required: false,
-						optional: true
+						required: true,
+						optional: false
 					}
 				]
 			: []),

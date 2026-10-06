@@ -294,8 +294,8 @@
 					the container after changing it.
 				</p>
 			{/if}
-			<!-- The subpath editor also renders while mount probing is unserved (v3
-				has no mount fields yet) so the setting stays editable. -->
+			<!-- The subpath editor also renders before the first mount probe has
+				run, so the setting stays editable. -->
 			{#if (mount?.ok && mountAdvisory) || !mount}
 				{#if mountAdvisory}
 					<div class="alert alert-warning items-start text-sm">
