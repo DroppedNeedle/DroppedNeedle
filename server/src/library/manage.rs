@@ -622,7 +622,7 @@ impl LibrarySetup {
                 managed_updates: managed_updates.clone(),
                 sidecars: Vec::new(),
                 staged_bytes_estimate: size + STAGED_HEADROOM_BYTES,
-                adopt: false,
+                adopt: None,
             });
             docs.insert(
                 track_id.clone(),
@@ -953,7 +953,7 @@ impl LibrarySetup {
                 managed_updates: item.doc.managed.clone(),
                 sidecars: Vec::new(),
                 staged_bytes_estimate: 0,
-                adopt: false,
+                adopt: None,
             });
             let size = sandbox
                 .resolve_no_symlink(&live_loc.0, &live_loc.1)
@@ -1113,7 +1113,7 @@ impl LibrarySetup {
                 managed_updates: updates.clone(),
                 sidecars: Vec::new(),
                 staged_bytes_estimate: size + STAGED_HEADROOM_BYTES,
-                adopt: false,
+                adopt: None,
             });
             docs.insert(
                 track_id.clone(),

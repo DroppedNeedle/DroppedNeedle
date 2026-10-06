@@ -144,7 +144,33 @@ pub struct PlanItem {
     /// the catalog commit adds its track instead of moving an existing
     /// one, and nothing is snapshotted for undo or baseline.
     #[serde(default)]
-    pub adopt: bool,
+    pub adopt: Option<Adoption>,
+}
+
+/// How a file brought into the library is indexed: the root policy that
+/// covers its destination (as a scan would apply it), and where it came
+/// from.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Adoption {
+    pub policy: crate::library::scan::models::EffectivePolicy,
+    pub policy_revision: String,
+    /// The download task that brought the file.
+    pub download_task_id: Option<String>,
+    /// Where the file was downloaded to.
+    pub source_path: Option<String>,
+}
+
+impl Adoption {
+    /// What a resumed commit knows from the journal alone: the automatic
+    /// policy and no provenance. The next scan re-reads the policy.
+    pub fn recovered() -> Self {
+        Self {
+            policy: crate::library::scan::models::EffectivePolicy::Automatic,
+            policy_revision: String::new(),
+            download_task_id: None,
+            source_path: None,
+        }
+    }
 }
 
 /// One sidecar travelling with its album.

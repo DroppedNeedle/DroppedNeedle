@@ -377,6 +377,16 @@ pub trait FingerprintSource: Send + Sync {
     /// Print and look up the given tracks. Fails soft: tracks it could
     /// not print or look up are simply absent.
     fn identify<'a>(&'a self, tracks: &'a [LocalTrackFacts]) -> BoxFuture<'a, AudioMatches>;
+
+    /// Print and look up files outside the library (a download being
+    /// imported), keyed by the caller's ids: the recordings heard in each.
+    /// Nothing is kept. Fails soft like [`Self::identify`].
+    fn identify_files<'a>(
+        &'a self,
+        _files: &'a [(String, PathBuf)],
+    ) -> BoxFuture<'a, HashMap<String, Vec<String>>> {
+        Box::pin(async { HashMap::new() })
+    }
 }
 
 /// No fingerprinting (tests, and wiring without a pool).
@@ -468,30 +478,11 @@ impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
                 ))
             })
             .collect();
-        let printed = futures_util::future::join_all(jobs.into_iter().map(|(id, path)| {
-            let pool = self.pool.clone();
-            async move {
-                let result = pool
-                    .run(move || crate::library::tags::generate_fingerprint(&path))
-                    .await;
-                (id, result)
-            }
-        }))
-        .await;
         let mut prints: Vec<(String, String, u32)> = stored
             .into_iter()
             .map(|(id, (print, seconds))| (id, print, seconds))
             .collect();
-        for (id, result) in printed {
-            match result {
-                Ok(Ok(print)) if print.duration_seconds > 0 => {
-                    prints.push((id, print.fingerprint, print.duration_seconds));
-                }
-                Ok(Ok(_)) => tracing::debug!(track = id, "zero-length audio not fingerprinted"),
-                Ok(Err(error)) => tracing::info!(track = id, %error, "fingerprint failed"),
-                Err(error) => tracing::warn!(track = id, %error, "fingerprint job failed"),
-            }
-        }
+        prints.extend(self.print(jobs).await);
         let queries: Vec<BatchQuery<'_>> = prints
             .iter()
             .map(|(_, print, seconds)| BatchQuery {
@@ -544,8 +535,66 @@ impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
     }
 }
 
+impl<P: Pacer, S: DegradationSink> AcoustIdFingerprints<P, S> {
+    /// Chromaprint each file on the blocking pool: (id, print, seconds).
+    async fn print(&self, jobs: Vec<(String, PathBuf)>) -> Vec<(String, String, u32)> {
+        let printed = futures_util::future::join_all(jobs.into_iter().map(|(id, path)| {
+            let pool = self.pool.clone();
+            async move {
+                let result = pool
+                    .run(move || crate::library::tags::generate_fingerprint(&path))
+                    .await;
+                (id, result)
+            }
+        }))
+        .await;
+        let mut prints = Vec::new();
+        for (id, result) in printed {
+            match result {
+                Ok(Ok(print)) if print.duration_seconds > 0 => {
+                    prints.push((id, print.fingerprint, print.duration_seconds));
+                }
+                Ok(Ok(_)) => tracing::debug!(track = id, "zero-length audio not fingerprinted"),
+                Ok(Err(error)) => tracing::info!(track = id, %error, "fingerprint failed"),
+                Err(error) => tracing::warn!(track = id, %error, "fingerprint job failed"),
+            }
+        }
+        prints
+    }
+
+    async fn identify_paths(&self, files: &[(String, PathBuf)]) -> HashMap<String, Vec<String>> {
+        let key = self.api_key();
+        if key.is_empty() || files.is_empty() {
+            return HashMap::new();
+        }
+        let prints = self.print(files.to_vec()).await;
+        let queries: Vec<BatchQuery<'_>> = prints
+            .iter()
+            .map(|(_, print, seconds)| BatchQuery {
+                fingerprint: print,
+                duration_secs: u64::from(*seconds),
+            })
+            .collect();
+        let found = self.client.lookup_batch(&key, &queries).await;
+        found
+            .into_iter()
+            .filter_map(|(index, heard)| {
+                let (id, _, _) = prints.get(index)?;
+                (!heard.recording_ids.is_empty()).then(|| (id.clone(), heard.recording_ids))
+            })
+            .collect()
+    }
+}
+
 impl<P: Pacer, S: DegradationSink> FingerprintSource for AcoustIdFingerprints<P, S> {
     fn identify<'a>(&'a self, tracks: &'a [LocalTrackFacts]) -> BoxFuture<'a, AudioMatches> {
         Box::pin(self.identify_tracks(tracks))
+    }
+
+    fn identify_files<'a>(
+        &'a self,
+        files: &'a [(String, PathBuf)],
+    ) -> BoxFuture<'a, HashMap<String, Vec<String>>> {
+        Box::pin(self.identify_paths(files))
     }
 }

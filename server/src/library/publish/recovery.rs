@@ -332,7 +332,9 @@ fn resume_precommit<C: Catalog>(
                 file_path: dest.to_string_lossy().into_owned(),
                 fingerprint: journal.staged_sha256.clone(),
                 mgmt_state: mgmt.to_string(),
-                adopt: mgmt.starts_with(super::publisher::ADOPTED_STATE),
+                adopt: mgmt
+                    .starts_with(super::publisher::ADOPTED_STATE)
+                    .then(super::planner::Adoption::recovered),
             });
         }
     }

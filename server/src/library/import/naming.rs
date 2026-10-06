@@ -273,15 +273,19 @@ fn clean_component(component: &str) -> String {
         cleaned = format!("_{cleaned}");
     }
     if cleaned.len() > MAX_COMPONENT_BYTES {
-        let mut cut = MAX_COMPONENT_BYTES;
-        while !cleaned.is_char_boundary(cut) {
+        // A long file name loses the end of its stem, never its extension.
+        let (stem, ext) = match cleaned.rfind('.') {
+            Some(dot) if dot > 0 && cleaned.len() - dot <= 16 => {
+                (cleaned[..dot].to_owned(), cleaned[dot..].to_owned())
+            }
+            _ => (cleaned.clone(), String::new()),
+        };
+        let mut cut = MAX_COMPONENT_BYTES - ext.len();
+        while !stem.is_char_boundary(cut) {
             cut -= 1;
         }
-        cleaned.truncate(cut);
-        cleaned = cleaned.trim_matches([' ', '.']).to_owned();
-        if cleaned.is_empty() {
-            cleaned = "_".to_owned();
-        }
+        let stem = stem[..cut].trim_matches([' ', '.']);
+        cleaned = format!("{}{ext}", if stem.is_empty() { "_" } else { stem });
     }
     cleaned
 }
@@ -325,6 +329,10 @@ mod tests {
             "Portishead/_/0103 AC_DC_ Live_.flac"
         );
         assert_eq!(render("{title}", &fields), "AC_DC_ Live_.flac");
+        fields.title = "é".repeat(200);
+        let long = render("{title}.{ext}", &fields);
+        assert!(long.ends_with(".flac") && long.len() <= MAX_COMPONENT_BYTES);
+        fields.title = "AC/DC: Live?".into();
         fields.album = "CON".into();
         assert_eq!(
             render("{album}/{title}.{ext}", &fields),

@@ -70,9 +70,13 @@ pub struct DownloadImport {
 /// Where the files went.
 #[derive(Debug, Clone)]
 pub struct ImportedAlbum {
+    /// Empty when every file was skipped.
     pub bundle_id: String,
     pub album_id: String,
     pub paths: Vec<PathBuf>,
+    /// Files not taken, by request index, with the reason: a second file
+    /// bound for the same destination, or a destination already occupied.
+    pub skipped: Vec<(usize, String)>,
 }
 
 /// Why an import did not happen.
@@ -87,6 +91,8 @@ pub enum ImportError {
 
 /// One planned file.
 struct Placement {
+    /// Index in the request.
+    index: usize,
     source: PathBuf,
     track: usize,
     staged_rel: String,
@@ -162,6 +168,7 @@ impl LibrarySetup {
                 tags.clear();
             }
             placements.push(Placement {
+                index: ordinal,
                 source: file.path.clone(),
                 track: file.track,
                 staged_rel: format!("{task_dir}/{ordinal:03}.{format}"),
@@ -183,6 +190,49 @@ impl LibrarySetup {
             .sandbox
             .resolve_no_symlink(&root.id, &task_dir)
             .map_err(|error| fault(error.to_string()))?;
+        // Files bound for a taken destination are held on their own (the
+        // first of two files bound for one path keeps it); the rest import.
+        let mut skipped = Vec::new();
+        let mut claimed = std::collections::HashSet::new();
+        placements.retain(|placement| {
+            let key = super::publish::collision_key(&root.id, &placement.dest_rel);
+            let occupied = open
+                .sandbox
+                .resolve_no_symlink(&root.id, &placement.dest_rel)
+                .map(|dest| std::fs::symlink_metadata(dest).is_ok())
+                .unwrap_or(true);
+            let reason = if !claimed.insert(key) {
+                Some(format!(
+                    "another file of this download goes to {}",
+                    placement.dest_rel
+                ))
+            } else if occupied {
+                Some(format!("a file already sits at {}", placement.dest_rel))
+            } else {
+                None
+            };
+            match reason {
+                Some(reason) => {
+                    skipped.push((placement.index, reason));
+                    false
+                }
+                None => true,
+            }
+        });
+        if placements.is_empty() {
+            return Ok(ImportedAlbum {
+                bundle_id: String::new(),
+                album_id: String::new(),
+                paths: Vec::new(),
+                skipped,
+            });
+        }
+        let dest_policy = |dest_rel: &str| super::publish::planner::Adoption {
+            policy: root.policy_for(&root.path.join(dest_rel)),
+            policy_revision: registry.policy_revision().to_owned(),
+            download_task_id: Some(import.task_id.clone()),
+            source_path: None,
+        };
         let result = (|| {
             let mut items = Vec::with_capacity(placements.len());
             for placement in &placements {
@@ -226,7 +276,10 @@ impl LibrarySetup {
                     format: placement.format.clone(),
                     managed_updates: placement.tags.clone(),
                     sidecars: Vec::new(),
-                    adopt: true,
+                    adopt: Some(super::publish::planner::Adoption {
+                        source_path: Some(placement.source.to_string_lossy().into_owned()),
+                        ..dest_policy(&placement.dest_rel)
+                    }),
                 });
             }
             let catalog_revision = SqliteCatalog
@@ -293,6 +346,7 @@ impl LibrarySetup {
             bundle_id: bundle.id.clone(),
             album_id,
             paths,
+            skipped,
         })
     }
 
@@ -318,8 +372,9 @@ impl LibrarySetup {
             row_revision: current.map_or(1, |row| row.row_revision + 1),
         });
         for item in &bundle.items {
-            if store
-                .track_identity(&item.track_id)
+            let current = store.track_identity(&item.track_id);
+            if current
+                .as_ref()
                 .is_some_and(|row| !row.decision_source.automatic_may_overwrite())
             {
                 continue;
@@ -330,7 +385,7 @@ impl LibrarySetup {
                 recording_mbid: Some(item.identity.recording_mbid.clone()),
                 release_track_mbid: Some(item.identity.release_track_mbid.clone()),
                 decision_source: DecisionSource::Automatic,
-                row_revision: 1,
+                row_revision: current.map_or(1, |row| row.row_revision + 1),
             });
         }
     }
@@ -355,21 +410,57 @@ fn safe_name(task_id: &str) -> String {
     }
 }
 
-/// Copy one landed file into the hidden import folder, synced, and
-/// fingerprint the copy.
+/// Copy one landed file into the hidden import folder, synced, hashing
+/// the bytes as they stream through.
 fn copy_in(source: &Path, staged: &Path) -> std::io::Result<FileFingerprint> {
-    use std::io::Write as _;
+    use sha2::Digest as _;
+    use std::io::{Read as _, Write as _};
     if let Some(parent) = staged.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let bytes = std::fs::read(source)?;
-    let mut file = std::fs::File::create(staged)?;
-    file.write_all(&bytes)?;
-    file.sync_all()?;
-    Ok(FileFingerprint {
-        size: bytes.len() as u64,
-        sha256: sha256_hex(&bytes),
-    })
+    let mut reader = std::fs::File::open(source)?;
+    let mut writer = std::fs::File::create(staged)?;
+    let mut hasher = sha2::Sha256::new();
+    let mut buffer = vec![0u8; 256 * 1024];
+    let mut size = 0u64;
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+        writer.write_all(&buffer[..read])?;
+        size += read as u64;
+    }
+    writer.sync_all()?;
+    let sha256 = hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    Ok(FileFingerprint { size, sha256 })
+}
+
+/// Remove import folders a stopped process left behind, once no publish
+/// is waiting on recovery (an unsettled bundle may still name one of
+/// their copies). Blocking.
+pub(crate) fn sweep_import_leftovers(roots: &[PathBuf], journal_settled: bool) {
+    if !journal_settled {
+        return;
+    }
+    for root in roots {
+        let dir = root.join(format!("{HIDDEN_PREFIX}import"));
+        match std::fs::symlink_metadata(&dir) {
+            Ok(meta) if meta.is_dir() => {
+                if let Err(error) = std::fs::remove_dir_all(&dir) {
+                    tracing::warn!(dir = %dir.display(), %error, "import leftovers not removed");
+                } else {
+                    tracing::info!(dir = %dir.display(), "removed import leftovers");
+                }
+            }
+            Ok(_) | Err(_) => {}
+        }
+    }
 }
 
 /// Remove the hidden import folder (and its parent when empty). The

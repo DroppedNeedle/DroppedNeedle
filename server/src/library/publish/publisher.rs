@@ -42,7 +42,7 @@ pub struct TrackCommit {
     pub mgmt_state: String,
     /// The track is new to the catalog: index the published file instead
     /// of moving an existing row (see [`ADOPTED_STATE`]).
-    pub adopt: bool,
+    pub adopt: Option<super::planner::Adoption>,
 }
 
 /// Management-state prefix journals carry for files a commit adds to the
@@ -165,8 +165,8 @@ impl Catalog for SqliteCatalog {
         }
         let now = now_secs();
         for track in &commit.tracks {
-            if track.adopt {
-                adopt_track(conn, track)?;
+            if let Some(adoption) = &track.adopt {
+                adopt_track(conn, track, adoption)?;
             } else {
                 move_track(conn, track)?;
             }
@@ -240,7 +240,11 @@ fn move_track(conn: &Connection, track: &TrackCommit) -> Result<(), PublishError
 /// Add a file the bundle brought into the library: index the published
 /// file from its own tags and header, exactly as a scan would, at the
 /// track id the plan pinned.
-fn adopt_track(conn: &Connection, track: &TrackCommit) -> Result<(), PublishError> {
+fn adopt_track(
+    conn: &Connection,
+    track: &TrackCommit,
+    adoption: &super::planner::Adoption,
+) -> Result<(), PublishError> {
     use crate::library::scan::seams::ScannedTags;
     use crate::library::scan::store::CommitIndexedItem;
 
@@ -258,8 +262,8 @@ fn adopt_track(conn: &Connection, track: &TrackCommit) -> Result<(), PublishErro
         mtime_ns: crate::library::scan::revision::mtime_ns_from_metadata(&meta),
         tags_read_at: now_secs(),
         tags: ScannedTags { tag, header },
-        effective_policy: crate::library::scan::models::EffectivePolicy::Automatic,
-        policy_revision: String::new(),
+        effective_policy: adoption.policy,
+        policy_revision: adoption.policy_revision.clone(),
         verdict_counter: "new_count",
     };
     let adopted = crate::library::scan::sqlite_store::adopt_file(conn, &item)?;
@@ -269,6 +273,12 @@ fn adopt_track(conn: &Connection, track: &TrackCommit) -> Result<(), PublishErro
             track.track_id
         )));
     }
+    // Provenance, as v2 recorded it: which download brought the file.
+    conn.execute(
+        "UPDATE local_tracks SET ingest_source = 'download', download_task_id = ?2, \
+         source_path = ?3 WHERE id = ?1",
+        rusqlite::params![adopted, adoption.download_task_id, adoption.source_path],
+    )?;
     Ok(())
 }
 
@@ -503,7 +513,10 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 staged_sha256: staged_sha.clone(),
                 track_id: Some(item.track_id.clone()),
                 catalog_revision: Some(bundle.catalog_revision as i64),
-                mgmt_state: Some(mgmt_state_for(item.adopt, bundle.profile_revision)),
+                mgmt_state: Some(mgmt_state_for(
+                    item.adopt.is_some(),
+                    bundle.profile_revision,
+                )),
                 state: JournalState::Prepared,
                 seq: 0,
             };
@@ -514,7 +527,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             }
             write_staged_temp(&temp, &staged_bytes)?;
             journals.transition(&journal_id, JournalState::Prepared, JournalState::Staged)?;
-            if !item.adopt {
+            if item.adopt.is_none() {
                 self.capture_before(bundle, item, before)?;
             }
             for (side_ordinal, sidecar) in item.sidecars.iter().enumerate() {
@@ -780,8 +793,8 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 rel_path: item.dest_rel.clone(),
                 file_path: dest.to_string_lossy().into_owned(),
                 fingerprint: file.staged_sha256.clone(),
-                mgmt_state: mgmt_state_for(item.adopt, bundle.profile_revision),
-                adopt: item.adopt,
+                mgmt_state: mgmt_state_for(item.adopt.is_some(), bundle.profile_revision),
+                adopt: item.adopt.clone(),
             });
         }
         let commit = BundleCommit {

@@ -153,6 +153,9 @@ pub struct LibrarySetup {
     /// release lookups, identity-critical like identification. `None` in
     /// test bundles unless a test scripts one.
     pub releases: Option<Arc<dyn super::identify::sources::ReleaseSource>>,
+    /// AcoustID for files being imported, keyed per call and keeping
+    /// nothing; off while no AcoustID key is set. `None` in test bundles.
+    pub fingerprints: Option<Arc<dyn super::identify::sources::FingerprintSource>>,
     /// Contribution service.
     pub contrib: Arc<ContributionService>,
     /// Contribution verification worker.
@@ -228,6 +231,14 @@ impl LibrarySetup {
                 mb_client(RequestPriority::BackgroundSync),
             )),
         };
+        let import_pacer = CorePacer::for_source(providers.clone(), "acoustid")
+            .ok_or_else(|| "acoustid has no verified rate row".to_owned())?;
+        let import_acoustid = AcoustIdClient::new(
+            http.shared().clone(),
+            DEFAULT_BASE_URL,
+            import_pacer,
+            health.clone(),
+        );
         let pacer = CorePacer::for_source(providers, "acoustid")
             .ok_or_else(|| "acoustid has no verified rate row".to_owned())?;
         let acoustid = AcoustIdClient::new(http.shared().clone(), DEFAULT_BASE_URL, pacer, health);
@@ -247,6 +258,16 @@ impl LibrarySetup {
         });
         let mut setup = Self::assemble(users, ids, make, None, contrib, db_path, config)?;
         setup.releases = Some(imports);
+        let registry = setup.registry.clone();
+        setup.fingerprints = Some(Arc::new(
+            super::identify::sources::AcoustIdFingerprints::new(
+                import_acoustid,
+                setup.config.clone(),
+                Arc::new(move || registry.resolver().registry().clone()),
+                setup.pool.clone(),
+                setup.identify_store.clone(),
+            ),
+        ));
         Ok(setup)
     }
 
@@ -417,6 +438,7 @@ impl LibrarySetup {
             identify,
             test_providers,
             releases: None,
+            fingerprints: None,
             contrib,
             contrib_worker,
             #[cfg(any(test, feature = "test-support"))]
@@ -501,11 +523,22 @@ impl LibrarySetup {
                 .publish
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            cell.refresh(&registry, &self.root_dirs)
+            let recoveries = cell
+                .refresh(&registry, &self.root_dirs)
                 .unwrap_or_else(|error| {
                     tracing::error!(%error, "publish recovery did not run; managed writes stay closed");
                     Vec::new()
-                })
+                });
+            // Copies an interrupted download import left in the hidden
+            // import folders, once no bundle still waits on them.
+            let roots: Vec<PathBuf> = registry
+                .roots()
+                .iter()
+                .map(|root| root.path.clone())
+                .collect();
+            let settled = cell.cell.is_some() && !cell.has_held();
+            super::import::sweep_import_leftovers(&roots, settled);
+            recoveries
         };
         let requeued = {
             use super::identify::stores::QueueStore as _;
