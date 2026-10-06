@@ -171,22 +171,24 @@ impl LibrarySetup {
     ) -> Result<Self, String> {
         use crate::providers::RequestPriority;
         use crate::providers::acoustid::{AcoustIdClient, DEFAULT_BASE_URL};
-        use crate::providers::adapters::{CorePacer, CoreSink};
+        use crate::providers::adapters::{CorePacer, HealthSink};
         use crate::providers::musicbrainz::{MbPacing, MusicBrainzClient, ReqwestMbTransport};
 
         // Identification is background work on the source settings name,
         // read per request; user page loads go ahead of it at the limiter.
+        // Both clients count their failures toward system health, so an
+        // outage during a background lookup shows on the health dot too.
+        let health = HealthSink::new(&providers);
         let musicbrainz = MusicBrainzClient::official(
             ReqwestMbTransport::new(http.no_redirect().clone()),
             MbPacing::new(providers.clone()),
         )
         .with_source_fn(mb_source)
         .with_priority(RequestPriority::BackgroundSync)
-        .with_sink(CoreSink);
+        .with_sink(health.clone());
         let pacer = CorePacer::for_source(providers, "acoustid")
             .ok_or_else(|| "acoustid has no verified rate row".to_owned())?;
-        let acoustid =
-            AcoustIdClient::new(http.shared().clone(), DEFAULT_BASE_URL, pacer, CoreSink);
+        let acoustid = AcoustIdClient::new(http.shared().clone(), DEFAULT_BASE_URL, pacer, health);
         let make: ProviderFactory = Box::new(move |parts| {
             let fingerprints = super::identify::sources::AcoustIdFingerprints::new(
                 acoustid,
