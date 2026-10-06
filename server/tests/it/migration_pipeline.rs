@@ -503,17 +503,26 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
         listenbrainz["user_token"],
         fixture.secrets.listenbrainz_token.as_str()
     );
-    // Spotify keeps v2's field names, sealed whole like the media servers.
-    let spotify: serde_json::Value = serde_json::from_str(
-        &crypto
-            .decrypt(&link("spotify").await)
-            .expect("spotify link opens"),
-    )
-    .expect("spotify json");
-    assert_eq!(
-        spotify["refresh_token"],
-        fixture.secrets.spotify_refresh.as_str()
-    );
+    // Spotify keeps v2's field names, sealed whole like the media servers,
+    // and v3's Spotify store reads the carried link as it is.
+    let spotify = {
+        use droppedneedle::acquire::imports::spotify::SpotifyConnectionStore as _;
+        let lane =
+            WriteLane::open(&v3_root.join("cache").join("library.db")).expect("writer lane opens");
+        let key = Crypto::load(&v3_root.join("config")).expect("v3 key loads");
+        droppedneedle::acquire::imports::spotify_store::SqliteSpotifyLinks::new(
+            droppedneedle::acquire::db::AcquireDb::new(pool.clone(), lane),
+            std::sync::Arc::new(key),
+        )
+        .get(&fixture.bob_id)
+        .await
+        .expect("spotify link reads")
+        .expect("spotify link carried")
+    };
+    assert_eq!(spotify.refresh_token, fixture.secrets.spotify_refresh);
+    assert_eq!(spotify.spotify_user_id, "bob-sp-id");
+    // 2025-06-01T01:00:00+00:00, v2's ISO expiry.
+    assert_eq!(spotify.expires_at_unix, 1_748_739_600);
     let lastfm: serde_json::Value =
         serde_json::from_str(&link("lastfm").await).expect("last.fm doc");
     assert_eq!(lastfm["configured"], false);
