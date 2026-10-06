@@ -21,8 +21,12 @@ const {
 	mockDownloadsData,
 	mockHeldData,
 	mockLibraryStatusData,
-	mockLocalCopiesData
+	mockLocalCopiesData,
+	mockLocalMatch,
+	mockNavidromeMatch
 } = vi.hoisted(() => ({
+	mockLocalMatch: vi.fn(),
+	mockNavidromeMatch: vi.fn(),
 	mockGoto: vi.fn(),
 	mockPageFetch: vi.fn(),
 	mockHydrateDetailCacheEntry: vi.fn(),
@@ -115,6 +119,15 @@ vi.mock('$lib/utils/serviceStatus', () => ({
 }));
 
 // Stub the library status query so the page renders without a QueryClientProvider.
+// Source matches come from the typed v3 reads; stub them at the module edge.
+vi.mock('$lib/queries/albumMatch', () => ({
+	fetchLocalAlbumMatch: (...args: unknown[]) => mockLocalMatch(...args),
+	fetchNavidromeAlbumMatch: (...args: unknown[]) => mockNavidromeMatch(...args),
+	fetchJellyfinAlbumMatch: () =>
+		Promise.resolve({ found: false, jellyfin_album_id: null, tracks: [] }),
+	fetchPlexAlbumMatch: () => Promise.resolve({ found: false, plex_album_id: null, tracks: [] })
+}));
+
 vi.mock('$lib/queries/library/LibraryQueries.svelte', () => ({
 	getLibraryAlbumStatusQuery: () => ({
 		get data() {
@@ -354,6 +367,105 @@ describe('album detail page track rendering', () => {
 
 			return true;
 		});
+		mockLocalMatch.mockReset().mockImplementation((mbid: string) =>
+			Promise.resolve(
+				mbid === albumId
+					? {
+							found: true,
+							tracks: [
+								{
+									track_file_id: '1',
+									title: 'Infinite ❤️ Without Fulfillment',
+									track_number: 1,
+									disc_number: 1,
+									duration_seconds: 95,
+									size_bytes: 1,
+									format: 'flac'
+								},
+								{
+									track_file_id: '2',
+									title: 'Circumambient',
+									track_number: 5,
+									disc_number: 1,
+									duration_seconds: 223,
+									size_bytes: 1,
+									format: 'flac'
+								},
+								{
+									track_file_id: '3',
+									title: 'Ambrosia',
+									track_number: 1,
+									disc_number: 2,
+									duration_seconds: 213,
+									size_bytes: 1,
+									format: 'flac'
+								},
+								{
+									track_file_id: '4',
+									title: 'Be a Body (Baarsden rework)',
+									track_number: 5,
+									disc_number: 2,
+									duration_seconds: 204,
+									size_bytes: 1,
+									format: 'flac'
+								}
+							],
+							total_size_bytes: 4,
+							primary_format: 'flac'
+						}
+					: { found: false, musicbrainz_id: mbid, tracks: [], total_size_bytes: 0 }
+			)
+		);
+		mockNavidromeMatch.mockReset().mockResolvedValue({
+			found: true,
+			navidrome_album_id: 'nav-1',
+			tracks: [
+				{
+					navidrome_id: 'n1',
+					title: 'Infinite ❤️ Without Fulfillment',
+					track_number: 1,
+					disc_number: 1,
+					duration_seconds: 95,
+					codec: 'flac',
+					bitrate: 800,
+					album_name: 'Visions',
+					artist_name: 'Grimes'
+				},
+				{
+					navidrome_id: 'n2',
+					title: 'Circumambient',
+					track_number: 5,
+					disc_number: 1,
+					duration_seconds: 223,
+					codec: 'flac',
+					bitrate: 800,
+					album_name: 'Visions',
+					artist_name: 'Grimes'
+				},
+				{
+					navidrome_id: 'n3',
+					title: 'Ambrosia',
+					track_number: 1,
+					disc_number: 2,
+					duration_seconds: 213,
+					codec: 'flac',
+					bitrate: 800,
+					album_name: 'Visions',
+					artist_name: 'Grimes'
+				},
+				{
+					navidrome_id: 'n4',
+					title: 'Be a Body (Baarsden rework)',
+					track_number: 5,
+					disc_number: 2,
+					duration_seconds: 204,
+					codec: 'flac',
+					bitrate: 800,
+					album_name: 'Visions',
+					artist_name: 'Grimes'
+				}
+			]
+		});
 		mockPageFetch.mockImplementation((input: string | URL) => {
 			const url = typeof input === 'string' ? input : input.toString();
 
@@ -410,113 +522,6 @@ describe('album detail page track rendering', () => {
 				return Promise.resolve(jsonResponse([]));
 			}
 
-			if (url.endsWith(`/api/v1/jellyfin/albums/match/${albumId}`)) {
-				return Promise.resolve(jsonResponse({ found: false, jellyfin_album_id: null, tracks: [] }));
-			}
-
-			if (url.endsWith(`/api/v1/local/albums/match/${albumId}`)) {
-				return Promise.resolve(
-					jsonResponse({
-						found: true,
-						tracks: [
-							{
-								track_file_id: 1,
-								title: 'Infinite ❤️ Without Fulfillment',
-								track_number: 1,
-								disc_number: 1,
-								duration_seconds: 95,
-								size_bytes: 1,
-								format: 'flac'
-							},
-							{
-								track_file_id: 2,
-								title: 'Circumambient',
-								track_number: 5,
-								disc_number: 1,
-								duration_seconds: 223,
-								size_bytes: 1,
-								format: 'flac'
-							},
-							{
-								track_file_id: 3,
-								title: 'Ambrosia',
-								track_number: 1,
-								disc_number: 2,
-								duration_seconds: 213,
-								size_bytes: 1,
-								format: 'flac'
-							},
-							{
-								track_file_id: 4,
-								title: 'Be a Body (Baarsden rework)',
-								track_number: 5,
-								disc_number: 2,
-								duration_seconds: 204,
-								size_bytes: 1,
-								format: 'flac'
-							}
-						],
-						total_size_bytes: 4,
-						primary_format: 'flac'
-					})
-				);
-			}
-
-			if (url.includes(`/api/v1/navidrome/album-match/${albumId}`)) {
-				return Promise.resolve(
-					jsonResponse({
-						found: true,
-						navidrome_album_id: 'nav-1',
-						tracks: [
-							{
-								navidrome_id: 'n1',
-								title: 'Infinite ❤️ Without Fulfillment',
-								track_number: 1,
-								disc_number: 1,
-								duration_seconds: 95,
-								codec: 'flac',
-								bitrate: 800,
-								album_name: 'Visions',
-								artist_name: 'Grimes'
-							},
-							{
-								navidrome_id: 'n2',
-								title: 'Circumambient',
-								track_number: 5,
-								disc_number: 1,
-								duration_seconds: 223,
-								codec: 'flac',
-								bitrate: 800,
-								album_name: 'Visions',
-								artist_name: 'Grimes'
-							},
-							{
-								navidrome_id: 'n3',
-								title: 'Ambrosia',
-								track_number: 1,
-								disc_number: 2,
-								duration_seconds: 213,
-								codec: 'flac',
-								bitrate: 800,
-								album_name: 'Visions',
-								artist_name: 'Grimes'
-							},
-							{
-								navidrome_id: 'n4',
-								title: 'Be a Body (Baarsden rework)',
-								track_number: 5,
-								disc_number: 2,
-								duration_seconds: 204,
-								codec: 'flac',
-								bitrate: 800,
-								album_name: 'Visions',
-								artist_name: 'Grimes'
-							}
-						]
-					})
-				);
-			}
-
 			return Promise.resolve(jsonResponse({}));
 		});
 	});
@@ -538,9 +543,7 @@ describe('album detail page track rendering', () => {
 	});
 
 	function localMatchFetchCount(): number {
-		return mockPageFetch.mock.calls.filter(([url]) =>
-			String(url).includes('/api/v1/local/albums/match/')
-		).length;
+		return mockLocalMatch.mock.calls.length;
 	}
 
 	async function openRemoveFileDialog(): Promise<void> {
@@ -567,11 +570,7 @@ describe('album detail page track rendering', () => {
 		const before = localMatchFetchCount();
 		await options.onSuccess();
 		await vi.waitFor(() => expect(localMatchFetchCount()).toBe(before + 1));
-		expect(
-			mockPageFetch.mock.calls
-				.filter(([url]) => String(url).includes('/api/v1/local/albums/match/'))
-				.every(([url]) => String(url).endsWith(albumId))
-		).toBe(true);
+		expect(mockLocalMatch.mock.calls.every(([mbid]) => mbid === albumId)).toBe(true);
 		await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
 	});
 
@@ -617,10 +616,11 @@ describe('album detail page track rendering', () => {
 		});
 
 		await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
-		const before = mockPageFetch.mock.calls.filter(([url]) => String(url).endsWith(albumId)).length;
+		const oldAlbumReads = () =>
+			mockPageFetch.mock.calls.filter(([url]) => String(url).endsWith(albumId)).length +
+			mockLocalMatch.mock.calls.filter(([mbid]) => mbid === albumId).length;
+		const before = oldAlbumReads();
 		await options.onSuccess();
-		expect(mockPageFetch.mock.calls.filter(([url]) => String(url).endsWith(albumId)).length).toBe(
-			before
-		);
+		expect(oldAlbumReads()).toBe(before);
 	});
 });
