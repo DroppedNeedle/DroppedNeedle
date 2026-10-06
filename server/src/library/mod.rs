@@ -27,8 +27,6 @@ mod loops;
 pub mod manage;
 pub mod publish;
 pub mod scan;
-#[cfg(any(test, feature = "test-support"))]
-pub mod scratch;
 pub mod service;
 pub mod settings;
 pub mod tags;

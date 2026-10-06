@@ -48,8 +48,9 @@ use crate::runtime_config::ConfigStore;
 /// Scratch database (every migration applied) plus config store in a
 /// directory that goes away when the last bundle clone drops.
 #[cfg(any(test, feature = "test-support"))]
-fn scratch_state() -> Result<(Arc<super::scratch::ScratchDir>, Arc<ConfigStore>), String> {
-    let dir = super::scratch::ScratchDir::new("library").map_err(|error| error.to_string())?;
+fn scratch_state() -> Result<(Arc<crate::tooling::scratch::ScratchDir>, Arc<ConfigStore>), String> {
+    let dir =
+        crate::tooling::scratch::ScratchDir::new("library").map_err(|error| error.to_string())?;
     let db_path = dir.path().join("app.db");
     let connection = crate::db::open_connection(&db_path).map_err(|error| error.to_string())?;
     crate::schema::apply_migrations_blocking(&connection).map_err(|error| error.to_string())?;
@@ -132,7 +133,7 @@ pub struct LibrarySetup {
     pub root_dirs: RootDirs,
     /// Scratch state of a test bundle, removed with the last clone.
     #[cfg(any(test, feature = "test-support"))]
-    pub scratch: Option<Arc<super::scratch::ScratchDir>>,
+    pub scratch: Option<Arc<crate::tooling::scratch::ScratchDir>>,
 }
 
 impl LibrarySetup {

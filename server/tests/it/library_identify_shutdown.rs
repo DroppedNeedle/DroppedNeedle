@@ -15,9 +15,10 @@
 
 use std::pin::Pin;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use crate::common::ScratchDir;
 use droppedneedle::auth::prod::ProdAuth;
 use droppedneedle::auth::users::stores::SystemClock;
 use droppedneedle::auth::wiring::AuthSetup;
@@ -33,9 +34,6 @@ use droppedneedle::library::wiring::LibrarySetup;
 use droppedneedle::providers::musicbrainz::Criticality;
 use droppedneedle::runtime_config::{ConfigStore, Crypto};
 use tokio::sync::{oneshot, watch};
-
-/// Scratch-dir sequence so parallel tests never share a database.
-static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Empty recall, no side effects: every attempt lands NoCandidate.
 struct EmptyRecall;
@@ -128,15 +126,14 @@ struct Lib {
     #[allow(dead_code)]
     runtime: DbRuntime,
     library: LibrarySetup,
+    /// Dropped last: the scratch directory goes away with the test.
+    _scratch: ScratchDir,
 }
 
 impl Lib {
     async fn open(tag: &str, providers: Arc<dyn IdentifyProviders>) -> Self {
-        let seq = SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "droppedneedle-lib-ident-shutdown-{tag}-{}-{seq}",
-            std::process::id()
-        ));
+        let scratch = ScratchDir::new(&format!("lib-ident-shutdown-{tag}"));
+        let dir = scratch.to_path_buf();
         let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
             .await
             .expect("scratch runtime opens");
@@ -173,7 +170,11 @@ impl Lib {
         let library =
             LibrarySetup::for_tests_with_providers(users, ids as Arc<dyn IdGenerator>, providers)
                 .expect("library bundle builds");
-        Self { runtime, library }
+        Self {
+            runtime,
+            library,
+            _scratch: scratch,
+        }
     }
 }
 

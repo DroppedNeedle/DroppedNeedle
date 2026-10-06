@@ -19,7 +19,7 @@ use droppedneedle::library::tags;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use droppedneedle::library::scratch::ScratchDir;
+use crate::common::ScratchDir;
 use publish::paths::Root;
 use publish::planner::{
     Capability, CapabilityGate, CollisionGate, FileFingerprint, PlanBundle, PlanItem, PlanKind,
@@ -93,8 +93,8 @@ struct Fixture {
 }
 
 fn fixture(tag: &str) -> Fixture {
-    let scratch = ScratchDir::new(&format!("publish-{tag}")).unwrap();
-    let dir = scratch.path().to_path_buf();
+    let scratch = ScratchDir::new(&format!("publish-{tag}"));
+    let dir = scratch.to_path_buf();
     let music = dir.join("music");
     let incoming = dir.join("incoming");
     std::fs::create_dir_all(&music).unwrap();

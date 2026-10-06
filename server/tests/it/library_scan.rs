@@ -11,13 +11,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use crate::common::ScratchDir;
 use droppedneedle::library::scan::{
     BlockingPool, EffectivePolicy, LibraryRoot, LibraryScanCoordinator, NullTagReader,
     RootRegistry, RootSeamError, RunStore, ScanKind, ScanRequest, ScanRun, ScanScope, ScanState,
     ScanTrigger, ScannedTags, SqliteScanStore, StaticResolver, StreamRootSeam, TagReadError,
     TagReader, WorkWakeups, counter_names, failure_codes,
 };
-use droppedneedle::library::scratch::ScratchDir;
 use droppedneedle::library::wiring::LibrarySetup;
 use sha2::{Digest, Sha256};
 use tokio::sync::watch;
@@ -120,8 +120,8 @@ fn query(library: &LibrarySetup, sql: &str) -> i64 {
 /// neither scan nor a no-op rescan writes a byte of music.
 #[tokio::test]
 async fn scan_catalogs_tags_without_touching_files() {
-    let scratch = ScratchDir::new("scan-tags").expect("scratch");
-    let music = scratch.path().join("music");
+    let scratch = ScratchDir::new("scan-tags");
+    let music = scratch.join("music");
     let tagged = plant(&music, "Album/01.flac", "management_full.flac");
     plant(&music, "Album/CD1/02.mp3", "mp3_full_01.mp3");
     plant(&music, "Loose/untagged.flac", "flac_no_tags.flac");
@@ -181,8 +181,8 @@ async fn scan_catalogs_tags_without_touching_files() {
 /// most of its files at once (an unmounted share) is held back instead.
 #[tokio::test]
 async fn vanished_files_are_marked_missing_and_mass_loss_is_held_back() {
-    let scratch = ScratchDir::new("scan-missing").expect("scratch");
-    let music = scratch.path().join("music");
+    let scratch = ScratchDir::new("scan-missing");
+    let music = scratch.join("music");
     for n in 0..30 {
         plant(&music, &format!("Album/{n:02}.flac"), "flac_full_01.flac");
     }
@@ -281,8 +281,8 @@ fn request(root: &Path) -> ScanRequest {
 /// the first uncommitted file, so every file lands once and counts once.
 #[tokio::test]
 async fn shutdown_mid_index_resumes_without_double_counting() {
-    let scratch = ScratchDir::new("scan-resume").expect("scratch");
-    let root = scratch.path().join("music");
+    let scratch = ScratchDir::new("scan-resume");
+    let root = scratch.join("music");
     std::fs::create_dir_all(&root).expect("root");
     for n in 0..600 {
         std::fs::write(root.join(format!("t{n:04}.flac")), b"junk").expect("plant");
@@ -324,8 +324,8 @@ async fn shutdown_mid_index_resumes_without_double_counting() {
 /// not trusted for missing detection.
 #[tokio::test]
 async fn a_refused_inventory_row_costs_that_file_only() {
-    let scratch = ScratchDir::new("scan-refused").expect("scratch");
-    let root = scratch.path().join("music");
+    let scratch = ScratchDir::new("scan-refused");
+    let root = scratch.join("music");
     std::fs::create_dir_all(&root).expect("root");
     for n in 0..10 {
         std::fs::write(root.join(format!("t{n:04}.flac")), b"junk").expect("plant");
@@ -357,8 +357,8 @@ async fn a_refused_inventory_row_costs_that_file_only() {
 async fn symlinks_never_escape_a_root() {
     use std::os::unix::fs::symlink;
 
-    let scratch = ScratchDir::new("scan-links").expect("scratch");
-    let root = scratch.path().join("music");
+    let scratch = ScratchDir::new("scan-links");
+    let root = scratch.join("music");
     plant(&root, "good.flac", "flac_full_01.flac");
     symlink("/etc/hostname", root.join("escape.flac")).expect("symlink");
     let (coordinator, paths) = coordinator(&root, Arc::new(NullTagReader::new()));
@@ -391,8 +391,8 @@ async fn symlinks_never_escape_a_root() {
 /// a "conflict" naming a run id that was never written.
 #[tokio::test]
 async fn unrecorded_scan_request_is_an_error() {
-    let scratch = ScratchDir::new("scan-unrecorded").expect("scratch");
-    let music = scratch.path().join("music");
+    let scratch = ScratchDir::new("scan-unrecorded");
+    let music = scratch.join("music");
     std::fs::create_dir_all(&music).expect("root");
     let library = bundle(&music);
     // No such user in this database: the auth_users reference fails.

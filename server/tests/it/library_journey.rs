@@ -20,6 +20,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::common::ScratchDir;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode};
@@ -34,7 +35,6 @@ use droppedneedle::ids::{IdGenerator, UuidGenerator};
 use droppedneedle::library::identify::models::{
     CandidateEvidence, EvidenceClass, RecallResult, TrackEvidence,
 };
-use droppedneedle::library::scratch::ScratchDir;
 use droppedneedle::library::wiring::LibrarySetup;
 use droppedneedle::runtime_config::sections::SecuritySettings;
 use droppedneedle::runtime_config::{
@@ -72,8 +72,8 @@ struct Lib {
 
 impl Lib {
     async fn open(tag: &str) -> Self {
-        let scratch = ScratchDir::new(&format!("lib-journey-{tag}")).expect("scratch dir");
-        let dir = scratch.path().to_path_buf();
+        let scratch = ScratchDir::new(&format!("lib-journey-{tag}"));
+        let dir = scratch.to_path_buf();
         let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
             .await
             .expect("scratch runtime opens");
@@ -817,8 +817,8 @@ async fn library_loops_start_and_stop() {
 async fn library_roots_survive_a_restart() {
     use droppedneedle::library::scan::{EffectivePolicy, ScanKind, ScanRequest, ScanTrigger};
 
-    let scratch = ScratchDir::new("lib-restart").expect("scratch dir");
-    let dir = scratch.path().to_path_buf();
+    let scratch = ScratchDir::new("lib-restart");
+    let dir = scratch.to_path_buf();
     let db_path = dir.join("app.db");
     let connection = droppedneedle::db::open_connection(&db_path).expect("scratch db opens");
     droppedneedle::schema::apply_migrations_blocking(&connection).expect("migrations apply");
@@ -900,8 +900,8 @@ async fn identification_survives_restarts() {
     use droppedneedle::library::identify::stores::IdentityStore as _;
     use droppedneedle::library::scan::{CatalogStore as _, EffectivePolicy};
 
-    let scratch = ScratchDir::new("lib-identify-restart").expect("scratch dir");
-    let dir = scratch.path().to_path_buf();
+    let scratch = ScratchDir::new("lib-identify-restart");
+    let dir = scratch.to_path_buf();
     let db_path = dir.join("app.db");
     let connection = droppedneedle::db::open_connection(&db_path).expect("scratch db opens");
     droppedneedle::schema::apply_migrations_blocking(&connection).expect("migrations apply");

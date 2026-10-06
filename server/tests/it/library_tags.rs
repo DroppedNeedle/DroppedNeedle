@@ -7,8 +7,8 @@
 
 use droppedneedle::library::tags;
 
+use crate::common::ScratchDir;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use lofty::file::TaggedFileExt as _;
 use lofty::tag::TagType;
@@ -26,17 +26,13 @@ fn fixture(name: &str) -> PathBuf {
     Path::new("tests/fixtures/library").join(name)
 }
 
-static SCRATCH_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-/// Copy a fixture into a unique scratch dir. Save tests only ever write
-/// to these copies.
-fn temp_copy(name: &str, test: &str) -> PathBuf {
-    let n = SCRATCH_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!("dn-tags-{}-{test}-{n}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+/// Copy a fixture into a scratch dir removed when the guard drops. Save
+/// tests only ever write to these copies.
+fn temp_copy(name: &str, test: &str) -> (ScratchDir, PathBuf) {
+    let dir = ScratchDir::new(&format!("tags-{test}"));
     let dest = dir.join(name);
     std::fs::copy(fixture(name), &dest).unwrap();
-    dest
+    (dir, dest)
 }
 
 fn id3_work(path: &Path) -> Option<String> {
@@ -709,7 +705,7 @@ fn fingerprint_is_deterministic_and_well_formed() {
 
 #[test]
 fn save_mp3_preserves_everything_but_the_title() {
-    let path = temp_copy("management_full.mp3", "mp3-roundtrip");
+    let (_scratch, path) = temp_copy("management_full.mp3", "mp3-roundtrip");
     let before = std::fs::read(&path).unwrap();
     let audio_before = mp3_audio_tail(&before).to_vec();
 
@@ -775,7 +771,7 @@ fn save_mp3_preserves_everything_but_the_title() {
 
 #[test]
 fn save_flac_preserves_vendor_spelling_and_unknowns() {
-    let path = temp_copy("management_full.flac", "flac-roundtrip");
+    let (_scratch, path) = temp_copy("management_full.flac", "flac-roundtrip");
     let audio_before = flac_audio_tail(&std::fs::read(&path).unwrap()).to_vec();
     let vendor_before = vorbis_vendor(&path);
 
@@ -814,7 +810,7 @@ fn save_ogg_opus_m4a_round_trip() {
         "management_full.opus",
         "management_full.m4a",
     ] {
-        let path = temp_copy(name, "roundtrip");
+        let (_scratch, path) = temp_copy(name, "roundtrip");
         let info_before = tags::probe(&path).unwrap();
         tags::save_tags(&path, &[TagEdit::set_title("WRAP TITLE")]).unwrap();
         let (tag, _) = tags::read_tags(&path).unwrap();
@@ -839,7 +835,7 @@ fn save_ogg_opus_m4a_round_trip() {
 
 #[test]
 fn save_m4a_audio_bytes_identical() {
-    let path = temp_copy("management_full.m4a", "m4a-audio");
+    let (_scratch, path) = temp_copy("management_full.m4a", "m4a-audio");
     let audio_before = m4a_mdat(&std::fs::read(&path).unwrap()).to_vec();
     tags::save_tags(&path, &[TagEdit::set_title("WRAP TITLE")]).unwrap();
     assert_eq!(m4a_mdat(&std::fs::read(&path).unwrap()), audio_before);
@@ -877,8 +873,7 @@ fn save_pure_v23_stays_v23() {
         ],
     );
     tag.extend_from_slice(&audio);
-    let dir = std::env::temp_dir().join(format!("dn-tags-{}-purev23", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = ScratchDir::new("tags-purev23");
     let path = dir.join("pure_v23.mp3");
     std::fs::write(&path, &tag).unwrap();
 
@@ -911,7 +906,7 @@ fn save_refuses_fixture_with_empty_values() {
 
 #[test]
 fn save_untagged_flac_gains_a_title() {
-    let path = temp_copy("management_full.flac", "untagged");
+    let (_scratch, path) = temp_copy("management_full.flac", "untagged");
     flac_strip_comments(&path);
     tags::save_tags(&path, &[TagEdit::set_title("Fresh Title")]).unwrap();
     let (tag, _) = tags::read_tags(&path).unwrap();
@@ -923,7 +918,7 @@ fn save_untagged_flac_gains_a_title() {
 // ---------------------------------------------------------------------------
 
 fn save_refused(name: &str, test: &str, edits: &[TagEdit]) -> (Refusal, Vec<u8>, Vec<u8>) {
-    let path = temp_copy(name, test);
+    let (_scratch, path) = temp_copy(name, test);
     let before = std::fs::read(&path).unwrap();
     let refusal = match tags::save_tags(&path, edits) {
         Err(TagsError::SaveRefused { refusal, .. }) => refusal,
@@ -1013,7 +1008,7 @@ fn save_refuses_unencodable_catalog() {
 
 #[test]
 fn save_refuses_empty_vorbis_values() {
-    let path = temp_copy("management_full.flac", "empty-vorbis");
+    let (_scratch, path) = temp_copy("management_full.flac", "empty-vorbis");
     flac_inject_pairs(&path, &[("ZZZ_EMPTY_TEST", "")]);
     let before = std::fs::read(&path).unwrap();
     let refusal = match tags::save_tags(&path, &[TagEdit::set_title("WRAP TITLE")]) {

@@ -467,8 +467,8 @@ mod tests {
 
     #[test]
     fn snapshot_records_nested_files_recursively() {
-        let root = std::env::temp_dir().join(format!("scan-snap-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let scratch = crate::tooling::scratch::ScratchDir::new("scan-snap").expect("scratch");
+        let root = scratch.to_path_buf();
         std::fs::create_dir_all(root.join("sub")).expect("mkdir");
         std::fs::write(root.join("sub").join("a.flac"), b"data").expect("write");
         let first = snapshot_tree(&root).expect("snapshot");
@@ -477,13 +477,12 @@ mod tests {
         std::fs::write(root.join("sub").join("a.flac"), b"longer-data").expect("rewrite");
         let second = snapshot_tree(&root).expect("snapshot");
         assert_ne!(first, second);
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[tokio::test]
     async fn poll_batches_mutation_into_due() {
-        let root = std::env::temp_dir().join(format!("scan-watch-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let scratch = crate::tooling::scratch::ScratchDir::new("scan-watch").expect("scratch");
+        let root = scratch.to_path_buf();
         std::fs::create_dir_all(&root).expect("mkdir");
         std::fs::write(root.join("a.flac"), b"data").expect("write");
         let registry = RootRegistry::new(
@@ -517,13 +516,13 @@ mod tests {
         // Past the window: due.
         let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 71.0).await;
         assert_eq!(action, WatcherAction::Due);
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[tokio::test]
     async fn staging_temps_do_not_trip_the_watcher() {
-        let root = std::env::temp_dir().join(format!("scan-watch-sidecar-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let scratch =
+            crate::tooling::scratch::ScratchDir::new("scan-watch-sidecar").expect("scratch");
+        let root = scratch.to_path_buf();
         std::fs::create_dir_all(&root).expect("mkdir");
         std::fs::write(root.join("a.flac"), b"data").expect("write");
         let registry = RootRegistry::new(
@@ -561,6 +560,5 @@ mod tests {
         std::fs::write(root.join("b.flac"), b"data").expect("write music");
         let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 30.0).await;
         assert!(matches!(action, WatcherAction::Batching { .. }));
-        let _ = std::fs::remove_dir_all(&root);
     }
 }
