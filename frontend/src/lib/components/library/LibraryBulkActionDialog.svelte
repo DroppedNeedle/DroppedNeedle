@@ -14,7 +14,7 @@
 		ReviewListItem
 	} from '$lib/queries/library/LibraryOperationsTypes';
 	import type { LibraryReviewFilters } from '$lib/queries/library/LibraryReviewQueries.svelte';
-	import { API } from '$lib/constants';
+	import { LibraryV3Api } from '$lib/queries/library/LibraryV3Api';
 	import { createUuid } from '$lib/utils/uuid';
 
 	interface Props {
@@ -240,7 +240,7 @@
 		<p class="mt-1 text-xs text-base-content/60">
 			{job.completed_count.toLocaleString()} complete · {job.skipped_count.toLocaleString()} skipped ·
 			{job.failed_count.toLocaleString()} failed ·
-			<a class="link link-primary" href={API.library.operation(job.id)}>Operation {job.id}</a>
+			<a class="link link-primary" href={LibraryV3Api.operation(job.id)}>Operation {job.id}</a>
 		</p>
 	</div>
 {/if}

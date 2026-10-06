@@ -141,7 +141,6 @@ export const API = {
 		cachedAlbumArtwork: (albumId: string, coverVersion: number) =>
 			`/api/v1/library/albums/${encodeURIComponent(albumId)}/artwork/cached?v=${coverVersion}`,
 		rescanAlbum: (mbid: string) => `/api/v1/library/albums/${mbid}/rescan`,
-		reidentifyAlbum: (mbid: string) => `/api/v1/library/albums/${mbid}/reidentify`,
 		reenableAlbumManagement: (albumId: string) =>
 			`/api/v1/library/albums/${encodeURIComponent(albumId)}/management/re-enable`,
 		editionConversionPreflight: (albumId: string) =>
@@ -158,21 +157,6 @@ export const API = {
 			`/api/v1/library/edition-conversions/${encodeURIComponent(jobId)}/recheck`,
 		editionConversionCancel: (jobId: string) =>
 			`/api/v1/library/edition-conversions/${encodeURIComponent(jobId)}/cancel`,
-		reidentificationReleases: (
-			albumId: string,
-			title: string,
-			artist: string,
-			limit = 12,
-			offset = 0
-		) => {
-			const query = new URLSearchParams({
-				title,
-				artist,
-				limit: String(limit),
-				offset: String(offset)
-			});
-			return `/api/v1/library/albums/${encodeURIComponent(albumId)}/reidentification/releases?${query.toString()}`;
-		},
 		removeTrack: (fileId: string) => `/api/v1/library/tracks/${fileId}`,
 		reviews: (
 			params: {
@@ -210,11 +194,6 @@ export const API = {
 		reviewRetry: (reviewId: string) => `/api/v1/library/reviews/${reviewId}/retry`,
 		bulkReviewPreview: () => '/api/v1/library/reviews/bulk-preview',
 		bulkReviewApply: () => '/api/v1/library/reviews/bulk-apply',
-		operation: (jobId: string) => `/api/v1/library/operations/${jobId}`,
-		pauseOperation: (jobId: string) => `/api/v1/library/operations/${jobId}/pause`,
-		resumeOperation: (jobId: string) => `/api/v1/library/operations/${jobId}/resume`,
-		stopOperation: (jobId: string) => `/api/v1/library/operations/${jobId}/stop`,
-		operationCandidate: (jobId: string) => `/api/v1/library/operations/${jobId}/candidate`,
 		previewAlbumSplit: (albumId: string) => `/api/v1/library/albums/${albumId}/split-preview`,
 		splitAlbum: (albumId: string) => `/api/v1/library/albums/${albumId}/split`,
 		previewAlbumMerge: () => '/api/v1/library/albums/merge-preview',
@@ -307,8 +286,6 @@ export const API = {
 			`/api/v1/library/management/identity-preparations/${encodeURIComponent(jobId)}/apply`,
 		discardIdentityPreparation: (jobId: string) =>
 			`/api/v1/library/management/identity-preparations/${encodeURIComponent(jobId)}/discard`,
-		undoAutomaticEdition: (albumId: string) =>
-			`/api/v1/library/albums/${encodeURIComponent(albumId)}/undo-automatic-edition`,
 		scanDiagnostics: (runId: string) => `/api/v1/library/scan-runs/${runId}/diagnostics`,
 		removeAlbum: (mbid: string) => `/api/v1/library/album/${mbid}`,
 		resolveTracks: () => '/api/v1/library/resolve-tracks'

@@ -3,6 +3,8 @@ import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
 import { toastStore } from '$lib/stores/toast';
 import { invalidateLibraryCatalog } from './LibraryCatalogInvalidation';
+import { LibraryV3Api } from './LibraryV3Api';
+import { toOperationResponse } from './libraryOperationAdapters';
 import { createUuid } from '$lib/utils/uuid';
 import type { MembershipPreviewResponse, OperationResponse } from './LibraryOperationsTypes';
 
@@ -30,27 +32,28 @@ interface CatalogCorrectionResponse {
 	catalog_revision: number;
 }
 
-// Re-identification evaluates candidates as an operation the user confirms.
-// v3 identify may seal on its own and has no operation or confirmation
-// route, so this stays on the waiting builder until v3 serves both. The
-// operation id it returns is only read through the matching operation
-// routes, never mixed with a v3 job id.
+// Re-identification evaluates candidates as an operation the user confirms:
+// nothing seals until a candidate is chosen. The album views carry no
+// revisions yet (0 and ''), so those guards are only sent when known.
 export function reidentifyLibraryAlbum() {
 	return createMutation(() => ({
-		mutationFn: (input: {
+		mutationFn: async (input: {
 			albumId: string;
 			expectedAlbumRevision: number;
 			expectedInputRevision: string;
 			oneOffLocalMetadata: boolean;
 			releaseMbid?: string | null;
-		}) =>
-			api.global.post<OperationResponse>(API.library.reidentifyAlbum(input.albumId), {
-				expected_album_revision: input.expectedAlbumRevision,
-				expected_input_revision: input.expectedInputRevision,
-				idempotency_key: createUuid(),
-				one_off_local_metadata: input.oneOffLocalMetadata,
-				release_mbid: input.releaseMbid ?? null
-			}),
+		}): Promise<OperationResponse> =>
+			toOperationResponse(
+				await api.global.v3.POST(LibraryV3Api.reidentifyAlbum(input.albumId), {
+					expected_album_revision:
+						input.expectedAlbumRevision > 0 ? input.expectedAlbumRevision : null,
+					expected_input_revision: input.expectedInputRevision || null,
+					idempotency_key: createUuid(),
+					one_off_local_metadata: input.oneOffLocalMetadata,
+					release_mbid: input.releaseMbid ?? null
+				})
+			),
 		onSuccess: async () => {
 			await invalidateLibraryCatalog();
 			toastStore.show({ message: 'Identification started', type: 'success' });
@@ -61,19 +64,21 @@ export function reidentifyLibraryAlbum() {
 
 export function selectReidentificationCandidate() {
 	return createMutation(() => ({
-		mutationFn: (input: {
+		mutationFn: async (input: {
 			jobId: string;
 			expectedRevision: number;
 			candidateKey?: string;
 			confirmation: boolean;
 			decisionMode?: 'exact_release' | 'custom_edition' | 'leave_unmanaged';
-		}) =>
-			api.global.post<OperationResponse>(API.library.operationCandidate(input.jobId), {
-				expected_row_revision: input.expectedRevision,
-				candidate_key: input.candidateKey ?? '',
-				confirmation: input.confirmation,
-				decision_mode: input.decisionMode ?? 'exact_release'
-			}),
+		}): Promise<OperationResponse> =>
+			toOperationResponse(
+				await api.global.v3.POST(LibraryV3Api.operationCandidate(input.jobId), {
+					expected_row_revision: input.expectedRevision,
+					candidate_key: input.candidateKey ?? '',
+					confirmation: input.confirmation,
+					decision_mode: input.decisionMode ?? 'exact_release'
+				})
+			),
 		onSuccess: invalidateLibraryCatalog,
 		onError: (error) =>
 			toastStore.show({

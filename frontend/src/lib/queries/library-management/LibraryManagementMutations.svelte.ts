@@ -4,6 +4,8 @@ import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
 import { LIBRARY_MANAGEMENT_ENDPOINTS } from './endpoints';
 import type { OperationResponse } from '$lib/queries/library/LibraryOperationsTypes';
+import { operationControlUrl } from '$lib/queries/library/LibraryOperationMutations.svelte';
+import { toOperationResponse } from '$lib/queries/library/libraryOperationAdapters';
 import { toastStore } from '$lib/stores/toast';
 
 import { invalidateLibraryManagementSurfaces } from './LibraryManagementInvalidation';
@@ -276,17 +278,15 @@ export const resolveLibraryManagementImportBundleMutation = () =>
 
 export const controlLibraryManagementOperationMutation = (action: 'pause' | 'resume' | 'stop') =>
 	createMutation(() => ({
-		mutationFn: (input: { jobId: string; expectedRevision: number }) => {
-			const url =
-				action === 'pause'
-					? API.library.pauseOperation(input.jobId)
-					: action === 'resume'
-						? API.library.resumeOperation(input.jobId)
-						: API.library.stopOperation(input.jobId);
-			return api.global.post<OperationResponse>(url, {
-				expected_row_revision: input.expectedRevision
-			});
-		},
+		mutationFn: async (input: {
+			jobId: string;
+			expectedRevision: number;
+		}): Promise<OperationResponse> =>
+			toOperationResponse(
+				await api.global.v3.POST(operationControlUrl(action, input.jobId), {
+					expected_row_revision: input.expectedRevision
+				})
+			),
 		onSuccess: async () => {
 			await invalidateLibraryManagementSurfaces();
 			toastStore.show({ message: `Organization ${action} requested`, type: 'success' });

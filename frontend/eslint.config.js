@@ -85,9 +85,9 @@ const transportRules = [
 // The one exception list for the transport rules: the calls the v3 server has
 // no route for yet. Their URL builders all live in lib/constants.ts (the API
 // registry), grouped by feature: membership and album status, edition
-// conversions and re-identification, scan diagnostics, reviews, operations,
-// repairs and identity preparations, Library Management previews and
-// recovery, cache sync, YouTube, local file downloads, Free Music, drop
+// conversions, scan diagnostics, reviews, bulk review and management
+// operations, repairs and identity preparations, Library Management previews
+// and recovery, cache sync, YouTube, local file downloads, Free Music, drop
 // import, the download queue, held imports and upgrades. When a route lands,
 // its call moves onto a v3() template and its builder leaves that file.
 const WAITING_ON_BACKEND = ['src/lib/constants.ts'];

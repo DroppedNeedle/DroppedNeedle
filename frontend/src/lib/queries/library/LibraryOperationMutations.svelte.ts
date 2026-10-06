@@ -1,10 +1,10 @@
 import { createMutation } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
+import { toOperationResponse } from './libraryOperationAdapters';
 import type {
 	IdentificationControlResponse,
 	LibraryWorkState,
@@ -83,19 +83,23 @@ export function controlIdentification(action: 'pause' | 'resume') {
 	}));
 }
 
+export function operationControlUrl(action: 'pause' | 'resume' | 'stop', jobId: string) {
+	if (action === 'pause') return LibraryV3Api.pauseOperation(jobId);
+	if (action === 'resume') return LibraryV3Api.resumeOperation(jobId);
+	return LibraryV3Api.stopOperation(jobId);
+}
+
 export function controlLibraryOperation(action: 'pause' | 'resume' | 'stop') {
 	return createMutation(() => ({
-		mutationFn: (input: { jobId: string; expectedRevision: number }) => {
-			const url =
-				action === 'pause'
-					? API.library.pauseOperation(input.jobId)
-					: action === 'resume'
-						? API.library.resumeOperation(input.jobId)
-						: API.library.stopOperation(input.jobId);
-			return api.global.post<OperationResponse>(url, {
-				expected_row_revision: input.expectedRevision
-			});
-		},
+		mutationFn: async (input: {
+			jobId: string;
+			expectedRevision: number;
+		}): Promise<OperationResponse> =>
+			toOperationResponse(
+				await api.global.v3.POST(operationControlUrl(action, input.jobId), {
+					expected_row_revision: input.expectedRevision
+				})
+			),
 		onSuccess: invalidateWork,
 		onError: () => toastStore.show({ message: `Could not ${action} this job`, type: 'error' })
 	}));

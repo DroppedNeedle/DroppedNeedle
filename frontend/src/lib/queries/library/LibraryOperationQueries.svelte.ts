@@ -1,9 +1,9 @@
 import { createInfiniteQuery, createQuery, queryOptions } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
+import { toOperationResponse } from './libraryOperationAdapters';
 import { toCurrentRuns, toRunDetail, toScanRun } from './libraryScanAdapters';
 import type {
 	OperationResponse,
@@ -12,8 +12,7 @@ import type {
 	ScanRunHistoryResponse
 } from './LibraryOperationsTypes';
 
-// Scan runs read the v3 scan routes. Operation jobs have no v3 route yet
-// (see the waiting-on-backend list in eslint.config.js).
+// Scan runs and operation jobs read the v3 routes.
 
 const HISTORY_PAGE = 50;
 const FAILURES_PAGE = 50;
@@ -106,7 +105,9 @@ export const getLibraryOperationQuery = (getJobId: Getter<string | null>) =>
 		return {
 			enabled: Boolean(jobId),
 			queryKey: LibraryQueryKeyFactory.repair(jobId ?? ''),
-			queryFn: ({ signal }) =>
-				api.global.get<OperationResponse>(API.library.operation(jobId ?? ''), { signal })
+			queryFn: async ({ signal }): Promise<OperationResponse> =>
+				toOperationResponse(
+					await api.global.v3.GET(LibraryV3Api.operation(jobId ?? ''), { signal })
+				)
 		};
 	});

@@ -9,7 +9,8 @@ import { DiscoverQueryKeyFactory } from '$lib/queries/discover/DiscoverQueryKeyF
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { createUuid } from '$lib/utils/uuid';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
-import type { AutomaticEditionUndoResponse, OperationResponse } from './LibraryOperationsTypes';
+import { LibraryV3Api } from './LibraryV3Api';
+import type { OperationResponse } from './LibraryOperationsTypes';
 
 async function invalidateIdentityPreparation(
 	userId: string | undefined,
@@ -86,13 +87,10 @@ export function undoLibraryAutomaticEdition(getUserId: () => string | undefined)
 			expectedAlbumRevision: number;
 			expectedIdentityRevision: number;
 		}) =>
-			api.global.post<AutomaticEditionUndoResponse>(
-				API.library.undoAutomaticEdition(input.albumId),
-				{
-					expected_album_revision: input.expectedAlbumRevision,
-					expected_identity_revision: input.expectedIdentityRevision
-				}
-			),
+			api.global.v3.POST(LibraryV3Api.undoAutomaticEdition(input.albumId), {
+				expected_album_revision: input.expectedAlbumRevision,
+				expected_identity_revision: input.expectedIdentityRevision
+			}),
 		onSuccess: async () => {
 			await invalidateIdentityPreparation(getUserId(), true);
 			toastStore.show({ message: 'Automatic edition acceptance undone', type: 'success' });

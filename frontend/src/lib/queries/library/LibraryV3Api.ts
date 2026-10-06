@@ -85,6 +85,30 @@ export const LibraryV3Api = {
 		v3('/api/v3/library/reviews/{id}/approve', { path: { id: reviewId } }),
 	rejectReview: (reviewId: string) =>
 		v3('/api/v3/library/reviews/{id}/reject', { path: { id: reviewId } }),
+	operation: (jobId: string) =>
+		v3('/api/v3/library/operations/{job_id}', { path: { job_id: jobId } }),
+	pauseOperation: (jobId: string) =>
+		v3('/api/v3/library/operations/{job_id}/pause', { path: { job_id: jobId } }),
+	resumeOperation: (jobId: string) =>
+		v3('/api/v3/library/operations/{job_id}/resume', { path: { job_id: jobId } }),
+	stopOperation: (jobId: string) =>
+		v3('/api/v3/library/operations/{job_id}/stop', { path: { job_id: jobId } }),
+	operationCandidate: (jobId: string) =>
+		v3('/api/v3/library/operations/{job_id}/candidate', { path: { job_id: jobId } }),
+	reidentifyAlbum: (albumId: string) =>
+		v3('/api/v3/library/albums/{album_id}/reidentify', { path: { album_id: albumId } }),
+	reidentificationReleases: (
+		albumId: string,
+		params: { title: string; artist: string; limit: number; offset: number }
+	) =>
+		v3('/api/v3/library/albums/{album_id}/reidentification/releases', {
+			path: { album_id: albumId },
+			query: params
+		}),
+	undoAutomaticEdition: (albumId: string) =>
+		v3('/api/v3/library/albums/{album_id}/undo-automatic-edition', {
+			path: { album_id: albumId }
+		}),
 	scanRuns: () => v3('/api/v3/library/scan/runs'),
 	scanRun: (runId: string) => v3('/api/v3/library/scan/runs/{id}', { path: { id: runId } }),
 	currentScanRuns: () => v3('/api/v3/library/scan/runs/current'),
