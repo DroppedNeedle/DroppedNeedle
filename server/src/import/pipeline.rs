@@ -1744,10 +1744,25 @@ fn permissiveness(state: &str) -> u8 {
     }
 }
 
+/// v2 served uploaded avatars at `/api/v1/profile/avatar/{id}`; v3 serves
+/// the same file at `/api/v3/users/{id}/avatar`. The cache-busting query
+/// is kept. Any other URL (a Plex picture, say) passes through.
+fn v3_avatar_url(user_id: &str, raw: Option<String>) -> Option<String> {
+    let raw = raw?;
+    let Some(rest) = raw.strip_prefix(&format!("/api/v1/profile/avatar/{user_id}")) else {
+        return Some(raw);
+    };
+    let version = rest
+        .strip_prefix("?v=")
+        .filter(|version| !version.is_empty())
+        .unwrap_or("0");
+    Some(crate::auth::users::services::avatar_url(user_id, version))
+}
+
 fn users_identical(existing: &UserRow, imported: &Value) -> bool {
     existing.display_name == str_or(imported, "display_name", "")
         && existing.email == opt_str(imported, "email")
-        && existing.avatar_url == opt_str(imported, "avatar_url")
+        && existing.avatar_url == v3_avatar_url(&existing.id, opt_str(imported, "avatar_url"))
         && existing.role == str_or(imported, "role", "user")
         && existing.username == opt_str(imported, "username")
         && existing.username_display == opt_str(imported, "username_display")
@@ -1810,15 +1825,17 @@ async fn insert_user(
     let username = (!username_nulled)
         .then(|| opt_str(record, "username"))
         .flatten();
+    let id = str_or(record, "id", "");
+    let avatar_url = v3_avatar_url(&id, opt_str(record, "avatar_url"));
     sqlx::query(
         "INSERT INTO auth_users (id, display_name, email, avatar_url, role, \
          created_at, last_login_at, username, username_display) \
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
-    .bind(str_or(record, "id", ""))
+    .bind(&id)
     .bind(str_or(record, "display_name", ""))
     .bind(email)
-    .bind(opt_str(record, "avatar_url"))
+    .bind(avatar_url)
     .bind(str_or(record, "role", "user"))
     .bind(str_or(record, "created_at", ""))
     .bind(opt_str(record, "last_login_at"))
