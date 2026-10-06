@@ -1261,6 +1261,44 @@ fn committed_dest_swapped_for_symlink_refuses_without_touching_target() {
     assert_eq!(results[0].action, publish::RecoveryAction::CleanupFinished);
 }
 
+/// A crash after the backup path is journaled but before the original
+/// moves there resumes with the original intact and the bundle whole.
+#[test]
+fn crash_after_backup_journaled_resumes() {
+    let fix = fixture("crash-backup-journaled");
+    let (bundle, docs) = two_track_bundle(&fix, PlanKind::SamePath);
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::AfterBackupJournaled));
+    assert!(matches!(
+        publisher.publish(&sealed, &live, &docs),
+        Err(PublishError::InjectedCrash(_))
+    ));
+    drop(publisher);
+
+    let mut conn = open_db(&fix);
+    let journaled = JournalStore::new(&conn).bundle("bundle-1").unwrap();
+    assert!(journaled.iter().any(|journal| journal.backup.is_some()));
+    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].action, publish::RecoveryAction::ResumedCommitted);
+    for item in bundle.items.iter() {
+        let dest = fix
+            .sandbox
+            .resolve(&item.dest_root, &item.dest_rel)
+            .unwrap();
+        assert_staged(&dest, &item.track_id);
+    }
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+    let journals = JournalStore::new(&conn).bundle("bundle-1").unwrap();
+    assert!(
+        journals
+            .iter()
+            .all(|journal| journal.state == JournalState::Cleaned)
+    );
+    assert_eq!(SqliteCatalog.revision(&conn).unwrap(), 1);
+}
+
 #[test]
 fn same_path_after_stage_resume_retains_backup() {
     let fix = fixture("resume-backup");

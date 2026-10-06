@@ -215,6 +215,10 @@ impl Catalog for SqliteCatalog {
 pub enum CrashPoint {
     /// After staging and journaling, before publish.
     AfterStage,
+    /// After a same-path write journaled its backup path, before the
+    /// original moves there. Same-path bundles only, so not in
+    /// [`CrashPoint::all`].
+    AfterBackupJournaled,
     /// After the first destination rename.
     AfterFirstRename,
     /// After all renames, before the catalog transaction.
@@ -230,6 +234,7 @@ impl CrashPoint {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::AfterStage => "after-stage",
+            Self::AfterBackupJournaled => "after-backup-journaled",
             Self::AfterFirstRename => "after-first-rename",
             Self::BeforeCatalogCommit => "before-catalog-commit",
             Self::AfterCatalogCommit => "after-catalog-commit",
@@ -401,7 +406,6 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 &item.managed_updates,
                 &temp,
             )?;
-            write_staged_temp(&temp, &staged_bytes)?;
             let staged_sha = sha256_hex(&staged_bytes);
             let journals = JournalStore::new(&self.conn);
             let journal = FileJournal {
@@ -421,9 +425,12 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 state: JournalState::Prepared,
                 seq: 0,
             };
+            // Journal first, then the temp: a crash between the two leaves
+            // a row recovery knows about, never an orphan temp.
             if journals.get(&journal_id)?.is_none() {
                 journals.insert(&journal)?;
             }
+            write_staged_temp(&temp, &staged_bytes)?;
             journals.transition(&journal_id, JournalState::Prepared, JournalState::Staged)?;
             let prior_mgmt = self
                 .catalog
@@ -512,7 +519,6 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         }
         let temp = self.sandbox.temp_path_for(&dest, &journal_id)?;
         self.sandbox.ensure_under_roots(&temp)?;
-        write_staged_temp(&temp, &bytes)?;
         let journals = JournalStore::new(&self.conn);
         if journals.get(&journal_id)?.is_none() {
             journals.insert(&FileJournal {
@@ -533,6 +539,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 seq: 0,
             })?;
         }
+        write_staged_temp(&temp, &bytes)?;
         journals.transition(&journal_id, JournalState::Prepared, JournalState::Staged)?;
         Ok(())
     }
@@ -630,6 +637,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 let backup = self.sandbox.backup_path_for(&dest, &journal.id)?;
                 self.sandbox.ensure_under_roots(&backup)?;
                 JournalStore::new(&self.conn).set_backup(&journal.id, &backup.to_string_lossy())?;
+                self.maybe_crash(CrashPoint::AfterBackupJournaled)?;
                 std::fs::rename(&dest, &backup).map_err(PublishError::from)?;
                 if let Some(parent) = dest.parent() {
                     super::journal::fsync_dir(parent)?;
