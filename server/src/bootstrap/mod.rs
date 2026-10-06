@@ -392,29 +392,10 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         "media-workers",
         tokio::spawn(async move { media_workers.run().await }),
     );
-    let acquire_loops = acquire
-        .spawn_loops(
-            runtime.wakeups().clone(),
-            runtime.lane().clone(),
-            stop.clone(),
-        )
-        .await
-        .map_err(stage("acquire loops"))?;
-    background.extend(acquire_loops);
-    background.extend(library.spawn_loops(stop.clone()));
-    // `activity.changed` for every open stream; it closes the hub at
-    // shutdown so streams end before connections drain.
-    background.push(
-        "event-revisions",
-        tokio::spawn(crate::events::revisions::run(
-            events.clone(),
-            runtime.pool().clone(),
-            stop,
-        )),
-    );
-    // Registry jobs stop through the registry at shutdown, not the watch.
-    jobs.spawn_loops().await.map_err(stage("jobs loops"))?;
 
+    // The state attaches the hub to every publishing bundle (presence,
+    // acquisition, library), so it is built before any loop starts: the
+    // first wanted sweep, scan or presence poll already reaches the hub.
     let state = AppState::new(
         ids,
         http,
@@ -432,11 +413,35 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         plugins,
         concerts,
     )
-    .with_events(events);
+    .with_events(events.clone());
+    let acquire_loops = state
+        .acquire
+        .spawn_loops(
+            runtime.wakeups().clone(),
+            runtime.lane().clone(),
+            stop.clone(),
+        )
+        .await
+        .map_err(stage("acquire loops"))?;
+    background.extend(acquire_loops);
+    background.extend(state.library.spawn_loops(stop.clone()));
+    // `activity.changed` for every open stream.
+    background.push(
+        "event-revisions",
+        tokio::spawn(crate::events::revisions::run(
+            events.clone(),
+            runtime.pool().clone(),
+            stop,
+        )),
+    );
+    // Registry jobs stop through the registry at shutdown, not the watch.
+    jobs.spawn_loops().await.map_err(stage("jobs loops"))?;
+
     let router = create_app_with_web(state, web);
     Ok((
         router,
         background
+            .with_events(events)
             .with_jobs(jobs)
             .with_runtime(runtime)
             .with_data_lock(data_lock),

@@ -7,8 +7,9 @@
 //! that one read instead of polling per connection. A scan changing state
 //! pokes the loop so it reads at once instead of at its next tick.
 //!
-//! The loop survives database errors (logged, retried next tick) and, at
-//! shutdown, closes the hub so open streams end before connections drain.
+//! The loop survives database errors (logged, retried next tick) and stops
+//! when the shutdown signal flips. `serve` closes the hub on that same
+//! signal.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -62,7 +63,7 @@ pub async fn read_revisions(pool: &SqlitePool) -> Result<BTreeMap<String, u64>, 
     Ok(revisions)
 }
 
-/// Run the poller until `stop` flips, then close the hub.
+/// Run the poller until `stop` flips.
 pub async fn run(hub: EventHub, pool: SqlitePool, mut stop: watch::Receiver<bool>) {
     let mut previous: Option<BTreeMap<String, u64>> = None;
     loop {
@@ -90,5 +91,4 @@ pub async fn run(hub: EventHub, pool: SqlitePool, mut stop: watch::Receiver<bool
             }
         }
     }
-    hub.close();
 }

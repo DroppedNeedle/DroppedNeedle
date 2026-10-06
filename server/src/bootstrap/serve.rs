@@ -1,11 +1,12 @@
 //! Listening, serving and the shutdown order.
 //!
 //! On the stop signal, [`serve`] first tells every background loop to stop
-//! (one watch channel), then drains HTTP connections, cancels registry
-//! jobs and joins the loops at the same time, each bounded by
-//! `SHUTDOWN_GRACE_PERIOD`. A long stream held open by a client therefore
-//! never keeps scans or downloads running. Whatever is still running at
-//! the bound is aborted with a warning. The database closes last.
+//! (one watch channel) and ends open event streams, then drains HTTP
+//! connections, cancels registry jobs and joins the loops at the same
+//! time, each bounded by `SHUTDOWN_GRACE_PERIOD`. A long stream held open
+//! by a client therefore never keeps scans or downloads running. Whatever
+//! is still running at the bound is aborted with a warning. The database
+//! closes last.
 
 use std::{
     future::{Future, IntoFuture as _},
@@ -18,7 +19,8 @@ use thiserror::Error;
 use tokio::{net::TcpListener, sync::watch, task::JoinHandle};
 
 use crate::{
-    config::BindHost, db::DbRuntime, jobs::wiring::JobsSetup, tooling::datalock::DataLock,
+    config::BindHost, db::DbRuntime, events::EventHub, jobs::wiring::JobsSetup,
+    tooling::datalock::DataLock,
 };
 
 /// Listen backlog, the usual server default.
@@ -85,6 +87,7 @@ pub struct Background {
     stop: watch::Sender<bool>,
     loops: Vec<(&'static str, JoinHandle<()>)>,
     jobs: Option<JobsSetup>,
+    events: Option<EventHub>,
     runtime: Option<DbRuntime>,
     data_lock: Option<DataLock>,
 }
@@ -98,6 +101,7 @@ impl Background {
             stop,
             loops: Vec::new(),
             jobs: None,
+            events: None,
             runtime: None,
             data_lock: None,
         }
@@ -122,6 +126,14 @@ impl Background {
     #[must_use]
     pub fn with_jobs(mut self, jobs: JobsSetup) -> Self {
         self.jobs = Some(jobs);
+        self
+    }
+
+    /// End this hub's open event streams the moment shutdown starts, so
+    /// connection draining never waits on them.
+    #[must_use]
+    pub fn with_events(mut self, hub: EventHub) -> Self {
+        self.events = Some(hub);
         self
     }
 
@@ -191,8 +203,12 @@ pub async fn serve(
         () = signal => None,
         outcome = &mut server => Some(outcome),
     };
-    // Loops and the HTTP drain hear the signal together.
+    // Loops and the HTTP drain hear the signal together. Event streams
+    // never end on their own, so they close here, before draining starts.
     background.stop.send_replace(true);
+    if let Some(events) = &background.events {
+        events.close();
+    }
     let grace = background.grace;
     let drain = async {
         if let Some(outcome) = ended_early {

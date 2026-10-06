@@ -750,11 +750,59 @@ pub async fn process_drop_job(
     let now = deps.clock.now_unix();
     let op_id = ops.register("drop-import", &job.id, now).await?.id;
     ops.transition(&op_id, OpState::Running, now, "").await?;
-    let mut resolved: i64 = 0;
     tokio::fs::create_dir_all(quarantine_dir(staging_root))
         .await
         .map_err(|error| format!("cannot open quarantine: {error}"))?;
 
+    let mut resolved: i64 = 0;
+    let walked = drop_items(
+        wakeups,
+        lane,
+        deps,
+        staging_root,
+        job,
+        rg_mbid,
+        &mut resolved,
+    )
+    .await;
+    // Once per job, not per file, and also when a later item failed the
+    // job: whatever resolved is in the library.
+    if resolved > 0
+        && let Some(rg) = rg_mbid
+    {
+        announce_request_imported(deps, &job.user_id, rg).await;
+    }
+    walked?;
+    let done = deps.clock.now_unix();
+    if resolved > 0 {
+        deps.ticks.announce(FlowEvent::ImportFinished {
+            release_group_mbid: rg_mbid.unwrap_or_default().to_owned(),
+            track_count: resolved,
+            source: "drop_import".to_owned(),
+        });
+    }
+    ops.transition(
+        &op_id,
+        OpState::Succeeded,
+        done,
+        &format!("{} items", job.items.len()),
+    )
+    .await?;
+    mark_finished(wakeups, lane, DROP_IMPORT_JOB, true).await;
+    Ok(())
+}
+
+/// Walk a drop job's unsettled items, counting resolves into `resolved`.
+/// The first resolve marks the album request imported.
+async fn drop_items(
+    wakeups: &DurableWorkWakeups,
+    lane: &WriteLane,
+    deps: &DropImportDeps,
+    staging_root: &Path,
+    job: &mut DropJob,
+    rg_mbid: Option<&str>,
+    resolved: &mut i64,
+) -> Result<(), String> {
     for item in &mut job.items {
         if item.outcome.is_some() {
             continue;
@@ -764,7 +812,12 @@ pub async fn process_drop_job(
             VerifyVerdict::Ok => {
                 let final_path = deps.organise.organise(&job.id, &item.staged_path)?;
                 item.outcome = Some(DropItemOutcome::Resolved(final_path.clone()));
-                resolved += 1;
+                if *resolved == 0
+                    && let Some(rg) = rg_mbid
+                {
+                    mark_imported(deps, rg, at).await;
+                }
+                *resolved += 1;
                 deps.ticks.emit(
                     "drop_import.resolved",
                     &format!("{} resolved to {final_path}", item.name),
@@ -816,26 +869,6 @@ pub async fn process_drop_job(
         }
         heartbeat(wakeups, lane, DROP_IMPORT_JOB).await;
     }
-    let done = deps.clock.now_unix();
-    if resolved > 0 {
-        // Once per job, not per file, so requesters hear about it once.
-        if let Some(rg) = rg_mbid {
-            mark_imported(deps, &job.user_id, rg, done).await;
-        }
-        deps.ticks.announce(FlowEvent::ImportFinished {
-            release_group_mbid: rg_mbid.unwrap_or_default().to_owned(),
-            track_count: resolved,
-            source: "drop_import".to_owned(),
-        });
-    }
-    ops.transition(
-        &op_id,
-        OpState::Succeeded,
-        done,
-        &format!("{} items", job.items.len()),
-    )
-    .await?;
-    mark_finished(wakeups, lane, DROP_IMPORT_JOB, true).await;
     Ok(())
 }
 
@@ -878,8 +911,10 @@ pub async fn resolve_quarantined_item(
                 .await
                 .map_err(|error| error.to_string())?;
             item.outcome = Some(DropItemOutcome::Resolved(final_path.clone()));
-            if let Some(rg) = rg_mbid {
-                mark_imported(deps, &importer, rg, at).await;
+            if let Some(rg) = rg_mbid
+                && mark_imported(deps, rg, at).await
+            {
+                announce_request_imported(deps, &importer, rg).await;
             }
             deps.ticks.emit(
                 "drop_import.resolved",
@@ -911,24 +946,58 @@ pub async fn resolve_quarantined_item(
     Ok(true)
 }
 
-/// Mark one album request imported after a drop resolved it, and tell
-/// everyone who asked for it, other than the importer, that it arrived
-/// (v2 `request_imported`; v2 told only the first requester). A failed
-/// write is logged; the status sync reconciles the row later.
-async fn mark_imported(deps: &DropImportDeps, importer: &str, rg_mbid: &str, at: i64) {
+/// Mark one album request imported after a drop resolved it. Answers
+/// true only when this call moved the status to `imported`. The write is
+/// guarded by the generation it read, so two resolves racing each other
+/// cannot both claim the change; a write that lost to some other update
+/// reads the row again. A failed write is logged; the status sync
+/// reconciles the row later.
+async fn mark_imported(deps: &DropImportDeps, rg_mbid: &str, at: i64) -> bool {
+    const ATTEMPTS: usize = 3;
     let at = u64::try_from(at).unwrap_or(0);
-    if let Err(error) = deps
-        .ledger
-        .update_status(RequestKind::Album, rg_mbid, "imported", Some(at), None)
-        .await
-    {
-        tracing::warn!(
-            rg_mbid,
-            ?error,
-            "drop import could not mark the request imported"
-        );
-        return;
+    for _ in 0..ATTEMPTS {
+        let generation = match deps.ledger.get(RequestKind::Album, rg_mbid).await {
+            Ok(Some(record)) if record.status == "imported" => return false,
+            Ok(Some(record)) => record.generation,
+            Ok(None) => return false,
+            Err(error) => {
+                tracing::warn!(rg_mbid, ?error, "drop import could not read the request");
+                return false;
+            }
+        };
+        match deps
+            .ledger
+            .update_status(
+                RequestKind::Album,
+                rg_mbid,
+                "imported",
+                Some(at),
+                Some(generation),
+            )
+            .await
+        {
+            Ok(true) => return true,
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(
+                    rg_mbid,
+                    ?error,
+                    "drop import could not mark the request imported"
+                );
+                return false;
+            }
+        }
     }
+    tracing::warn!(
+        rg_mbid,
+        "drop import gave up marking the request imported: the row kept changing"
+    );
+    false
+}
+
+/// Tell everyone who asked for the album, other than the importer, that
+/// it arrived (v2 `request_imported`; v2 told only the first requester).
+async fn announce_request_imported(deps: &DropImportDeps, importer: &str, rg_mbid: &str) {
     let record = match deps.ledger.get(RequestKind::Album, rg_mbid).await {
         Ok(Some(record)) => record,
         Ok(None) => return,

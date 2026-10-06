@@ -445,14 +445,27 @@ impl PresenceRegistry {
         self.generation.load(Ordering::SeqCst)
     }
 
-    fn publish(&self) {
+    /// Broadcast the projected snapshot of `entries`. Callers hold the
+    /// entries lock across this call, so two concurrent changes publish in
+    /// the order they were applied and the hub keeps the latest one.
+    fn publish(&self, entries: &HashMap<String, PresenceEntry>) {
         self.generation.fetch_add(1, Ordering::SeqCst);
-        if self.events.is_attached() {
-            self.events
-                .publish(crate::events::Event::NowPlaying(NowPlayingSnapshot {
-                    sessions: self.snapshot(),
-                }));
+        if !self.events.is_attached() {
+            return;
         }
+        let Ok(visibility) = self.visibility.lock() else {
+            tracing::warn!("presence visibility lock is poisoned; snapshot not published");
+            return;
+        };
+        let sessions = entries
+            .values()
+            .filter_map(|entry| project(entry, &visibility))
+            .collect();
+        drop(visibility);
+        self.events
+            .publish(crate::events::Event::NowPlaying(NowPlayingSnapshot {
+                sessions,
+            }));
     }
 
     /// Upsert a session. `load_visibility` resolves the owner's setting on
@@ -493,19 +506,16 @@ impl PresenceRegistry {
                     track_file_id: update.track_file_id,
                 },
             );
+            self.publish(&entries);
         }
-        self.publish();
     }
 
     /// Drop one session, publishing only when something was there.
     pub fn remove(&self, key: &str) {
-        let existed = self
-            .entries
-            .lock()
-            .map(|mut entries| entries.remove(key).is_some())
-            .unwrap_or(false);
-        if existed {
-            self.publish();
+        if let Ok(mut entries) = self.entries.lock()
+            && entries.remove(key).is_some()
+        {
+            self.publish(&entries);
         }
     }
 
@@ -513,7 +523,6 @@ impl PresenceRegistry {
     /// result. Idle stays silent: no entries before and none now means no
     /// publish (v2 `reconcile_source` no-op rule).
     pub fn reconcile_source(&self, source: &str, sessions: Vec<ExternalSession>, now: i64) {
-        let mut changed = false;
         if let Ok(mut entries) = self.entries.lock() {
             let had_any = entries
                 .values()
@@ -543,18 +552,14 @@ impl PresenceRegistry {
                     },
                 );
             }
-            changed = true;
-        }
-        if changed {
-            self.publish();
+            self.publish(&entries);
         }
     }
 
     /// Drop sessions that stopped heartbeating; publish only when any were
     /// removed (v2 `sweep`).
     pub fn sweep(&self, now: i64) -> usize {
-        let removed = self
-            .entries
+        self.entries
             .lock()
             .map(|mut entries| {
                 let cutoff = now - PRESENCE_TTL_SECS;
@@ -566,13 +571,12 @@ impl PresenceRegistry {
                 for key in &stale {
                     entries.remove(key);
                 }
+                if !stale.is_empty() {
+                    self.publish(&entries);
+                }
                 stale.len()
             })
-            .unwrap_or(0);
-        if removed > 0 {
-            self.publish();
-        }
-        removed
+            .unwrap_or(0)
     }
 
     /// Apply a user's privacy choice (unknown values normalize to full)
@@ -585,7 +589,9 @@ impl PresenceRegistry {
         if let Ok(mut cached) = self.visibility.lock() {
             cached.insert(user_id.to_owned(), normalized);
         }
-        self.publish();
+        if let Ok(entries) = self.entries.lock() {
+            self.publish(&entries);
+        }
     }
 
     /// Privacy-projected live sessions (v2 `snapshot`; no sweep here, the
