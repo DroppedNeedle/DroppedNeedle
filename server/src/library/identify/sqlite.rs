@@ -1098,12 +1098,17 @@ impl QueueStore for SqliteIdentifyStore {
     fn claim(&self, now_ms: u64, lease_ms: u64) -> Option<IdentifyJob> {
         self.write("claim identify job", |tx| {
             let now = now_ms as i64;
+            // While identification is paused nothing is claimed, lapsed
+            // leases included; the check sits in the same statement so a
+            // pause can never race a claim.
             let job = tx
                 .query_row(
                     &format!(
                         "SELECT {JOB_COLUMNS} FROM library_identify_jobs \
-                         WHERE (state IN ('queued','deferred') AND not_before_ms <= ?1) \
-                         OR (state = 'running' AND lease_expires_ms <= ?1) \
+                         WHERE ((state IN ('queued','deferred') AND not_before_ms <= ?1) \
+                         OR (state = 'running' AND lease_expires_ms <= ?1)) \
+                         AND NOT EXISTS (SELECT 1 FROM library_work_control \
+                             WHERE queue_kind = 'identification' AND state = 'paused') \
                          ORDER BY priority, created_ms, rowid LIMIT 1"
                     ),
                     params![now],

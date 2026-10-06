@@ -122,9 +122,9 @@ impl LibrarySetup {
     }
 
     /// True while identification is paused. The identify loop checks this
-    /// before it claims each job. An unreadable switch reads as running,
-    /// with the error logged: a paused queue that cannot be read should
-    /// not freeze identification for good. Blocking.
+    /// before each claim to stop early; the claim itself also refuses
+    /// while paused, so this is only a fast path. An unreadable switch
+    /// reads as running, with the error logged. Blocking.
     pub fn identification_paused(&self) -> bool {
         match self
             .scan_store
