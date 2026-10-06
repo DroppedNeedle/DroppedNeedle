@@ -80,6 +80,16 @@ impl LibrarySetup {
 
     /// One watcher tick over the persistent watcher state.
     pub async fn watcher_tick(&self) -> WatcherAction {
+        let (_live, quiet) = watch::channel(false);
+        self.watcher_tick_with_shutdown(&quiet).await
+    }
+
+    /// One watcher tick that stops its tree snapshot once `shutdown` is
+    /// signalled; an interrupted root keeps its previous baseline.
+    pub async fn watcher_tick_with_shutdown(
+        &self,
+        shutdown: &watch::Receiver<bool>,
+    ) -> WatcherAction {
         // The state swaps out and back so no mutex guard crosses the
         // snapshot await.
         let mut state = {
@@ -98,6 +108,7 @@ impl LibrarySetup {
             &(self.root_dirs)(),
             &self.pool,
             now_unix(),
+            shutdown,
         )
         .await;
         if matches!(action, WatcherAction::Due) {
@@ -251,8 +262,8 @@ pub(crate) async fn watcher_loop(setup: LibrarySetup, mut shutdown: watch::Recei
         // A snapshot of a large tree takes a while; shutdown does not wait
         // for it.
         let tick = {
-            let setup = setup.clone();
-            drive_blocking(move || async move { setup.watcher_tick().await })
+            let (setup, shutdown) = (setup.clone(), shutdown.clone());
+            drive_blocking(move || async move { setup.watcher_tick_with_shutdown(&shutdown).await })
         };
         let action = tokio::select! {
             _ = shutdown.changed() => break,

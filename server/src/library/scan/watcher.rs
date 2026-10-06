@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tokio::sync::Notify;
+use tokio::sync::{Notify, watch};
 
 use super::fs::is_management_artifact;
 use super::models::{ScanKind, ScanRequest, ScanTrigger};
@@ -64,11 +64,19 @@ pub type Snapshot = HashMap<String, SnapshotEntry>;
 /// Recursive stat-only snapshot of `root` (v2 `_snapshot_tree`).
 /// Unreadable subdirectories are skipped; a missing top-level root is an
 /// error, and the caller keeps its previous baseline instead of
-/// scan-storming on a transient unmount.
-pub fn snapshot_tree(root: &Path) -> std::io::Result<Snapshot> {
+/// scan-storming on a transient unmount. `stop` is asked before each
+/// directory; once it answers true the walk ends with `Interrupted`, so
+/// shutdown never waits out a large tree.
+pub fn snapshot_tree(root: &Path, stop: &dyn Fn() -> bool) -> std::io::Result<Snapshot> {
     let mut snapshot = Snapshot::new();
     let mut stack = vec![root.to_owned()];
     while let Some(current) = stack.pop() {
+        if stop() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "watcher snapshot stopped for shutdown",
+            ));
+        }
         let entries = match std::fs::read_dir(&current) {
             Ok(entries) => entries.collect::<Vec<_>>(),
             Err(error) => {
@@ -283,16 +291,21 @@ pub async fn poll_once(
     root_paths: &HashMap<String, PathBuf>,
     pool: &BlockingPool,
     now: f64,
+    shutdown: &watch::Receiver<bool>,
 ) -> WatcherAction {
     let poll_interval = settings.poll_interval_seconds.max(MIN_POLL_INTERVAL_SECS);
     let window = settings.batch_window_seconds.max(0.0);
     let enabled = settings.enabled && registry.enabled();
     if enabled {
         for (root_id, root_path) in root_paths {
+            if *shutdown.borrow() {
+                break;
+            }
             let path = root_path.clone();
             let pool = pool.clone();
+            let stop = shutdown.clone();
             let snapshot = pool
-                .run(move || snapshot_tree(&path))
+                .run(move || snapshot_tree(&path, &|| *stop.borrow()))
                 .await
                 .unwrap_or_else(|error| Err(std::io::Error::other(error)));
             let snapshot = match snapshot {
@@ -402,16 +415,17 @@ mod tests {
         let root = scratch.to_path_buf();
         std::fs::create_dir_all(root.join("sub")).expect("mkdir");
         std::fs::write(root.join("sub").join("a.flac"), b"data").expect("write");
-        let first = snapshot_tree(&root).expect("snapshot");
+        let first = snapshot_tree(&root, &|| false).expect("snapshot");
         assert!(first.contains_key("sub/a.flac"));
         assert!(first.contains_key("sub"));
         std::fs::write(root.join("sub").join("a.flac"), b"longer-data").expect("rewrite");
-        let second = snapshot_tree(&root).expect("snapshot");
+        let second = snapshot_tree(&root, &|| false).expect("snapshot");
         assert_ne!(first, second);
     }
 
     #[tokio::test]
     async fn poll_batches_mutation_into_due() {
+        let (_live, quiet) = watch::channel(false);
         let scratch = crate::tooling::scratch::ScratchDir::new("scan-watch").expect("scratch");
         let root = scratch.to_path_buf();
         std::fs::create_dir_all(&root).expect("mkdir");
@@ -435,17 +449,26 @@ mod tests {
         };
         let mut state = WatcherState::new();
         // First sighting seeds silently: idle, not due.
-        let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 0.0).await;
+        let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 0.0, &quiet).await;
         assert!(matches!(action, WatcherAction::Idle { .. }));
         // A mutation starts batching.
         std::fs::write(root.join("b.flac"), b"data").expect("write");
-        let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 10.0).await;
+        let action = poll_once(
+            &mut state, &settings, &registry, &roots, &pool, 10.0, &quiet,
+        )
+        .await;
         assert!(matches!(action, WatcherAction::Batching { .. }));
         // Inside the window: still batching.
-        let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 20.0).await;
+        let action = poll_once(
+            &mut state, &settings, &registry, &roots, &pool, 20.0, &quiet,
+        )
+        .await;
         assert!(matches!(action, WatcherAction::Batching { .. }));
         // Past the window: due, for the root that changed only.
-        let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 71.0).await;
+        let action = poll_once(
+            &mut state, &settings, &registry, &roots, &pool, 71.0, &quiet,
+        )
+        .await;
         assert_eq!(action, WatcherAction::Due);
         let request = watcher_request(&registry, &[], state.changed_roots()).expect("request");
         assert!(request.scopes.iter().all(|scope| scope.root_id == "r1"));
@@ -454,6 +477,7 @@ mod tests {
 
     #[tokio::test]
     async fn staging_temps_do_not_trip_the_watcher() {
+        let (_live, quiet) = watch::channel(false);
         let scratch =
             crate::tooling::scratch::ScratchDir::new("scan-watch-sidecar").expect("scratch");
         let root = scratch.to_path_buf();
@@ -477,22 +501,31 @@ mod tests {
             batch_window_seconds: 60.0,
         };
         let mut state = WatcherState::new();
-        let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 0.0).await;
+        let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 0.0, &quiet).await;
         assert!(matches!(action, WatcherAction::Idle { .. }));
         // A publish staging temp lands beside the music: still idle, with
         // no batch pending.
         let temp = root.join(".droppedneedle-management-j1.a.flac.tmp");
         std::fs::write(&temp, b"staged").expect("write temp");
-        let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 10.0).await;
+        let action = poll_once(
+            &mut state, &settings, &registry, &roots, &pool, 10.0, &quiet,
+        )
+        .await;
         assert!(matches!(action, WatcherAction::Idle { .. }));
         assert!(!state.is_pending(), "staging temp leaves no batch pending");
         // Rewriting the temp stays quiet too, while a real music file
         // still trips the batch.
         std::fs::write(&temp, b"staged-v2").expect("rewrite temp");
-        let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 20.0).await;
+        let action = poll_once(
+            &mut state, &settings, &registry, &roots, &pool, 20.0, &quiet,
+        )
+        .await;
         assert!(matches!(action, WatcherAction::Idle { .. }));
         std::fs::write(root.join("b.flac"), b"data").expect("write music");
-        let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 30.0).await;
+        let action = poll_once(
+            &mut state, &settings, &registry, &roots, &pool, 30.0, &quiet,
+        )
+        .await;
         assert!(matches!(action, WatcherAction::Batching { .. }));
     }
 }
