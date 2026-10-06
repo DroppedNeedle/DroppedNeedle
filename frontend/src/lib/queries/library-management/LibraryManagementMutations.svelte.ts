@@ -2,6 +2,7 @@ import { createMutation } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
+import { LIBRARY_MANAGEMENT_ENDPOINTS } from './endpoints';
 import type { OperationResponse } from '$lib/queries/library/LibraryOperationsTypes';
 import { toastStore } from '$lib/stores/toast';
 
@@ -14,7 +15,6 @@ import type {
 	LibraryManagementBaselinePurgeRequest,
 	LibraryManagementBaselinePurgeResponse,
 	LibraryManagementBaselineRestorePreviewRequest,
-	LibraryManagementChangeImpact,
 	LibraryManagementDuplicateResolutionPreviewRequest,
 	LibraryManagementDiscardRequest,
 	LibraryManagementImportBundleResolveResponse,
@@ -26,12 +26,8 @@ import type {
 	LibraryManagementProfileCreateRequest,
 	LibraryManagementProfileDeleteRequest,
 	LibraryManagementProfileExportRequest,
-	LibraryManagementProfileExportResponse,
 	LibraryManagementProfileImportPreviewRequest,
-	LibraryManagementProfileImportPreviewResponse,
 	LibraryManagementProfileImportRequest,
-	LibraryManagementProfileImportResponse,
-	LibraryManagementProfileMutationResponse,
 	LibraryManagementProfileUpdateRequest,
 	LibraryManagementSettingsImpactRequest,
 	LibraryManagementSettingsResponse,
@@ -52,58 +48,52 @@ const showQueued = (message: string) => async () => {
 export const updateLibraryManagementSettingsMutation = () =>
 	createMutation(() => ({
 		mutationFn: (request: LibraryManagementSettingsUpdateRequest) =>
-			api.global.put<LibraryManagementSettingsResponse>(API.libraryManagement.settings(), request),
+			api.global.v3.PUT(LIBRARY_MANAGEMENT_ENDPOINTS.settings(), request),
 		onSuccess: invalidateLibraryManagementSurfaces
 	}));
 
 export const previewLibraryManagementSettingsImpactMutation = () =>
 	createMutation(() => ({
 		mutationFn: (request: LibraryManagementSettingsImpactRequest) =>
-			api.global.post<LibraryManagementChangeImpact>(API.libraryManagement.impact(), request)
+			api.global.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.impact(), request)
 	}));
 
 export const validateLibraryManagementSettingsMutation = () =>
 	createMutation(() => ({
 		mutationFn: (request: LibraryManagementSettingsImpactRequest) =>
-			api.global.post<LibraryManagementChangeImpact>(API.libraryManagement.validate(), request)
+			api.global.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.validate(), request)
 	}));
 
 export const createLibraryManagementProfileMutation = () =>
 	createMutation(() => ({
 		mutationFn: (request: LibraryManagementProfileCreateRequest) =>
-			api.global.post<LibraryManagementProfileMutationResponse>(
-				API.libraryManagement.profiles(),
-				request
-			),
+			api.global.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.profiles(), request),
 		onSuccess: invalidateLibraryManagementSurfaces
 	}));
 
 export const copyLibraryManagementProfileMutation = () =>
 	createMutation(() => ({
 		mutationFn: (input: { profileId: string; request: LibraryManagementProfileCopyRequest }) =>
-			api.global.post<LibraryManagementProfileMutationResponse>(
-				API.libraryManagement.copyProfile(input.profileId),
-				input.request
-			),
+			api.global.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.copyProfile(input.profileId), input.request),
 		onSuccess: invalidateLibraryManagementSurfaces
 	}));
 
 export const updateLibraryManagementProfileMutation = () =>
 	createMutation(() => ({
 		mutationFn: (input: { profileId: string; request: LibraryManagementProfileUpdateRequest }) =>
-			api.global.put<LibraryManagementProfileMutationResponse>(
-				API.libraryManagement.profile(input.profileId),
-				input.request
-			),
+			api.global.v3.PUT(LIBRARY_MANAGEMENT_ENDPOINTS.profile(input.profileId), input.request),
 		onSuccess: invalidateLibraryManagementSurfaces
 	}));
 
 export const deleteLibraryManagementProfileMutation = () =>
 	createMutation(() => ({
 		mutationFn: (input: { profileId: string; request: LibraryManagementProfileDeleteRequest }) =>
+			// The typed client sends no DELETE body, so this one call names its type.
 			api.global.delete<LibraryManagementSettingsResponse>(
-				API.libraryManagement.profile(input.profileId),
-				{ body: input.request }
+				LIBRARY_MANAGEMENT_ENDPOINTS.profile(input.profileId),
+				{
+					body: input.request
+				}
 			),
 		onSuccess: invalidateLibraryManagementSurfaces
 	}));
@@ -111,28 +101,19 @@ export const deleteLibraryManagementProfileMutation = () =>
 export const exportLibraryManagementProfileMutation = () =>
 	createMutation(() => ({
 		mutationFn: (input: { profileId: string; request: LibraryManagementProfileExportRequest }) =>
-			api.global.post<LibraryManagementProfileExportResponse>(
-				API.libraryManagement.exportProfile(input.profileId),
-				input.request
-			)
+			api.global.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.exportProfile(input.profileId), input.request)
 	}));
 
 export const previewLibraryManagementProfileImportMutation = () =>
 	createMutation(() => ({
 		mutationFn: (request: LibraryManagementProfileImportPreviewRequest) =>
-			api.global.post<LibraryManagementProfileImportPreviewResponse>(
-				API.libraryManagement.profileImportPreview(),
-				request
-			)
+			api.global.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.profileImportPreview(), request)
 	}));
 
 export const importLibraryManagementProfileMutation = () =>
 	createMutation(() => ({
 		mutationFn: (request: LibraryManagementProfileImportRequest) =>
-			api.global.post<LibraryManagementProfileImportResponse>(
-				API.libraryManagement.profileImports(),
-				request
-			),
+			api.global.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.profileImports(), request),
 		onSuccess: invalidateLibraryManagementSurfaces
 	}));
 

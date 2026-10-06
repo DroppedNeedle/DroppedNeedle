@@ -3,19 +3,24 @@ import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
+import { LibraryV3Api } from './LibraryV3Api';
+import { toTargetLibrarySettings } from './libraryAdapters';
 import type {
 	LibraryPathMappingReport,
 	LibraryPolicyTreeResponse,
-	LibraryRestorableRootsResponse,
-	TargetLibrarySettingsResponse
+	LibraryRestorableRootsResponse
 } from './LibraryOperationsTypes';
+
+// The library settings read is on v3. The policy tree, path mapping and
+// restorable roots have no v3 route yet (see the waiting-on-backend list in
+// eslint.config.js).
 
 export const getTargetLibrarySettingsQuery = (enabled: Getter<boolean> = () => true) =>
 	createQuery(() => ({
 		enabled: enabled(),
 		queryKey: LibraryQueryKeyFactory.targetSettings(),
-		queryFn: ({ signal }) =>
-			api.global.get<TargetLibrarySettingsResponse>(API.library.settings(), { signal })
+		queryFn: async ({ signal }) =>
+			toTargetLibrarySettings(await api.global.v3.GET(LibraryV3Api.settings(), { signal }))
 	}));
 
 export const getLibraryRestorableRootsQuery = (enabled: Getter<boolean> = () => true) =>

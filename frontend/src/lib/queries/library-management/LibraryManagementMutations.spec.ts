@@ -15,7 +15,11 @@ vi.mock('$lib/api/client', () => ({
 		global: {
 			delete: vi.fn().mockResolvedValue({}),
 			post: vi.fn().mockResolvedValue({}),
-			put: vi.fn().mockResolvedValue({})
+			put: vi.fn().mockResolvedValue({}),
+			v3: {
+				POST: vi.fn().mockResolvedValue({}),
+				PUT: vi.fn().mockResolvedValue({})
+			}
 		}
 	}
 }));
@@ -65,7 +69,7 @@ describe('Library Management mutations', () => {
 		await mutation.mutationFn(request);
 		await mutation.onSuccess?.({}, request);
 
-		expect(api.global.put).toHaveBeenCalledWith('/api/v1/settings/library-management', request);
+		expect(api.global.v3.PUT).toHaveBeenCalledWith('/api/v3/settings/library-management', request);
 		expect(invalidate).toHaveBeenCalledOnce();
 	});
 
@@ -83,7 +87,7 @@ describe('Library Management mutations', () => {
 		await mutation.mutationFn(input);
 
 		expect(api.global.delete).toHaveBeenCalledWith(
-			'/api/v1/settings/library-management/profiles/profile%2F1',
+			'/api/v3/settings/library-management/profiles/profile%2F1',
 			{ body: input.request }
 		);
 	});
@@ -98,8 +102,8 @@ describe('Library Management mutations', () => {
 			profileId: 'profile/1',
 			request: { expected_settings_revision: 'rev-1' }
 		});
-		expect(api.global.post).toHaveBeenLastCalledWith(
-			'/api/v1/settings/library-management/profiles/profile%2F1/export',
+		expect(api.global.v3.POST).toHaveBeenLastCalledWith(
+			'/api/v3/settings/library-management/profiles/profile%2F1/export',
 			{ expected_settings_revision: 'rev-1' }
 		);
 
@@ -107,8 +111,8 @@ describe('Library Management mutations', () => {
 		const previewMutation = currentMutation<Record<string, unknown>>();
 		const previewRequest = { content: 'DNLP1:code', expected_settings_revision: 'rev-1' };
 		await previewMutation.mutationFn(previewRequest);
-		expect(api.global.post).toHaveBeenLastCalledWith(
-			'/api/v1/settings/library-management/profile-imports/preview',
+		expect(api.global.v3.POST).toHaveBeenLastCalledWith(
+			'/api/v3/settings/library-management/profile-imports/preview',
 			previewRequest
 		);
 
@@ -122,8 +126,8 @@ describe('Library Management mutations', () => {
 		};
 		await importMutation.mutationFn(importRequest);
 		await importMutation.onSuccess?.({}, importRequest);
-		expect(api.global.post).toHaveBeenLastCalledWith(
-			'/api/v1/settings/library-management/profile-imports',
+		expect(api.global.v3.POST).toHaveBeenLastCalledWith(
+			'/api/v3/settings/library-management/profile-imports',
 			importRequest
 		);
 		expect(invalidate).toHaveBeenCalledOnce();

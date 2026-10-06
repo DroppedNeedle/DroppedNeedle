@@ -1,5 +1,10 @@
-export type ManagementFieldMode = 'disabled' | 'replace' | 'fill_missing' | 'merge';
-export type ManagementGenreMode = 'replace' | 'merge' | 'fill_missing';
+import type { components } from '$lib/api/v3/openapi';
+
+// Settings, profile and sharing shapes are the generated v3 schemas. The
+// preview, operation, recovery and tag-editor shapes have no v3 route yet
+// and stay hand-written until they do.
+export type ManagementFieldMode = components['schemas']['FieldMode'];
+export type ManagementGenreMode = components['schemas']['GenreMode'];
 export type ManagementSelectionKind = 'roots' | 'artists' | 'albums' | 'tracks' | 'filter';
 export type ManagementEligibility = 'eligible' | 'warning' | 'blocked' | 'stale';
 export type ManagementChangeKind = 'tags' | 'artwork' | 'path' | 'sidecars' | 'no_change';
@@ -18,175 +23,35 @@ export type DuplicateResolutionAction =
 	| 'recycle_existing_keep_incoming'
 	| 'recycle_incoming_keep_existing';
 
-export interface ManagedFieldSettings {
-	field: string;
-	mode: ManagementFieldMode;
-	clear_when_canonical_missing: boolean;
-}
+export type ManagedFieldSettings = components['schemas']['ManagedField'];
 
-export interface ArtistCreditSettings {
-	standardization: 'credited' | 'canonical';
-	translate_names: boolean;
-	preferred_locales: string[];
-}
+export type ArtistCreditSettings = components['schemas']['ArtistCreditSettings'];
 
-export interface RelationshipCreditSettings {
-	enabled: boolean;
-	types: Array<
-		| 'composer'
-		| 'lyricist'
-		| 'conductor'
-		| 'performer'
-		| 'arranger'
-		| 'remixer'
-		| 'producer'
-		| 'other'
-	>;
-}
+export type RelationshipCreditSettings = components['schemas']['RelationshipCreditSettings'];
 
-export interface FormatCompatibilitySettings {
-	id3_version: '2.4' | '2.3';
-	id3v23_join_delimiter: string;
-	id3_text_encoding: 'utf8' | 'utf16';
-	remove_id3_from_flac: boolean;
-	mp3_apev2_policy: 'preserve' | 'remove';
-	raw_aac_tag_policy: 'save_apev2' | 'do_not_write' | 'remove_apev2';
-	wav_tag_policy: 'id3' | 'riff_info' | 'preserve_existing';
-}
+export type FormatCompatibilitySettings = components['schemas']['FormatCompatibilitySettings'];
 
-export interface MetadataManagementSettings {
-	enabled: boolean;
-	fields: ManagedFieldSettings[];
-	artist_credits: ArtistCreditSettings;
-	relationships: RelationshipCreditSettings;
-	tagging_script_ids: string[];
-	preserve_fields: string[];
-	scrub_unmanaged_tags: boolean;
-	preserve_embedded_art_during_scrub: boolean;
-	format_compatibility: FormatCompatibilitySettings;
-}
+export type MetadataManagementSettings = components['schemas']['MetadataManagementSettings'];
 
-export interface GenreAliasSettings {
-	source: string;
-	target: string;
-}
+export type GenreAliasSettings = components['schemas']['GenreAlias'];
 
-export interface GenreManagementSettings {
-	enabled: boolean;
-	mode: ManagementGenreMode;
-	sources: Array<'musicbrainz' | 'listenbrainz' | 'lastfm' | 'existing_local'>;
-	maximum_count: number;
-	musicbrainz_minimum_count: number;
-	listenbrainz_minimum_count: number;
-	lastfm_minimum_weight: number;
-	listenbrainz_curated_only: boolean;
-	lastfm_whitelist_only: boolean;
-	canonicalize: boolean;
-	maximum_ancestry_depth: number;
-	allowlist: string[];
-	denylist: string[];
-	aliases: GenreAliasSettings[];
-	preferred_casing: string[];
-	write_primary_only_for_constrained_formats: boolean;
-}
+export type GenreManagementSettings = components['schemas']['GenreManagementSettings'];
 
-export type ArtworkProvider =
-	'cover_art_archive_release' | 'cover_art_archive_release_group' | 'local_files' | 'embedded';
-export type ArtworkImageType =
-	'front' | 'back' | 'booklet' | 'medium' | 'tray' | 'obi' | 'spine' | 'track' | 'other';
+export type ArtworkProvider = components['schemas']['ArtworkProvider'];
+export type ArtworkImageType = components['schemas']['ArtworkImageType'];
 
-export interface ArtworkManagementSettings {
-	embedded_enabled: boolean;
-	external_enabled: boolean;
-	providers: ArtworkProvider[];
-	approved_only: boolean;
-	download_size: 'full' | '1200' | '500' | '250';
-	local_file_patterns: string[];
-	image_types: ArtworkImageType[];
-	minimum_width: number;
-	minimum_height: number;
-	embedded_maximum_size: number;
-	embedded_format: 'original' | 'jpeg' | 'png' | 'webp';
-	external_maximum_size: number;
-	external_format: 'original' | 'jpeg' | 'png' | 'webp';
-	embedded_front_only: boolean;
-	external_front_only: boolean;
-	never_replace_with_smaller: boolean;
-	preserve_existing_types: ArtworkImageType[];
-	external_naming_script_id: string | null;
-	overwrite_external_files: boolean;
-}
+export type ArtworkManagementSettings = components['schemas']['ArtworkManagementSettings'];
 
-export interface PathCompatibilitySettings {
-	windows_compatible: boolean;
-	replace_non_ascii: boolean;
-	replace_spaces_with_underscores: boolean;
-	separator_replacement: string;
-	maximum_component_length: number;
-	maximum_path_length: number;
-	unicode_normalization: 'NFC' | 'NFKC';
-	extension_case: 'preserve' | 'lower' | 'upper';
-	windows_legacy_path_limit: boolean;
-}
+export type PathCompatibilitySettings = components['schemas']['PathCompatibilitySettings'];
 
-export interface OrganizationManagementSettings {
-	rename_enabled: boolean;
-	move_enabled: boolean;
-	naming_script_id: string;
-	multi_disc_naming_script_id: string | null;
-	compatibility: PathCompatibilitySettings;
-	move_sidecars: boolean;
-	sidecar_patterns: string[];
-	source_cleanup: 'keep' | 'remove_after_confirmed_move';
-	remove_empty_directories: boolean;
-}
+export type OrganizationManagementSettings =
+	components['schemas']['OrganizationManagementSettings'];
 
-export interface FileBehaviorSettings {
-	preserve_timestamps: boolean;
-	preserve_permissions: boolean;
-	strict_capability_gate: boolean;
-	reject_symlinks: boolean;
-	validate_written_metadata: boolean;
-	validate_technical_audio: boolean;
-}
+export type FileBehaviorSettings = components['schemas']['FileBehaviorSettings'];
 
-export interface EnrichmentManagementSettings {
-	lyrics: {
-		enabled: boolean;
-		provider: 'lrclib';
-		write_plain: boolean;
-		write_synced: boolean;
-		preserve_existing: boolean;
-		required: boolean;
-	};
-	replaygain: {
-		enabled: boolean;
-		mode: 'preserve' | 'fill_missing' | 'replace';
-		album_aware: boolean;
-		required: boolean;
-	};
-}
+export type EnrichmentManagementSettings = components['schemas']['EnrichmentManagementSettings'];
 
-export interface LibraryManagementProfile {
-	id: string;
-	name: string;
-	description: string;
-	preset_origin: string | null;
-	preset_version: number | null;
-	revision: string;
-	metadata: MetadataManagementSettings;
-	genres: GenreManagementSettings;
-	artwork: ArtworkManagementSettings;
-	organization: OrganizationManagementSettings;
-	file_behavior: FileBehaviorSettings;
-	enrichment: EnrichmentManagementSettings;
-	identity: {
-		automatic_edition_acceptance_enabled: boolean;
-	};
-	notification: {
-		refresh_external_servers: boolean;
-	};
-}
+export type LibraryManagementProfile = components['schemas']['LibraryManagementProfile'];
 
 export interface ManagementScriptSettings {
 	id: string;
@@ -197,84 +62,20 @@ export interface ManagementScriptSettings {
 	preset_version: number | null;
 }
 
-export interface LibraryManagementRootOverrides {
-	metadata_enabled: boolean | null;
-	genres_enabled: boolean | null;
-	embedded_artwork_enabled: boolean | null;
-	external_artwork_enabled: boolean | null;
-	rename_enabled: boolean | null;
-	move_enabled: boolean | null;
-	move_sidecars: boolean | null;
-	source_cleanup: 'keep' | 'remove_after_confirmed_move' | null;
-	preserve_timestamps: boolean | null;
-	naming_script_id: string | null;
-	multi_disc_naming_mode: 'inherit' | 'standard' | 'script';
-	multi_disc_naming_script_id: string | null;
-	automatic_edition_acceptance_enabled: boolean | null;
-}
+export type LibraryManagementRootOverrides =
+	components['schemas']['LibraryManagementRootOverrides'];
 
-export interface LibraryManagementRootAssignment {
-	root_id: string;
-	profile_id: string | null;
-	overrides: LibraryManagementRootOverrides | null;
-	enabled: boolean;
-	automatic_acquisitions: boolean;
-	automatic_drop_imports: boolean;
-	automatic_scan_discovered: boolean;
-	automatic_custom_editions: boolean;
-	activation_profile_revision: string | null;
-	activation_naming_policy_revision: string | null;
-	activation_policy_revision: string | null;
-	activation_settings_revision: string | null;
-	activation_preview_token: string | null;
-	activation_preview_hash: string | null;
-	activation_confirmed_at: number | null;
-}
+export type LibraryManagementRootAssignment =
+	components['schemas']['LibraryManagementRootAssignment'];
 
-export interface LibraryManagementSettings {
-	schema_version: number;
-	preset_catalog_version: number;
-	profiles: LibraryManagementProfile[];
-	default_profile_id: string;
-	root_assignments: LibraryManagementRootAssignment[];
-	naming_scripts: ManagementScriptSettings[];
-	tagging_scripts: ManagementScriptSettings[];
-	undo_retention_days: number;
-	preview_retention_hours: number;
-	recycle_bin_path: string;
-	external_refresh: {
-		enabled: boolean;
-		plex_enabled: boolean;
-		jellyfin_enabled: boolean;
-		navidrome_enabled: boolean;
-		retry_attempts: number;
-		retry_delay_seconds: number;
-	};
-}
+export type LibraryManagementSettings = components['schemas']['LibraryManagementSettings'];
 
-export interface LibraryManagementSettingsResponse extends LibraryManagementSettings {
-	settings_revision: string;
-}
+export type LibraryManagementSettingsResponse =
+	components['schemas']['LibraryManagementSettingsResponse'];
 
-export interface LibraryManagementChangeImpact {
-	current_settings_revision: string;
-	proposed_settings_revision: string;
-	stale: boolean;
-	classification: 'no_change' | 'harmless' | 'restrictive' | 'destructive';
-	preview_required: boolean;
-	affected_root_ids: string[];
-	reasons: string[];
-}
+export type LibraryManagementChangeImpact = components['schemas']['LibraryManagementChangeImpact'];
 
-export interface LibraryManagementPresetDiff {
-	profile_id: string;
-	preset_origin: string | null;
-	preset_version: number | null;
-	differs: boolean;
-	changed_groups: string[];
-	version_upgrade_groups: string[];
-	preset_profile: LibraryManagementProfile | null;
-}
+export type LibraryManagementPresetDiff = components['schemas']['LibraryManagementPresetDiff'];
 
 export interface LibraryManagementCatalogFilter {
 	search?: string | null;
@@ -437,10 +238,8 @@ export interface LibraryManagementPlanItemPageResponse {
 	has_more: boolean;
 }
 
-export interface LibraryManagementProfileMutationResponse {
-	profile: LibraryManagementProfile;
-	settings_revision: string;
-}
+export type LibraryManagementProfileMutationResponse =
+	components['schemas']['LibraryManagementProfileMutationResponse'];
 
 export interface LibraryManagementActivationProof {
 	root_id: string;
@@ -448,90 +247,47 @@ export interface LibraryManagementActivationProof {
 	preview_token: string;
 }
 
-export interface LibraryManagementActivationHealthResponse {
-	stale_root_ids: string[];
-	blocked_root_ids: string[];
-	blocked_reason: string | null;
-}
+export type LibraryManagementActivationHealthResponse =
+	components['schemas']['LibraryManagementActivationHealthResponse'];
 
-export interface LibraryManagementSettingsUpdateRequest {
-	settings: LibraryManagementSettings;
-	expected_settings_revision: string;
-}
+export type LibraryManagementSettingsUpdateRequest =
+	components['schemas']['LibraryManagementSaveRequest'];
 
-export interface LibraryManagementSettingsImpactRequest {
-	settings: LibraryManagementSettings;
-	expected_settings_revision?: string | null;
-}
+export type LibraryManagementSettingsImpactRequest =
+	components['schemas']['LibraryManagementSettingsImpactRequest'];
 
-export interface LibraryManagementProfileCreateRequest {
-	name: string;
-	description?: string;
-	expected_settings_revision: string;
-}
+export type LibraryManagementProfileCreateRequest =
+	components['schemas']['LibraryManagementProfileCreateRequest'];
 
-export interface LibraryManagementProfileCopyRequest {
-	name: string;
-	expected_settings_revision: string;
-}
+export type LibraryManagementProfileCopyRequest =
+	components['schemas']['LibraryManagementProfileCopyRequest'];
 
-export interface LibraryManagementProfileUpdateRequest {
-	profile: LibraryManagementProfile;
-	expected_settings_revision: string;
-}
+export type LibraryManagementProfileUpdateRequest =
+	components['schemas']['LibraryManagementProfileUpdateRequest'];
 
-export interface LibraryManagementProfileDeleteRequest {
-	expected_settings_revision: string;
-}
+export type LibraryManagementProfileDeleteRequest =
+	components['schemas']['LibraryManagementProfileDeleteRequest'];
 
-export interface LibraryManagementProfileExportRequest {
-	expected_settings_revision: string;
-}
+export type LibraryManagementProfileExportRequest =
+	components['schemas']['LibraryManagementProfileExportRequest'];
 
-export interface LibraryManagementProfileExportResponse {
-	filename: string;
-	mime_type: string;
-	document: string;
-	share_code: string;
-	bundle_hash: string;
-	settings_revision: string;
-}
+export type LibraryManagementProfileExportResponse =
+	components['schemas']['LibraryManagementProfileExportResponse'];
 
-export interface LibraryManagementProfileImportPreviewRequest {
-	content: string;
-	expected_settings_revision: string;
-}
+export type LibraryManagementProfileImportPreviewRequest =
+	components['schemas']['LibraryManagementProfileImportPreviewRequest'];
 
-export interface LibraryManagementProfileImportRequest {
-	content: string;
-	reviewed_bundle_hash: string;
-	name: string;
-	expected_settings_revision: string;
-}
+export type LibraryManagementProfileImportRequest =
+	components['schemas']['LibraryManagementProfileImportRequest'];
 
-export interface LibraryManagementProfileImportWarning {
-	code: string;
-	severity: 'warning' | 'danger';
-	title: string;
-	message: string;
-}
+export type LibraryManagementProfileImportWarning =
+	components['schemas']['LibraryManagementProfileImportWarning'];
 
-export interface LibraryManagementProfileImportPreviewResponse {
-	profile: LibraryManagementProfile;
-	bundle_hash: string;
-	settings_revision: string;
-	naming_scripts: ManagementScriptSettings[];
-	tagging_scripts: ManagementScriptSettings[];
-	aspects: string[];
-	warnings: LibraryManagementProfileImportWarning[];
-}
+export type LibraryManagementProfileImportPreviewResponse =
+	components['schemas']['LibraryManagementProfileImportPreviewResponse'];
 
-export interface LibraryManagementProfileImportResponse {
-	profile: LibraryManagementProfile;
-	settings_revision: string;
-	naming_scripts: ManagementScriptSettings[];
-	tagging_scripts: ManagementScriptSettings[];
-}
+export type LibraryManagementProfileImportResponse =
+	components['schemas']['LibraryManagementProfileImportResponse'];
 
 export interface LibraryManagementPreviewCreateRequest {
 	selection: LibraryManagementSelection;

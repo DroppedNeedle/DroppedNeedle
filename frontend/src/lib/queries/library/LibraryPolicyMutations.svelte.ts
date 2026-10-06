@@ -4,6 +4,8 @@ import { API } from '$lib/constants';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
+import { LibraryV3Api } from './LibraryV3Api';
+import { toTargetLibrarySettings } from './libraryAdapters';
 import type {
 	LibraryPolicyApplyPreviewResponse,
 	LibraryPolicyImpactResponse,
@@ -36,8 +38,10 @@ export function previewLibraryPolicyImpact() {
 
 export function saveTargetLibrarySettings() {
 	return createMutation(() => ({
-		mutationFn: (input: { settings: TypedLibrarySettings; expected_policy_revision: string }) =>
-			api.global.put<TargetLibrarySettingsResponse>(API.library.settings(), input),
+		mutationFn: async (input: {
+			settings: TypedLibrarySettings;
+			expected_policy_revision: string;
+		}) => toTargetLibrarySettings(await api.global.v3.PUT(LibraryV3Api.settings(), input)),
 		onSuccess: async () => {
 			await invalidatePolicies();
 			toastStore.show({ message: 'Library policies saved', type: 'success' });

@@ -142,6 +142,7 @@ function baseSettings(): LibraryManagementSettingsResponse {
 					scrub_unmanaged_tags: false,
 					preserve_embedded_art_during_scrub: true,
 					format_compatibility: {
+						constrained_genres_primary_only: true,
 						id3_version: '2.4',
 						id3v23_join_delimiter: '; ',
 						id3_text_encoding: 'utf8',
@@ -230,7 +231,7 @@ function baseSettings(): LibraryManagementSettingsResponse {
 					},
 					replaygain: { enabled: false, mode: 'preserve', album_aware: true, required: false }
 				},
-				notification: { refresh_external_servers: false },
+				notification: { refresh_droppedneedle: true, refresh_external_servers: false },
 				identity: { automatic_edition_acceptance_enabled: false }
 			}
 		],

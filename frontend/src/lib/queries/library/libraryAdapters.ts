@@ -1,4 +1,5 @@
 import type { components } from '$lib/api/v3/openapi';
+import type { TargetLibrarySettingsResponse } from './LibraryOperationsTypes';
 import type {
 	AlbumIdentityState,
 	LibraryAlbumDetail,
@@ -14,6 +15,7 @@ export type TrackView = components['schemas']['TrackView'];
 type AlbumPage = components['schemas']['AlbumPage'];
 type ArtistView = components['schemas']['ArtistView'];
 type StatsView = components['schemas']['StatsView'];
+type LibrarySettingsResponse = components['schemas']['LibrarySettingsResponse'];
 
 // The library pages read the native page models that the v2 catalog served.
 // v3's catalog views carry the browse fields only: identity is `local_only`
@@ -113,5 +115,39 @@ export function toLibraryStats(stats: StatsView): LibraryStats {
 		review_count: 0,
 		local_only_count: 0,
 		last_scan_at: null
+	};
+}
+
+// The settings schema marks every field optional; the editor needs them all,
+// so a missing field reads as its empty value.
+export function toTargetLibrarySettings(
+	settings: LibrarySettingsResponse
+): TargetLibrarySettingsResponse {
+	return {
+		library_roots: (settings.library_roots ?? []).map((root) => ({
+			id: root.id ?? '',
+			path: root.path ?? '',
+			label: root.label ?? '',
+			policy: root.policy ?? 'local_metadata',
+			rules: (root.rules ?? []).map((rule) => ({
+				id: rule.id ?? '',
+				relative_path: rule.relative_path ?? '',
+				policy: rule.policy ?? 'local_metadata'
+			}))
+		})),
+		staging_path: settings.staging_path ?? '',
+		naming_template: settings.naming_template ?? '',
+		acoustid_api_key: settings.acoustid_api_key ?? '',
+		enabled: settings.enabled ?? false,
+		policy_revision: settings.policy_revision,
+		reconciliation_required: settings.reconciliation_required,
+		reconciliation_state:
+			settings.reconciliation_state === 'awaiting_reconciliation'
+				? 'awaiting_reconciliation'
+				: 'applied',
+		pending_policy_revision: settings.pending_policy_revision ?? null,
+		affected_scope_ids: settings.affected_scope_ids,
+		actions_applied: settings.actions_applied,
+		warnings: settings.warnings
 	};
 }

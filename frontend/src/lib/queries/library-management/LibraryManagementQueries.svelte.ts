@@ -3,20 +3,17 @@ import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
+import { LIBRARY_MANAGEMENT_ENDPOINTS } from './endpoints';
 
 import { LibraryManagementQueryKeyFactory } from './LibraryManagementQueryKeyFactory';
 import type {
-	LibraryManagementActivationHealthResponse,
 	LibraryManagementHistoryParams,
 	LibraryManagementOperationHistoryResponse,
 	LibraryManagementPlanItemPageResponse,
 	LibraryManagementPlanItemParams,
-	LibraryManagementPresetDiff,
 	LibraryManagementPreviewDetailResponse,
-	LibraryManagementProfile,
 	LibraryManagementRecoveryDiagnosticsResponse,
 	LibraryManagementResultPageResponse,
-	LibraryManagementSettingsResponse,
 	LibraryManagementTagEditorContext
 } from './types';
 
@@ -66,10 +63,7 @@ const activeResultsRefetchInterval = (
 export const getLibraryManagementSettingsQueryOptions = (userId: string | null | undefined) =>
 	queryOptions({
 		queryKey: LibraryManagementQueryKeyFactory.settings(userId),
-		queryFn: ({ signal }) =>
-			api.global.get<LibraryManagementSettingsResponse>(API.libraryManagement.settings(), {
-				signal
-			})
+		queryFn: ({ signal }) => api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.settings(), { signal })
 	});
 
 export const getLibraryManagementSettingsQuery = (
@@ -109,9 +103,7 @@ export const getLibraryManagementProfileQuery = (
 			enabled: Boolean(profileId),
 			queryKey: LibraryManagementQueryKeyFactory.profile(getUserId(), profileId ?? ''),
 			queryFn: ({ signal }) =>
-				api.global.get<LibraryManagementProfile>(API.libraryManagement.profile(profileId ?? ''), {
-					signal
-				})
+				api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.profile(profileId ?? ''), { signal })
 		};
 	});
 
@@ -125,10 +117,7 @@ export const getLibraryManagementPresetDiffQuery = (
 			enabled: Boolean(profileId),
 			queryKey: LibraryManagementQueryKeyFactory.presetDiff(getUserId(), profileId ?? ''),
 			queryFn: ({ signal }) =>
-				api.global.get<LibraryManagementPresetDiff>(
-					API.libraryManagement.profilePresetDiff(profileId ?? ''),
-					{ signal }
-				)
+				api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.presetDiff(profileId ?? ''), { signal })
 		};
 	});
 
@@ -279,8 +268,5 @@ export const getLibraryManagementActivationHealthQuery = (
 		enabled: enabled(),
 		queryKey: LibraryManagementQueryKeyFactory.activationHealth(getUserId()),
 		queryFn: ({ signal }) =>
-			api.global.get<LibraryManagementActivationHealthResponse>(
-				API.libraryManagement.activationHealth(),
-				{ signal }
-			)
+			api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.activationHealth(), { signal })
 	}));

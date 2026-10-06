@@ -398,7 +398,6 @@ export const API = {
 		undoAutomaticEdition: (albumId: string) =>
 			`/api/v1/library/albums/${encodeURIComponent(albumId)}/undo-automatic-edition`,
 		scanDiagnostics: (runId: string) => `/api/v1/library/scan-runs/${runId}/diagnostics`,
-		settings: () => '/api/v1/settings/library',
 		policyTree: () => '/api/v1/settings/library/policy-tree',
 		policyImpact: () => '/api/v1/settings/library/policy-impact',
 		policyApplyPreview: () => '/api/v1/settings/library/policy-apply-preview',
@@ -409,25 +408,10 @@ export const API = {
 		resolveTracks: () => '/api/v1/library/resolve-tracks'
 	},
 	libraryManagement: {
-		settings: () => '/api/v1/settings/library-management',
-		impact: () => '/api/v1/settings/library-management/impact',
-		validate: () => '/api/v1/settings/library-management/validate',
-		profiles: () => '/api/v1/settings/library-management/profiles',
-		profile: (profileId: string) =>
-			`/api/v1/settings/library-management/profiles/${encodeURIComponent(profileId)}`,
-		copyProfile: (profileId: string) =>
-			`/api/v1/settings/library-management/profiles/${encodeURIComponent(profileId)}/copy`,
-		exportProfile: (profileId: string) =>
-			`/api/v1/settings/library-management/profiles/${encodeURIComponent(profileId)}/export`,
-		profileImportPreview: () => '/api/v1/settings/library-management/profile-imports/preview',
-		profileImports: () => '/api/v1/settings/library-management/profile-imports',
-		profilePresetDiff: (profileId: string) =>
-			`/api/v1/settings/library-management/profiles/${encodeURIComponent(profileId)}/preset-diff`,
 		activationPreviews: () => '/api/v1/settings/library-management/activation-previews',
 		activationPreview: (jobId: string) =>
 			`/api/v1/settings/library-management/activation-previews/${encodeURIComponent(jobId)}`,
 		activationConfirmations: () => '/api/v1/settings/library-management/activation-confirmations',
-		activationHealth: () => '/api/v1/settings/library-management/activation-health',
 		previews: () => '/api/v1/library/management/previews',
 		tagEditor: (trackId: string) =>
 			`/api/v1/library/management/tracks/${encodeURIComponent(trackId)}/tag-editor`,
