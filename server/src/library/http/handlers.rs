@@ -180,6 +180,7 @@ pub async fn list_roots(
             .collect(),
         enabled: registry.enabled(),
         policy_revision: registry.policy_revision().to_owned(),
+        held_publish_bundles: state.held_publish_bundles(),
     }))
 }
 

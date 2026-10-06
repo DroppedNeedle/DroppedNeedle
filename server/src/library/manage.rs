@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use super::adapters::FsSpaceProbe;
 use super::clock::today_day;
@@ -62,15 +63,63 @@ pub(crate) struct OpenPublish {
 pub struct PublishCell {
     db_path: PathBuf,
     pub(crate) cell: Option<OpenPublish>,
+    /// Bundles the last reconcile pass left as they were. Shared so the
+    /// status read never waits on a publish holding the cell.
+    held: HeldBundles,
 }
 
+/// Bundle ids recovery could not settle yet, newest pass wins.
+pub type HeldBundles = Arc<std::sync::Mutex<Vec<String>>>;
+
 impl PublishCell {
-    /// An unopened cell over the application database at `db_path`.
-    pub(crate) fn new(db_path: &Path) -> Self {
+    /// An unopened cell over the application database at `db_path`,
+    /// reporting held bundles into `held`.
+    pub(crate) fn new(db_path: &Path, held: HeldBundles) -> Self {
         Self {
             db_path: db_path.to_owned(),
             cell: None,
+            held,
         }
+    }
+
+    /// Remember which bundles a full reconcile pass left as they were.
+    fn note(&self, recoveries: &[super::publish::recovery::BundleRecovery]) {
+        let deferred = recoveries
+            .iter()
+            .filter(|recovery| {
+                matches!(recovery.action, super::publish::RecoveryAction::Deferred(_))
+            })
+            .map(|recovery| recovery.bundle_id.clone())
+            .collect();
+        *self
+            .held
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = deferred;
+    }
+
+    /// True while some bundle waits for a later recovery pass.
+    pub(crate) fn has_held(&self) -> bool {
+        !self
+            .held
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_empty()
+    }
+
+    /// Reconcile again under the open sandbox: the maintenance tick's
+    /// retry for held bundles. No-op while no usable root exists.
+    pub(crate) fn retry_held(
+        &mut self,
+    ) -> Result<Vec<super::publish::recovery::BundleRecovery>, PublishError> {
+        let Some(open) = self.cell.as_ref() else {
+            return Ok(Vec::new());
+        };
+        let mut conn = crate::db::open_connection(&self.db_path)
+            .map_err(|error| PublishError::Store(error.to_string()))?;
+        let recoveries =
+            super::publish::recovery::reconcile(&mut conn, &open.sandbox, &SqliteCatalog)?;
+        self.note(&recoveries);
+        Ok(recoveries)
     }
 
     fn root_dirs(registry: &RootRegistry) -> Vec<super::publish::paths::Root> {
@@ -113,6 +162,7 @@ impl PublishCell {
                 .map_err(|error| PublishError::Store(error.to_string()))?;
             super::publish::recovery::reconcile(&mut conn, &sandbox, &SqliteCatalog)?
         };
+        self.note(&recoveries);
         let publisher = Publisher::open(
             sandbox.clone(),
             &self.db_path,

@@ -203,6 +203,14 @@ impl LibrarySetup {
             .ok_or_else(|| ServiceError::internal(&"identify job not recorded"))
     }
 
+    /// Publish bundles recovery left for a later pass.
+    pub fn held_publish_bundles(&self) -> Vec<String> {
+        self.held_bundles
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
     /// Pending reviews for one album, oldest first.
     pub fn pending_reviews(&self, album_id: &str) -> Vec<super::identify::models::ReviewItem> {
         self.identify.pending_reviews(album_id)

@@ -288,6 +288,27 @@ impl<'a> JournalStore<'a> {
 
     /// Distinct bundle ids that still hold nonterminal journals,
     /// ordered for deterministic startup recovery.
+    /// Another bundle that still holds an unsettled journal for this
+    /// track, if any.
+    pub fn unsettled_bundle_for_track(
+        &self,
+        track_id: &str,
+        except_bundle: &str,
+    ) -> Result<Option<String>, PublishError> {
+        use rusqlite::OptionalExtension as _;
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT bundle_id FROM library_publish_journal
+                 WHERE track_id = ?1 AND bundle_id <> ?2
+                 AND state NOT IN ('cleaned', 'compensated', 'needs_attention')
+                 LIMIT 1",
+                rusqlite::params![track_id, except_bundle],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
     pub fn active_bundles(&self) -> Result<Vec<String>, PublishError> {
         let mut stmt = self.conn.prepare(
             "SELECT DISTINCT bundle_id FROM library_publish_journal

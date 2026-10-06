@@ -199,14 +199,19 @@ impl LibrarySetup {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let registry = self.live_registry();
-        // Reconcile-on-reopen can resume renames; a no-op refresh
-        // takes no guards and bumps no revisions.
-        let _guards = if cell.needs_refresh(&registry) {
+        // Reconcile-on-reopen (and the retry of held bundles) can resume
+        // renames; a no-op tick takes no guards and bumps no revisions.
+        let reopen = cell.needs_refresh(&registry);
+        let retry = !reopen && cell.has_held();
+        let _guards = if reopen || retry {
             self.publish_guards(&registry)
         } else {
             Vec::new()
         };
         cell.refresh(&registry, &self.root_dirs)?;
+        if retry {
+            cell.retry_held()?;
+        }
         let purged = match cell.cell.as_mut() {
             Some(open) => {
                 SnapshotStore::new(open.publisher.connection()).purge_expired(today_day())?

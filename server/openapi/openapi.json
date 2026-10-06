@@ -29332,12 +29332,20 @@
         "required": [
           "roots",
           "enabled",
-          "policy_revision"
+          "policy_revision",
+          "held_publish_bundles"
         ],
         "properties": {
           "enabled": {
             "type": "boolean",
             "description": "Whether the local library is enabled."
+          },
+          "held_publish_bundles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Managed-write bundles recovery could not finish yet (their root is\ngone or excluded, or a file operation failed). The background\nmaintenance retries them; their tracks take no new managed writes\nuntil then."
           },
           "policy_revision": {
             "type": "string",

@@ -125,6 +125,9 @@ pub struct LibrarySetup {
     pub contrib_worker: Arc<VerificationWorker>,
     /// Publish cell (empty until a usable root exists).
     pub publish: Arc<std::sync::Mutex<PublishCell>>,
+    /// Publish bundles recovery left for a later pass; their tracks take
+    /// no new managed writes until a pass settles them.
+    pub held_bundles: super::manage::HeldBundles,
     /// Sealed previews awaiting apply, keyed by token hash.
     pub previews: Arc<std::sync::Mutex<HashMap<String, PreviewEntry>>>,
     /// Watcher state across ticks.
@@ -315,6 +318,7 @@ impl LibrarySetup {
             contrib_identity,
             VerificationWorkerConfig::default(),
         ));
+        let held_bundles = super::manage::HeldBundles::default();
         Ok(Self {
             users,
             ids,
@@ -332,7 +336,11 @@ impl LibrarySetup {
             test_providers,
             contrib,
             contrib_worker,
-            publish: Arc::new(std::sync::Mutex::new(PublishCell::new(db_path))),
+            publish: Arc::new(std::sync::Mutex::new(PublishCell::new(
+                db_path,
+                held_bundles.clone(),
+            ))),
+            held_bundles,
             previews: Arc::new(std::sync::Mutex::new(HashMap::new())),
             watcher_state: Arc::new(std::sync::Mutex::new(WatcherState::new())),
             root_dirs,

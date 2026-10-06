@@ -356,8 +356,17 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             SealError::BadToken => PublishError::Validation("bad confirmation token".into()),
             SealError::Expired => PublishError::Validation("preview expired".into()),
         })?;
+        let journals = JournalStore::new(&self.conn);
         for item in sealed.bundle.items.iter() {
             self.gate.check(item)?;
+            if let Some(held) =
+                journals.unsettled_bundle_for_track(&item.track_id, &sealed.bundle.id)?
+            {
+                return Err(PublishError::Journal(format!(
+                    "track {} has an unfinished managed write (bundle {held}) waiting for recovery",
+                    item.track_id
+                )));
+            }
         }
         CollisionGate::check_bundle(&self.sandbox, &sealed.bundle)?;
         DiskPreflight::check(&sealed.bundle, &self.space)?;

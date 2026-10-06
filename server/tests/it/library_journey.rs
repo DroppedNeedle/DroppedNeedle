@@ -1256,10 +1256,11 @@ async fn failed_approval_leaves_the_review_pending() {
     );
 }
 
-/// A publish journal that recovery cannot reconcile (its root was
-/// removed) never stops boot: recovery finishes and flags the bundle.
+/// A publish journal for a root that is gone never stops boot: recovery
+/// finishes, leaves the bundle as it is for a later pass (its root may
+/// come back), and reports it held.
 #[tokio::test]
-async fn unrecoverable_journal_needs_attention() {
+async fn journal_on_a_removed_root_waits() {
     let (scratch, first, music) = bare_library("lib-journal-gone");
     plant(&music, "album/01.flac", "flac_full_01.flac");
     add_music_root(&first, &music).await;
@@ -1278,17 +1279,21 @@ async fn unrecoverable_journal_needs_attention() {
     let recovery = library.run_recovery().await;
 
     assert_eq!(recovery.publish_recoveries.len(), 1);
+    assert!(recovery.publish_recoveries[0].1.starts_with("Deferred"));
+    assert_eq!(library.held_publish_bundles(), vec!["bundle-1".to_owned()]);
     assert_eq!(
         library
             .scan_store
             .query_i64_for_tests(
                 "SELECT COUNT(*) FROM library_publish_journal \
-                 WHERE id = 'j-1' AND state = 'needs_attention'"
+                 WHERE id = 'j-1' AND state = 'cleanup_pending'"
             )
             .expect("state reads"),
         1,
-        "the bundle waits for an administrator"
+        "the bundle is left as it was"
     );
+    library.publish_tick().expect("maintenance retries");
+    assert_eq!(library.held_publish_bundles(), vec!["bundle-1".to_owned()]);
 }
 
 /// Identification state is durable: a job the scan queued survives a

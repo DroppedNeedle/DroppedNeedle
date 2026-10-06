@@ -40,8 +40,9 @@ pub enum RecoveryAction {
     CleanupFinished,
     /// Evidence was ambiguous; the bundle needs an administrator.
     NeedsAttention(String),
-    /// This pass failed on the bundle (an unsafe path, a file operation);
-    /// it stays as it was for the next pass.
+    /// This pass could not settle the bundle (its root is not usable, a
+    /// path is unsafe, a file operation failed); it stays as it was for a
+    /// later pass.
     Deferred(String),
     /// Nothing left to do; all journals already terminal.
     Noop,
@@ -73,9 +74,10 @@ pub fn startup_gate(conn: &Connection) -> Result<(), PublishError> {
 /// order. Runs at startup after schema ratchets and before scan,
 /// import, acquisition, or operation workers. One bundle never stops
 /// the others: a bundle naming a root that is no longer a usable library
-/// root (removed or excluded) moves to `needs_attention`, and a bundle
-/// this pass fails on (an unsafe path, a file operation) is logged and
-/// left for the next pass. Only the startup gate or an unreadable
+/// root (removed or excluded), or one this pass fails on (an unsafe path,
+/// a file operation), is logged and left as it is for a later pass; the
+/// publish maintenance tick retries it, and its tracks take no new
+/// managed writes meanwhile. Only the startup gate or an unreadable
 /// journal fails the pass.
 pub fn reconcile<C: Catalog>(
     conn: &mut Connection,
@@ -88,9 +90,10 @@ pub fn reconcile<C: Catalog>(
     for bundle_id in bundles {
         let journals = JournalStore::new(conn).bundle(&bundle_id)?;
         let action = if let Some(root) = unusable_root(sandbox, &journals) {
-            tracing::warn!(bundle_id, root, "publish bundle names an unusable root");
-            flag_attention(conn, &journals)?;
-            RecoveryAction::NeedsAttention(format!(
+            // The root may come back (a re-added or re-included root), and
+            // the bundle may hold a hidden backup there: keep it as it is.
+            tracing::warn!(bundle_id, root, "publish bundle waits for its root");
+            RecoveryAction::Deferred(format!(
                 "bundle {bundle_id} names root {root}, which is not a usable library root"
             ))
         } else {
