@@ -238,7 +238,9 @@ fn flag_attention(conn: &Connection, journals: &[FileJournal]) -> Result<(), Pub
         if journal.state.is_terminal() {
             continue;
         }
-        let _ = store.transition(&journal.id, journal.state, JournalState::NeedsAttention);
+        if !store.transition(&journal.id, journal.state, JournalState::NeedsAttention)? {
+            tracing::warn!(journal_id = %journal.id, "needs-attention not recorded: state moved");
+        }
     }
     Ok(())
 }
@@ -348,8 +350,11 @@ fn resume_rename(
     if let Ok(bytes) = paths::read_regular_file(&dest) {
         if sha256_hex(&bytes) == journal.staged_sha256 {
             if paths::read_regular_file(staged).is_err() {
-                let store = JournalStore::new(conn);
-                let _ = store.transition(&journal.id, journal.state, JournalState::Published);
+                JournalStore::new(conn).transition(
+                    &journal.id,
+                    journal.state,
+                    JournalState::Published,
+                )?;
                 return Ok(());
             }
             return Err(PublishError::Journal(format!(
@@ -386,8 +391,8 @@ fn resume_rename(
         }
         let backup = sandbox.backup_path_for(&dest, &journal.id)?;
         sandbox.ensure_under_roots(&backup)?;
-        std::fs::rename(&dest, &backup).map_err(PublishError::from)?;
         JournalStore::new(conn).set_backup(&journal.id, &backup.to_string_lossy())?;
+        std::fs::rename(&dest, &backup).map_err(PublishError::from)?;
         if let Some(parent) = dest.parent() {
             super::journal::fsync_dir(parent)?;
         }
@@ -533,13 +538,13 @@ fn finish_cleanup(
             }
         }
         let store = JournalStore::new(conn);
-        if failed {
-            let _ = store.transition(&journal.id, journal.state, JournalState::CleanupPending);
-        } else {
-            let moved = store.transition(&journal.id, journal.state, JournalState::Cleaned)?;
-            if !moved {
-                let _ = store.transition(&journal.id, journal.state, JournalState::CleanupPending);
-            }
+        let cleaned =
+            !failed && store.transition(&journal.id, journal.state, JournalState::Cleaned)?;
+        if !cleaned
+            && journal.state != JournalState::CleanupPending
+            && !store.transition(&journal.id, journal.state, JournalState::CleanupPending)?
+        {
+            tracing::warn!(journal_id = %journal.id, "cleanup-pending not recorded: state moved");
         }
     }
     Ok(())
@@ -582,8 +587,13 @@ fn compensate_bundle(
         {
             std::fs::remove_file(staged).map_err(PublishError::from)?;
         }
-        let store = JournalStore::new(conn);
-        let _ = store.transition(&journal.id, journal.state, JournalState::Compensated);
+        if !JournalStore::new(conn).transition(
+            &journal.id,
+            journal.state,
+            JournalState::Compensated,
+        )? {
+            tracing::warn!(journal_id = %journal.id, "compensation not recorded: state moved");
+        }
     }
     Ok(())
 }

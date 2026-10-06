@@ -74,6 +74,15 @@ pub trait Catalog {
     fn mark_missing(&self, conn: &Connection, track_id: &str) -> Result<(), PublishError>;
 }
 
+/// Flush a directory entry change where a failure must not undo work
+/// already done (cleanup and compensation): the next sync or recovery
+/// pass covers it, so it is logged instead of returned.
+fn sync_dir_logged(dir: &Path) {
+    if let Err(error) = super::journal::fsync_dir(dir) {
+        tracing::warn!(dir = %dir.display(), %error, "directory sync failed");
+    }
+}
+
 fn now_secs() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -604,10 +613,12 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                         journal.dest_root, journal.dest_rel
                     )));
                 }
+                // Journal the backup before the rename: a crash between
+                // the two then still knows where the original went.
                 let backup = self.sandbox.backup_path_for(&dest, &journal.id)?;
                 self.sandbox.ensure_under_roots(&backup)?;
-                std::fs::rename(&dest, &backup).map_err(PublishError::from)?;
                 JournalStore::new(&self.conn).set_backup(&journal.id, &backup.to_string_lossy())?;
+                std::fs::rename(&dest, &backup).map_err(PublishError::from)?;
                 if let Some(parent) = dest.parent() {
                     super::journal::fsync_dir(parent)?;
                 }
@@ -705,14 +716,16 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             if journal.state != JournalState::Committed {
                 continue;
             }
-            if let Err(err) = self.cleanup_one(journal, staged) {
+            if let Err(error) = self.cleanup_one(journal, staged) {
                 pending = true;
-                let _ = JournalStore::new(&self.conn).transition(
+                tracing::warn!(journal_id = %journal.id, %error, "publish cleanup failed; left pending");
+                if let Err(error) = JournalStore::new(&self.conn).transition(
                     &journal.id,
                     JournalState::Committed,
                     JournalState::CleanupPending,
-                );
-                let _ = err;
+                ) {
+                    tracing::warn!(journal_id = %journal.id, %error, "cleanup-pending not recorded");
+                }
                 continue;
             }
             let moved = JournalStore::new(&self.conn).transition(
@@ -750,7 +763,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             if !expected.is_empty() && sha256_hex(&bytes) == expected {
                 std::fs::remove_file(backup).map_err(PublishError::from)?;
                 if let Some(parent) = backup.parent() {
-                    let _ = super::journal::fsync_dir(parent);
+                    sync_dir_logged(parent);
                 }
             } else if expected.is_empty() {
                 std::fs::remove_file(backup).map_err(PublishError::from)?;
@@ -794,11 +807,13 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             let current = JournalStore::new(&self.conn)
                 .get(&journal.id)?
                 .ok_or_else(|| PublishError::Journal(format!("missing journal {}", journal.id)))?;
-            let _ = JournalStore::new(&self.conn).transition(
+            if let Err(error) = JournalStore::new(&self.conn).transition(
                 &journal.id,
                 current.state,
                 JournalState::Compensated,
-            );
+            ) {
+                tracing::warn!(journal_id = %journal.id, %error, "compensation not recorded");
+            }
         }
         Ok(())
     }
@@ -832,7 +847,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             std::fs::remove_file(staged).map_err(PublishError::from)?;
         }
         if let Some(parent) = dest.parent() {
-            let _ = super::journal::fsync_dir(parent);
+            sync_dir_logged(parent);
         }
         Ok(())
     }
