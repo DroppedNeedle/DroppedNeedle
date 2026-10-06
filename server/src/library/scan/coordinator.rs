@@ -1437,9 +1437,12 @@ const RECONCILE_CHUNK: usize = 500;
 const MASS_MISSING_MIN_INDEXED: usize = 20;
 
 /// True when a walk would mark so much of a scope missing that a vanished
-/// mount is the likelier story: everything, or more than half.
+/// mount is the likelier story: a walk that found none of the scope's
+/// files at all (an unmounted share or an empty mount point, whatever its
+/// size, as v2 protects), or more than half of a larger scope.
 fn mass_missing(missing: usize, indexed: usize) -> bool {
-    indexed >= MASS_MISSING_MIN_INDEXED && missing * 2 > indexed
+    let nothing_left = missing > 0 && missing == indexed;
+    nothing_left || (indexed >= MASS_MISSING_MIN_INDEXED && missing * 2 > indexed)
 }
 
 /// Failure rows for the files a window could not read.

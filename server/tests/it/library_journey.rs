@@ -1110,6 +1110,8 @@ async fn long_missing_album_is_not_taken_over() {
 
     let (_scratch, library, music) = bare_library("lib-no-takeover");
     let green = plant(&music, "green/01.flac", "flac_full_02.flac");
+    // Something stays, so the walk is not an empty mount point.
+    plant(&music, "keep/01.flac", "flac_no_tags.flac");
     add_music_root(&library, &music).await;
     let old_track = library
         .scan_store
@@ -1150,6 +1152,7 @@ async fn long_missing_album_is_not_taken_over() {
 /// A share that comes up empty (unmounted) while a copy of one of its
 /// files appears in another root: the guard holds the share back, so its
 /// tracks keep their ids and stay available, and the copy gets its own row.
+/// A small root that comes up empty is held back the same way.
 #[tokio::test]
 async fn unmounted_share_keeps_its_tracks() {
     use droppedneedle::library::scan::{CatalogStore as _, EffectivePolicy};
@@ -1161,8 +1164,12 @@ async fn unmounted_share_keeps_its_tracks() {
     for n in 2..=20 {
         plant(&share, &format!("other/{n:02}.flac"), "flac_no_tags.flac");
     }
+    let small = scratch.join("small");
+    for n in 1..=3 {
+        plant(&small, &format!("{n:02}.flac"), "flac_no_tags.flac");
+    }
     std::fs::create_dir_all(&local).expect("local root");
-    for (id, path) in [("share", &share), ("local", &local)] {
+    for (id, path) in [("share", &share), ("local", &local), ("small", &small)] {
         library
             .add_root(
                 Some(id.to_owned()),
@@ -1178,8 +1185,10 @@ async fn unmounted_share_keeps_its_tracks() {
         .expect("share track indexed");
 
     // The share goes dark; a copy of one of its files lands locally.
-    std::fs::remove_dir_all(&share).expect("unmount");
-    std::fs::create_dir_all(&share).expect("empty mount point");
+    for root in [&share, &small] {
+        std::fs::remove_dir_all(root).expect("unmount");
+        std::fs::create_dir_all(root).expect("empty mount point");
+    }
     plant(&local, "album/01.flac", "flac_full_01.flac");
     assert!(!shared.exists());
     rescan(&library).await;
@@ -1194,6 +1203,10 @@ async fn unmounted_share_keeps_its_tracks() {
         .track_at("local", "album/01.flac")
         .expect("copy indexed");
     assert_ne!(copy, track, "the copy gets its own row");
+    assert!(
+        library.scan_store.track_at("small", "01.flac").is_some(),
+        "an emptied small root keeps its tracks"
+    );
     assert_eq!(
         library
             .scan_store
