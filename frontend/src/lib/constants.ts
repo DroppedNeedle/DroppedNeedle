@@ -596,34 +596,6 @@ export const API = {
 		status: () => '/api/v1/cache/sync/status',
 		cancel: () => '/api/v1/cache/sync/cancel'
 	},
-	discover: () => '/api/v1/discover',
-	discoverRefresh: () => '/api/v1/discover/refresh',
-	discoverActivity: () => '/api/v1/discover/activity',
-	discoverQueuePreview: (mbid: string) => `/api/v1/discover/queue/preview/${mbid}`,
-	discoverQueue: () => '/api/v1/discover/queue',
-	discoverQueueStatus: () => '/api/v1/discover/queue/status',
-	discoverQueueGenerate: () => '/api/v1/discover/queue/generate',
-	discoverQueueEnrich: (mbid: string) => `/api/v1/discover/queue/enrich/${mbid}`,
-	discoverQueueIgnore: () => '/api/v1/discover/queue/ignore',
-	discoverQueueIgnored: () => '/api/v1/discover/queue/ignored',
-	discoverQueueValidate: () => '/api/v1/discover/queue/validate',
-	discoverQueueYoutubeSearch: (artist: string, album: string) =>
-		`/api/v1/discover/queue/youtube-search?artist=${encodeURIComponent(artist)}&album=${encodeURIComponent(album)}`,
-	discoverQueueYoutubeTrackSearch: (artist: string, track: string) =>
-		`/api/v1/discover/queue/youtube-track-search?artist=${encodeURIComponent(artist)}&track=${encodeURIComponent(track)}`,
-	discoverQueueYoutubeQuota: () => '/api/v1/discover/queue/youtube-quota',
-	discoverQueueYoutubeCacheCheck: () => '/api/v1/discover/queue/youtube-cache-check',
-	discoverRadio: () => '/api/v1/discover/radio',
-	discoverRadioPlan: () => '/api/v1/discover/radio/plan',
-	discoverBatches: () => '/api/v1/discover/batches',
-	discoverBatch: (id: string) => `/api/v1/discover/batches/${id}`,
-	discoverBatchRemove: (id: string, removeAlbums: boolean) =>
-		`/api/v1/discover/batches/${id}?remove_albums=${removeAlbums}`,
-	discoverTrackPreview: (artist: string, track: string) =>
-		`/api/v1/discover/track-preview?artist=${encodeURIComponent(artist)}&track=${encodeURIComponent(track)}`,
-	discoverAlbumPreview: (artist: string, album: string) =>
-		`/api/v1/discover/album-preview?artist=${encodeURIComponent(artist)}&album=${encodeURIComponent(album)}`,
-	discoverPlaylistSuggestions: () => '/api/v1/discover/playlist-suggestions',
 	youtube: {
 		generate: () => '/api/v1/youtube/generate',
 		link: (albumId: string) => `/api/v1/youtube/link/${albumId}`,

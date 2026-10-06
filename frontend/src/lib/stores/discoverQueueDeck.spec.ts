@@ -45,7 +45,9 @@ const { apiMock, statusMock, cacheMock, cacheTtls, authMock } = vi.hoisted(() =>
 	};
 });
 
-vi.mock('$lib/api/client', () => ({ api: apiMock }));
+vi.mock('$lib/api/client', () => ({
+	api: { global: { v3: { GET: apiMock.global.get, POST: apiMock.global.post } } }
+}));
 vi.mock('$lib/stores/discoverQueueStatus', () => ({ discoverQueueStatusStore: statusMock }));
 vi.mock('$lib/utils/discoverQueueCache', () => cacheMock);
 vi.mock('$lib/stores/cacheTtl.svelte', () => ({ getCacheTTLs: () => cacheTtls }));

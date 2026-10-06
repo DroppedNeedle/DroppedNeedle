@@ -586,19 +586,6 @@ export type DiscoverActivity = {
 	provider?: 'lastfm' | 'listenbrainz';
 };
 
-export type DiscoverQueuePreview = {
-	status: 'available' | 'not_found' | 'unavailable';
-	youtube_url: string | null;
-	youtube_search_url: string | null;
-};
-
-export type YouTubeSearchResponse = {
-	video_id: string | null;
-	embed_url: string | null;
-	error: string | null;
-	cached: boolean;
-};
-
 export type YouTubeQuotaStatus = {
 	used: number;
 	limit: number;
@@ -616,11 +603,6 @@ export type DiscoverQueueItemFull = DiscoverQueueItemLight & {
 	enrichment?: DiscoverQueueEnrichment;
 	// client-side marker set after the user requests the album from the deck
 	requested?: boolean;
-};
-
-export type DiscoverQueueResponse = {
-	items: DiscoverQueueItemFull[];
-	queue_id: string;
 };
 
 export type MoreByArtistResponse = {
@@ -2852,18 +2834,6 @@ export interface PreviewTrackItem {
 	position: number | null;
 }
 
-export interface TrackPreviewResponse {
-	preview_url: string | null;
-	title: string | null;
-	duration_s: number | null;
-	provider: string | null;
-}
-
-export interface AlbumPreviewResponse {
-	tracks: PreviewTrackItem[];
-	provider: string | null;
-}
-
 export interface RadioSeedItem {
 	artist_mbid: string;
 	artist_name?: string;
@@ -2878,7 +2848,6 @@ export interface RadioPlanRequest {
 	mode?: 'library' | 'hybrid';
 	count?: number;
 	exclude_recording_mbids?: string[];
-	fast?: boolean;
 }
 
 export interface RadioPlanTrack {
@@ -2897,47 +2866,4 @@ export interface RadioPlanTrack {
 export interface RadioPlanResponse {
 	title: string;
 	tracks: RadioPlanTrack[];
-}
-
-export interface DiscoveryBatchItemIn {
-	release_group_mbid: string;
-	artist_mbid: string;
-	album_name: string;
-	artist_name: string;
-}
-
-export interface DiscoveryBatchCreate {
-	name: string;
-	source_section: string;
-	items: DiscoveryBatchItemIn[];
-}
-
-export interface DiscoveryBatchItemStatus extends DiscoveryBatchItemIn {
-	outcome: 'requested' | 'skipped_in_library' | 'skipped_duplicate';
-	request_status: string | null;
-	in_library: boolean;
-}
-
-export interface DiscoveryBatchSummary {
-	id: string;
-	name: string;
-	source_section: string;
-	created_at: string;
-	item_count: number;
-	imported_count: number;
-	pending_count: number;
-}
-
-export interface DiscoveryBatchDetail extends DiscoveryBatchSummary {
-	items: DiscoveryBatchItemStatus[];
-}
-
-export interface DiscoveryBatchListResponse {
-	batches: DiscoveryBatchSummary[];
-}
-
-export interface DiscoveryBatchRemoveResult {
-	removed_albums: number;
-	cancelled_requests: number;
-	kept: number;
 }

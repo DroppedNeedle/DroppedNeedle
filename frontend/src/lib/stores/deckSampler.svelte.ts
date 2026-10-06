@@ -12,12 +12,12 @@
  *  - a single album / track (`start` / `startTrack`)
  *  - a station: a queue of album/track entries played back-to-back (`startStation`)
  */
-import { API } from '$lib/constants';
 import { api } from '$lib/api/client';
 import { SvelteSet } from 'svelte/reactivity';
 import { audioFocus } from '$lib/stores/audioFocus.svelte';
 import { playbackToast } from '$lib/stores/playbackToast.svelte';
-import type { AlbumPreviewResponse, PreviewTrackItem, TrackPreviewResponse } from '$lib/types';
+import type { PreviewTrackItem } from '$lib/types';
+import { DiscoverV3Api } from '$lib/queries/discover/DiscoverV3Api';
 
 const FOCUS_ID = 'deck-sampler';
 const CROSSFADE_S = 0.5;
@@ -446,10 +446,9 @@ function createDeckSampler() {
 		provider: string | null;
 	}> {
 		if (entry.kind === 'track') {
-			const data = await api.global.get<TrackPreviewResponse>(
-				API.discoverTrackPreview(entry.artist, entry.title)
-			);
-			if (!data.preview_url) return { tracks: [], provider: data.provider };
+			const data = await api.global.v3.GET(DiscoverV3Api.trackPreview(entry.artist, entry.title));
+			const provider = data.provider ?? null;
+			if (!data.preview_url) return { tracks: [], provider };
 			return {
 				tracks: [
 					{
@@ -460,14 +459,27 @@ function createDeckSampler() {
 						position: 1
 					}
 				],
-				provider: data.provider
+				provider
 			};
 		}
-		const data = await api.global.get<AlbumPreviewResponse>(
-			API.discoverAlbumPreview(entry.artist, entry.title)
+		const data = await api.global.v3.GET(
+			DiscoverV3Api.albumPreview(entry.artist, entry.title, null)
 		);
-		const limit = station.length > 1 ? STATION_CLIPS_PER_ALBUM : data.tracks.length;
-		return { tracks: data.tracks.slice(0, limit), provider: data.provider };
+		const tracks: PreviewTrackItem[] = (data.tracks ?? []).flatMap((track) =>
+			track.preview_url
+				? [
+						{
+							title: track.title,
+							artist_name: track.artist_name ?? entry.artist,
+							preview_url: track.preview_url,
+							duration_s: track.duration_s ?? null,
+							position: track.position ?? null
+						}
+					]
+				: []
+		);
+		const limit = station.length > 1 ? STATION_CLIPS_PER_ALBUM : tracks.length;
+		return { tracks: tracks.slice(0, limit), provider: data.provider ?? null };
 	}
 
 	async function loadEntry(index: number, mySession: number): Promise<void> {

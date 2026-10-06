@@ -3,8 +3,9 @@
  * YouTube when configured. Cross-origin previews stay in deckSampler because the
  * player's Web Audio graph mutes them.
  */
-import { API } from '$lib/constants';
 import { api } from '$lib/api/client';
+import type { components } from '$lib/api/v3/openapi';
+import { DiscoverV3Api } from '$lib/queries/discover/DiscoverV3Api';
 import { playerStore } from '$lib/stores/player.svelte';
 import { radioSession } from '$lib/stores/radioSession.svelte';
 import { audioFocus } from '$lib/stores/audioFocus.svelte';
@@ -73,11 +74,27 @@ export function planTrackToQueueItem(
 	return null;
 }
 
+function toPlanTrack(track: components['schemas']['RadioPlanTrack']): RadioPlanTrack {
+	return {
+		track_name: track.track_name,
+		artist_name: track.artist_name,
+		artist_mbid: track.artist_mbid ?? '',
+		recording_mbid: track.recording_mbid ?? null,
+		album_mbid: track.album_mbid ?? null,
+		album_name: track.album_name ?? null,
+		in_library: track.in_library ?? false,
+		local_file_id: track.local_file_id ?? null,
+		file_format: track.file_format ?? null,
+		duration_s: track.duration_s ?? null
+	};
+}
+
 async function fetchPlan(
-	request: RadioPlanRequest,
+	request: RadioPlanRequest & { mode: RadioMode },
 	signal: AbortSignal
 ): Promise<RadioPlanResponse> {
-	return api.global.post<RadioPlanResponse>(API.discoverRadioPlan(), request, { signal });
+	const plan = await api.global.v3.POST(DiscoverV3Api.radioPlan(), request, { signal });
+	return { title: plan.title, tracks: (plan.tracks ?? []).map(toPlanTrack) };
 }
 
 function dedupeTracks(tracks: RadioPlanTrack[]): RadioPlanTrack[] {
@@ -93,7 +110,7 @@ function dedupeTracks(tracks: RadioPlanTrack[]): RadioPlanTrack[] {
 }
 
 export async function launchRadio(
-	seed: Omit<RadioPlanRequest, 'exclude_recording_mbids' | 'fast'>,
+	seed: Omit<RadioPlanRequest, 'exclude_recording_mbids'>,
 	ytConfigured: boolean,
 	options: LaunchRadioOptions = {}
 ): Promise<boolean> {
@@ -107,7 +124,7 @@ export async function launchRadio(
 
 	let plan: RadioPlanResponse;
 	try {
-		plan = await fetchPlan({ ...request, fast: false }, launch.signal);
+		plan = await fetchPlan(request, launch.signal);
 	} catch {
 		if (!radioSession.isCurrent(launch.generation)) return false;
 		radioSession.end();

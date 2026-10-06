@@ -3,19 +3,22 @@
 	import { slide } from 'svelte/transition';
 	import { SvelteSet } from 'svelte/reactivity';
 	import {
-		getDiscoveryBatchesQuery,
-		removeDiscoveryBatch
-	} from '$lib/queries/discover/DiscoveryBatchQuery.svelte';
+		getDiscoveryBatchesV3Query,
+		type DiscoveryBatchDetailV3
+	} from '$lib/queries/discover/DiscoverV3Queries.svelte';
+	import { removeDiscoveryBatchV3 } from '$lib/queries/discover/DiscoverV3Mutations.svelte';
+	import { DiscoverV3Api } from '$lib/queries/discover/DiscoverV3Api';
 	import { api } from '$lib/api/client';
-	import { API } from '$lib/constants';
+	import type { components } from '$lib/api/v3/openapi';
 	import { albumHrefOrNull } from '$lib/utils/entityRoutes';
-	import type { DiscoveryBatchDetail, DiscoveryBatchSummary } from '$lib/types';
 
-	const batchesQuery = getDiscoveryBatchesQuery();
+	type DiscoveryBatchSummary = components['schemas']['DiscoveryBatchSummary'];
+
+	const batchesQuery = getDiscoveryBatchesV3Query();
 	const batches = $derived(batchesQuery.data?.batches ?? []);
 
 	const expanded = new SvelteSet<string>();
-	let details = $state<Record<string, DiscoveryBatchDetail>>({});
+	let details = $state<Record<string, DiscoveryBatchDetailV3>>({});
 	let confirming = $state<DiscoveryBatchSummary | null>(null);
 	let removing = $state(false);
 	let confirmDialog: HTMLDialogElement | undefined = $state();
@@ -30,7 +33,7 @@
 			try {
 				details = {
 					...details,
-					[batch.id]: await api.global.get<DiscoveryBatchDetail>(API.discoverBatch(batch.id))
+					[batch.id]: await api.global.v3.GET(DiscoverV3Api.batch(batch.id))
 				};
 			} catch {
 				expanded.delete(batch.id);
@@ -51,7 +54,7 @@
 		if (!confirming || removing) return;
 		removing = true;
 		try {
-			await removeDiscoveryBatch(confirming.id, removeAlbums);
+			await removeDiscoveryBatchV3(confirming.id, removeAlbums);
 			expanded.delete(confirming.id);
 			confirming = null;
 		} finally {
@@ -59,7 +62,7 @@
 		}
 	}
 
-	function statusLabel(status: string | null, inLibrary: boolean): string {
+	function statusLabel(status: string | null | undefined, inLibrary: boolean | undefined): string {
 		if (inLibrary) return 'Imported';
 		switch (status) {
 			case 'awaiting_approval':
@@ -101,7 +104,7 @@
 							<div class="min-w-0 flex-1">
 								<p class="truncate font-semibold">{batch.name}</p>
 								<p class="text-xs text-base-content/50">
-									{new Date(batch.created_at).toLocaleDateString()} ·
+									{#if batch.created_at}{new Date(batch.created_at).toLocaleDateString()} ·{/if}
 									{batch.imported_count}/{batch.item_count} imported
 									{#if batch.pending_count}
 										· {batch.pending_count} pending
@@ -132,7 +135,7 @@
 						>
 							{#if details[batch.id]}
 								<ul class="divide-y divide-base-content/5">
-									{#each details[batch.id].items as item (item.release_group_mbid)}
+									{#each details[batch.id].items ?? [] as item (item.release_group_mbid)}
 										{@const href = albumHrefOrNull(item.release_group_mbid)}
 										<li class="flex items-center gap-3 py-1.5 text-sm">
 											<svelte:element

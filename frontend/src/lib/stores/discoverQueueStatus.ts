@@ -1,10 +1,11 @@
 import { writable } from 'svelte/store';
 import { browser } from '$app/environment';
-import { API } from '$lib/constants';
 import { getCacheTTLs } from '$lib/stores/cacheTtl.svelte';
 import { api, ApiError } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { musicBrainzSourceKey } from '$lib/queries/musicbrainz/sourceScope.svelte';
+import { DiscoverV3Api } from '$lib/queries/discover/DiscoverV3Api';
+import type { components } from '$lib/api/v3/openapi';
 
 export type QueueBuildStatus = 'idle' | 'building' | 'ready' | 'error' | 'unknown';
 
@@ -22,6 +23,18 @@ type QueueStatusPayload = {
 	item_count?: number;
 	error?: string;
 };
+
+const BUILD_STATUSES: readonly QueueBuildStatus[] = ['idle', 'building', 'ready', 'error'];
+
+function toPayload(data: components['schemas']['DiscoverQueueStatusResponse']): QueueStatusPayload {
+	const status = BUILD_STATUSES.find((known) => known === data.status) ?? 'unknown';
+	return {
+		status,
+		queue_id: data.queue_id ?? undefined,
+		item_count: data.item_count ?? undefined,
+		error: data.error ?? undefined
+	};
+}
 
 const INITIAL: DiscoverQueueStatusState = {
 	status: 'unknown',
@@ -55,7 +68,7 @@ function createDiscoverQueueStatusStore() {
 		if (!browser) return null;
 		const scope = requestScope();
 		try {
-			const data = await api.global.get<QueueStatusPayload>(API.discoverQueueStatus());
+			const data = toPayload(await api.global.v3.GET(DiscoverV3Api.queueStatus()));
 			if (scope !== requestScope()) return null;
 			applyStatusData(data);
 			return data;
@@ -69,9 +82,7 @@ function createDiscoverQueueStatusStore() {
 		const scope = requestScope();
 		try {
 			update((s) => ({ ...s, status: 'building' }));
-			const data = await api.global.post<QueueStatusPayload>(API.discoverQueueGenerate(), {
-				force
-			});
+			const data = toPayload(await api.global.v3.POST(DiscoverV3Api.queueGenerate(), { force }));
 			if (scope !== requestScope()) return;
 			applyStatusData(data);
 			if (data.status === 'building') {

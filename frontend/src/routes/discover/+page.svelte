@@ -38,15 +38,15 @@
 	import { getDiscoverHomeV3Query } from '$lib/queries/discover/DiscoverV3Queries.svelte';
 	import {
 		getIgnoreDiscoveryV3Mutation,
-		getRefreshDiscoverV3Mutation,
-		useDiscoverActivityV3
+		getRefreshDiscoverV3Mutation
 	} from '$lib/queries/discover/DiscoverV3Mutations.svelte';
+	import { useDiscoverActivity } from '$lib/queries/discover/DiscoverDemand.svelte';
 	import type { TopPickItem } from '$lib/types';
 	import { getSectionPrefsQuery } from '$lib/queries/section-prefs/SectionPrefsQuery.svelte';
 	import { discoverHasContent } from '$lib/utils/discoverContent';
 	import { toDiscoverResponseV1 } from '$lib/queries/discover/DiscoverV3Adapters';
 
-	useDiscoverActivityV3(() => ({ feature: 'discover' }));
+	useDiscoverActivity(() => ({ feature: 'discover' }));
 
 	let playlistDiscoverOpen = $state(false);
 

@@ -6,7 +6,7 @@ const { apiGet, focus, playbackToast } = vi.hoisted(() => ({
 	playbackToast: { show: vi.fn(), dismiss: vi.fn() }
 }));
 vi.mock('$lib/api/client', () => ({
-	api: { global: { get: (...args: unknown[]) => apiGet(...args) } }
+	api: { global: { v3: { GET: (...args: unknown[]) => apiGet(...args) } } }
 }));
 vi.mock('$lib/stores/audioFocus.svelte', () => ({ audioFocus: focus }));
 vi.mock('$lib/stores/playbackToast.svelte', () => ({ playbackToast }));

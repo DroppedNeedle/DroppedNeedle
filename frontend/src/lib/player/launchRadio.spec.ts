@@ -16,7 +16,9 @@ const { apiMock, playerMock, toastMock } = vi.hoisted(() => ({
 	toastMock: { show: vi.fn() }
 }));
 
-vi.mock('$lib/api/client', () => ({ api: apiMock }));
+vi.mock('$lib/api/client', () => ({
+	api: { global: { v3: { GET: apiMock.global.get, POST: apiMock.global.post } } }
+}));
 vi.mock('$lib/stores/player.svelte', () => ({ playerStore: playerMock }));
 vi.mock('$lib/stores/playbackToast.svelte', () => ({ playbackToast: toastMock }));
 const resolveRadioPatch = vi.hoisted(() => vi.fn());

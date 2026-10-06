@@ -3,7 +3,7 @@ import { get } from 'svelte/store';
 
 const apiGet = vi.fn();
 vi.mock('$lib/api/client', () => ({
-	api: { global: { get: (...args: unknown[]) => apiGet(...args) } }
+	api: { global: { v3: { GET: (...args: unknown[]) => apiGet(...args) } } }
 }));
 
 type IntegrationStore = (typeof import('$lib/stores/integration'))['integrationStore'];

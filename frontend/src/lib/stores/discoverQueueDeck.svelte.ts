@@ -6,7 +6,6 @@
  * The queue is consumed-once and mutated locally (advance/ignore/jump), so it lives
  * here rather than in TanStack Query; every mutation persists to localStorage.
  */
-import { API } from '$lib/constants';
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { discoverQueueStatusStore } from '$lib/stores/discoverQueueStatus';
@@ -19,17 +18,15 @@ import {
 import { isAbortError } from '$lib/utils/errorHandling';
 import { invalidateDiscoverRecommendations } from '$lib/queries/discover/DiscoverInvalidation';
 import { recordDiscoverActivity } from '$lib/queries/discover/DiscoverDemand.svelte';
+import { DiscoverV3Api } from '$lib/queries/discover/DiscoverV3Api';
+import { toQueueEnrichment, toQueueItem } from '$lib/queries/discover/DiscoverV3Adapters';
 import {
 	musicBrainzSourceKey,
 	subscribeMusicBrainzSourceScope,
 	watchMusicBrainzSourceScope
 } from '$lib/queries/musicbrainz/sourceScope.svelte';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
-import type {
-	DiscoverQueueEnrichment,
-	DiscoverQueueItemFull,
-	DiscoverQueueResponse
-} from '$lib/types';
+import type { DiscoverQueueEnrichment, DiscoverQueueItemFull } from '$lib/types';
 
 export type DeckPhase = 'idle' | 'loading' | 'building' | 'ready' | 'finished' | 'empty' | 'error';
 
@@ -135,13 +132,13 @@ function createDiscoverQueueDeck() {
 		const key = requestKey();
 		if (!queue.length) phase = 'loading';
 		try {
-			const data = await api.global.get<DiscoverQueueResponse>(API.discoverQueue(), {
+			const data = await api.global.v3.GET(DiscoverV3Api.queue(null), {
 				signal: abortController?.signal
 			});
 			if (key !== requestKey() || abortController?.signal.aborted) return;
 			generation++;
 			replacing = false;
-			queue = dedupeByMbid(data.items.map((item) => ({ ...item })));
+			queue = dedupeByMbid((data.items ?? []).map(toQueueItem));
 			queueId = data.queue_id;
 			currentIndex = 0;
 			inFlightEnrich.clear();
@@ -166,8 +163,8 @@ function createDiscoverQueueDeck() {
 		const key = requestKey();
 		try {
 			const mbids = queue.map((i) => i.release_group_mbid);
-			const data = await api.global.post<{ in_library?: string[] }>(
-				API.discoverQueueValidate(),
+			const data = await api.global.v3.POST(
+				DiscoverV3Api.queueValidate(),
 				{ release_group_mbids: mbids },
 				{ signal: abortController?.signal }
 			);
@@ -201,9 +198,9 @@ function createDiscoverQueueDeck() {
 		const signal = abortController?.signal;
 		const promise = (async (): Promise<DiscoverQueueEnrichment | null> => {
 			try {
-				const data = await api.global.get<DiscoverQueueEnrichment>(API.discoverQueueEnrich(mbid), {
-					signal
-				});
+				const data = toQueueEnrichment(
+					await api.global.v3.GET(DiscoverV3Api.queueEnrich(mbid), { signal })
+				);
 				if (key !== requestKey()) return null;
 				const idx = queue.findIndex((q) => q.release_group_mbid === mbid);
 				if (idx >= 0 && !queue[idx].enrichment) {
@@ -396,8 +393,8 @@ function createDiscoverQueueDeck() {
 			const key = requestKey();
 			let saved = false;
 			try {
-				await api.global.post(
-					API.discoverQueueIgnore(),
+				await api.global.v3.POST(
+					DiscoverV3Api.queueIgnore(),
 					{
 						release_group_mbid: item.release_group_mbid,
 						artist_mbid: item.artist_mbid,

@@ -1,5 +1,11 @@
 import type { components } from '$lib/api/v3/openapi';
-import type { BecauseYouListenTo, DiscoverResponse, TopPicksSection } from '$lib/types';
+import type {
+	BecauseYouListenTo,
+	DiscoverQueueEnrichment,
+	DiscoverQueueItemFull,
+	DiscoverResponse,
+	TopPicksSection
+} from '$lib/types';
 import {
 	maybe,
 	toAlbum,
@@ -13,6 +19,8 @@ import {
 type V3Response = components['schemas']['DiscoverResponse'];
 type V3TopPicks = components['schemas']['TopPicksSection'];
 type V3Because = components['schemas']['BecauseYouListenTo'];
+type V3QueueItem = components['schemas']['QueueItemFull'];
+type V3QueueEnrichment = components['schemas']['QueueEnrichment'];
 
 function toTopPicks(section: V3TopPicks): TopPicksSection {
 	return {
@@ -72,5 +80,35 @@ export function toDiscoverResponseV1(v3: V3Response): DiscoverResponse {
 		service_prompts: (v3.service_prompts ?? []).map(toPrompt),
 		refreshing: v3.refreshing ?? false,
 		service_status: v3.service_status ?? null
+	};
+}
+
+export function toQueueEnrichment(enrichment: V3QueueEnrichment): DiscoverQueueEnrichment {
+	return {
+		artist_mbid: enrichment.artist_mbid ?? null,
+		release_date: enrichment.release_date ?? null,
+		country: enrichment.country ?? null,
+		tags: enrichment.tags ?? [],
+		youtube_url: enrichment.youtube_url ?? null,
+		youtube_search_url: enrichment.youtube_search_url ?? '',
+		youtube_search_available: enrichment.youtube_search_available ?? false,
+		artist_description: enrichment.artist_description ?? null,
+		listen_count: enrichment.listen_count ?? null
+	};
+}
+
+// Light and enriched cards share every field but `enrichment`, so one
+// adapter reads both.
+export function toQueueItem(item: V3QueueItem): DiscoverQueueItemFull {
+	return {
+		release_group_mbid: item.release_group_mbid,
+		album_name: item.album_name,
+		artist_name: item.artist_name,
+		artist_mbid: item.artist_mbid,
+		cover_url: item.cover_url ?? null,
+		recommendation_reason: item.recommendation_reason,
+		is_wildcard: item.is_wildcard ?? false,
+		in_library: item.in_library ?? false,
+		...(item.enrichment ? { enrichment: toQueueEnrichment(item.enrichment) } : {})
 	};
 }

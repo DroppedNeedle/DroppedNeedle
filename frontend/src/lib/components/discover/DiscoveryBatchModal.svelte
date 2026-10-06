@@ -4,7 +4,7 @@
 	import AlbumImage from '$lib/components/AlbumImage.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { libraryStore } from '$lib/stores/library';
-	import { createDiscoveryBatch } from '$lib/queries/discover/DiscoveryBatchQuery.svelte';
+	import { createDiscoveryBatchV3 } from '$lib/queries/discover/DiscoverV3Mutations.svelte';
 	import type { HomeAlbum } from '$lib/types';
 
 	interface Props {
@@ -68,7 +68,7 @@
 					album_name: a.name,
 					artist_name: a.artist_name ?? ''
 				}));
-			const created = await createDiscoveryBatch({
+			const created = await createDiscoveryBatchV3({
 				name: name.trim() || sectionTitle,
 				source_section: sectionKey,
 				items

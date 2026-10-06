@@ -8,7 +8,7 @@ const h = vi.hoisted(() => ({
 	source: { source_mode: 'brainzmash', source_id: 'source-a', generation: 1 },
 	setSource: vi.fn()
 }));
-vi.mock('$lib/api/client', () => ({ api: { global: { post: h.post } } }));
+vi.mock('$lib/api/client', () => ({ api: { global: { v3: { POST: h.post } } } }));
 vi.mock('$lib/stores/authStore.svelte', () => ({ authStore: { user: h.user } }));
 vi.mock('$lib/queries/musicbrainz/sourceScope.svelte', () => ({
 	musicBrainzSourceKey: () => ({ user_id: h.user.id, ...h.source }),
@@ -67,7 +67,7 @@ describe('visible discovery demand', () => {
 		h.post.mockClear();
 		window.dispatchEvent(new Event('focus'));
 		expect(h.post).toHaveBeenCalledWith(
-			'/api/v1/discover/activity',
+			'/api/v3/discover/activity',
 			{ feature: 'home' },
 			{ signal: undefined }
 		);
@@ -93,7 +93,7 @@ describe('visible discovery demand', () => {
 		visibility = 'visible';
 		document.dispatchEvent(new Event('visibilitychange'));
 		expect(h.post).toHaveBeenCalledWith(
-			'/api/v1/discover/activity',
+			'/api/v3/discover/activity',
 			{
 				feature: 'artist',
 				artist_mbid: 'artist-a',
