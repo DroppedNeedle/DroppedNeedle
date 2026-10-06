@@ -26,8 +26,8 @@ export const DOWNLOAD_SETTINGS_ENDPOINTS = {
 	wanted: () => v3('/api/v3/settings/download-clients/wanted')
 } as const;
 
-// v3 download-task URLs. Only the admin reimport is served so far (the
-// request history card needs it); the rest stays on v1 builders.
+// v3 download-task URLs. Only the admin reimport is served so far: it
+// imports the task's files right away. The rest stays on v1 builders.
 export const DOWNLOAD_TASKS_ENDPOINTS = {
 	reimport: (taskId: string) =>
 		v3('/api/v3/downloads/tasks/{task_id}/reimport', { path: { task_id: taskId } })

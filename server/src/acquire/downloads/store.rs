@@ -103,6 +103,14 @@ fn unknown_value(column: &str, value: String) -> rusqlite::Error {
     )
 }
 
+/// Reimport guard: a failed or partial task with an attempt whose handle
+/// still names its files.
+pub(crate) const REIMPORTABLE_SQL: &str = "SELECT EXISTS (SELECT 1 FROM download_tasks t \
+     WHERE t.id = ?1 AND t.status IN ('failed', 'partial') \
+       AND EXISTS (SELECT 1 FROM download_attempts a WHERE a.task_id = t.id \
+         AND a.handle_json != '' \
+         AND a.state IN ('preserved', 'cleanup_pending', 'complete')))";
+
 /// Retryable tasks: failed or partial, under the retry ceiling, with no
 /// newer task for the same ask (the successor check).
 pub(crate) const RETRYABLE_SQL: &str = "SELECT * FROM download_tasks t \
@@ -303,7 +311,7 @@ pub struct QuarantineRow {
 
 /// The download journal over one SQLite connection.
 pub struct DownloadStore<'conn> {
-    conn: &'conn Connection,
+    pub(super) conn: &'conn Connection,
 }
 
 impl<'conn> DownloadStore<'conn> {
@@ -542,47 +550,34 @@ impl<'conn> DownloadStore<'conn> {
         Ok(())
     }
 
-    /// Whether one task can be reimported: failed or short-landed, with a
-    /// picked candidate still linked (ports v2
-    /// `download_store.get_reimportable_task_ids`, including the #245 note:
-    /// usenet persists `source_username = ""`, so the NULL check only
-    /// excludes never-linked tasks of either source).
+    /// Whether one task can be reimported: failed or short-landed, with
+    /// an attempt whose client handle still names its files (kept on a
+    /// failure, or settled without removing the files). Ports v2
+    /// `get_reimportable_task_ids`, keyed on the attempt journal instead
+    /// of the never-written candidate link.
     pub fn is_reimportable(&self, task_id: &str) -> Result<bool, StoreError> {
-        let found: Option<String> = self
-            .conn
-            .query_row(
-                "SELECT id FROM download_tasks WHERE id = ? \
-                 AND status IN ('failed', 'partial') \
-                 AND source_username IS NOT NULL \
-                 AND search_job_id IS NOT NULL \
-                 AND candidate_index IS NOT NULL",
-                rusqlite::params![task_id],
-                |row| row.get(0),
-            )
-            .optional()?;
-        Ok(found.is_some())
+        let found: bool =
+            self.conn
+                .query_row(REIMPORTABLE_SQL, rusqlite::params![task_id], |row| {
+                    row.get(0)
+                })?;
+        Ok(found)
     }
 
-    /// Requeue one failed or short-landed task for import without
-    /// re-searching: the picked candidate, source link, and search job stay
-    /// on the row, so the worker resumes from the linked files instead of
-    /// starting over. Answers None when the task is missing or the
-    /// reimport guard above fails. This is the one intended write out of
-    /// a terminal status; `transition_task` still refuses all others.
-    pub fn reimport_task(&self, task_id: &str, now: f64) -> Result<Option<TaskRow>, StoreError> {
+    /// Start a reimport: a failed or short-landed task goes back to
+    /// `processing` with its error and completion cleared, so the import
+    /// can run against the files already on disk. This is the one write
+    /// out of a terminal status; `transition_task` still refuses all
+    /// others. Answers false when the task is missing or not terminal
+    /// failed or partial.
+    pub fn begin_reimport(&self, task_id: &str, now: f64) -> Result<bool, StoreError> {
         let changed = self.conn.execute(
-            "UPDATE download_tasks SET status = 'queued', error_message = NULL, \
+            "UPDATE download_tasks SET status = 'processing', error_message = NULL, \
                  completed_at = NULL, last_polled_at = ?, updated_at = ? WHERE id = ? \
-             AND status IN ('failed', 'partial') \
-             AND source_username IS NOT NULL \
-             AND search_job_id IS NOT NULL \
-             AND candidate_index IS NOT NULL",
+             AND status IN ('failed', 'partial')",
             rusqlite::params![now, now, task_id],
         )?;
-        if changed == 0 {
-            return Ok(None);
-        }
-        self.get_task(task_id)
+        Ok(changed > 0)
     }
 
     /// Claim an idempotency key. Returns true on first claim; a repeat

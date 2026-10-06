@@ -7,8 +7,8 @@
 
 use std::sync::Arc;
 
-use crate::acquire::dispatch::Journal;
 use crate::acquire::requests::{auth::Principal, error::RequestsError, http::HttpError};
+use crate::acquire::worker::{DownloadWorker, ReimportError};
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -18,23 +18,23 @@ use axum::{
 use serde::Serialize;
 use utoipa::ToSchema;
 
-/// Reimport outcome. The requeue puts the task back in line; the worker
-/// reports fresh progress from there.
+/// Reimport outcome: the task as the import left it.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ReimportResponse {
-    /// Whether the task went back in line.
+    /// Whether the files reached the library (`completed` or `partial`).
     pub success: bool,
-    /// Task status after this call (`queued`).
+    /// Task status after the import (`completed`, `partial`, `failed`).
     pub status: String,
-    /// Failure text, when the requeue itself failed.
+    /// Why the import did not complete, when it did not.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_message: Option<String>,
 }
 
-/// Requeue one failed or short-landed task for import without
-/// re-searching. `POST /api/v3/downloads/tasks/{task_id}/reimport`.
-/// Admin only. Missing tasks and tasks that fail the reimport guard
-/// (no picked candidate linked) answer 404.
+/// Import a failed or short-landed task's files again, right away, from
+/// the files its last download left on disk (no new search or download).
+/// `POST /api/v3/downloads/tasks/{task_id}/reimport`. Admin only. Missing
+/// tasks and tasks with no files to reimport answer 404; a download client
+/// that is no longer configured answers 409.
 #[utoipa::path(
     post,
     path = "/api/v3/downloads/tasks/{task_id}/reimport",
@@ -42,50 +42,44 @@ pub struct ReimportResponse {
     responses((status = 200, body = ReimportResponse))
 )]
 pub async fn reimport_task_handler(
-    State(journal): State<Arc<Journal>>,
+    State(worker): State<Arc<DownloadWorker>>,
     principal: Principal,
     Path(task_id): Path<String>,
 ) -> Result<impl IntoResponse, HttpError> {
     principal.require_admin()?;
-    let row = journal
-        .run_foreground("downloads.reimport", move |store| {
-            store.reimport_task(&task_id, now_unix_f64())
-        })
+    let row = worker
+        .reimport(&task_id)
         .await
-        .map_err(|cause| RequestsError::internal(&cause))?;
+        .map_err(|error| match error {
+            ReimportError::Unavailable(message) => RequestsError::Conflict { message },
+            ReimportError::Journal(cause) => RequestsError::internal(&cause),
+        })?;
     let Some(row) = row else {
         return Err(RequestsError::NotFound.into());
     };
+    let status = row.status.as_str().to_owned();
     Ok(Json(ReimportResponse {
-        success: true,
-        status: row.status.as_str().to_owned(),
-        error_message: None,
+        success: matches!(status.as_str(), "completed" | "partial"),
+        status,
+        error_message: row.error_message,
     }))
 }
 
 /// Task routes without an auth layer. The app mounts this inside the
 /// session gate under the shared principal-translation layer.
-pub fn downloads_core_routes(journal: Arc<Journal>) -> Router {
+pub fn downloads_core_routes(worker: Arc<DownloadWorker>) -> Router {
     Router::new()
         .route(
             "/downloads/tasks/{task_id}/reimport",
             routing::post(reimport_task_handler),
         )
-        .with_state(journal)
+        .with_state(worker)
 }
 
 /// Task routes behind the header test gate.
 #[cfg(any(test, feature = "test-support"))]
-pub fn downloads_router(journal: Arc<Journal>) -> Router {
-    downloads_core_routes(journal).layer(axum::middleware::from_fn(
+pub fn downloads_router(worker: Arc<DownloadWorker>) -> Router {
+    downloads_core_routes(worker).layer(axum::middleware::from_fn(
         crate::acquire::requests::auth::gate,
     ))
-}
-
-/// Current unix time as the float seconds the journal stores.
-fn now_unix_f64() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|span| span.as_secs_f64())
-        .unwrap_or(0.0)
 }

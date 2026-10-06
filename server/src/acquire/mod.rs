@@ -1,6 +1,6 @@
-//! Acquisition: requests, downloads, sources, flows, imports.
+//! Acquisition: requests, downloads, sources, flows, imports, landing.
 //!
-//! Six areas plus a unification layer:
+//! Seven areas plus a unification layer:
 //!
 //! - [`requests`] serves the user-facing ask/approval/wanted surface.
 //! - [`downloads`] owns the durable task journal, manifests, watchdog
@@ -9,6 +9,8 @@
 //! - [`flows`] runs the wanted watcher, follow poll, upgrade sweep,
 //!   status sync, and the free-music/drop-import operations.
 //! - [`imports`] serves Lidarr/Spotify import plus the health smoke.
+//! - [`landing`] verifies a finished download, matches it to the
+//!   requested release, and publishes it into the library or holds it.
 //!
 //! The `db`, `dispatch`, `search`, `sources`, `settings`, `probes`,
 //! `worker`, and `wiring` modules unify the per-area seams onto one
@@ -22,6 +24,7 @@ pub mod dispatch;
 pub mod downloads;
 pub mod flows;
 pub mod imports;
+pub mod landing;
 pub mod plugin_events;
 pub mod plugin_source;
 pub mod probes;

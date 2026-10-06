@@ -83,6 +83,27 @@ impl SlskdSource {
         Self { repo, journal }
     }
 
+    /// Where the handle's files sit on the downloads mount. Located from
+    /// the mount alone (no transfer records needed), so a reimport after
+    /// the client forgot the transfers still finds them. Files that cannot
+    /// be located are left out; the landing reports them missing.
+    pub async fn locate_files(&self, handle: &SourceHandle) -> Result<Vec<PathBuf>, SourceError> {
+        let repo_handle =
+            super::slskd::repository::TaskHandle::new(&handle.username, handle.filenames.clone());
+        let mut paths = Vec::new();
+        for filename in &handle.filenames {
+            if let Some(path) = self
+                .repo
+                .get_file_path(&repo_handle, filename, None)
+                .await
+                .map_err(slskd_error)?
+            {
+                paths.push(path);
+            }
+        }
+        Ok(paths)
+    }
+
     /// Search hits grouped by peer, best group first: a free upload slot
     /// outranks file count, ties break on username for determinism.
     fn rank_groups(

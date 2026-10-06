@@ -13,12 +13,14 @@
 //! - [`quarantine`] release blocklist with TTL and prune-on-write.
 //! - [`orphans`] fail-closed orphan reconcile and recycle-bin prune.
 //! - [`sources`] the per-source fetch seam (slskd/usenet live elsewhere).
+//! - [`landing_rows`] held files and per-landing import decisions.
 //! - [`http`] the served task legs (admin reimport only, for now).
 //!
 //! Quirk citations name the v2 behavior each port preserves, so a reader
 //! can diff against the Python without guessing.
 
 pub mod http;
+pub mod landing_rows;
 pub mod manifest;
 pub mod orphans;
 pub mod quarantine;

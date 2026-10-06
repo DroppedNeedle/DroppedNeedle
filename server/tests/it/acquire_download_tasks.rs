@@ -1,6 +1,7 @@
-//! Download tasks: the admin reimport behind the request history card, the
-//! dispatch seam's journal reads and writes, and the worker's retry pass.
-//! Scratch journal only.
+//! Download tasks: the admin reimport guard behind the request history
+//! card, the dispatch seam's journal reads and writes, and the worker's
+//! retry pass. Scratch journal only; the reimport landing itself is covered
+//! by the download import journey.
 
 use std::sync::Arc;
 
@@ -16,6 +17,7 @@ use droppedneedle::acquire::downloads::{
     state::{AttemptState, TaskStatus},
     store::NewTask,
 };
+use droppedneedle::acquire::landing::{LandingService, LandingSettings, LibrarySlot};
 use droppedneedle::acquire::requests::dispatch::{
     DispatchOrigin, DispatchOutcome, DispatchRequest, DownloadDispatch as _,
 };
@@ -46,8 +48,9 @@ fn now_f64() -> f64 {
         .unwrap_or(0.0)
 }
 
-/// Scratch journal with one linked failed task (`t-linked`), one bare
-/// failed task (`t-bare`), and one live task (`t-live`).
+/// Scratch journal with one failed task whose download left its files
+/// (`t-linked`, a preserved soulseek attempt), one failed task that never
+/// downloaded (`t-bare`), and one live task (`t-live`).
 async fn journal() -> Arc<Journal> {
     let db = AcquireDb::scratch().unwrap();
     db.add_user("u-ada", "Ada", "user").await.unwrap();
@@ -58,8 +61,16 @@ async fn journal() -> Arc<Journal> {
             for id in ["t-linked", "t-bare", "t-live"] {
                 store.insert_task(&task(id), now)?;
             }
-            store.link_candidate("t-linked", "peer", "job-1", 2, now)?;
-            store.link_candidate("t-live", "peer", "job-1", 0, now)?;
+            store.insert_attempt(
+                "t-linked-a0",
+                "t-linked",
+                "soulseek",
+                0,
+                "",
+                r#"{"source":"soulseek","username":"peer","filenames":["a.flac"],"job_name":""}"#,
+                AttemptState::Preserved,
+                now,
+            )?;
             store.transition_task("t-linked", TaskStatus::Failed, now, Some("mount gone"))?;
             store.transition_task("t-bare", TaskStatus::Failed, now, Some("mount gone"))?;
             Ok(())
@@ -79,8 +90,30 @@ fn post(uri: &str, identity: &str) -> Request<Body> {
         .unwrap()
 }
 
+/// A worker with the landing attached and no download client configured.
+fn worker_over(journal: &Arc<Journal>) -> Arc<DownloadWorker> {
+    let staging = staging_for(journal);
+    let landing = Arc::new(LandingService::new(
+        journal.clone(),
+        LibrarySlot::default(),
+        Arc::new(LandingSettings::default),
+        staging.join("held"),
+    ));
+    Arc::new(
+        DownloadWorker::fixed(
+            journal.clone(),
+            Vec::new(),
+            WorkerConfig {
+                staging_root: staging,
+                ..WorkerConfig::default()
+            },
+        )
+        .with_landing(landing),
+    )
+}
+
 async fn send(journal: &Arc<Journal>, req: Request<Body>) -> (StatusCode, Value) {
-    let response = downloads_router(journal.clone())
+    let response = downloads_router(worker_over(journal))
         .oneshot(req)
         .await
         .unwrap();
@@ -92,31 +125,11 @@ async fn send(journal: &Arc<Journal>, req: Request<Body>) -> (StatusCode, Value)
     (status, json)
 }
 
-// An admin reimport puts a linked failed task back in line; a second
-// call finds it live and answers 404.
+// Non-admins are refused; missing, never-downloaded and live tasks answer
+// 404; a reimportable task whose download client is gone answers 409 and
+// stays failed.
 #[tokio::test]
-async fn reimport_requeues_then_reports_live() {
-    let journal = journal().await;
-    let (status, body) = send(&journal, post("/downloads/tasks/t-linked/reimport", ADMIN)).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["success"], true);
-    assert_eq!(body["status"], "queued");
-
-    let row = journal
-        .run("test.read", |store| store.get_task("t-linked"))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(row.status, TaskStatus::Queued);
-    assert!(row.error_message.is_none());
-
-    let (status, _) = send(&journal, post("/downloads/tasks/t-linked/reimport", ADMIN)).await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-}
-
-// Non-admins are refused; missing and unlinked tasks answer 404.
-#[tokio::test]
-async fn reimport_guards_role_and_link() {
+async fn reimport_guards_role_link_and_client() {
     let journal = journal().await;
     let (status, _) = send(&journal, post("/downloads/tasks/t-linked/reimport", USER)).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
@@ -127,6 +140,15 @@ async fn reimport_guards_role_and_link() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     let (status, _) = send(&journal, post("/downloads/tasks/nope/reimport", ADMIN)).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let (status, _) = send(&journal, post("/downloads/tasks/t-linked/reimport", ADMIN)).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let row = journal
+        .run("test.read", |store| store.get_task("t-linked"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.status, TaskStatus::Failed);
 }
 
 // The dispatch seam reads progress and the reimport guard from the

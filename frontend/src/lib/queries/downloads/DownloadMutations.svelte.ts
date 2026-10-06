@@ -579,14 +579,16 @@ export function reimportDownload() {
 		mutationFn: (input: ReimportInput) =>
 			api.global.v3.POST(DOWNLOAD_TASKS_ENDPOINTS.reimport(input.id)),
 		onSuccess: (data, input: ReimportInput) => {
-			if (data.success) {
+			if (data.status === 'completed') {
+				toastStore.show({ message: 'Import complete', type: 'success' });
+			} else if (data.status === 'partial') {
 				toastStore.show({
-					message: 'Back in line - checking the downloads mount again',
-					type: 'success'
+					message: 'Imported what was found, some files still missing',
+					type: 'info'
 				});
 			} else {
 				toastStore.show({
-					message: data.error_message ?? "Couldn't requeue that download",
+					message: data.error_message ?? "Couldn't find the files on the downloads mount yet",
 					type: 'error'
 				});
 			}

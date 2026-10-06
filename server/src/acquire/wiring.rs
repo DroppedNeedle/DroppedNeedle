@@ -50,6 +50,8 @@ use super::imports::spotify::{
 use super::imports::spotify_store::{
     CollectionsPlaylistBridge, SqliteSpotifyLinks, SqliteSpotifyStates,
 };
+use super::landing::ports::LandingLibrary;
+use super::landing::{LandingService, LandingSettings, LibrarySlot};
 use super::probes::{LiveProbes, ProbeCache, ProbeInputs, refresh_probes, seed_from_config};
 use super::requests::quota::{QuotaLedger, QuotaPolicy};
 use super::requests::sqlite::{RequestStore, WantedStore};
@@ -379,6 +381,8 @@ pub struct AcquireSetup {
     pub prune: Arc<PruneDeps>,
     /// Live event hub handle shared by the flows and the imports.
     pub events: EventSink,
+    /// Finished-download import: verify, match, publish or hold.
+    pub landing: Arc<LandingService>,
 }
 
 /// Flows stores plus the loop deps built over them.
@@ -484,6 +488,15 @@ impl LibraryOrganise for StagingOrganise {
         }
         std::fs::rename(&source, &dest).map_err(|error| format!("cannot resolve drop: {error}"))?;
         Ok(dest.to_string_lossy().into_owned())
+    }
+}
+
+/// Landing settings from the download-policy section: the quality band
+/// landed files must sit in.
+fn landing_settings(policy: &DownloadPolicy) -> LandingSettings {
+    LandingSettings {
+        quality_min: policy.quality_min.clone(),
+        quality_max: policy.quality_max.clone(),
     }
 }
 
@@ -735,6 +748,14 @@ impl AcquireSetup {
             base_path: config.base_path.clone(),
         };
 
+        let landing_store = config_store.clone();
+        let landing = Arc::new(LandingService::new(
+            core.journal.clone(),
+            LibrarySlot::default(),
+            Arc::new(move || landing_settings(&plain::<DownloadPolicy>(&landing_store))),
+            config.cache_dir.join("held"),
+        ));
+
         // Worker over the live sources and tuning.
         let worker_clients = clients.clone();
         let worker_store = config_store.clone();
@@ -757,7 +778,8 @@ impl AcquireSetup {
                     worker_config(&policy, &source_priority, &worker_staging, sab_mount)
                 }),
             )
-            .with_plugin_events(worker_plugins),
+            .with_plugin_events(worker_plugins)
+            .with_landing(landing.clone()),
         );
 
         Ok(Self {
@@ -775,6 +797,7 @@ impl AcquireSetup {
             staging_root,
             prune,
             events,
+            landing,
         })
     }
 
@@ -782,6 +805,16 @@ impl AcquireSetup {
     /// [`crate::AppState::with_events`] calls this.
     pub fn attach_events(&self, hub: &crate::events::EventHub) {
         self.events.attach(hub);
+    }
+
+    /// Let finished downloads reach the library: the landing looks
+    /// releases up, checks what the library holds, and publishes through
+    /// this port. Boot calls this once the library bundle exists.
+    pub fn with_library(self, library: Arc<dyn LandingLibrary>) -> Self {
+        if self.landing.library_slot().set(library).is_err() {
+            tracing::warn!("library port was already attached to acquisition");
+        }
+        self
     }
 
     /// Let enabled plugins act as download sources and feed usenet. Boot
@@ -906,14 +939,28 @@ impl AcquireSetup {
             ids: ids.clone(),
             base_path: String::new(),
         };
-        let worker = Arc::new(DownloadWorker::fixed(
+        let held_dir = db
+            .path()
+            .parent()
+            .map(|dir| dir.join("held"))
+            .ok_or_else(|| "scratch database has no directory".to_owned())?;
+        let landing = Arc::new(LandingService::new(
             core.journal.clone(),
-            Vec::new(),
-            WorkerConfig {
-                staging_root: staging_root.clone(),
-                ..WorkerConfig::default()
-            },
+            LibrarySlot::default(),
+            Arc::new(LandingSettings::default),
+            held_dir,
         ));
+        let worker = Arc::new(
+            DownloadWorker::fixed(
+                core.journal.clone(),
+                Vec::new(),
+                WorkerConfig {
+                    staging_root: staging_root.clone(),
+                    ..WorkerConfig::default()
+                },
+            )
+            .with_landing(landing.clone()),
+        );
         let probe_cache = Arc::new(ProbeCache::new(seed_from_config(
             &SlskdConnection::default(),
             &DownloadClients::default(),
@@ -943,6 +990,7 @@ impl AcquireSetup {
             staging_root,
             prune,
             events,
+            landing,
         })
     }
 
@@ -975,9 +1023,8 @@ impl AcquireSetup {
     /// principal-translation layer (both extract the requests
     /// `Principal`) so their handlers keep working unchanged.
     pub fn gated_router(&self) -> Router {
-        let legs = super::requests::requests_core_routes(self.requests.clone()).merge(
-            super::downloads::downloads_core_routes(self.journal.clone()),
-        );
+        let legs = super::requests::requests_core_routes(self.requests.clone())
+            .merge(super::downloads::downloads_core_routes(self.worker.clone()));
         let requests = legs.layer(axum::middleware::from_fn_with_state(
             self.users.clone(),
             translate_principal,

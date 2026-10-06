@@ -833,10 +833,11 @@ fn manifest_paths_reject_escape() {
     );
 }
 
-// Reimport requeues a linked failed task with its candidate kept, and
-// refuses unlinked, live, or missing tasks (v2 reimport guard).
+// Reimport needs a failed or partial task whose attempt still names its
+// files; starting one moves the task to processing with its error cleared
+// (v2 reimport guard, keyed on the attempt journal).
 #[test]
-fn reimport_requeues_linked_failed_tasks() {
+fn reimport_starts_tasks_whose_files_remain() {
     let dir = scratch_dir("reimport");
     let conn = scratch_store(&dir);
     let now = SystemTime::now()
@@ -844,37 +845,55 @@ fn reimport_requeues_linked_failed_tasks() {
         .unwrap()
         .as_secs_f64();
     let store = DownloadStore::new(&conn);
-    store.insert_task(&new_task("linked"), now).unwrap();
-    store.insert_task(&new_task("bare"), now).unwrap();
-    store.insert_task(&new_task("live"), now).unwrap();
+    for id in ["kept", "bare", "live"] {
+        store.insert_task(&new_task(id), now).unwrap();
+    }
+    let handle = r#"{"source":"soulseek","username":"peer","filenames":["a.flac"],"job_name":""}"#;
     store
-        .link_candidate("linked", "peer", "job-1", 2, now)
+        .insert_attempt(
+            "kept-a0",
+            "kept",
+            "soulseek",
+            0,
+            "",
+            handle,
+            AttemptState::Preserved,
+            now,
+        )
         .unwrap();
     store
-        .link_candidate("live", "peer", "job-1", 0, now)
+        .insert_attempt(
+            "live-a0",
+            "live",
+            "soulseek",
+            0,
+            "",
+            handle,
+            AttemptState::InUse,
+            now,
+        )
         .unwrap();
     store
-        .transition_task("linked", TaskStatus::Failed, now, Some("mount gone"))
+        .transition_task("kept", TaskStatus::Failed, now, Some("mount gone"))
         .unwrap();
     store
         .transition_task("bare", TaskStatus::Failed, now, Some("mount gone"))
         .unwrap();
 
-    assert!(store.is_reimportable("linked").unwrap());
+    assert!(store.is_reimportable("kept").unwrap());
     assert!(!store.is_reimportable("bare").unwrap());
     assert!(!store.is_reimportable("live").unwrap());
     assert!(!store.is_reimportable("missing").unwrap());
 
-    let row = store.reimport_task("linked", now).unwrap().unwrap();
-    assert_eq!(row.status, TaskStatus::Queued);
+    assert!(store.begin_reimport("kept", now).unwrap());
+    let row = store.get_task("kept").unwrap().unwrap();
+    assert_eq!(row.status, TaskStatus::Processing);
     assert!(row.error_message.is_none());
-    assert_eq!(row.candidate_index, Some(2));
-    assert_eq!(row.source_username.as_deref(), Some("peer"));
-    assert_eq!(row.search_job_id.as_deref(), Some("job-1"));
-    // Back in line, so the guard no longer passes for it.
-    assert!(!store.is_reimportable("linked").unwrap());
-
-    assert!(store.reimport_task("bare", now).unwrap().is_none());
-    assert!(store.reimport_task("live", now).unwrap().is_none());
-    assert!(store.reimport_task("missing", now).unwrap().is_none());
+    assert!(row.completed_at.is_none());
+    assert!(
+        !store.begin_reimport("kept", now).unwrap(),
+        "already running"
+    );
+    assert!(!store.begin_reimport("live", now).unwrap());
+    assert!(!store.begin_reimport("missing", now).unwrap());
 }

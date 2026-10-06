@@ -4087,7 +4087,7 @@
         "tags": [
           "crate::acquire::downloads::http"
         ],
-        "summary": "Requeue one failed or short-landed task for import without\nre-searching. `POST /api/v3/downloads/tasks/{task_id}/reimport`.\nAdmin only. Missing tasks and tasks that fail the reimport guard\n(no picked candidate linked) answer 404.",
+        "summary": "Import a failed or short-landed task's files again, right away, from\nthe files its last download left on disk (no new search or download).\n`POST /api/v3/downloads/tasks/{task_id}/reimport`. Admin only. Missing\ntasks and tasks with no files to reimport answer 404; a download client\nthat is no longer configured answers 409.",
         "operationId": "reimport_task_handler",
         "parameters": [
           {
@@ -34190,7 +34190,7 @@
       },
       "ReimportResponse": {
         "type": "object",
-        "description": "Reimport outcome. The requeue puts the task back in line; the worker\nreports fresh progress from there.",
+        "description": "Reimport outcome: the task as the import left it.",
         "required": [
           "success",
           "status"
@@ -34201,15 +34201,15 @@
               "string",
               "null"
             ],
-            "description": "Failure text, when the requeue itself failed."
+            "description": "Why the import did not complete, when it did not."
           },
           "status": {
             "type": "string",
-            "description": "Task status after this call (`queued`)."
+            "description": "Task status after the import (`completed`, `partial`, `failed`)."
           },
           "success": {
             "type": "boolean",
-            "description": "Whether the task went back in line."
+            "description": "Whether the files reached the library (`completed` or `partial`)."
           }
         }
       },

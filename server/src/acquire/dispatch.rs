@@ -22,8 +22,8 @@ use super::db::AcquireDb;
 use super::downloads::manifest::{DownloadManifest, ManifestCodec};
 use super::downloads::state::TaskStatus;
 use super::downloads::store::{
-    CLEANUP_DEBT_SQL, DownloadStore, NewTask, QUARANTINE_SET_SQL, RETRYABLE_SQL, StoreError,
-    TaskDetails, TaskRow, task_from_sqlx,
+    CLEANUP_DEBT_SQL, DownloadStore, NewTask, QUARANTINE_SET_SQL, REIMPORTABLE_SQL, RETRYABLE_SQL,
+    StoreError, TaskDetails, TaskRow, task_from_sqlx,
 };
 use super::downloads::watchdog::RetryPolicy;
 use super::flows::seams as flows;
@@ -488,15 +488,11 @@ impl requests::DownloadDispatch for UnifiedDispatch {
         task_id: &'a str,
     ) -> BoxFuture<'a, Result<bool, requests::DispatchError>> {
         Box::pin(async move {
-            sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS (SELECT 1 FROM download_tasks WHERE id = ?1 \
-                 AND status IN ('failed', 'partial') AND source_username IS NOT NULL \
-                 AND search_job_id IS NOT NULL AND candidate_index IS NOT NULL)",
-            )
-            .bind(task_id)
-            .fetch_one(self.journal.db().pool())
-            .await
-            .map_err(|error| failed(error.to_string()))
+            sqlx::query_scalar::<_, bool>(REIMPORTABLE_SQL)
+                .bind(task_id)
+                .fetch_one(self.journal.db().pool())
+                .await
+                .map_err(|error| failed(error.to_string()))
         })
     }
 
