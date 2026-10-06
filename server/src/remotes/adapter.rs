@@ -582,10 +582,10 @@ impl RemoteHandle {
     }
 
     /// Tracks of any of several genres, merged in genre order without
-    /// duplicates. Each genre fills an even share of everything up to the
-    /// end of the page (at least 10, as in v2), and the page is sliced from
-    /// the merged list. v2 applied the offset to each genre instead, which
-    /// skipped tracks on every page after the first.
+    /// duplicates. Each genre is read from its start up to the end of the
+    /// page, so the merged list has the same order on every page and the
+    /// page is a plain slice of it. v2 applied the offset to each genre
+    /// instead, which skipped tracks on every page after the first.
     pub async fn genres_songs(
         &self,
         genres: &[String],
@@ -595,10 +595,9 @@ impl RemoteHandle {
         if let [genre] = genres {
             return self.genre_songs(genre, limit, offset).await;
         }
-        let count = genres.len().max(1) as i64;
-        let share = ((offset + limit + count - 1) / count).max(10);
+        let reach = offset + limit;
         let pages = futures_util::future::try_join_all(
-            genres.iter().map(|genre| self.genre_songs(genre, share, 0)),
+            genres.iter().map(|genre| self.genre_songs(genre, reach, 0)),
         )
         .await?;
         let mut seen = std::collections::HashSet::new();
