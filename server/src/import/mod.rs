@@ -18,6 +18,7 @@
 //! orphan rows from v2 and re-exporting. The planner's drop-and-count
 //! branches are defense in depth unreachable through [`pipeline::run_import`].
 
+pub(crate) mod carry;
 pub mod envelope;
 pub mod pipeline;
 pub mod r8;

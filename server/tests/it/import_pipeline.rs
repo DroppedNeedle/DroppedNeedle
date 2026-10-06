@@ -747,7 +747,7 @@ async fn report_shape_matches_spec() {
 
     let parsed: Value = serde_json::from_str(&report.to_json()).unwrap();
     assert_eq!(parsed["format"], json!("droppedneedle-import-report"));
-    assert_eq!(parsed["format_version"], json!(1));
+    assert_eq!(parsed["format_version"], json!(2));
     assert_eq!(parsed["dry_run"], json!(false));
     // Every counter exists even when zero; nonzero `dropped_unknown_user`
     // is unreachable through `run_import` (fail closed), and `error` has
@@ -759,6 +759,10 @@ async fn report_shape_matches_spec() {
         "recovery_code",
         "follow",
         "approval",
+        "connection",
+        "playlist",
+        "play_history",
+        "download_task",
     ] {
         for counter in [
             "imported",
@@ -775,6 +779,8 @@ async fn report_shape_matches_spec() {
             );
         }
     }
+    assert!(parsed["pending_links"].is_number());
+    assert!(parsed["left_behind"].is_array());
     assert_eq!(parsed["export_file"]["instance_id"], json!("instance-1"));
     assert!(parsed["items"].as_array().unwrap().iter().all(|item| {
         item["entity"].is_string() && item["key"].is_string() && item["outcome"].is_string()

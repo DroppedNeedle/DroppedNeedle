@@ -1,6 +1,7 @@
-//! v2 → v3 importer: parse → unlock → settings → users → secrets →
-//! follows/approvals → concerts cities and seen markers → atomic commit →
-//! post-import rebuild.
+//! v2 → v3 importer: parse → unlock → bundle check → settings → users →
+//! secrets → follows/approvals → concerts cities and seen markers → atomic
+//! commit → config write → section carry ([`super::carry`], one transaction
+//! per section) → post-import rebuild.
 //!
 //! Every run, including dry-run,
 //! produces exactly one [`ImportReport`]; failures are exit codes, never
@@ -34,6 +35,7 @@ use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 use thiserror::Error;
 
+use super::carry::bundle::{Bundle, BundleRejection};
 use super::envelope::{ExportFile, Opener, collect_sealed, is_sealed, unseal_value};
 use super::r8::carry_frequency;
 use super::report::{ExitCode, ExportProvenance, ImportReport, ReportBuilder, utc_now_iso};
@@ -108,6 +110,9 @@ enum ImportError {
     /// Reading the scan schedule from v2's `config.json` failed.
     #[error("v2 scan schedule carry failed: {0}")]
     R8(#[from] super::r8::R8Error),
+    /// A carried section failed; earlier sections stay applied.
+    #[error("{0}")]
+    Carry(#[from] super::carry::CarryError),
     /// Simulated crash before commit (tests only).
     #[error("simulated crash before commit")]
     FaultBeforeCommit,
@@ -130,6 +135,11 @@ pub struct ImportRequest {
     pub crypto: Crypto,
     /// v2 `config.json` for the one-shot scan-schedule carry, when available.
     pub v2_config_path: Option<PathBuf>,
+    /// Folder holding the files the export names (its data bundle);
+    /// normally the export file's own folder.
+    pub attachments_dir: Option<PathBuf>,
+    /// v3 cache folder, where carried avatar files land.
+    pub cache_dir: Option<PathBuf>,
     /// Dry-run: identical decisions and counts, zero writes.
     pub dry_run: bool,
     /// Test-only: fail after staging everything, before commit, to
@@ -138,6 +148,9 @@ pub struct ImportRequest {
     /// Test-only: fail after the DB commit but before the config
     /// write, to prove re-import converges from the split state.
     pub fault_after_commit: bool,
+    /// Test-only: fail after this many carried sections, to prove an
+    /// interrupted import resumes.
+    pub fault_after_sections: Option<usize>,
 }
 
 /// Run the full pipeline and return the report. This function does
@@ -209,8 +222,35 @@ pub async fn run_import(request: ImportRequest) -> ImportReport {
             return report.finish(ExitCode::FailedInternal, reason);
         }
     };
+    if let Some(left_behind) = parsed
+        .root
+        .get("left_behind")
+        .and_then(|list| serde_json::from_value(list.clone()).ok())
+    {
+        report.set_left_behind(left_behind);
+    }
 
-    let outcome = run_guarded(&request, &parsed.root, &unsealed, &mut report).await;
+    // The bundle is checked whole before anything is written: a missing,
+    // swapped or inconsistent bundle refuses the import with zero writes.
+    let bundle = match prepare_bundle(&request, &parsed.root).await {
+        Ok(bundle) => bundle,
+        Err(BundleRejection::Invalid(reason)) => {
+            report.note("export", "attachments".to_owned(), "error", reason.clone());
+            return report.finish(ExitCode::FailedValidation, reason);
+        }
+        Err(BundleRejection::Internal(reason)) => {
+            return report.finish(ExitCode::FailedInternal, reason);
+        }
+    };
+
+    let outcome = run_guarded(
+        &request,
+        &parsed.root,
+        &unsealed,
+        bundle.as_ref(),
+        &mut report,
+    )
+    .await;
     if outcome.is_err() && !report.committed() {
         report.discard_counts();
     }
@@ -229,6 +269,21 @@ pub async fn run_import(request: ImportRequest) -> ImportReport {
         }
         Err(error) => report.finish(ExitCode::FailedInternal, error.to_string()),
     }
+}
+
+/// Find the export's bundle, check its hash, then check its content
+/// against the export.
+async fn prepare_bundle(
+    request: &ImportRequest,
+    root: &Value,
+) -> Result<Option<Bundle>, BundleRejection> {
+    let Some(found) =
+        super::carry::bundle::locate(root, request.attachments_dir.as_deref()).await?
+    else {
+        return Ok(None);
+    };
+    super::carry::check_bundle(&request.pool, &found, root).await?;
+    Ok(Some(found))
 }
 
 /// Best-effort provenance for reports on unparseable files.
@@ -311,7 +366,19 @@ fn consumed_sealed(root: &Value) -> Vec<(String, Value)> {
     if let Some(users) = root.get("users") {
         collect_sealed(users, "users".to_owned(), &mut found);
     }
+    if carries_connections(root)
+        && let Some(connections) = root.get("user_connections")
+    {
+        collect_sealed(connections, "user_connections".to_owned(), &mut found);
+    }
     found
+}
+
+/// Per-user connections are a format 2 section; a format 1 reader never
+/// had them.
+pub(crate) fn carries_connections(root: &Value) -> bool {
+    root.get("format_version").and_then(Value::as_u64) >= Some(2)
+        && root.get("user_connections").is_some()
 }
 
 /// Unseal every sealed value the importer consumes (settings plus app
@@ -337,14 +404,27 @@ fn unseal_consumed(root: &Value, opener: &Opener) -> Result<HashMap<String, Stri
 }
 
 /// The guarded middle of the pipeline: settings staging, entity merge,
-/// atomic commit, config write, rebuild. Any error before the config
-/// write leaves prior state untouched (DB rolls back, config unwritten).
+/// atomic commit, config write, section carry, rebuild. Any error before
+/// the config write leaves prior state untouched (DB rolls back, config
+/// unwritten). Carried sections commit one by one after that; a failure
+/// there keeps the sections already applied, and a rerun resumes.
 async fn run_guarded(
     request: &ImportRequest,
     root: &Value,
     unsealed: &HashMap<String, String>,
+    bundle: Option<&Bundle>,
     report: &mut ReportBuilder,
 ) -> Result<(), ImportError> {
+    let carry = |dry_run: bool| super::carry::CarryRun {
+        pool: &request.pool,
+        root,
+        bundle,
+        unsealed,
+        crypto: &request.crypto,
+        cache_dir: request.cache_dir.as_deref(),
+        dry_run,
+        stop_after: request.fault_after_sections,
+    };
     let current_config = read_current_config(&request.config_path)?;
     let secrets_before = report.secrets_counted();
     let staged_config = stage_settings(
@@ -369,11 +449,12 @@ async fn run_guarded(
         let snapshot = DatabaseSnapshot::load(&mut tx).await?;
         tx.rollback().await?;
         let plan = Plan::decide(root, &snapshot, unsealed, report);
+        super::carry::run(carry(true), report).await?;
         for action in &plan.rebuild {
             report.note(
                 "rebuild",
                 action.clone(),
-                "queued",
+                "would_queue",
                 "dry-run: no writes performed".to_owned(),
             );
         }
@@ -391,7 +472,7 @@ async fn run_guarded(
     // A pure re-import (every record identical) writes nothing at all,
     // not even an audit row: idempotency means zero writes.
     let run_id = if plan.has_writes() {
-        Some(record_import_run(&mut tx, root, report).await?)
+        Some(record_import_run(&mut tx, root, report, completed_exit(report)).await?)
     } else {
         None
     };
@@ -416,6 +497,31 @@ async fn run_guarded(
             mark_import_run_failed(&request.pool, &id).await;
         }
         return Err(error);
+    }
+
+    let carried = super::carry::run(carry(false), report).await;
+    // The audit row carries the whole run's real counts, the carried
+    // sections included, and a failed run says so. A run whose only writes
+    // were carried sections (a resume) records its own row.
+    let exit = match &carried {
+        Ok(_) => completed_exit(report),
+        Err(_) => "FAILED_INTERNAL",
+    };
+    let audited = match run_id {
+        Some(id) => update_import_run(&request.pool, &id, exit, report).await,
+        None if report.carried_writes() > 0 => {
+            insert_import_run(&request.pool, root, exit, report).await
+        }
+        None => Ok(()),
+    };
+    match (carried, audited) {
+        (Err(error), audited) => {
+            if let Err(audit) = audited {
+                tracing::warn!(%audit, "import audit row write failed after a section failure");
+            }
+            return Err(error.into());
+        }
+        (Ok(_), audited) => audited?,
     }
     for action in &plan.rebuild {
         report.note("rebuild", action.clone(), "queued", String::new());
@@ -467,6 +573,9 @@ fn stage_settings(
         match exported.get(*section) {
             Some(value) => {
                 let filtered = filter_section(section, value);
+                if *section == "plugins" {
+                    note_unflagged_plugin_settings(&filtered, report);
+                }
                 let applied = rekey_section(
                     &filtered,
                     &format!("settings.{section}"),
@@ -506,6 +615,35 @@ fn stage_settings(
         );
     }
     Ok(staged)
+}
+
+/// Note every plugin setting the exporter sealed without knowing whether it
+/// is a secret (v2 had no manifest for the plugin). It lands encrypted,
+/// and v3 opens it on read whichever way the plugin's manifest flags it.
+fn note_unflagged_plugin_settings(plugins: &Value, report: &mut ReportBuilder) {
+    use crate::export::exporter::{UNKNOWN_FLAG, UNKNOWN_FLAG_KEY};
+    let Some(plugins) = plugins.as_object() else {
+        return;
+    };
+    for (plugin, config) in plugins {
+        let Some(settings) = config.get("settings").and_then(Value::as_object) else {
+            continue;
+        };
+        for (key, value) in settings {
+            if is_sealed(value)
+                && value.get(UNKNOWN_FLAG_KEY).and_then(Value::as_str) == Some(UNKNOWN_FLAG)
+            {
+                report.note(
+                    "settings",
+                    format!("plugins.{plugin}.settings.{key}"),
+                    "kept_sealed",
+                    "v2 had no manifest saying whether this is a secret; it is stored \
+                     encrypted and v3 reads it either way"
+                        .to_owned(),
+                );
+            }
+        }
+    }
 }
 
 /// Drop fields the export spec excludes, before re-encryption:
@@ -2054,19 +2192,24 @@ async fn merge_approval(
     Ok(())
 }
 
+/// Exit code of a run that completed.
+fn completed_exit(report: &ReportBuilder) -> &'static str {
+    if report.has_drops() {
+        "OK_WITH_DROPS"
+    } else {
+        "OK"
+    }
+}
+
 async fn record_import_run(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     root: &Value,
     report: &ReportBuilder,
+    exit: &str,
 ) -> Result<String, ImportError> {
-    // The row only persists when the commit succeeds, so the stored
-    // exit reflects a completed run; failures roll this row back too.
-    // (A post-commit config failure corrects the row afterwards.)
-    let exit = if report.has_drops() {
-        "OK_WITH_DROPS"
-    } else {
-        "OK"
-    };
+    // The row only persists when the commit succeeds; failures roll this
+    // row back too. The carry and a post-commit config failure correct it
+    // afterwards.
     let id = uuid::Uuid::new_v4().to_string();
     sqlx::query(
         "INSERT INTO import_runs (id, instance_id, exported_at, exit_code, \
@@ -2081,6 +2224,36 @@ async fn record_import_run(
     .execute(&mut **tx)
     .await?;
     Ok(id)
+}
+
+/// Audit row for a run whose only writes were carried sections.
+async fn insert_import_run(
+    pool: &SqlitePool,
+    root: &Value,
+    exit: &str,
+    report: &ReportBuilder,
+) -> Result<(), ImportError> {
+    let mut tx = pool.begin().await?;
+    record_import_run(&mut tx, root, report, exit).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Refresh the audit row with the counts of the carried sections, which
+/// commit after the row was first written.
+async fn update_import_run(
+    pool: &SqlitePool,
+    run_id: &str,
+    exit: &str,
+    report: &ReportBuilder,
+) -> Result<(), ImportError> {
+    sqlx::query("UPDATE import_runs SET exit_code = ?, entity_counts = ? WHERE id = ?")
+        .bind(exit)
+        .bind(report.counts_json())
+        .bind(run_id)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 /// Best-effort audit correction after a post-commit config failure. Errors

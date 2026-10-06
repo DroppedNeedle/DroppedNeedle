@@ -545,9 +545,12 @@ async fn run_merge(
         config_path: config_dir.join("config.json"),
         crypto,
         v2_config_path: None,
+        attachments_dir: export.parent().map(std::path::Path::to_path_buf),
+        cache_dir: None,
         dry_run: false,
         fault_before_commit: false,
         fault_after_commit: false,
+        fault_after_sections: None,
     })
     .await
 }

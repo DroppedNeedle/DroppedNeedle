@@ -33,13 +33,15 @@ Usage:
       [--v2-commit <sha>] [--passphrase-file <file>]
   droppedneedle-tool validate <file> [--v2-root <dir>] [--passphrase-file <file>]
   droppedneedle-tool import --file <export> --db <v3.db> --config-dir <dir>
-      [--passphrase-file <file>] [--v2-config <config.json>]
+      [--cache-dir <dir>] [--passphrase-file <file>] [--v2-config <config.json>]
   droppedneedle-tool dry-run --file <export> --db <v3.db> --config-dir <dir>
-      [--passphrase-file <file>] [--v2-config <config.json>]
+      [--cache-dir <dir>] [--passphrase-file <file>] [--v2-config <config.json>]
   droppedneedle-tool restore --backup <file> --target-dir <dir> [--allow-downgrade]
 
 The passphrase comes from --passphrase-file or stdin, never from argv.
-Import and dry-run print exactly one JSON report to stdout.
+Export writes <file> plus <name>.bundle.sqlite beside it; keep the two
+together. Import and dry-run print exactly one JSON report to stdout.
+--cache-dir defaults to the folder holding --db.
 ";
 
 fn main() {
@@ -298,6 +300,7 @@ fn run_import_cmd(args: &[String], dry_run: bool) -> Result<(), String> {
             "--file",
             "--db",
             "--config-dir",
+            "--cache-dir",
             "--passphrase-file",
             "--v2-config",
         ],
@@ -306,6 +309,13 @@ fn run_import_cmd(args: &[String], dry_run: bool) -> Result<(), String> {
     let export_path = required_flag(args, "--file")?;
     let db_path = required_flag(args, "--db")?;
     let config_dir = PathBuf::from(required_flag(args, "--config-dir")?);
+    // The bundle sits beside the export file; avatars land in the v3
+    // cache folder, which holds the database unless told otherwise.
+    let attachments_dir = folder_of(std::path::Path::new(&export_path));
+    let cache_dir = match flag_value(args, "--cache-dir")? {
+        Some(dir) => PathBuf::from(dir),
+        None => folder_of(std::path::Path::new(&db_path)),
+    };
     let export_bytes =
         std::fs::read(&export_path).map_err(|_| format!("cannot read {export_path}"))?;
     let passphrase = read_passphrase(args)?;
@@ -355,9 +365,12 @@ fn run_import_cmd(args: &[String], dry_run: bool) -> Result<(), String> {
                 config_path: config_dir.join("config.json"),
                 crypto,
                 v2_config_path: v2_config,
+                attachments_dir: Some(attachments_dir),
+                cache_dir: Some(cache_dir),
                 dry_run,
                 fault_before_commit: false,
                 fault_after_commit: false,
+                fault_after_sections: None,
             })
             .await,
         )

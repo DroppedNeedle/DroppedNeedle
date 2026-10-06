@@ -11,15 +11,19 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 
 use crate::auth::times::to_iso;
+use crate::export::envelope::LeftBehind;
 
 /// Report envelope marker.
 pub const REPORT_FORMAT: &str = "droppedneedle-import-report";
-/// Report schema version.
-pub const REPORT_FORMAT_VERSION: u32 = 1;
+/// Report schema version. Version 2 adds the carried sections, the
+/// left-behind list and the pending library links.
+pub const REPORT_FORMAT_VERSION: u32 = 2;
 /// Imported outcomes sampled per entity before counts-only cutoff.
 pub const IMPORT_SAMPLE_LIMIT: usize = 50;
 
-/// Counted entities, in stable report order.
+/// Counted entities from the export JSON, in stable report order. Every
+/// bundle section ([`crate::export::sections::ALL`]) is counted too, under
+/// its own name.
 pub const ENTITIES: &[&str] = &[
     "user",
     "provider",
@@ -29,6 +33,7 @@ pub const ENTITIES: &[&str] = &[
     "approval",
     "event_city",
     "event_seen",
+    "connection",
 ];
 
 /// Import exit code.
@@ -144,6 +149,10 @@ pub struct ImportReport {
     pub settings_defaulted: Vec<String>,
     /// Secrets re-encrypted under the v3 key (count only).
     pub secrets_reencrypted: u64,
+    /// v2 library references recorded for the library carry to resolve.
+    pub pending_links: u64,
+    /// What the export left behind in v2, copied from the file.
+    pub left_behind: Vec<LeftBehind>,
     /// Itemized outcomes with semantic keys.
     pub items: Vec<ReportItem>,
 }
@@ -166,6 +175,9 @@ pub struct ReportBuilder {
     settings_applied: Vec<String>,
     settings_defaulted: Vec<String>,
     secrets_reencrypted: u64,
+    pending_links: u64,
+    carried_writes: u64,
+    left_behind: Vec<LeftBehind>,
     items: Vec<ReportItem>,
     sampled_imports: HashMap<String, usize>,
     committed: bool,
@@ -176,8 +188,11 @@ impl ReportBuilder {
     #[must_use]
     pub fn new(dry_run: bool, export_file: ExportProvenance) -> Self {
         let mut entities = HashMap::new();
-        for entity in ENTITIES {
-            entities.insert((*entity).to_owned(), EntityCounts::default());
+        let sections = crate::export::sections::ALL
+            .iter()
+            .map(|section| section.name);
+        for entity in ENTITIES.iter().copied().chain(sections) {
+            entities.insert(entity.to_owned(), EntityCounts::default());
         }
         Self {
             dry_run,
@@ -187,10 +202,47 @@ impl ReportBuilder {
             settings_applied: Vec::new(),
             settings_defaulted: Vec::new(),
             secrets_reencrypted: 0,
+            pending_links: 0,
+            carried_writes: 0,
+            left_behind: Vec::new(),
             items: Vec::new(),
             sampled_imports: HashMap::new(),
             committed: false,
         }
+    }
+
+    /// Copy the export's left-behind list into the report.
+    pub fn set_left_behind(&mut self, left_behind: Vec<LeftBehind>) {
+        self.left_behind = left_behind;
+    }
+
+    /// Add one section's counts in bulk. Large sections are counted, not
+    /// itemized; the caller notes anything that needs attention.
+    pub fn add_counts(&mut self, entity: &str, counts: &EntityCounts) {
+        let total = self.entities.entry(entity.to_owned()).or_default();
+        total.imported += counts.imported;
+        total.skipped_identical += counts.skipped_identical;
+        total.conflict_kept_existing += counts.conflict_kept_existing;
+        total.dropped_unknown_user += counts.dropped_unknown_user;
+        total.dropped_invalid += counts.dropped_invalid;
+        total.nulled_field += counts.nulled_field;
+        total.error += counts.error;
+    }
+
+    /// Count library references recorded for the library carry.
+    pub fn add_pending_links(&mut self, count: u64) {
+        self.pending_links += count;
+    }
+
+    /// Count rows and files written by committed carried sections.
+    pub fn add_carried_writes(&mut self, count: u64) {
+        self.carried_writes += count;
+    }
+
+    /// Rows and files written by committed carried sections so far.
+    #[must_use]
+    pub fn carried_writes(&self) -> u64 {
+        self.carried_writes
     }
 
     /// Secrets counted as re-encrypted so far.
@@ -222,6 +274,7 @@ impl ReportBuilder {
             *counts = EntityCounts::default();
         }
         self.secrets_reencrypted = 0;
+        self.pending_links = 0;
     }
 
     /// Record one entity outcome, sampling plain imports.
@@ -302,6 +355,8 @@ impl ReportBuilder {
             settings_applied: self.settings_applied,
             settings_defaulted: self.settings_defaulted,
             secrets_reencrypted: self.secrets_reencrypted,
+            pending_links: self.pending_links,
+            left_behind: self.left_behind,
             items: self.items,
         }
     }

@@ -190,9 +190,12 @@ pub fn import_request(
         config_path,
         crypto,
         v2_config_path: None,
+        attachments_dir: None,
+        cache_dir: None,
         dry_run: false,
         fault_before_commit: false,
         fault_after_commit: false,
+        fault_after_sections: None,
     }
 }
 

@@ -179,9 +179,9 @@ async fn imported_counts_match_the_fixture() {
     assert_eq!(count("event_seen").imported, 1);
     // Nine settings seals (slskd, sabnzbd, two indexers, AudioDB, one
     // plugin token, one plugin setting with no manifest, the Last.fm key
-    // pair) plus three app passwords; v2's global Last.fm session key is
-    // dropped and counts none.
-    assert_eq!(report.secrets_reencrypted, 12);
+    // pair), three app passwords and four per-user connections; v2's
+    // global Last.fm session key is dropped and counts none.
+    assert_eq!(report.secrets_reencrypted, 16);
     // The v2 instance Last.fm key pair opens under the v3 key, so linking
     // and scrobbling keep working after the move.
     let config_dir = v3_root.join("config");
@@ -349,6 +349,206 @@ async fn reimport_writes_nothing() {
     assert_eq!(runs_after, 1, "a pure re-import writes no audit row");
 }
 
+/// The user data beyond accounts: every section lands with its v2 library
+/// references kept as pending links, a duplicate v2 playlist is counted
+/// instead of breaking the import, sealed connections open under the v3
+/// key, an interrupted carry resumes where it stopped, and a repeat import
+/// writes nothing at all and brings back nothing the user deleted.
+#[tokio::test]
+async fn user_data_carries_resumes_and_repeats_as_noop() {
+    use droppedneedle::tooling::fixture::{AVATAR_BYTES, COVER_BYTES, PLAYLIST_ID};
+
+    let root = scratch_dir("carry");
+    let (fixture, text) = repaired_export(&root);
+    let (v3_root, pool) = seeded_target(&root).await;
+    let rows = |table: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {table}"))
+                .fetch_one(&pool)
+                .await
+                .expect("table counts")
+        }
+    };
+
+    // A crash after three sections keeps them; the rest has not landed.
+    // The second playlist from the same source is a conflict, and its entry
+    // is left out with a count rather than failing the section.
+    let crashed = run_pipeline_with(&text, PASSPHRASE, &v3_root, &pool, false, Some(3)).await;
+    assert_eq!(
+        crashed.exit.code,
+        droppedneedle::r#import::ExitCode::FailedInternal
+    );
+    assert_eq!(rows("user_connections").await, 4);
+    assert_eq!(rows("playlists").await, 2);
+    assert_eq!(rows("playlist_tracks").await, 2);
+    assert_eq!(rows("library_play_history").await, 0);
+    let playlists = &crashed.entities["playlist"];
+    assert_eq!(
+        (playlists.imported, playlists.conflict_kept_existing),
+        (2, 1)
+    );
+    let entries = &crashed.entities["playlist_track"];
+    assert_eq!((entries.imported, entries.dropped_invalid), (2, 1));
+    // The failed run's audit row holds the sections it did commit.
+    let (exit, counts): (String, String) =
+        sqlx::query_as("SELECT exit_code, entity_counts FROM import_runs")
+            .fetch_one(&pool)
+            .await
+            .expect("audit row reads");
+    assert_eq!(exit, "FAILED_INTERNAL");
+    let counts: serde_json::Value = serde_json::from_str(&counts).expect("counts json");
+    assert_eq!(counts["playlist_track"]["imported"], 2);
+
+    let resumed = run_pipeline(&text, PASSPHRASE, &v3_root, &pool, false).await;
+    assert_eq!(
+        resumed.exit.code,
+        droppedneedle::r#import::ExitCode::OkWithDrops,
+        "{:?}",
+        resumed.exit
+    );
+    let skipped: Vec<&str> = resumed
+        .items
+        .iter()
+        .filter(|item| item.outcome == "already_applied")
+        .map(|item| item.key.as_str())
+        .collect();
+    assert_eq!(skipped, ["connection", "playlist", "playlist_track"]);
+    for (table, expected) in [
+        ("playlists", 2),
+        ("playlist_covers", 1),
+        ("library_user_favorites", 2),
+        ("library_play_history", 2),
+        ("request_history", 1),
+        ("request_history_requesters", 1),
+        ("request_history_dismissals", 1),
+        ("download_tasks", 1),
+        ("download_attempts", 1),
+        ("library_user_favorite_names", 2),
+        ("wanted_watches", 1),
+        ("wanted_seen_candidates", 1),
+        ("user_quotas", 1),
+        ("download_quarantine", 1),
+        ("user_listening_prefs", 1),
+        ("personal_mix_approvals", 1),
+        ("user_section_prefs", 1),
+        ("user_navidrome_folder_preferences", 1),
+        ("user_new_release_seen", 1),
+        ("compat_play_queues", 1),
+        ("compat_play_queue_items", 2),
+        ("compat_bookmarks", 1),
+        ("artist_known_releases", 1),
+        ("new_release_feed", 1),
+    ] {
+        assert_eq!(rows(table).await, expected, "{table}");
+    }
+    // Library ids wait for the library carry: written as is where v3 has
+    // no foreign key, empty where it does, and recorded either way.
+    assert_eq!(rows("import_pending_links").await, 13);
+    let history: Option<String> =
+        sqlx::query_scalar("SELECT local_track_id FROM library_play_history WHERE id = 'listen-1'")
+            .fetch_one(&pool)
+            .await
+            .expect("history reads");
+    assert_eq!(history, None);
+    let cover: Vec<u8> =
+        sqlx::query_scalar("SELECT image FROM playlist_covers WHERE playlist_id = ?")
+            .bind(PLAYLIST_ID)
+            .fetch_one(&pool)
+            .await
+            .expect("cover reads");
+    assert_eq!(cover, COVER_BYTES);
+    let avatar = v3_root
+        .join("cache")
+        .join("avatars")
+        .join(format!("{}.png", fixture.alice_id));
+    assert_eq!(std::fs::read(avatar).expect("avatar file"), AVATAR_BYTES);
+    for (table, left) in [
+        ("request_history", 1),
+        ("download_tasks", 1),
+        ("download_attempts", 2),
+        ("auth_tokens", 1),
+        ("youtube_links", 1),
+    ] {
+        assert!(
+            resumed
+                .left_behind
+                .iter()
+                .any(|item| item.table == table && item.rows == left),
+            "{table} listed as left behind"
+        );
+    }
+
+    // Sealed links open under the v3 key, in the shapes v3 reads.
+    let crypto = Crypto::load(&v3_root.join("config")).expect("v3 key loads");
+    let link = |service: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, String>(
+                "SELECT connection_data FROM user_connections WHERE service = ?",
+            )
+            .bind(service)
+            .fetch_one(&pool)
+            .await
+            .expect("link reads")
+        }
+    };
+    let listenbrainz: serde_json::Value = serde_json::from_str(
+        &crypto
+            .decrypt(&link("listenbrainz").await)
+            .expect("listenbrainz link opens"),
+    )
+    .expect("listenbrainz json");
+    assert_eq!(
+        listenbrainz["user_token"],
+        fixture.secrets.listenbrainz_token.as_str()
+    );
+    // Spotify keeps v2's field names, sealed whole like the media servers.
+    let spotify: serde_json::Value = serde_json::from_str(
+        &crypto
+            .decrypt(&link("spotify").await)
+            .expect("spotify link opens"),
+    )
+    .expect("spotify json");
+    assert_eq!(
+        spotify["refresh_token"],
+        fixture.secrets.spotify_refresh.as_str()
+    );
+    let lastfm: serde_json::Value =
+        serde_json::from_str(&link("lastfm").await).expect("last.fm doc");
+    assert_eq!(lastfm["configured"], false);
+    assert_eq!(
+        crypto
+            .decrypt(lastfm["session_key"].as_str().expect("session key"))
+            .expect("session key opens"),
+        fixture.secrets.lastfm_session
+    );
+    // A plugin setting sealed without a v2 manifest reads back plain.
+    let store = droppedneedle::runtime_config::ConfigStore::open(
+        &v3_root.join("config").join("config.json"),
+        crypto,
+    )
+    .expect("v3 config opens");
+    let orphan = store
+        .get_plugin_raw("orphan", &std::collections::HashSet::new())
+        .expect("plugin reads");
+    assert_eq!(
+        orphan.settings.get("mode").map(String::as_str),
+        Some(fixture.secrets.orphan_plugin_mode.as_str())
+    );
+
+    // A repeat import writes nothing anywhere, and a playlist deleted in v3
+    // since does not come back: each section is carried once.
+    sqlx::query("DELETE FROM playlists WHERE id = 'playlist-bob'")
+        .execute(&pool)
+        .await
+        .expect("playlist deletes");
+    let before = table_counts(&pool).await;
+    let again = run_pipeline(&text, PASSPHRASE, &v3_root, &pool, false).await;
+    assert!(again.entities.values().all(|counts| counts.imported == 0));
+    assert_eq!(table_counts(&pool).await, before);
+}
+
 /// Pre-seed the target with the conflict cases: strangers holding both
 /// fixture emails, and a Plex binding under a third account that collides
 /// with Bob's.
@@ -424,6 +624,18 @@ async fn run_pipeline(
     pool: &sqlx::SqlitePool,
     dry_run: bool,
 ) -> droppedneedle::r#import::ImportReport {
+    run_pipeline_with(export_text, passphrase, v3_root, pool, dry_run, None).await
+}
+
+/// [`run_pipeline`] with a simulated crash after some carried sections.
+async fn run_pipeline_with(
+    export_text: &str,
+    passphrase: &str,
+    v3_root: &Path,
+    pool: &sqlx::SqlitePool,
+    dry_run: bool,
+    fault_after_sections: Option<usize>,
+) -> droppedneedle::r#import::ImportReport {
     let config_dir = v3_root.join("config");
     let crypto = if dry_run {
         Crypto::from_key_bytes(&[9u8; 32]).expect("dry key builds")
@@ -443,9 +655,12 @@ async fn run_pipeline(
                 .join("config")
                 .join("config.json"),
         ),
+        attachments_dir: Some(v3_root.join("..")),
+        cache_dir: Some(v3_root.join("cache")),
         dry_run,
         fault_before_commit: false,
         fault_after_commit: false,
+        fault_after_sections,
     })
     .await
 }
