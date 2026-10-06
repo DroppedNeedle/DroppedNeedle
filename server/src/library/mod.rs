@@ -21,10 +21,14 @@
 //! dedicated rusqlite database with idempotent schema.
 
 pub mod adapters;
+mod clock;
 pub mod contrib;
 pub mod http;
 pub mod identify;
+mod loops;
+pub mod manage;
 pub mod publish;
 pub mod scan;
+pub mod service;
 pub mod tags;
 pub mod wiring;

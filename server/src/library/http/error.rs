@@ -145,6 +145,18 @@ impl IntoResponse for LibraryError {
     }
 }
 
+impl From<crate::library::service::ServiceError> for LibraryError {
+    fn from(error: crate::library::service::ServiceError) -> Self {
+        use crate::library::service::ServiceError;
+        match error {
+            ServiceError::NotFound => Self::NotFound,
+            ServiceError::InvalidInput { message } => Self::InvalidInput { message },
+            ServiceError::Conflict { message } => Self::Conflict { message },
+            ServiceError::Internal { cause } => Self::internal(&cause),
+        }
+    }
+}
+
 /// JSON body extractor that keeps malformed input inside the shared envelope
 /// instead of Axum's default plain-text 400.
 pub struct ValidJson<T>(pub T);

@@ -20,9 +20,10 @@ use super::models::{
     ScanRunsResponse, ScanScopeView, snake,
 };
 use crate::library::identify::models::{CandidateEvidence, IdentifyKind, JobState, ReviewItem};
+use crate::library::manage::PreviewItemInput;
 use crate::library::publish::planner::PlanKind;
 use crate::library::scan::models::{EffectivePolicy, ScanRun, ScanScope};
-use crate::library::wiring::{LibrarySetup, PreviewItemInput};
+use crate::library::wiring::LibrarySetup;
 
 // ---------------------------------------------------------------------------
 // Views.

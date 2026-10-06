@@ -94,3 +94,48 @@ impl<S: Send + Sync> FromRequestParts<S> for RequireCurator {
         }
     }
 }
+
+/// Resolve the library principal from the stashed session, mirroring
+/// the users role extractors: the role rereads the user row every
+/// request. A session whose account is gone reads as stale (401).
+pub async fn translate_principal(
+    axum::extract::State(users): axum::extract::State<crate::auth::users::UsersDeps>,
+    mut request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let missing = || LibraryError::Unauthorized {
+        message: "Authentication required".to_owned(),
+    };
+    let Some(session) = request
+        .extensions()
+        .get::<crate::auth::session::middleware::CurrentSession>()
+        .cloned()
+    else {
+        return missing().into_response();
+    };
+    let user = match users.users.get_by_id(&session.user_id).await {
+        Ok(Some(user)) => user,
+        Ok(None) => return missing().into_response(),
+        Err(crate::auth::users::stores::StoreError::Conflict) => {
+            return LibraryError::Conflict {
+                message: "Conflicting state".to_owned(),
+            }
+            .into_response();
+        }
+        Err(crate::auth::users::stores::StoreError::Internal(cause)) => {
+            return LibraryError::internal(&cause).into_response();
+        }
+    };
+    request.extensions_mut().insert(Principal {
+        user_id: user.id,
+        username: user.username,
+        role: match user.role {
+            crate::auth::users::roles::Role::User => Role::User,
+            crate::auth::users::roles::Role::Trusted => Role::Trusted,
+            crate::auth::users::roles::Role::Admin => Role::Admin,
+        },
+    });
+    next.run(request).await
+}
