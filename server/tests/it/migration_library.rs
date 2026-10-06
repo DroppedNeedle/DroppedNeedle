@@ -282,7 +282,8 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
     );
     let count = |entity: &str| report.entities[entity].imported;
     assert_eq!(count("library_track"), 2);
-    assert_eq!(count("album_identity"), 1);
+    // The curator's match and the pinned album's automatic one.
+    assert_eq!(count("album_identity"), 2);
     assert_eq!(count("management_baseline"), 1);
     assert_eq!(count("original_baseline"), 1, "{:?}", report.items);
     // The open MusicBrainz contribution moves with its return link; the
