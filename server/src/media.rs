@@ -40,6 +40,7 @@ use crate::remotes::service::RemotesService;
 use crate::runtime_config::ConfigStore;
 use crate::runtime_config::crypto::Crypto;
 use crate::runtime_config::sections::{AudioFormat, ConnectApps};
+use crate::stream::download::{DownloadState, access_from_config, download_routes};
 use crate::stream::gateway::Gateway;
 use crate::stream::routes::{StreamState, stream_routes};
 use crate::stream::transcode::{
@@ -60,6 +61,8 @@ pub struct MediaSetup {
     pub remotes: RemotesDeps,
     /// Stream-gateway state over the production engine.
     pub stream: StreamState<MediaEngine>,
+    /// Local file downloads (track files and album archives).
+    pub download: DownloadState,
     /// Playback-reporting deps (SQLite catalog/history/prefs/names).
     pub playback: PlaybackDeps,
 }
@@ -107,6 +110,13 @@ impl MediaSetup {
         config: Arc<ConfigStore>,
         imports: Arc<dyn ImportSink>,
     ) -> Result<(Self, MediaWorkers), String> {
+        let download = DownloadState::new(
+            pool.clone(),
+            library_roots.clone(),
+            access_from_config(config.clone()),
+            users.clone(),
+            ids.clone(),
+        );
         let resolver = Arc::new(
             ConnectionResolver::new(
                 Arc::new(SqliteConnectionStore::new(pool.clone(), lane.clone())),
@@ -186,6 +196,7 @@ impl MediaSetup {
             Self {
                 remotes,
                 stream,
+                download,
                 playback,
             },
             worker,
@@ -214,6 +225,15 @@ impl MediaSetup {
             Arc::new(CredentialCoder::new(crypto)),
             Arc::new(NoServers),
         ));
+        // No catalog tables and no roots: downloads answer 404 or 500.
+        let download = DownloadState::new(
+            sqlx::SqlitePool::connect_lazy("sqlite::memory:")
+                .map_err(|error| format!("test download pool: {error}"))?,
+            None,
+            Arc::new(|| Ok(crate::runtime_config::sections::SecuritySettings::default())),
+            users.clone(),
+            ids.clone(),
+        );
         let remotes = RemotesDeps {
             service: RemotesService::new(
                 http.clone(),
@@ -242,6 +262,7 @@ impl MediaSetup {
                 engine: Arc::new(engine),
                 ids: ids.clone(),
             },
+            download,
             playback: PlaybackDeps {
                 catalog: Arc::new(FakeCatalog::with_tracks(Vec::new())),
                 sinks: Arc::new(FakeSinks::unlinked()),
@@ -272,6 +293,7 @@ impl MediaSetup {
         Router::new()
             .merge(remotes_router(self.remotes.clone()))
             .merge(stream_routes(self.stream.clone()))
+            .merge(download_routes(self.download.clone()))
             .merge(crate::playback::playback_router(self.playback.clone()))
     }
 }

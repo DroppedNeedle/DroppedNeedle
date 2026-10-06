@@ -46,6 +46,7 @@ mod jobs_playlist_sync;
 mod jobs_plugin_ticks;
 mod jobs_registry;
 mod leak;
+mod library_browse_journey;
 mod library_contrib;
 mod library_identify;
 mod library_identify_shutdown;

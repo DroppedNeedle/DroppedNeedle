@@ -1709,6 +1709,15 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     // Stage-6 stream gateway.
     ("GET", "/api/v3/stream/{source}/{*key}", Posture::User),
     ("HEAD", "/api/v3/stream/{source}/{*key}", Posture::User),
+    // Local file downloads; the access setting then decides per role.
+    ("GET", "/api/v3/download/access", Posture::User),
+    ("GET", "/api/v3/download/local/track/{id}", Posture::User),
+    ("GET", "/api/v3/download/local/album/{id}", Posture::User),
+    (
+        "GET",
+        "/api/v3/download/local/album/mbid/{mbid}",
+        Posture::User,
+    ),
     // Stage-6 playback reporting (GET /now-playing keeps its stage-4 row;
     // stage 6 serves it from the live registry now).
     ("POST", "/api/v3/playback/start", Posture::User),
