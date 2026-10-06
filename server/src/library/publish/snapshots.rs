@@ -1,13 +1,10 @@
 //! Content-addressed snapshots and immutable baselines.
 //!
-//! Snapshot bytes live under the sandbox metadata directory at
-//! `blobs/<sha256>`, deduplicated by content hash. SQLite rows
-//! own references: per-operation snapshots expire by
+//! Snapshot bytes live in the application database, deduplicated by
+//! content hash, and reference rows own them: per-operation snapshots expire by
 //! `undo_retention_days`, while first-management baselines are
 //! immutable and indefinite and are removed only by explicit
 //! administrator purge.
-
-use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
@@ -30,64 +27,41 @@ fn hex_encode(bytes: &[u8]) -> String {
     out
 }
 
-/// Content-addressed blob store rooted at `<meta>/blobs`.
-pub struct BlobStore {
-    dir: PathBuf,
+/// Content-addressed blob store in the application database.
+pub struct BlobStore<'a> {
+    conn: &'a Connection,
 }
 
-impl BlobStore {
-    /// Open the store, creating its directory under the sandbox meta dir.
-    pub fn open(meta_dir: &Path) -> Result<Self, PublishError> {
-        let dir = meta_dir.join("blobs");
-        std::fs::create_dir_all(&dir).map_err(PublishError::from)?;
-        super::journal::fsync_dir(&dir)?;
-        Ok(Self { dir })
-    }
-
-    /// Path for one content hash.
-    pub fn path_for(&self, sha256: &str) -> PathBuf {
-        self.dir.join(sha256)
+impl<'a> BlobStore<'a> {
+    /// Borrow a connection as a blob store.
+    pub fn new(conn: &'a Connection) -> Self {
+        Self { conn }
     }
 
     /// Store bytes, returning their content hash. Identical bytes
-    /// deduplicate to one file; a present blob with mismatched bytes
-    /// fails closed instead of being trusted.
+    /// deduplicate to one row; a stored blob whose bytes disagree with
+    /// its hash fails closed instead of being trusted.
     pub fn put(&self, bytes: &[u8]) -> Result<String, PublishError> {
         let hash = sha256_hex(bytes);
-        let path = self.path_for(&hash);
-        match std::fs::symlink_metadata(&path) {
-            Ok(meta) => {
-                if meta.file_type().is_symlink() {
-                    return Err(PublishError::UnsafePath(format!(
-                        "blob {hash} path is a symlink"
-                    )));
-                }
-                let current = std::fs::read(&path).map_err(PublishError::from)?;
-                if sha256_hex(&current) != hash {
-                    return Err(PublishError::Snapshot(format!(
-                        "blob {hash} bytes disagree with its hash"
-                    )));
-                }
-                return Ok(hash);
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(err) => return Err(PublishError::Io(err.to_string())),
-        }
-        let temp = self
-            .dir
-            .join(format!("{}.tmp-{}", hash, std::process::id()));
-        std::fs::write(&temp, bytes).map_err(PublishError::from)?;
-        let file = std::fs::File::open(&temp).map_err(PublishError::from)?;
-        super::journal::fsync_file(&file)?;
-        drop(file);
-        std::fs::rename(&temp, &path).map_err(PublishError::from)?;
-        super::journal::fsync_dir(&self.dir)?;
+        self.conn.execute(
+            "INSERT OR IGNORE INTO library_publish_blobs (sha256, bytes) VALUES (?1, ?2)",
+            rusqlite::params![hash, bytes],
+        )?;
+        self.get(&hash)?;
         Ok(hash)
     }
 
     /// Read and hash-verify one blob.
     pub fn get(&self, sha256: &str) -> Result<Vec<u8>, PublishError> {
-        let bytes = super::paths::read_regular_file(&self.path_for(sha256))?;
+        let bytes: Vec<u8> = self
+            .conn
+            .query_row(
+                "SELECT bytes FROM library_publish_blobs WHERE sha256 = ?1",
+                rusqlite::params![sha256],
+                |row| row.get(0),
+            )
+            .optional()?
+            .ok_or_else(|| PublishError::Snapshot(format!("blob {sha256} is missing")))?;
         if sha256_hex(&bytes) != sha256 {
             return Err(PublishError::Snapshot(format!(
                 "blob {sha256} failed content verification"
@@ -121,7 +95,7 @@ impl<'a> SnapshotStore<'a> {
         expires_day: i64,
     ) -> Result<(), PublishError> {
         self.conn.execute(
-            "INSERT INTO publish_snapshots
+            "INSERT INTO library_publish_snapshots
              (id, bundle_id, track_id, blob_sha256, created_day, expires_day)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             rusqlite::params![
@@ -146,7 +120,7 @@ impl<'a> SnapshotStore<'a> {
         owner_id: &str,
     ) -> Result<(), PublishError> {
         self.conn.execute(
-            "INSERT OR IGNORE INTO publish_blob_refs (sha256, owner_kind, owner_id)
+            "INSERT OR IGNORE INTO library_publish_blob_refs (sha256, owner_kind, owner_id)
              VALUES (?1, ?2, ?3)",
             rusqlite::params![sha256, owner_kind, owner_id],
         )?;
@@ -158,7 +132,7 @@ impl<'a> SnapshotStore<'a> {
         self.conn
             .query_row(
                 "SELECT track_id, blob_sha256, expires_day
-                 FROM publish_snapshots WHERE id = ?1",
+                 FROM library_publish_snapshots WHERE id = ?1",
                 rusqlite::params![id],
                 |row| {
                     Ok((
@@ -179,7 +153,7 @@ impl<'a> SnapshotStore<'a> {
     ) -> Result<Vec<(String, String, String, i64)>, PublishError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, track_id, blob_sha256, expires_day
-             FROM publish_snapshots WHERE bundle_id = ?1 ORDER BY id",
+             FROM library_publish_snapshots WHERE bundle_id = ?1 ORDER BY id",
         )?;
         let rows = stmt.query_map(rusqlite::params![bundle_id], |row| {
             Ok((
@@ -201,9 +175,9 @@ impl<'a> SnapshotStore<'a> {
     /// unreferenced bytes later.
     pub fn purge_expired(&self, today_day: i64) -> Result<usize, PublishError> {
         let expired: Vec<(String, String)> = {
-            let mut stmt = self
-                .conn
-                .prepare("SELECT id, bundle_id FROM publish_snapshots WHERE expires_day <= ?1")?;
+            let mut stmt = self.conn.prepare(
+                "SELECT id, bundle_id FROM library_publish_snapshots WHERE expires_day <= ?1",
+            )?;
             let rows = stmt.query_map(rusqlite::params![today_day], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })?;
@@ -215,11 +189,11 @@ impl<'a> SnapshotStore<'a> {
         };
         for (id, bundle_id) in expired.iter() {
             self.conn.execute(
-                "DELETE FROM publish_blob_refs WHERE owner_kind = 'operation' AND owner_id = ?1",
+                "DELETE FROM library_publish_blob_refs WHERE owner_kind = 'operation' AND owner_id = ?1",
                 rusqlite::params![bundle_id],
             )?;
             self.conn.execute(
-                "DELETE FROM publish_snapshots WHERE id = ?1",
+                "DELETE FROM library_publish_snapshots WHERE id = ?1",
                 rusqlite::params![id],
             )?;
         }
@@ -250,7 +224,7 @@ impl<'a> BaselineStore<'a> {
         created_day: i64,
     ) -> Result<(), PublishError> {
         let changed = self.conn.execute(
-            "INSERT OR IGNORE INTO publish_baselines
+            "INSERT OR IGNORE INTO library_publish_baselines
              (track_id, blob_sha256, original_root, original_rel, created_day)
              VALUES (?1, ?2, ?3, ?4, ?5)",
             rusqlite::params![
@@ -267,7 +241,7 @@ impl<'a> BaselineStore<'a> {
             )));
         }
         self.conn.execute(
-            "INSERT OR IGNORE INTO publish_blob_refs (sha256, owner_kind, owner_id)
+            "INSERT OR IGNORE INTO library_publish_blob_refs (sha256, owner_kind, owner_id)
              VALUES (?1, 'baseline', ?2)",
             rusqlite::params![blob_sha256, track_id],
         )?;
@@ -279,7 +253,7 @@ impl<'a> BaselineStore<'a> {
         self.conn
             .query_row(
                 "SELECT blob_sha256, original_root, original_rel
-                 FROM publish_baselines WHERE track_id = ?1",
+                 FROM library_publish_baselines WHERE track_id = ?1",
                 rusqlite::params![track_id],
                 |row| {
                     Ok((
@@ -296,13 +270,13 @@ impl<'a> BaselineStore<'a> {
     /// Baseline count plus distinct referenced blob count for the purge
     /// impact report.
     pub fn impact(&self) -> Result<(usize, usize), PublishError> {
-        let baselines: i64 =
-            self.conn
-                .query_row("SELECT COUNT(*) FROM publish_baselines", [], |row| {
-                    row.get(0)
-                })?;
+        let baselines: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM library_publish_baselines",
+            [],
+            |row| row.get(0),
+        )?;
         let blobs: i64 = self.conn.query_row(
-            "SELECT COUNT(DISTINCT sha256) FROM publish_blob_refs WHERE owner_kind = 'baseline'",
+            "SELECT COUNT(DISTINCT sha256) FROM library_publish_blob_refs WHERE owner_kind = 'baseline'",
             [],
             |row| row.get(0),
         )?;

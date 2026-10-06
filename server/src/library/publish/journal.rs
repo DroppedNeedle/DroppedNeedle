@@ -180,8 +180,8 @@ pub struct FileJournal {
     pub seq: i64,
 }
 
-/// SQLite over the journal, snapshot, baseline, catalog-shadow, and
-/// invalidation tables. One database, one bundle commit transaction.
+/// The publish journal in the application database, next to the catalog
+/// a bundle commits against in the same transaction.
 pub struct JournalStore<'a> {
     conn: &'a Connection,
 }
@@ -195,7 +195,7 @@ impl<'a> JournalStore<'a> {
     /// Insert a fresh intent in `Prepared` state.
     pub fn insert(&self, journal: &FileJournal) -> Result<(), PublishError> {
         self.conn.execute(
-            "INSERT INTO publish_journal
+            "INSERT INTO library_publish_journal
              (id, bundle_id, kind, source_root, source_rel, dest_root, dest_rel,
               staged, backup, source_sha256, staged_sha256, track_id,
               catalog_revision, mgmt_state, state, seq)
@@ -239,7 +239,7 @@ impl<'a> JournalStore<'a> {
             )));
         }
         let changed = self.conn.execute(
-            "UPDATE publish_journal SET state = ?1, seq = seq + 1
+            "UPDATE library_publish_journal SET state = ?1, seq = seq + 1
              WHERE id = ?2 AND state = ?3",
             rusqlite::params![next.as_str(), id, expected.as_str()],
         )?;
@@ -249,7 +249,7 @@ impl<'a> JournalStore<'a> {
     /// Record the absolute backup path retained for a same-path write.
     pub fn set_backup(&self, id: &str, backup: &str) -> Result<(), PublishError> {
         self.conn.execute(
-            "UPDATE publish_journal SET backup = ?1 WHERE id = ?2",
+            "UPDATE library_publish_journal SET backup = ?1 WHERE id = ?2",
             rusqlite::params![backup, id],
         )?;
         Ok(())
@@ -262,7 +262,7 @@ impl<'a> JournalStore<'a> {
                 "SELECT id, bundle_id, kind, source_root, source_rel, dest_root,
                         dest_rel, staged, backup, source_sha256, staged_sha256,
                         track_id, catalog_revision, mgmt_state, state, seq
-                 FROM publish_journal WHERE id = ?1",
+                 FROM library_publish_journal WHERE id = ?1",
                 rusqlite::params![id],
                 read_journal,
             )
@@ -276,7 +276,7 @@ impl<'a> JournalStore<'a> {
             "SELECT id, bundle_id, kind, source_root, source_rel, dest_root,
                     dest_rel, staged, backup, source_sha256, staged_sha256,
                     track_id, catalog_revision, mgmt_state, state, seq
-             FROM publish_journal WHERE bundle_id = ?1 ORDER BY id",
+             FROM library_publish_journal WHERE bundle_id = ?1 ORDER BY id",
         )?;
         let rows = stmt.query_map(rusqlite::params![bundle_id], read_journal)?;
         let mut out = Vec::new();
@@ -290,7 +290,7 @@ impl<'a> JournalStore<'a> {
     /// ordered for deterministic startup recovery.
     pub fn active_bundles(&self) -> Result<Vec<String>, PublishError> {
         let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT bundle_id FROM publish_journal
+            "SELECT DISTINCT bundle_id FROM library_publish_journal
              WHERE state NOT IN ('cleaned', 'compensated', 'needs_attention')
              ORDER BY bundle_id",
         )?;
@@ -331,84 +331,6 @@ fn read_journal(row: &rusqlite::Row<'_>) -> Result<FileJournal, rusqlite::Error>
         state,
         seq: row.get(15)?,
     })
-}
-
-/// Create the publisher tables. Idempotent so scratch stores and the wired
-/// build can both apply it safely.
-pub fn apply_schema(conn: &Connection) -> Result<(), PublishError> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS publish_journal (
-           id TEXT PRIMARY KEY,
-           bundle_id TEXT NOT NULL,
-           kind TEXT NOT NULL,
-           source_root TEXT,
-           source_rel TEXT,
-           dest_root TEXT NOT NULL,
-           dest_rel TEXT NOT NULL,
-           staged TEXT NOT NULL,
-           backup TEXT,
-           source_sha256 TEXT,
-           staged_sha256 TEXT NOT NULL,
-           track_id TEXT,
-           catalog_revision INTEGER,
-           mgmt_state TEXT,
-           state TEXT NOT NULL,
-           seq INTEGER NOT NULL DEFAULT 0
-         );
-         CREATE INDEX IF NOT EXISTS idx_publish_journal_bundle
-           ON publish_journal(bundle_id);
-         CREATE INDEX IF NOT EXISTS idx_publish_journal_state
-           ON publish_journal(state);
-         CREATE TABLE IF NOT EXISTS publish_blob_refs (
-           sha256 TEXT NOT NULL,
-           owner_kind TEXT NOT NULL,
-           owner_id TEXT NOT NULL,
-           PRIMARY KEY (sha256, owner_kind, owner_id)
-         );
-         CREATE TABLE IF NOT EXISTS publish_snapshots (
-           id TEXT PRIMARY KEY,
-           bundle_id TEXT NOT NULL,
-           track_id TEXT NOT NULL,
-           blob_sha256 TEXT NOT NULL,
-           created_day INTEGER NOT NULL,
-           expires_day INTEGER NOT NULL
-         );
-         CREATE INDEX IF NOT EXISTS idx_publish_snapshots_bundle
-           ON publish_snapshots(bundle_id);
-         CREATE TABLE IF NOT EXISTS publish_baselines (
-           track_id TEXT PRIMARY KEY,
-           blob_sha256 TEXT NOT NULL,
-           original_root TEXT NOT NULL,
-           original_rel TEXT NOT NULL,
-           created_day INTEGER NOT NULL
-         );
-         CREATE TABLE IF NOT EXISTS publish_catalog_shadow (
-           track_id TEXT PRIMARY KEY,
-           root_id TEXT NOT NULL,
-           rel_path TEXT NOT NULL,
-           fingerprint TEXT NOT NULL,
-           mgmt_state TEXT NOT NULL,
-           revision INTEGER NOT NULL DEFAULT 0
-         );
-         CREATE TABLE IF NOT EXISTS publish_catalog_meta (
-           id INTEGER PRIMARY KEY CHECK (id = 1),
-           revision INTEGER NOT NULL DEFAULT 0
-         );
-         INSERT INTO publish_catalog_meta (id, revision)
-           SELECT 1, 0 WHERE NOT EXISTS (SELECT 1 FROM publish_catalog_meta);
-         CREATE TABLE IF NOT EXISTS publish_invalidations (
-           id INTEGER PRIMARY KEY AUTOINCREMENT,
-           bundle_id TEXT NOT NULL,
-           track_id TEXT NOT NULL,
-           created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-         );
-         CREATE TABLE IF NOT EXISTS publish_operations (
-           bundle_id TEXT PRIMARY KEY,
-           bundle_json TEXT NOT NULL,
-           created_day INTEGER NOT NULL
-         );",
-    )?;
-    Ok(())
 }
 
 /// Durably persist a directory entry change (rename, unlink, create).

@@ -1,7 +1,8 @@
 //! Publisher slice briefs: seal, crash matrix, preservation, archive safety.
 //!
-//! Each brief pins one stage-8 behavior against a scratch sandbox and a
-//! throwaway SQLite database: sealed previews reject stale state,
+//! Each test pins one publisher behavior against a scratch sandbox and a
+//! scratch application database (every migration applied, the bundle's
+//! tracks seeded into the catalog): sealed previews reject stale state,
 //! crash injection at every phase resumes or compensates without
 //! half-renames or occupied overwrites, unknown tags and frames
 //! survive Apply, and hostile archives never extract. The publisher
@@ -17,8 +18,8 @@ use droppedneedle::library::tags;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 
+use droppedneedle::library::scratch::ScratchDir;
 use publish::paths::Root;
 use publish::planner::{
     Capability, CapabilityGate, CollisionGate, FileFingerprint, PlanBundle, PlanItem, PlanKind,
@@ -33,21 +34,46 @@ use publish::undo::{
 use publish::{
     ArchiveEntry, ArchivePolicy, AutomaticEligibility, AutomaticHold, Catalog, CrashPoint,
     JournalState, JournalStore, PublishError, PublishOutcome, Publisher, Sandbox, SqliteCatalog,
-    apply_schema, reconcile, validate_archive,
+    reconcile, validate_archive,
 };
 use rusqlite::Connection;
 
-static COUNTER: AtomicU64 = AtomicU64::new(0);
+/// Tracks the bundles in these tests publish, seeded into the catalog
+/// at their source paths.
+const CATALOG_TRACKS: [(&str, &str); 4] = [
+    ("track-a", "staging/a.flac"),
+    ("track-b", "staging/b.flac"),
+    ("track-s", "staging/s.flac"),
+    ("t", "s.flac"),
+];
 
-fn scratch_dir(tag: &str) -> PathBuf {
-    let id = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let dir = std::env::temp_dir().join(format!(
-        "dn-library-publish-{}-{}-{id}",
-        std::process::id(),
-        tag
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+/// A migrated scratch database with the test tracks in the catalog.
+fn scratch_db(dir: &std::path::Path) -> PathBuf {
+    let db_path = dir.join("app.db");
+    let conn = droppedneedle::db::open_connection(&db_path).unwrap();
+    droppedneedle::schema::apply_migrations_blocking(&conn).unwrap();
+    conn.execute_batch(
+        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_id, grouping_source, created_at, updated_at) VALUES ('album', 'music', \
+         'k', 'Album', 'album', '00000000-0000-4000-8000-000000000002', 'automatic', 0, 0);",
+    )
+    .unwrap();
+    for (id, rel) in CATALOG_TRACKS {
+        conn.execute(
+            "INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path, \
+             path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded, \
+             album_title, album_title_folded, file_format, ingest_source, imported_at, \
+             membership_source) VALUES (?1, 'album', 'music', ?2, ?2, ?1, 0, 0, '0:0', ?1, ?1, \
+             'Album', 'album', 'flac', 'scan', 0, 'automatic')",
+            rusqlite::params![id, rel],
+        )
+        .unwrap();
+    }
+    db_path
+}
+
+fn open_db(fix: &Fixture) -> Connection {
+    droppedneedle::db::open_connection(&fix.db_path).unwrap()
 }
 
 /// Fixed free-space probe so disk preflight pins exact values.
@@ -63,35 +89,33 @@ struct Fixture {
     dir: PathBuf,
     sandbox: Sandbox,
     db_path: PathBuf,
+    _scratch: ScratchDir,
 }
 
 fn fixture(tag: &str) -> Fixture {
-    let dir = scratch_dir(tag);
+    let scratch = ScratchDir::new(&format!("publish-{tag}")).unwrap();
+    let dir = scratch.path().to_path_buf();
     let music = dir.join("music");
     let incoming = dir.join("incoming");
     std::fs::create_dir_all(&music).unwrap();
     std::fs::create_dir_all(&incoming).unwrap();
-    let meta = music.join("meta");
-    std::fs::create_dir_all(&meta).unwrap();
-    let sandbox = Sandbox::new(
-        vec![
-            Root {
-                id: "music".to_string(),
-                dir: music,
-            },
-            Root {
-                id: "incoming".to_string(),
-                dir: incoming,
-            },
-        ],
-        meta.clone(),
-    )
+    let sandbox = Sandbox::new(vec![
+        Root {
+            id: "music".to_string(),
+            dir: music,
+        },
+        Root {
+            id: "incoming".to_string(),
+            dir: incoming,
+        },
+    ])
     .unwrap();
-    let db_path = meta.join("publish.db");
+    let db_path = scratch_db(&dir);
     Fixture {
         dir,
         sandbox,
         db_path,
+        _scratch: scratch,
     }
 }
 
@@ -219,7 +243,7 @@ fn seal(bundle: &PlanBundle) -> (SealedPreview, SealRecheck) {
 fn open_publisher(fix: &Fixture) -> Publisher<SqliteCatalog, FixedSpace> {
     Publisher::open(
         fix.sandbox.clone(),
-        fix.db_path.clone(),
+        &fix.db_path,
         SqliteCatalog,
         FixedSpace(u64::MAX),
         50,
@@ -457,6 +481,8 @@ fn move_bundle_commits_atomically() {
         assert_eq!(journal.state, JournalState::Cleaned);
         assert!(journal.seq >= 4, "monotonic transitions recorded");
     }
+    // The catalog the reads API serves follows the move in the same
+    // transaction, and its revision bump invalidates read caches.
     let catalog = SqliteCatalog;
     assert_eq!(catalog.revision(publisher.connection()).unwrap(), 1);
     let located = catalog
@@ -465,13 +491,18 @@ fn move_bundle_commits_atomically() {
         .unwrap();
     assert_eq!(located.0, "music");
     assert_eq!(located.1, "organized/a.flac");
-    let invalidations: i64 = publisher
+    let at_dest: i64 = publisher
         .connection()
-        .query_row("SELECT COUNT(*) FROM publish_invalidations", [], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "SELECT COUNT(*) FROM local_tracks WHERE id = 'track-a' \
+             AND relative_path = 'organized/a.flac'",
+            [],
+            |row| row.get(0),
+        )
         .unwrap();
-    assert_eq!(invalidations, 2);
+    assert_eq!(at_dest, 1);
+    // Nothing the server owns is left inside the music root.
+    assert!(hidden_leftovers(&fix.dir.join("music")).is_empty());
 }
 
 // --- Crash matrix: restart resumes or compensates at every phase. ---
@@ -491,7 +522,7 @@ fn crash_at_every_phase_resumes_without_half_state() {
         );
         drop(publisher);
 
-        let mut conn = Connection::open(&fix.db_path).unwrap();
+        let mut conn = open_db(&fix);
         let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
         assert_eq!(results.len(), 1, "{point:?}: one bundle reconciled");
 
@@ -534,7 +565,7 @@ fn same_path_crash_keeps_original_until_commit() {
     assert!(matches!(err, PublishError::InjectedCrash(_)));
     drop(publisher);
 
-    let mut conn = Connection::open(&fix.db_path).unwrap();
+    let mut conn = open_db(&fix);
     let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
     assert_eq!(results.len(), 1);
     for item in bundle.items.iter() {
@@ -570,7 +601,7 @@ fn foreign_bytes_at_dest_flag_attention_without_deleting() {
     std::fs::create_dir_all(occupier.parent().unwrap()).unwrap();
     std::fs::write(&occupier, b"external-file").unwrap();
 
-    let mut conn = Connection::open(&fix.db_path).unwrap();
+    let mut conn = open_db(&fix);
     let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
     assert_eq!(results.len(), 1);
     assert!(
@@ -738,7 +769,7 @@ fn archive_safety_blocks_hostile_manifests() {
 // --- Sandbox brief: every write stays under sandbox roots. ---
 
 #[test]
-fn sandbox_rejects_escape_symlink_and_foreign_db() {
+fn sandbox_rejects_escapes_and_symlinks() {
     let fix = fixture("sandbox");
     assert!(fix.sandbox.resolve("music", "../incoming/x").is_err());
     assert!(fix.sandbox.resolve("music", "/abs/x").is_err());
@@ -757,18 +788,6 @@ fn sandbox_rejects_escape_symlink_and_foreign_db() {
                 .is_err()
         );
     }
-
-    let foreign_db = scratch_dir("foreign-db").join("publish.db");
-    assert!(
-        Publisher::open(
-            fix.sandbox.clone(),
-            foreign_db,
-            SqliteCatalog,
-            FixedSpace(u64::MAX),
-            50,
-        )
-        .is_err()
-    );
 }
 
 // --- Undo briefs: later external edits are never rolled back. ---
@@ -964,10 +983,9 @@ fn baseline_purge_requires_phrase_token_and_quiet_journals() {
 
 #[test]
 fn snapshots_expire_baselines_stay_and_blobs_dedup() {
-    let dir = scratch_dir("snapshots");
-    let conn = Connection::open(dir.join("snap.db")).unwrap();
-    apply_schema(&conn).unwrap();
-    let blobs = BlobStore::open(&dir).unwrap();
+    let fix = fixture("snapshots");
+    let conn = open_db(&fix);
+    let blobs = BlobStore::new(&conn);
     let first = blobs.put(b"same-bytes").unwrap();
     let second = blobs.put(b"same-bytes").unwrap();
     assert_eq!(first, second);
@@ -1185,7 +1203,7 @@ fn symlink_at_dest_flags_attention_without_touching_target() {
     std::fs::write(&canary, b"canary").unwrap();
     std::os::unix::fs::symlink(&canary, &dest).unwrap();
 
-    let mut conn = Connection::open(&fix.db_path).unwrap();
+    let mut conn = open_db(&fix);
     let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
     assert_eq!(results.len(), 1);
     assert!(
@@ -1226,7 +1244,7 @@ fn committed_dest_swapped_for_symlink_refuses_without_touching_target() {
     std::fs::write(&canary, b"canary").unwrap();
     std::os::unix::fs::symlink(&canary, &dest).unwrap();
 
-    let mut conn = Connection::open(&fix.db_path).unwrap();
+    let mut conn = open_db(&fix);
     let err = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap_err();
     assert!(matches!(err, PublishError::UnsafePath(_)), "got {err:?}");
     assert_eq!(std::fs::read(&canary).unwrap(), b"canary");
@@ -1254,7 +1272,7 @@ fn same_path_after_stage_resume_retains_backup() {
     drop(publisher);
 
     // No backup could exist yet: publish never reached its first rename.
-    let mut conn = Connection::open(&fix.db_path).unwrap();
+    let mut conn = open_db(&fix);
     let before = JournalStore::new(&conn).bundle("bundle-1").unwrap();
     assert_eq!(before.len(), 2);
     assert!(before.iter().all(|journal| journal.backup.is_none()));

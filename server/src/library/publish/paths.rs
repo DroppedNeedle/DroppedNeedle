@@ -19,22 +19,18 @@ pub struct Root {
     pub dir: PathBuf,
 }
 
-/// The writable world for one publisher run: library roots plus the
-/// metadata directory that holds journals, blobs, and snapshots.
-///
-/// The metadata directory must itself sit under one of the roots, so
-/// "writes only under sandbox roots" covers journal and snapshot
-/// writes too.
+/// The writable world for one publisher run: the library roots. The
+/// journal, snapshots, and baselines live in the application database;
+/// the only things written under a root are the files themselves and
+/// the hidden staging and backup temps beside them.
 #[derive(Debug, Clone)]
 pub struct Sandbox {
     roots: Vec<Root>,
-    meta_dir: PathBuf,
 }
 
 impl Sandbox {
-    /// Build a sandbox, rejecting a metadata directory that escapes
-    /// every root and roots that are not absolute directories.
-    pub fn new(roots: Vec<Root>, meta_dir: PathBuf) -> Result<Self, PublishError> {
+    /// Build a sandbox, rejecting roots that are not absolute.
+    pub fn new(roots: Vec<Root>) -> Result<Self, PublishError> {
         if roots.is_empty() {
             return Err(PublishError::UnsafePath(
                 "sandbox needs at least one root".into(),
@@ -48,19 +44,7 @@ impl Sandbox {
                 )));
             }
         }
-        let sandbox = Self { roots, meta_dir };
-        let mut inside = false;
-        for root in &sandbox.roots {
-            if sandbox.meta_dir.starts_with(&root.dir) {
-                inside = true;
-            }
-        }
-        if !inside {
-            return Err(PublishError::UnsafePath(
-                "metadata directory must sit under a sandbox root".into(),
-            ));
-        }
-        Ok(sandbox)
+        Ok(Self { roots })
     }
 
     /// Look up a root directory by stable id.
@@ -70,11 +54,6 @@ impl Sandbox {
             .find(|root| root.id == id)
             .map(|root| root.dir.as_path())
             .ok_or_else(|| PublishError::UnsafePath(format!("unknown root {id}")))
-    }
-
-    /// Metadata directory for journals, blobs, and snapshots.
-    pub fn meta_dir(&self) -> &Path {
-        &self.meta_dir
     }
 
     /// Resolve a root-relative path to an absolute path, rejecting

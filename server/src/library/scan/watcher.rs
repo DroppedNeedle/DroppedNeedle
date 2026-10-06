@@ -521,7 +521,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sidecar_writes_do_not_trip_the_watcher() {
+    async fn staging_temps_do_not_trip_the_watcher() {
         let root = std::env::temp_dir().join(format!("scan-watch-sidecar-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).expect("mkdir");
@@ -546,17 +546,16 @@ mod tests {
         let mut state = WatcherState::new();
         let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 0.0).await;
         assert!(matches!(action, WatcherAction::Idle { .. }));
-        // The server's own publish sidecar lands mid-root: still idle,
-        // with no batch pending.
-        let meta = root.join(".droppedneedle-management-meta");
-        std::fs::create_dir_all(&meta).expect("mkdir meta");
-        std::fs::write(meta.join("publish.db"), b"sidecar").expect("write sidecar");
+        // A publish staging temp lands beside the music: still idle, with
+        // no batch pending.
+        let temp = root.join(".droppedneedle-management-j1.a.flac.tmp");
+        std::fs::write(&temp, b"staged").expect("write temp");
         let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 10.0).await;
         assert!(matches!(action, WatcherAction::Idle { .. }));
-        assert!(!state.is_pending(), "sidecar write leaves no batch pending");
-        // A second sidecar write stays quiet too, while a real music
-        // file still trips the batch.
-        std::fs::write(meta.join("publish.db"), b"sidecar-v2").expect("rewrite sidecar");
+        assert!(!state.is_pending(), "staging temp leaves no batch pending");
+        // Rewriting the temp stays quiet too, while a real music file
+        // still trips the batch.
+        std::fs::write(&temp, b"staged-v2").expect("rewrite temp");
         let action = poll_once(&mut state, &settings, &registry, &roots, &pool, 20.0).await;
         assert!(matches!(action, WatcherAction::Idle { .. }));
         std::fs::write(root.join("b.flac"), b"data").expect("write music");

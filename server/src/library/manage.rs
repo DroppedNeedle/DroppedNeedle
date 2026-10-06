@@ -1,7 +1,7 @@
 //! Library management: sealed previews, apply, undo, baseline restore.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::adapters::FsSpaceProbe;
 use super::clock::today_day;
@@ -60,12 +60,17 @@ pub(crate) struct OpenPublish {
 /// reopened (with reconciliation) whenever the usable root set
 /// changes. One mutex serializes publishes against reopens.
 pub struct PublishCell {
+    db_path: PathBuf,
     pub(crate) cell: Option<OpenPublish>,
 }
 
 impl PublishCell {
-    pub(crate) fn empty() -> Self {
-        Self { cell: None }
+    /// An unopened cell over the application database at `db_path`.
+    pub(crate) fn new(db_path: &Path) -> Self {
+        Self {
+            db_path: db_path.to_owned(),
+            cell: None,
+        }
     }
 
     fn root_dirs(registry: &RootRegistry) -> Vec<super::publish::paths::Root> {
@@ -98,24 +103,19 @@ impl PublishCell {
         {
             return Ok(Vec::new());
         }
-        let primary = roots[0].dir.clone();
-        let meta_dir = primary.join(format!("{}meta", super::publish::HIDDEN_PREFIX));
-        let sandbox = Sandbox::new(roots, meta_dir)?;
-        let db_path = sandbox.meta_dir().join("publish.db");
+        let sandbox = Sandbox::new(roots)?;
         // Reconcile through a short-lived connection first: the
         // publisher owns its connection privately, so recovery runs
-        // before it opens. Schema is idempotent on both opens.
+        // before it opens. The journal lives in the application
+        // database, so root order never decides where it is.
         let recoveries = {
-            if let Some(parent) = db_path.parent() {
-                std::fs::create_dir_all(parent).map_err(PublishError::from)?;
-            }
-            let mut conn = rusqlite::Connection::open(&db_path).map_err(PublishError::from)?;
-            super::publish::journal::apply_schema(&conn)?;
+            let mut conn = crate::db::open_connection(&self.db_path)
+                .map_err(|error| PublishError::Store(error.to_string()))?;
             super::publish::recovery::reconcile(&mut conn, &sandbox, &SqliteCatalog)?
         };
         let publisher = Publisher::open(
             sandbox.clone(),
-            db_path,
+            &self.db_path,
             SqliteCatalog,
             FsSpaceProbe::new(space_roots.clone()),
             today_day(),
@@ -225,8 +225,7 @@ pub(crate) fn publish_error(error: PublishError) -> ServiceError {
         PublishError::UnsafePath(message) | PublishError::Archive(message) => {
             ServiceError::InvalidInput { message }
         }
-        PublishError::CacheInvalidation(message)
-        | PublishError::Store(message)
+        PublishError::Store(message)
         | PublishError::Io(message)
         | PublishError::InjectedCrash(message) => ServiceError::internal(&message),
     }
@@ -684,7 +683,7 @@ impl LibrarySetup {
         let journals = super::publish::journal::JournalStore::new(conn)
             .bundle(bundle_id)
             .map_err(publish_error)?;
-        let blobs = BlobStore::open(open.sandbox.meta_dir()).map_err(publish_error)?;
+        let blobs = BlobStore::new(conn);
         let by_track: HashMap<&str, &PlanItem> = source
             .items
             .iter()
@@ -864,7 +863,7 @@ impl LibrarySetup {
             .map_err(publish_error)?;
         let open = cell.open().map_err(publish_error)?;
         let conn = open.publisher.connection();
-        let blobs = BlobStore::open(open.sandbox.meta_dir()).map_err(publish_error)?;
+        let blobs = BlobStore::new(conn);
         let baselines = BaselineStore::new(conn);
         let mut inputs = Vec::new();
         let mut current_locs: HashMap<String, (String, String)> = HashMap::new();

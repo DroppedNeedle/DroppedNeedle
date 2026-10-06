@@ -8,12 +8,9 @@
 //! and memory stores. The routers nest under `/api/v3` inside the
 //! deny-by-default session gate.
 //!
-//! Store durability: scan state runs on SQLite over the application
-//! database, while identify and contribution state run on in-memory
-//! stores. Durable SQLite ports for those, durable roots, the rolling
-//! schedule settings, and the AcoustID key config do not exist yet. Publish journals, snapshots, baselines, and the catalog
-//! shadow run on a dedicated rusqlite database under the primary
-//! root with idempotent schema.
+//! Store durability: roots, scan state, identification, and the publish
+//! journal live in the application database. Contribution state runs on
+//! an in-memory store.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -334,7 +331,7 @@ impl LibrarySetup {
             test_providers,
             contrib,
             contrib_worker,
-            publish: Arc::new(std::sync::Mutex::new(PublishCell::empty())),
+            publish: Arc::new(std::sync::Mutex::new(PublishCell::new(db_path))),
             previews: Arc::new(std::sync::Mutex::new(HashMap::new())),
             watcher_state: Arc::new(std::sync::Mutex::new(WatcherState::new())),
             root_dirs,

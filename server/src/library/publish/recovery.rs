@@ -327,10 +327,6 @@ fn resume_precommit<C: Catalog>(
             )));
         }
     }
-    let track_ids: Vec<String> = commit.tracks.iter().map(|t| t.track_id.clone()).collect();
-    if let Err(err) = catalog.invalidate(&tx, bundle_id, &track_ids) {
-        return Err(PublishError::CacheInvalidation(err.to_string()));
-    }
     tx.commit().map_err(PublishError::from)?;
     finish_cleanup(conn, sandbox, bundle_id)?;
     Ok(())

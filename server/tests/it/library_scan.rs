@@ -46,13 +46,6 @@ fn snapshot(root: &Path) -> BTreeMap<String, (u64, i64, String)> {
     while let Some(dir) = stack.pop() {
         for entry in std::fs::read_dir(&dir).expect("read dir") {
             let path = entry.expect("entry").path();
-            // Publish bookkeeping still lives beside the music for now.
-            if path
-                .file_name()
-                .is_some_and(|name| name.to_string_lossy().starts_with(".droppedneedle-"))
-            {
-                continue;
-            }
             if path.is_dir() {
                 stack.push(path);
                 continue;

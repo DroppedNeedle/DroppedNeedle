@@ -14,11 +14,9 @@
 //! stores, services, HTTP routes, background loops, and startup
 //! recovery. HTTP lives under [`http`].
 //!
-//! Store durability: scan state runs on SQLite over the application
-//! database; identify and contribution state run on in-memory stores
-//! (no durable SQLite ports yet); publish
-//! journals, snapshots, baselines, and the catalog shadow run on a
-//! dedicated rusqlite database with idempotent schema.
+//! Store durability: roots, scan runs, the catalog, identification, and
+//! the publish journal (with its snapshots and baselines) all live in the
+//! application database. Contribution state runs on an in-memory store.
 
 pub mod adapters;
 mod clock;

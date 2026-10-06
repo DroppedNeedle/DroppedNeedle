@@ -85,7 +85,7 @@ pub mod tags_seam;
 pub mod undo;
 
 pub use archive::{ArchiveBlock, ArchiveEntry, ArchivePolicy, ArchiveReport, validate_archive};
-pub use journal::{FileJournal, JournalKind, JournalState, JournalStore, apply_schema, fsync_dir};
+pub use journal::{FileJournal, JournalKind, JournalState, JournalStore, fsync_dir};
 pub use paths::{CollisionKey, Sandbox, collision_key};
 pub use planner::{
     AutomaticEligibility, AutomaticHold, Capability, CapabilityGate, DiskPreflight,
@@ -145,10 +145,6 @@ pub enum PublishError {
     /// commit stands; cleanup stays pending and retryable.
     #[error("cleanup pending: {0}")]
     Cleanup(String),
-    /// Cache invalidation ran after commit and reported a fault. Like
-    /// external notification, this warns and never rolls back.
-    #[error("cache invalidation: {0}")]
-    CacheInvalidation(String),
     /// Path safety: traversal, escape, symlink, or out-of-sandbox path.
     #[error("unsafe path: {0}")]
     UnsafePath(String),

@@ -12,11 +12,11 @@
 //! or compensates. Production never sets a crash point.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension};
 
-use super::journal::{FileJournal, JournalKind, JournalState, JournalStore, apply_schema};
+use super::journal::{FileJournal, JournalKind, JournalState, JournalStore};
 use super::paths::Sandbox;
 use super::planner::{
     CapabilityGate, CollisionGate, DiskPreflight, PlanBundle, PlanKind, SealError, SealRecheck,
@@ -52,43 +52,46 @@ pub struct BundleCommit {
     pub tracks: Vec<TrackCommit>,
 }
 
-/// Catalog port. Production uses `SqliteCatalog`, a SQLite shadow catalog
-/// with CAS semantics, so the protocol and its tests run without the
-/// reads catalog.
+/// Catalog port: where a managed track lives and what the publisher
+/// last wrote there. Production is [`SqliteCatalog`], the catalog tables
+/// the scan writes and the reads API serves.
 pub trait Catalog {
     /// Current catalog revision.
     fn revision(&self, conn: &Connection) -> Result<u64, PublishError>;
-    /// Locate a track: (root id, relative path, fingerprint, mgmt state).
+    /// Locate a track: (root id, relative path, last published SHA-256,
+    /// management state). The last two are empty for a track the
+    /// publisher never wrote.
     fn locate(
         &self,
         conn: &Connection,
         track_id: &str,
     ) -> Result<Option<(String, String, String, String)>, PublishError>;
-    /// Commit one bundle: CAS on the expected revision, adopt every
-    /// track row, bump the catalog once.
+    /// Commit one bundle: CAS on the expected revision, move every track
+    /// row to its published location, bump the catalog once.
     fn commit_bundle(&self, conn: &Connection, commit: &BundleCommit) -> Result<(), PublishError>;
-    /// Record cache invalidation for the committed bundle. Runs inside
-    /// the commit transaction, right after the catalog rows land.
-    fn invalidate(
-        &self,
-        conn: &Connection,
-        bundle_id: &str,
-        track_ids: &[String],
-    ) -> Result<(), PublishError>;
     /// Mark a track missing so streaming and search stay accurate when
     /// committed bytes cannot be recovered.
     fn mark_missing(&self, conn: &Connection, track_id: &str) -> Result<(), PublishError>;
 }
 
-/// SQLite shadow catalog with compare-and-swap commits. Stands in for
-/// the reads catalog, which has no publish port yet.
+fn now_secs() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|span| span.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
+/// The application catalog: `local_tracks` holds where a track lives,
+/// `library_track_management_state` what the publisher last wrote, and
+/// `library_catalog_revision` the compare-and-swap counter (the same one
+/// read caches key on, so a commit invalidates them).
 #[derive(Debug, Clone, Default)]
 pub struct SqliteCatalog;
 
 impl Catalog for SqliteCatalog {
     fn revision(&self, conn: &Connection) -> Result<u64, PublishError> {
         let rev: i64 = conn.query_row(
-            "SELECT revision FROM publish_catalog_meta WHERE id = 1",
+            "SELECT value FROM library_catalog_revision WHERE singleton = 1",
             [],
             |row| row.get(0),
         )?;
@@ -101,8 +104,11 @@ impl Catalog for SqliteCatalog {
         track_id: &str,
     ) -> Result<Option<(String, String, String, String)>, PublishError> {
         conn.query_row(
-            "SELECT root_id, rel_path, fingerprint, mgmt_state
-             FROM publish_catalog_shadow WHERE track_id = ?1",
+            "SELECT t.root_id, t.relative_path, COALESCE(m.applied_projection_hash, ''), \
+             COALESCE(m.last_outcome, '') \
+             FROM local_tracks t \
+             LEFT JOIN library_track_management_state m ON m.local_track_id = t.id \
+             WHERE t.id = ?1",
             rusqlite::params![track_id],
             |row| {
                 Ok((
@@ -119,8 +125,8 @@ impl Catalog for SqliteCatalog {
 
     fn commit_bundle(&self, conn: &Connection, commit: &BundleCommit) -> Result<(), PublishError> {
         let changed = conn.execute(
-            "UPDATE publish_catalog_meta SET revision = revision + 1
-             WHERE id = 1 AND revision = ?1",
+            "UPDATE library_catalog_revision SET value = value + 1
+             WHERE singleton = 1 AND value = ?1",
             rusqlite::params![commit.expected_catalog_revision as i64],
         )?;
         if changed != 1 {
@@ -129,39 +135,41 @@ impl Catalog for SqliteCatalog {
                 commit.bundle_id
             )));
         }
-        for track in commit.tracks.iter() {
-            conn.execute(
-                "INSERT INTO publish_catalog_shadow
-                 (track_id, root_id, rel_path, fingerprint, mgmt_state, revision)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-                 ON CONFLICT(track_id) DO UPDATE SET
-                   root_id = excluded.root_id, rel_path = excluded.rel_path,
-                   fingerprint = excluded.fingerprint,
-                   mgmt_state = excluded.mgmt_state,
-                   revision = excluded.revision",
+        let now = now_secs();
+        for track in &commit.tracks {
+            let moved = conn.execute(
+                "UPDATE local_tracks SET root_id = ?2, relative_path = ?3, file_path = ?3, \
+                 path_hash = ?4, row_revision = row_revision + 1 WHERE id = ?1",
                 rusqlite::params![
                     track.track_id,
                     track.root_id,
                     track.rel_path,
-                    track.fingerprint,
-                    track.mgmt_state,
-                    commit.expected_catalog_revision as i64 + 1,
+                    sha256_hex(track.rel_path.as_bytes())
                 ],
             )?;
-        }
-        Ok(())
-    }
-
-    fn invalidate(
-        &self,
-        conn: &Connection,
-        bundle_id: &str,
-        track_ids: &[String],
-    ) -> Result<(), PublishError> {
-        for track_id in track_ids {
+            if moved != 1 {
+                return Err(PublishError::Catalog(format!(
+                    "track {} is not in the catalog",
+                    track.track_id
+                )));
+            }
             conn.execute(
-                "INSERT INTO publish_invalidations (bundle_id, track_id) VALUES (?1, ?2)",
-                rusqlite::params![bundle_id, track_id],
+                "INSERT INTO library_track_management_state (local_track_id, managed_root_id, \
+                 applied_projection_hash, last_outcome, last_managed_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5) \
+                 ON CONFLICT (local_track_id) DO UPDATE SET \
+                 managed_root_id = excluded.managed_root_id, \
+                 applied_projection_hash = excluded.applied_projection_hash, \
+                 last_outcome = excluded.last_outcome, \
+                 last_managed_at = excluded.last_managed_at, \
+                 row_revision = library_track_management_state.row_revision + 1",
+                rusqlite::params![
+                    track.track_id,
+                    track.root_id,
+                    track.fingerprint,
+                    track.mgmt_state,
+                    now
+                ],
             )?;
         }
         Ok(())
@@ -169,8 +177,12 @@ impl Catalog for SqliteCatalog {
 
     fn mark_missing(&self, conn: &Connection, track_id: &str) -> Result<(), PublishError> {
         conn.execute(
-            "UPDATE publish_catalog_shadow SET mgmt_state = 'missing' WHERE track_id = ?1",
-            rusqlite::params![track_id],
+            "UPDATE local_tracks SET availability = 'missing', missing_since = ?2 WHERE id = ?1",
+            rusqlite::params![track_id, now_secs()],
+        )?;
+        conn.execute(
+            "UPDATE library_catalog_revision SET value = value + 1 WHERE singleton = 1",
+            [],
         )?;
         Ok(())
     }
@@ -232,7 +244,6 @@ pub struct Publisher<C: Catalog, P: SpaceProbe> {
     conn: Connection,
     catalog: C,
     space: P,
-    blobs: BlobStore,
     gate: CapabilityGate,
     injector: Option<CrashPoint>,
     today_day: i64,
@@ -240,30 +251,22 @@ pub struct Publisher<C: Catalog, P: SpaceProbe> {
 }
 
 impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
-    /// Open a publisher: the database path must sit under a sandbox
-    /// root, and the publisher schema is applied idempotently.
+    /// Open a publisher on the application database through the
+    /// database factory. The journal tables come from the migrations.
     pub fn open(
         sandbox: Sandbox,
-        db_path: PathBuf,
+        db_path: &Path,
         catalog: C,
         space: P,
         today_day: i64,
     ) -> Result<Self, PublishError> {
-        sandbox.ensure_under_roots(&db_path)?;
-        if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent).map_err(PublishError::from)?;
-        }
-        let conn = Connection::open(&db_path).map_err(PublishError::from)?;
-        conn.execute_batch("PRAGMA foreign_keys = ON")
-            .map_err(PublishError::from)?;
-        apply_schema(&conn)?;
-        let blobs = BlobStore::open(sandbox.meta_dir())?;
+        let conn = crate::db::open_connection(db_path)
+            .map_err(|error| PublishError::Store(error.to_string()))?;
         Ok(Self {
             sandbox,
             conn,
             catalog,
             space,
-            blobs,
             gate: CapabilityGate::production(),
             injector: None,
             today_day,
@@ -404,7 +407,8 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             let prior_mgmt = self
                 .catalog
                 .locate(&self.conn, &item.track_id)?
-                .map(|(_, _, _, state)| state);
+                .map(|(_, _, _, state)| state)
+                .filter(|state| !state.is_empty());
             let before_state = super::undo::BeforeState {
                 doc: before,
                 source_root: item.source_root.clone(),
@@ -419,7 +423,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 .get(&item.track_id)?
                 .is_none()
             {
-                let baseline_blob = self.blobs.put(&before_state.to_bytes()?)?;
+                let baseline_blob = BlobStore::new(&self.conn).put(&before_state.to_bytes()?)?;
                 match super::snapshots::BaselineStore::new(&self.conn).capture(
                     &item.track_id,
                     &baseline_blob,
@@ -432,7 +436,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                     Err(other) => return Err(other),
                 }
             }
-            let blob = self.blobs.put(&before_state.to_bytes()?)?;
+            let blob = BlobStore::new(&self.conn).put(&before_state.to_bytes()?)?;
             let snapshots = SnapshotStore::new(&self.conn);
             snapshots.record(
                 &format!("{}-{}", bundle.id, item.track_id),
@@ -681,10 +685,6 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 )));
             }
         }
-        let track_ids: Vec<String> = commit.tracks.iter().map(|t| t.track_id.clone()).collect();
-        if let Err(err) = self.catalog.invalidate(&tx, &bundle.id, &track_ids) {
-            return Err(PublishError::CacheInvalidation(err.to_string()));
-        }
         tx.commit().map_err(PublishError::from)?;
         Ok(())
     }
@@ -843,9 +843,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
     fn compensatable(err: &PublishError) -> bool {
         !matches!(
             err,
-            PublishError::InjectedCrash(_)
-                | PublishError::Cleanup(_)
-                | PublishError::CacheInvalidation(_)
+            PublishError::InjectedCrash(_) | PublishError::Cleanup(_)
         )
     }
 

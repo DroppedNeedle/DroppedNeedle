@@ -20,7 +20,7 @@ pub fn record_operation(
 ) -> Result<(), PublishError> {
     let json = serde_json::to_string(bundle).map_err(PublishError::from)?;
     let changed = conn.execute(
-        "INSERT OR IGNORE INTO publish_operations (bundle_id, bundle_json, created_day)
+        "INSERT OR IGNORE INTO library_publish_operations (bundle_id, bundle_json, created_day)
          VALUES (?1, ?2, ?3)",
         rusqlite::params![bundle.id, json, today_day],
     )?;
@@ -40,7 +40,7 @@ pub fn load_operation(
 ) -> Result<Option<PlanBundle>, PublishError> {
     let row: Option<String> = conn
         .query_row(
-            "SELECT bundle_json FROM publish_operations WHERE bundle_id = ?1",
+            "SELECT bundle_json FROM library_publish_operations WHERE bundle_id = ?1",
             rusqlite::params![bundle_id],
             |row| row.get(0),
         )
