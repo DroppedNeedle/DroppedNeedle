@@ -315,11 +315,30 @@ The first account is always admin. Later accounts are created by an admin or aut
 <details>
 <summary>Setting up OIDC</summary>
 
-Any provider with the authorization code flow works (Authelia, Keycloak, Authentik, and others):
+Any OpenID Connect provider works (Authelia, Keycloak, Authentik, Pocket ID, and others):
 
-1. Create a client in your provider with redirect URI `https://your-droppedneedle-url/api/v3/auth/oidc/callback`.
-2. Enter the issuer URL, client ID, and client secret under Settings > Security.
-3. Save. An SSO button appears on the login page.
+1. In your provider, create a client for DroppedNeedle. Set its redirect URI to `https://your-droppedneedle-url/api/v3/auth/oidc/callback`. If you serve DroppedNeedle under a sub-path with `BASE_PATH`, put that in front: `https://example.com/music/api/v3/auth/oidc/callback`.
+2. Under Settings > Security, enter the issuer URL, the client ID, the client secret (leave it empty for a public client), and the same redirect URI. Keep `openid` in the scopes; `openid email profile` is the default.
+3. Test, switch it on and save. A single sign-on button appears on the login page.
+
+Things worth knowing:
+
+- The issuer URL is the one your provider lists as `issuer` at `/.well-known/openid-configuration`. DroppedNeedle checks that the two match and refuses to log in if they don't.
+- DroppedNeedle checks the signature, audience, expiry and nonce of every login token against the keys your provider publishes, so the server needs to reach your provider directly, not only your browser.
+- A sign-in only joins an existing DroppedNeedle account when the provider says the email address is verified. Otherwise it creates a new account.
+- The first account on a fresh install becomes the admin, whichever way it signs in.
+
+</details>
+
+<details>
+<summary>Signing in with Plex or Jellyfin</summary>
+
+Turn on "Allow login with Plex" or "Allow login with Jellyfin" on that server's settings page. The login page then shows the matching tab, and the sign-in only works while the switch is on.
+
+- Jellyfin checks the username and password against your Jellyfin server.
+- Plex sends the user to plex.tv to approve the sign-in. When a Plex server is set up, only accounts that can reach that server get in.
+
+Either way the user's own media account is linked for playback, so plays count for them without extra setup. Admins can also pre-create accounts for everyone on the media server from Settings > Users > Import; those people then sign in with Plex or Jellyfin and land in their account.
 
 </details>
 
