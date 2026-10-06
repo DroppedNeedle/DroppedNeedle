@@ -472,7 +472,6 @@ async fn user_data_carries_resumes_and_repeats_as_noop() {
         ("download_tasks", 1),
         ("download_attempts", 2),
         ("auth_tokens", 1),
-        ("youtube_links", 1),
     ] {
         assert!(
             resumed

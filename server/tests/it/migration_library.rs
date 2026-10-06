@@ -191,7 +191,15 @@ fn managed_album(v2_root: &Path, alice: &str) -> PathBuf {
                  '{{}}', '{{}}', NULL, 1700000100.0, 1700000200.0);
          INSERT INTO library_contribution_callback_tokens (token_hash, contribution_id,
              requested_by_user_id, expires_at, created_at)
-         VALUES ('token-open', 'contrib-open', '{alice}', 4000000000.0, 1700000700.0);",
+         VALUES ('token-open', 'contrib-open', '{alice}', 4000000000.0, 1700000700.0);
+         INSERT INTO youtube_links (album_id, video_id, album_name, artist_name, embed_url,
+             created_at, is_manual, track_count)
+         VALUES ('rg-blue', 'vid-album', 'Blue Train', 'John Coltrane', 'https://e/a',
+                 '2025-06-01T00:00:00Z', 1, 2);
+         INSERT INTO youtube_track_links (album_id, track_number, disc_number, album_name,
+             track_name, video_id, artist_name, embed_url, created_at)
+         VALUES ('rg-blue', 1, 1, 'Blue Train', 'Blue Train', 'vid-1', 'John Coltrane',
+                 'https://e/1', '2025-06-01T00:00:00Z');",
         len = snapshot.len(),
     ))
     .expect("library rows");
@@ -290,6 +298,8 @@ async fn managed_identified_album_keeps_ids_identity_and_original() {
     // linked one stays behind.
     assert_eq!(count("contribution_draft"), 1);
     assert_eq!(count("contribution_callback_token"), 1);
+    assert_eq!(count("youtube_link"), 1);
+    assert_eq!(count("youtube_track_link"), 1);
     pool.close().await;
 
     // v3 starts on the imported state and scans the carried root.

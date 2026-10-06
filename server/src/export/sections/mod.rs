@@ -25,6 +25,7 @@ pub mod management;
 pub mod prefs;
 pub mod releases;
 pub mod requests;
+pub mod youtube;
 
 /// The kind of v2 library row a carried row points at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -330,6 +331,8 @@ pub const ALL: &[&TableSection] = &[
     &compat::BOOKMARKS,
     &releases::KNOWN_RELEASES,
     &releases::NEW_RELEASE_FEED,
+    &youtube::ALBUM_LINKS,
+    &youtube::TRACK_LINKS,
     &avatars::AVATARS,
     &library::ARTISTS,
     &library::ALBUMS,

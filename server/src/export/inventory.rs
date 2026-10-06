@@ -37,21 +37,11 @@ const PRE_UPGRADE_COPIES: &[&str] = &[
 const REBUILT_FROM_CARRIED: &[&str] = &["download_landed_groups"];
 
 /// Data v3 has no place to keep yet, with what the user does instead.
-const NO_V3_STORE: &[(&str, &str)] = &[
-    (
-        "ignored_releases",
-        "releases you hid from the new-release list; v3 cannot keep them yet. Hide them \
+const NO_V3_STORE: &[(&str, &str)] = &[(
+    "ignored_releases",
+    "releases you hid from the new-release list; v3 cannot keep them yet. Hide them \
          again in v3 when they show up",
-    ),
-    (
-        "youtube_links",
-        "YouTube links on albums; v3 cannot keep them yet. Add them again in v3",
-    ),
-    (
-        "youtube_track_links",
-        "YouTube links on tracks; v3 cannot keep them yet. Add them again in v3",
-    ),
-];
+)];
 
 /// Sign-in state: everyone signs in again on v3.
 const SIGN_IN_STATE: &[&str] = &["auth_oidc_states", "auth_tokens", "spotify_oauth_states"];

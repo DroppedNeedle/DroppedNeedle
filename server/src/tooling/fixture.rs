@@ -888,8 +888,7 @@ fn build_user_data(
              artist_mbid_lower, artist_name, title, discovered_at)
          VALUES ('cccccccc-0000-4000-8000-000000000001', 'CCCCCCCC-0000-4000-8000-000000000001',
                  '{artist}', 'Fixture Artist One', 'New One', 1700000000.0);
-         INSERT INTO auth_tokens (token_hash, user_id, created_at) VALUES ('t', '{alice}', '{at}');
-         INSERT INTO youtube_links (id, user_id) VALUES ('yt-1', '{alice}');"
+         INSERT INTO auth_tokens (token_hash, user_id, created_at) VALUES ('t', '{alice}', '{at}');"
     );
     run(&rows)
 }
@@ -1010,7 +1009,6 @@ const USER_DATA_SCHEMA: &str = "
         discovered_at REAL NOT NULL);
     CREATE TABLE auth_tokens (
         token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, created_at TEXT NOT NULL);
-    CREATE TABLE youtube_links (id TEXT PRIMARY KEY, user_id TEXT NOT NULL);
     CREATE TABLE download_attempts (
         id TEXT PRIMARY KEY, task_id TEXT NOT NULL, source TEXT NOT NULL,
         candidate_index INTEGER NOT NULL, job_name TEXT NOT NULL DEFAULT '',
@@ -1156,6 +1154,16 @@ const V2_LIBRARY_SCHEMA: &str = "
         lease_expires_at REAL, heartbeat_at REAL, created_at REAL NOT NULL,
         updated_at REAL NOT NULL, terminal_at REAL, row_revision INTEGER NOT NULL DEFAULT 1,
         event_revision INTEGER NOT NULL DEFAULT 0);
+    CREATE TABLE youtube_links (
+        album_id TEXT PRIMARY KEY, video_id TEXT, album_name TEXT NOT NULL,
+        artist_name TEXT NOT NULL, embed_url TEXT, cover_url TEXT, created_at TEXT NOT NULL,
+        is_manual INTEGER DEFAULT 0, track_count INTEGER DEFAULT 0);
+    CREATE TABLE youtube_track_links (
+        album_id TEXT NOT NULL, track_number INTEGER NOT NULL,
+        disc_number INTEGER NOT NULL DEFAULT 1, album_name TEXT NOT NULL,
+        track_name TEXT NOT NULL, video_id TEXT NOT NULL, artist_name TEXT NOT NULL,
+        embed_url TEXT NOT NULL, created_at TEXT NOT NULL,
+        PRIMARY KEY (album_id, disc_number, track_number));
 ";
 
 /// Low-cost bcrypt for fixtures (fast, still `$2b$` shaped).
