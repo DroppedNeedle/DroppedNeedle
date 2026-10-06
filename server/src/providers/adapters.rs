@@ -65,10 +65,12 @@ pub struct CorePacer {
 
 impl CorePacer {
     /// Pace `source` through the shared deps, or `None` when the source has
-    /// no verified rate row.
+    /// no verified rate row. The row is checked against the policy table,
+    /// not the limiter set, so the test-only unpaced set still builds
+    /// clients (and never waits).
     #[must_use]
     pub fn for_source(providers: Arc<Providers>, source: &'static str) -> Option<Self> {
-        providers.limiter(source)?;
+        super::limiter::policy_for(source)?;
         Some(Self { providers, source })
     }
 

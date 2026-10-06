@@ -177,6 +177,8 @@ pub struct TopReleaseGroup {
     pub release_group_mbid: String,
     /// Release-group title, empty when the wire omits it.
     pub name: String,
+    /// Credited artist name, empty when the wire omits it.
+    pub artist_name: String,
     /// Total listen count.
     pub listen_count: i64,
 }
@@ -1144,9 +1146,16 @@ fn parse_top_release_group(item: &serde_json::Value) -> Option<TopReleaseGroup> 
         .and_then(serde_json::Value::as_str)
         .unwrap_or("")
         .to_owned();
+    let artist_name = item
+        .get("artist")
+        .and_then(|artist| artist.get("name"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .to_owned();
     Some(TopReleaseGroup {
         release_group_mbid: mbid.to_owned(),
         name,
+        artist_name,
         listen_count,
     })
 }

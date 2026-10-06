@@ -22,16 +22,18 @@ use tokio::sync::Mutex;
 
 use super::error::ProviderError;
 
-type FlightResult<T> = Result<Arc<T>, Arc<ProviderError>>;
-type Flight<T> = Shared<BoxFuture<'static, FlightResult<T>>>;
+type FlightResult<T, E> = Result<Arc<T>, Arc<E>>;
+type Flight<T, E> = Shared<BoxFuture<'static, FlightResult<T, E>>>;
 
 /// Coalesces concurrent identical fetches. `Clone` shares the flight table;
-/// each provider client holds one per response shape it coalesces.
-pub struct Singleflight<T> {
-    pending: Arc<Mutex<HashMap<String, Flight<T>>>>,
+/// each provider client holds one per response shape it coalesces. The
+/// error type defaults to the core [`ProviderError`]; services that
+/// coalesce whole page builds share their own typed error instead.
+pub struct Singleflight<T, E = ProviderError> {
+    pending: Arc<Mutex<HashMap<String, Flight<T, E>>>>,
 }
 
-impl<T> Clone for Singleflight<T> {
+impl<T, E> Clone for Singleflight<T, E> {
     fn clone(&self) -> Self {
         Self {
             pending: Arc::clone(&self.pending),
@@ -39,13 +41,13 @@ impl<T> Clone for Singleflight<T> {
     }
 }
 
-impl<T> std::fmt::Debug for Singleflight<T> {
+impl<T, E> std::fmt::Debug for Singleflight<T, E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Singleflight").finish_non_exhaustive()
     }
 }
 
-impl<T: Send + Sync + 'static> Singleflight<T> {
+impl<T: Send + Sync + 'static, E: Send + Sync + 'static> Singleflight<T, E> {
     /// An empty flight table.
     #[must_use]
     pub fn new() -> Self {
@@ -57,10 +59,10 @@ impl<T: Send + Sync + 'static> Singleflight<T> {
     /// Run `factory` under `key`, coalescing with any flight already in the
     /// air for that key. The result (value or typed error) is shared with
     /// every follower.
-    pub async fn run<F, Fut>(&self, key: &str, factory: F) -> FlightResult<T>
+    pub async fn run<F, Fut>(&self, key: &str, factory: F) -> FlightResult<T, E>
     where
         F: FnOnce() -> Fut + Send + 'static,
-        Fut: Future<Output = Result<T, ProviderError>> + Send + 'static,
+        Fut: Future<Output = Result<T, E>> + Send + 'static,
     {
         let flight = {
             let mut pending = self.pending.lock().await;
@@ -99,7 +101,7 @@ impl<T: Send + Sync + 'static> Singleflight<T> {
     }
 }
 
-impl<T: Send + Sync + 'static> Default for Singleflight<T> {
+impl<T: Send + Sync + 'static, E: Send + Sync + 'static> Default for Singleflight<T, E> {
     fn default() -> Self {
         Self::new()
     }

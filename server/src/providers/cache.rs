@@ -224,6 +224,7 @@ pub const PROVIDER_CACHE_PREFIXES: &[SourcePrefixes] = &[
             "discover_queue_enrich:",
             "artist_discovery:top_songs:",
             "artist_discovery:top_albums:",
+            "getit:",
         ],
     },
     SourcePrefixes {
