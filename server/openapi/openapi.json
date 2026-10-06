@@ -4031,7 +4031,7 @@
         "tags": [
           "crate::stream::download"
         ],
-        "summary": "One track file, unchanged, as an attachment.",
+        "summary": "One track file, unchanged, as an attachment. A single `Range` is\nanswered with 206, as v2's file response did, so download managers can\nresume.",
         "operationId": "download_track",
         "parameters": [
           {
@@ -4051,6 +4051,12 @@
               "application/octet-stream": {}
             }
           },
+          "206": {
+            "description": "The asked byte range of the track file",
+            "content": {
+              "application/octet-stream": {}
+            }
+          },
           "401": {
             "description": "Not authenticated"
           },
@@ -4059,6 +4065,9 @@
           },
           "404": {
             "description": "Unknown track, or the file is gone"
+          },
+          "416": {
+            "description": "Range not satisfiable"
           }
         }
       }
@@ -6956,6 +6965,30 @@
         }
       }
     },
+    "/api/v3/library/mbids": {
+      "get": {
+        "tags": [
+          "crate::reads::library::handlers"
+        ],
+        "summary": "Every MusicBrainz release group the library holds, and every album\nwith an open request.",
+        "operationId": "album_mbids",
+        "responses": {
+          "200": {
+            "description": "Held and requested album ids",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryMbids"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          }
+        }
+      }
+    },
     "/api/v3/library/membership": {
       "post": {
         "tags": [
@@ -8236,6 +8269,50 @@
           },
           "404": {
             "description": "Unknown track id"
+          }
+        }
+      }
+    },
+    "/api/v3/library/tracks/{id}/tags": {
+      "get": {
+        "tags": [
+          "crate::reads::library::handlers"
+        ],
+        "summary": "The tags in one track's file on disk (admins only).",
+        "operationId": "track_tags",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Local track id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file's tags",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackTags"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The file is gone from disk or cannot be read"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required, or the file left the library roots"
+          },
+          "404": {
+            "description": "Unknown track"
           }
         }
       }
@@ -27772,6 +27849,30 @@
         ],
         "description": "GET/PUT view of Library Management: the settings plus their content\nrevision (the write CAS token)."
       },
+      "LibraryMbids": {
+        "type": "object",
+        "description": "Every MusicBrainz release group the library holds and every album with\nan open request (v2 `/library/mbids`). Both lists are lowercase and\nsorted.",
+        "required": [
+          "mbids",
+          "requested_mbids"
+        ],
+        "properties": {
+          "mbids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Release groups held with at least one streamable track."
+          },
+          "requested_mbids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Album ids with an open acquisition request."
+          }
+        }
+      },
       "LibraryMembershipRequest": {
         "type": "object",
         "description": "Which of these MusicBrainz album ids the library holds or has an open\nrequest for. Ids compare case-insensitively.",
@@ -37921,6 +38022,45 @@
           }
         }
       },
+      "TagArtistCredit": {
+        "type": "object",
+        "description": "One artist value as the file carries it (v2 `AudioArtistCredit`).",
+        "required": [
+          "name",
+          "join_phrase"
+        ],
+        "properties": {
+          "credited_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name as credited, when it differs."
+          },
+          "join_phrase": {
+            "type": "string",
+            "description": "Text joining this credit to the next."
+          },
+          "musicbrainz_artist_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "MusicBrainz artist id."
+          },
+          "name": {
+            "type": "string",
+            "description": "Artist name."
+          },
+          "sort_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Sort name."
+          }
+        }
+      },
       "TaggingScript": {
         "type": "object",
         "description": "One tagging script.",
@@ -38583,6 +38723,209 @@
               "null"
             ],
             "description": "Track title, when found."
+          }
+        }
+      },
+      "TrackTags": {
+        "type": "object",
+        "description": "The tags in one audio file, field for field v2's `AudioTag`. The\n`musicbrainz_*` fields use Picard's tag names.",
+        "required": [
+          "title",
+          "artist",
+          "album",
+          "track_number",
+          "disc_number",
+          "compilation",
+          "genres",
+          "artists",
+          "album_artists",
+          "musicbrainz_artist_ids",
+          "musicbrainz_album_artist_ids"
+        ],
+        "properties": {
+          "acoustid_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "album": {
+            "type": "string"
+          },
+          "album_artist": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "album_artist_sort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "album_artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TagArtistCredit"
+            }
+          },
+          "album_sort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "artist": {
+            "type": "string"
+          },
+          "artist_sort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TagArtistCredit"
+            }
+          },
+          "compilation": {
+            "type": "boolean"
+          },
+          "disc_number": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "disc_subtitle": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "genre": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "musicbrainz_album_artist_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "musicbrainz_album_artist_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "musicbrainz_artist_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "musicbrainz_artist_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "musicbrainz_recording_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "musicbrainz_release_group_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "musicbrainz_release_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "musicbrainz_release_track_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "original_release_date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "release_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Raw RELEASETYPE / MUSICBRAINZ_ALBUMTYPE value."
+          },
+          "replaygain_album_gain": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "replaygain_album_peak": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "replaygain_track_gain": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "replaygain_track_peak": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "title": {
+            "type": "string"
+          },
+          "title_sort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "track_number": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
           }
         }
       },

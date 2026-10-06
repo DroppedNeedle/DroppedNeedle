@@ -1852,7 +1852,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** One track file, unchanged, as an attachment. */
+        /**
+         * One track file, unchanged, as an attachment. A single `Range` is
+         *     answered with 206, as v2's file response did, so download managers can
+         *     resume.
+         */
         get: operations["download_track"];
         put?: never;
         post?: never;
@@ -2902,6 +2906,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/mbids": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every MusicBrainz release group the library holds, and every album
+         *     with an open request.
+         */
+        get: operations["album_mbids"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/membership": {
         parameters: {
             query?: never;
@@ -3344,6 +3368,23 @@ export interface paths {
         };
         /** Stored lyrics for one track. */
         get: operations["get_lyrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/tracks/{id}/tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The tags in one track's file on disk (admins only). */
+        get: operations["track_tags"];
         put?: never;
         post?: never;
         delete?: never;
@@ -12277,6 +12318,17 @@ export interface components {
             settings_revision: string;
         };
         /**
+         * @description Every MusicBrainz release group the library holds and every album with
+         *     an open request (v2 `/library/mbids`). Both lists are lowercase and
+         *     sorted.
+         */
+        LibraryMbids: {
+            /** @description Release groups held with at least one streamable track. */
+            mbids: string[];
+            /** @description Album ids with an open acquisition request. */
+            requested_mbids: string[];
+        };
+        /**
          * @description Which of these MusicBrainz album ids the library holds or has an open
          *     request for. Ids compare case-insensitively.
          */
@@ -17055,6 +17107,19 @@ export interface components {
             /** @description Live degraded entries, sorted by service then capability. */
             degraded: components["schemas"]["ServiceHealthItem"][];
         };
+        /** @description One artist value as the file carries it (v2 `AudioArtistCredit`). */
+        TagArtistCredit: {
+            /** @description Name as credited, when it differs. */
+            credited_name?: string | null;
+            /** @description Text joining this credit to the next. */
+            join_phrase: string;
+            /** @description MusicBrainz artist id. */
+            musicbrainz_artist_id?: string | null;
+            /** @description Artist name. */
+            name: string;
+            /** @description Sort name. */
+            sort_name?: string | null;
+        };
         /** @description One tagging script. */
         TaggingScript: {
             /**
@@ -17336,6 +17401,52 @@ export interface components {
             provider?: string | null;
             /** @description Track title, when found. */
             title?: string | null;
+        };
+        /**
+         * @description The tags in one audio file, field for field v2's `AudioTag`. The
+         *     `musicbrainz_*` fields use Picard's tag names.
+         */
+        TrackTags: {
+            acoustid_id?: string | null;
+            album: string;
+            album_artist?: string | null;
+            album_artist_sort?: string | null;
+            album_artists: components["schemas"]["TagArtistCredit"][];
+            album_sort?: string | null;
+            artist: string;
+            artist_sort?: string | null;
+            artists: components["schemas"]["TagArtistCredit"][];
+            compilation: boolean;
+            /** Format: int32 */
+            disc_number: number;
+            disc_subtitle?: string | null;
+            genre?: string | null;
+            genres: string[];
+            musicbrainz_album_artist_id?: string | null;
+            musicbrainz_album_artist_ids: string[];
+            musicbrainz_artist_id?: string | null;
+            musicbrainz_artist_ids: string[];
+            musicbrainz_recording_id?: string | null;
+            musicbrainz_release_group_id?: string | null;
+            musicbrainz_release_id?: string | null;
+            musicbrainz_release_track_id?: string | null;
+            original_release_date?: string | null;
+            /** @description Raw RELEASETYPE / MUSICBRAINZ_ALBUMTYPE value. */
+            release_type?: string | null;
+            /** Format: double */
+            replaygain_album_gain?: number | null;
+            /** Format: double */
+            replaygain_album_peak?: number | null;
+            /** Format: double */
+            replaygain_track_gain?: number | null;
+            /** Format: double */
+            replaygain_track_peak?: number | null;
+            title: string;
+            title_sort?: string | null;
+            /** Format: int32 */
+            track_number: number;
+            /** Format: int32 */
+            year?: number | null;
         };
         /**
          * @description One catalog track. Only streamable tracks are listed; missing or
@@ -21885,6 +21996,15 @@ export interface operations {
                     "application/octet-stream": unknown;
                 };
             };
+            /** @description The asked byte range of the track file */
+            206: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": unknown;
+                };
+            };
             /** @description Not authenticated */
             401: {
                 headers: {
@@ -21901,6 +22021,13 @@ export interface operations {
             };
             /** @description Unknown track, or the file is gone */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Range not satisfiable */
+            416: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -24666,6 +24793,33 @@ export interface operations {
             };
         };
     };
+    album_mbids: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Held and requested album ids */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryMbids"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     membership: {
         parameters: {
             query?: never;
@@ -25957,6 +26111,57 @@ export interface operations {
                 content?: never;
             };
             /** @description Unknown track id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    track_tags: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local track id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file's tags */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackTags"];
+                };
+            };
+            /** @description The file is gone from disk or cannot be read */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required, or the file left the library roots */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown track */
             404: {
                 headers: {
                     [name: string]: unknown;
