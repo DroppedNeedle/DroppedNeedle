@@ -3,20 +3,24 @@ import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
+import { LibraryV3Api } from './LibraryV3Api';
+import { toCurrentRuns, toRunDetail, toScanRun } from './libraryScanAdapters';
 import type {
 	OperationResponse,
 	ScanEstimateResponse,
-	ScanRunCurrentResponse,
-	ScanRunDetailResponse,
 	ScanRunFailuresResponse,
 	ScanRunHistoryResponse
 } from './LibraryOperationsTypes';
 
+// Current runs, history and run detail read the v3 scan routes. Failures,
+// estimates and operation jobs have no v3 route yet (see the
+// waiting-on-backend list in eslint.config.js).
+
 export const getCurrentLibraryRunsQueryOptions = () =>
 	queryOptions({
 		queryKey: LibraryQueryKeyFactory.currentRuns(),
-		queryFn: ({ signal }) =>
-			api.global.get<ScanRunCurrentResponse>(API.library.currentScanRuns(), { signal }),
+		queryFn: async ({ signal }) =>
+			toCurrentRuns(await api.global.v3.GET(LibraryV3Api.scanRuns(), { signal })),
 		staleTime: 2_000
 	});
 
@@ -29,18 +33,21 @@ export const getLibraryRunQuery = (getRunId: Getter<string | null>) =>
 		return {
 			enabled: Boolean(runId),
 			queryKey: LibraryQueryKeyFactory.run(runId ?? ''),
-			queryFn: ({ signal }) =>
-				api.global.get<ScanRunDetailResponse>(API.library.scanRun(runId ?? ''), { signal })
+			queryFn: async ({ signal }) =>
+				toRunDetail(await api.global.v3.GET(LibraryV3Api.scanRun(runId ?? ''), { signal }))
 		};
 	});
 
+// v3 returns the recent history in one list, so it reads as a single page.
 export const getLibraryRunHistoryQuery = (enabled: Getter<boolean> = () => true) =>
 	createInfiniteQuery(() => ({
 		enabled: enabled(),
 		queryKey: LibraryQueryKeyFactory.runHistory(undefined),
 		initialPageParam: undefined as string | undefined,
-		queryFn: ({ pageParam, signal }) =>
-			api.global.get<ScanRunHistoryResponse>(API.library.scanRuns(50, pageParam), { signal }),
+		queryFn: async ({ signal }): Promise<ScanRunHistoryResponse> => {
+			const runs = await api.global.v3.GET(LibraryV3Api.scanRuns(), { signal });
+			return { items: runs.history.map(toScanRun), next_cursor: null };
+		},
 		getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined
 	}));
 

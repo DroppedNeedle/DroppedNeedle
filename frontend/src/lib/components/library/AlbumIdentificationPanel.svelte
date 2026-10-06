@@ -164,7 +164,7 @@
 	}
 
 	async function begin(releaseMbid: string | null = null): Promise<void> {
-		let job: OperationResponse;
+		let job: { id: string };
 		try {
 			job = await start.mutateAsync({
 				albumId: album.id,

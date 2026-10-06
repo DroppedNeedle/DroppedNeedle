@@ -76,27 +76,12 @@ export const LibraryV3Api = {
 				...(params.genre ? { genre: params.genre } : {})
 			}
 		}),
-	trackDetail: (trackId: string) => v3('/api/v3/library/tracks/{id}', { path: { id: trackId } }),
 	lyrics: (trackId: string) => v3('/api/v3/library/tracks/{id}/lyrics', { path: { id: trackId } }),
-	genres: () => v3('/api/v3/library/genres'),
-	genreTracks: (name: string, params: LibraryV3PageParams) =>
-		v3('/api/v3/library/genres/{name}/tracks', {
-			path: { name },
-			query: {
-				...(params.limit !== undefined ? { limit: params.limit } : {}),
-				...(params.offset !== undefined ? { offset: params.offset } : {})
-			}
-		}),
 	recentlyAdded: (limit: number) => v3('/api/v3/library/recently-added', { query: { limit } }),
 	stats: () => v3('/api/v3/library/stats'),
-	reviews: (albumId: string) => v3('/api/v3/library/reviews', { query: { album_id: albumId } }),
 	editionPin: (albumId: string) =>
 		v3('/api/v3/library/albums/{album_id}/edition-pin', { path: { album_id: albumId } }),
 	identify: () => v3('/api/v3/library/identify'),
-	managePreview: () => v3('/api/v3/library/manage/preview'),
-	manageApply: () => v3('/api/v3/library/manage/apply'),
-	manageUndo: () => v3('/api/v3/library/manage/undo'),
-	baselineRestore: () => v3('/api/v3/library/manage/baseline/restore'),
 	approveReview: (reviewId: string) =>
 		v3('/api/v3/library/reviews/{id}/approve', { path: { id: reviewId } }),
 	rejectReview: (reviewId: string) =>
@@ -104,7 +89,6 @@ export const LibraryV3Api = {
 	scan: () => v3('/api/v3/library/scan'),
 	scanRuns: () => v3('/api/v3/library/scan/runs'),
 	scanRun: (runId: string) => v3('/api/v3/library/scan/runs/{id}', { path: { id: runId } }),
-	roots: () => v3('/api/v3/library/roots'),
 	schedule: () => v3('/api/v3/settings/library/schedule'),
 	settings: () => v3('/api/v3/settings/library')
 };

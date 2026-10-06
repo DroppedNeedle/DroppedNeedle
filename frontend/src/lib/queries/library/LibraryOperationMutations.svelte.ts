@@ -1,15 +1,18 @@
 import { createMutation } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
-import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
+import { invalidateQueriesWithPersister, queryClient } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
+import { LibraryV3Api } from './LibraryV3Api';
+import { scanRootsFor, toRunRequested } from './libraryScanAdapters';
 import type {
 	IdentificationControlResponse,
 	OperationResponse,
 	ScanControlResponse,
 	ScanKind,
-	ScanRunRequestedResponse
+	ScanRunRequestedResponse,
+	TargetLibrarySettingsResponse
 } from './LibraryOperationsTypes';
 
 async function invalidateWork(): Promise<void> {
@@ -19,13 +22,25 @@ async function invalidateWork(): Promise<void> {
 	]);
 }
 
+// v3 starts one scan per root and has no scan kinds or policy-revision
+// guard: every kind runs as a plain scan over the roots the scope ids name.
 export function requestLibraryRun() {
 	return createMutation(() => ({
-		mutationFn: (input: {
+		mutationFn: async (input: {
 			kind: ScanKind;
 			scope_ids: string[];
 			expected_policy_revision: string;
-		}) => api.global.post<ScanRunRequestedResponse>(API.library.scanRuns(), input),
+		}): Promise<ScanRunRequestedResponse> => {
+			const settings = queryClient.getQueryData<TargetLibrarySettingsResponse>(
+				LibraryQueryKeyFactory.targetSettings()
+			);
+			const responses = await Promise.all(
+				scanRootsFor(input.scope_ids, settings).map((rootId) =>
+					api.global.v3.POST(LibraryV3Api.scan(), { root_id: rootId })
+				)
+			);
+			return toRunRequested(responses[0]);
+		},
 		onSuccess: async () => {
 			await invalidateWork();
 			toastStore.show({ message: 'Library work queued', type: 'success' });

@@ -3,6 +3,7 @@ import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
 import { toastStore } from '$lib/stores/toast';
 import { invalidateLibraryCatalog } from './LibraryCatalogInvalidation';
+import { LibraryV3Api } from './LibraryV3Api';
 import { createUuid } from '$lib/utils/uuid';
 import type { MembershipPreviewResponse, OperationResponse } from './LibraryOperationsTypes';
 
@@ -30,22 +31,33 @@ interface CatalogCorrectionResponse {
 	catalog_revision: number;
 }
 
+// A plain re-identification is the v3 identify job. Pinning the answer to
+// one release has no v3 route yet, so that request still asks the old path
+// (see the waiting-on-backend list in eslint.config.js).
 export function reidentifyLibraryAlbum() {
 	return createMutation(() => ({
-		mutationFn: (input: {
+		mutationFn: async (input: {
 			albumId: string;
 			expectedAlbumRevision: number;
 			expectedInputRevision: string;
 			oneOffLocalMetadata: boolean;
 			releaseMbid?: string | null;
-		}) =>
-			api.global.post<OperationResponse>(API.library.reidentifyAlbum(input.albumId), {
+		}): Promise<{ id: string }> => {
+			if (!input.releaseMbid) {
+				const job = await api.global.v3.POST(LibraryV3Api.identify(), {
+					album_id: input.albumId,
+					kind: 'manual'
+				});
+				return { id: job.job_id };
+			}
+			return api.global.post<OperationResponse>(API.library.reidentifyAlbum(input.albumId), {
 				expected_album_revision: input.expectedAlbumRevision,
 				expected_input_revision: input.expectedInputRevision,
 				idempotency_key: createUuid(),
 				one_off_local_metadata: input.oneOffLocalMetadata,
-				release_mbid: input.releaseMbid ?? null
-			}),
+				release_mbid: input.releaseMbid
+			});
+		},
 		onSuccess: async () => {
 			await invalidateLibraryCatalog();
 			toastStore.show({ message: 'Identification started', type: 'success' });

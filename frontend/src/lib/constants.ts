@@ -235,20 +235,10 @@ export const API = {
 		activity: () => '/api/v1/library/activity',
 		pauseIdentification: () => '/api/v1/library/identification/pause',
 		resumeIdentification: () => '/api/v1/library/identification/resume',
-		scanRuns: (limit?: number, cursor?: string) => {
-			const query = new URLSearchParams();
-			if (limit !== undefined) query.set('limit', String(limit));
-			if (cursor) query.set('cursor', cursor);
-			let url = '/api/v1/library/scan-runs';
-			if (query.size) url += `?${query.toString()}`;
-			return url;
-		},
-		currentScanRuns: () => '/api/v1/library/scan-runs/current',
 		scanRunEstimate: (scopeIds: string[] = []) => {
 			const query = scopeIds.map((id) => `scope_ids=${encodeURIComponent(id)}`).join('&');
 			return `/api/v1/library/scan-runs/estimate${query ? `?${query}` : ''}`;
 		},
-		scanRun: (runId: string) => `/api/v1/library/scan-runs/${runId}`,
 		scanRunFailures: (runId: string, limit?: number, cursor?: number) => {
 			const query = new URLSearchParams();
 			if (limit !== undefined) query.set('limit', String(limit));
@@ -288,13 +278,11 @@ export const API = {
 			return `/api/v1/library/reviews${query.size ? `?${query.toString()}` : ''}`;
 		},
 		review: (reviewId: string) => `/api/v1/library/reviews/${reviewId}`,
-		reviewKeepTagged: (reviewId: string) => `/api/v1/library/reviews/${reviewId}/keep-tagged`,
 		reviewDetachKeepTagged: (reviewId: string) =>
 			`/api/v1/library/reviews/${reviewId}/detach-and-keep-tagged`,
 		reviewExclude: (reviewId: string) => `/api/v1/library/reviews/${reviewId}/exclude`,
 		reviewRestore: (reviewId: string) => `/api/v1/library/reviews/${reviewId}/restore`,
 		reviewDismiss: (reviewId: string) => `/api/v1/library/reviews/${reviewId}/dismiss`,
-		reviewCandidate: (reviewId: string) => `/api/v1/library/reviews/${reviewId}/candidate`,
 		reviewRetry: (reviewId: string) => `/api/v1/library/reviews/${reviewId}/retry`,
 		bulkReviewPreview: () => '/api/v1/library/reviews/bulk-preview',
 		bulkReviewApply: () => '/api/v1/library/reviews/bulk-apply',

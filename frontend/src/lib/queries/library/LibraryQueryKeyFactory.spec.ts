@@ -27,20 +27,11 @@ describe('LibraryQueryKeyFactory.catalog', () => {
 			catalog.artistDetail(userId, 'artist-1'),
 			catalog.artistAlbums(userId, 'artist-1', {}),
 			catalog.artistAppearances(userId, 'artist-1', {}),
-			catalog.tracks(userId, { limit: 50, offset: 0, sort: 'title', order: 'asc' }),
-			catalog.trackDetail(userId, 'track-1'),
-			catalog.lyrics(userId, 'track-1'),
-			catalog.genres(userId),
-			catalog.genreTracks(userId, 'Rock', {}),
 			catalog.recentlyAdded(userId, 20),
 			catalog.search(userId, 'abba'),
 			catalog.albumSearch(userId, 'abba'),
 			catalog.stats(userId),
-			catalog.reviews(userId, 'album-1'),
-			catalog.editionPin(userId, 'album-1'),
-			catalog.scanRuns(userId),
-			catalog.scanRun(userId, 'run-1'),
-			catalog.roots(userId)
+			catalog.editionPin(userId, 'album-1')
 		];
 		expect(keys.length).toBeGreaterThan(0);
 		for (const key of keys) {

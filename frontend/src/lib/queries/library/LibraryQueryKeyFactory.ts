@@ -69,16 +69,6 @@ export const LibraryQueryKeyFactory = {
 				artistId,
 				params
 			] as const,
-		tracks: (userId: LibraryV3UserId, params: LibraryV3TracksParams) =>
-			[...LibraryQueryKeyFactory.catalog.root(userId), 'tracks', params] as const,
-		trackDetail: (userId: LibraryV3UserId, trackId: string) =>
-			[...LibraryQueryKeyFactory.catalog.root(userId), 'track-detail', trackId] as const,
-		lyrics: (userId: LibraryV3UserId, trackId: string) =>
-			[...LibraryQueryKeyFactory.catalog.root(userId), 'lyrics', trackId] as const,
-		genres: (userId: LibraryV3UserId) =>
-			[...LibraryQueryKeyFactory.catalog.root(userId), 'genres'] as const,
-		genreTracks: (userId: LibraryV3UserId, name: string, params: LibraryV3PageParams) =>
-			[...LibraryQueryKeyFactory.catalog.root(userId), 'genre-tracks', name, params] as const,
 		recentlyAddedPrefix: (userId: LibraryV3UserId) =>
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'recently-added'] as const,
 		recentlyAdded: (userId: LibraryV3UserId, limit: number) =>
@@ -89,16 +79,8 @@ export const LibraryQueryKeyFactory = {
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'album-search', q] as const,
 		stats: (userId: LibraryV3UserId) =>
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'stats'] as const,
-		reviews: (userId: LibraryV3UserId, albumId: string) =>
-			[...LibraryQueryKeyFactory.catalog.root(userId), 'reviews', albumId] as const,
 		editionPin: (userId: LibraryV3UserId, albumId: string) =>
-			[...LibraryQueryKeyFactory.catalog.root(userId), 'edition-pin', albumId] as const,
-		scanRuns: (userId: LibraryV3UserId) =>
-			[...LibraryQueryKeyFactory.catalog.root(userId), 'scan-runs'] as const,
-		scanRun: (userId: LibraryV3UserId, runId: string) =>
-			[...LibraryQueryKeyFactory.catalog.root(userId), 'scan-run', runId] as const,
-		roots: (userId: LibraryV3UserId) =>
-			[...LibraryQueryKeyFactory.catalog.root(userId), 'roots'] as const
+			[...LibraryQueryKeyFactory.catalog.root(userId), 'edition-pin', albumId] as const
 	},
 	activityPrefix: () => [...LibraryQueryKeyFactory.all, 'activity'] as const,
 	activity: (userId: LibraryV3UserId) =>

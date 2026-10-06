@@ -8,6 +8,7 @@ import { ArtistQueryKeyFactory } from '$lib/queries/artist/ArtistQueryKeyFactory
 import { DiscoverQueryKeyFactory } from '$lib/queries/discover/DiscoverQueryKeyFactory';
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
+import { LibraryV3Api } from './LibraryV3Api';
 import type {
 	BulkReviewAction,
 	BulkReviewPreviewResponse,
@@ -46,20 +47,26 @@ async function invalidateReviewState(
 
 export type ReviewAction = 'keep_tagged' | 'detach_keep_tagged' | 'exclude' | 'restore' | 'dismiss';
 
+// Keeping the album as tagged is the v3 reject action and choosing a
+// candidate is v3 approve; v3 carries no revision guards for either. The
+// other review actions have no v3 route yet (see the waiting-on-backend list
+// in eslint.config.js).
 export function actOnLibraryReview(action: ReviewAction) {
 	return createMutation(() => ({
-		mutationFn: (input: { reviewId: string; body: ReviewActionRequest }) => {
+		mutationFn: async (input: { reviewId: string; body: ReviewActionRequest }) => {
+			if (action === 'keep_tagged') {
+				await api.global.v3.POST(LibraryV3Api.rejectReview(input.reviewId));
+				return;
+			}
 			const url =
-				action === 'keep_tagged'
-					? API.library.reviewKeepTagged(input.reviewId)
-					: action === 'detach_keep_tagged'
-						? API.library.reviewDetachKeepTagged(input.reviewId)
-						: action === 'exclude'
-							? API.library.reviewExclude(input.reviewId)
-							: action === 'dismiss'
-								? API.library.reviewDismiss(input.reviewId)
-								: API.library.reviewRestore(input.reviewId);
-			return api.global.post<ReviewActionResponse>(url, input.body);
+				action === 'detach_keep_tagged'
+					? API.library.reviewDetachKeepTagged(input.reviewId)
+					: action === 'exclude'
+						? API.library.reviewExclude(input.reviewId)
+						: action === 'dismiss'
+							? API.library.reviewDismiss(input.reviewId)
+							: API.library.reviewRestore(input.reviewId);
+			await api.global.post<ReviewActionResponse>(url, input.body);
 		},
 		onSuccess: async (_result, input) => {
 			// dismiss and keep_tagged mutate no catalog rows: both run only the
@@ -83,11 +90,11 @@ export function actOnLibraryReview(action: ReviewAction) {
 
 export function acceptLibraryReviewCandidate() {
 	return createMutation(() => ({
-		mutationFn: (input: { reviewId: string; body: CandidateAcceptanceRequest }) =>
-			api.global.post<ReviewActionResponse>(
-				API.library.reviewCandidate(input.reviewId),
-				input.body
-			),
+		mutationFn: async (input: { reviewId: string; body: CandidateAcceptanceRequest }) => {
+			await api.global.v3.POST(LibraryV3Api.approveReview(input.reviewId), {
+				candidate_key: input.body.candidate_key
+			});
+		},
 		onSuccess: async (_result, input) => {
 			await invalidateReviewState(input.reviewId, { catalog: true });
 			toastStore.show({ message: 'Release selected', type: 'success' });
