@@ -167,6 +167,8 @@ pub struct LibrarySetup {
     pub watcher_state: Arc<std::sync::Mutex<WatcherState>>,
     /// Shared root-directory lookup.
     pub root_dirs: RootDirs,
+    /// Live event hub handle (scan events poke the revision poller).
+    pub events: crate::events::EventSink,
     /// Scratch state of a test bundle, removed with the last clone.
     #[cfg(any(test, feature = "test-support"))]
     pub scratch: Option<Arc<crate::tooling::scratch::ScratchDir>>,
@@ -340,6 +342,8 @@ impl LibrarySetup {
         let pool = BlockingPool::new(4);
         let wakeups = WorkWakeups::new();
         let fs = FsCoordinator::new();
+        let events = crate::events::EventSink::default();
+        let scan_events = events.clone();
         let coordinator = Arc::new(
             ScanCoordinator::new(
                 scan_store.clone(),
@@ -349,12 +353,16 @@ impl LibrarySetup {
             )
             .with_filesystem(fs.clone())
             .with_wakeups(wakeups.clone())
-            .with_events(ScanEventPublisher::new(Arc::new(|event| {
-                tracing::info!(
+            // A scan event follows a run write: the revision poller
+            // reads at once, so a moved revision goes out as
+            // `activity.changed` without waiting for its next tick.
+            .with_events(ScanEventPublisher::new(Arc::new(move |event| {
+                tracing::debug!(
                     run_id = event.run_id,
                     event = event.event,
                     "library scan event"
                 );
+                scan_events.poke_activity();
             }))),
         );
         let providers = make_providers(ProviderParts {
@@ -407,6 +415,7 @@ impl LibrarySetup {
             previews: Arc::new(std::sync::Mutex::new(HashMap::new())),
             watcher_state: Arc::new(std::sync::Mutex::new(WatcherState::new())),
             root_dirs,
+            events,
             #[cfg(any(test, feature = "test-support"))]
             scratch: None,
         })

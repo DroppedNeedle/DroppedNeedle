@@ -207,7 +207,23 @@ pub fn offer_album(conn: &Connection, local_album_id: &str, now_ms: i64) -> rusq
             key,
         ],
     )?;
+    if inserted == 1 {
+        bump_identification_stream(conn)?;
+    }
     Ok(inserted == 1)
+}
+
+/// Move the `identification` activity revision. Every change to the queue
+/// or the review list calls this inside its own transaction, so the
+/// revision poller sends `activity.changed` and open tabs refetch.
+fn bump_identification_stream(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO library_event_stream_revisions (stream_kind, value) \
+         VALUES ('identification', 1) \
+         ON CONFLICT (stream_kind) DO UPDATE SET value = value + 1",
+        [],
+    )?;
+    Ok(())
 }
 
 /// SQLite identify store.
@@ -1065,6 +1081,7 @@ impl QueueStore for SqliteIdentifyStore {
                 ],
             )?;
             if inserted == 1 {
+                bump_identification_stream(tx)?;
                 return Ok(job.clone());
             }
             tx.query_row(
@@ -1101,6 +1118,7 @@ impl QueueStore for SqliteIdentifyStore {
                  updated_ms = ?2 WHERE id = ?3",
                 params![now + lease_ms as i64, now, job.id],
             )?;
+            bump_identification_stream(tx)?;
             job.state = JobState::Running;
             Ok(Some(job))
         })
@@ -1127,7 +1145,8 @@ impl QueueStore for SqliteIdentifyStore {
                     now_ms(),
                     job.id,
                 ],
-            )
+            )?;
+            bump_identification_stream(tx)
         });
     }
 
@@ -1157,11 +1176,15 @@ impl QueueStore for SqliteIdentifyStore {
 
     fn recover(&self) -> usize {
         self.write("recover identify jobs", |tx| {
-            tx.execute(
+            let requeued = tx.execute(
                 "UPDATE library_identify_jobs SET state = 'queued', lease_expires_ms = NULL, \
                  updated_ms = ?1 WHERE state = 'running'",
                 params![now_ms()],
-            )
+            )?;
+            if requeued > 0 {
+                bump_identification_stream(tx)?;
+            }
+            Ok(requeued)
         })
         .unwrap_or(0)
     }
@@ -1193,7 +1216,8 @@ impl ReviewStore for SqliteIdentifyStore {
                     review.selected_candidate_key,
                     now,
                 ],
-            )
+            )?;
+            bump_identification_stream(tx)
         });
     }
 
@@ -1233,7 +1257,7 @@ impl ReviewStore for SqliteIdentifyStore {
         selected_key: Option<&str>,
     ) -> bool {
         self.write("settle review", |tx| {
-            tx.execute(
+            let changed = tx.execute(
                 "UPDATE library_identify_reviews SET state = ?1, resolved_by_user_id = ?2, \
                  selected_candidate_key = ?3, updated_ms = ?4 WHERE id = ?5",
                 params![
@@ -1243,7 +1267,11 @@ impl ReviewStore for SqliteIdentifyStore {
                     now_ms(),
                     review_id
                 ],
-            )
+            )?;
+            if changed == 1 {
+                bump_identification_stream(tx)?;
+            }
+            Ok(changed)
         })
         .is_some_and(|changed| changed == 1)
     }
@@ -1270,6 +1298,7 @@ impl ReviewStore for SqliteIdentifyStore {
             for track in &approval.tracks {
                 seal_track_identity(&tx, track)?;
             }
+            bump_identification_stream(&tx)?;
             tx.commit()?;
             Ok(true)
         })();

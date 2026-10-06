@@ -412,14 +412,15 @@ pub struct PresenceUpdate {
 /// Presence is transient and process-local: it is intentionally lost on
 /// restart (v2 single-process invariant). Privacy is enforced here,
 /// server-side, keyed on the owner's visibility setting, so a hidden track
-/// is never serialized to other clients. Each mutation that v2 would
-/// broadcast over SSE bumps the generation instead; no SSE fan-out
-/// consumes it yet.
+/// is never serialized to other clients. Each change broadcasts the
+/// projected snapshot as the `snapshot` event once an event hub is
+/// attached, and bumps the generation either way.
 #[derive(Debug, Clone)]
 pub struct PresenceRegistry {
     entries: Arc<Mutex<HashMap<String, PresenceEntry>>>,
     visibility: Arc<Mutex<HashMap<String, String>>>,
     generation: Arc<AtomicU64>,
+    events: crate::events::EventSink,
 }
 
 impl PresenceRegistry {
@@ -429,7 +430,13 @@ impl PresenceRegistry {
             entries: Arc::new(Mutex::new(HashMap::new())),
             visibility: Arc::new(Mutex::new(HashMap::new())),
             generation: Arc::new(AtomicU64::new(0)),
+            events: crate::events::EventSink::default(),
         }
+    }
+
+    /// Broadcast snapshots to `hub` (this registry and every clone).
+    pub fn attach_events(&self, hub: &crate::events::EventHub) {
+        self.events.attach(hub);
     }
 
     /// Broadcast count: bumped on every publish, so tests can assert the
@@ -440,6 +447,12 @@ impl PresenceRegistry {
 
     fn publish(&self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
+        if self.events.is_attached() {
+            self.events
+                .publish(crate::events::Event::NowPlaying(NowPlayingSnapshot {
+                    sessions: self.snapshot(),
+                }));
+        }
     }
 
     /// Upsert a session. `load_visibility` resolves the owner's setting on
