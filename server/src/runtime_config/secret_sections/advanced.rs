@@ -7,10 +7,7 @@ use super::*;
 // Kept: user-meaningful TTL/perf fields below. Dropped as internal tuning:
 // artist_discovery_warm_interval, artist_discovery_warm_delay,
 // artist_discovery_precache_delay, artist_discovery_precache_concurrency,
-// discover_queue_warm_cycle_build, discover_queue_similar_artists_limit,
-// discover_queue_albums_per_similar, discover_queue_enrich_ttl,
-// discover_queue_lastfm_mbid_max_lookups, audiodb_prewarm_concurrency,
-// audiodb_prewarm_delay, cache_ttl_recently_viewed_bytes,
+// audiodb_prewarm_concurrency, audiodb_prewarm_delay, cache_ttl_recently_viewed_bytes,
 // cache_ttl_local_files_recently_added.
 // The AudioDB key is encrypted at rest now (v2 stored it plaintext).
 
@@ -104,6 +101,16 @@ pub struct AdvancedSettings {
     pub discover_queue_seed_artists: i64,
     /// Discover wildcard slots.
     pub discover_queue_wildcard_slots: i64,
+    /// Whether the background warm cycle may build queue decks.
+    pub discover_queue_warm_cycle_build: bool,
+    /// Similar artists fetched per seed artist.
+    pub discover_queue_similar_artists_limit: i64,
+    /// Albums taken per similar artist.
+    pub discover_queue_albums_per_similar: i64,
+    /// Queue card details cache lifetime, seconds.
+    pub discover_queue_enrich_ttl: i64,
+    /// MusicBrainz lookups one Last.fm album batch may spend.
+    pub discover_queue_lastfm_mbid_max_lookups: i64,
     /// Discover picks count.
     pub discover_picks_count: i64,
     /// Discover genre-affinity weight.
@@ -212,6 +219,11 @@ impl Default for AdvancedSettings {
             discover_queue_polling_interval: 4000,
             discover_queue_seed_artists: 3,
             discover_queue_wildcard_slots: 2,
+            discover_queue_warm_cycle_build: true,
+            discover_queue_similar_artists_limit: 15,
+            discover_queue_albums_per_similar: 5,
+            discover_queue_enrich_ttl: 86400,
+            discover_queue_lastfm_mbid_max_lookups: 10,
             discover_picks_count: 12,
             discover_picks_genre_affinity_weight: 0.7,
             frontend_ttl_home: 300000,
@@ -444,6 +456,30 @@ impl Section for AdvancedSettings {
                 self.discover_queue_wildcard_slots,
                 0,
                 10,
+            ),
+            (
+                "discover_queue_similar_artists_limit",
+                self.discover_queue_similar_artists_limit,
+                5,
+                50,
+            ),
+            (
+                "discover_queue_albums_per_similar",
+                self.discover_queue_albums_per_similar,
+                1,
+                20,
+            ),
+            (
+                "discover_queue_enrich_ttl",
+                self.discover_queue_enrich_ttl,
+                3600,
+                604800,
+            ),
+            (
+                "discover_queue_lastfm_mbid_max_lookups",
+                self.discover_queue_lastfm_mbid_max_lookups,
+                1,
+                50,
             ),
             ("discover_picks_count", self.discover_picks_count, 4, 30),
             ("frontend_ttl_home", self.frontend_ttl_home, 60000, 3600000),

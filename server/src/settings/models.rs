@@ -710,6 +710,16 @@ pub struct AdvancedSettingsForm {
     pub discover_queue_seed_artists: i64,
     /// Discover wildcard slots (0-10).
     pub discover_queue_wildcard_slots: i64,
+    /// Let the background warm cycle build queue decks.
+    pub discover_queue_warm_cycle_build: bool,
+    /// Similar artists per seed (5-50).
+    pub discover_queue_similar_artists_limit: i64,
+    /// Albums per similar artist (1-20).
+    pub discover_queue_albums_per_similar: i64,
+    /// Queue card details cache, hours (1-168).
+    pub discover_queue_enrich_ttl: i64,
+    /// MusicBrainz lookups per Last.fm album batch (1-50).
+    pub discover_queue_lastfm_mbid_max_lookups: i64,
     /// Discover genre-affinity weight (0-1).
     pub discover_picks_genre_affinity_weight: f64,
     /// Discover picks count (4-30).
@@ -824,6 +834,11 @@ impl AdvancedSettingsForm {
             discover_queue_polling_interval: section.discover_queue_polling_interval / 1000,
             discover_queue_seed_artists: section.discover_queue_seed_artists,
             discover_queue_wildcard_slots: section.discover_queue_wildcard_slots,
+            discover_queue_warm_cycle_build: section.discover_queue_warm_cycle_build,
+            discover_queue_similar_artists_limit: section.discover_queue_similar_artists_limit,
+            discover_queue_albums_per_similar: section.discover_queue_albums_per_similar,
+            discover_queue_enrich_ttl: section.discover_queue_enrich_ttl / 3600,
+            discover_queue_lastfm_mbid_max_lookups: section.discover_queue_lastfm_mbid_max_lookups,
             discover_picks_genre_affinity_weight: section.discover_picks_genre_affinity_weight,
             discover_picks_count: section.discover_picks_count,
             frontend_ttl_home: section.frontend_ttl_home / 60000,
@@ -905,6 +920,11 @@ impl AdvancedSettingsForm {
             discover_queue_polling_interval: self.discover_queue_polling_interval * 1000,
             discover_queue_seed_artists: self.discover_queue_seed_artists,
             discover_queue_wildcard_slots: self.discover_queue_wildcard_slots,
+            discover_queue_warm_cycle_build: self.discover_queue_warm_cycle_build,
+            discover_queue_similar_artists_limit: self.discover_queue_similar_artists_limit,
+            discover_queue_albums_per_similar: self.discover_queue_albums_per_similar,
+            discover_queue_enrich_ttl: self.discover_queue_enrich_ttl * 3600,
+            discover_queue_lastfm_mbid_max_lookups: self.discover_queue_lastfm_mbid_max_lookups,
             discover_picks_genre_affinity_weight: self.discover_picks_genre_affinity_weight,
             discover_picks_count: self.discover_picks_count,
             frontend_ttl_home: self.frontend_ttl_home * 60000,
