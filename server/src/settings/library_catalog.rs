@@ -6,6 +6,8 @@
 //! all-rows total the apply preview uses. A scope is a root (`.`) or a
 //! rule directory relative to its root.
 
+use std::collections::BTreeSet;
+
 use futures_util::future::BoxFuture;
 use sqlx::Row;
 
@@ -34,10 +36,12 @@ fn escape_like(value: &str) -> String {
 /// The scopes as a JSON array of `[root_id, key, prefix, pattern]`,
 /// where `key` is the relative path as the caller passed it, `prefix`
 /// is `.` for a whole root, and `pattern` matches files below the
-/// prefix. Fed to `json_each` so one query covers every scope.
+/// prefix. Duplicate scopes are sent once. Fed to `json_each` so one
+/// query covers every scope.
 fn requested_json(scopes: &[(String, String)]) -> String {
-    let rows: Vec<serde_json::Value> = scopes
-        .iter()
+    let unique: BTreeSet<&(String, String)> = scopes.iter().collect();
+    let rows: Vec<serde_json::Value> = unique
+        .into_iter()
         .map(|(root_id, relative)| {
             let trimmed = relative.trim_matches('/');
             let prefix = if trimmed.is_empty() { "." } else { trimmed };

@@ -254,6 +254,7 @@ pub fn resolve(settings: &TypedLibrary) -> Result<ResolvedLibraryPolicy, Setting
         canonical_paths.push((root_id.clone(), canonical.clone()));
 
         let mut rule_ids = BTreeSet::new();
+        let mut rule_paths = BTreeSet::new();
         let mut rules: Vec<LibraryPathRule> = Vec::new();
         for rule in &root.rules {
             let rule_id = rule.id.trim().to_owned();
@@ -268,6 +269,11 @@ pub fn resolve(settings: &TypedLibrary) -> Result<ResolvedLibraryPolicy, Setting
                 });
             }
             let relative = normalise_rule_path(&rule.relative_path)?;
+            if !rule_paths.insert(relative.clone()) {
+                return Err(SettingsError::InvalidInput {
+                    message: format!("Library root {label} has more than one rule for {relative}."),
+                });
+            }
             if !canonical.join(&relative).exists() {
                 warnings.push(format!(
                     "Policy path {relative} under {label} is not currently available."
@@ -279,7 +285,12 @@ pub fn resolve(settings: &TypedLibrary) -> Result<ResolvedLibraryPolicy, Setting
                 policy: rule.policy,
             });
         }
-        rules.sort_by_key(|rule| rule.relative_path.matches('/').count());
+        // Shallow rules first, then by path, so deeper rules win and the
+        // revision does not depend on the order rules were entered.
+        rules.sort_by(|a, b| {
+            (a.relative_path.matches('/').count(), &a.relative_path)
+                .cmp(&(b.relative_path.matches('/').count(), &b.relative_path))
+        });
         if !canonical.exists() {
             warnings.push(format!("Library root {label} is not currently available."));
         }
