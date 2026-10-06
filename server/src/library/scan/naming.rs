@@ -48,6 +48,45 @@ pub fn is_disc_directory(segment: &str) -> bool {
     rest.is_empty()
 }
 
+/// Separator inside name-based album keys; never part of a folded name.
+pub const KEY_SEPARATOR: char = '\u{1f}';
+
+/// The key an album is found by wherever its files sit: the release MBID
+/// when the file carries one (`mbid:<lowercased>`), else the folded album
+/// artist and title when both came from tags. Names parsed from the path
+/// (or placeholders) only mean something next to that path, so those keys
+/// keep the grouping directory. The scan files tracks by this key,
+/// migration 0013 wrote it for albums indexed before it, and the v2
+/// export writes it for carried albums.
+#[must_use]
+pub fn album_grouping_key(
+    release_mbid: Option<&str>,
+    from_tags: bool,
+    directory: &str,
+    title_folded: &str,
+    artist_folded: &str,
+) -> String {
+    match release_mbid {
+        Some(mbid) => format!("mbid:{}", mbid.to_lowercase()),
+        None => album_name_key(from_tags, directory, title_folded, artist_folded),
+    }
+}
+
+/// The name part of [`album_grouping_key`], without the release MBID.
+#[must_use]
+pub fn album_name_key(
+    from_tags: bool,
+    directory: &str,
+    title_folded: &str,
+    artist_folded: &str,
+) -> String {
+    if from_tags {
+        format!("tag:{artist_folded}{KEY_SEPARATOR}{title_folded}")
+    } else {
+        format!("{directory}\0{title_folded}\0{artist_folded}")
+    }
+}
+
 /// Directory an album groups under: the file's parent, with a disc folder
 /// folded into its own parent (a root-level disc folder folds to `.`).
 pub fn grouping_directory(relative_path: &str) -> String {

@@ -22,7 +22,9 @@
 
 use super::*;
 use crate::library::identify::sqlite::offer_album;
-use crate::library::scan::naming::{grouping_directory, parse_names_for_row};
+use crate::library::scan::naming::{
+    album_grouping_key, album_name_key, grouping_directory, parse_names_for_row,
+};
 use crate::library::scan::store::{IndexWindow, WindowOutcome};
 
 /// The catalog's "Unknown Artist" sentinel (seeded by the baseline).
@@ -104,9 +106,6 @@ fn upsert_artist(tx: &Connection, credit: &Credit, now: f64) -> rusqlite::Result
     Ok(id)
 }
 
-/// Separator inside name-based album keys; never part of a folded name.
-const KEY_SEPARATOR: char = '\u{1f}';
-
 /// How one file names its album.
 struct AlbumNames<'a> {
     release_mbid: Option<&'a str>,
@@ -118,30 +117,24 @@ struct AlbumNames<'a> {
 }
 
 impl AlbumNames<'_> {
-    /// The key an album is found by wherever its files sit: the release
-    /// MBID when the file carries one, else the folded album artist and
-    /// title from tags. Names parsed from the path (or placeholders) only
-    /// mean something next to that path, so those keys keep the folder.
-    /// Migration 0013 writes the same keys for albums indexed before it.
+    /// The album's persistent key (see [`album_grouping_key`]).
     fn key(&self) -> String {
-        match self.release_mbid {
-            Some(mbid) => format!("mbid:{}", mbid.to_lowercase()),
-            None => self.name_key(),
-        }
+        album_grouping_key(
+            self.release_mbid,
+            self.from_tags,
+            self.directory,
+            &self.title_folded,
+            &self.artist_folded,
+        )
     }
 
     fn name_key(&self) -> String {
-        if self.from_tags {
-            format!(
-                "tag:{}{KEY_SEPARATOR}{}",
-                self.artist_folded, self.title_folded
-            )
-        } else {
-            format!(
-                "{}\0{}\0{}",
-                self.directory, self.title_folded, self.artist_folded
-            )
-        }
+        album_name_key(
+            self.from_tags,
+            self.directory,
+            &self.title_folded,
+            &self.artist_folded,
+        )
     }
 }
 
@@ -217,12 +210,34 @@ fn album_presence(
 ///    whose files this run found gone, so they moved here (the oldest
 ///    first);
 /// 4. else a new album.
+///
+/// A track whose grouping came from an earlier DroppedNeedle version
+/// (`legacy`: v2 grouped it, and v3 has not moved it since) first stays in
+/// the album it was in while the file still names that album, wherever the
+/// album's other tracks sit: v2 grouped differently in places, and its
+/// album ids must not change under the people using them.
 fn resolve_album(
     tx: &Connection,
     names: &AlbumNames<'_>,
     place: &Place<'_>,
     previous: Option<&str>,
+    legacy: bool,
 ) -> rusqlite::Result<String> {
+    if legacy && let Some(previous) = previous {
+        let named: bool = tx
+            .prepare_cached(
+                "SELECT EXISTS(SELECT 1 FROM local_albums WHERE id = ?1 \
+                 AND retired_into_album_id IS NULL AND title_folded = ?2 \
+                 AND COALESCE(album_artist_name_folded, '') = ?3)",
+            )?
+            .query_row(
+                params![previous, names.title_folded, names.artist_folded],
+                |row| row.get(0),
+            )?;
+        if named {
+            return Ok(previous.to_owned());
+        }
+    }
     let key = names.key();
     if let Some(previous) = previous {
         let same: bool = tx
@@ -386,6 +401,95 @@ fn find_moved_track(
     })
 }
 
+/// The album facts one file gives, beyond its credits.
+struct AlbumRow<'a> {
+    grouping_key: &'a str,
+    album_title: &'a str,
+    album_artist: &'a str,
+    raw_album: &'a str,
+    year: Option<i32>,
+    now: f64,
+}
+
+/// Insert or refresh the album row and its artist credits from one file.
+fn write_album(
+    tx: &Connection,
+    album_id: &str,
+    item: &CommitIndexedItem,
+    album_credits: &[Credit],
+    album_artist_ids: &[String],
+    row: &AlbumRow<'_>,
+) -> rusqlite::Result<()> {
+    let tag = &item.tags.tag;
+    let (grouping_key, album_title, album_artist, raw_album, year, now) = (
+        row.grouping_key,
+        row.album_title,
+        row.album_artist,
+        row.raw_album,
+        row.year,
+        row.now,
+    );
+    let primary_artist = album_artist_ids
+        .first()
+        .cloned()
+        .unwrap_or_else(|| UNKNOWN_ARTIST_ID.to_owned());
+    tx.prepare_cached(
+        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_name, album_artist_name_folded, tag_album_title, tag_album_artist_name, \
+         album_artist_id, album_artist_sort_name, year, original_release_date, primary_genre, \
+         is_compilation, grouping_source, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, \
+         'automatic', ?16, ?16) \
+         ON CONFLICT (id) DO UPDATE SET root_id = excluded.root_id, title = excluded.title, \
+         title_folded = excluded.title_folded, album_artist_name = excluded.album_artist_name, \
+         album_artist_name_folded = excluded.album_artist_name_folded, \
+         tag_album_title = excluded.tag_album_title, \
+         tag_album_artist_name = excluded.tag_album_artist_name, \
+         album_artist_sort_name = excluded.album_artist_sort_name, \
+         year = COALESCE(excluded.year, local_albums.year), \
+         original_release_date = COALESCE(excluded.original_release_date, \
+         local_albums.original_release_date), \
+         primary_genre = COALESCE(excluded.primary_genre, local_albums.primary_genre), \
+         is_compilation = excluded.is_compilation, updated_at = excluded.updated_at",
+    )?
+    .execute(params![
+        album_id,
+        item.root_id,
+        grouping_key,
+        album_title,
+        fold_text(album_title),
+        album_artist,
+        fold_text(album_artist),
+        raw_album,
+        tag.album_artist.as_deref().unwrap_or("").trim(),
+        primary_artist,
+        tag.album_artist_sort,
+        year,
+        tag.original_release_date,
+        tag.genre,
+        tag.compilation,
+        now,
+    ])?;
+    let mut album_artist_rows = tx.prepare_cached(
+        "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role, \
+         credited_name, join_phrase) VALUES (?1, ?2, ?3, 'main', ?4, ?5) \
+         ON CONFLICT (local_album_id, position) DO UPDATE SET \
+         local_artist_id = excluded.local_artist_id, credited_name = excluded.credited_name, \
+         join_phrase = excluded.join_phrase",
+    )?;
+    for (position, (credit, id)) in album_credits.iter().zip(album_artist_ids).enumerate() {
+        album_artist_rows.execute(params![
+            album_id,
+            position as i64,
+            id,
+            credit.credited_name,
+            credit.join_phrase,
+        ])?;
+    }
+
+    Ok(())
+}
+
 /// Write one file's catalog rows. Returns the track id, its album id, and
 /// the album it left, if it changed albums.
 fn write_item(
@@ -534,72 +638,52 @@ fn write_item(
             previous = Some((moved_id, moved_album));
         }
     }
-    let album_id = resolve_album(
-        tx,
-        &names,
-        &Place {
-            run_id,
-            root_id: &item.root_id,
-            directory: &directory,
-        },
-        previous.as_ref().map(|(_, album)| album.as_str()),
-    )?;
-    let primary_artist = album_artist_ids
-        .first()
-        .cloned()
-        .unwrap_or_else(|| UNKNOWN_ARTIST_ID.to_owned());
-    tx.prepare_cached(
-        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
-         album_artist_name, album_artist_name_folded, tag_album_title, tag_album_artist_name, \
-         album_artist_id, album_artist_sort_name, year, original_release_date, primary_genre, \
-         is_compilation, grouping_source, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, \
-         'automatic', ?16, ?16) \
-         ON CONFLICT (id) DO UPDATE SET root_id = excluded.root_id, title = excluded.title, \
-         title_folded = excluded.title_folded, album_artist_name = excluded.album_artist_name, \
-         album_artist_name_folded = excluded.album_artist_name_folded, \
-         tag_album_title = excluded.tag_album_title, \
-         tag_album_artist_name = excluded.tag_album_artist_name, \
-         album_artist_sort_name = excluded.album_artist_sort_name, \
-         year = COALESCE(excluded.year, local_albums.year), \
-         original_release_date = COALESCE(excluded.original_release_date, \
-         local_albums.original_release_date), \
-         primary_genre = COALESCE(excluded.primary_genre, local_albums.primary_genre), \
-         is_compilation = excluded.is_compilation, updated_at = excluded.updated_at",
-    )?
-    .execute(params![
-        album_id,
-        item.root_id,
-        grouping_key,
-        album_title,
-        fold_text(&album_title),
-        album_artist,
-        fold_text(&album_artist),
-        raw_album,
-        tag.album_artist.as_deref().unwrap_or("").trim(),
-        primary_artist,
-        tag.album_artist_sort,
-        year,
-        tag.original_release_date,
-        tag.genre,
-        tag.compilation,
-        now,
-    ])?;
-    let mut album_artist_rows = tx.prepare_cached(
-        "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role, \
-         credited_name, join_phrase) VALUES (?1, ?2, ?3, 'main', ?4, ?5) \
-         ON CONFLICT (local_album_id, position) DO UPDATE SET \
-         local_artist_id = excluded.local_artist_id, credited_name = excluded.credited_name, \
-         join_phrase = excluded.join_phrase",
-    )?;
-    for (position, (credit, id)) in album_credits.iter().zip(&album_artist_ids).enumerate() {
-        album_artist_rows.execute(params![
-            album_id,
-            position as i64,
-            id,
-            credit.credited_name,
-            credit.join_phrase,
-        ])?;
+    // How the stored row holds its album: a curator's lock keeps it as is
+    // (album row included), and a grouping carried from v2 holds while the
+    // file still names the album.
+    let membership: Option<(String, bool)> = match &previous {
+        Some((id, _)) => tx
+            .prepare_cached(
+                "SELECT membership_source, membership_locked = 1 FROM local_tracks WHERE id = ?1",
+            )?
+            .query_row(params![id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .optional()?,
+        None => None,
+    };
+    let locked = membership.as_ref().is_some_and(|(_, locked)| *locked);
+    let legacy = membership
+        .as_ref()
+        .is_some_and(|(source, _)| source == "legacy_import");
+    let album_id = match (&previous, locked) {
+        (Some((_, album)), true) => album.clone(),
+        _ => resolve_album(
+            tx,
+            &names,
+            &Place {
+                run_id,
+                root_id: &item.root_id,
+                directory: &directory,
+            },
+            previous.as_ref().map(|(_, album)| album.as_str()),
+            legacy,
+        )?,
+    };
+    if !locked {
+        write_album(
+            tx,
+            &album_id,
+            item,
+            &album_credits,
+            &album_artist_ids,
+            &AlbumRow {
+                grouping_key: &grouping_key,
+                album_title: &album_title,
+                album_artist: &album_artist,
+                raw_album,
+                year,
+                now,
+            },
+        )?;
     }
 
     // A new path takes a stable id unless a moved track already holds it.
@@ -650,6 +734,9 @@ fn write_item(
          ON CONFLICT (root_id, relative_path) DO UPDATE SET \
          local_album_id = CASE WHEN local_tracks.membership_locked = 1 \
            THEN local_tracks.local_album_id ELSE excluded.local_album_id END, \
+         membership_source = CASE WHEN local_tracks.membership_locked = 1 \
+           OR local_tracks.local_album_id = excluded.local_album_id \
+           THEN local_tracks.membership_source ELSE 'automatic' END, \
          file_path = excluded.file_path, file_size_bytes = excluded.file_size_bytes, \
          file_mtime_ns = excluded.file_mtime_ns, stat_revision = excluded.stat_revision, \
          stat_revision_kind = excluded.stat_revision_kind, tag_revision = excluded.tag_revision, \
@@ -686,7 +773,10 @@ fn write_item(
          title_provenance = excluded.title_provenance, \
          album_title_provenance = excluded.album_title_provenance, \
          album_artist_provenance = excluded.album_artist_provenance, \
-         availability = 'indexed', missing_since = NULL, excluded_at = NULL",
+         availability = CASE WHEN local_tracks.manual_excluded = 1 THEN 'excluded' \
+           ELSE 'indexed' END, missing_since = NULL, \
+         excluded_at = CASE WHEN local_tracks.manual_excluded = 1 \
+           THEN COALESCE(local_tracks.excluded_at, excluded.tags_read_at) END",
     )?
     .execute(params![
         track_id,

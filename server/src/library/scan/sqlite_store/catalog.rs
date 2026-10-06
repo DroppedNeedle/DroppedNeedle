@@ -419,7 +419,8 @@ fn shared_catalog_revision(conn: &Connection) -> rusqlite::Result<i64> {
 }
 
 /// Bulk catalog load backing in-memory classify: every indexed row of one
-/// root, keyed by relative path for verdict lookups.
+/// root, plus rows a curator excluded by hand (they stay excluded, and an
+/// unchanged one needs no tag read), keyed by relative path.
 fn load_catalog_map(
     conn: &Connection,
     root_id: &str,
@@ -427,7 +428,7 @@ fn load_catalog_map(
     let mut stmt = conn.prepare(
         "SELECT relative_path, id, stat_revision, stat_revision_kind, file_size_bytes, \
          file_mtime_ns, tags_read_at FROM local_tracks \
-         WHERE root_id = ?1 AND availability = 'indexed'",
+         WHERE root_id = ?1 AND (availability = 'indexed' OR manual_excluded = 1)",
     )?;
     let rows = stmt.query_map(params![root_id], |row| {
         let kind: String = row.get("stat_revision_kind")?;
