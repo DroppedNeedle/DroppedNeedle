@@ -50,10 +50,13 @@ with the same ids, and v3 checks it against your files on its first scan.
 - The releases each user hid from the discover queue.
 
 Every edition you chose in v2 stays the album's edition in v3: a manual
-match, an edition pin, or an active custom edition. v3's automatic
-identification never replaces it; only you can, from the album page. If an
-album had both a manual match and a pin naming a different release, the
-manual match wins and the import report says so.
+match, an edition pin, or an active custom edition. A pin becomes your
+choice of edition, exactly as if you had picked it in v3, and the files are
+placed on that edition's tracks in the background once MusicBrainz is
+reachable. v3's automatic identification never replaces it; only you can,
+from the album page. If an album had both a manual match and a pin naming a
+different release, the manual match wins and the import report says so.
+Upgrading an existing v3 install does the same with any pins it holds.
 
 Albums that were waiting on a review question in v2 go back on v3's
 identify queue, so v3 asks again with its own candidates.
