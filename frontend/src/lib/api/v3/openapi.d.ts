@@ -2890,28 +2890,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v3/library/albums/{album_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /**
-         * Remove an album from the library. With `delete_files` its files move
-         *     into the recycle bin; nothing is deleted outright. Its pending download
-         *     retries, held files and blocklist entries go, and its wanted watch
-         *     stops (or, with `stop_wanted=false`, looks for a replacement).
-         */
-        delete: operations["remove_album"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v3/library/albums/{album_id}/edition": {
         parameters: {
             query?: never;
@@ -3094,7 +3072,13 @@ export interface paths {
         get: operations["get_album"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Remove an album from the library. With `delete_files` its files move
+         *     into the recycle bin; nothing is deleted outright. Its pending download
+         *     retries, held files and blocklist entries go, and its wanted watch
+         *     stops (or, with `stop_wanted=false`, looks for a replacement).
+         */
+        delete: operations["remove_album"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4161,7 +4145,11 @@ export interface paths {
         get: operations["get_track"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Remove one track. Its file moves into the recycle bin unless
+         *     `delete_file=false`.
+         */
+        delete: operations["remove_track"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4196,26 +4184,6 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v3/library/tracks/{track_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /**
-         * Remove one track. Its file moves into the recycle bin unless
-         *     `delete_file=false`.
-         */
-        delete: operations["remove_track"];
         options?: never;
         head?: never;
         patch?: never;
@@ -25926,74 +25894,6 @@ export interface operations {
             };
         };
     };
-    remove_album: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Local album id or release-group MBID */
-                album_id: string;
-                /**
-                 * @description Move the album's files into the recycle bin too. Off by default:
-                 *     the album only leaves the catalog.
-                 */
-                delete_files: boolean;
-                /**
-                 * @description Stop the album's wanted watch (default). False keeps looking for a
-                 *     replacement: a fulfilled watch starts watching again.
-                 */
-                stop_wanted: boolean;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Album removed */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RemovalResponse"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Admin role required */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Album not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Library busy or a file is outside the library folders */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description A file could not be recycled; nothing changed */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
     get_edition: {
         parameters: {
             query?: never;
@@ -26706,6 +26606,74 @@ export interface operations {
             };
             /** @description Unknown album id */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    remove_album: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id or release-group MBID */
+                id: string;
+                /**
+                 * @description Move the album's files into the recycle bin too. Off by default:
+                 *     the album only leaves the catalog.
+                 */
+                delete_files: boolean;
+                /**
+                 * @description Stop the album's wanted watch (default). False keeps looking for a
+                 *     replacement: a fulfilled watch starts watching again.
+                 */
+                stop_wanted: boolean;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Album removed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemovalResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Album not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Library busy or a file is outside the library folders */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A file could not be recycled; nothing changed */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -29765,6 +29733,69 @@ export interface operations {
             };
         };
     };
+    remove_track: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local track id */
+                id: string;
+                /**
+                 * @description Move the track's file into the recycle bin too. On by default, as
+                 *     in v2 (where it deleted the file outright).
+                 */
+                delete_file: boolean;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Track removed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemovalResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Track not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Library busy or the file is outside the library folders */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The file could not be recycled; nothing changed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     get_lyrics: {
         parameters: {
             query?: never;
@@ -29846,69 +29877,6 @@ export interface operations {
             };
             /** @description Unknown track */
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    remove_track: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Local track id */
-                track_id: string;
-                /**
-                 * @description Move the track's file into the recycle bin too. On by default, as
-                 *     in v2 (where it deleted the file outright).
-                 */
-                delete_file: boolean;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Track removed */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RemovalResponse"];
-                };
-            };
-            /** @description Not authenticated */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Curator role required */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Track not found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Library busy or the file is outside the library folders */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description The file could not be recycled; nothing changed */
-            422: {
                 headers: {
                     [name: string]: unknown;
                 };

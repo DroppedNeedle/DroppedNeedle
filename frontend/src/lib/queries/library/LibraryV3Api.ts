@@ -11,12 +11,11 @@ import type {
 // Nothing outside this feature imports them.
 export const LibraryV3Api = {
 	removeAlbum: (albumId: string, stopWanted: boolean) =>
-		v3('/api/v3/library/albums/{album_id}', {
-			path: { album_id: albumId },
+		v3('/api/v3/library/albums/{id}', {
+			path: { id: albumId },
 			query: { delete_files: true, stop_wanted: stopWanted }
 		}),
-	removeTrack: (trackId: string) =>
-		v3('/api/v3/library/tracks/{track_id}', { path: { track_id: trackId } }),
+	removeTrack: (trackId: string) => v3('/api/v3/library/tracks/{id}', { path: { id: trackId } }),
 	rescanAlbum: (albumId: string) =>
 		v3('/api/v3/library/albums/{album_id}/rescan', { path: { album_id: albumId } }),
 	reenableManagement: (albumId: string) =>

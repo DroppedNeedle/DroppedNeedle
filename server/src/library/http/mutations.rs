@@ -22,8 +22,8 @@ use crate::library::wiring::LibrarySetup;
 /// Mutation routes, relative for nesting under `/api/v3`.
 pub fn mutations_router() -> Router<LibrarySetup> {
     Router::new()
-        .route("/library/albums/{album_id}", delete(remove_album))
-        .route("/library/tracks/{track_id}", delete(remove_track))
+        .route("/library/albums/{id}", delete(remove_album))
+        .route("/library/tracks/{id}", delete(remove_track))
         .route("/library/albums/{album_id}/rescan", post(rescan_album))
         .route(
             "/library/albums/{album_id}/management/re-enable",
@@ -138,9 +138,9 @@ async fn blocking<T: Send + 'static>(
 /// stops (or, with `stop_wanted=false`, looks for a replacement).
 #[utoipa::path(
     delete,
-    path = "/api/v3/library/albums/{album_id}",
+    path = "/api/v3/library/albums/{id}",
     params(
-        ("album_id" = String, Path, description = "Local album id or release-group MBID"),
+        ("id" = String, Path, description = "Local album id or release-group MBID"),
         RemoveAlbumQuery,
     ),
     responses(
@@ -179,9 +179,9 @@ pub async fn remove_album(
 /// `delete_file=false`.
 #[utoipa::path(
     delete,
-    path = "/api/v3/library/tracks/{track_id}",
+    path = "/api/v3/library/tracks/{id}",
     params(
-        ("track_id" = String, Path, description = "Local track id"),
+        ("id" = String, Path, description = "Local track id"),
         RemoveTrackQuery,
     ),
     responses(

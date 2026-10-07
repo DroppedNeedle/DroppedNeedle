@@ -2182,16 +2182,8 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/library/artists/duplicate-groups/{group_id}/dismiss",
         Posture::Admin,
     ),
-    (
-        "DELETE",
-        "/api/v3/library/albums/{album_id}",
-        Posture::Admin,
-    ),
-    (
-        "DELETE",
-        "/api/v3/library/tracks/{track_id}",
-        Posture::Curator,
-    ),
+    ("DELETE", "/api/v3/library/albums/{id}", Posture::Admin),
+    ("DELETE", "/api/v3/library/tracks/{id}", Posture::Curator),
     (
         "POST",
         "/api/v3/library/albums/{album_id}/rescan",

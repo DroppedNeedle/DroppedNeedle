@@ -6053,71 +6053,6 @@
         }
       }
     },
-    "/api/v3/library/albums/{album_id}": {
-      "delete": {
-        "tags": [
-          "crate::library::http::mutations"
-        ],
-        "summary": "Remove an album from the library. With `delete_files` its files move\ninto the recycle bin; nothing is deleted outright. Its pending download\nretries, held files and blocklist entries go, and its wanted watch\nstops (or, with `stop_wanted=false`, looks for a replacement).",
-        "operationId": "remove_album",
-        "parameters": [
-          {
-            "name": "album_id",
-            "in": "path",
-            "description": "Local album id or release-group MBID",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "delete_files",
-            "in": "path",
-            "description": "Move the album's files into the recycle bin too. Off by default:\nthe album only leaves the catalog.",
-            "required": true,
-            "schema": {
-              "type": "boolean"
-            }
-          },
-          {
-            "name": "stop_wanted",
-            "in": "path",
-            "description": "Stop the album's wanted watch (default). False keeps looking for a\nreplacement: a fulfilled watch starts watching again.",
-            "required": true,
-            "schema": {
-              "type": "boolean"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Album removed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RemovalResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated"
-          },
-          "403": {
-            "description": "Admin role required"
-          },
-          "404": {
-            "description": "Album not found"
-          },
-          "409": {
-            "description": "Library busy or a file is outside the library folders"
-          },
-          "422": {
-            "description": "A file could not be recycled; nothing changed"
-          }
-        }
-      }
-    },
     "/api/v3/library/albums/{album_id}/edition": {
       "get": {
         "tags": [
@@ -6818,6 +6753,69 @@
           },
           "404": {
             "description": "Unknown album id"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "crate::library::http::mutations"
+        ],
+        "summary": "Remove an album from the library. With `delete_files` its files move\ninto the recycle bin; nothing is deleted outright. Its pending download\nretries, held files and blocklist entries go, and its wanted watch\nstops (or, with `stop_wanted=false`, looks for a replacement).",
+        "operationId": "remove_album",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Local album id or release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "delete_files",
+            "in": "path",
+            "description": "Move the album's files into the recycle bin too. Off by default:\nthe album only leaves the catalog.",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "stop_wanted",
+            "in": "path",
+            "description": "Stop the album's wanted watch (default). False keeps looking for a\nreplacement: a fulfilled watch starts watching again.",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Album removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemovalResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Album not found"
+          },
+          "409": {
+            "description": "Library busy or a file is outside the library folders"
+          },
+          "422": {
+            "description": "A file could not be recycled; nothing changed"
           }
         }
       }
@@ -9857,6 +9855,60 @@
             "description": "Unknown track id"
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "crate::library::http::mutations"
+        ],
+        "summary": "Remove one track. Its file moves into the recycle bin unless\n`delete_file=false`.",
+        "operationId": "remove_track",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Local track id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "delete_file",
+            "in": "path",
+            "description": "Move the track's file into the recycle bin too. On by default, as\nin v2 (where it deleted the file outright).",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Track removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemovalResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Track not found"
+          },
+          "409": {
+            "description": "Library busy or the file is outside the library folders"
+          },
+          "422": {
+            "description": "The file could not be recycled; nothing changed"
+          }
+        }
       }
     },
     "/api/v3/library/tracks/{id}/lyrics": {
@@ -9937,62 +9989,6 @@
           },
           "404": {
             "description": "Unknown track"
-          }
-        }
-      }
-    },
-    "/api/v3/library/tracks/{track_id}": {
-      "delete": {
-        "tags": [
-          "crate::library::http::mutations"
-        ],
-        "summary": "Remove one track. Its file moves into the recycle bin unless\n`delete_file=false`.",
-        "operationId": "remove_track",
-        "parameters": [
-          {
-            "name": "track_id",
-            "in": "path",
-            "description": "Local track id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "delete_file",
-            "in": "path",
-            "description": "Move the track's file into the recycle bin too. On by default, as\nin v2 (where it deleted the file outright).",
-            "required": true,
-            "schema": {
-              "type": "boolean"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Track removed",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RemovalResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated"
-          },
-          "403": {
-            "description": "Curator role required"
-          },
-          "404": {
-            "description": "Track not found"
-          },
-          "409": {
-            "description": "Library busy or the file is outside the library folders"
-          },
-          "422": {
-            "description": "The file could not be recycled; nothing changed"
           }
         }
       }
