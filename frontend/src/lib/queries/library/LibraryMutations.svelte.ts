@@ -20,10 +20,8 @@ import type {
 
 export function removeLibraryAlbum() {
 	return createMutation(() => ({
-		// stopWanted stays in the signature for the dialog; the v3 route
-		// leaves wanted watches alone.
-		mutationFn: ({ mbid }: { mbid: string; stopWanted: boolean }) =>
-			api.global.v3.DELETE(LibraryV3Api.removeAlbum(mbid)) as Promise<
+		mutationFn: ({ mbid, stopWanted }: { mbid: string; stopWanted: boolean }) =>
+			api.global.v3.DELETE(LibraryV3Api.removeAlbum(mbid, stopWanted)) as Promise<
 				AlbumRemoveResponse | TargetCatalogRemovalResponse
 			>,
 		onSuccess: async (result, { mbid: requestedMbid }) => {

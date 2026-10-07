@@ -359,8 +359,10 @@ pub struct WorkerConfig {
     pub source_order: Vec<String>,
     /// Per-task staging root (manifests live beneath it).
     pub staging_root: PathBuf,
-    /// Upgrade recycle bin, when resolvable.
-    pub recycle: Option<RecycleBin>,
+    /// Recycle bins to prune: the configured one, when resolvable, plus
+    /// the `.recycle` folder of every library root (library removals land
+    /// there). All share one retention window.
+    pub recycle: Vec<RecycleBin>,
     /// Complete dirs to walk as `(journal source, dir)`.
     pub orphan_roots: Vec<(String, PathBuf)>,
     /// Lease owner name for cleanup claims.
@@ -377,7 +379,7 @@ impl Default for WorkerConfig {
             watchdog: WatchdogConfig::default(),
             source_order: vec!["soulseek".to_owned(), "usenet".to_owned()],
             staging_root: PathBuf::from("staging"),
-            recycle: None,
+            recycle: Vec::new(),
             orphan_roots: Vec::new(),
             worker_id: "download-worker".to_owned(),
         }
@@ -1462,7 +1464,7 @@ impl DownloadWorker {
         for (source_tag, root) in &pass.config.orphan_roots {
             self.orphan_root(pass, source_tag, root).await;
         }
-        if let Some(bin) = &pass.config.recycle {
+        for bin in &pass.config.recycle {
             let bin = bin.clone();
             let pruned = tokio::task::spawn_blocking(move || bin.prune(SystemTime::now())).await;
             if let Err(error) = pruned

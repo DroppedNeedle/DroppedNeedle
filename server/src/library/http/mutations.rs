@@ -38,6 +38,10 @@ pub struct RemoveAlbumQuery {
     /// the album only leaves the catalog.
     #[serde(default)]
     pub delete_files: bool,
+    /// Stop the album's wanted watch (default). False keeps looking for a
+    /// replacement: a fulfilled watch starts watching again.
+    #[serde(default = "default_true")]
+    pub stop_wanted: bool,
 }
 
 /// Track removal options.
@@ -129,7 +133,9 @@ async fn blocking<T: Send + 'static>(
 }
 
 /// Remove an album from the library. With `delete_files` its files move
-/// into the recycle bin; nothing is deleted outright.
+/// into the recycle bin; nothing is deleted outright. Its pending download
+/// retries, held files and blocklist entries go, and its wanted watch
+/// stops (or, with `stop_wanted=false`, looks for a replacement).
 #[utoipa::path(
     delete,
     path = "/api/v3/library/albums/{album_id}",
@@ -153,10 +159,15 @@ pub async fn remove_album(
     Query(query): Query<RemoveAlbumQuery>,
 ) -> Result<Json<RemovalResponse>, Response> {
     let actor = caller.0.user_id;
+    let hook = state.removal_hook.get().cloned();
     let removed = blocking(move || {
         Mutations::new(&state).remove_album(&album_id, query.delete_files, &actor)
     })
     .await?;
+    // The removal stands; download and wanted cleanup only follow it.
+    if let (Some(hook), Some(group)) = (hook, removed.release_group_mbid.as_deref()) {
+        hook.album_removed(group, query.stop_wanted).await;
+    }
     Ok(Json(RemovalResponse {
         success: true,
         id: removed.id,

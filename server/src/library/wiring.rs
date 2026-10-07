@@ -176,6 +176,8 @@ pub struct LibrarySetup {
     pub root_dirs: RootDirs,
     /// Live event hub handle (scan events poke the revision poller).
     pub events: crate::events::EventSink,
+    /// Download and wanted cleanup after an album removal, set at boot.
+    pub removal_hook: super::mutations::AlbumRemovalSlot,
     /// Scratch state of a test bundle, removed with the last clone.
     #[cfg(any(test, feature = "test-support"))]
     pub scratch: Option<Arc<crate::tooling::scratch::ScratchDir>>,
@@ -449,6 +451,7 @@ impl LibrarySetup {
             watcher_state: Arc::new(std::sync::Mutex::new(WatcherState::new())),
             root_dirs,
             events,
+            removal_hook: Default::default(),
             #[cfg(any(test, feature = "test-support"))]
             scratch: None,
         })

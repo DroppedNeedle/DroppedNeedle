@@ -7,7 +7,8 @@
 //! With it, every file first moves into the recycle bin, each into its
 //! own `<stamp>-<id>` entry so equal names never collide; if any move
 //! fails, the files already moved go back and nothing in the catalog
-//! changes. The bin is the configured `recycle_bin_path`, else `.recycle`
+//! changes. The bin is the download settings' `recycle_bin_path` (the one
+//! upgrades use, pruned on the same retention window), else `.recycle`
 //! at the top of the file's library root, which the scanner skips and
 //! which keeps the move a rename on the same filesystem.
 //!
@@ -26,7 +27,7 @@ use super::scan::coordinator::ScanRequestError;
 use super::scan::models::{ScanKind, ScanRequest, ScanRequestResult, ScanScope, ScanTrigger};
 use super::scan::roots::RootRegistry;
 use super::wiring::LibrarySetup;
-use crate::runtime_config::sections::LibraryManagement;
+use crate::runtime_config::sections::DownloadPolicy;
 
 /// Most hops followed through merged (retired) albums.
 const MAX_RETIRED_HOPS: usize = 8;
@@ -122,7 +123,28 @@ pub struct Removed {
     pub id: String,
     /// Track ids now marked missing.
     pub track_ids: Vec<String>,
+    /// The removed album's release group, when it was identified.
+    pub release_group_mbid: Option<String>,
 }
+
+/// What happens outside the library once an album is removed: its
+/// download records and wanted watch are cleaned up. Acquisition fills the
+/// slot at boot; failures are logged there, never surfaced, because the
+/// removal itself already happened.
+pub trait AlbumRemovalHook: Send + Sync {
+    /// The album `release_group_mbid` left the library. `stop_wanted`
+    /// stops its watch; otherwise a fulfilled watch looks for a
+    /// replacement again.
+    fn album_removed<'a>(
+        &'a self,
+        release_group_mbid: &'a str,
+        stop_wanted: bool,
+    ) -> futures_util::future::BoxFuture<'a, ()>;
+}
+
+/// The slot the removal hook goes into.
+pub type AlbumRemovalSlot =
+    std::sync::Arc<std::sync::OnceLock<std::sync::Arc<dyn AlbumRemovalHook>>>;
 
 /// One track row a removal or rescan works on.
 #[derive(Debug, Clone)]
@@ -162,10 +184,20 @@ impl<'a> Mutations<'a> {
         } else {
             "CATALOG_REMOVAL"
         };
+        let release_group_mbid = self.read(|conn| {
+            conn.query_row(
+                "SELECT release_group_mbid FROM local_album_external_identities \
+                 WHERE local_album_id = ?1 AND release_group_mbid IS NOT NULL LIMIT 1",
+                [&canonical],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+        })?;
         let track_ids = self.remove_tracks(&tracks, delete_files, reason_code, actor)?;
         Ok(Removed {
             id: canonical,
             track_ids,
+            release_group_mbid,
         })
     }
 
@@ -197,6 +229,7 @@ impl<'a> Mutations<'a> {
         Ok(Removed {
             id: track_id.to_owned(),
             track_ids,
+            release_group_mbid: None,
         })
     }
 
@@ -368,10 +401,10 @@ impl<'a> Mutations<'a> {
 
     /// The configured recycle bin, when it is an absolute path.
     fn configured_bin(&self) -> Option<PathBuf> {
-        let configured = match self.setup.config.get::<LibraryManagement>() {
+        let configured = match self.setup.config.get::<DownloadPolicy>() {
             Ok(section) => section.recycle_bin_path,
             Err(error) => {
-                tracing::warn!(%error, "library management settings unreadable; using root bins");
+                tracing::warn!(%error, "download settings unreadable; using root bins");
                 return None;
             }
         };

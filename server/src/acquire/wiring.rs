@@ -824,7 +824,21 @@ impl AcquireSetup {
                     let sab: DownloadClients = secret(&worker_store);
                     let sab_mount = (!sab.sabnzbd.url.is_empty())
                         .then(|| PathBuf::from(sab.sabnzbd.downloads_mount.clone()));
-                    worker_config(&policy, &source_priority, &worker_staging, sab_mount)
+                    let library: TypedLibrary = plain(&worker_store);
+                    let library_roots: Vec<PathBuf> = library
+                        .library_roots
+                        .iter()
+                        .map(|root| root.path.trim())
+                        .filter(|path| !path.is_empty())
+                        .map(PathBuf::from)
+                        .collect();
+                    worker_config(
+                        &policy,
+                        &source_priority,
+                        &worker_staging,
+                        sab_mount,
+                        &library_roots,
+                    )
                 }),
             )
             .with_plugin_events(worker_plugins)
@@ -1560,6 +1574,7 @@ fn worker_config(
     source_priority: &SourcePriority,
     staging_root: &Path,
     sab_mount: Option<PathBuf>,
+    library_roots: &[PathBuf],
 ) -> WorkerConfig {
     let mut source_order: Vec<String> = source_priority
         .0
@@ -1580,10 +1595,21 @@ fn worker_config(
     if let Some(mount) = &sab_mount {
         protected.push(mount.clone());
     }
-    let recycle = match RecycleBin::resolve(&policy.recycle_bin_path, &[]) {
-        None => None,
-        Some(root) => RecycleBin::guarded(root, policy.recycle_retention_days.max(0), &protected),
-    };
+    protected.extend(library_roots.iter().cloned());
+    let retention = policy.recycle_retention_days.max(0);
+    let mut bin_roots: Vec<PathBuf> = RecycleBin::resolve(&policy.recycle_bin_path, &[])
+        .into_iter()
+        .collect();
+    for root in library_roots {
+        let bin = root.join(crate::library::scan::fs::RECYCLE_BIN_DIRECTORY_NAME);
+        if !bin_roots.contains(&bin) {
+            bin_roots.push(bin);
+        }
+    }
+    let recycle = bin_roots
+        .into_iter()
+        .filter_map(|root| RecycleBin::guarded(root, retention, &protected))
+        .collect();
     WorkerConfig {
         interval: super::worker::WORKER_INTERVAL,
         max_concurrent_downloads: clamp_usize(policy.max_concurrent_downloads).max(1),

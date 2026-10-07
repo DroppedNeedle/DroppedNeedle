@@ -311,6 +311,19 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         )),
         None => acquire,
     };
+    // Removing an album also clears its download and wanted state.
+    if library
+        .removal_hook
+        .set(Arc::new(
+            crate::acquire::library_removal::AcquireAlbumCleanup::new(
+                acquire.journal.clone(),
+                acquire.requests.wanted.clone(),
+            ),
+        ))
+        .is_err()
+    {
+        tracing::warn!("album removal cleanup was already attached");
+    }
     acquire.refresh_admins().await;
     // Startup recovery before serving traffic. Re-running after a clean
     // shutdown is a no-op: nothing destructive repeats.

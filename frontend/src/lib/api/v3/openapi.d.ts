@@ -2538,7 +2538,9 @@ export interface paths {
         post?: never;
         /**
          * Remove an album from the library. With `delete_files` its files move
-         *     into the recycle bin; nothing is deleted outright.
+         *     into the recycle bin; nothing is deleted outright. Its pending download
+         *     retries, held files and blocklist entries go, and its wanted watch
+         *     stops (or, with `stop_wanted=false`, looks for a replacement).
          */
         delete: operations["remove_album"];
         options?: never;
@@ -24538,6 +24540,11 @@ export interface operations {
                  *     the album only leaves the catalog.
                  */
                 delete_files: boolean;
+                /**
+                 * @description Stop the album's wanted watch (default). False keeps looking for a
+                 *     replacement: a fulfilled watch starts watching again.
+                 */
+                stop_wanted: boolean;
             };
             cookie?: never;
         };

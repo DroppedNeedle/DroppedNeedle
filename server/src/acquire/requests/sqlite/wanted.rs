@@ -257,6 +257,44 @@ impl WantedStore {
             .map_err(|error| lane_error("wanted.record_check", error))
     }
 
+    /// After an admin removed the album: stop a watching or dormant watch
+    /// (v2 `stop_after_library_removal`). Answers whether it changed.
+    pub async fn stop_after_removal(&self, key: &str) -> Result<bool, RequestsError> {
+        let key = key.to_lowercase();
+        self.db
+            .write("wanted.stop_after_removal", move |tx| {
+                let changed = tx.execute(
+                    "UPDATE wanted_watches SET state = ?2 WHERE release_group_mbid_lower = ?1 \
+                     AND state IN (?3, ?4)",
+                    params![key, WATCH_STOPPED, WATCH_WATCHING, WATCH_DORMANT],
+                )?;
+                Ok(changed > 0)
+            })
+            .await
+            .map_err(|error| lane_error("wanted.stop_after_removal", error))
+    }
+
+    /// After an admin removed the album but wants a replacement: a
+    /// fulfilled watch goes back to watching, due now, with fresh counters
+    /// (v2 `continue_after_library_removal`). Stopped and dormant watches
+    /// keep the user's choice.
+    pub async fn rearm_after_removal(&self, key: &str, now: u64) -> Result<bool, RequestsError> {
+        let key = key.to_lowercase();
+        self.db
+            .write("wanted.rearm_after_removal", move |tx| {
+                let changed = tx.execute(
+                    "UPDATE wanted_watches SET state = ?2, created_at = ?3, check_count = 0, \
+                     quiet_streak = 0, last_checked_at = NULL, next_check_at = ?3, \
+                     last_outcome = NULL, new_candidate_count = 0 \
+                     WHERE release_group_mbid_lower = ?1 AND state = ?4",
+                    params![key, WATCH_WATCHING, now as f64, WATCH_FULFILLED],
+                )?;
+                Ok(changed > 0)
+            })
+            .await
+            .map_err(|error| lane_error("wanted.rearm_after_removal", error))
+    }
+
     /// Mark a watch fulfilled (the album reached the library).
     pub async fn mark_fulfilled(
         &self,

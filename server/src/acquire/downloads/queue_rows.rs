@@ -61,7 +61,52 @@ pub enum Stopped {
     AlreadySettled,
 }
 
+/// What an album purge took out of the download journal.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AlbumPurge {
+    /// Failed or short tasks that will no longer retry.
+    pub retries_cancelled: usize,
+    /// Held "couldn't verify" files whose rows were dropped; the caller
+    /// deletes the files.
+    pub held_paths: Vec<String>,
+}
+
 impl DownloadStore<'_> {
+    /// Download-side cleanup after an album leaves the library (v2
+    /// `purge_album_downloads`): its failed or short tasks stop retrying,
+    /// its held imports and blocklist entries go. Live tasks are left
+    /// alone; they are cancelled per task so their transfers are torn down.
+    pub fn purge_album(
+        &self,
+        release_group_mbid: &str,
+        now: f64,
+    ) -> Result<AlbumPurge, StoreError> {
+        let retries_cancelled = self.conn.execute(
+            "UPDATE download_tasks SET status = 'cancelled', cancelled_at = ?2, \
+                 remote_queued = 0, updated_at = ?2 \
+             WHERE lower(release_group_mbid) = lower(?1) AND status IN ('failed', 'partial')",
+            params![release_group_mbid, now],
+        )?;
+        let mut statement = self.conn.prepare(
+            "SELECT held_path FROM held_imports WHERE lower(release_group_mbid) = lower(?1)",
+        )?;
+        let held_paths = statement
+            .query_map(params![release_group_mbid], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        self.conn.execute(
+            "DELETE FROM held_imports WHERE lower(release_group_mbid) = lower(?1)",
+            params![release_group_mbid],
+        )?;
+        self.conn.execute(
+            "DELETE FROM download_quarantine WHERE lower(release_group_mbid) = lower(?1)",
+            params![release_group_mbid],
+        )?;
+        Ok(AlbumPurge {
+            retries_cancelled,
+            held_paths,
+        })
+    }
+
     /// Store one poll's progress on a live task and stamp the poll.
     pub fn record_progress(
         &self,

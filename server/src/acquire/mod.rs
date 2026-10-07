@@ -29,6 +29,7 @@ pub mod edition;
 pub mod flows;
 pub mod imports;
 pub mod landing;
+pub mod library_removal;
 pub mod plugin_events;
 pub mod plugin_source;
 pub mod probes;

@@ -10,10 +10,10 @@ import type {
 // a literal the contract-coverage gate verifies against the generated spec.
 // Nothing outside this feature imports them.
 export const LibraryV3Api = {
-	removeAlbum: (albumId: string) =>
+	removeAlbum: (albumId: string, stopWanted: boolean) =>
 		v3('/api/v3/library/albums/{album_id}', {
 			path: { album_id: albumId },
-			query: { delete_files: true }
+			query: { delete_files: true, stop_wanted: stopWanted }
 		}),
 	removeTrack: (trackId: string) =>
 		v3('/api/v3/library/tracks/{track_id}', { path: { track_id: trackId } }),

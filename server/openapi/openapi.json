@@ -5487,7 +5487,7 @@
         "tags": [
           "crate::library::http::mutations"
         ],
-        "summary": "Remove an album from the library. With `delete_files` its files move\ninto the recycle bin; nothing is deleted outright.",
+        "summary": "Remove an album from the library. With `delete_files` its files move\ninto the recycle bin; nothing is deleted outright. Its pending download\nretries, held files and blocklist entries go, and its wanted watch\nstops (or, with `stop_wanted=false`, looks for a replacement).",
         "operationId": "remove_album",
         "parameters": [
           {
@@ -5503,6 +5503,15 @@
             "name": "delete_files",
             "in": "path",
             "description": "Move the album's files into the recycle bin too. Off by default:\nthe album only leaves the catalog.",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "stop_wanted",
+            "in": "path",
+            "description": "Stop the album's wanted watch (default). False keeps looking for a\nreplacement: a fulfilled watch starts watching again.",
             "required": true,
             "schema": {
               "type": "boolean"
