@@ -114,11 +114,13 @@ pub trait LandingLibrary: Send + Sync {
     /// upgrade floor. `None` when it holds nothing.
     fn held_tier<'a>(&'a self, release_group_mbid: &'a str) -> BoxFuture<'a, Option<String>>;
 
-    /// The library's copies of one release track (matched by release
-    /// track, else recording), for an upgrade to compare against.
+    /// The copies an upgrade of one release track would replace: in the
+    /// local album of `release_mbid` only, matched by release track, else
+    /// by recording when no copy of the release track exists.
     fn owned_copies<'a>(
         &'a self,
         release_group_mbid: &'a str,
+        release_mbid: &'a str,
         release_track_mbid: &'a str,
         recording_mbid: &'a str,
     ) -> BoxFuture<'a, Vec<OwnedCopy>>;

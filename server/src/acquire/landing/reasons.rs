@@ -138,6 +138,11 @@ pub const CATALOG: &[Reason] = &[
         "Check that the recycle bin folder exists and can be written, then import the held file.",
     ),
     reason(
+        "upgrade_restore_failed",
+        "A better file could not be placed, and your old copy could not be put back either. The old copy is in the recycle bin.",
+        "Move the old file back from the recycle bin, or import the held file to replace it.",
+    ),
+    reason(
         "no_tracks",
         "No file of the download could be imported.",
         "Review the held files, or let DroppedNeedle try another source.",

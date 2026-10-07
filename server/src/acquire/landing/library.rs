@@ -41,13 +41,73 @@ fn group_tracks_sql() -> String {
 
 type GroupTrack = (String, String, String, Option<i64>, Option<i64>);
 
-/// One release track's copies in a group: track id and quality facts.
-fn track_copies_sql() -> String {
+/// Every indexed copy in a group, with the album it sits in, that album's
+/// release (sealed identity first, then the file's own tags), the copy's
+/// release track and recording, and its quality facts.
+fn group_copies_sql() -> String {
     format!(
-        "SELECT t.id, t.file_format, t.bit_rate, t.bit_depth {OWNED_TRACKS_FROM} \
-         AND ((?2 <> '' AND lower(COALESCE(ti.release_track_mbid, t.embedded_release_track_mbid, '')) = ?2) \
-           OR (?3 <> '' AND lower(COALESCE(ti.recording_mbid, t.embedded_recording_mbid, '')) = ?3))"
+        "SELECT t.id AS track_id, b.id AS album_id, \
+         lower(COALESCE(ai.release_mbid, t.embedded_release_mbid, '')) AS release_mbid, \
+         lower(COALESCE(ti.release_track_mbid, t.embedded_release_track_mbid, '')) \
+           AS release_track_mbid, \
+         lower(COALESCE(ti.recording_mbid, t.embedded_recording_mbid, '')) AS recording_mbid, \
+         t.file_format AS format, t.bit_rate AS bitrate, t.bit_depth AS depth \
+         {OWNED_TRACKS_FROM}"
     )
+}
+
+/// One row of [`group_copies_sql`].
+#[derive(Debug, Clone, Default, PartialEq, sqlx::FromRow)]
+pub struct GroupCopy {
+    pub track_id: String,
+    pub album_id: String,
+    pub release_mbid: String,
+    pub release_track_mbid: String,
+    pub recording_mbid: String,
+    pub format: String,
+    pub bitrate: Option<i64>,
+    pub depth: Option<i64>,
+}
+
+/// The copies an upgrade of one release track replaces. Only the local
+/// album holding the release being imported counts (the album whose
+/// release is that edition, else the group's only album), so another
+/// edition the person keeps is never touched. Inside that album, copies
+/// of the release track win; the recording is matched only when no copy
+/// of the release track exists. Two albums of the same edition are
+/// ambiguous and answer nothing, so nothing is replaced.
+pub fn copies_to_replace<'a>(
+    rows: &'a [GroupCopy],
+    release_mbid: &str,
+    release_track_mbid: &str,
+    recording_mbid: &str,
+) -> Vec<&'a GroupCopy> {
+    let release_mbid = release_mbid.to_ascii_lowercase();
+    let albums: HashSet<&str> = rows.iter().map(|row| row.album_id.as_str()).collect();
+    let of_release: HashSet<&str> = rows
+        .iter()
+        .filter(|row| !release_mbid.is_empty() && row.release_mbid == release_mbid)
+        .map(|row| row.album_id.as_str())
+        .collect();
+    let album = match (of_release.len(), albums.len()) {
+        (1, _) => of_release.into_iter().next(),
+        (0, 1) => albums.into_iter().next(),
+        _ => None,
+    };
+    let Some(album) = album else {
+        return Vec::new();
+    };
+    let wanted = |value: &str, field: &str| !value.is_empty() && field.eq_ignore_ascii_case(value);
+    let in_album = || rows.iter().filter(move |row| row.album_id == album);
+    let by_track: Vec<&GroupCopy> = in_album()
+        .filter(|row| wanted(release_track_mbid, &row.release_track_mbid))
+        .collect();
+    if !by_track.is_empty() {
+        return by_track;
+    }
+    in_album()
+        .filter(|row| wanted(recording_mbid, &row.recording_mbid))
+        .collect()
 }
 
 fn tier_of(format: &str, bitrate: Option<i64>, depth: Option<i64>) -> &'static str {
@@ -145,30 +205,29 @@ impl LandingLibrary for LibraryLanding {
     fn owned_copies<'a>(
         &'a self,
         release_group_mbid: &'a str,
+        release_mbid: &'a str,
         release_track_mbid: &'a str,
         recording_mbid: &'a str,
     ) -> BoxFuture<'a, Vec<OwnedCopy>> {
         Box::pin(async move {
-            let rows: Vec<(String, String, Option<i64>, Option<i64>)> =
-                match sqlx::query_as(&track_copies_sql())
-                    .bind(release_group_mbid.to_ascii_lowercase())
-                    .bind(release_track_mbid.to_ascii_lowercase())
-                    .bind(recording_mbid.to_ascii_lowercase())
-                    .fetch_all(&self.pool)
-                    .await
-                {
-                    Ok(rows) => rows,
-                    Err(error) => {
-                        tracing::warn!(%error, "library copies unreadable; nothing is replaced");
-                        return Vec::new();
-                    }
-                };
+            let rows: Vec<GroupCopy> = match sqlx::query_as(&group_copies_sql())
+                .bind(release_group_mbid.to_ascii_lowercase())
+                .fetch_all(&self.pool)
+                .await
+            {
+                Ok(rows) => rows,
+                Err(error) => {
+                    tracing::warn!(%error, "library copies unreadable; nothing is replaced");
+                    return Vec::new();
+                }
+            };
             let mut seen = HashSet::new();
-            rows.into_iter()
-                .filter(|(id, ..)| seen.insert(id.clone()))
-                .map(|(track_id, format, bitrate, depth)| OwnedCopy {
-                    track_id,
-                    tier: tier_of(&format, bitrate, depth),
+            copies_to_replace(&rows, release_mbid, release_track_mbid, recording_mbid)
+                .into_iter()
+                .filter(|row| seen.insert(row.track_id.clone()))
+                .map(|row| OwnedCopy {
+                    track_id: row.track_id.clone(),
+                    tier: tier_of(&row.format, row.bitrate, row.depth),
                 })
                 .collect()
         })
@@ -281,5 +340,56 @@ impl LandingLibrary for LibraryLanding {
                 Err(ImportError::Occupied(detail)) => Err(ImportFailure::Occupied(detail)),
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn copy(track: &str, album: &str, release: &str, rt: &str, rec: &str) -> GroupCopy {
+        GroupCopy {
+            track_id: track.to_owned(),
+            album_id: album.to_owned(),
+            release_mbid: release.to_owned(),
+            release_track_mbid: rt.to_owned(),
+            recording_mbid: rec.to_owned(),
+            format: "mp3".to_owned(),
+            ..GroupCopy::default()
+        }
+    }
+
+    fn ids(rows: Vec<&GroupCopy>) -> Vec<&str> {
+        rows.into_iter().map(|row| row.track_id.as_str()).collect()
+    }
+
+    // An upgrade replaces only the copy it stands in for: never the same
+    // recording in another edition the person keeps, and never a second
+    // appearance of the recording when the release track itself is there.
+    #[test]
+    fn upgrade_replaces_only_its_own_album_and_track() {
+        let rows = vec![
+            copy("std-1", "standard", "rel-std", "rt-1", "rec-1"),
+            copy("std-9", "standard", "rel-std", "rt-9", "rec-1"),
+            copy("dlx-1", "deluxe", "rel-dlx", "rt-d1", "rec-1"),
+        ];
+        assert_eq!(
+            ids(copies_to_replace(&rows, "REL-STD", "rt-1", "rec-1")),
+            ["std-1"]
+        );
+        // No release-track copy: the recording, inside the edition only.
+        assert_eq!(
+            ids(copies_to_replace(&rows, "rel-dlx", "rt-gone", "rec-1")),
+            ["dlx-1"]
+        );
+        // An edition the library does not hold, with two albums of the
+        // group: nothing is replaced.
+        assert!(copies_to_replace(&rows, "rel-other", "rt-1", "rec-1").is_empty());
+        // The group's only album counts even without a sealed release.
+        let only = vec![copy("a-1", "only", "", "rt-1", "rec-1")];
+        assert_eq!(
+            ids(copies_to_replace(&only, "rel-std", "rt-1", "rec-1")),
+            ["a-1"]
+        );
     }
 }

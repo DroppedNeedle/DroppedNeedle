@@ -63,6 +63,10 @@ pub const UPGRADE_PENDING: &str = "upgrade_pending";
 /// recycle bin, so the old file stays and the new one waits.
 pub const UPGRADE_BLOCKED: &str = "upgrade_blocked";
 
+/// Hold code for a better file that could not be placed when its old copy
+/// could not be put back either: the old copy is in the recycle bin.
+pub const UPGRADE_RESTORE_FAILED: &str = "upgrade_restore_failed";
+
 /// One file or folder a download client reported, with the byte size it
 /// advertised for that exact file when it did (Soulseek does).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,7 +154,10 @@ pub struct LandingReport {
 /// Hold codes that say nothing against the source: the files were fine,
 /// the library side could not take them yet.
 pub fn is_local_hold(code: &str) -> bool {
-    matches!(code, "target_occupied" | UPGRADE_PENDING | UPGRADE_BLOCKED)
+    matches!(
+        code,
+        "target_occupied" | UPGRADE_PENDING | UPGRADE_BLOCKED | UPGRADE_RESTORE_FAILED
+    )
 }
 
 /// The landing service the worker calls.
@@ -449,6 +456,7 @@ impl LandingService {
                 let copies = library
                     .owned_copies(
                         &found.release.release_group_id,
+                        &found.release.id,
                         &release_track.id,
                         &release_track.recording_id,
                     )
@@ -515,13 +523,20 @@ impl LandingService {
                     for (index, (file, track)) in plan.import.iter().enumerate() {
                         match skipped.get(&index) {
                             Some(detail) => {
-                                if let Some(moved) = recycled.remove(file) {
-                                    library.put_back(moved, task.user_id.clone()).await;
-                                }
+                                let restored = match recycled.remove(file) {
+                                    Some(moved) => {
+                                        library.put_back(moved, task.user_id.clone()).await
+                                    }
+                                    None => true,
+                                };
                                 held.push(Held {
                                     file: &landing.audio[*file],
                                     track: Some(*track),
-                                    code: "target_occupied",
+                                    code: if restored {
+                                        "target_occupied"
+                                    } else {
+                                        UPGRADE_RESTORE_FAILED
+                                    },
                                     detail: detail.clone(),
                                 });
                             }
@@ -540,21 +555,46 @@ impl LandingService {
                     );
                 }
                 Err(ImportFailure::LocalFault(detail)) => {
-                    for (_, moved) in recycled.drain() {
-                        library.put_back(moved, task.user_id.clone()).await;
+                    // A better file whose old copy could not be put back is
+                    // held, so neither copy is lost from view; the rest of
+                    // the landing fails as a local fault.
+                    let mut stranded = Vec::new();
+                    for (file, moved) in recycled.drain() {
+                        if !library.put_back(moved, task.user_id.clone()).await {
+                            stranded.push(file);
+                        }
                     }
-                    decision.outcome = Outcome::Reject(local_fault(detail));
-                    return Acted::decided(decision, 0);
+                    if stranded.is_empty() {
+                        decision.outcome = Outcome::Reject(local_fault(detail));
+                        return Acted::decided(decision, 0);
+                    }
+                    for (file, track) in &plan.import {
+                        if stranded.contains(file) {
+                            held.push(Held {
+                                file: &landing.audio[*file],
+                                track: Some(*track),
+                                code: UPGRADE_RESTORE_FAILED,
+                                detail: detail.clone(),
+                            });
+                        }
+                    }
                 }
                 Err(ImportFailure::Occupied(detail)) => {
-                    for (_, moved) in recycled.drain() {
-                        library.put_back(moved, task.user_id.clone()).await;
+                    let mut stranded = HashSet::new();
+                    for (file, moved) in recycled.drain() {
+                        if !library.put_back(moved, task.user_id.clone()).await {
+                            stranded.insert(file);
+                        }
                     }
                     for (file, track) in &plan.import {
                         held.push(Held {
                             file: &landing.audio[*file],
                             track: Some(*track),
-                            code: "target_occupied",
+                            code: if stranded.contains(file) {
+                                UPGRADE_RESTORE_FAILED
+                            } else {
+                                "target_occupied"
+                            },
                             detail: detail.clone(),
                         });
                     }

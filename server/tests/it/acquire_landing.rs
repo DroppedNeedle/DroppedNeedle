@@ -543,6 +543,9 @@ async fn held_files_import_as_upgrades_or_discard() {
     let held_dir = dir.join("held");
     let flac = land_file(&held_dir, "up.flac", "flac_full_01.flac", "Mysterons", 1);
     let spare = land_file(&held_dir, "spare.flac", "flac_full_02.flac", "Roads", 2);
+    // And an upgrade file that cannot be read as audio.
+    let broken = held_dir.join("broken.flac");
+    std::fs::write(&broken, b"not audio").expect("broken file");
     let (track_id, recording_id) = (first.id.clone(), first.recording_id.clone());
     let seeded: Vec<i64> = acquire
         .db
@@ -552,6 +555,7 @@ async fn held_files_import_as_upgrades_or_discard() {
                 ("u-ada", &flac, "fingerprint_mismatch", "upgrade"),
                 ("u-bob", &flac, "fingerprint_mismatch", "upgrade"),
                 ("u-ada", &spare, "tag_mismatch", "user"),
+                ("u-ada", &broken, "fingerprint_mismatch", "upgrade"),
             ] {
                 tx.execute(
                     "INSERT INTO held_imports (user_id, release_group_mbid, release_mbid, \
@@ -606,7 +610,27 @@ async fn held_files_import_as_upgrades_or_discard() {
         !held_dir.join("spare.flac").exists(),
         "discarded file deleted"
     );
+
+    // An upgrade file whose quality cannot be read is refused, never taken
+    // for "no better" and deleted: the file and its row stay.
+    let (status, body) = held_call(&review, "POST", &import(seeded[3]), ADA).await;
+    assert_eq!(status, 409, "{body}");
+    assert!(
+        held_dir.join("broken.flac").is_file(),
+        "unreadable file kept"
+    );
+    assert!(new_copy.is_file(), "the library copy is untouched");
+
     let (status, body) = held_call(&review, "GET", "/downloads/held", ADA).await;
     assert_eq!(status, 200);
-    assert_eq!(body["items"].as_array().map(Vec::len), Some(0), "{body}");
+    let left: Vec<i64> = body["items"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item["id"].as_i64())
+                .collect()
+        })
+        .unwrap_or_default();
+    assert_eq!(left, vec![seeded[3]], "{body}");
 }

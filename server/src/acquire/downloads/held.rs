@@ -401,12 +401,21 @@ impl HeldImports {
             let copies = library
                 .owned_copies(
                     &release.release_group_id,
+                    &release.id,
                     &release_track.id,
                     &release_track.recording_id,
                 )
                 .await;
             if !copies.is_empty() {
-                let tier = held_tier(&source).await;
+                // A file whose quality cannot be read is never judged worse
+                // than the copy: that would delete it. It stays held.
+                let Some(tier) = held_tier(&source).await else {
+                    return Err(HeldError::Refused(
+                        "The held file could not be read to compare its quality with your \
+                         copy, so nothing was changed. Play it to check it, or discard it."
+                            .to_owned(),
+                    ));
+                };
                 if !copies.iter().all(|copy| quality::beats(tier, copy.tier)) {
                     self.finish(row, "imported").await?;
                     remove_held_copy(&source).await;
@@ -453,17 +462,18 @@ impl HeldImports {
             Err(failure) => Some(failure.clone()),
         };
         if let Some(failure) = failed {
-            if let Some(moved) = recycled
-                && !library.put_back(moved, actor.to_owned()).await
-            {
-                tracing::error!(held_id = row.id, "recycled copies not all put back");
-            }
+            let restored = match recycled {
+                Some(moved) => library.put_back(moved, actor.to_owned()).await,
+                None => true,
+            };
             tracing::warn!(
                 held_id = row.id,
                 detail = failure.detail(),
+                restored,
                 "held import refused"
             );
             let reason = match failure {
+                _ if !restored => explain("upgrade_restore_failed"),
                 ImportFailure::Occupied(_) => explain("target_occupied"),
                 ImportFailure::LocalFault(_) => explain("local_fault"),
             };
@@ -643,14 +653,15 @@ impl HeldImports {
     }
 }
 
-/// The quality tier of a held file, read from its header.
-async fn held_tier(path: &Path) -> &'static str {
+/// The quality tier of a held file, read from its header. `None` when it
+/// cannot be read as audio.
+async fn held_tier(path: &Path) -> Option<&'static str> {
     let paths = vec![path.to_path_buf()];
     match tokio::task::spawn_blocking(move || probe::probe(&paths, &[])).await {
-        Ok(landing) => landing.audio.first().map_or("low", |file| file.tier()),
+        Ok(landing) => landing.audio.first().map(|file| file.tier()),
         Err(error) => {
-            tracing::warn!(%error, "held file probe failed; treated as lowest quality");
-            "low"
+            tracing::warn!(%error, "held file probe failed");
+            None
         }
     }
 }
