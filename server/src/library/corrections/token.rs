@@ -1,36 +1,45 @@
-//! Preview tokens. A token is `<issued_at>.<digest>`, where the digest
-//! covers the request, the state the preview read, and the result it
-//! computed. Applying recomputes all three: anything that changed in
-//! between (a scan, another correction, a different selection) changes
-//! the digest, so an apply only ever does what the person saw.
-
-use sha2::{Digest as _, Sha256};
+//! Preview tokens. A token is `<issued_at>.<mac>`, where the MAC (keyed
+//! with the server's data key) covers the person who previewed, the
+//! request, the state the preview read, and the result it computed.
+//! Applying recomputes all of it: anything that changed in between (a
+//! scan, another correction, a different selection or choice, another
+//! person) changes the MAC, so an apply only ever does what was shown to
+//! the person applying it.
 
 use super::reasons;
 use crate::library::operations::reasons::Reason;
+use crate::runtime_config::ConfigStore;
 
 /// How long a preview stays good, as in v2.
 pub const TTL_SECS: i64 = 15 * 60;
 
-fn digest(material: &str, issued_at: i64) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(issued_at.to_string().as_bytes());
-    hasher.update([0u8]);
-    hasher.update(material.as_bytes());
-    hasher
-        .finalize()
+/// Keeps catalog correction tokens apart from anything else the server
+/// signs.
+const PURPOSE: &str = "catalog-correction-preview";
+
+fn mac(signer: &ConfigStore, actor: &str, material: &str, issued_at: i64) -> String {
+    let message = format!("{actor}\0{issued_at}\0{material}");
+    signer
+        .mac(PURPOSE, message.as_bytes())
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
 }
 
-/// A token for `material`, issued at `issued_at` (unix seconds).
-pub fn issue(material: &str, issued_at: i64) -> String {
-    format!("{issued_at}.{}", digest(material, issued_at))
+/// A token for `material`, previewed by `actor` at `issued_at` (unix
+/// seconds).
+pub fn issue(signer: &ConfigStore, actor: &str, material: &str, issued_at: i64) -> String {
+    format!("{issued_at}.{}", mac(signer, actor, material, issued_at))
 }
 
 /// Check a token against the material recomputed now.
-pub fn verify(token: &str, material: &str, now: i64) -> Result<(), TokenFault> {
+pub fn verify(
+    signer: &ConfigStore,
+    actor: &str,
+    token: &str,
+    material: &str,
+    now: i64,
+) -> Result<(), TokenFault> {
     let issued: i64 = token
         .split_once('.')
         .and_then(|(issued, _)| issued.parse().ok())
@@ -38,7 +47,7 @@ pub fn verify(token: &str, material: &str, now: i64) -> Result<(), TokenFault> {
     if issued > now + 60 || now - issued > TTL_SECS {
         return Err(TokenFault::Expired);
     }
-    if token != issue(material, issued) {
+    if token != issue(signer, actor, material, issued) {
         return Err(TokenFault::Stale);
     }
     Ok(())

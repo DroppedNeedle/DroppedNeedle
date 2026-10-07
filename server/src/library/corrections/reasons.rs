@@ -123,6 +123,11 @@ pub const EDITION_CONFLICT_KEPT: Reason = reason(
     "The merged albums had different editions; the album keeps its own and the others are dropped.",
     "Check the album's edition once the change is applied.",
 );
+pub const EDITION_PIN_WINS: Reason = reason(
+    "EDITION_CHOSEN_WINS",
+    "One of these albums has an edition picked by hand; it wins over the automatic ones.",
+    "Nothing to do. The dropped editions are listed in the album's review if you want one back.",
+);
 pub const EDITION_AMBIGUOUS: Reason = reason(
     "EDITION_CLEARED_AMBIGUOUS",
     "The albums being combined had different editions and none of them clearly wins.",

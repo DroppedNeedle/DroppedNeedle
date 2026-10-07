@@ -15,11 +15,11 @@ use serde::Serialize;
 
 use super::edition::{self, Settle, placeholders};
 use super::models::{
-    AlbumGroup, CorrectionError, EditionChange, EditionChangeKind, MembershipKind,
+    AlbumGroup, CorrectionError, EditionChange, EditionChangeKind, IdentityChoice, MembershipKind,
     MembershipOutcome, MembershipRequest,
 };
 use super::reasons;
-use crate::library::identify::sqlite::offer_album;
+use crate::library::identify::sqlite::{offer_album, retarget_references};
 
 /// One stored track the change reads.
 #[derive(Debug, Clone)]
@@ -45,9 +45,10 @@ pub(super) struct Run {
     pub material: String,
 }
 
-/// What a preview token covers: the request, the state read before the
-/// change, and where every track ended up. A new album's id is random, so
-/// it stands in as `new:<n>`.
+/// What a preview token covers: the request (with the edition choice),
+/// the state read before the change, where every track ended up, and what
+/// happens to every edition. A new album's id is random, so it stands in
+/// as `new:<n>`, numbered in the order of its first track.
 #[derive(Serialize)]
 struct Material<'a> {
     kind: &'static str,
@@ -56,11 +57,23 @@ struct Material<'a> {
     target_album_id: Option<&'a str>,
     title: Option<&'a str>,
     album_artist_name: Option<&'a str>,
+    identity_choice: IdentityChoice,
     albums: Vec<(String, i64, i64)>,
     tracks: Vec<(String, String, i64)>,
     groups: Vec<(String, Vec<String>)>,
     retired: Vec<(String, Option<String>)>,
+    editions: Vec<EditionMaterial>,
 }
+
+/// One edition outcome as the token covers it: album, change, release,
+/// reason code, and the editions dropped.
+type EditionMaterial = (
+    String,
+    &'static str,
+    Option<String>,
+    &'static str,
+    Vec<String>,
+);
 
 pub(super) fn material(
     request: &MembershipRequest,
@@ -68,22 +81,44 @@ pub(super) fn material(
     tracks: &[TrackRow],
     outcome: &MembershipOutcome,
 ) -> String {
-    let mut created = BTreeMap::new();
-    for group in outcome.groups.iter().filter(|group| group.created) {
-        let next = format!("new:{}", created.len());
-        created.insert(group.album_id.clone(), next);
-    }
-    let name = |id: &String| created.get(id).cloned().unwrap_or_else(|| id.clone());
+    // Tracks arrive in path order; a new album is known by its first one.
+    let position: BTreeMap<&str, usize> = tracks
+        .iter()
+        .enumerate()
+        .map(|(index, track)| (track.id.as_str(), index))
+        .collect();
+    let mut fresh: Vec<(usize, &str)> = outcome
+        .groups
+        .iter()
+        .filter(|group| group.created)
+        .map(|group| {
+            let first = group
+                .track_ids
+                .iter()
+                .filter_map(|id| position.get(id.as_str()).copied())
+                .min()
+                .unwrap_or(usize::MAX);
+            (first, group.album_id.as_str())
+        })
+        .collect();
+    fresh.sort();
+    let created: BTreeMap<&str, String> = fresh
+        .iter()
+        .enumerate()
+        .map(|(index, (_, id))| (*id, format!("new:{index}")))
+        .collect();
+    let name = |id: &str| created.get(id).cloned().unwrap_or_else(|| id.to_owned());
     let mut track_ids: Vec<&str> = request.track_ids.iter().map(String::as_str).collect();
     track_ids.sort_unstable();
     track_ids.dedup();
     let mut albums = albums.to_vec();
     albums.sort();
-    let mut tracks: Vec<(String, String, i64)> = tracks
+    albums.dedup();
+    let mut track_state: Vec<(String, String, i64)> = tracks
         .iter()
         .map(|track| (track.id.clone(), track.album_id.clone(), track.row_revision))
         .collect();
-    tracks.sort();
+    track_state.sort();
     let mut groups: Vec<(String, Vec<String>)> = outcome
         .groups
         .iter()
@@ -97,9 +132,33 @@ pub(super) fn material(
     let mut retired: Vec<(String, Option<String>)> = outcome
         .retired
         .iter()
-        .map(|(album, to)| (album.clone(), to.as_ref().map(name)))
+        .map(|(album, to)| (album.clone(), to.as_deref().map(name)))
         .collect();
     retired.sort();
+    let editions = outcome
+        .edition_changes
+        .iter()
+        .map(|change| {
+            (
+                name(&change.album_id),
+                change.change.as_str(),
+                change.release_mbid.clone(),
+                change.reason.code,
+                change
+                    .dropped
+                    .iter()
+                    .map(|dropped| {
+                        format!(
+                            "{}:{}:{}",
+                            dropped.album_id,
+                            dropped.release_group_mbid,
+                            dropped.release_mbid.as_deref().unwrap_or_default()
+                        )
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
     let material = Material {
         kind: request.kind.as_str(),
         album_id: request.album_id.as_deref(),
@@ -107,10 +166,12 @@ pub(super) fn material(
         target_album_id: request.target_album_id.as_deref(),
         title: request.title.as_deref(),
         album_artist_name: request.album_artist_name.as_deref(),
+        identity_choice: request.identity_choice,
         albums,
-        tracks,
+        tracks: track_state,
         groups,
         retired,
+        editions,
     };
     serde_json::to_string(&material).unwrap_or_default()
 }
@@ -217,6 +278,27 @@ pub(super) fn album_state(
     Ok(state)
 }
 
+/// Albums by id with their revision and their edition's revision.
+pub(super) fn identity_state(
+    tx: &Transaction<'_>,
+    albums: &[String],
+) -> Result<Vec<(String, i64, i64)>, CorrectionError> {
+    let mut state = Vec::with_capacity(albums.len());
+    for album in albums {
+        let revision: i64 = tx
+            .query_row(
+                "SELECT row_revision FROM local_albums WHERE id = ?1",
+                params![album],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(0);
+        let identity = edition::identity(tx, album)?.map_or(0, |found| found.row_revision);
+        state.push((album.clone(), revision, identity));
+    }
+    Ok(state)
+}
+
 /// Retire an emptied album into `successor`, with an alias so links to the
 /// old id land on the new album. Its pending reviews close and its queued
 /// identification goes.
@@ -238,6 +320,26 @@ pub(super) fn retire(
     tx.execute(
         "INSERT OR IGNORE INTO local_album_aliases (alias, local_album_id, kind, created_at) \
          VALUES (?1, ?2, 'merged_album', ?3)",
+        params![album_id, successor, now],
+    )?;
+    retarget_references(tx, "album", album_id, successor)?;
+    // What a curator set on the old album carries over, unless the
+    // receiving album has its own: an exclusion from file organizing, and
+    // album field overrides.
+    tx.execute(
+        "INSERT OR IGNORE INTO library_management_exclusions (local_album_id, reason, \
+         excluded_by_user_id, excluded_at) SELECT ?2, reason, excluded_by_user_id, excluded_at \
+         FROM library_management_exclusions WHERE local_album_id = ?1",
+        params![album_id, successor],
+    )?;
+    tx.execute(
+        "DELETE FROM library_management_exclusions WHERE local_album_id = ?1",
+        params![album_id],
+    )?;
+    tx.execute(
+        "UPDATE OR IGNORE library_management_overrides SET local_album_id = ?2, \
+         updated_at = ?3, row_revision = row_revision + 1 \
+         WHERE local_album_id = ?1 AND subject_kind = 'album'",
         params![album_id, successor, now],
     )?;
     tx.execute(
@@ -302,6 +404,7 @@ pub(super) fn kept_editions(
                 from_album_id: None,
                 release_mbid: found.release_mbid,
                 reason: reasons::EDITION_KEPT,
+                dropped: Vec::new(),
             });
         }
     }

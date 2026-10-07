@@ -1069,6 +1069,42 @@ impl ReleaseStore for SqliteIdentifyStore {
     }
 }
 
+/// Point what people made of a merged album, artist or track (favorites,
+/// playlist entries, play history, app ids) at the record it merged into.
+/// A person who already favorited the survivor keeps one row.
+pub(crate) fn retarget_references(
+    tx: &Connection,
+    item_kind: &str,
+    retired_id: &str,
+    surviving_id: &str,
+) -> rusqlite::Result<()> {
+    let column = match item_kind {
+        "album" => "local_album_id",
+        "artist" => "local_artist_id",
+        _ => "local_track_id",
+    };
+    tx.execute(
+        "UPDATE OR IGNORE library_user_favorites SET item_id = ?1 \
+         WHERE item_kind = ?2 AND item_id = ?3",
+        params![surviving_id, item_kind, retired_id],
+    )?;
+    tx.execute(
+        "DELETE FROM library_user_favorites WHERE item_kind = ?1 AND item_id = ?2",
+        params![item_kind, retired_id],
+    )?;
+    for table in ["library_playlist_tracks", "library_play_history"] {
+        tx.execute(
+            &format!("UPDATE {table} SET {column} = ?1 WHERE {column} = ?2"),
+            params![surviving_id, retired_id],
+        )?;
+    }
+    tx.execute(
+        "UPDATE library_compat_id_map SET internal_id = ?1 WHERE kind = ?2 AND internal_id = ?3",
+        params![surviving_id, item_kind, retired_id],
+    )?;
+    Ok(())
+}
+
 fn release_input_hash() -> String {
     hex_sha256(RELEASE_DOCUMENT_VERSION.as_bytes())
 }
@@ -1224,37 +1260,13 @@ impl AliasStore for SqliteIdentifyStore {
             tracing::warn!(retired_id, "retarget without a saved alias skipped");
             return;
         };
-        let (item_kind, playlist_column) = match kind {
-            AliasKind::MergedAlbum => ("album", "local_album_id"),
-            AliasKind::MergedArtist => ("artist", "local_artist_id"),
-            AliasKind::MergedTrack => ("track", "local_track_id"),
+        let item_kind = match kind {
+            AliasKind::MergedAlbum => "album",
+            AliasKind::MergedArtist => "artist",
+            AliasKind::MergedTrack => "track",
         };
         self.write("retarget references", |tx| {
-            tx.execute(
-                "UPDATE OR IGNORE library_user_favorites SET item_id = ?1 \
-                 WHERE item_kind = ?2 AND item_id = ?3",
-                params![surviving_id, item_kind, retired_id],
-            )?;
-            // A user who already favorited the survivor keeps one row.
-            tx.execute(
-                "DELETE FROM library_user_favorites WHERE item_kind = ?1 AND item_id = ?2",
-                params![item_kind, retired_id],
-            )?;
-            tx.execute(
-                &format!(
-                    "UPDATE library_playlist_tracks SET {playlist_column} = ?1 \
-                     WHERE {playlist_column} = ?2"
-                ),
-                params![surviving_id, retired_id],
-            )?;
-            if kind == AliasKind::MergedTrack {
-                tx.execute(
-                    "UPDATE library_play_history SET local_track_id = ?1 \
-                     WHERE local_track_id = ?2",
-                    params![surviving_id, retired_id],
-                )?;
-            }
-            Ok(())
+            retarget_references(tx, item_kind, retired_id, surviving_id)
         });
     }
 

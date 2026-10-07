@@ -2903,6 +2903,15 @@ async fn library_journey_catalog_corrections() {
          '11111111-2222-4333-8444-555555555555', '{CHOSEN}', 'manual', 1);"
     ))
     .expect("pin album b");
+    // Someone favorited album B and played it; both follow the merge.
+    db.execute_batch(&format!(
+        "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('listener', 'album', '{album_b}', 1); \
+         INSERT INTO library_play_history (id, user_id, local_album_id, track_name, \
+         artist_name, played_at) VALUES ('play-1', 'listener', '{album_b}', 'Song', \
+         'Artist', '2026-01-01T00:00:00Z');"
+    ))
+    .expect("favorite and play album b");
     let selection = json!({"track_ids": [b1], "target_album_id": album_a});
     let (status, preview) = call(
         lib.router(),
@@ -2915,8 +2924,21 @@ async fn library_journey_catalog_corrections() {
     assert_eq!(status, StatusCode::OK, "{preview}");
     assert_eq!(preview["aliases"], json!([album_b]));
     assert_eq!(preview["edition_changes"][0]["change"], json!("moved"));
+    // The preview was for "detach"; applying it as "retain" is refused.
     let mut apply = selection;
     apply["preview_token"] = preview["preview_token"].clone();
+    let mut other_choice = apply.clone();
+    other_choice["identity_choice"] = json!("retain_manual");
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/albums/merge",
+        &headers,
+        Some(other_choice),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], json!("STALE_REVISION"));
     let (status, body) = call(
         lib.router(),
         "POST",
@@ -2926,6 +2948,18 @@ async fn library_journey_catalog_corrections() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
+    let (favorite, played): (String, String) = db
+        .query_row(
+            "SELECT (SELECT item_id FROM library_user_favorites WHERE user_id = 'listener'), \
+             (SELECT local_album_id FROM library_play_history WHERE id = 'play-1')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("references");
+    assert_eq!(
+        (favorite.as_str(), played.as_str()),
+        (album_a.as_str(), album_a.as_str())
+    );
     assert_eq!(
         store.album_for_track(&b1).as_deref(),
         Some(album_a.as_str())

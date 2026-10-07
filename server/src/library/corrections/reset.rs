@@ -13,8 +13,8 @@ use rusqlite::{Transaction, params};
 
 use super::edition::{self, Settle};
 use super::membership::{
-    AlbumRow, Run, album_state, album_track_ids, check_expected, kept_editions, load_album,
-    load_tracks, material, offer, retire, selected,
+    AlbumRow, Run, album_state, album_track_ids, check_expected, identity_state, kept_editions,
+    load_album, load_tracks, material, offer, retire, selected,
 };
 use super::models::{AlbumGroup, CorrectionError, MembershipOutcome, MembershipRequest};
 use super::reasons;
@@ -38,7 +38,7 @@ pub(super) fn reset(
     if !held_by_hand(tx, &album, &track_ids)? {
         return Err(CorrectionError::Invalid(reasons::NOTHING_TO_RESET));
     }
-    let state = album_state(tx, &[&album])?;
+    let mut state = album_state(tx, &[&album])?;
 
     tx.execute(
         &format!(
@@ -98,6 +98,14 @@ pub(super) fn reset(
         )?;
     }
 
+    // The editions the landing albums hold decide what the reset does to
+    // them, so the token covers them too.
+    let existing: Vec<String> = landing
+        .iter()
+        .filter(|(_, (_, created))| !created)
+        .map(|(id, _)| id.clone())
+        .collect();
+    state.extend(identity_state(tx, &existing)?);
     let mut changes = Vec::new();
     let mut conflicts = BTreeSet::new();
     let mut groups = Vec::new();

@@ -203,12 +203,29 @@
 		previewResult = null;
 		previewRequest = request;
 		try {
-			previewResult = await previewArtist.mutateAsync(request);
+			previewResult = await previewArtist.mutateAsync({
+				...request,
+				provider_choice: providerChoice
+			});
 			mergeDialog.showModal();
 			mergeHeading.focus();
 		} catch {
 			previewResult = null;
 			previewRequest = null;
+		}
+	}
+
+	// The preview token covers the provider choice, so a changed choice is
+	// previewed again before it can be applied.
+	async function chooseProvider(choice: 'detach' | 'retain_survivor'): Promise<void> {
+		if (!previewRequest) return;
+		providerChoice = choice;
+		confirmed = false;
+		const request = previewRequest;
+		try {
+			previewResult = await previewArtist.mutateAsync({ ...request, provider_choice: choice });
+		} catch {
+			previewResult = null;
 		}
 	}
 
@@ -649,16 +666,18 @@
 						><input
 							type="radio"
 							class="radio radio-sm"
-							bind:group={providerChoice}
-							value="retain_survivor"
+							name="provider-choice"
+							checked={providerChoice === 'retain_survivor'}
+							onchange={() => void chooseProvider('retain_survivor')}
 						/> Keep the chosen survivor's provider identity</label
 					>
 					<label class="mt-2 flex gap-2 text-sm"
 						><input
 							type="radio"
 							class="radio radio-sm"
-							bind:group={providerChoice}
-							value="detach"
+							name="provider-choice"
+							checked={providerChoice === 'detach'}
+							onchange={() => void chooseProvider('detach')}
 						/> Detach conflicting provider identities</label
 					>
 				</fieldset>
@@ -672,7 +691,7 @@
 			<button class="btn btn-ghost" onclick={() => mergeDialog.close()}>Cancel</button>
 			<button
 				class="btn btn-primary"
-				disabled={!previewResult || !confirmed || applyArtist.isPending}
+				disabled={!previewResult || !confirmed || applyArtist.isPending || previewArtist.isPending}
 				onclick={() => void mergeArtists()}>Merge artists</button
 			>
 		</div>

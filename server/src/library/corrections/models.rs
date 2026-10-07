@@ -126,6 +126,18 @@ pub struct EditionChange {
     pub from_album_id: Option<String>,
     pub release_mbid: Option<String>,
     pub reason: Reason,
+    /// Editions this change dropped, so they can be put back.
+    pub dropped: Vec<DroppedEdition>,
+}
+
+/// An edition a change dropped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DroppedEdition {
+    /// The album that held it.
+    pub album_id: String,
+    pub release_group_mbid: String,
+    pub release_mbid: Option<String>,
+    pub decision_source: String,
 }
 
 /// What a membership change does.

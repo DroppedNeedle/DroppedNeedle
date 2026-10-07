@@ -7,14 +7,17 @@
 //!   the source's pin where it is);
 //! - an album emptied by the change hands its edition to the album its
 //!   tracks went to, when that album has none and nothing competes;
-//! - when the editions of the albums being combined differ, the receiving
-//!   album keeps its own (`retain_manual`) or every one is dropped
-//!   (`detach`); with no edition of its own and several on offer, none
-//!   wins and all are dropped;
-//! - a dropped edition leaves a pending review carrying the reason, and the
-//!   album is offered to identification again;
-//! - a moved track keeps its track identity only when it sits on the
-//!   receiving album's release;
+//! - a person's choice (a pin) beats an automatic edition, whatever the
+//!   conflict choice;
+//! - otherwise, when the editions of the albums being combined differ, the
+//!   receiving album keeps its own (`retain_manual`) or every one is
+//!   dropped (`detach`); with no edition of its own and several on offer,
+//!   none wins and all are dropped;
+//! - a dropped edition leaves a pending review carrying the reason, with
+//!   the dropped editions as its candidates (approving one puts it back),
+//!   and the album is offered to identification again;
+//! - a track keeps its track identity only when it sits on the receiving
+//!   album's release;
 //! - an album keeping a chosen edition that gains tracks queues them to be
 //!   placed on that release.
 
@@ -23,8 +26,9 @@ use std::collections::BTreeSet;
 use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension as _, Transaction, params, params_from_iter};
 
-use super::models::{EditionChange, EditionChangeKind, IdentityChoice};
+use super::models::{DroppedEdition, EditionChange, EditionChangeKind, IdentityChoice};
 use super::reasons;
+use crate::library::identify::models::CandidateEvidence;
 use crate::library::operations::choice::queue_remap;
 use crate::library::operations::reasons::Reason;
 
@@ -49,6 +53,19 @@ impl Identity {
             .as_deref()
             .unwrap_or(&self.release_group_mbid)
             .to_lowercase()
+    }
+
+    fn pinned(&self) -> bool {
+        self.decision_source == "manual"
+    }
+
+    fn dropped(&self) -> DroppedEdition {
+        DroppedEdition {
+            album_id: self.album_id.clone(),
+            release_group_mbid: self.release_group_mbid.clone(),
+            release_mbid: self.release_mbid.clone(),
+            decision_source: self.decision_source.clone(),
+        }
     }
 }
 
@@ -103,6 +120,73 @@ pub(super) struct Settled {
     pub changes: Vec<EditionChange>,
 }
 
+/// Which edition the receiving album ends with.
+#[derive(Debug, Clone, Copy)]
+enum Verdict {
+    /// No album involved has an edition.
+    Nothing,
+    KeepOwn(Reason),
+    /// Take the edition of `incoming[index]`.
+    Take(usize, Reason),
+    DropAll(Reason),
+}
+
+/// The rules, in order: one edition on offer is kept or moves in (a pin
+/// preferred over an automatic row naming the same edition); a single pin
+/// among competing editions wins whatever the conflict choice; otherwise
+/// the conflict choice decides, and several editions with none on the
+/// receiving album means none wins. A custom edition never moves: it
+/// lists its own album's tracks.
+fn decide(
+    own: Option<&Identity>,
+    incoming: &[Identity],
+    distinct: usize,
+    choice: IdentityChoice,
+) -> Verdict {
+    let take = |index: usize, reason: Reason| {
+        if incoming[index].custom {
+            Verdict::DropAll(reasons::EDITION_CUSTOM_CLEARED)
+        } else {
+            Verdict::Take(index, reason)
+        }
+    };
+    let incoming_pin = incoming.iter().position(Identity::pinned);
+    let pins: BTreeSet<String> = own
+        .into_iter()
+        .chain(incoming.iter())
+        .filter(|identity| identity.pinned())
+        .map(Identity::key)
+        .collect();
+    let own_pinned = own.is_some_and(Identity::pinned);
+    match (own, distinct) {
+        (_, 0) => Verdict::Nothing,
+        (Some(_), 1) => match incoming_pin {
+            Some(index) if !own_pinned => take(index, reasons::EDITION_MOVED),
+            _ => Verdict::KeepOwn(reasons::EDITION_KEPT),
+        },
+        (None, 1) => take(incoming_pin.unwrap_or(0), reasons::EDITION_MOVED),
+        _ if pins.len() == 1 => {
+            if own_pinned {
+                Verdict::KeepOwn(reasons::EDITION_PIN_WINS)
+            } else {
+                match incoming_pin {
+                    Some(index) => take(index, reasons::EDITION_PIN_WINS),
+                    None => Verdict::DropAll(reasons::EDITION_AMBIGUOUS),
+                }
+            }
+        }
+        (Some(_), _)
+            if choice == IdentityChoice::RetainManual && (own_pinned || pins.is_empty()) =>
+        {
+            Verdict::KeepOwn(reasons::EDITION_CONFLICT_KEPT)
+        }
+        (Some(_), _) if choice == IdentityChoice::Detach => {
+            Verdict::DropAll(reasons::EDITION_CONFLICT_CLEARED)
+        }
+        _ => Verdict::DropAll(reasons::EDITION_AMBIGUOUS),
+    }
+}
+
 pub(super) fn settle(tx: &Transaction<'_>, s: &Settle<'_>) -> rusqlite::Result<Settled> {
     let own = identity(tx, s.dest)?;
     let mut incoming = Vec::new();
@@ -111,16 +195,26 @@ pub(super) fn settle(tx: &Transaction<'_>, s: &Settle<'_>) -> rusqlite::Result<S
             incoming.push(found);
         }
     }
-    let keys: BTreeSet<String> = own
-        .iter()
-        .chain(incoming.iter())
-        .map(Identity::key)
-        .collect();
+    let all: Vec<&Identity> = own.iter().chain(incoming.iter()).collect();
+    let keys: BTreeSet<String> = all.iter().map(|identity| identity.key()).collect();
     let conflicts: Vec<String> = if keys.len() > 1 {
         keys.iter().cloned().collect()
     } else {
         Vec::new()
     };
+    let verdict = decide(own.as_ref(), &incoming, keys.len(), s.choice);
+    let winner: Option<&Identity> = match verdict {
+        Verdict::KeepOwn(_) => own.as_ref(),
+        Verdict::Take(index, _) => incoming.get(index),
+        Verdict::DropAll(_) | Verdict::Nothing => None,
+    };
+    let kept_key = winner.map(Identity::key);
+    // Every identity that goes and names another edition than the one kept.
+    let dropped: Vec<DroppedEdition> = all
+        .iter()
+        .filter(|identity| kept_key.as_deref() != Some(identity.key().as_str()))
+        .map(|identity| identity.dropped())
+        .collect();
     let title = album_title(tx, s.dest)?;
     let change = |kind: EditionChangeKind,
                   from: Option<&str>,
@@ -132,100 +226,105 @@ pub(super) fn settle(tx: &Transaction<'_>, s: &Settle<'_>) -> rusqlite::Result<S
         from_album_id: from.map(str::to_owned),
         release_mbid: release.map(str::to_owned),
         reason,
+        dropped: dropped.clone(),
     };
     let mut changes = Vec::new();
-    // The edition the album ends with, and why one was dropped.
-    let mut kept: Option<Identity> = None;
-    let mut dropped: Option<Reason> = None;
-    match own {
-        Some(own) if conflicts.is_empty() => {
+    // The album's own edition changed: every track is checked against the
+    // new one, not just the moved ones.
+    let mut replaced = false;
+    let mut review: Option<Reason> = None;
+    let kept: Option<Identity> = match verdict {
+        Verdict::Nothing => None,
+        Verdict::KeepOwn(reason) => {
             changes.push(change(
                 EditionChangeKind::Kept,
                 None,
-                own.release_mbid.as_deref(),
-                reasons::EDITION_KEPT,
+                own.as_ref().and_then(|own| own.release_mbid.as_deref()),
+                reason,
             ));
-            kept = Some(own);
+            review = Some(reason);
+            own.clone()
         }
-        Some(own) => match s.choice {
-            IdentityChoice::RetainManual => {
-                changes.push(change(
-                    EditionChangeKind::Kept,
-                    None,
-                    own.release_mbid.as_deref(),
-                    reasons::EDITION_CONFLICT_KEPT,
-                ));
-                kept = Some(own);
+        Verdict::Take(index, reason) => {
+            let from = incoming[index].clone();
+            if own.is_some() {
+                drop_edition(tx, s.dest)?;
+                replaced = true;
             }
-            IdentityChoice::Detach => dropped = Some(reasons::EDITION_CONFLICT_CLEARED),
-        },
-        None if keys.len() == 1 => {
-            let from = &incoming[0];
-            if from.custom {
-                dropped = Some(reasons::EDITION_CUSTOM_CLEARED);
-            } else {
-                move_edition(tx, &from.album_id, s.dest)?;
-                changes.push(change(
-                    EditionChangeKind::Moved,
-                    Some(&from.album_id),
-                    from.release_mbid.as_deref(),
-                    reasons::EDITION_MOVED,
-                ));
-                kept = identity(tx, s.dest)?;
-            }
+            move_edition(tx, &from.album_id, s.dest)?;
+            changes.push(change(
+                EditionChangeKind::Moved,
+                Some(&from.album_id),
+                from.release_mbid.as_deref(),
+                reason,
+            ));
+            review = Some(reason);
+            identity(tx, s.dest)?
         }
-        None if keys.len() > 1 => dropped = Some(reasons::EDITION_AMBIGUOUS),
-        None => {}
-    }
+        Verdict::DropAll(reason) => {
+            drop_edition(tx, s.dest)?;
+            replaced = true;
+            changes.push(change(EditionChangeKind::Cleared, None, None, reason));
+            review = Some(reason);
+            None
+        }
+    };
     for album in s.retired_into {
         drop_edition(tx, album)?;
     }
-    if let Some(reason) = dropped {
-        drop_edition(tx, s.dest)?;
-        tx.execute(
-            "DELETE FROM local_track_external_identities WHERE provider = ?2 AND local_track_id IN \
-             (SELECT id FROM local_tracks WHERE local_album_id = ?1)",
-            params![s.dest, PROVIDER],
-        )?;
-        open_review(tx, s.dest, reason)?;
-        changes.push(change(EditionChangeKind::Cleared, None, None, reason));
-    } else if !s.moved_tracks.is_empty() {
-        let release = kept
-            .as_ref()
-            .and_then(|identity| identity.release_mbid.clone());
-        let marks = placeholders(s.moved_tracks.len());
-        let mut values = vec![
-            Value::Text(PROVIDER.to_owned()),
-            release.map_or(Value::Null, Value::Text),
-        ];
-        values.extend(s.moved_tracks.iter().cloned().map(Value::Text));
-        tx.execute(
-            &format!(
-                "DELETE FROM local_track_external_identities WHERE provider = ?1 \
-                 AND release_mbid IS NOT NULL AND (?2 IS NULL OR lower(release_mbid) <> lower(?2)) \
-                 AND local_track_id IN ({marks})"
-            ),
-            params_from_iter(values),
-        )?;
-        if let Some(chosen) = kept
-            .as_ref()
-            .filter(|identity| identity.decision_source == "manual" && !identity.custom)
-            && let Some(release) = chosen.release_mbid.as_deref()
-            && unplaced(tx, s.moved_tracks, release)?
-        {
-            queue_remap(tx, s.dest, release, Some(s.actor), s.now)?;
-            changes.push(change(
-                EditionChangeKind::RemapQueued,
-                None,
-                Some(release),
-                reasons::EDITION_REMAP,
-            ));
-        }
+    if let Some(reason) = review
+        && !dropped.is_empty()
+    {
+        open_review(tx, s.dest, reason, &title, &dropped)?;
+    }
+    let checked: Vec<String> = if replaced {
+        album_tracks(tx, s.dest)?
+    } else {
+        s.moved_tracks.to_vec()
+    };
+    if checked.is_empty() {
+        return Ok(Settled { conflicts, changes });
+    }
+    let release = kept
+        .as_ref()
+        .and_then(|identity| identity.release_mbid.clone());
+    let marks = placeholders(checked.len());
+    let mut values = vec![
+        Value::Text(PROVIDER.to_owned()),
+        release.map_or(Value::Null, Value::Text),
+    ];
+    values.extend(checked.iter().cloned().map(Value::Text));
+    // Without an edition, no track keeps a release placement.
+    tx.execute(
+        &format!(
+            "DELETE FROM local_track_external_identities WHERE provider = ?1 \
+             AND release_mbid IS NOT NULL AND (?2 IS NULL OR lower(release_mbid) <> lower(?2)) \
+             AND local_track_id IN ({marks})"
+        ),
+        params_from_iter(values),
+    )?;
+    if let Some(chosen) = kept
+        .as_ref()
+        .filter(|identity| identity.pinned() && !identity.custom)
+        && let Some(release) = chosen.release_mbid.as_deref()
+        && unplaced(tx, &checked, release)?
+    {
+        queue_remap(tx, s.dest, release, Some(s.actor), s.now)?;
+        changes.push(EditionChange {
+            album_id: s.dest.to_owned(),
+            album_title: title.clone(),
+            change: EditionChangeKind::RemapQueued,
+            from_album_id: None,
+            release_mbid: Some(release.to_owned()),
+            reason: reasons::EDITION_REMAP,
+            dropped: Vec::new(),
+        });
     }
     Ok(Settled { conflicts, changes })
 }
 
-/// An album emptied with nowhere clear to go loses its edition.
+/// An album emptied with nowhere clear to go loses its edition; a review
+/// on it keeps what was dropped.
 pub(super) fn drop_scattered(
     tx: &Transaction<'_>,
     album_id: &str,
@@ -233,14 +332,18 @@ pub(super) fn drop_scattered(
     let Some(found) = identity(tx, album_id)? else {
         return Ok(None);
     };
+    let title = album_title(tx, album_id)?;
+    let dropped = vec![found.dropped()];
     drop_edition(tx, album_id)?;
+    open_review(tx, album_id, reasons::EDITION_ALBUM_GONE, &title, &dropped)?;
     Ok(Some(EditionChange {
         album_id: album_id.to_owned(),
-        album_title: album_title(tx, album_id)?,
+        album_title: title,
         change: EditionChangeKind::Cleared,
         from_album_id: None,
         release_mbid: found.release_mbid,
         reason: reasons::EDITION_ALBUM_GONE,
+        dropped,
     }))
 }
 
@@ -282,23 +385,58 @@ fn drop_edition(tx: &Transaction<'_>, album_id: &str) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// Leave a pending review saying why the edition went.
-fn open_review(tx: &Transaction<'_>, album_id: &str, reason: Reason) -> rusqlite::Result<()> {
+/// Leave a pending review saying why editions went. The dropped editions
+/// are its candidates, so approving one puts that edition back.
+fn open_review(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    reason: Reason,
+    title: &str,
+    dropped: &[DroppedEdition],
+) -> rusqlite::Result<()> {
+    let candidates: Vec<CandidateEvidence> = dropped
+        .iter()
+        .map(|edition| CandidateEvidence {
+            candidate_key: format!(
+                "{}:{}",
+                edition.release_group_mbid,
+                edition.release_mbid.as_deref().unwrap_or_default()
+            ),
+            release_group_mbid: edition.release_group_mbid.clone(),
+            release_mbid: edition.release_mbid.clone(),
+            album_title: title.to_owned(),
+            album_artist_name: String::new(),
+            track_evidence: Vec::new(),
+            score: 0.0,
+            reason_code: reason.code.to_owned(),
+            distance: 0.0,
+            penalties: Vec::new(),
+        })
+        .collect();
+    let candidates = serde_json::to_string(&candidates)
+        .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
     let now_ms = crate::library::clock::now_ms() as i64;
     tx.execute(
         "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, candidates_json, \
-         state, created_ms, updated_ms) VALUES (?1, ?2, ?3, '[]', 'pending', ?4, ?4)",
+         state, created_ms, updated_ms) VALUES (?1, ?2, ?3, ?4, 'pending', ?5, ?5)",
         params![
             uuid::Uuid::new_v4().to_string(),
             album_id,
             reason.code,
+            candidates,
             now_ms
         ],
     )?;
     Ok(())
 }
 
-/// Some moved track is not placed on `release`.
+fn album_tracks(tx: &Transaction<'_>, album_id: &str) -> rusqlite::Result<Vec<String>> {
+    tx.prepare("SELECT id FROM local_tracks WHERE local_album_id = ?1")?
+        .query_map(params![album_id], |row| row.get(0))?
+        .collect()
+}
+
+/// Some of `tracks` is not placed on `release`.
 fn unplaced(tx: &Transaction<'_>, tracks: &[String], release: &str) -> rusqlite::Result<bool> {
     let marks = placeholders(tracks.len());
     let placed: i64 = tx.query_row(
@@ -315,4 +453,57 @@ fn unplaced(tx: &Transaction<'_>, tracks: &[String], release: &str) -> rusqlite:
 
 pub(super) fn placeholders(n: usize) -> String {
     vec!["?"; n.max(1)].join(",")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn edition(album: &str, release: &str, source: &str) -> Identity {
+        Identity {
+            album_id: album.to_owned(),
+            release_group_mbid: "rg".to_owned(),
+            release_mbid: Some(release.to_owned()),
+            decision_source: source.to_owned(),
+            row_revision: 1,
+            custom: false,
+        }
+    }
+
+    /// The edition rules: a pin beats an automatic edition under either
+    /// conflict choice; the same edition prefers the pinned row; otherwise
+    /// the choice decides.
+    #[test]
+    fn pins_win_and_choices_decide_the_rest() {
+        use IdentityChoice::{Detach, RetainManual};
+        let auto_own = edition("dest", "r1", "automatic");
+        let pin_own = edition("dest", "r1", "manual");
+        let pin_in = [edition("src", "r2", "manual")];
+        let auto_in = [edition("src", "r2", "automatic")];
+        let same_pin_in = [edition("src", "r1", "manual")];
+        let case = |own: Option<&Identity>, incoming: &[Identity], choice| {
+            let keys: BTreeSet<String> = own
+                .into_iter()
+                .chain(incoming.iter())
+                .map(Identity::key)
+                .collect();
+            match decide(own, incoming, keys.len(), choice) {
+                Verdict::Nothing => "nothing",
+                Verdict::KeepOwn(_) => "keep",
+                Verdict::Take(..) => "take",
+                Verdict::DropAll(_) => "drop",
+            }
+        };
+        for choice in [Detach, RetainManual] {
+            assert_eq!(case(Some(&auto_own), &pin_in, choice), "take");
+            assert_eq!(case(Some(&pin_own), &auto_in, choice), "keep");
+            assert_eq!(case(None, &pin_in, choice), "take");
+            assert_eq!(case(Some(&auto_own), &same_pin_in, choice), "take");
+        }
+        assert_eq!(case(Some(&auto_own), &auto_in, Detach), "drop");
+        assert_eq!(case(Some(&auto_own), &auto_in, RetainManual), "keep");
+        let two_pins = [edition("a", "r2", "manual"), edition("b", "r3", "manual")];
+        assert_eq!(case(None, &two_pins, RetainManual), "drop");
+        assert_eq!(case(Some(&auto_own), &two_pins, RetainManual), "drop");
+    }
 }

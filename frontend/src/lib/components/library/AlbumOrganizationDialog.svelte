@@ -106,8 +106,11 @@
 		};
 	}
 
+	// The preview token covers the edition choice: drop the old preview
+	// first so it can never be applied with the new choice.
 	function chooseIdentity(choice: 'detach' | 'retain_manual'): void {
 		identityChoice = choice;
+		previewResult = null;
 		void preview();
 	}
 

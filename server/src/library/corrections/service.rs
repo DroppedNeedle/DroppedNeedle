@@ -21,17 +21,21 @@ use super::token::{self, TokenFault};
 use crate::library::clock::now_unix;
 use crate::library::identify::sqlite::SqliteIdentifyStore;
 use crate::library::wiring::LibrarySetup;
+use crate::runtime_config::ConfigStore;
 
-/// Catalog corrections over the library's store.
+/// Catalog corrections over the library's store. Preview tokens are signed
+/// with the server's data key, held by the settings store.
 #[derive(Clone)]
 pub struct Corrections {
     store: Arc<SqliteIdentifyStore>,
+    signer: Arc<ConfigStore>,
 }
 
 impl Corrections {
     pub fn new(setup: &LibrarySetup) -> Self {
         Self {
             store: setup.identify_store.clone(),
+            signer: setup.config.clone(),
         }
     }
 
@@ -61,7 +65,7 @@ impl Corrections {
         self.in_tx(false, |tx| {
             let run = run_membership(tx, request, actor, now)?;
             Ok(Previewed {
-                token: token::issue(&run.material, now as i64),
+                token: token::issue(&self.signer, actor, &run.material, now as i64),
                 outcome: run.outcome,
             })
         })
@@ -79,7 +83,7 @@ impl Corrections {
                 return Ok(done);
             }
             let run = run_membership(tx, request, &meta.actor, now)?;
-            check_token(&meta.preview_token, &run.material, now)?;
+            self.check_token(meta, &run.material, now)?;
             let outcome = run.outcome;
             let mut applied = Applied {
                 kind: request.kind.as_str().to_owned(),
@@ -106,6 +110,7 @@ impl Corrections {
                     before: serde_json::json!({
                         "source_album_ids": outcome.source_album_ids,
                         "track_ids": outcome.track_ids,
+                        "dropped_editions": dropped_editions(&outcome),
                     }),
                     reason: match request.kind {
                         MembershipKind::Reset => "AUTOMATIC_GROUPING_RESET",
@@ -124,12 +129,13 @@ impl Corrections {
     pub fn preview_artist_merge(
         &self,
         request: &ArtistMergeRequest,
+        actor: &str,
     ) -> Result<Previewed<ArtistMergeOutcome>, CorrectionError> {
         let now = now_unix();
         self.in_tx(false, |tx| {
             let run = artists::merge(tx, request, now)?;
             Ok(Previewed {
-                token: token::issue(&run.material, now as i64),
+                token: token::issue(&self.signer, actor, &run.material, now as i64),
                 outcome: run.outcome,
             })
         })
@@ -147,7 +153,7 @@ impl Corrections {
                 return Ok(done);
             }
             let run = artists::merge(tx, request, now)?;
-            check_token(&meta.preview_token, &run.material, now)?;
+            self.check_token(meta, &run.material, now)?;
             let mut applied = Applied {
                 kind: "merge_artist".to_owned(),
                 surviving_artist_id: Some(run.outcome.surviving_artist_id.clone()),
@@ -187,11 +193,47 @@ fn run_membership(
     }
 }
 
-fn check_token(token: &str, material: &str, now: f64) -> Result<(), CorrectionError> {
-    token::verify(token, material, now as i64).map_err(|fault| match fault {
-        TokenFault::Invalid => CorrectionError::Invalid(fault.reason()),
-        TokenFault::Expired | TokenFault::Stale => CorrectionError::Conflict(fault.reason()),
-    })
+impl Corrections {
+    fn check_token(
+        &self,
+        meta: &ApplyMeta,
+        material: &str,
+        now: f64,
+    ) -> Result<(), CorrectionError> {
+        token::verify(
+            &self.signer,
+            &meta.actor,
+            &meta.preview_token,
+            material,
+            now as i64,
+        )
+        .map_err(|fault| match fault {
+            TokenFault::Invalid => CorrectionError::Invalid(fault.reason()),
+            TokenFault::Expired | TokenFault::Stale => CorrectionError::Conflict(fault.reason()),
+        })
+    }
+}
+
+/// Editions the change dropped, kept in the audit row so a dropped pin can
+/// be put back by hand.
+fn dropped_editions(outcome: &MembershipOutcome) -> serde_json::Value {
+    serde_json::Value::Array(
+        outcome
+            .edition_changes
+            .iter()
+            .flat_map(|change| {
+                change.dropped.iter().map(move |dropped| {
+                    serde_json::json!({
+                        "local_album_id": change.album_id,
+                        "release_group_mbid": dropped.release_group_mbid,
+                        "release_mbid": dropped.release_mbid,
+                        "decision_source": dropped.decision_source,
+                        "from_album_id": dropped.album_id,
+                    })
+                })
+            })
+            .collect(),
+    )
 }
 
 /// The result recorded under an idempotency key already used.

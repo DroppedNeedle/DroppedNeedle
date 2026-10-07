@@ -189,6 +189,10 @@ pub struct ArtistMergePreviewBody {
     /// unknown.
     #[serde(default)]
     pub expected_revisions: BTreeMap<String, i64>,
+    /// What the survivor keeps when the artists name different MusicBrainz
+    /// artists; the apply must send the same choice.
+    #[serde(default)]
+    pub provider_choice: ProviderChoiceBody,
 }
 
 /// A previewed artist merge to apply.
@@ -635,7 +639,7 @@ fn artist_request(
 )]
 pub async fn preview_artist_merge(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    caller: RequireAdmin,
     ValidJson(body): ValidJson<ArtistMergePreviewBody>,
 ) -> Result<Json<MembershipPreviewResponse>, Response> {
     let corrections = Corrections::new(&state);
@@ -643,9 +647,10 @@ pub async fn preview_artist_merge(
         body.source_artist_ids,
         body.surviving_artist_id,
         body.expected_revisions,
-        ProviderChoiceBody::default(),
+        body.provider_choice,
     );
-    let previewed = blocking(move || corrections.preview_artist_merge(&request)).await?;
+    let actor = caller.0.user_id;
+    let previewed = blocking(move || corrections.preview_artist_merge(&request, &actor)).await?;
     Ok(Json(artist_view(previewed.token, previewed.outcome)))
 }
 

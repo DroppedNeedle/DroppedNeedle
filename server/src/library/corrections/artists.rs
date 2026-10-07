@@ -74,6 +74,7 @@ struct Material<'a> {
     kind: &'static str,
     surviving_artist_id: &'a str,
     retired: &'a [String],
+    provider_choice: ProviderChoice,
     revisions: Vec<(String, i64)>,
     identities: Vec<(String, String)>,
 }
@@ -174,6 +175,7 @@ pub(super) fn merge(
         kind: "artist_merge",
         surviving_artist_id: &survivor,
         retired: &retired,
+        provider_choice: request.provider_choice,
         revisions,
         identities: identities.clone(),
     })

@@ -24,6 +24,7 @@ export interface ArtistMergePreviewInput {
 	source_artist_ids: string[];
 	surviving_artist_id: string;
 	expected_revisions: Record<string, number>;
+	provider_choice?: 'detach' | 'retain_survivor';
 }
 
 // Re-identification evaluates candidates as an operation the user confirms:
