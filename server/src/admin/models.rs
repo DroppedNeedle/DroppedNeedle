@@ -77,12 +77,18 @@ pub struct CacheStatsResponse {
     pub entries: usize,
     /// Registered invalidation roots by source.
     pub sources: Vec<String>,
+    /// Cover and artist images on disk.
+    pub cover_images: u64,
+    /// Their total size in bytes.
+    pub cover_bytes: u64,
 }
 
 /// Cache-clear request. Empty scope clears everything.
 #[derive(Debug, Clone, Default, Deserialize, ToSchema)]
 pub struct CacheClearBody {
-    /// `all` (default) or `source`.
+    /// `all` (default: provider responses and images), `source` (one
+    /// provider's responses), `covers` (cover and artist images only) or
+    /// `audiodb` (TheAudioDB answers only).
     #[serde(default)]
     pub scope: Option<String>,
     /// Source name when `scope` is `source`.
@@ -99,6 +105,15 @@ pub struct CacheClearResponse {
     pub cleared_entries: usize,
     /// Entries left behind.
     pub remaining_entries: usize,
+    /// Cover and artist images deleted from disk.
+    pub cleared_cover_images: u64,
+}
+
+/// `POST /cache/sync/cancel` answer.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct CacheSyncCancelResponse {
+    /// `cancelled`.
+    pub status: String,
 }
 
 /// One durable-work channel's demand.

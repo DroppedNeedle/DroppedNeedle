@@ -26,6 +26,7 @@ pub mod library;
 pub mod mapping;
 pub mod models;
 pub mod ports;
+pub mod precache;
 pub mod search;
 pub mod upstream;
 

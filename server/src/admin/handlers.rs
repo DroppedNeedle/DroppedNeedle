@@ -19,8 +19,8 @@ use super::{
     error::AdminError,
     models::{
         BackupListResponse, BackupRunResponse, CacheClearBody, CacheClearResponse,
-        CacheStatsResponse, PrecacheRunResponse, ProviderStatsResponse, QueueStatsResponse,
-        QuotaOverrideBody, QuotaResponse, RestoreReport,
+        CacheStatsResponse, CacheSyncCancelResponse, PrecacheRunResponse, ProviderStatsResponse,
+        QueueStatsResponse, QuotaOverrideBody, QuotaResponse, RestoreReport,
     },
 };
 
@@ -148,7 +148,7 @@ pub async fn restore_report(
     responses((status = 200, description = "Cache counters", body = CacheStatsResponse))
 )]
 pub async fn cache_stats(State(admin): State<AdminSetup>) -> Json<CacheStatsResponse> {
-    Json(super::cache::cache_stats(&admin.cache).await)
+    Json(super::cache::cache_stats(&admin.cache, admin.covers.as_ref()).await)
 }
 
 /// Clear the provider cache: everything, or one source's keys.
@@ -162,7 +162,7 @@ pub async fn clear_cache(
     State(admin): State<AdminSetup>,
     ValidJson(body): ValidJson<CacheClearBody>,
 ) -> Result<Json<CacheClearResponse>, AdminHttpError> {
-    super::cache::clear_cache(&admin.cache, &body)
+    super::cache::clear_cache(&admin.cache, admin.covers.as_ref(), &body)
         .await
         .map(Json)
         .map_err(AdminHttpError::from)
@@ -221,9 +221,11 @@ pub async fn get_quota(
 )]
 pub async fn run_precache(
     State(admin): State<AdminSetup>,
+    session: Option<axum::Extension<crate::auth::session::middleware::CurrentSession>>,
 ) -> Result<(StatusCode, Json<PrecacheRunResponse>), AdminHttpError> {
     let trigger = admin.precache.as_ref().ok_or_else(unwired_precache)?;
-    match trigger.run().await {
+    let user_id = session.map(|axum::Extension(session)| session.user_id);
+    match trigger.run(user_id).await {
         Ok(_) => Ok((
             StatusCode::ACCEPTED,
             Json(PrecacheRunResponse {
@@ -236,6 +238,42 @@ pub async fn run_precache(
         }
         .into()),
     }
+}
+
+/// Where the library image precache stands. The same shape streams live
+/// as the `cache.sync` event.
+#[utoipa::path(
+    get,
+    path = "/api/v3/cache/sync/status",
+    responses((status = 200, description = "Precache progress", body = crate::events::CacheSyncProgress))
+)]
+pub async fn cache_sync_status(
+    State(admin): State<AdminSetup>,
+) -> Json<crate::events::CacheSyncProgress> {
+    Json(
+        admin
+            .precache
+            .as_ref()
+            .map(|trigger| trigger.status().snapshot())
+            .unwrap_or_default(),
+    )
+}
+
+/// Stop the running library image precache. Images already fetched stay
+/// cached, so the next run continues from there. Succeeds when nothing is
+/// running too.
+#[utoipa::path(
+    post,
+    path = "/api/v3/cache/sync/cancel",
+    responses((status = 200, description = "Precache stopped", body = CacheSyncCancelResponse))
+)]
+pub async fn cancel_cache_sync(State(admin): State<AdminSetup>) -> Json<CacheSyncCancelResponse> {
+    if let Some(trigger) = &admin.precache {
+        trigger.cancel().await;
+    }
+    Json(CacheSyncCancelResponse {
+        status: "cancelled".to_owned(),
+    })
 }
 
 /// Set (or, with all-`None`, clear) one user's quota overrides.

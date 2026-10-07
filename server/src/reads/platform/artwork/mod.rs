@@ -22,14 +22,26 @@
 //! outlasts [`WARM_WAIT`] keeps running in the background while the web
 //! route answers 202 ("warming"), which the frontend polls.
 //!
-//! Artist images have no source wired yet and read as missing.
+//! Artist images come from TheAudioDB's artist thumbnail, else the
+//! Wikidata portrait (v2's order, minus the Lidarr and Jellyfin sources v3
+//! does not mirror). The catalog names the candidate URLs through
+//! [`ArtistImageSource`]; the image itself is downloaded once, from an
+//! allowed host only (see [`remote::check_image_url`]), stored full size,
+//! and scaled down per requested size like local art. A grid of artists
+//! never waits on the lookups: past [`WARM_WAIT`] the route answers 202 and
+//! the resolve finishes in the background, at most
+//! [`ARTIST_RESOLVE_PERMITS`] at a time.
+//!
+//! TheAudioDB album thumbnails, fetched by the library precache, stand in
+//! for a release group's cover when neither the album's own art nor the
+//! archive has one.
 
 pub mod cache;
 pub mod local;
 pub mod remote;
 pub mod resize;
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use futures_util::future::BoxFuture;
@@ -40,7 +52,7 @@ use crate::reads::platform::covers::{CoverArt, CoverBytes, CoverLookup};
 
 use self::cache::{ArtworkCache, KeyEntry, unix_now};
 use self::local::{LocalArt, LocalArtwork, read_local_art};
-use self::remote::RemoteCovers;
+use self::remote::{ImageFetch, RemoteCovers, RemoteImages};
 
 /// Source label for Cover Art Archive bytes; the routes give these the
 /// short cache window, as v2 did.
@@ -60,6 +72,38 @@ pub const OUTAGE_TTL_SECS: u64 = 900;
 pub const RESIZE_PERMITS: usize = 3;
 /// Largest archive image accepted (v2 `MAX_DELIVERY_IMAGE_BYTES`).
 pub const MAX_REMOTE_BYTES: usize = 20 * 1024 * 1024;
+/// Source label for artist images.
+pub const ARTIST_SOURCE: &str = "artist-image";
+/// Source label for TheAudioDB album thumbnails served as covers.
+pub const AUDIODB_SOURCE: &str = "audiodb";
+/// How long a precache run waits for one image before moving on (the
+/// fetch keeps going in the background).
+pub const PRECACHE_WAIT: Duration = Duration::from_secs(60);
+/// Artist images resolved at once. Each resolve asks MusicBrainz and
+/// TheAudioDB, which are paced, so more would only queue.
+pub const ARTIST_RESOLVE_PERMITS: usize = 4;
+
+/// Candidate artist image URLs, best first.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ArtistImageCandidates {
+    /// URLs to try in order: TheAudioDB thumbnail, then the Wikidata
+    /// portrait.
+    pub urls: Vec<String>,
+    /// A source could not answer, so "no image" is not settled yet and is
+    /// asked again sooner.
+    pub incomplete: bool,
+}
+
+/// Names the image URLs an artist has. The catalog implements it; lookups
+/// it makes are cached and paced there.
+pub trait ArtistImageSource: Send + Sync {
+    /// Candidate URLs for one artist (lowercase MBID).
+    fn candidates<'a>(&'a self, artist_mbid: &'a str) -> BoxFuture<'a, ArtistImageCandidates>;
+}
+
+/// The slot the catalog fills once it exists (the artwork service is built
+/// first).
+pub type ArtistSourceSlot = Arc<OnceLock<Arc<dyn ArtistImageSource>>>;
 
 /// Reads `prefer_local_cover_art` per call, so a settings change applies
 /// to the next request.
@@ -75,6 +119,10 @@ pub struct ArtworkService {
     flights: Singleflight<Option<CoverBytes>>,
     resizes: Singleflight<Option<Rendition>>,
     resize_permits: Arc<tokio::sync::Semaphore>,
+    images: Option<Arc<dyn RemoteImages>>,
+    artist_source: ArtistSourceSlot,
+    artist_flights: Singleflight<Option<CoverBytes>>,
+    artist_permits: Arc<tokio::sync::Semaphore>,
 }
 
 /// A scaled-down copy of local art.
@@ -102,6 +150,167 @@ impl ArtworkService {
             flights: Singleflight::new(),
             resizes: Singleflight::new(),
             resize_permits: Arc::new(tokio::sync::Semaphore::new(RESIZE_PERMITS)),
+            images: None,
+            artist_source: Arc::new(OnceLock::new()),
+            artist_flights: Singleflight::new(),
+            artist_permits: Arc::new(tokio::sync::Semaphore::new(ARTIST_RESOLVE_PERMITS)),
+        }
+    }
+
+    /// Download artist images and AudioDB thumbnails through `images`.
+    #[must_use]
+    pub fn with_images(mut self, images: Arc<dyn RemoteImages>) -> Self {
+        self.images = Some(images);
+        self
+    }
+
+    /// The slot the artist image source goes into once the catalog exists.
+    pub fn artist_source_slot(&self) -> ArtistSourceSlot {
+        Arc::clone(&self.artist_source)
+    }
+
+    /// The disk cache, for the admin stats and clears.
+    pub fn cache(&self) -> &ArtworkCache {
+        &self.cache
+    }
+
+    /// Whether the artist's image question is settled in the cache: an
+    /// image, or a "none" that has not expired.
+    pub async fn artist_image_cached(&self, artist_mbid: &str) -> bool {
+        self.settled(&artist_key(artist_mbid)).await
+    }
+
+    /// Resolve and cache the artist's image now (the precache), waiting up
+    /// to [`PRECACHE_WAIT`]. True when an image is cached.
+    pub async fn warm_artist_image(&self, artist_mbid: &str) -> bool {
+        matches!(
+            self.artist_original(artist_mbid, PRECACHE_WAIT).await,
+            CoverLookup::Found(_)
+        )
+    }
+
+    /// Whether a release group's 500 px cover is settled: the album's own
+    /// art (when preferred), or an archive answer that has not expired.
+    pub async fn release_group_cover_cached(&self, mbid: &str) -> bool {
+        let mbid = mbid.trim().to_ascii_lowercase();
+        if (self.prefer_local)() && matches!(self.local.by_release_group(&mbid).await, Ok(Some(_)))
+        {
+            return true;
+        }
+        self.settled(&format!(
+            "caa:{}:{mbid}:500",
+            EntityKind::ReleaseGroup.path()
+        ))
+        .await
+    }
+
+    /// Fetch and cache a release group's 500 px cover now (the precache).
+    pub async fn warm_release_group_cover(&self, mbid: &str) -> bool {
+        matches!(
+            self.mbid_cover(EntityKind::ReleaseGroup, mbid, Some("500"), PRECACHE_WAIT)
+                .await,
+            CoverLookup::Found(_)
+        )
+    }
+
+    /// Whether TheAudioDB's thumbnail for a release group is settled.
+    pub async fn audiodb_cover_cached(&self, mbid: &str) -> bool {
+        self.settled(&audiodb_cover_key(mbid)).await
+    }
+
+    /// Download and keep TheAudioDB's thumbnail for a release group, which
+    /// stands in when the album has no other cover (v2's AudioDB prewarm).
+    /// `None` records that AudioDB has no thumbnail.
+    pub async fn store_audiodb_cover(&self, mbid: &str, url: Option<&str>) {
+        let key = audiodb_cover_key(mbid);
+        let Some(url) = url else {
+            self.cache.put_miss(&key, MISS_TTL_SECS).await;
+            return;
+        };
+        let Some(images) = &self.images else {
+            return;
+        };
+        match images.fetch(url).await {
+            ImageFetch::Found(art) => {
+                self.cache
+                    .put(Some(&key), art.bytes, &art.content_type)
+                    .await;
+            }
+            ImageFetch::Unusable => self.cache.put_miss(&key, MISS_TTL_SECS).await,
+            ImageFetch::Failed => self.cache.put_miss(&key, OUTAGE_TTL_SECS).await,
+        }
+    }
+
+    /// True when `key` holds an image still on disk, or a fresh miss.
+    async fn settled(&self, key: &str) -> bool {
+        match self.cache.key(key).await {
+            Some(KeyEntry::Hit { hash, .. }) => self.cache.blob(&hash).await.is_some(),
+            Some(KeyEntry::Miss { until }) => until > unix_now(),
+            None => false,
+        }
+    }
+
+    /// A cached image by key, labelled with `source`.
+    async fn cached_image(&self, key: &str, source: &str) -> Option<CoverBytes> {
+        let Some(KeyEntry::Hit { hash, content_type }) = self.cache.key(key).await else {
+            return None;
+        };
+        let bytes = self.cache.blob(&hash).await?;
+        Some(CoverBytes {
+            bytes,
+            content_type,
+            source: source.to_owned(),
+            hash,
+            version: None,
+        })
+    }
+
+    /// The artist's image at full size: from the cache, or resolved in the
+    /// background while the caller waits up to `wait`.
+    async fn artist_original(&self, mbid: &str, wait: Duration) -> CoverLookup {
+        let key = artist_key(mbid);
+        match self.cache.key(&key).await {
+            Some(KeyEntry::Hit { .. }) => {
+                if let Some(image) = self.cached_image(&key, ARTIST_SOURCE).await {
+                    return CoverLookup::Found(image);
+                }
+            }
+            Some(KeyEntry::Miss { until }) if until > unix_now() => return CoverLookup::Missing,
+            _ => {}
+        }
+        let (Some(source), Some(images)) = (self.artist_source.get().cloned(), self.images.clone())
+        else {
+            return CoverLookup::Missing;
+        };
+        let flights = self.artist_flights.clone();
+        let cache = self.cache.clone();
+        let permits = Arc::clone(&self.artist_permits);
+        let mbid = mbid.to_owned();
+        // Spawned so a resolve the caller stops waiting for still lands in
+        // the cache for the next request.
+        let flight = tokio::spawn(async move {
+            let flight_key = key.clone();
+            flights
+                .run(&flight_key, move || async move {
+                    let _permit = permits.acquire_owned().await.ok();
+                    Ok(resolve_artist(source.as_ref(), images.as_ref(), &cache, &mbid, &key).await)
+                })
+                .await
+        });
+        match tokio::time::timeout(wait, flight).await {
+            Ok(Ok(Ok(found))) => match found.as_ref() {
+                Some(image) => CoverLookup::Found(image.clone()),
+                None => CoverLookup::Missing,
+            },
+            Ok(Ok(Err(error))) => {
+                tracing::warn!(%error, "artist image resolve failed");
+                CoverLookup::Missing
+            }
+            Ok(Err(error)) => {
+                tracing::error!(%error, "artist image task failed");
+                CoverLookup::Missing
+            }
+            Err(_) => CoverLookup::Warming,
         }
     }
 
@@ -127,6 +336,13 @@ impl ArtworkService {
         }
         if !prefer_local && let Some(cover) = self.local_for(entity, &mbid, size).await {
             return CoverLookup::Found(cover);
+        }
+        if entity == EntityKind::ReleaseGroup
+            && let Some(cover) = self
+                .cached_image(&audiodb_cover_key(&mbid), AUDIODB_SOURCE)
+                .await
+        {
+            return CoverLookup::Found(self.sized(cover, size).await);
         }
         CoverLookup::Missing
     }
@@ -156,19 +372,25 @@ impl ArtworkService {
     /// larger than the asked size.
     async fn serve_local(&self, art: &LocalArt, size: Option<&str>) -> Option<CoverBytes> {
         let original = self.local_original(art).await?;
+        Some(self.sized(original, size).await)
+    }
+
+    /// `original` scaled down to `size` (`None` is full size), the rendition
+    /// cached by the original's hash.
+    async fn sized(&self, original: CoverBytes, size: Option<&str>) -> CoverBytes {
         let Some(max) = size.and_then(|size| size.parse::<u32>().ok()) else {
-            return Some(original);
+            return original;
         };
         let key = format!("rendition:{}:{max}", original.hash);
         if let Some(KeyEntry::Hit { hash, content_type }) = self.cache.key(&key).await
             && let Some(bytes) = self.cache.blob(&hash).await
         {
-            return Some(CoverBytes {
+            return CoverBytes {
                 bytes,
                 content_type,
                 hash,
                 ..original
-            });
+            };
         }
         // One resize per rendition at a time, and at most a few overall.
         let cache = self.cache.clone();
@@ -192,13 +414,13 @@ impl ArtworkService {
             })
             .await;
         match rendition.as_deref() {
-            Ok(Some(rendition)) => Some(CoverBytes {
+            Ok(Some(rendition)) => CoverBytes {
                 bytes: rendition.bytes.clone(),
                 content_type: rendition.content_type.clone(),
                 hash: rendition.hash.clone(),
                 ..original
-            }),
-            Ok(None) | Err(_) => Some(original),
+            },
+            Ok(None) | Err(_) => original,
         }
     }
 
@@ -366,6 +588,65 @@ async fn fetch_and_store(
     }
 }
 
+/// Cache key of an artist's full-size image.
+fn artist_key(mbid: &str) -> String {
+    format!("artist:{}", mbid.trim().to_ascii_lowercase())
+}
+
+/// Cache key of TheAudioDB's thumbnail for a release group.
+fn audiodb_cover_key(mbid: &str) -> String {
+    format!("audiodb:release-group:{}", mbid.trim().to_ascii_lowercase())
+}
+
+/// Snap a requested artist image width to the renditions kept (250, 500,
+/// 1200); anything larger, or no width, is full size.
+fn artist_size(size_px: Option<u32>) -> Option<&'static str> {
+    match size_px? {
+        0..=250 => Some("250"),
+        251..=500 => Some("500"),
+        501..=1200 => Some("1200"),
+        _ => None,
+    }
+}
+
+/// One artist image resolve: the first candidate that downloads is
+/// cached; with none, a miss marker (short when a source was down).
+async fn resolve_artist(
+    source: &dyn ArtistImageSource,
+    images: &dyn RemoteImages,
+    cache: &ArtworkCache,
+    mbid: &str,
+    key: &str,
+) -> Option<CoverBytes> {
+    let candidates = source.candidates(mbid).await;
+    let mut failed = candidates.incomplete;
+    for url in &candidates.urls {
+        match images.fetch(url).await {
+            ImageFetch::Found(art) => {
+                let hash = cache
+                    .put(Some(key), art.bytes.clone(), &art.content_type)
+                    .await;
+                return Some(CoverBytes {
+                    bytes: art.bytes,
+                    content_type: art.content_type,
+                    source: ARTIST_SOURCE.to_owned(),
+                    hash,
+                    version: None,
+                });
+            }
+            ImageFetch::Unusable => {}
+            ImageFetch::Failed => failed = true,
+        }
+    }
+    let ttl = if failed {
+        OUTAGE_TTL_SECS
+    } else {
+        MISS_TTL_SECS
+    };
+    cache.put_miss(key, ttl).await;
+    None
+}
+
 /// Map a validated size (`250`, `500`, `1200`, or `None` for full size)
 /// onto the archive's renditions.
 fn download_size(size: Option<&str>) -> DownloadSize {
@@ -396,10 +677,21 @@ impl CoverArt for ArtworkService {
 
     fn artist_image<'a>(
         &'a self,
-        _artist_id: &'a str,
-        _size_px: Option<u32>,
+        artist_id: &'a str,
+        size_px: Option<u32>,
     ) -> BoxFuture<'a, CoverLookup> {
-        Box::pin(async { CoverLookup::Missing })
+        Box::pin(async move {
+            let mbid = artist_id.trim().to_ascii_lowercase();
+            if !crate::providers::coverart::is_valid_mbid(&mbid) {
+                return CoverLookup::Missing;
+            }
+            match self.artist_original(&mbid, WARM_WAIT).await {
+                CoverLookup::Found(original) => {
+                    CoverLookup::Found(self.sized(original, artist_size(size_px)).await)
+                }
+                other => other,
+            }
+        })
     }
 
     fn album_cover<'a>(

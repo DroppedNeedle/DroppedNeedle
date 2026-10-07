@@ -18,6 +18,7 @@
 //!   transfer.
 //! - `downloads.changed`: [`downloads::run`], from the durable download
 //!   activity revision.
+//! - `cache.sync`: the library image precache, as it moves.
 //! - `concerts_new`, `personal_mix_refreshed`, `drop_import_updated`,
 //!   `free_music_updated`: their features call [`EventHub::notify`] with
 //!   the matching [`UserNotice`].
@@ -34,7 +35,7 @@ pub mod revisions;
 pub use http::{SessionCheck, router, session_check};
 pub use hub::{EventHub, EventSink, Subscription};
 pub use model::{
-    ActivityChanged, AutoDownloadEnqueued, ConcertsNew, DownloadProgress, DownloadsChanged,
-    DropImportUpdated, Event, FreeMusicUpdated, PersonalMixRefreshed, PlaylistImported,
-    RequestImported, SearchJobUpdated, UserNotice, WantedNotice, new_event_id,
+    ActivityChanged, AutoDownloadEnqueued, CacheSyncProgress, ConcertsNew, DownloadProgress,
+    DownloadsChanged, DropImportUpdated, Event, FreeMusicUpdated, PersonalMixRefreshed,
+    PlaylistImported, RequestImported, SearchJobUpdated, UserNotice, WantedNotice, new_event_id,
 };

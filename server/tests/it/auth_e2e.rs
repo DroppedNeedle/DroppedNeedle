@@ -1301,6 +1301,10 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         Posture::Admin,
     ),
     ("POST", "/api/v3/admin/precache/run", Posture::Admin),
+    // Library image refresh progress: anyone signed in watches it,
+    // curators may stop it.
+    ("GET", "/api/v3/cache/sync/status", Posture::User),
+    ("POST", "/api/v3/cache/sync/cancel", Posture::Curator),
     // Stage-12 gap step: admin reimport behind the request card.
     (
         "POST",

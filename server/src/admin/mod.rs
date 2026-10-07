@@ -45,9 +45,9 @@ pub use error::AdminError;
 pub use handlers::AdminHttpError;
 pub use models::{
     BackupListResponse, BackupRunResponse, BackupView, CacheClearBody, CacheClearResponse,
-    CacheStatsResponse, CheckpointView, JobView, PrecacheRunResponse, ProviderLimiterView,
-    ProviderStatsResponse, QueueStatsResponse, QuotaOverrideBody, QuotaOverrideView, QuotaResponse,
-    RestoreCheck, RestoreReport, SlotView, WakeupChannelView,
+    CacheStatsResponse, CacheSyncCancelResponse, CheckpointView, JobView, PrecacheRunResponse,
+    ProviderLimiterView, ProviderStatsResponse, QueueStatsResponse, QuotaOverrideBody,
+    QuotaOverrideView, QuotaResponse, RestoreCheck, RestoreReport, SlotView, WakeupChannelView,
 };
 pub use system::{ServiceHealthItem, SystemHealthResponse};
 
@@ -93,6 +93,9 @@ pub struct AdminSetup {
     /// Precache trigger over the shared jobs registry. `None` on unwired
     /// test states.
     pub precache: Option<crate::jobs::wiring::PrecacheTrigger>,
+    /// Cover and artist image cache, for its stats and clears. `None` on
+    /// states without one.
+    pub covers: Option<crate::reads::platform::artwork::cache::ArtworkCache>,
 }
 
 impl AdminSetup {
@@ -113,6 +116,7 @@ impl AdminSetup {
             backups: None,
             checkpoint: None,
             precache: None,
+            covers: None,
         }
     }
 
@@ -144,6 +148,16 @@ impl AdminSetup {
         self
     }
 
+    /// Attach the cover and artist image cache.
+    #[must_use]
+    pub fn with_covers(
+        mut self,
+        covers: crate::reads::platform::artwork::cache::ArtworkCache,
+    ) -> Self {
+        self.covers = Some(covers);
+        self
+    }
+
     /// Test bundle: always-present handles only, backends unwired. Suites
     /// that need a database attach it with the `with_*` builders.
     #[cfg(any(test, feature = "test-support"))]
@@ -162,9 +176,17 @@ impl AdminSetup {
     pub fn gated_router(&self) -> Router {
         let system = Router::new()
             .route("/system/health", get(system::system_health))
+            .route("/cache/sync/status", get(handlers::cache_sync_status))
             .layer(axum::middleware::from_fn_with_state(
                 self.clone(),
                 require_user,
+            ))
+            .with_state(self.clone());
+        let curator = Router::new()
+            .route("/cache/sync/cancel", post(handlers::cancel_cache_sync))
+            .layer(axum::middleware::from_fn_with_state(
+                self.clone(),
+                require_curator,
             ))
             .with_state(self.clone());
         let admin = Router::new()
@@ -190,7 +212,7 @@ impl AdminSetup {
                 require_admin,
             ))
             .with_state(self.clone());
-        admin.merge(system)
+        admin.merge(system).merge(curator)
     }
 }
 
@@ -231,6 +253,26 @@ async fn require_user(State(admin): State<AdminSetup>, request: Request, next: N
         Ok(_) => next.run(request).await,
         Err(error) => error.into_response(),
     }
+}
+
+/// Curator gate: [`signed_in_user`], then 403 unless the account is an
+/// admin or trusted.
+async fn require_curator(
+    State(admin): State<AdminSetup>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let user = match signed_in_user(&admin, session_user(&request)).await {
+        Ok(user) => user,
+        Err(error) => return error.into_response(),
+    };
+    if !user.role.is_curator() {
+        return AdminHttpError(AdminError::Forbidden {
+            message: "Curator role required".to_owned(),
+        })
+        .into_response();
+    }
+    next.run(request).await
 }
 
 /// Admin gate: [`signed_in_user`], then 403 when the account is not an

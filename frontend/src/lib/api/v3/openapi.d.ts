@@ -1381,6 +1381,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/cache/sync/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop the running library image precache. Images already fetched stay
+         *     cached, so the next run continues from there. Succeeds when nothing is
+         *     running too.
+         */
+        post: operations["cancel_cache_sync"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/cache/sync/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Where the library image precache stands. The same shape streams live
+         *     as the `cache.sync` event.
+         */
+        get: operations["cache_sync_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/covers/artist/{artist_id}": {
         parameters: {
             query?: never;
@@ -8310,6 +8351,18 @@ export interface components {
          */
         AdvancedSettingsForm: {
             /**
+             * Format: int64
+             * @description Discovery precache workers (1-8).
+             * @default 5
+             */
+            artist_discovery_precache_concurrency: number;
+            /**
+             * Format: double
+             * @description Pause after each discovery precache artist, seconds (0-5).
+             * @default 0.2
+             */
+            artist_discovery_precache_delay: number;
+            /**
              * @description AudioDB API key (masked unless unset).
              * @default
              */
@@ -8324,6 +8377,18 @@ export interface components {
              * @default false
              */
             audiodb_name_search_fallback: boolean;
+            /**
+             * Format: int64
+             * @description AudioDB precache workers (1-8).
+             * @default 4
+             */
+            audiodb_prewarm_concurrency: number;
+            /**
+             * Format: double
+             * @description Pause before each AudioDB precache lookup, seconds (0-5).
+             * @default 0.3
+             */
+            audiodb_prewarm_delay: number;
             /**
              * Format: int64
              * @description Album batch size (1-20).
@@ -10160,13 +10225,22 @@ export interface components {
         };
         /** @description Cache-clear request. Empty scope clears everything. */
         CacheClearBody: {
-            /** @description `all` (default) or `source`. */
+            /**
+             * @description `all` (default: provider responses and images), `source` (one
+             *     provider's responses), `covers` (cover and artist images only) or
+             *     `audiodb` (TheAudioDB answers only).
+             */
             scope?: string | null;
             /** @description Source name when `scope` is `source`. */
             source?: string | null;
         };
         /** @description What one cache clear dropped. */
         CacheClearResponse: {
+            /**
+             * Format: int64
+             * @description Cover and artist images deleted from disk.
+             */
+            cleared_cover_images: number;
             /** @description Entries dropped. */
             cleared_entries: number;
             /** @description Plain-language summary. */
@@ -10176,10 +10250,84 @@ export interface components {
         };
         /** @description Provider byte-cache counters. */
         CacheStatsResponse: {
+            /**
+             * Format: int64
+             * @description Their total size in bytes.
+             */
+            cover_bytes: number;
+            /**
+             * Format: int64
+             * @description Cover and artist images on disk.
+             */
+            cover_images: number;
             /** @description Entries currently held. */
             entries: number;
             /** @description Registered invalidation roots by source. */
             sources: string[];
+        };
+        /** @description `POST /cache/sync/cancel` answer. */
+        CacheSyncCancelResponse: {
+            /** @description `cancelled`. */
+            status: string;
+        };
+        /**
+         * @description `cache.sync`: where the library image precache stands. Sent to
+         *     everyone and replayed to new tabs, so the progress pill shows the live
+         *     run (or its last error) without a fetch. The same shape answers
+         *     `GET /cache/sync/status`.
+         */
+        CacheSyncProgress: {
+            /** @description What the run is working on, in words. */
+            current_item?: string | null;
+            /** @description Why the last run failed, when it did. */
+            error_message?: string | null;
+            /** @description Whether a run is going. */
+            is_syncing: boolean;
+            /**
+             * @description Current phase: `artists`, `discovery`, `albums` or
+             *     `audiodb_prewarm`. A phase with zero items was skipped.
+             */
+            phase?: string | null;
+            /**
+             * Format: int64
+             * @description Albums done.
+             */
+            processed_albums: number;
+            /**
+             * Format: int64
+             * @description Artists done.
+             */
+            processed_artists: number;
+            /**
+             * Format: int64
+             * @description Items done in the current phase.
+             */
+            processed_items: number;
+            /**
+             * Format: int32
+             * @description `processed_items` as a whole percentage of `total_items`.
+             */
+            progress_percent: number;
+            /**
+             * Format: double
+             * @description When the run started, unix seconds.
+             */
+            started_at?: number | null;
+            /**
+             * Format: int64
+             * @description Library albums in this run.
+             */
+            total_albums: number;
+            /**
+             * Format: int64
+             * @description Library artists in this run.
+             */
+            total_artists: number;
+            /**
+             * Format: int64
+             * @description Items in the current phase.
+             */
+            total_items: number;
         };
         /** @description Choose a re-identification candidate. */
         CandidateChoiceBody: {
@@ -23060,6 +23208,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SetupStatusBody"];
+                };
+            };
+        };
+    };
+    cancel_cache_sync: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Precache stopped */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CacheSyncCancelResponse"];
+                };
+            };
+        };
+    };
+    cache_sync_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Precache progress */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CacheSyncProgress"];
                 };
             };
         };

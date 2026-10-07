@@ -38,6 +38,13 @@ struct Rig {
 
 impl Rig {
     async fn open(tag: &str) -> Self {
+        Self::open_with(tag, None).await
+    }
+
+    async fn open_with(
+        tag: &str,
+        precache: Option<Arc<dyn droppedneedle::jobs::precache_phases::PrecacheSources>>,
+    ) -> Self {
         let scratch = crate::common::ScratchDir::new(&format!("admin-routes-{tag}"));
         let dir = scratch.to_path_buf();
         let runtime = open_runtime(&DbConfig::new(&dir.join("app.db")))
@@ -53,7 +60,10 @@ impl Rig {
         );
         let cache = Arc::new(droppedneedle::providers::InMemoryProviderCache::new());
         let providers = Arc::new(droppedneedle::providers::Providers::new(cache.clone()));
-        let jobs = droppedneedle::jobs::wiring::JobsSetup::for_tests(rig.deps.clone());
+        let mut jobs = droppedneedle::jobs::wiring::JobsSetup::for_tests(rig.deps.clone());
+        if let Some(sources) = precache {
+            jobs = jobs.with_precache_sources(sources);
+        }
         let admin = AdminSetup::new(rig.deps.clone(), quota.clone(), cache.clone(), providers)
             .with_db(AdminDb::new(runtime.pool().clone(), runtime.lane().clone()))
             .with_backups(droppedneedle::db::BackupService::new(
@@ -280,6 +290,201 @@ async fn precache_second_run_is_409_while_live() {
     rig.jobs.cancel_all(Duration::from_secs(5)).await;
     let (status, _) = call(rig.admin_app(), "POST", "/admin/precache/run", None).await;
     assert_eq!(status, StatusCode::ACCEPTED);
+}
+
+const ALPHA: &str = "aaaaaaaa-0000-4000-8000-000000000001";
+const BETA: &str = "bbbbbbbb-0000-4000-8000-000000000002";
+const FIRST: &str = "cccccccc-0000-4000-8000-000000000003";
+
+/// A two-artist, one-album library for the image refresh. Album warms
+/// wait on `album_gate`, so the test can watch a run mid-flight.
+struct ScriptedLibrary {
+    calls: std::sync::Mutex<Vec<String>>,
+    album_gate: tokio::sync::Semaphore,
+}
+
+impl ScriptedLibrary {
+    fn record(&self, call: String) {
+        self.calls.lock().unwrap().push(call);
+    }
+
+    fn called(&self, call: &str) -> bool {
+        self.calls.lock().unwrap().iter().any(|seen| seen == call)
+    }
+}
+
+impl droppedneedle::jobs::precache_phases::PrecacheSources for ScriptedLibrary {
+    fn tuning(&self) -> droppedneedle::jobs::precache_phases::PrecacheTuning {
+        droppedneedle::jobs::precache_phases::PrecacheTuning {
+            artist_delay: Duration::ZERO,
+            album_delay: Duration::ZERO,
+            discovery_delay: Duration::ZERO,
+            audiodb_delay: Duration::ZERO,
+            ..Default::default()
+        }
+    }
+
+    fn library(
+        &self,
+    ) -> droppedneedle::jobs::registry::BoxFuture<
+        '_,
+        Result<droppedneedle::jobs::precache_phases::PrecacheLibrary, String>,
+    > {
+        use droppedneedle::jobs::precache_phases::{LibraryAlbum, LibraryArtist, PrecacheLibrary};
+        Box::pin(async {
+            Ok(PrecacheLibrary {
+                artists: vec![
+                    LibraryArtist {
+                        mbid: ALPHA.to_owned(),
+                        name: "Alpha".to_owned(),
+                    },
+                    LibraryArtist {
+                        mbid: BETA.to_owned(),
+                        name: "Beta".to_owned(),
+                    },
+                ],
+                albums: vec![LibraryAlbum {
+                    release_group_mbid: FIRST.to_owned(),
+                    title: "First".to_owned(),
+                    artist_name: "Alpha".to_owned(),
+                }],
+            })
+        })
+    }
+
+    fn artist_cached<'a>(
+        &'a self,
+        _artist: &'a droppedneedle::jobs::precache_phases::LibraryArtist,
+    ) -> droppedneedle::jobs::registry::BoxFuture<'a, bool> {
+        Box::pin(async { false })
+    }
+
+    fn warm_artist<'a>(
+        &'a self,
+        artist: &'a droppedneedle::jobs::precache_phases::LibraryArtist,
+    ) -> droppedneedle::jobs::registry::BoxFuture<'a, ()> {
+        Box::pin(async move { self.record(format!("artist:{}", artist.mbid)) })
+    }
+
+    fn warm_discovery<'a>(
+        &'a self,
+        user_id: &'a str,
+        artist_mbid: &'a str,
+    ) -> droppedneedle::jobs::registry::BoxFuture<'a, ()> {
+        Box::pin(async move { self.record(format!("discovery:{user_id}:{artist_mbid}")) })
+    }
+
+    fn album_cached<'a>(
+        &'a self,
+        _album: &'a droppedneedle::jobs::precache_phases::LibraryAlbum,
+    ) -> droppedneedle::jobs::registry::BoxFuture<'a, bool> {
+        Box::pin(async { false })
+    }
+
+    fn warm_album<'a>(
+        &'a self,
+        album: &'a droppedneedle::jobs::precache_phases::LibraryAlbum,
+    ) -> droppedneedle::jobs::registry::BoxFuture<'a, ()> {
+        Box::pin(async move {
+            let _permit = self.album_gate.acquire().await;
+            self.record(format!("album:{}", album.release_group_mbid));
+        })
+    }
+
+    fn audiodb_artist_cached<'a>(
+        &'a self,
+        _artist: &'a droppedneedle::jobs::precache_phases::LibraryArtist,
+    ) -> droppedneedle::jobs::registry::BoxFuture<'a, bool> {
+        Box::pin(async { true })
+    }
+
+    fn warm_audiodb_artist<'a>(
+        &'a self,
+        artist: &'a droppedneedle::jobs::precache_phases::LibraryArtist,
+    ) -> droppedneedle::jobs::registry::BoxFuture<'a, ()> {
+        Box::pin(async move { self.record(format!("audiodb:{}", artist.mbid)) })
+    }
+
+    fn audiodb_album_cached<'a>(
+        &'a self,
+        _album: &'a droppedneedle::jobs::precache_phases::LibraryAlbum,
+    ) -> droppedneedle::jobs::registry::BoxFuture<'a, bool> {
+        Box::pin(async { false })
+    }
+
+    fn warm_audiodb_album<'a>(
+        &'a self,
+        album: &'a droppedneedle::jobs::precache_phases::LibraryAlbum,
+    ) -> droppedneedle::jobs::registry::BoxFuture<'a, ()> {
+        Box::pin(async move { self.record(format!("audiodb:{}", album.release_group_mbid)) })
+    }
+}
+
+/// Poll the status route until `done` holds.
+async fn wait_for_status(rig: &Rig, done: impl Fn(&Value) -> bool) -> Value {
+    for _ in 0..500 {
+        let (status, body) = call(rig.user_app(), "GET", "/cache/sync/status", None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        if done(&body) {
+            return body;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("the refresh status never got there");
+}
+
+/// The library image refresh end to end through its routes: progress any
+/// user can read, a curator-only cancel that leaves the status idle, and a
+/// rerun that walks every phase, discovery as the admin who started it.
+#[tokio::test]
+async fn library_image_refresh_reports_progress_and_cancels() {
+    let library = Arc::new(ScriptedLibrary {
+        calls: std::sync::Mutex::new(Vec::new()),
+        album_gate: tokio::sync::Semaphore::new(0),
+    });
+    let rig = Rig::open_with("image-refresh", Some(library.clone())).await;
+    let idle = wait_for_status(&rig, |_| true).await;
+    assert_eq!(idle["is_syncing"], Value::Bool(false));
+
+    let (status, _) = call(rig.admin_app(), "POST", "/admin/precache/run", None).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let live = wait_for_status(&rig, |body| body["phase"] == "albums").await;
+    assert_eq!(live["is_syncing"], Value::Bool(true));
+    assert_eq!(live["processed_artists"], Value::from(2));
+    assert_eq!(live["total_albums"], Value::from(1));
+    assert!(library.called(&format!("artist:{BETA}")));
+    assert!(library.called(&format!("discovery:{}:{ALPHA}", rig.admin_id)));
+
+    let (status, _) = call(rig.user_app(), "POST", "/cache/sync/cancel", None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, body) = call(rig.admin_app(), "POST", "/cache/sync/cancel", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], Value::from("cancelled"));
+    let stopped = wait_for_status(&rig, |_| true).await;
+    assert_eq!(stopped["is_syncing"], Value::Bool(false));
+    assert_eq!(stopped["error_message"], Value::Null);
+    assert!(!library.called(&format!("album:{FIRST}")));
+
+    library.album_gate.add_permits(8);
+    let (status, _) = call(rig.admin_app(), "POST", "/admin/precache/run", None).await;
+    assert_eq!(
+        status,
+        StatusCode::ACCEPTED,
+        "a cancelled run frees the job name"
+    );
+    for _ in 0..500 {
+        if library.called(&format!("audiodb:{FIRST}")) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let done = wait_for_status(&rig, |body| body["is_syncing"] == false).await;
+    assert_eq!(done["error_message"], Value::Null);
+    assert!(library.called(&format!("album:{FIRST}")));
+    assert!(
+        !library.called(&format!("audiodb:{ALPHA}")),
+        "cached AudioDB answers are skipped"
+    );
 }
 
 #[tokio::test]

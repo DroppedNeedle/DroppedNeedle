@@ -217,10 +217,21 @@ pub(super) fn checked_mbid(raw: &str, what: &str) -> Result<String, CatalogError
 }
 
 impl Catalog {
+    /// Cache key of the MusicBrainz artist detail.
+    pub(super) fn artist_detail_key(&self, mbid: &str) -> String {
+        let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
+        format!("mb:artist:detail:{namespace}:{mbid}")
+    }
+
+    /// Cache key of the artist's release-group list.
+    pub(super) fn release_groups_key(&self, mbid: &str) -> String {
+        let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
+        format!("mb:artist_rgs:{namespace}:{mbid}")
+    }
+
     /// The cached MusicBrainz artist detail, `None` for a definitive miss.
     pub(super) async fn artist_detail(&self, mbid: &str) -> Result<ArtistCore, CatalogError> {
-        let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
-        let key = format!("mb:artist:detail:{namespace}:{mbid}");
+        let key = self.artist_detail_key(mbid);
         let catalog = self.clone();
         let mbid = mbid.to_owned();
         self.cached(&self.inner.flights.artist, key, move || async move {
@@ -267,7 +278,7 @@ impl Catalog {
         Ok(info)
     }
 
-    async fn build_artist(&self, mbid: &str) -> Result<ArtistInfo, CatalogError> {
+    pub(super) async fn build_artist(&self, mbid: &str) -> Result<ArtistInfo, CatalogError> {
         let (detail, list) = tokio::join!(self.artist_detail(mbid), self.release_groups(mbid));
         let detail = match detail {
             Ok(Some(detail)) => detail,
@@ -385,13 +396,35 @@ impl Catalog {
     /// TheAudioDB images, fetched and cached with v2's found/miss
     /// lifetimes. Off or failing reads as no images.
     async fn fetch_artist_images(&self, mbid: &str, name: &str) -> Option<ArtistImages> {
+        self.artist_images_lookup(mbid, name).await.flatten()
+    }
+
+    /// Whether TheAudioDB's answer for the artist is cached.
+    pub(super) async fn artist_images_known(&self, mbid: &str) -> bool {
+        self.upstream()
+            .cache()
+            .get_bytes(&audiodb_artist_key(mbid))
+            .await
+            .is_some()
+    }
+
+    /// TheAudioDB images as a settled answer: `Some(None)` when AudioDB has
+    /// none (or is off), `None` when it could not answer, so nothing was
+    /// cached and the caller may ask again soon.
+    pub(super) async fn artist_images_lookup(
+        &self,
+        mbid: &str,
+        name: &str,
+    ) -> Option<Option<ArtistImages>> {
         let advanced = self.upstream().settings().advanced();
-        let client = self.upstream().audiodb(&advanced)?;
+        let Some(client) = self.upstream().audiodb(&advanced) else {
+            return Some(None);
+        };
         let key = audiodb_artist_key(mbid);
         if let Some(bytes) = self.upstream().cache().get_bytes(&key).await
             && let Ok(entry) = serde_json::from_slice::<AudioDbArtistEntry>(&bytes)
         {
-            return entry.images;
+            return Some(entry.images);
         }
         let mut outcome = client.artist_by_mbid(mbid).await;
         if matches!(outcome, crate::providers::audiodb::Outcome::Missing)
@@ -428,7 +461,7 @@ impl Catalog {
         }) {
             self.upstream().cache().set_bytes(&key, bytes, ttl).await;
         }
-        images
+        Some(images)
     }
 
     /// `GET /artists/{artist_mbid}/extended`: biography and portrait from
@@ -458,7 +491,7 @@ impl Catalog {
         })
     }
 
-    async fn biography(&self, detail: &ArtistDetail) -> Biography {
+    pub(super) async fn biography(&self, detail: &ArtistDetail) -> Biography {
         if detail.wiki_url.is_none() && detail.wikidata_id.is_none() {
             return Biography::default();
         }
@@ -504,8 +537,7 @@ impl Catalog {
         &self,
         mbid: &str,
     ) -> Result<ReleaseGroupList, CatalogError> {
-        let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
-        let key = format!("mb:artist_rgs:{namespace}:{mbid}");
+        let key = self.release_groups_key(mbid);
         let catalog = self.clone();
         let artist = mbid.to_owned();
         let store_key = key.clone();

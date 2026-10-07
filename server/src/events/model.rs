@@ -43,6 +43,8 @@ pub mod names {
     /// The download queue changed (a task was added, moved status,
     /// switched source or was removed, or a held file came or went).
     pub const DOWNLOADS_CHANGED: &str = "downloads.changed";
+    /// Library image precache progress moved.
+    pub const CACHE_SYNC: &str = "cache.sync";
 }
 
 /// A fresh id the web UI uses to drop an event it has already shown (a
@@ -252,6 +254,39 @@ pub struct DownloadsChanged {
     pub id: String,
 }
 
+/// `cache.sync`: where the library image precache stands. Sent to
+/// everyone and replayed to new tabs, so the progress pill shows the live
+/// run (or its last error) without a fetch. The same shape answers
+/// `GET /cache/sync/status`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, ToSchema)]
+pub struct CacheSyncProgress {
+    /// Whether a run is going.
+    pub is_syncing: bool,
+    /// Current phase: `artists`, `discovery`, `albums` or
+    /// `audiodb_prewarm`. A phase with zero items was skipped.
+    pub phase: Option<String>,
+    /// Items in the current phase.
+    pub total_items: u64,
+    /// Items done in the current phase.
+    pub processed_items: u64,
+    /// `processed_items` as a whole percentage of `total_items`.
+    pub progress_percent: u8,
+    /// What the run is working on, in words.
+    pub current_item: Option<String>,
+    /// When the run started, unix seconds.
+    pub started_at: Option<f64>,
+    /// Why the last run failed, when it did.
+    pub error_message: Option<String>,
+    /// Library artists in this run.
+    pub total_artists: u64,
+    /// Artists done.
+    pub processed_artists: u64,
+    /// Library albums in this run.
+    pub total_albums: u64,
+    /// Albums done.
+    pub processed_albums: u64,
+}
+
 /// One event for one user.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UserNotice {
@@ -328,6 +363,8 @@ pub enum Event {
     NowPlaying(NowPlayingSnapshot),
     /// `downloads.changed`, for everyone.
     DownloadsChanged(DownloadsChanged),
+    /// `cache.sync`, for everyone.
+    CacheSync(CacheSyncProgress),
     /// A notice for one user only.
     User {
         /// Who receives it.
@@ -390,6 +427,13 @@ impl Frame {
                 Replay::State,
                 names::DOWNLOADS_CHANGED,
                 Some(payload.id.clone()),
+                serde_json::to_string(&payload)?,
+            ),
+            Event::CacheSync(payload) => (
+                Audience::Everyone,
+                Replay::State,
+                names::CACHE_SYNC,
+                None,
                 serde_json::to_string(&payload)?,
             ),
             Event::User { user_id, notice } => (

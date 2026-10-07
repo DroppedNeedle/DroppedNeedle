@@ -24,6 +24,7 @@ use axum::Router;
 use crate::auth::users::{UsersDeps, roles::Role};
 use crate::concerts::ConcertsSweep;
 use crate::db::{CheckpointService, DurableWorkWakeups, WriteLane};
+use crate::jobs::cache_sync::CacheSyncStatus;
 use crate::jobs::checkpoint::{self, CheckpointRunner};
 use crate::jobs::discovery_demand::{self, DemandTick, NoDemand};
 use crate::jobs::events_kick::{self, EventsKick, FnKick, KickOutcome};
@@ -35,6 +36,7 @@ use crate::jobs::playlist_sync::{
     self, PlaylistSyncConfig, PlaylistSyncSettings, PlaylistSyncState, SyncRoles,
 };
 use crate::jobs::precache::{self, PrecacheLimits, PrecacheWork};
+use crate::jobs::precache_phases::{LibraryPrecache, PrecacheSources};
 use crate::jobs::presence;
 use crate::jobs::registry::{
     AlreadyRunning, BoxFuture, DurableRegistryStore, JobKind, JobRegistry, MemoryRegistryStore,
@@ -190,19 +192,22 @@ impl SyncRoles for StoreSyncRoles {
     }
 }
 
-/// Precache phases without an implementation: every run reports the reason
-/// and lands failed, so the trigger reports the gap until the artist,
-/// album, discovery, and AudioDB passes are wired here.
+/// Precache on states without the catalog and artwork behind it (test
+/// states): every run lands failed with the reason.
 #[derive(Clone, Debug, Default)]
 pub struct UnwiredPrecacheWork;
 
 impl PrecacheWork for UnwiredPrecacheWork {
     fn run(&self, _progress: precache::Progress) -> BoxFuture<'_, Result<(), String>> {
         Box::pin(async {
-            Err("Library precache phases are not wired yet; the run stays pending.".to_owned())
+            Err("Library precache has no catalog to warm on this server.".to_owned())
         })
     }
 }
+
+/// How long a cancel waits for the run to stop before aborting it (v2
+/// waited 30 seconds for the sync task).
+pub const PRECACHE_CANCEL_GRACE: Duration = Duration::from_secs(30);
 
 /// The production precache trigger: one supervised run per call through the
 /// shared registry. Watchdog limits re-read the advanced settings on every
@@ -212,13 +217,45 @@ impl PrecacheWork for UnwiredPrecacheWork {
 pub struct PrecacheTrigger {
     registry: JobRegistry<StoreKind>,
     config: Option<Arc<ConfigStore>>,
+    status: CacheSyncStatus,
+    sources: Option<Arc<dyn PrecacheSources>>,
 }
 
 impl PrecacheTrigger {
-    /// Start one supervised run. Rejected while a run is live, like any
-    /// duplicate job name.
-    pub async fn run(&self) -> Result<precache::PrecacheHandle, AlreadyRunning> {
-        precache::spawn_run(&self.registry, UnwiredPrecacheWork, self.limits()).await
+    /// Start one supervised run, started by `user_id` when a person asked
+    /// for it. Rejected while a run is live, like any duplicate job name.
+    /// The status settles when the run lands, however it ends.
+    pub async fn run(
+        &self,
+        user_id: Option<String>,
+    ) -> Result<precache::PrecacheHandle, AlreadyRunning> {
+        let Some(sources) = self.sources.clone() else {
+            return precache::spawn_run(&self.registry, UnwiredPrecacheWork, self.limits()).await;
+        };
+        let work = LibraryPrecache::new(sources, self.status.clone(), user_id);
+        let settler = work.settler();
+        let handle = precache::spawn_run(&self.registry, work, self.limits()).await?;
+        let waiter = handle.clone();
+        tokio::spawn(async move {
+            let outcome = waiter.wait().await;
+            settler.settle(&outcome);
+        });
+        Ok(handle)
+    }
+
+    /// Where the current run stands.
+    pub fn status(&self) -> &CacheSyncStatus {
+        &self.status
+    }
+
+    /// Stop the live run, if any: the status goes idle at once, then the
+    /// run gets [`PRECACHE_CANCEL_GRACE`] to stop before it is aborted.
+    /// Work already cached stays cached, so the next run carries on.
+    pub async fn cancel(&self) {
+        self.status.cancel();
+        self.registry
+            .cancel(precache::JOB_NAME, PRECACHE_CANCEL_GRACE)
+            .await;
     }
 
     /// Watchdog limits for the next run. Values clamp to at least one unit;
@@ -277,6 +314,8 @@ pub struct JobsSetup {
     config: Option<Arc<ConfigStore>>,
     mixer: Arc<dyn PersonalMixer>,
     demand: Arc<dyn DemandTick>,
+    cache_sync: CacheSyncStatus,
+    precache_sources: Option<Arc<dyn PrecacheSources>>,
 }
 
 impl JobsSetup {
@@ -315,7 +354,44 @@ impl JobsSetup {
             config: Some(config),
             mixer: Arc::new(UnwiredMixer),
             demand: Arc::new(NoDemand),
+            cache_sync: CacheSyncStatus::default(),
+            precache_sources: None,
         }
+    }
+
+    /// The catalog and artwork lookups library precache runs warm.
+    pub fn with_precache_sources(mut self, sources: Arc<dyn PrecacheSources>) -> Self {
+        self.precache_sources = Some(sources);
+        self
+    }
+
+    /// Library precache over the reads' catalog and artwork service, when
+    /// both are wired; otherwise runs stay unwired and fail with a reason.
+    pub fn with_precache_sources_from(
+        self,
+        reads: &crate::reads::ReadsSetup,
+        config: &Arc<ConfigStore>,
+    ) -> Self {
+        match (&reads.catalog, &reads.artwork) {
+            (Some(catalog), Some(artwork)) => self.with_precache_sources(Arc::new(
+                crate::reads::catalog::precache::CatalogPrecache::new(
+                    catalog.catalog.clone(),
+                    artwork.clone(),
+                    Arc::clone(config),
+                ),
+            )),
+            _ => {
+                tracing::warn!(
+                    "library precache has no catalog or artwork service; runs will fail"
+                );
+                self
+            }
+        }
+    }
+
+    /// The precache status; its sink attaches to the event hub.
+    pub fn cache_sync(&self) -> &CacheSyncStatus {
+        &self.cache_sync
     }
 
     /// The personal-mix builder the daily refresh loop drives.
@@ -351,6 +427,8 @@ impl JobsSetup {
             config: None,
             mixer: Arc::new(UnwiredMixer),
             demand: Arc::new(NoDemand),
+            cache_sync: CacheSyncStatus::default(),
+            precache_sources: None,
         }
     }
 
@@ -367,6 +445,8 @@ impl JobsSetup {
         PrecacheTrigger {
             registry: self.registry.clone(),
             config: self.config.clone(),
+            status: self.cache_sync.clone(),
+            sources: self.precache_sources.clone(),
         }
     }
 

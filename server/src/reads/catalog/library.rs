@@ -117,6 +117,48 @@ impl LocalCatalog {
         Ok(found)
     }
 
+    /// Every identified artist credited on a live album with at least one
+    /// indexed track: (lowercase MBID, display name), by name.
+    pub async fn identified_artists(&self) -> Result<Vec<(String, String)>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT lower(e.provider_artist_id), MIN(a.display_name) \
+             FROM local_artist_external_identities e \
+             JOIN local_artists a ON a.id = e.local_artist_id \
+             JOIN local_album_artists credit ON credit.local_artist_id = e.local_artist_id \
+             JOIN local_albums b ON b.id = credit.local_album_id \
+             WHERE e.provider = 'musicbrainz' AND a.retired_into_artist_id IS NULL \
+             AND b.retired_into_album_id IS NULL \
+             AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = b.id \
+             AND t.availability = 'indexed') \
+             GROUP BY lower(e.provider_artist_id) ORDER BY 2",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter()
+            .map(|row| Ok((row.try_get(0)?, row.try_get(1)?)))
+            .collect()
+    }
+
+    /// Every identified live album with at least one indexed track:
+    /// (lowercase release-group MBID, title, album artist name).
+    pub async fn identified_albums(&self) -> Result<Vec<(String, String, String)>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT lower(e.release_group_mbid), MIN(b.title), \
+             MIN(COALESCE(b.album_artist_name, '')) \
+             FROM local_album_external_identities e \
+             JOIN local_albums b ON b.id = e.local_album_id \
+             WHERE b.retired_into_album_id IS NULL AND e.release_group_mbid IS NOT NULL \
+             AND EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = b.id \
+             AND t.availability = 'indexed') \
+             GROUP BY lower(e.release_group_mbid) ORDER BY 3, 2",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter()
+            .map(|row| Ok((row.try_get(0)?, row.try_get(1)?, row.try_get(2)?)))
+            .collect()
+    }
+
     /// The artist MBIDs (lowercase) the library holds: credited on a live
     /// album with at least one indexed track (v2
     /// `target_provider_artist_relationship`, owned half).

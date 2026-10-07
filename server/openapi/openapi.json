@@ -2801,6 +2801,48 @@
         }
       }
     },
+    "/api/v3/cache/sync/cancel": {
+      "post": {
+        "tags": [
+          "crate::admin::handlers"
+        ],
+        "summary": "Stop the running library image precache. Images already fetched stay\ncached, so the next run continues from there. Succeeds when nothing is\nrunning too.",
+        "operationId": "cancel_cache_sync",
+        "responses": {
+          "200": {
+            "description": "Precache stopped",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CacheSyncCancelResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/cache/sync/status": {
+      "get": {
+        "tags": [
+          "crate::admin::handlers"
+        ],
+        "summary": "Where the library image precache stands. The same shape streams live\nas the `cache.sync` event.",
+        "operationId": "cache_sync_status",
+        "responses": {
+          "200": {
+            "description": "Precache progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CacheSyncProgress"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/covers/artist/{artist_id}": {
       "get": {
         "tags": [
@@ -19963,6 +20005,18 @@
         "type": "object",
         "description": "Advanced tunables in the form's units. This is not a copy of the\nsection: the form shows human units (hours, minutes, seconds) while\nthe section stores seconds and milliseconds, v2's\n`AdvancedSettingsFrontend` contract minus the dropped internal-tuning\nfields. It is a closed allowlist: unknown JSON fields are rejected at\ndecode (400), so a client holding a dropped tuning field learns it is\ngone instead of believing it saved.",
         "properties": {
+          "artist_discovery_precache_concurrency": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Discovery precache workers (1-8).",
+            "default": 5
+          },
+          "artist_discovery_precache_delay": {
+            "type": "number",
+            "format": "double",
+            "description": "Pause after each discovery precache artist, seconds (0-5).",
+            "default": 0.2
+          },
           "audiodb_api_key": {
             "type": "string",
             "description": "AudioDB API key (masked unless unset).",
@@ -19977,6 +20031,18 @@
             "type": "boolean",
             "description": "AudioDB name-search fallback.",
             "default": false
+          },
+          "audiodb_prewarm_concurrency": {
+            "type": "integer",
+            "format": "int64",
+            "description": "AudioDB precache workers (1-8).",
+            "default": 4
+          },
+          "audiodb_prewarm_delay": {
+            "type": "number",
+            "format": "double",
+            "description": "Pause before each AudioDB precache lookup, seconds (0-5).",
+            "default": 0.3
           },
           "batch_albums": {
             "type": "integer",
@@ -23531,7 +23597,7 @@
               "string",
               "null"
             ],
-            "description": "`all` (default) or `source`."
+            "description": "`all` (default: provider responses and images), `source` (one\nprovider's responses), `covers` (cover and artist images only) or\n`audiodb` (TheAudioDB answers only)."
           },
           "source": {
             "type": [
@@ -23548,9 +23614,16 @@
         "required": [
           "message",
           "cleared_entries",
-          "remaining_entries"
+          "remaining_entries",
+          "cleared_cover_images"
         ],
         "properties": {
+          "cleared_cover_images": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Cover and artist images deleted from disk.",
+            "minimum": 0
+          },
           "cleared_entries": {
             "type": "integer",
             "description": "Entries dropped.",
@@ -23572,9 +23645,23 @@
         "description": "Provider byte-cache counters.",
         "required": [
           "entries",
-          "sources"
+          "sources",
+          "cover_images",
+          "cover_bytes"
         ],
         "properties": {
+          "cover_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Their total size in bytes.",
+            "minimum": 0
+          },
+          "cover_images": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Cover and artist images on disk.",
+            "minimum": 0
+          },
           "entries": {
             "type": "integer",
             "description": "Entries currently held.",
@@ -23586,6 +23673,110 @@
               "type": "string"
             },
             "description": "Registered invalidation roots by source."
+          }
+        }
+      },
+      "CacheSyncCancelResponse": {
+        "type": "object",
+        "description": "`POST /cache/sync/cancel` answer.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "`cancelled`."
+          }
+        }
+      },
+      "CacheSyncProgress": {
+        "type": "object",
+        "description": "`cache.sync`: where the library image precache stands. Sent to\neveryone and replayed to new tabs, so the progress pill shows the live\nrun (or its last error) without a fetch. The same shape answers\n`GET /cache/sync/status`.",
+        "required": [
+          "is_syncing",
+          "total_items",
+          "processed_items",
+          "progress_percent",
+          "total_artists",
+          "processed_artists",
+          "total_albums",
+          "processed_albums"
+        ],
+        "properties": {
+          "current_item": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the run is working on, in words."
+          },
+          "error_message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the last run failed, when it did."
+          },
+          "is_syncing": {
+            "type": "boolean",
+            "description": "Whether a run is going."
+          },
+          "phase": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Current phase: `artists`, `discovery`, `albums` or\n`audiodb_prewarm`. A phase with zero items was skipped."
+          },
+          "processed_albums": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Albums done.",
+            "minimum": 0
+          },
+          "processed_artists": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Artists done.",
+            "minimum": 0
+          },
+          "processed_items": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Items done in the current phase.",
+            "minimum": 0
+          },
+          "progress_percent": {
+            "type": "integer",
+            "format": "int32",
+            "description": "`processed_items` as a whole percentage of `total_items`.",
+            "minimum": 0
+          },
+          "started_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "When the run started, unix seconds."
+          },
+          "total_albums": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Library albums in this run.",
+            "minimum": 0
+          },
+          "total_artists": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Library artists in this run.",
+            "minimum": 0
+          },
+          "total_items": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Items in the current phase.",
+            "minimum": 0
           }
         }
       },

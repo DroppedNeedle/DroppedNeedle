@@ -249,7 +249,7 @@ const EDITION_PAGE: u32 = 100;
 const EDITION_PAGES: u32 = 5;
 
 impl Catalog {
-    fn group_key(&self, mbid: &str) -> String {
+    pub(super) fn group_key(&self, mbid: &str) -> String {
         let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
         format!("mb:rg:detail:{namespace}:{mbid}")
     }
@@ -693,13 +693,24 @@ impl Catalog {
     }
 
     async fn fetch_album_images(&self, group: &GroupDetail) -> Option<AlbumImages> {
+        self.album_images_lookup(group).await.flatten()
+    }
+
+    /// TheAudioDB images as a settled answer: `Some(None)` when AudioDB has
+    /// none (or is off), `None` when it could not answer.
+    pub(super) async fn album_images_lookup(
+        &self,
+        group: &GroupDetail,
+    ) -> Option<Option<AlbumImages>> {
         let advanced = self.upstream().settings().advanced();
-        let client = self.upstream().audiodb(&advanced)?;
+        let Some(client) = self.upstream().audiodb(&advanced) else {
+            return Some(None);
+        };
         let key = audiodb_album_key(&group.mbid);
         if let Some(bytes) = self.upstream().cache().get_bytes(&key).await
             && let Ok(entry) = serde_json::from_slice::<AudioDbAlbumEntry>(&bytes)
         {
-            return entry.images;
+            return Some(entry.images);
         }
         let mut outcome = client.album_by_mbid(&group.mbid).await;
         if matches!(outcome, crate::providers::audiodb::Outcome::Missing)
@@ -731,7 +742,7 @@ impl Catalog {
         }) {
             self.upstream().cache().set_bytes(&key, bytes, ttl).await;
         }
-        images
+        Some(images)
     }
 
     /// `GET /albums/{album_id}/editions`: every MusicBrainz release of the

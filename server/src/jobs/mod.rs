@@ -35,6 +35,7 @@
 //! boot loops ([`wiring::JobsSetup::spawn_loops`]); the plugins bundle
 //! shares the registry for its tick loops rather than running its own.
 
+pub mod cache_sync;
 pub mod checkpoint;
 pub mod discovery_demand;
 pub mod events_kick;
@@ -45,6 +46,7 @@ pub mod playlist_export;
 pub mod playlist_sync;
 pub mod plugin_ticks;
 pub mod precache;
+pub mod precache_phases;
 pub mod presence;
 pub mod registry;
 pub mod schedule;

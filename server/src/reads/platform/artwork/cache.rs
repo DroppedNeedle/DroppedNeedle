@@ -237,6 +237,46 @@ impl ArtworkCache {
         }
     }
 
+    /// Images held and their total size in bytes.
+    pub async fn usage(&self) -> (u64, u64) {
+        self.ensure_index().await;
+        self.lock()
+            .as_ref()
+            .map_or((0, 0), |index| (index.blobs.len() as u64, index.total))
+    }
+
+    /// Delete every image and key record (the admin "clear covers"). Art
+    /// is fetched or read again on the next request. Returns how many
+    /// images went.
+    pub async fn clear(&self) -> u64 {
+        self.ensure_index().await;
+        let cleared = {
+            let mut guard = self.lock();
+            let count = guard.as_ref().map_or(0, |index| index.blobs.len() as u64);
+            *guard = Some(Index {
+                last_full_clean: Some(Instant::now()),
+                ..Index::default()
+            });
+            count
+        };
+        let root = self.root.clone();
+        let removed = blocking(move || {
+            for dir in ["blobs", "keys"] {
+                let path = root.join(dir);
+                if let Err(error) = std::fs::remove_dir_all(&path)
+                    && error.kind() != std::io::ErrorKind::NotFound
+                {
+                    tracing::warn!(%error, path = %path.display(), "cover cache clear incomplete");
+                }
+            }
+        })
+        .await;
+        if removed.is_none() {
+            tracing::warn!("cover cache clear task failed");
+        }
+        cleared
+    }
+
     /// Load the blob index from disk once, by scanning the blob folders.
     async fn ensure_index(&self) {
         if self.lock().is_some() {

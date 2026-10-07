@@ -52,6 +52,9 @@ pub struct ReadsSetup {
     pub catalog: Option<catalog::CatalogDeps>,
     /// Covers/version/wrapped states.
     pub platform: platform::PlatformState,
+    /// The cover and artist image service behind `platform`, for the
+    /// precache and the cache admin. `None` on test states.
+    pub artwork: Option<platform::artwork::ArtworkService>,
     /// Saved YouTube links. Unwired until [`ReadsSetup::with_collections`]
     /// hands over the database.
     pub youtube: youtube::YouTubeLinks,
@@ -88,7 +91,7 @@ impl ReadsSetup {
             },
             ids.clone(),
         );
-        let platform = platform_state(pool, &users, inputs);
+        let (platform, artwork) = platform_state(pool, &users, inputs);
         let youtube = unwired_youtube(&discover, ids.clone());
         let library_db = library::sqlite::LibraryDb::new(pool);
         let catalog: Arc<dyn library::stores::LibraryCatalog> =
@@ -133,6 +136,7 @@ impl ReadsSetup {
             discover,
             collections: collections::CollectionsState::unwired(),
             catalog: None,
+            artwork: Some(artwork),
             platform,
             youtube,
         }
@@ -167,6 +171,7 @@ impl ReadsSetup {
             collections: collections::CollectionsState::unwired(),
             catalog: None,
             platform: test_platform_state(),
+            artwork: None,
         })
     }
 
@@ -194,6 +199,16 @@ impl ReadsSetup {
     #[must_use]
     pub fn with_catalog(mut self, catalog: catalog::Catalog) -> Self {
         let catalog = catalog.with_follows(Arc::new(CollectionsFollows(self.collections.clone())));
+        if let Some(artwork) = &self.artwork
+            && artwork
+                .artist_source_slot()
+                .set(Arc::new(catalog::precache::CatalogArtistImages(
+                    catalog.clone(),
+                )))
+                .is_err()
+        {
+            tracing::warn!("artist image source was already set");
+        }
         self.search.service = self.search.service.clone().with_remote(catalog.clone());
         self.catalog = Some(catalog::CatalogDeps {
             catalog,
@@ -333,20 +348,27 @@ pub struct ReadsInputs {
     pub discover_warmer: bool,
 }
 
-/// Production platform states: local and Cover Art Archive art through
-/// the disk cache, GitHub releases for the version check, and wrapped from
-/// ListenBrainz behind the configured key.
+/// Production platform states: local and Cover Art Archive art (plus
+/// artist images, once the catalog names their sources) through the disk
+/// cache, GitHub releases for the version check, and wrapped from
+/// ListenBrainz behind the configured key. The artwork service comes back
+/// too, for the precache and the cache admin.
 fn platform_state(
     pool: &sqlx::SqlitePool,
     users: &UsersDeps,
     inputs: ReadsInputs,
-) -> platform::PlatformState {
+) -> (platform::PlatformState, platform::artwork::ArtworkService) {
     use crate::providers::adapters::{CorePacer, CoreSink};
     use crate::providers::coverart::ReqwestCaaTransport;
     use crate::providers::github::GitHubClient;
     use crate::providers::listenbrainz::{DEFAULT_BASE_URL, ListenBrainzClient};
     use platform::{
-        artwork::{ArtworkService, cache::ArtworkCache, local::LocalArtwork, remote::cover_client},
+        artwork::{
+            ArtworkService,
+            cache::ArtworkCache,
+            local::LocalArtwork,
+            remote::{HttpImages, cover_client},
+        },
         covers::CoversState,
         listenbrainz_wrapped::ListenBrainzWrapped,
         version::{GitHubReleases, VersionState},
@@ -367,10 +389,11 @@ fn platform_state(
         ArtworkCache::new(inputs.covers_dir, inputs.cover_cache_max_bytes),
         LocalArtwork::new(pool.clone()),
         Some(Arc::new(cover_client(ReqwestCaaTransport::new(
-            inputs.no_redirect,
+            inputs.no_redirect.clone(),
         )))),
         prefer_local,
-    );
+    )
+    .with_images(Arc::new(HttpImages::new(inputs.no_redirect)));
     let wrapped: Arc<dyn WrappedData> =
         match CorePacer::for_source(inputs.providers.clone(), "listenbrainz") {
             Some(pacer) => Arc::new(ListenBrainzWrapped::new(
@@ -383,13 +406,14 @@ fn platform_state(
                 Arc::new(platform::wrapped::NoWrappedData)
             }
         };
-    platform::PlatformState::new(
-        CoversState::new(Arc::new(artwork)),
+    let state = platform::PlatformState::new(
+        CoversState::new(Arc::new(artwork.clone())),
         VersionState::new(Arc::new(GitHubReleases::new(GitHubClient::new(
             inputs.http,
         )))),
         WrappedState::new(ConfigWrappedKey::new(inputs.config), wrapped),
-    )
+    );
+    (state, artwork)
 }
 
 /// Test platform states: no art, a tagged build, and wrapped denying
