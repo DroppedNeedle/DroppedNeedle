@@ -257,6 +257,7 @@ With `BASE_PATH` set, everything moves under it: the web UI, `/api/v3`, the Subs
 | Variable | Default | What it is |
 |-|-|-|
 | `CONTACT_EMAIL` | `contact@droppedneedle.com` | Contact address in the outbound User-Agent; MusicBrainz asks for one, so set your own if you run many lookups |
+| `DISCOVER_WARMER_ENABLED` | `true` | Keeps each user's Discover page and discover queue fresh in the background while they use them. `false` builds them only when someone opens the page |
 | `SHUTDOWN_GRACE_PERIOD` | `10` | Seconds to finish open requests and stop background work on shutdown |
 | `HTTP_TIMEOUT` | `30` | Outbound request timeout, seconds |
 | `HTTP_CONNECT_TIMEOUT` | `10` | Outbound connect timeout, seconds |
@@ -310,9 +311,11 @@ Where things live in the UI:
 | Home layout, release types, MusicBrainz source | Settings > Preferences |
 | Users, roles, Jellyfin and Plex user import | Settings > Users |
 | Password breach checking, HSTS, who can download library files | Settings > Security |
-| Discover queue size, freshness and tuning | Settings > Advanced |
+| Discover queue and top picks tuning | Settings > Advanced |
 
 Album covers come from your own files first: an image in the album folder (`cover.jpg`, `folder.png`, `front.jpg` and the like) or a picture embedded in a track. The library picks these up after each scan, and large pictures are scaled down for the grid. Albums without local art get their cover from the Cover Art Archive, cached on disk. To prefer the Cover Art Archive over your files, turn off "Prefer local cover art" under Settings > Advanced.
+
+The Discover page fills its shelves from your listening history: top picks for you, "because you listen to" rows, artists you might like, fresh releases, albums missing from your favourite artists, artists to rediscover from your Jellyfin plays, popular albums in your genres, daily mixes, radio stations, your ListenBrainz weekly exploration and what listeners like you play, anniversaries and new releases from artists you follow, plus global trends and your Last.fm weekly charts when Last.fm is linked. Albums you own are marked. The page is built in the background, so opening it never waits: you see the last page right away, and a page older than five minutes rebuilds while you look at it and swaps in when it is done. The Refresh button starts a fresh build. The last good page is saved, so it survives a restart. While you keep using Discover, the server rebuilds your page and your discover queue every six hours in the background; it stops a day after your last visit. Set `DISCOVER_WARMER_ENABLED=false` to turn that background work off. How many top picks you get and how much your genres weigh in them are under Settings > Advanced.
 
 The discover queue on the Discover page deals you albums one at a time. It is built in the background from what you listen to: artists similar to your top artists, your genres, fresh releases, artists you love on ListenBrainz and lesser-played albums by your favourites, with a couple of trending picks mixed in. Last.fm users get similar artists and charts from Last.fm instead, and your Jellyfin most played and favourite artists fill in when ListenBrainz has too little history. Without any of them the queue is trending albums. Albums already in your library are left out. Ignore an album and it stays out of every future queue for a year (the retention is under Settings > Advanced). To hide the queue, switch it off under Settings > Discover. A built queue survives a restart and counts as stale after its freshness window (24 hours by default), after which the page builds a new one.
 
