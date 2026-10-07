@@ -14,16 +14,8 @@
 // Preference-step labels
 // ---------------------------------------------------------------------------
 
-export type QualityStepEvidence = {
-	/** Index of this candidate/task inside the accepted preference order. */
-	preference_step?: number | null;
-	/** Length of the accepted preference order the step indexes into. */
-	preference_steps_total?: number | null;
-	certainty?: string | null;
-};
-
 /**
- * Step-index label used on task cards and review candidates.
+ * Step-index label used on task cards.
  * - step 0 -> "Preferred"
  * - step n -> "Fallback n"
  * - step null/negative/out of [0, total) -> "Outside policy"
@@ -39,25 +31,6 @@ export function labelForQualityStep(
 		return 'Outside policy';
 	}
 	return step === 0 ? 'Preferred' : `Fallback ${step}`;
-}
-
-/**
- * Quality text label for a review candidate. Legacy candidate blobs written
- * before snapshots carry no preference_step (`undefined`): fall back to a
- * conservative "Within policy" ("Unknown" only when certainty says so).
- * `null` means the backend computed the step and found no accepted match.
- */
-export function candidateQualityLabel(evidence?: QualityStepEvidence | null): string {
-	const provided = evidence !== null && evidence !== undefined;
-	if (!provided || evidence.preference_step === undefined) {
-		if (provided && evidence.certainty === 'unknown') return 'Unknown';
-		return 'Within policy';
-	}
-	if (evidence.certainty === 'unknown') return 'Unknown';
-	return labelForQualityStep(
-		evidence.preference_step ?? null,
-		evidence.preference_steps_total ?? null
-	);
 }
 
 // ---------------------------------------------------------------------------
@@ -275,6 +248,3 @@ export function classifyEmptyState(task: EmptyStateSource): AcquisitionEmptyStat
 	if (lower.trim()) return 'source-failure';
 	return null;
 }
-
-/** Reason copy attached to hard-blocked (unimportable) review candidates. */
-export const BLOCKED_PICK_REASON = 'Blocked: outside the accepted quality policy.';

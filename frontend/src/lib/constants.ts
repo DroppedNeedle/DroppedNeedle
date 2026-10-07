@@ -365,11 +365,6 @@ export const API = {
 		discard: (itemId: number) => `/api/v1/import/items/${itemId}/discard`
 	},
 	downloads: {
-		searchAlbum: () => '/api/v1/downloads/search/album',
-		searchJob: (jobId: string) => `/api/v1/downloads/search/${jobId}`,
-		pick: (jobId: string) => `/api/v1/downloads/search/${jobId}/pick`,
-		dismissReview: (jobId: string) => `/api/v1/downloads/search/${jobId}/dismiss`,
-		cancelSearch: (jobId: string) => `/api/v1/downloads/search/${jobId}/cancel`,
 		held: (releaseGroupMbid?: string) => {
 			const params = new URLSearchParams();
 			if (releaseGroupMbid) params.set('release_group_mbid', releaseGroupMbid);

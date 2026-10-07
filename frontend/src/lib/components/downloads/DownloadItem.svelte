@@ -5,6 +5,7 @@
 		ExternalLink,
 		FileDown,
 		RotateCcw,
+		Search,
 		TimerOff,
 		TriangleAlert,
 		X
@@ -18,6 +19,7 @@
 		stopAutoRetry
 	} from '$lib/queries/downloads/DownloadMutations.svelte';
 	import { createDownloadStream } from '$lib/queries/downloads/DownloadSSE.svelte';
+	import { startAlbumSearch } from '$lib/queries/downloads/SearchQueries.svelte';
 	import {
 		canCancel,
 		canReimport,
@@ -34,7 +36,7 @@
 	import DownloadReasonNote from './DownloadReasonNote.svelte';
 	import DownloadSourceStatus from './DownloadSourceStatus.svelte';
 	import DownloadStatusBadge from './DownloadStatusBadge.svelte';
-	import ReviewCandidates from './ReviewCandidates.svelte';
+	import ManualSearch from './ManualSearch.svelte';
 	import VinylProgress from './VinylProgress.svelte';
 
 	let { task }: { task: DownloadTask } = $props();
@@ -43,6 +45,7 @@
 	const retry = retryDownload();
 	const stopRetry = stopAutoRetry();
 	const reimport = reimportDownload();
+	const search = startAlbumSearch();
 	const stream = createDownloadStream();
 
 	// A failed/partial task waiting on its next auto-retry: offer an off-switch so the
@@ -75,7 +78,33 @@
 	const livePct = $derived(progress?.progress_percent ?? task.progress_percent);
 	const isOwnedByOther = $derived(authStore.isAdmin && task.user_id !== authStore.user?.id);
 
+	// A task parked on a search job waits for a pick from that job.
+	const parkedJobId = $derived(
+		isReview && !task.held_for_review && task.search_job_id ? task.search_job_id : null
+	);
 	let reviewOpen = $state(false);
+	// A manual search started from this row (failed, cancelled or partial
+	// album downloads): every source's candidates for the album, to pick from.
+	let manualJobId = $state<string | null>(null);
+	const canSearchManually = $derived(
+		canRetry(task) && task.download_type !== 'track' && !!task.release_group_mbid
+	);
+	function onSearchManually() {
+		search.mutate(
+			{
+				artist_name: task.artist_name,
+				album_title: task.album_title,
+				year: task.year,
+				release_group_mbid: task.release_group_mbid,
+				release_mbid: task.release_mbid
+			},
+			{
+				onSuccess: (data) => {
+					if (data.job_id) manualJobId = data.job_id;
+				}
+			}
+		);
+	}
 	// Once retry is clicked the row is about to move to the active queue (the failed task
 	// is superseded by a new attempt); keep the button disabled until then so a second
 	// click can't spawn a duplicate. Reset only if the retry call itself fails.
@@ -193,7 +222,7 @@
 		</div>
 
 		<div class="flex shrink-0 flex-col items-end gap-1.5">
-			{#if isReview}
+			{#if parkedJobId}
 				<button
 					class="btn btn-primary btn-xs"
 					onclick={() => (reviewOpen = !reviewOpen)}
@@ -235,6 +264,18 @@
 					{reimport.isPending ? 'Checking...' : 'Retry import'}
 				</button>
 			{/if}
+			{#if canSearchManually}
+				<button
+					class="btn btn-ghost btn-xs"
+					onclick={onSearchManually}
+					disabled={search.isPending || manualJobId !== null}
+					title="Search every download source for this album and choose the copy yourself"
+					aria-label="Search sources and pick a copy"
+				>
+					<Search class="h-3.5 w-3.5" />
+					{search.isPending ? 'Starting…' : 'Pick a source'}
+				</button>
+			{/if}
 			{#if canRetry(task)}
 				<button
 					class="btn btn-ghost btn-primary btn-xs"
@@ -270,8 +311,10 @@
 		</div>
 	</div>
 
-	{#if isReview && reviewOpen}
-		<ReviewCandidates {task} />
+	{#if parkedJobId && reviewOpen}
+		<ManualSearch jobId={parkedJobId} onClose={() => (reviewOpen = false)} />
+	{:else if manualJobId}
+		<ManualSearch jobId={manualJobId} onClose={() => (manualJobId = null)} />
 	{/if}
 </article>
 

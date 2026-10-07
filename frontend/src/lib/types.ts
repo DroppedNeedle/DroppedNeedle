@@ -2013,51 +2013,6 @@ export interface QualityRecipeEntry {
 export interface SourcePriority {
 	order: string[];
 }
-export type CodecFamily = 'lossy' | 'lossless' | 'unknown';
-export type EvidenceCertainty = 'exact' | 'partial' | 'inferred' | 'unknown';
-export type EvidenceProvenance =
-	| 'local_probe'
-	| 'source_metadata'
-	| 'archive_format'
-	| 'release_title'
-	| 'category'
-	| 'format_only'
-	| 'none';
-
-export interface AudioQualityEvidence {
-	extension: string;
-	codec_family: CodecFamily;
-	bitrate_kbps: number | null;
-	bit_depth: number | null;
-	sample_rate_hz: number | null;
-	total_bytes: number | null;
-	audio_file_count: number;
-	mixed_format: boolean;
-	mixed_quality: boolean;
-	certainty: EvidenceCertainty;
-	provenance: EvidenceProvenance;
-}
-
-export interface QualityDecision {
-	eligible: boolean;
-	disposition: string;
-	tier: string | null;
-	preference_step: number | null;
-	quality_recipe_index: number | null;
-	quality_recipe_entry: QualityRecipeEntry | null;
-	lossless_detail_step: number | null;
-	evidence: AudioQualityEvidence;
-	reasons: string[];
-	summary: string;
-}
-
-export interface QualityRejectionSummary {
-	outside_policy: number;
-	unknown_rejected: number;
-	not_importable: number;
-	needs_review: number;
-}
-
 export type QualityRecipeStatus = 'v1' | 'v2' | 'non_convertible' | 'invalid';
 
 export interface DownloadPolicySettings {
@@ -2106,70 +2061,6 @@ export interface WantedWatcherSettings {
 	watch_partial_albums: boolean;
 	max_checks_per_sweep: number;
 	dormant_after_days: number;
-}
-export interface DownloadSearchResultFile {
-	username: string;
-	filename: string;
-	parent_directory: string;
-	size: number;
-	extension: string;
-	bitrate?: number | null;
-	bit_depth?: number | null;
-	sample_rate?: number | null;
-	duration?: number | null;
-	has_free_slot: boolean;
-	upload_speed: number;
-	queue_length?: number | null;
-}
-export type CandidateTier = 'auto' | 'manual' | 'rejected';
-export interface UsenetRelease {
-	indexer_id: string;
-	indexer_name: string;
-	guid: string;
-	title: string;
-	nzb_url: string;
-	size_bytes: number;
-	category_ids: number[];
-	grabs?: number | null;
-	files?: number | null;
-	usenet_date?: number | null;
-}
-
-export interface PluginFileRef {
-	username: string;
-	filename: string;
-	size: number;
-}
-
-// Hand-mirrors backend PluginSearchResult (repositories/protocols/indexer.py).
-export interface PluginSearchResult {
-	title: string;
-	size_bytes: number;
-	score: number;
-	quality_tier: string;
-	files: PluginFileRef[];
-	payload: string;
-}
-
-export interface ScoredCandidate {
-	// "soulseek" | "usenet" | "plugin:<name>" - selects the review-card variant (D16). Optional for
-	// backward-compat with older cached candidate blobs (default soulseek).
-	source?: string;
-	username: string;
-	parent_directory: string;
-	files: DownloadSearchResultFile[];
-	usenet_release?: UsenetRelease | null;
-	// Plugin release for a "plugin:<name>" candidate; null for soulseek/usenet.
-	// Optional for backward-compat with older cached candidate blobs.
-	plugin_release?: PluginSearchResult | null;
-	coherence: number;
-	file_confidence: number;
-	final_score: number;
-	tier: CandidateTier;
-	track_overlap?: number | null;
-	candidate_index?: number | null;
-	quality_evidence?: AudioQualityEvidence | null;
-	quality_decision?: QualityDecision | null;
 }
 
 // Hand-mirrors backend PluginSourceInfo (api/v1/schemas/plugins.py).
@@ -2225,34 +2116,6 @@ export interface PluginUiRpcResponse {
 	ok: boolean;
 	result: unknown;
 	error: string | null;
-}
-
-export interface SearchAlbumResponse {
-	status: string;
-	job_id: string | null;
-}
-
-export interface SearchJobView {
-	job_id: string;
-	status: string;
-	artist_name: string;
-	album_title: string;
-	candidate_count: number;
-	top_score?: number | null;
-	quality_snapshot_summary?: string | null;
-	quality_rejections: QualityRejectionSummary;
-	candidates: ScoredCandidate[];
-}
-
-export interface PickResponse {
-	task_id: string;
-}
-
-// Hand-mirrors backend DismissReviewResponse (api/v1/schemas/download.py):
-// "None of these - keep watching" put the album on the wanted watchlist.
-export interface DismissReviewResponse {
-	success: boolean;
-	state: string;
 }
 
 export type DownloadStatus =

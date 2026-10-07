@@ -4,7 +4,7 @@ import { v3 } from '$lib/api/v3/endpoint';
 // built through the typed registry: every template is a literal the
 // contract-coverage gate verifies against the generated spec, and hooks
 // import from here so a route rename touches this file only.
-// Held/search/upgrade surfaces have no v3 HTTP equivalent yet and stay on
+// Held and upgrade surfaces have no v3 HTTP equivalent yet and stay on
 // their v1 builders until they land.
 export const DOWNLOAD_SETTINGS_ENDPOINTS = {
 	slskdConfig: () => v3('/api/v3/settings/download-client/config'),
@@ -56,4 +56,17 @@ export const DOWNLOAD_TASKS_ENDPOINTS = {
 	quarantine: () => v3('/api/v3/downloads/quarantine'),
 	quarantineDelete: (id: number) =>
 		v3('/api/v3/downloads/quarantine/{quarantine_id}', { path: { quarantine_id: id } })
+} as const;
+
+// v3 manual album search URLs: start a search, read a job and its
+// candidates, pick one, dismiss ("none of these, keep watching") or close.
+// Progress arrives as `search_job_updated` on the shared event stream.
+const byJob = (jobId: string) => ({ path: { job_id: jobId } });
+
+export const DOWNLOAD_SEARCH_ENDPOINTS = {
+	start: () => v3('/api/v3/downloads/search/album'),
+	job: (jobId: string) => v3('/api/v3/downloads/search/{job_id}', byJob(jobId)),
+	pick: (jobId: string) => v3('/api/v3/downloads/search/{job_id}/pick', byJob(jobId)),
+	dismiss: (jobId: string) => v3('/api/v3/downloads/search/{job_id}/dismiss', byJob(jobId)),
+	cancel: (jobId: string) => v3('/api/v3/downloads/search/{job_id}/cancel', byJob(jobId))
 } as const;
