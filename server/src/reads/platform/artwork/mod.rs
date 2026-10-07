@@ -47,7 +47,9 @@ use std::time::Duration;
 use futures_util::future::BoxFuture;
 
 use crate::providers::Singleflight;
-use crate::providers::coverart::{DownloadSize, EntityKind, sniff_image_content_type};
+use crate::providers::coverart::{
+    ArtworkBytes, DownloadSize, EntityKind, sniff_image_content_type,
+};
 use crate::reads::platform::covers::{CoverArt, CoverBytes, CoverLookup};
 
 use self::cache::{ArtworkCache, KeyEntry, unix_now};
@@ -244,7 +246,7 @@ impl ArtworkService {
     /// True when `key` holds an image still on disk, or a fresh miss.
     async fn settled(&self, key: &str) -> bool {
         match self.cache.key(key).await {
-            Some(KeyEntry::Hit { hash, .. }) => self.cache.blob(&hash).await.is_some(),
+            Some(KeyEntry::Hit { hash, .. }) => self.cache.has_blob(&hash).await,
             Some(KeyEntry::Miss { until }) => until > unix_now(),
             None => false,
         }
@@ -595,17 +597,45 @@ fn artist_key(mbid: &str) -> String {
 
 /// Cache key of TheAudioDB's thumbnail for a release group.
 fn audiodb_cover_key(mbid: &str) -> String {
-    format!("audiodb:release-group:{}", mbid.trim().to_ascii_lowercase())
+    format!(
+        "{}release-group:{}",
+        self::cache::AUDIODB_KEY_PREFIX,
+        mbid.trim().to_ascii_lowercase()
+    )
 }
 
-/// Snap a requested artist image width to the renditions kept (250, 500,
-/// 1200); anything larger, or no width, is full size.
+/// Largest artist image kept: downloads are scaled down to this before
+/// they are stored, so artist pictures do not crowd covers out of the
+/// size-bounded cache.
+pub const ARTIST_STORED_MAX: u32 = 1200;
+
+/// Snap a requested artist image width to the renditions kept (250, 500);
+/// anything larger, or no width, is the stored image.
 fn artist_size(size_px: Option<u32>) -> Option<&'static str> {
     match size_px? {
         0..=250 => Some("250"),
         251..=500 => Some("500"),
-        501..=1200 => Some("1200"),
         _ => None,
+    }
+}
+
+/// An artist image scaled down to [`ARTIST_STORED_MAX`], off the async
+/// workers. Images already small enough, or that cannot be decoded, stay
+/// as downloaded.
+async fn shrink_artist_image(art: ArtworkBytes) -> ArtworkBytes {
+    let source = art.bytes.clone();
+    match tokio::task::spawn_blocking(move || resize::shrink_to_fit(&source, ARTIST_STORED_MAX))
+        .await
+    {
+        Ok(Some((bytes, content_type))) => ArtworkBytes {
+            bytes,
+            content_type: content_type.to_owned(),
+        },
+        Ok(None) => art,
+        Err(error) => {
+            tracing::error!(%error, "artist image resize task failed; keeping the download");
+            art
+        }
     }
 }
 
@@ -623,6 +653,7 @@ async fn resolve_artist(
     for url in &candidates.urls {
         match images.fetch(url).await {
             ImageFetch::Found(art) => {
+                let art = shrink_artist_image(art).await;
                 let hash = cache
                     .put(Some(key), art.bytes.clone(), &art.content_type)
                     .await;

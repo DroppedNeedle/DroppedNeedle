@@ -33,6 +33,10 @@ use super::cache_sync::CacheSyncStatus;
 use super::precache::{PrecacheOutcome, PrecacheWork, Progress};
 use super::registry::BoxFuture;
 
+/// Cache checks between two watchdog beats while a phase sorts out what
+/// still needs fetching.
+pub const CHECK_BEAT_EVERY: usize = 25;
+
 /// One library artist.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LibraryArtist {
@@ -242,6 +246,15 @@ struct Run<'a> {
 }
 
 impl Run<'_> {
+    /// Count one cache check. A large, fully cached library takes a while
+    /// to check, so every [`CHECK_BEAT_EVERY`] checks count as progress for
+    /// the stall watchdog.
+    fn checked(&self, index: usize) {
+        if index % CHECK_BEAT_EVERY == 0 {
+            self.progress.beat(None);
+        }
+    }
+
     fn skip(&self, phase: &str) {
         self.progress.beat(Some(phase));
         self.status.phase(self.generation, phase, 0);
@@ -254,7 +267,8 @@ impl Run<'_> {
 
     async fn artists(&self, artists: &[LibraryArtist]) {
         let mut needed = Vec::new();
-        for artist in artists {
+        for (index, artist) in artists.iter().enumerate() {
+            self.checked(index);
             if !self.sources.artist_cached(artist).await {
                 needed.push(artist);
             }
@@ -312,7 +326,8 @@ impl Run<'_> {
 
     async fn albums(&self, albums: &[LibraryAlbum]) {
         let mut needed = Vec::new();
-        for album in albums {
+        for (index, album) in albums.iter().enumerate() {
+            self.checked(index);
             if !self.sources.album_cached(album).await {
                 needed.push(album);
             }
@@ -362,13 +377,15 @@ impl Run<'_> {
             return self.skip("audiodb_prewarm");
         }
         let mut needed_artists = Vec::new();
-        for artist in artists {
+        for (index, artist) in artists.iter().enumerate() {
+            self.checked(index);
             if !self.sources.audiodb_artist_cached(artist).await {
                 needed_artists.push(artist);
             }
         }
         let mut needed_albums = Vec::new();
-        for album in albums {
+        for (index, album) in albums.iter().enumerate() {
+            self.checked(index);
             if !self.sources.audiodb_album_cached(album).await {
                 needed_albums.push(album);
             }

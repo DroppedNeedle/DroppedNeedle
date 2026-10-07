@@ -88,7 +88,7 @@ pub struct CacheStatsResponse {
 pub struct CacheClearBody {
     /// `all` (default: provider responses and images), `source` (one
     /// provider's responses), `covers` (cover and artist images only) or
-    /// `audiodb` (TheAudioDB answers only).
+    /// `audiodb` (TheAudioDB answers and album thumbnails).
     #[serde(default)]
     pub scope: Option<String>,
     /// Source name when `scope` is `source`.
@@ -105,7 +105,8 @@ pub struct CacheClearResponse {
     pub cleared_entries: usize,
     /// Entries left behind.
     pub remaining_entries: usize,
-    /// Cover and artist images deleted from disk.
+    /// Cover and artist images deleted from disk (for the `audiodb`
+    /// scope, AudioDB album thumbnails forgotten).
     pub cleared_cover_images: u64,
 }
 

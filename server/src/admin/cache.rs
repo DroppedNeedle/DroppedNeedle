@@ -61,7 +61,13 @@ pub async fn clear_cache(
     let (cleared, cleared_cover_images) = match scope {
         "all" => (store.clear_prefix("").await, clear_covers().await),
         "covers" => (0, clear_covers().await),
-        "audiodb" => (invalidate_source(store, "audiodb").await, 0),
+        "audiodb" => {
+            let thumbnails = match covers {
+                Some(covers) => covers.clear_audiodb().await,
+                None => 0,
+            };
+            (invalidate_source(store, "audiodb").await, thumbnails)
+        }
         "source" => {
             let source = body.source.as_deref().unwrap_or("").trim();
             if source.is_empty() {
@@ -92,6 +98,9 @@ pub async fn clear_cache(
     };
     let message = match scope {
         "covers" => format!("Cleared {cleared_cover_images} cached images"),
+        "audiodb" => {
+            format!("Cleared {entries} and {cleared_cover_images} AudioDB album thumbnails")
+        }
         "all" => format!("Cleared {entries} and {cleared_cover_images} cached images"),
         _ => format!("Cleared {entries}"),
     };

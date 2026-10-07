@@ -156,12 +156,19 @@ pub struct WireQueryResponse {
     pub query: Option<WireQuery>,
 }
 
+/// Width Commons scales artist portraits to: big enough for any artist
+/// header, without downloading multi-megabyte originals.
+pub const COMMONS_THUMB_WIDTH: &str = "1200";
+
 /// One Commons imageinfo row on the wire.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct WireImageInfo {
     /// Direct file URL.
     #[serde(default)]
     pub url: Option<String>,
+    /// Scaled thumbnail URL, when one was asked for (`iiurlwidth`).
+    #[serde(default)]
+    pub thumburl: Option<String>,
 }
 
 /// One Commons page on the wire.
@@ -305,10 +312,16 @@ pub fn select_commons_url(page: &WireCommonsResponse) -> Option<String> {
         if entry.imageinfo.is_empty() {
             continue;
         }
+        // The scaled thumbnail when Commons made one, else the original.
         return entry
             .imageinfo
             .first()
-            .and_then(|info| info.url.clone())
+            .and_then(|info| {
+                info.thumburl
+                    .clone()
+                    .filter(|url| !url.is_empty())
+                    .or_else(|| info.url.clone())
+            })
             .filter(|url| !url.is_empty());
     }
     None
@@ -469,6 +482,7 @@ impl<'h, H: HttpPort> WikidataClient<'h, H> {
                     ("titles", titles.as_str()),
                     ("prop", "imageinfo"),
                     ("iiprop", "url"),
+                    ("iiurlwidth", COMMONS_THUMB_WIDTH),
                     ("format", "json"),
                 ],
             )

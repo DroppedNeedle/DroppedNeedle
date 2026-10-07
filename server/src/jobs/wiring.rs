@@ -224,6 +224,7 @@ pub struct PrecacheTrigger {
     config: Option<Arc<ConfigStore>>,
     status: CacheSyncStatus,
     sources: Option<Arc<dyn PrecacheSources>>,
+    closed: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl PrecacheTrigger {
@@ -269,7 +270,10 @@ impl PrecacheTrigger {
             let latest = Arc::clone(&latest);
             runtime.spawn(async move {
                 tokio::time::sleep(SCAN_PRECACHE_DEBOUNCE).await;
-                if latest.load(Ordering::SeqCst) != ticket {
+                // A newer scan restarted the wait, or the server is
+                // shutting down: no run from this timer.
+                if latest.load(Ordering::SeqCst) != ticket || trigger.closed.load(Ordering::SeqCst)
+                {
                     return;
                 }
                 match trigger.run(None).await {
@@ -355,6 +359,7 @@ pub struct JobsSetup {
     demand: Arc<dyn DemandTick>,
     cache_sync: CacheSyncStatus,
     precache_sources: Option<Arc<dyn PrecacheSources>>,
+    closed: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl JobsSetup {
@@ -395,6 +400,7 @@ impl JobsSetup {
             demand: Arc::new(NoDemand),
             cache_sync: CacheSyncStatus::default(),
             precache_sources: None,
+            closed: Default::default(),
         }
     }
 
@@ -468,6 +474,7 @@ impl JobsSetup {
             demand: Arc::new(NoDemand),
             cache_sync: CacheSyncStatus::default(),
             precache_sources: None,
+            closed: Default::default(),
         }
     }
 
@@ -486,6 +493,7 @@ impl JobsSetup {
             config: self.config.clone(),
             status: self.cache_sync.clone(),
             sources: self.precache_sources.clone(),
+            closed: Arc::clone(&self.closed),
         }
     }
 
@@ -571,6 +579,8 @@ impl JobsSetup {
     /// plugin ticks; `plugin-tick:*` shares this registry), each with the
     /// same grace. Shutdown calls this before awaiting the loops.
     pub async fn cancel_all(&self, grace: Duration) {
+        // Pending post-scan timers must not start a run once shutdown began.
+        self.closed.store(true, std::sync::atomic::Ordering::SeqCst);
         self.registry.cancel_all(grace).await;
     }
 }

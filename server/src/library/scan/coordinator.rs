@@ -182,6 +182,8 @@ pub struct ScanEvent {
     pub event_revision: u64,
     pub state: ScanState,
     pub event: String,
+    /// Whether the run indexed, added, changed or lost any file so far.
+    pub changed: bool,
 }
 
 /// Durable-revision scan invalidations with counter-rate throttling (v2
@@ -219,6 +221,14 @@ impl ScanEventPublisher {
             last.remove(&run.id);
         }
         drop(last);
+        let changed = [
+            counter_names::NEW,
+            counter_names::CHANGED,
+            counter_names::INDEXED,
+            counter_names::MISSING,
+        ]
+        .iter()
+        .any(|name| run.counters.get(*name).copied().unwrap_or(0) > 0);
         (self.sink)(ScanEvent {
             id: format!("scan:{stream_revision}"),
             stream_kind: "scan".to_owned(),
@@ -228,6 +238,7 @@ impl ScanEventPublisher {
             event_revision: run.event_revision,
             state: run.state,
             event: event.to_owned(),
+            changed,
         });
         true
     }

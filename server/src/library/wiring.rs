@@ -115,7 +115,8 @@ pub struct LibraryRecovery {
 // Bundle.
 // ---------------------------------------------------------------------------
 
-/// What runs after a scan completes. Boot fills it once the jobs exist;
+/// What runs after a scan that changed the library completes. Boot fills
+/// it once the jobs exist;
 /// until then completed scans call nothing.
 pub type ScanCompletedSlot = Arc<std::sync::OnceLock<Arc<dyn Fn() + Send + Sync>>>;
 
@@ -407,6 +408,7 @@ impl LibrarySetup {
                 scan_events.poke_activity();
                 if event.state == crate::library::scan::models::ScanState::Completed
                     && event.event == "scan.transition"
+                    && event.changed
                     && let Some(hook) = completed_hook.get()
                 {
                     hook();

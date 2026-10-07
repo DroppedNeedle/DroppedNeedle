@@ -7,7 +7,9 @@
 //!   found in a folder and served through two routes, is stored once.
 //! - `keys/<aa>/<key hash>`: a small text record mapping a lookup key (for
 //!   example `caa:release-group:<mbid>:500`) to a blob, or recording that
-//!   the archive had no art until a given time.
+//!   the archive had no art until a given time. TheAudioDB album
+//!   thumbnails keep theirs under `keys-audiodb/` instead, so they can be
+//!   forgotten on their own.
 //!
 //! When the blobs pass `COVER_CACHE_MAX_SIZE_MB` the least recently used
 //! ones are deleted. A key whose blob was evicted reads as a miss, so the
@@ -26,6 +28,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Least time between two full passes over the key records.
 const FULL_CLEAN_EVERY: Duration = Duration::from_secs(3600);
+/// Key records, by key hash.
+const KEYS_DIR: &str = "keys";
+/// Key records of TheAudioDB album thumbnails, kept apart so the AudioDB
+/// clear can drop them without touching other art.
+const AUDIODB_KEYS_DIR: &str = "keys-audiodb";
+/// Keys that live in [`AUDIODB_KEYS_DIR`].
+pub const AUDIODB_KEY_PREFIX: &str = "audiodb:";
 
 use sha2::{Digest as _, Sha256};
 
@@ -118,6 +127,16 @@ impl ArtworkCache {
         let path = self.key_path(key);
         let text = blocking(move || std::fs::read_to_string(path).ok()).await??;
         parse_key(&text)
+    }
+
+    /// Whether a blob is on disk, by a metadata check only: no read, and
+    /// its place in the eviction order stays as it was.
+    pub async fn has_blob(&self, hash: &str) -> bool {
+        if !is_hash(hash) {
+            return false;
+        }
+        let path = self.blob_path(hash);
+        blocking(move || path.is_file()).await.unwrap_or(false)
     }
 
     /// Read a blob by content hash, marking it recently used.
@@ -261,7 +280,7 @@ impl ArtworkCache {
         };
         let root = self.root.clone();
         let removed = blocking(move || {
-            for dir in ["blobs", "keys"] {
+            for dir in ["blobs", KEYS_DIR, AUDIODB_KEYS_DIR] {
                 let path = root.join(dir);
                 if let Err(error) = std::fs::remove_dir_all(&path)
                     && error.kind() != std::io::ErrorKind::NotFound
@@ -275,6 +294,24 @@ impl ArtworkCache {
             tracing::warn!("cover cache clear task failed");
         }
         cleared
+    }
+
+    /// Forget every TheAudioDB album thumbnail (the admin "clear AudioDB").
+    /// Their key records go at once; the images themselves age out of the
+    /// cache like any unused image. Returns how many records went.
+    pub async fn clear_audiodb(&self) -> u64 {
+        let dir = self.root.join(AUDIODB_KEYS_DIR);
+        blocking(move || {
+            let count = count_files(&dir);
+            if let Err(error) = std::fs::remove_dir_all(&dir)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::warn!(%error, path = %dir.display(), "AudioDB thumbnail clear incomplete");
+            }
+            count
+        })
+        .await
+        .unwrap_or(0)
     }
 
     /// Load the blob index from disk once, by scanning the blob folders.
@@ -316,9 +353,18 @@ impl ArtworkCache {
             index.last_full_clean = Some(Instant::now());
             index.blobs.keys().cloned().collect()
         };
-        let keys_dir = self.root.join("keys");
-        let Some((removed, kept)) =
-            blocking(move || clean_key_files(&keys_dir, &live, unix_now())).await
+        let root = self.root.clone();
+        let Some((removed, kept)) = blocking(move || {
+            let mut removed = 0;
+            let mut kept = Vec::new();
+            for dir in [KEYS_DIR, AUDIODB_KEYS_DIR] {
+                let (gone, held) = clean_key_files(&root.join(dir), &live, unix_now());
+                removed += gone;
+                kept.extend(held);
+            }
+            (removed, kept)
+        })
+        .await
         else {
             return;
         };
@@ -397,7 +443,12 @@ impl ArtworkCache {
     fn key_path(&self, key: &str) -> PathBuf {
         let name = sha256_hex(key.as_bytes());
         let shard = name.get(..2).unwrap_or("00").to_owned();
-        self.root.join("keys").join(shard).join(name)
+        let dir = if key.starts_with(AUDIODB_KEY_PREFIX) {
+            AUDIODB_KEYS_DIR
+        } else {
+            KEYS_DIR
+        };
+        self.root.join(dir).join(shard).join(name)
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Option<Index>> {
@@ -503,6 +554,18 @@ fn clean_key_files(
         }
     }
     (removed, kept)
+}
+
+/// Files under `dir`, one shard level deep.
+fn count_files(dir: &Path) -> u64 {
+    let Ok(shards) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    shards
+        .flatten()
+        .filter_map(|shard| std::fs::read_dir(shard.path()).ok())
+        .map(|files| files.flatten().count() as u64)
+        .sum()
 }
 
 /// Every blob on disk with its size; older files count as less recently

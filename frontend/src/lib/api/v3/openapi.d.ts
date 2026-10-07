@@ -10228,7 +10228,7 @@ export interface components {
             /**
              * @description `all` (default: provider responses and images), `source` (one
              *     provider's responses), `covers` (cover and artist images only) or
-             *     `audiodb` (TheAudioDB answers only).
+             *     `audiodb` (TheAudioDB answers and album thumbnails).
              */
             scope?: string | null;
             /** @description Source name when `scope` is `source`. */
@@ -10238,7 +10238,8 @@ export interface components {
         CacheClearResponse: {
             /**
              * Format: int64
-             * @description Cover and artist images deleted from disk.
+             * @description Cover and artist images deleted from disk (for the `audiodb`
+             *     scope, AudioDB album thumbnails forgotten).
              */
             cleared_cover_images: number;
             /** @description Entries dropped. */
