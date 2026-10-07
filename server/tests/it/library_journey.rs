@@ -2753,3 +2753,238 @@ async fn library_journey_choose_edition() {
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
     assert_eq!(body["error"]["code"], json!("EDITION_NOT_FOUND"));
 }
+
+/// Catalog corrections end to end: split a track off, find it still there
+/// after a rescan, reset it back to the original album, merge a copy in
+/// with its chosen edition following it, and merge a duplicate artist.
+/// Applies refuse a token that does not match, and a replayed key returns
+/// the first result.
+#[tokio::test]
+async fn library_journey_catalog_corrections() {
+    use droppedneedle::library::scan::CatalogStore as _;
+
+    let lib = Lib::open("corrections").await;
+    let admin = setup_admin(lib.router(), "owner", "owner-password-1").await;
+    let auth = bearer(&admin);
+    let headers = [("authorization", auth.as_str())];
+    let music = lib.dir.join("music");
+    plant(&music, "a/01.flac", "flac_full_01.flac");
+    plant(&music, "a/02.flac", "flac_full_02.flac");
+    plant(&music, "b/01.flac", "flac_full_01.flac");
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/roots",
+        &headers,
+        Some(json!({"id": "music", "path": music.to_string_lossy()})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let scan = || async {
+        let (status, body) = call(
+            lib.router(),
+            "POST",
+            "/api/v3/library/scan",
+            &headers,
+            Some(json!({})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        drain_scans(&lib.library).await;
+    };
+    scan().await;
+    let store = &lib.library.scan_store;
+    let a1 = store.track_at("music", "a/01.flac").expect("a/01");
+    let a2 = store.track_at("music", "a/02.flac").expect("a/02");
+    let b1 = store.track_at("music", "b/01.flac").expect("b/01");
+    let album_a = store.album_for_track(&a1).expect("album a");
+    let album_b = store.album_for_track(&b1).expect("album b");
+    assert_ne!(album_a, album_b, "copies in two folders are two albums");
+
+    // Split track 2 off album A.
+    let selection = json!({"track_ids": [a2], "title": "Bonus"});
+    let (status, preview) = call(
+        lib.router(),
+        "POST",
+        &format!("/api/v3/library/albums/{album_a}/split-preview"),
+        &headers,
+        Some(selection.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["automatic_groups"][0]["created"], json!(true));
+    assert_eq!(preview["automatic_groups"][0]["title"], json!("Bonus"));
+    assert_eq!(
+        store.album_for_track(&a2).as_deref(),
+        Some(album_a.as_str()),
+        "a preview changes nothing"
+    );
+    let token = preview["preview_token"].as_str().expect("token").to_owned();
+    let split = format!("/api/v3/library/albums/{album_a}/split");
+    let mut apply = selection.clone();
+    apply["preview_token"] = json!("1.0000");
+    let (status, body) = call(lib.router(), "POST", &split, &headers, Some(apply)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], json!("PREVIEW_EXPIRED"));
+    let mut apply = selection.clone();
+    apply["preview_token"] = json!(token);
+    apply["idempotency_key"] = json!("split-1");
+    let (status, applied) = call(lib.router(), "POST", &split, &headers, Some(apply.clone())).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    let album_new = applied["target_album_id"]
+        .as_str()
+        .expect("new album")
+        .to_owned();
+    assert_eq!(
+        store.album_for_track(&a2).as_deref(),
+        Some(album_new.as_str())
+    );
+    let (status, replay) = call(lib.router(), "POST", &split, &headers, Some(apply)).await;
+    assert_eq!(status, StatusCode::OK, "{replay}");
+    assert_eq!(replay["target_album_id"], json!(album_new));
+
+    // A rescan keeps the manual grouping.
+    scan().await;
+    assert_eq!(
+        store.album_for_track(&a2).as_deref(),
+        Some(album_new.as_str())
+    );
+
+    // Reset grouping sends the track back to album A; the split album is
+    // retired into it.
+    let selection = json!({"track_ids": [a2]});
+    let (status, preview) = call(
+        lib.router(),
+        "POST",
+        &format!("/api/v3/library/albums/{album_new}/reset-grouping-preview"),
+        &headers,
+        Some(selection.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(
+        preview["automatic_groups"][0]["local_album_id"],
+        json!(album_a)
+    );
+    let mut apply = selection;
+    apply["preview_token"] = preview["preview_token"].clone();
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        &format!("/api/v3/library/albums/{album_new}/reset-grouping"),
+        &headers,
+        Some(apply),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        store.album_for_track(&a2).as_deref(),
+        Some(album_a.as_str())
+    );
+    let db = rusqlite::Connection::open(&lib.db_path).expect("db opens");
+    let retired_into = |album: &str| -> Option<String> {
+        db.query_row(
+            "SELECT retired_into_album_id FROM local_albums WHERE id = ?1",
+            [album],
+            |row| row.get(0),
+        )
+        .expect("album row")
+    };
+    assert_eq!(retired_into(&album_new).as_deref(), Some(album_a.as_str()));
+
+    // Album B carries a chosen edition, album A none: merging B into A
+    // moves the edition onto A.
+    const CHOSEN: &str = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    db.execute_batch(&format!(
+        "DELETE FROM local_track_external_identities; \
+         DELETE FROM local_album_external_identities; \
+         INSERT INTO local_album_external_identities (local_album_id, release_group_mbid, \
+         release_mbid, decision_source, selected_at) VALUES ('{album_b}', \
+         '11111111-2222-4333-8444-555555555555', '{CHOSEN}', 'manual', 1);"
+    ))
+    .expect("pin album b");
+    let selection = json!({"track_ids": [b1], "target_album_id": album_a});
+    let (status, preview) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/albums/merge-preview",
+        &headers,
+        Some(selection.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["aliases"], json!([album_b]));
+    assert_eq!(preview["edition_changes"][0]["change"], json!("moved"));
+    let mut apply = selection;
+    apply["preview_token"] = preview["preview_token"].clone();
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/albums/merge",
+        &headers,
+        Some(apply),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        store.album_for_track(&b1).as_deref(),
+        Some(album_a.as_str())
+    );
+    assert_eq!(retired_into(&album_b).as_deref(), Some(album_a.as_str()));
+    let pinned: String = db
+        .query_row(
+            "SELECT release_mbid FROM local_album_external_identities WHERE local_album_id = ?1",
+            [&album_a],
+            |row| row.get(0),
+        )
+        .expect("edition moved to album a");
+    assert_eq!(pinned, CHOSEN);
+
+    // Two artists that are the same person: merge one into the other.
+    db.execute_batch(
+        "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at) \
+         VALUES ('artist-keep', 'Same', 'same', 'person', 1, 1), \
+         ('artist-dupe', 'Same.', 'same.', 'person', 1, 1); \
+         INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         VALUES ('someone', 'artist', 'artist-dupe', 1);",
+    )
+    .expect("artists");
+    let selection = json!({
+        "source_artist_ids": ["artist-keep", "artist-dupe"],
+        "surviving_artist_id": "artist-keep",
+        "expected_revisions": {"artist-keep": 1, "artist-dupe": 1},
+    });
+    let (status, preview) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/artists/merge-preview",
+        &headers,
+        Some(selection.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["reference_counts"]["favorites"], json!(1));
+    let mut apply = selection;
+    apply["preview_token"] = preview["preview_token"].clone();
+    apply["idempotency_key"] = json!("artist-merge-1");
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/artists/merge",
+        &headers,
+        Some(apply),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["retired_artist_ids"], json!(["artist-dupe"]));
+    let (retired, favorite): (Option<String>, String) = db
+        .query_row(
+            "SELECT (SELECT retired_into_artist_id FROM local_artists WHERE id = 'artist-dupe'), \
+             (SELECT item_id FROM library_user_favorites WHERE user_id = 'someone')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("merged artist");
+    assert_eq!(retired.as_deref(), Some("artist-keep"));
+    assert_eq!(favorite, "artist-keep");
+}

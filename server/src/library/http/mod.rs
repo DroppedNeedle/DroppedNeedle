@@ -2,6 +2,7 @@
 
 pub mod auth;
 pub mod contrib;
+pub mod corrections;
 pub mod edition;
 pub mod error;
 pub mod handlers;

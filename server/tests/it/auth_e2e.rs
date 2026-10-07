@@ -2165,6 +2165,45 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/library/albums/{album_id}/undo-automatic-edition",
         Posture::Admin,
     ),
+    // Catalog corrections: admin-only, as in v2.
+    (
+        "POST",
+        "/api/v3/library/albums/{album_id}/split-preview",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/albums/{album_id}/split",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/albums/merge-preview",
+        Posture::Admin,
+    ),
+    ("POST", "/api/v3/library/albums/merge", Posture::Admin),
+    (
+        "POST",
+        "/api/v3/library/tracks/move-preview",
+        Posture::Admin,
+    ),
+    ("POST", "/api/v3/library/tracks/move", Posture::Admin),
+    (
+        "POST",
+        "/api/v3/library/albums/{album_id}/reset-grouping-preview",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/albums/{album_id}/reset-grouping",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/artists/merge-preview",
+        Posture::Admin,
+    ),
+    ("POST", "/api/v3/library/artists/merge", Posture::Admin),
     // Artist reconciliation: admin-only, as in v2.
     (
         "GET",
