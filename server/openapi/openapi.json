@@ -6095,6 +6095,98 @@
         }
       }
     },
+    "/api/v3/library/albums/merge": {
+      "post": {
+        "tags": [
+          "crate::library::http::corrections"
+        ],
+        "summary": "Fold whole albums into the target album.",
+        "operationId": "apply_album_merge",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembershipApplyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Merge applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogCorrectionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad selection or token"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown album, track or target"
+          },
+          "409": {
+            "description": "The preview expired or the albums changed since"
+          }
+        }
+      }
+    },
+    "/api/v3/library/albums/merge-preview": {
+      "post": {
+        "tags": [
+          "crate::library::http::corrections"
+        ],
+        "summary": "Preview folding whole albums into the target album.",
+        "operationId": "preview_album_merge",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembershipPreviewBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What the merge would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembershipPreviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No tracks, no target, or the target is the source"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown album, track or target"
+          },
+          "409": {
+            "description": "An album changed since the page loaded"
+          }
+        }
+      }
+    },
     "/api/v3/library/albums/{album_id}/edition": {
       "get": {
         "tags": [
@@ -6700,6 +6792,234 @@
           },
           "409": {
             "description": "The library could not start a scan"
+          }
+        }
+      }
+    },
+    "/api/v3/library/albums/{album_id}/reset-grouping": {
+      "post": {
+        "tags": [
+          "crate::library::http::corrections"
+        ],
+        "summary": "Hand an album's tracks back to automatic grouping.",
+        "operationId": "apply_grouping_reset",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembershipApplyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Reset applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogCorrectionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad selection or token"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown album or track"
+          },
+          "409": {
+            "description": "The preview expired or the album changed since"
+          }
+        }
+      }
+    },
+    "/api/v3/library/albums/{album_id}/reset-grouping-preview": {
+      "post": {
+        "tags": [
+          "crate::library::http::corrections"
+        ],
+        "summary": "Preview handing an album's tracks back to automatic grouping.",
+        "operationId": "preview_grouping_reset",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembershipPreviewBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Where the tracks would land",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembershipPreviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No tracks, a track from another album, or nothing grouped by hand"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown album or track"
+          },
+          "409": {
+            "description": "The album changed since the page loaded"
+          }
+        }
+      }
+    },
+    "/api/v3/library/albums/{album_id}/split": {
+      "post": {
+        "tags": [
+          "crate::library::http::corrections"
+        ],
+        "summary": "Split selected tracks off an album into a new album (or into the target).",
+        "operationId": "apply_album_split",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembershipApplyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Split applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogCorrectionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad selection or token"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown album, track or target"
+          },
+          "409": {
+            "description": "The preview expired or the albums changed since"
+          }
+        }
+      }
+    },
+    "/api/v3/library/albums/{album_id}/split-preview": {
+      "post": {
+        "tags": [
+          "crate::library::http::corrections"
+        ],
+        "summary": "Preview splitting selected tracks off an album.",
+        "operationId": "preview_album_split",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembershipPreviewBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What the split would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembershipPreviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No tracks, a track from another album, or nothing left behind"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown album, track or target"
+          },
+          "409": {
+            "description": "The album changed since the page loaded"
           }
         }
       }
@@ -7359,6 +7679,98 @@
           },
           "409": {
             "description": "A member changed since the group was read"
+          }
+        }
+      }
+    },
+    "/api/v3/library/artists/merge": {
+      "post": {
+        "tags": [
+          "crate::library::http::corrections"
+        ],
+        "summary": "Fold duplicate artists into one survivor.",
+        "operationId": "apply_artist_merge",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArtistMergeApplyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Artists merged",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogCorrectionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad selection or token"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown or already merged artist"
+          },
+          "409": {
+            "description": "The preview expired or an artist changed since"
+          }
+        }
+      }
+    },
+    "/api/v3/library/artists/merge-preview": {
+      "post": {
+        "tags": [
+          "crate::library::http::corrections"
+        ],
+        "summary": "Preview folding duplicate artists into one survivor.",
+        "operationId": "preview_artist_merge",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArtistMergePreviewBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What the merge would move",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembershipPreviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No duplicate chosen, or a reserved artist would be merged away"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown or already merged artist"
+          },
+          "409": {
+            "description": "An artist changed since the page loaded"
           }
         }
       }
@@ -9857,6 +10269,98 @@
           },
           "401": {
             "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/library/tracks/move": {
+      "post": {
+        "tags": [
+          "crate::library::http::corrections"
+        ],
+        "summary": "Move selected tracks onto the target album.",
+        "operationId": "apply_track_move",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembershipApplyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Move applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogCorrectionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad selection or token"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown album, track or target"
+          },
+          "409": {
+            "description": "The preview expired or the albums changed since"
+          }
+        }
+      }
+    },
+    "/api/v3/library/tracks/move-preview": {
+      "post": {
+        "tags": [
+          "crate::library::http::corrections"
+        ],
+        "summary": "Preview moving selected tracks onto the target album.",
+        "operationId": "preview_track_move",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembershipPreviewBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What the move would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembershipPreviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No tracks, no target, or the tracks are already there"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown album, track or target"
+          },
+          "409": {
+            "description": "An album changed since the page loaded"
           }
         }
       }
@@ -22304,6 +22808,85 @@
           }
         }
       },
+      "ArtistMergeApplyBody": {
+        "type": "object",
+        "description": "A previewed artist merge to apply.",
+        "required": [
+          "source_artist_ids",
+          "surviving_artist_id",
+          "preview_token"
+        ],
+        "properties": {
+          "expected_revisions": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "idempotency_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "preview_token": {
+            "type": "string",
+            "description": "The token the preview returned."
+          },
+          "provider_choice": {
+            "$ref": "#/components/schemas/ProviderChoiceBody"
+          },
+          "source_artist_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "surviving_artist_id": {
+            "type": "string"
+          }
+        }
+      },
+      "ArtistMergePreviewBody": {
+        "type": "object",
+        "description": "An artist merge to preview.",
+        "required": [
+          "source_artist_ids",
+          "surviving_artist_id"
+        ],
+        "properties": {
+          "expected_revisions": {
+            "type": "object",
+            "description": "Artist revisions as the page showed them; zero or missing means\nunknown.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "provider_choice": {
+            "$ref": "#/components/schemas/ProviderChoiceBody",
+            "description": "What the survivor keeps when the artists name different MusicBrainz\nartists; the apply must send the same choice."
+          },
+          "source_artist_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The duplicates (the survivor may be listed too)."
+          },
+          "surviving_artist_id": {
+            "type": "string",
+            "description": "The artist everything moves to."
+          }
+        }
+      },
       "ArtistOwnedReference": {
         "type": "object",
         "description": "An album or track the group's records are credited on.",
@@ -23104,6 +23687,45 @@
               "null"
             ],
             "description": "The review the album went to, when there was no earlier identity."
+          }
+        }
+      },
+      "AutomaticGroupView": {
+        "type": "object",
+        "description": "Where a set of tracks ends up.",
+        "required": [
+          "title",
+          "album_artist_name",
+          "track_ids",
+          "reason_code",
+          "created"
+        ],
+        "properties": {
+          "album_artist_name": {
+            "type": "string"
+          },
+          "created": {
+            "type": "boolean"
+          },
+          "local_album_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The receiving album; null for an album the change creates."
+          },
+          "reason_code": {
+            "type": "string",
+            "description": "`MANUAL_SPLIT`, `MANUAL_MERGE`, `MANUAL_MOVE`, `AUTOMATIC_GROUPING`\nor `AUTOMATIC_NEW_ALBUM`."
+          },
+          "title": {
+            "type": "string"
+          },
+          "track_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -23940,6 +24562,57 @@
             "type": "integer",
             "description": "Supported track count.",
             "minimum": 0
+          }
+        }
+      },
+      "CatalogCorrectionResponse": {
+        "type": "object",
+        "description": "An applied correction.",
+        "required": [
+          "kind",
+          "track_ids",
+          "source_album_ids",
+          "retired_artist_ids",
+          "catalog_revision"
+        ],
+        "properties": {
+          "catalog_revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "type": "string",
+            "description": "`split`, `merge`, `move`, `reset` or `merge_artist`."
+          },
+          "retired_artist_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "source_album_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "surviving_artist_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "target_album_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "track_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -27635,6 +28308,44 @@
           }
         }
       },
+      "EditionChangeView": {
+        "type": "object",
+        "description": "What happens to one album's edition.",
+        "required": [
+          "local_album_id",
+          "album_title",
+          "change",
+          "reason"
+        ],
+        "properties": {
+          "album_title": {
+            "type": "string"
+          },
+          "change": {
+            "type": "string",
+            "description": "`kept`, `moved`, `cleared` or `remap_queued`."
+          },
+          "from_album_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a moved edition, the album it came from."
+          },
+          "local_album_id": {
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/ReasonView"
+          },
+          "release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "EditionChoiceView": {
         "type": "object",
         "description": "What choosing an edition did.",
@@ -30316,6 +31027,14 @@
             "description": "Job state after enqueue."
           }
         }
+      },
+      "IdentityChoiceBody": {
+        "type": "string",
+        "description": "What the receiving album keeps when the combined albums name different\neditions.",
+        "enum": [
+          "detach",
+          "retain_manual"
+        ]
       },
       "IdentityManagementSettings": {
         "type": "object",
@@ -33922,6 +34641,192 @@
           "brainzmash"
         ]
       },
+      "MembershipApplyBody": {
+        "type": "object",
+        "description": "A previewed membership change to apply.",
+        "required": [
+          "track_ids",
+          "preview_token"
+        ],
+        "properties": {
+          "album_artist_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expected_album_revisions": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "idempotency_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Replaying a key returns the first result instead of applying twice."
+          },
+          "identity_choice": {
+            "$ref": "#/components/schemas/IdentityChoiceBody"
+          },
+          "preview_token": {
+            "type": "string",
+            "description": "The token the preview returned."
+          },
+          "target_album_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "track_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "MembershipPreviewBody": {
+        "type": "object",
+        "description": "A membership change to preview.",
+        "required": [
+          "track_ids"
+        ],
+        "properties": {
+          "album_artist_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Split only: the new album's album artist (default: the source's)."
+          },
+          "expected_album_revisions": {
+            "type": "object",
+            "description": "Album revisions as the page showed them, by album id. Zero or\nmissing means unknown; the preview token still guards the change.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "identity_choice": {
+            "$ref": "#/components/schemas/IdentityChoiceBody",
+            "description": "How competing editions settle; shown in the preview."
+          },
+          "target_album_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The album that receives the tracks (merge and move; optional for a\nsplit, which otherwise makes a new album)."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Split only: the new album's title (default: the source's)."
+          },
+          "track_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The tracks to split off, move, or reset. For a merge, any track of\neach album to fold in: merges always take whole albums."
+          }
+        }
+      },
+      "MembershipPreviewResponse": {
+        "type": "object",
+        "description": "A correction preview. Album and artist previews share this shape, as\nin v2.",
+        "required": [
+          "preview_token",
+          "source_album_ids",
+          "track_ids",
+          "identity_conflicts",
+          "aliases",
+          "automatic_groups",
+          "reference_counts",
+          "edition_changes"
+        ],
+        "properties": {
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ids that will point at the receiving album or artist."
+          },
+          "automatic_groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AutomaticGroupView"
+            }
+          },
+          "edition_changes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EditionChangeView"
+            }
+          },
+          "identity_conflicts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Competing editions or MusicBrainz artists."
+          },
+          "preview_token": {
+            "type": "string",
+            "description": "Send this back to apply exactly this change (valid 15 minutes)."
+          },
+          "reference_counts": {
+            "type": "object",
+            "description": "Artist merge: references that move to the survivor, by kind.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "source_album_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "target_album_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The receiving album (the surviving artist for an artist merge)."
+          },
+          "track_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "MetadataManagementSettings": {
         "type": "object",
         "description": "Metadata management block.",
@@ -37218,6 +38123,14 @@
           }
         ],
         "description": "Own profile. Identity only; connected services and library stats belong\nto the connections and library routes."
+      },
+      "ProviderChoiceBody": {
+        "type": "string",
+        "description": "What the surviving artist keeps when the merged artists name different\nMusicBrainz artists.",
+        "enum": [
+          "detach",
+          "retain_survivor"
+        ]
       },
       "ProviderLimiterView": {
         "type": "object",

@@ -2931,6 +2931,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/albums/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fold whole albums into the target album. */
+        post: operations["apply_album_merge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/merge-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview folding whole albums into the target album. */
+        post: operations["preview_album_merge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/albums/{album_id}/edition": {
         parameters: {
             query?: never;
@@ -3076,6 +3110,74 @@ export interface paths {
         put?: never;
         /** Rescan the folders holding one album's files. */
         post: operations["rescan_album"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{album_id}/reset-grouping": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Hand an album's tracks back to automatic grouping. */
+        post: operations["apply_grouping_reset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{album_id}/reset-grouping-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview handing an album's tracks back to automatic grouping. */
+        post: operations["preview_grouping_reset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{album_id}/split": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Split selected tracks off an album into a new album (or into the target). */
+        post: operations["apply_album_split"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{album_id}/split-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview splitting selected tracks off an album. */
+        post: operations["preview_album_split"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3283,6 +3385,40 @@ export interface paths {
          *     member changes or another record with the name appears.
          */
         post: operations["dismiss_artist_duplicate_group"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/artists/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fold duplicate artists into one survivor. */
+        post: operations["apply_artist_merge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/artists/merge-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview folding duplicate artists into one survivor. */
+        post: operations["preview_artist_merge"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4169,6 +4305,40 @@ export interface paths {
         get: operations["list_tracks"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/tracks/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Move selected tracks onto the target album. */
+        post: operations["apply_track_move"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/tracks/move-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview moving selected tracks onto the target album. */
+        post: operations["preview_track_move"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9561,6 +9731,37 @@ export interface components {
             /** @description Artist type (`Person`, `Group`, ...). */
             type?: string | null;
         };
+        /** @description A previewed artist merge to apply. */
+        ArtistMergeApplyBody: {
+            expected_revisions?: {
+                [key: string]: number;
+            };
+            idempotency_key?: string | null;
+            /** @description The token the preview returned. */
+            preview_token: string;
+            provider_choice?: components["schemas"]["ProviderChoiceBody"];
+            source_artist_ids: string[];
+            surviving_artist_id: string;
+        };
+        /** @description An artist merge to preview. */
+        ArtistMergePreviewBody: {
+            /**
+             * @description Artist revisions as the page showed them; zero or missing means
+             *     unknown.
+             */
+            expected_revisions?: {
+                [key: string]: number;
+            };
+            /**
+             * @description What the survivor keeps when the artists name different MusicBrainz
+             *     artists; the apply must send the same choice.
+             */
+            provider_choice?: components["schemas"]["ProviderChoiceBody"];
+            /** @description The duplicates (the survivor may be listed too). */
+            source_artist_ids: string[];
+            /** @description The artist everything moves to. */
+            surviving_artist_id: string;
+        };
         /** @description An album or track the group's records are credited on. */
         ArtistOwnedReference: {
             /** @description Every indexed file maps to a track of that release. */
@@ -9960,6 +10161,20 @@ export interface components {
             outcome: string;
             /** @description The review the album went to, when there was no earlier identity. */
             review_id?: string | null;
+        };
+        /** @description Where a set of tracks ends up. */
+        AutomaticGroupView: {
+            album_artist_name: string;
+            created: boolean;
+            /** @description The receiving album; null for an album the change creates. */
+            local_album_id?: string | null;
+            /**
+             * @description `MANUAL_SPLIT`, `MANUAL_MERGE`, `MANUAL_MOVE`, `AUTOMATIC_GROUPING`
+             *     or `AUTOMATIC_NEW_ALBUM`.
+             */
+            reason_code: string;
+            title: string;
+            track_ids: string[];
         };
         /**
          * @description Avatar upload. JSON with base64 bytes: the server has no multipart
@@ -10418,6 +10633,18 @@ export interface components {
             score: number;
             /** @description Supported track count. */
             supported_tracks: number;
+        };
+        /** @description An applied correction. */
+        CatalogCorrectionResponse: {
+            /** Format: int64 */
+            catalog_revision: number;
+            /** @description `split`, `merge`, `move`, `reset` or `merge_artist`. */
+            kind: string;
+            retired_artist_ids: string[];
+            source_album_ids: string[];
+            surviving_artist_id?: string | null;
+            target_album_id?: string | null;
+            track_ids: string[];
         };
         /**
          * @description Where a page's core data came from.
@@ -11972,6 +12199,17 @@ export interface components {
              */
             score: number;
         };
+        /** @description What happens to one album's edition. */
+        EditionChangeView: {
+            album_title: string;
+            /** @description `kept`, `moved`, `cleared` or `remap_queued`. */
+            change: string;
+            /** @description For a moved edition, the album it came from. */
+            from_album_id?: string | null;
+            local_album_id: string;
+            reason: components["schemas"]["ReasonView"];
+            release_mbid?: string | null;
+        };
         /** @description What choosing an edition did. */
         EditionChoiceView: {
             album_id: string;
@@ -13204,6 +13442,12 @@ export interface components {
             /** @description Job state after enqueue. */
             state: string;
         };
+        /**
+         * @description What the receiving album keeps when the combined albums name different
+         *     editions.
+         * @enum {string}
+         */
+        IdentityChoiceBody: "detach" | "retain_manual";
         /** @description Catalog-identity policy (no file writes). */
         IdentityManagementSettings: {
             /**
@@ -15005,6 +15249,69 @@ export interface components {
          * @enum {string}
          */
         MbSourceMode: "official" | "mirror" | "community" | "brainzmash";
+        /** @description A previewed membership change to apply. */
+        MembershipApplyBody: {
+            album_artist_name?: string | null;
+            expected_album_revisions?: {
+                [key: string]: number;
+            };
+            /** @description Replaying a key returns the first result instead of applying twice. */
+            idempotency_key?: string | null;
+            identity_choice?: components["schemas"]["IdentityChoiceBody"];
+            /** @description The token the preview returned. */
+            preview_token: string;
+            target_album_id?: string | null;
+            title?: string | null;
+            track_ids: string[];
+        };
+        /** @description A membership change to preview. */
+        MembershipPreviewBody: {
+            /** @description Split only: the new album's album artist (default: the source's). */
+            album_artist_name?: string | null;
+            /**
+             * @description Album revisions as the page showed them, by album id. Zero or
+             *     missing means unknown; the preview token still guards the change.
+             */
+            expected_album_revisions?: {
+                [key: string]: number;
+            };
+            /** @description How competing editions settle; shown in the preview. */
+            identity_choice?: components["schemas"]["IdentityChoiceBody"];
+            /**
+             * @description The album that receives the tracks (merge and move; optional for a
+             *     split, which otherwise makes a new album).
+             */
+            target_album_id?: string | null;
+            /** @description Split only: the new album's title (default: the source's). */
+            title?: string | null;
+            /**
+             * @description The tracks to split off, move, or reset. For a merge, any track of
+             *     each album to fold in: merges always take whole albums.
+             */
+            track_ids: string[];
+        };
+        /**
+         * @description A correction preview. Album and artist previews share this shape, as
+         *     in v2.
+         */
+        MembershipPreviewResponse: {
+            /** @description Ids that will point at the receiving album or artist. */
+            aliases: string[];
+            automatic_groups: components["schemas"]["AutomaticGroupView"][];
+            edition_changes: components["schemas"]["EditionChangeView"][];
+            /** @description Competing editions or MusicBrainz artists. */
+            identity_conflicts: string[];
+            /** @description Send this back to apply exactly this change (valid 15 minutes). */
+            preview_token: string;
+            /** @description Artist merge: references that move to the survivor, by kind. */
+            reference_counts: {
+                [key: string]: number;
+            };
+            source_album_ids: string[];
+            /** @description The receiving album (the surviving artist for an artist merge). */
+            target_album_id?: string | null;
+            track_ids: string[];
+        };
         /** @description Metadata management block. */
         MetadataManagementSettings: {
             /**
@@ -16641,6 +16948,12 @@ export interface components {
          *     to the connections and library routes.
          */
         ProfileResponse: components["schemas"]["UserResponse"];
+        /**
+         * @description What the surviving artist keeps when the merged artists name different
+         *     MusicBrainz artists.
+         * @enum {string}
+         */
+        ProviderChoiceBody: "detach" | "retain_survivor";
         /** @description One provider's limiter posture. */
         ProviderLimiterView: {
             /**
@@ -26083,6 +26396,124 @@ export interface operations {
             };
         };
     };
+    apply_album_merge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MembershipApplyBody"];
+            };
+        };
+        responses: {
+            /** @description Merge applied */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogCorrectionResponse"];
+                };
+            };
+            /** @description Bad selection or token */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album, track or target */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The preview expired or the albums changed since */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    preview_album_merge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MembershipPreviewBody"];
+            };
+        };
+        responses: {
+            /** @description What the merge would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MembershipPreviewResponse"];
+                };
+            };
+            /** @description No tracks, no target, or the target is the source */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album, track or target */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description An album changed since the page loaded */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     get_edition: {
         parameters: {
             query?: never;
@@ -26703,6 +27134,254 @@ export interface operations {
             };
         };
     };
+    apply_grouping_reset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MembershipApplyBody"];
+            };
+        };
+        responses: {
+            /** @description Reset applied */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogCorrectionResponse"];
+                };
+            };
+            /** @description Bad selection or token */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album or track */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The preview expired or the album changed since */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    preview_grouping_reset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MembershipPreviewBody"];
+            };
+        };
+        responses: {
+            /** @description Where the tracks would land */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MembershipPreviewResponse"];
+                };
+            };
+            /** @description No tracks, a track from another album, or nothing grouped by hand */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album or track */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The album changed since the page loaded */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    apply_album_split: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MembershipApplyBody"];
+            };
+        };
+        responses: {
+            /** @description Split applied */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogCorrectionResponse"];
+                };
+            };
+            /** @description Bad selection or token */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album, track or target */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The preview expired or the albums changed since */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    preview_album_split: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MembershipPreviewBody"];
+            };
+        };
+        responses: {
+            /** @description What the split would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MembershipPreviewResponse"];
+                };
+            };
+            /** @description No tracks, a track from another album, or nothing left behind */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album, track or target */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The album changed since the page loaded */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     undo_automatic_edition: {
         parameters: {
             query?: never;
@@ -27288,6 +27967,124 @@ export interface operations {
                 content?: never;
             };
             /** @description A member changed since the group was read */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    apply_artist_merge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtistMergeApplyBody"];
+            };
+        };
+        responses: {
+            /** @description Artists merged */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogCorrectionResponse"];
+                };
+            };
+            /** @description Bad selection or token */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown or already merged artist */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The preview expired or an artist changed since */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    preview_artist_merge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtistMergePreviewBody"];
+            };
+        };
+        responses: {
+            /** @description What the merge would move */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MembershipPreviewResponse"];
+                };
+            };
+            /** @description No duplicate chosen, or a reserved artist would be merged away */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown or already merged artist */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description An artist changed since the page loaded */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -29878,6 +30675,124 @@ export interface operations {
             };
             /** @description Not authenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    apply_track_move: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MembershipApplyBody"];
+            };
+        };
+        responses: {
+            /** @description Move applied */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogCorrectionResponse"];
+                };
+            };
+            /** @description Bad selection or token */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album, track or target */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The preview expired or the albums changed since */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    preview_track_move: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MembershipPreviewBody"];
+            };
+        };
+        responses: {
+            /** @description What the move would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MembershipPreviewResponse"];
+                };
+            };
+            /** @description No tracks, no target, or the tracks are already there */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album, track or target */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description An album changed since the page loaded */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
