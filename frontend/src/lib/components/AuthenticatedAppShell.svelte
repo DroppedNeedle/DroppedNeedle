@@ -683,35 +683,41 @@
 							href={versionUpdateAvailable
 								? withBasePath('/settings?tab=about')
 								: withBasePath('/settings')}
-							class="btn btn-ghost btn-circle relative"
+							class="grid w-full grid-flow-col items-center justify-start gap-3 rounded-lg px-3 py-3 text-start hover:bg-base-content/10"
 							aria-label={versionUpdateAvailable ? 'Settings - update available' : 'Settings'}
 						>
-							<Settings class="h-6 w-6" />
-							{#if versionUpdateAvailable}
-								<span
-									class="absolute -top-0.5 -right-0.5 flex h-4.5 w-4.5 items-center justify-center rounded-full bg-accent text-accent-content shadow-sm shadow-accent/30"
-								>
-									<CircleArrowUp class="h-3 w-3" />
-								</span>
-							{/if}
+							<span class="relative">
+								<Settings class="h-6 w-6" />
+								{#if versionUpdateAvailable}
+									<span
+										class="absolute -top-0.5 -right-0.5 flex h-4.5 w-4.5 items-center justify-center rounded-full bg-accent text-accent-content shadow-sm shadow-accent/30"
+									>
+										<CircleArrowUp class="h-3 w-3" />
+									</span>
+								{/if}
+							</span>
+							<span class="is-drawer-close:hidden">Settings</span>
 						</a>
 					</div>
 				{/if}
 				<div class="is-drawer-close:tooltip is-drawer-close:tooltip-right" data-tip="Log out">
 					<button
 						onclick={() => void logout()}
-						class="btn btn-ghost btn-circle"
+						class="grid w-full grid-flow-col items-center justify-start gap-3 rounded-lg px-3 py-3 text-start hover:bg-base-content/10"
 						aria-label="Log out"
 					>
 						<LogOut class="h-6 w-6" />
+						<span class="is-drawer-close:hidden">Log out</span>
 					</button>
 				</div>
-				<div class="is-drawer-close:tooltip is-drawer-close:tooltip-right" data-tip="Open">
+				<div class="is-drawer-close:tooltip is-drawer-close:tooltip-right" data-tip="Show sidebar">
 					<label
 						for="main-drawer"
-						class="btn btn-ghost btn-circle drawer-button is-drawer-open:rotate-y-180"
+						class="grid w-full cursor-pointer grid-flow-col items-center justify-start gap-3 rounded-lg px-3 py-3 text-start hover:bg-base-content/10 drawer-button"
+						aria-label="Show or hide sidebar"
 					>
-						<PanelLeft class="h-6 w-6" />
+						<PanelLeft class="h-6 w-6 is-drawer-open:rotate-y-180" />
+						<span class="is-drawer-close:hidden">Hide sidebar</span>
 					</label>
 				</div>
 			</div>
