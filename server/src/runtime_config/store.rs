@@ -106,6 +106,13 @@ impl ConfigStore {
         })
     }
 
+    /// Sign `message` for `purpose` with the server's data key (see
+    /// [`Crypto::mac`]).
+    #[must_use]
+    pub fn mac(&self, purpose: &str, message: &[u8]) -> [u8; 32] {
+        self.crypto.mac(purpose, message)
+    }
+
     /// The config file path.
     #[must_use]
     pub fn path(&self) -> &Path {

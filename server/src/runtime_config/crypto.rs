@@ -163,6 +163,25 @@ impl Crypto {
         ChaCha20Poly1305::new_from_slice(&self.key).map_err(|_| CryptoError::KeyInvalid)
     }
 
+    /// HMAC-SHA256 over `message` under a key derived from the data key
+    /// for `purpose`, so tokens one feature signs never verify in another.
+    #[must_use]
+    pub fn mac(&self, purpose: &str, message: &[u8]) -> [u8; 32] {
+        use hmac::digest::KeyInit;
+        use hmac::{Hmac, Mac as _};
+        // Keys are 32 bytes; HMAC zero-pads them to the 64-byte block, so
+        // passing the padded block is the same key with no fallible path.
+        let derive = |key: &[u8; 32], data: &[u8]| -> [u8; 32] {
+            let mut block = [0u8; 64];
+            block[..32].copy_from_slice(key);
+            let mut mac = <Hmac<sha2::Sha256> as KeyInit>::new(&block.into());
+            mac.update(data);
+            mac.finalize().into_bytes().into()
+        };
+        let purpose_key = derive(&self.key, purpose.as_bytes());
+        derive(&purpose_key, message)
+    }
+
     /// Encrypt one secret. Empty passes through; anything else becomes
     /// `v3:` ciphertext with a fresh random nonce.
     pub fn encrypt(&self, plaintext: &str) -> Result<String, CryptoError> {
