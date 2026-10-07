@@ -238,6 +238,9 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         runtime.pool().clone(),
         library.root_source(),
     ));
+    reads = reads.with_edition_choices(Arc::new(
+        crate::library::operations::service::Operations::new(&library),
+    ));
     let (media, media_workers) = MediaSetup::build(
         &config.library_db_path,
         &config,

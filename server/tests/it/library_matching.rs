@@ -19,8 +19,8 @@ use droppedneedle::providers::musicbrainz::{
     MbPacing, MbRequest, MbTransport, MusicBrainzClient, RawResponse, TransportError,
 };
 use identify::memory::{
-    MemoryAliasStore, MemoryIdentityStore, MemoryPinStore, MemoryProofStore, MemoryQueueStore,
-    MemoryReleaseStore, MemoryReviewStore,
+    MemoryAliasStore, MemoryIdentityStore, MemoryProofStore, MemoryQueueStore, MemoryReleaseStore,
+    MemoryReviewStore,
 };
 use identify::models::{
     EvidenceClass, IdentificationOutcome, IdentifyKind, LocalAlbumFacts, LocalTrackFacts,
@@ -117,7 +117,6 @@ fn rig(down: bool) -> Rig {
         facts: identities.clone(),
         proofs: Arc::new(MemoryProofStore::default()),
         aliases: Arc::new(MemoryAliasStore::default()),
-        pins: Arc::new(MemoryPinStore::default()),
         queue: queue.clone(),
         reviews: reviews.clone(),
         releases: releases.clone(),

@@ -8,11 +8,13 @@
 //! two ways v2 recorded a choice, for carried albums only:
 //!
 //! - an edition pin: the album's identity becomes the pinned release
-//!   group and release, marked `legacy_import` (protected). A manual
-//!   identity is the curator's own later word and is left alone. When the
-//!   pinned release differs from the identity the album had, that
+//!   group and release, chosen by the person who pinned it (`manual`). A
+//!   manual identity is the curator's own later word and is left alone.
+//!   When the pinned release differs from the identity the album had, that
 //!   identity's automatic track mappings belonged to another release and
-//!   go; v3 maps the tracks again against the pinned release;
+//!   go; the album is queued so the library places its files on the pinned
+//!   release once MusicBrainz is reachable. The pin rows are then removed:
+//!   the identity row is the album's one record of its edition;
 //! - an active custom edition: the album's identity becomes the custom
 //!   edition's release group with no exact release, as v2 sealed it, and
 //!   is protected the same way.
@@ -115,10 +117,12 @@ pub(crate) async fn apply(
         &format!(
             "UPDATE main.local_album_external_identities AS e SET \
              release_group_mbid = {group}, release_mbid = {release}, \
-             decision_source = 'legacy_import', row_revision = e.row_revision + 1 \
+             decision_source = 'manual', selected_by_user_id = (SELECT u.id FROM \
+             main.auth_users u WHERE u.id = {user}), row_revision = e.row_revision + 1 \
              WHERE {pinned}",
             group = pin("release_group_mbid"),
             release = pin("release_mbid"),
+            user = pin("set_by_user_id"),
         ),
     )
     .await?;
@@ -129,7 +133,7 @@ pub(crate) async fn apply(
              release_group_mbid, release_mbid, decision_source, selected_by_user_id, \
              selected_at) \
              SELECT p.local_album_id, 'musicbrainz', p.release_group_mbid, p.release_mbid, \
-             'legacy_import', (SELECT u.id FROM main.auth_users u \
+             'manual', (SELECT u.id FROM main.auth_users u \
              WHERE u.id = p.set_by_user_id), CAST(strftime('%s', 'now') AS REAL) \
              FROM main.library_album_release_pins p WHERE p.local_album_id {carried} \
              AND NOT EXISTS (SELECT 1 FROM main.local_album_external_identities e \
@@ -202,5 +206,25 @@ pub(crate) async fn apply(
             ),
         );
     }
+    // The chosen release still needs the files placed on its tracks; the
+    // library does that when MusicBrainz is reachable. The pin rows have
+    // done their job: the identity row is the album's edition now.
+    run(
+        conn,
+        &format!(
+            "INSERT OR IGNORE INTO main.library_edition_remap_queue (local_album_id, \
+             release_mbid, chosen_by_user_id, queued_at) \
+             SELECT p.local_album_id, lower(p.release_mbid), \
+             (SELECT u.id FROM main.auth_users u WHERE u.id = p.set_by_user_id), \
+             CAST(strftime('%s', 'now') AS REAL) \
+             FROM main.library_album_release_pins p \
+             JOIN main.local_album_external_identities e ON e.local_album_id = p.local_album_id \
+             WHERE p.local_album_id {carried} AND e.provider = 'musicbrainz' \
+             AND e.decision_source = 'manual' AND e.release_mbid = p.release_mbid"
+        ),
+    )
+    .await?;
+    run(conn, "DELETE FROM main.library_album_release_pins").await?;
+    run(conn, "DELETE FROM main.album_release_pins").await?;
     Ok(result)
 }

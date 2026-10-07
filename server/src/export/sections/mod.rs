@@ -352,7 +352,6 @@ pub const ALL: &[&TableSection] = &[
     &library::KEPT_TAGGED,
     &library::REQUEUED_REVIEWS,
     &library::ALBUM_PINS,
-    &library::IDENTIFY_PINS,
     &library::MERGE_CANDIDATES,
     &library::ARTIST_DISMISSALS,
     &management::BLOBS,

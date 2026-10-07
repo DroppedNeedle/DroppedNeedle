@@ -209,15 +209,6 @@ pub enum AliasKind {
     MergedTrack,
 }
 
-/// A curator release pin: which edition to display and acquire. Hint-only:
-/// it orders editions within one release group when identifying, and is
-/// never identity evidence.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ReleasePin {
-    pub release_group_mbid: String,
-    pub release_mbid: String,
-}
-
 /// A provider artist credit on one track.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArtistCredit {

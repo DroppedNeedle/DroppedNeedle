@@ -1,19 +1,40 @@
-//! Edition pins: display lane only.
+//! The per-album edition route (`/library/albums/{id}/edition-pin`).
 //!
-//! A pin steers the soft display hint (`selected_release_mbid`): the pinned
-//! release when set, else the album's own release. It never becomes catalog
-//! identity; the pin store cannot write identity rows. Setting and clearing
-//! are curator-gated (v2); reading is open to any authenticated user.
-//! A pin must name a release of the album's release group that the library
-//! knows; an album without a MusicBrainz identity cannot be pinned (404).
+//! The album's identity row is its edition. Setting a "pin" chooses that
+//! edition through the library's one edition operation (any release, even
+//! one of another release group); clearing it hands the album back to
+//! automatic best fit. Setting and clearing are curator-gated (v2);
+//! reading is open to any authenticated user.
 
 use super::CollectionsService;
+use crate::library::operations::models::OperationError;
 use crate::reads::collections::auth::Principal;
 use crate::reads::collections::error::CollectionsError;
 use crate::reads::collections::models::EditionPinResponse;
 
+/// An edition operation's refusal as a collections error, keeping its
+/// sentence and what to do about it.
+fn refused(error: OperationError) -> CollectionsError {
+    let said = |reason: crate::library::operations::reasons::Reason| {
+        format!("{} {}", reason.message, reason.action)
+    };
+    match error {
+        OperationError::NotFound(_) => CollectionsError::NotFound,
+        OperationError::Invalid(reason) => CollectionsError::invalid(&said(reason)),
+        OperationError::Conflict(reason) => CollectionsError::Conflict {
+            message: said(reason),
+        },
+        OperationError::Unavailable(cause) => CollectionsError::Conflict {
+            message: format!(
+                "MusicBrainz is not answering right now ({cause}). Try again in a few minutes."
+            ),
+        },
+        OperationError::Store(cause) => CollectionsError::internal(&cause),
+    }
+}
+
 impl CollectionsService<'_> {
-    /// The pin display for one album.
+    /// The album's edition and whether a person chose it.
     pub async fn edition_pin(
         &self,
         album_id: &str,
@@ -25,20 +46,20 @@ impl CollectionsService<'_> {
             .album(album_id)
             .await?
             .ok_or(CollectionsError::NotFound)?;
-        let (selected, hint_source) = match (&album.pinned_release_mbid, &album.release_mbid) {
-            (Some(pinned), _) => (Some(pinned.clone()), "pin"),
-            (None, Some(own)) => (Some(own.clone()), "default"),
-            (None, None) => (None, "none"),
+        let hint_source = match (&album.release_mbid, album.chosen) {
+            (Some(_), true) => "pin",
+            (Some(_), false) => "default",
+            (None, _) => "none",
         };
         Ok(EditionPinResponse {
             album_id: album_id.to_owned(),
-            pinned_release_mbid: album.pinned_release_mbid,
-            selected_release_mbid: selected,
+            pinned_release_mbid: album.release_mbid.clone().filter(|_| album.chosen),
+            selected_release_mbid: album.release_mbid,
             hint_source: hint_source.to_owned(),
         })
     }
 
-    /// Pin one edition. Curator only.
+    /// Choose the album's edition. Curator only.
     pub async fn set_edition_pin(
         &self,
         caller: &Principal,
@@ -46,36 +67,32 @@ impl CollectionsService<'_> {
         release_mbid: &str,
     ) -> Result<EditionPinResponse, CollectionsError> {
         caller.require_curator()?;
-        let pins = &self.state.stores.pins;
-        let album = pins
-            .album(album_id)
-            .await?
-            .ok_or(CollectionsError::NotFound)?;
-        let group = album.release_group_mbid.ok_or(CollectionsError::NotFound)?;
-        let known = pins.known_editions(&group).await?;
-        if !known
-            .iter()
-            .any(|edition| edition.eq_ignore_ascii_case(release_mbid))
-        {
-            return Err(CollectionsError::invalid("Unknown edition for this album"));
-        }
-        pins.set(album_id, &group, release_mbid, &caller.user_id)
-            .await?;
+        self.state
+            .editions
+            .choose(album_id, release_mbid, &caller.user_id)
+            .await
+            .map_err(refused)?;
         self.edition_pin(album_id).await
     }
 
-    /// Clear the pin. Curator only; clearing an unpinned album is a no-op.
+    /// Hand the album's edition back to automatic choice. Curator only.
     pub async fn clear_edition_pin(
         &self,
         caller: &Principal,
         album_id: &str,
     ) -> Result<EditionPinResponse, CollectionsError> {
         caller.require_curator()?;
-        let pins = &self.state.stores.pins;
-        pins.album(album_id)
+        self.state
+            .stores
+            .pins
+            .album(album_id)
             .await?
             .ok_or(CollectionsError::NotFound)?;
-        pins.clear(album_id).await?;
+        self.state
+            .editions
+            .hand_back(album_id, &caller.user_id)
+            .await
+            .map_err(refused)?;
         self.edition_pin(album_id).await
     }
 }

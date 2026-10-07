@@ -412,7 +412,6 @@ impl LibrarySetup {
             facts: identify_store.clone(),
             proofs: identify_store.clone(),
             aliases: identify_store.clone(),
-            pins: identify_store.clone(),
             queue: identify_store.clone(),
             reviews: identify_store.clone(),
             releases: identify_store.clone(),

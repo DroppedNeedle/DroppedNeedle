@@ -477,7 +477,8 @@ pub struct AlbumTracksInfo {
     pub country: Option<String>,
     /// The edition shown.
     pub selected_release_mbid: Option<String>,
-    /// Why that edition: `pin`, `owned`, `file_count` or `ranked`.
+    /// Why that edition: `chosen` (by a person), `owned` (the best fit for
+    /// the library's files), `file_count` or `ranked`.
     pub pick_basis: Option<String>,
 }
 
@@ -516,7 +517,7 @@ pub struct AlbumInfo {
 }
 
 /// One edition (MusicBrainz release) of an album.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct AlbumEditionItem {
     /// Release MBID.
     pub release_mbid: String,
@@ -534,9 +535,24 @@ pub struct AlbumEditionItem {
     pub packaging: Option<String>,
     /// Status (`Official`, `Promotion`, ...).
     pub status: Option<String>,
-    /// True when the library's copy is identified as this edition.
+    /// Media formats (`CD`, `Digital Media`, `12" Vinyl`), in disc order.
+    #[serde(default)]
+    pub media_formats: Vec<String>,
+    /// Number of discs (media), when known.
+    #[serde(default)]
+    pub disc_count: u32,
+    /// Barcode, when known.
+    #[serde(default)]
+    pub barcode: Option<String>,
+    /// First label, when known.
+    #[serde(default)]
+    pub label: Option<String>,
+    /// First catalog number, when known.
+    #[serde(default)]
+    pub catalog_number: Option<String>,
+    /// True when the library's copy is this edition.
     pub is_owned: bool,
-    /// True when a curator pinned this edition.
+    /// True when a person chose this edition for the library's copy.
     pub is_pinned: bool,
 }
 
@@ -545,13 +561,14 @@ pub struct AlbumEditionItem {
 pub struct AlbumEditionsResponse {
     /// Every edition MusicBrainz lists.
     pub items: Vec<AlbumEditionItem>,
-    /// Pinned edition, if any.
+    /// The edition a person chose for the library's copy, if any.
     pub pinned_release_mbid: Option<String>,
     /// Owned edition, if identified.
     pub owned_release_mbid: Option<String>,
     /// The edition the album page shows.
     pub selected_release_mbid: Option<String>,
-    /// Why that edition: `pin`, `owned`, `file_count` or `ranked`.
+    /// Why that edition: `chosen` (by a person), `owned` (the best fit for
+    /// the library's files), `file_count` or `ranked`.
     pub selected_basis: Option<String>,
 }
 

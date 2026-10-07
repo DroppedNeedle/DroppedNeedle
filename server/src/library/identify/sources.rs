@@ -229,7 +229,7 @@ impl<T: MbTransport, S: DegradationSink> ReleaseSource for MusicBrainzClient<T, 
 
 /// An edition-finder row from a release search hit; hits without a
 /// release group are skipped, as v2 did.
-fn edition_from_hit(hit: ReleaseSearchHit) -> Option<Edition> {
+pub fn edition_from_hit(hit: ReleaseSearchHit) -> Option<Edition> {
     let release_group_mbid = hit.release_group.as_ref()?.id.to_ascii_lowercase();
     let label = hit.label_info.first();
     let mut media_formats: Vec<String> = Vec::new();

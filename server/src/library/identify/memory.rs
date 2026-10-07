@@ -6,11 +6,11 @@ use std::sync::{Arc, Mutex};
 
 use super::models::{
     AlbumIdentity, Alias, ArtistCredit, ArtistIdentity, CreditProof, IdentifyJob, LocalAlbumFacts,
-    ReleasePin, ReviewItem, ReviewState, TrackIdentity,
+    ReviewItem, ReviewState, TrackIdentity,
 };
 use super::stores::{
-    AliasStore, Approval, FactsSource, IdentityStore, PinStore, ProofStore, QueueStore,
-    ReleaseStore, ReviewStore, StoreError,
+    AliasStore, Approval, FactsSource, IdentityStore, ProofStore, QueueStore, ReleaseStore,
+    ReviewStore, StoreError,
 };
 use crate::library::matching::Release;
 
@@ -299,34 +299,6 @@ impl AliasStore for MemoryAliasStore {
         if let Ok(mut favorites) = self.favorites.lock() {
             favorites.push((user_id.to_owned(), item_kind.to_owned(), item_id.to_owned()));
         }
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct MemoryPinStore {
-    pins: Mutex<HashMap<String, ReleasePin>>,
-}
-
-impl PinStore for MemoryPinStore {
-    fn pin(&self, release_group_mbid: &str) -> Option<ReleasePin> {
-        self.pins
-            .lock()
-            .ok()?
-            .get(&release_group_mbid.to_lowercase())
-            .cloned()
-    }
-
-    fn set_pin(&self, pin: ReleasePin) {
-        if let Ok(mut pins) = self.pins.lock() {
-            pins.insert(pin.release_group_mbid.to_lowercase(), pin);
-        }
-    }
-
-    fn clear_pin(&self, release_group_mbid: &str) -> bool {
-        self.pins
-            .lock()
-            .map(|mut pins| pins.remove(&release_group_mbid.to_lowercase()).is_some())
-            .unwrap_or(false)
     }
 }
 

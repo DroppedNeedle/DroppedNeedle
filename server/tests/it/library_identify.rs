@@ -11,15 +11,15 @@ use std::sync::Arc;
 
 use droppedneedle::library::matching::{CreditedArtist, Release, ReleaseTrack};
 use identify::memory::{
-    MemoryAliasStore, MemoryIdentityStore, MemoryPinStore, MemoryProofStore, MemoryQueueStore,
-    MemoryReleaseStore, MemoryReviewStore,
+    MemoryAliasStore, MemoryIdentityStore, MemoryProofStore, MemoryQueueStore, MemoryReleaseStore,
+    MemoryReviewStore,
 };
 use identify::models::IdentifyJob;
 use identify::models::JobState;
 use identify::models::{
     AlbumIdentity, AliasKind, ArtistCredit, ArtistIdentity, CreditProof, DecisionSource,
     IdentificationOutcome, IdentifyKind, IdentityBrief, LocalAlbumFacts, LocalTrackFacts,
-    RecallResult, ReleasePin, ReviewState, TrackIdentity,
+    RecallResult, ReviewState, TrackIdentity,
 };
 use identify::providers::FakeProviders;
 use identify::queue::{
@@ -32,8 +32,7 @@ use identify::rules::{
 };
 use identify::service::{IdentifyDeps, IdentifyService};
 use identify::stores::{
-    AliasStore, AttemptLanding, IdentityStore, PinStore, ProofStore, QueueStore, ReleaseStore,
-    ReviewStore, land_job,
+    AliasStore, AttemptLanding, IdentityStore, ProofStore, QueueStore, ReviewStore, land_job,
 };
 
 const GROUP_A: &str = "fc97b087-221c-4ea4-9dd9-5277a52eb84a";
@@ -48,11 +47,9 @@ const RECORDING_2: &str = "5224cfc7-b3bb-4008-a41b-21b168dc631f";
 
 struct Rig {
     service: IdentifyService,
-    releases: Arc<MemoryReleaseStore>,
     identities: Arc<MemoryIdentityStore>,
     proofs: Arc<MemoryProofStore>,
     aliases: Arc<MemoryAliasStore>,
-    pins: Arc<MemoryPinStore>,
     queue: Arc<MemoryQueueStore>,
     reviews: Arc<MemoryReviewStore>,
     providers: Arc<FakeProviders>,
@@ -62,7 +59,6 @@ fn rig_with_recall(recall: RecallResult) -> Rig {
     let identities = Arc::new(MemoryIdentityStore::default());
     let proofs = Arc::new(MemoryProofStore::default());
     let aliases = Arc::new(MemoryAliasStore::default());
-    let pins = Arc::new(MemoryPinStore::default());
     let queue = Arc::new(MemoryQueueStore::default());
     let reviews = Arc::new(MemoryReviewStore::linked(identities.clone()));
     let providers = Arc::new(FakeProviders::with_recall(recall));
@@ -72,7 +68,6 @@ fn rig_with_recall(recall: RecallResult) -> Rig {
         facts: identities.clone(),
         proofs: proofs.clone(),
         aliases: aliases.clone(),
-        pins: pins.clone(),
         queue: queue.clone(),
         reviews: reviews.clone(),
         releases: releases.clone(),
@@ -80,11 +75,9 @@ fn rig_with_recall(recall: RecallResult) -> Rig {
     });
     Rig {
         service,
-        releases,
         identities,
         proofs,
         aliases,
-        pins,
         queue,
         reviews,
         providers,
@@ -772,65 +765,6 @@ fn retired_ids_keep_resolving() {
         rig.aliases.history_ref("row-1").as_deref(),
         Some("artist-new")
     );
-}
-
-/// A pin picks among editions that match equally well, and never
-/// rescues an edition the files' own ids rule out.
-#[tokio::test]
-async fn pin_orders_editions_but_never_beats_proof() {
-    let rig = rig_with_recall(recall(vec![
-        release(GROUP_A, RELEASE_A1, &[RECORDING_1]),
-        release(GROUP_A, RELEASE_A2, &[RECORDING_1]),
-    ]));
-    rig.identities
-        .save_album_facts(album_facts("album-1", &[("t1", Some(RECORDING_1))]));
-    rig.pins.set_pin(ReleasePin {
-        release_group_mbid: GROUP_A.to_owned(),
-        release_mbid: RELEASE_A2.to_owned(),
-    });
-    assert!(!rig.pins.clear_pin("missing-group"));
-    rig.service.enqueue_album(
-        "job-1",
-        "album-1",
-        IdentifyKind::Automatic,
-        "rev-1",
-        None,
-        0,
-    );
-    rig.queue.claim(0, 60_000);
-    let report = rig
-        .service
-        .run_claimed_job("job-1", 0)
-        .await
-        .expect("report");
-    assert_eq!(report.outcome, IdentificationOutcome::Identified);
-    let identity = rig.identities.album_identity("album-1").expect("identity");
-    assert_eq!(identity.release_mbid.as_deref(), Some(RELEASE_A2));
-    // The sealed release stays on file for tagging.
-    assert!(rig.releases.release(RELEASE_A2, None).is_some());
-
-    // The pinned edition lacks the file's recording: proof wins.
-    rig.providers.set_recall(recall(vec![
-        release(GROUP_A, RELEASE_A1, &[RECORDING_1]),
-        release(GROUP_A, RELEASE_A2, &[RECORDING_2]),
-    ]));
-    rig.service.enqueue_album(
-        "job-2",
-        "album-1",
-        IdentifyKind::Automatic,
-        "rev-2",
-        None,
-        0,
-    );
-    rig.queue.claim(0, 60_000);
-    let report = rig
-        .service
-        .run_claimed_job("job-2", 0)
-        .await
-        .expect("report");
-    assert_eq!(report.outcome, IdentificationOutcome::Identified);
-    let identity = rig.identities.album_identity("album-1").expect("identity");
-    assert_eq!(identity.release_mbid.as_deref(), Some(RELEASE_A1));
 }
 
 #[test]

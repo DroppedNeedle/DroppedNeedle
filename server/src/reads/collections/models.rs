@@ -550,26 +550,26 @@ pub struct ApprovalBatchListResponse {
     pub count: usize,
 }
 
-// Edition pins (display lane only).
+// The per-album edition.
 
-/// Edition-pin display answer. `selected_release_mbid` is the soft display
-/// hint: the pin when set, else the catalog default. It never becomes
-/// catalog identity.
+/// The album's edition. `selected_release_mbid` is the album's edition
+/// (its identity row); `pinned_release_mbid` is set when a person chose it.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct EditionPinResponse {
     /// Album id.
     pub album_id: String,
-    /// Pinned release MBID, when pinned.
+    /// The edition, when a person chose it.
     pub pinned_release_mbid: Option<String>,
-    /// Display pick: the pin when set, else the catalog default.
+    /// The album's edition.
     pub selected_release_mbid: Option<String>,
-    /// Where the pick came from: pin, default, or none.
+    /// Who decided: `pin` (a person), `default` (automatic best fit), or
+    /// `none` (not identified).
     pub hint_source: String,
 }
 
 /// Pin-set body.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct EditionPinBody {
-    /// Release MBID to pin. Must be a known edition of the album.
+    /// Any MusicBrainz release, from this album's group or another.
     pub release_mbid: String,
 }

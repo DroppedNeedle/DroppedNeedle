@@ -92,39 +92,3 @@ impl PurchaseLinkSource for NoPurchaseLinks {
         Box::pin(async { Vec::new() })
     }
 }
-
-/// Where edition pins are written. Pins belong to one library copy of an
-/// album; the collections pin store owns them.
-pub trait EditionPins: Send + Sync {
-    /// Pin `release_mbid` for one library album.
-    fn set<'a>(
-        &'a self,
-        album_id: &'a str,
-        release_group_mbid: &'a str,
-        release_mbid: &'a str,
-        user_id: &'a str,
-    ) -> BoxFuture<'a, Result<(), String>>;
-
-    /// Clear one library album's pin.
-    fn clear<'a>(&'a self, album_id: &'a str) -> BoxFuture<'a, Result<(), String>>;
-}
-
-/// No pin store wired: every write fails.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct NoEditionPins;
-
-impl EditionPins for NoEditionPins {
-    fn set<'a>(
-        &'a self,
-        _album_id: &'a str,
-        _release_group_mbid: &'a str,
-        _release_mbid: &'a str,
-        _user_id: &'a str,
-    ) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async { Err("edition pins are not wired".to_owned()) })
-    }
-
-    fn clear<'a>(&'a self, _album_id: &'a str) -> BoxFuture<'a, Result<(), String>> {
-        Box::pin(async { Err("edition pins are not wired".to_owned()) })
-    }
-}

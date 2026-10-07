@@ -70,8 +70,8 @@ pub struct LocalArtistAlbum {
 pub struct EditionEvidence {
     /// Release MBID the library's copy is identified as.
     pub owned_release: Option<String>,
-    /// Release MBID a curator pinned.
-    pub pinned_release: Option<String>,
+    /// Release MBID a person chose for the library's copy.
+    pub chosen_release: Option<String>,
     /// Indexed files in the library's copy, when it has one.
     pub file_count: Option<u32>,
 }
@@ -358,21 +358,21 @@ impl LocalCatalog {
         .await
     }
 
-    /// Owned and pinned editions plus the file count for one release
-    /// group. Several local copies of one group read as the first one.
+    /// The library copy's edition (who chose it) and file count for one
+    /// release group. Several copies read as a chosen one first, then the
+    /// oldest, as acquisition does.
     pub async fn edition_evidence(
         &self,
         release_group_mbid: &str,
     ) -> Result<EditionEvidence, sqlx::Error> {
         let row = sqlx::query(
-            "SELECT e.release_mbid, p.release_mbid, \
+            "SELECT e.release_mbid, e.decision_source, \
              (SELECT COUNT(*) FROM local_tracks t WHERE t.local_album_id = b.id \
               AND t.availability = 'indexed') \
              FROM local_album_external_identities e \
              JOIN local_albums b ON b.id = e.local_album_id \
-             LEFT JOIN library_album_release_pins p ON p.local_album_id = b.id \
              WHERE b.retired_into_album_id IS NULL AND lower(e.release_group_mbid) = ? \
-             ORDER BY b.created_at LIMIT 1",
+             ORDER BY e.decision_source <> 'manual', b.created_at LIMIT 1",
         )
         .bind(release_group_mbid.to_ascii_lowercase())
         .fetch_optional(&self.pool)
@@ -381,9 +381,11 @@ impl LocalCatalog {
             return Ok(EditionEvidence::default());
         };
         let files: i64 = row.try_get(2)?;
+        let release: Option<String> = row.try_get(0)?;
+        let source: String = row.try_get(1)?;
         Ok(EditionEvidence {
-            owned_release: row.try_get(0)?,
-            pinned_release: row.try_get(1)?,
+            chosen_release: release.clone().filter(|_| source == "manual"),
+            owned_release: release,
             file_count: u32::try_from(files).ok().filter(|count| *count > 0),
         })
     }

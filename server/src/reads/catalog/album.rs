@@ -82,6 +82,9 @@ pub struct ReleaseSummary {
     pub status: Option<String>,
     /// Tracks across all media.
     pub track_count: u32,
+    /// Media formats, in disc order, without repeats.
+    #[serde(default)]
+    pub formats: Vec<String>,
     /// Rank among the group's releases, best first.
     pub rank: usize,
 }
@@ -107,6 +110,17 @@ impl GroupDetail {
                 packaging: release.packaging.clone(),
                 status: release.status.clone(),
                 track_count: mapping::media_track_count(release),
+                formats: release
+                    .media
+                    .iter()
+                    .fold(Vec::new(), |mut formats, medium| {
+                        if let Some(format) = medium.format.clone()
+                            && !formats.contains(&format)
+                        {
+                            formats.push(format);
+                        }
+                        formats
+                    }),
                 rank: ranked
                     .iter()
                     .position(|id| *id == release.id)
@@ -225,8 +239,14 @@ struct Selection {
     selected: Option<String>,
     basis: Option<&'static str>,
     owned: Option<String>,
-    pinned: Option<String>,
+    /// The edition a person chose for the library's copy.
+    chosen: Option<String>,
 }
+
+/// Releases read per page when listing every edition of a group.
+const EDITION_PAGE: u32 = 100;
+/// Pages read at most when listing every edition (500 editions).
+const EDITION_PAGES: u32 = 5;
 
 impl Catalog {
     fn group_key(&self, mbid: &str) -> String {
@@ -457,29 +477,21 @@ impl Catalog {
         }))
     }
 
-    /// Pick the edition: a valid pin, then the owned identification, then
-    /// the release closest to the library's file count, then MusicBrainz's
-    /// best (v2 `_effective_release_id`, minus the embedded-tag vote the
-    /// v3 identity tables already settle).
+    /// Pick the edition: the library copy's edition (a person's choice or
+    /// the matcher's best fit for the files; the identity row is the one
+    /// record of it), then the release closest to the library's file count,
+    /// then MusicBrainz's best. The library's edition stands even when the
+    /// group lookup does not list it (MusicBrainz lists at most 25).
     async fn select_edition(&self, group: &GroupDetail) -> Result<Selection, CatalogError> {
         let evidence = self
             .local()
             .edition_evidence(&group.mbid)
             .await
             .map_err(CatalogError::database)?;
-        let listed = |candidate: &Option<String>| {
-            candidate.as_ref().and_then(|wanted| {
-                group
-                    .releases
-                    .iter()
-                    .find(|release| release.id.eq_ignore_ascii_case(wanted))
-                    .map(|release| release.id.clone())
-            })
-        };
         let ranked = group.ranked();
-        let (selected, basis) = if let Some(pin) = listed(&evidence.pinned_release) {
-            (Some(pin), Some("pin"))
-        } else if let Some(owned) = listed(&evidence.owned_release) {
+        let (selected, basis) = if let Some(chosen) = evidence.chosen_release.clone() {
+            (Some(chosen), Some("chosen"))
+        } else if let Some(owned) = evidence.owned_release.clone() {
             (Some(owned), Some("owned"))
         } else if let Some(closest) = evidence.file_count.and_then(|files| {
             ranked
@@ -499,7 +511,7 @@ impl Catalog {
             selected,
             basis,
             owned: evidence.owned_release,
-            pinned: evidence.pinned_release,
+            chosen: evidence.chosen_release,
         })
     }
 
@@ -696,7 +708,9 @@ impl Catalog {
     }
 
     /// `GET /albums/{album_id}/editions`: every MusicBrainz release of the
-    /// album, flagged owned and pinned, with the one the page shows.
+    /// album (paged through the release index, so groups with more than 25
+    /// editions list them all), flagged owned and chosen, with the one the
+    /// page shows.
     pub async fn album_editions(
         &self,
         raw_id: &str,
@@ -712,28 +726,83 @@ impl Catalog {
                 .as_deref()
                 .is_some_and(|wanted| wanted.eq_ignore_ascii_case(id))
         };
+        let mut items = match self.every_edition(&group.mbid).await {
+            Ok(items) if !items.is_empty() => items,
+            Ok(_) => listed_editions(&group),
+            Err(error) => {
+                tracing::info!(album = %group.mbid, %error, "edition index unavailable; listing the group lookup's editions");
+                listed_editions(&group)
+            }
+        };
+        for item in &mut items {
+            item.is_owned = matches(&selection.owned, &item.release_mbid);
+            item.is_pinned = matches(&selection.chosen, &item.release_mbid);
+        }
         Ok(AlbumEditionsResponse {
-            items: group
-                .releases
-                .iter()
-                .map(|release| AlbumEditionItem {
-                    release_mbid: release.id.clone(),
-                    track_count: release.track_count,
-                    title: release.title.clone(),
-                    disambiguation: release.disambiguation.clone(),
-                    date: release.date.clone(),
-                    country: release.country.clone(),
-                    packaging: release.packaging.clone(),
-                    status: release.status.clone(),
-                    is_owned: matches(&selection.owned, &release.id),
-                    is_pinned: matches(&selection.pinned, &release.id),
-                })
-                .collect(),
-            pinned_release_mbid: selection.pinned,
+            items,
+            pinned_release_mbid: selection.chosen,
             owned_release_mbid: selection.owned,
             selected_release_mbid: selection.selected,
             selected_basis: selection.basis.map(str::to_owned),
         })
+    }
+
+    fn editions_key(&self, mbid: &str) -> String {
+        let (_, namespace) = self.upstream().musicbrainz(RequestPriority::UserInitiated);
+        format!("mb:rg:editions:{namespace}:{}", mbid.to_ascii_lowercase())
+    }
+
+    /// Every release of one group from MusicBrainz's release index, cached
+    /// like the group detail.
+    async fn every_edition(&self, mbid: &str) -> Result<Vec<AlbumEditionItem>, CatalogError> {
+        let catalog = self.clone();
+        let group = mbid.to_owned();
+        let value = self
+            .cached(
+                &self.inner.flights.other,
+                self.editions_key(mbid),
+                move || async move {
+                    let (client, _) = catalog
+                        .upstream()
+                        .musicbrainz(RequestPriority::UserInitiated);
+                    let mut items: Vec<AlbumEditionItem> = Vec::new();
+                    for page in 0..EDITION_PAGES {
+                        let offset = page * EDITION_PAGE;
+                        let found = mb_retry(|| {
+                            client.search_release_group_editions(
+                                &group,
+                                EDITION_PAGE,
+                                offset,
+                                Criticality::IdentityCritical,
+                            )
+                        })
+                        .await
+                        .map_err(mb_error)?;
+                        let total = found.count;
+                        let got = found.items.len();
+                        items.extend(
+                            found
+                                .items
+                                .into_iter()
+                                .filter_map(crate::library::identify::sources::edition_from_hit)
+                                .filter(|edition| {
+                                    edition.release_group_mbid.eq_ignore_ascii_case(&group)
+                                })
+                                .map(edition_item),
+                        );
+                        if got == 0 || u64::from(offset) + got as u64 >= total {
+                            break;
+                        }
+                    }
+                    let (owned, _) = catalog.album_flags(std::slice::from_ref(&group)).await;
+                    let ttl = album_ttl(&catalog, !owned.is_empty());
+                    let value = serde_json::to_value(&items)
+                        .map_err(|error| CatalogError::Internal(error.to_string()))?;
+                    Ok((value, Some(ttl)))
+                },
+            )
+            .await?;
+        serde_json::from_value(value).map_err(|error| CatalogError::Internal(error.to_string()))
     }
 
     /// `POST /albums/{album_id}/refresh`: drop the album's cached
@@ -760,7 +829,7 @@ impl Catalog {
         self.album_basic(&id).await
     }
 
-    /// Whether the user may pin editions: admins and trusted users (v2
+    /// Whether the user may choose editions: admins and trusted users (v2
     /// curators). A user who is gone reads as not allowed.
     async fn require_curator(&self, user_id: &str) -> Result<(), CatalogError> {
         use crate::auth::users::roles::Role;
@@ -777,11 +846,15 @@ impl Catalog {
         }
     }
 
-    /// The library copy of a release group an edition pin applies to. v2
-    /// pinned per release group; v3 pins per library copy, so a copy named
-    /// by its library id is the target, and a group named by MBID must be
-    /// held exactly once.
-    async fn pin_target(&self, group: &str, named: Option<String>) -> Result<String, CatalogError> {
+    /// The library copy of a release group an edition choice applies to.
+    /// v2 pinned per release group; v3 chooses per library copy, so a copy
+    /// named by its library id is the target, and a group named by MBID
+    /// must be held exactly once.
+    async fn choice_target(
+        &self,
+        group: &str,
+        named: Option<String>,
+    ) -> Result<String, CatalogError> {
         if let Some(album) = named {
             return Ok(album);
         }
@@ -792,25 +865,27 @@ impl Catalog {
             .map_err(CatalogError::database)?;
         match albums.len() {
             0 => Err(CatalogError::Missing(
-                "This album is not in the library, so there is no copy to pin".to_owned(),
+                "This album is not in the library, so there is no copy to choose an edition for"
+                    .to_owned(),
             )),
             1 => Ok(albums.remove(0)),
             _ => Err(CatalogError::Conflict(
-                "The library holds this album more than once; pin the edition by the copy's library id"
+                "The library holds this album more than once; choose the edition on the copy's own page"
                     .to_owned(),
             )),
         }
     }
 
     /// Drop the cached answers an edition change alters. Release keys come
-    /// from the group detail when one is at hand or cached.
-    async fn forget_album(&self, mbid: &str, group: Option<&GroupDetail>) {
-        let cached = match group {
-            Some(_) => None,
-            None => self.cached_group_detail(mbid).await,
-        };
-        let mut keys = vec![self.group_key(mbid), self.purchase_key(mbid)];
-        if let Some(group) = group.or(cached.as_ref()) {
+    /// from the group detail when one is cached.
+    async fn forget_album(&self, mbid: &str) {
+        let cached = self.cached_group_detail(mbid).await;
+        let mut keys = vec![
+            self.group_key(mbid),
+            self.purchase_key(mbid),
+            self.editions_key(mbid),
+        ];
+        if let Some(group) = cached.as_ref() {
             keys.push(self.group_key(&group.mbid));
             keys.push(self.purchase_key(&group.mbid));
             keys.extend(
@@ -823,9 +898,10 @@ impl Catalog {
         self.forget(&keys).await;
     }
 
-    /// `PUT /albums/{album_id}/edition`: pin an edition by release group,
-    /// as v2 did, for the library's one copy of the album. Curators only;
-    /// the release must be one of the album's editions.
+    /// `PUT /albums/{album_id}/edition`: choose the edition of the
+    /// library's copy of the album (v2's pin route). Curators only. Any
+    /// release counts, even one of another release group; the library's
+    /// edition operation does the work.
     pub async fn set_group_edition_pin(
         &self,
         user_id: &str,
@@ -834,32 +910,23 @@ impl Catalog {
     ) -> Result<GroupEditionPinResponse, CatalogError> {
         self.require_curator(user_id).await?;
         let (id, named) = self.album_ref(raw_id).await?;
-        let group = self
-            .group_detail(&id)
-            .await?
-            .ok_or(CatalogError::NotFound)?;
-        let release = group
-            .releases
-            .iter()
-            .find(|release| release.id.eq_ignore_ascii_case(release_mbid.trim()))
-            .map(|release| release.id.clone())
-            .ok_or_else(|| {
-                CatalogError::Missing("That edition does not belong to this album".to_owned())
-            })?;
-        let album = self.pin_target(&group.mbid, named).await?;
-        self.pins
-            .set(&album, &group.mbid, &release, user_id)
+        let album = self.choice_target(&id, named).await?;
+        let choice = self
+            .editions
+            .choose(&album, release_mbid, user_id)
             .await
-            .map_err(CatalogError::Internal)?;
-        self.forget_album(&id, Some(&group)).await;
+            .map_err(choice_error)?;
+        self.forget_album(&id).await;
+        if !choice.release_group_mbid.eq_ignore_ascii_case(&id) {
+            self.forget_album(&choice.release_group_mbid).await;
+        }
         Ok(GroupEditionPinResponse {
-            pinned_release_mbid: Some(release),
+            pinned_release_mbid: Some(choice.release_mbid),
         })
     }
 
-    /// `DELETE /albums/{album_id}/edition`: clear the pin and go back to
-    /// automatic edition choice. Curators only. Like v2 it never calls
-    /// MusicBrainz: the id is taken as the release group.
+    /// `DELETE /albums/{album_id}/edition`: "Let DroppedNeedle choose" for
+    /// the library's copy. Curators only.
     pub async fn clear_group_edition_pin(
         &self,
         user_id: &str,
@@ -867,12 +934,12 @@ impl Catalog {
     ) -> Result<GroupEditionPinResponse, CatalogError> {
         self.require_curator(user_id).await?;
         let (id, named) = self.album_ref(raw_id).await?;
-        let album = self.pin_target(&id, named).await?;
-        self.pins
-            .clear(&album)
+        let album = self.choice_target(&id, named).await?;
+        self.editions
+            .hand_back(&album, user_id)
             .await
-            .map_err(CatalogError::Internal)?;
-        self.forget_album(&id, None).await;
+            .map_err(choice_error)?;
+        self.forget_album(&id).await;
         Ok(GroupEditionPinResponse {
             pinned_release_mbid: None,
         })
@@ -1087,4 +1154,61 @@ fn bandcamp_album_search(term: &str) -> String {
         "https://bandcamp.com/search?q={}&item_type=a",
         mapping::quote_plus(term.trim())
     )
+}
+
+/// An edition operation's refusal as a catalog error, keeping its sentence
+/// and what to do about it.
+fn choice_error(error: crate::library::operations::models::OperationError) -> CatalogError {
+    use crate::library::operations::models::OperationError;
+    let said = |reason: crate::library::operations::reasons::Reason| {
+        format!("{} {}", reason.message, reason.action)
+    };
+    match error {
+        OperationError::NotFound(reason) => CatalogError::Missing(said(reason)),
+        OperationError::Invalid(reason) => CatalogError::Invalid(said(reason)),
+        OperationError::Conflict(reason) => CatalogError::Conflict(said(reason)),
+        OperationError::Unavailable(cause) => CatalogError::Unavailable(cause),
+        OperationError::Store(cause) => CatalogError::Internal(cause),
+    }
+}
+
+/// The editions the group lookup itself lists.
+fn listed_editions(group: &GroupDetail) -> Vec<AlbumEditionItem> {
+    group
+        .releases
+        .iter()
+        .map(|release| AlbumEditionItem {
+            release_mbid: release.id.clone(),
+            track_count: release.track_count,
+            title: release.title.clone(),
+            disambiguation: release.disambiguation.clone(),
+            date: release.date.clone(),
+            country: release.country.clone(),
+            packaging: release.packaging.clone(),
+            status: release.status.clone(),
+            media_formats: release.formats.clone(),
+            ..AlbumEditionItem::default()
+        })
+        .collect()
+}
+
+/// One release from the release index as an edition row.
+fn edition_item(edition: crate::library::identify::sources::Edition) -> AlbumEditionItem {
+    AlbumEditionItem {
+        release_mbid: edition.release_mbid,
+        track_count: edition.track_count,
+        title: Some(edition.title).filter(|title| !title.is_empty()),
+        disambiguation: edition.disambiguation,
+        date: edition.date,
+        country: edition.country,
+        packaging: edition.packaging,
+        status: edition.status,
+        media_formats: edition.media_formats,
+        disc_count: edition.disc_count,
+        barcode: edition.barcode,
+        label: edition.label,
+        catalog_number: edition.catalogue_number,
+        is_owned: false,
+        is_pinned: false,
+    }
 }

@@ -24,8 +24,8 @@ use super::rules::{
 };
 use super::sources::{EditionPage, EditionQuery, SourceError};
 use super::stores::{
-    AliasStore, Approval, AttemptLanding, FactsSource, IdentityStore, PinStore, ProofStore,
-    QueueStore, ReleaseStore, ReviewStore, StoreError, keep_releases, land_job,
+    AliasStore, Approval, AttemptLanding, FactsSource, IdentityStore, ProofStore, QueueStore,
+    ReleaseStore, ReviewStore, StoreError, keep_releases, land_job,
 };
 use crate::library::matching::{
     EditionPrefs, LocalAlbum, ReleaseMatch, Support, Verdict, decide, match_release,
@@ -37,7 +37,6 @@ pub struct IdentifyDeps {
     pub facts: Arc<dyn FactsSource>,
     pub proofs: Arc<dyn ProofStore>,
     pub aliases: Arc<dyn AliasStore>,
-    pub pins: Arc<dyn PinStore>,
     pub queue: Arc<dyn QueueStore>,
     pub reviews: Arc<dyn ReviewStore>,
     pub releases: Arc<dyn ReleaseStore>,
@@ -176,12 +175,6 @@ impl IdentifyService {
             .iter()
             .map(|release| match_release(&local, release, &recall.recording_aliases))
             .collect();
-        let pinned: Vec<String> = recall
-            .releases
-            .iter()
-            .filter_map(|release| self.deps.pins.pin(&release.release_group_id))
-            .map(|pin| pin.release_mbid)
-            .collect();
         let tagged = local.tagged_release();
         let verdict = decide(
             &local,
@@ -189,7 +182,6 @@ impl IdentifyService {
             &matches,
             EditionPrefs {
                 tagged: tagged.as_deref(),
-                pinned: &pinned,
             },
         );
         let lead = match verdict {

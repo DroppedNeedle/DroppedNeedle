@@ -3,7 +3,7 @@
 
 use super::models::{
     AlbumIdentity, Alias, ArtistCredit, ArtistIdentity, AutomaticSeal, CreditProof, DecisionSource,
-    IdentifyJob, JobState, LocalAlbumFacts, ReleasePin, ReviewItem, ReviewState, TrackIdentity,
+    IdentifyJob, JobState, LocalAlbumFacts, ReviewItem, ReviewState, TrackIdentity,
 };
 use crate::library::matching::Release;
 
@@ -154,13 +154,6 @@ pub trait AliasStore: Send + Sync {
     fn retarget(&self, retired_id: &str, surviving_id: &str);
     fn favorite_holds(&self, user_id: &str, item_kind: &str, item_id: &str) -> bool;
     fn add_favorite(&self, user_id: &str, item_kind: &str, item_id: &str);
-}
-
-/// Release pins: hint-only steering for edition search.
-pub trait PinStore: Send + Sync {
-    fn pin(&self, release_group_mbid: &str) -> Option<ReleasePin>;
-    fn set_pin(&self, pin: ReleasePin);
-    fn clear_pin(&self, release_group_mbid: &str) -> bool;
 }
 
 /// Durable identification queue.

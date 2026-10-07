@@ -3,6 +3,8 @@
 //! loopback fixture server (tests/fixtures/catalog). One test per page,
 //! the MusicBrainz outage fallback, and the auth matrix rows.
 
+use droppedneedle::library::operations::models::{EditionChoice, OperationError};
+use droppedneedle::library::operations::port::{BoxFuture as PortFuture, EditionChoices};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -844,28 +846,31 @@ async fn unified_search_joins_musicbrainz_with_the_library() {
     assert_eq!(album["in_library"], true);
 }
 
-/// Pin writes recorded for assertions.
+/// Edition choices recorded for assertions.
 #[derive(Default)]
 struct RecordedPins(Mutex<Vec<String>>);
 
-impl catalog::ports::EditionPins for RecordedPins {
-    fn set<'a>(
+impl EditionChoices for RecordedPins {
+    fn choose<'a>(
         &'a self,
         album_id: &'a str,
-        _release_group_mbid: &'a str,
         release_mbid: &'a str,
         _user_id: &'a str,
-    ) -> catalog::ports::BoxFuture<'a, Result<(), String>> {
+    ) -> PortFuture<'a, Result<EditionChoice, OperationError>> {
         Box::pin(async move {
             self.0
                 .lock()
                 .unwrap()
                 .push(format!("set {album_id} {release_mbid}"));
-            Ok(())
+            Err(OperationError::Store("not scripted".to_owned()))
         })
     }
 
-    fn clear<'a>(&'a self, album_id: &'a str) -> catalog::ports::BoxFuture<'a, Result<(), String>> {
+    fn hand_back<'a>(
+        &'a self,
+        album_id: &'a str,
+        _user_id: &'a str,
+    ) -> PortFuture<'a, Result<(), OperationError>> {
         Box::pin(async move {
             self.0.lock().unwrap().push(format!("clear {album_id}"));
             Ok(())
@@ -909,7 +914,8 @@ async fn clearing_a_pin_names_the_copy_and_never_calls_musicbrainz() {
         rig.deps.clone(),
     );
     let pins = Arc::new(RecordedPins::default());
-    let catalog = Catalog::new(upstream, LocalCatalog::new(pool)).with_edition_pins(pins.clone());
+    let catalog =
+        Catalog::new(upstream, LocalCatalog::new(pool)).with_edition_choices(pins.clone());
 
     let error = catalog
         .clear_group_edition_pin(&curator.id, OK_COMPUTER)

@@ -24,13 +24,13 @@ use sha2::{Digest as _, Sha256};
 use super::models::{
     AlbumIdentity, Alias, AliasKind, ArtistCredit, ArtistIdentity, AutomaticSeal,
     CandidateEvidence, CreditProof, DecisionSource, IdentifyJob, IdentifyKind, JobState,
-    LocalAlbumFacts, LocalTrackFacts, PriorAlbumIdentity, PriorTrackIdentity, ReleasePin,
-    ReviewItem, ReviewState, TrackIdentity,
+    LocalAlbumFacts, LocalTrackFacts, PriorAlbumIdentity, PriorTrackIdentity, ReviewItem,
+    ReviewState, TrackIdentity,
 };
 use super::queue::PRIORITY_NEW_OR_CHANGED;
 use super::stores::{
-    AliasStore, Approval, FactsSource, FingerprintStore, IdentityStore, PinStore, ProofStore,
-    QueueStore, RELEASE_FRESH_SECS, ReleaseStore, ReviewStore, StoreError,
+    AliasStore, Approval, FactsSource, FingerprintStore, IdentityStore, ProofStore, QueueStore,
+    RELEASE_FRESH_SECS, ReleaseStore, ReviewStore, StoreError,
 };
 use crate::library::matching::Release;
 
@@ -1192,50 +1192,6 @@ impl AliasStore for SqliteIdentifyStore {
                 params![user_id, item_kind, item_id, now_secs()],
             )
         });
-    }
-}
-
-impl PinStore for SqliteIdentifyStore {
-    fn pin(&self, release_group_mbid: &str) -> Option<ReleasePin> {
-        self.read("release pin", |conn| {
-            conn.query_row(
-                "SELECT release_group_mbid, release_mbid FROM album_release_pins \
-                 WHERE release_group_mbid = ?1",
-                params![release_group_mbid.to_lowercase()],
-                |row| {
-                    Ok(ReleasePin {
-                        release_group_mbid: row.get(0)?,
-                        release_mbid: row.get(1)?,
-                    })
-                },
-            )
-            .optional()
-        })
-        .flatten()
-    }
-
-    fn set_pin(&self, pin: ReleasePin) {
-        self.write("set release pin", |tx| {
-            tx.execute(
-                "INSERT OR REPLACE INTO album_release_pins (release_group_mbid, release_mbid, \
-                 set_at) VALUES (?1, ?2, ?3)",
-                params![
-                    pin.release_group_mbid.to_lowercase(),
-                    pin.release_mbid,
-                    now_secs().to_string(),
-                ],
-            )
-        });
-    }
-
-    fn clear_pin(&self, release_group_mbid: &str) -> bool {
-        self.write("clear release pin", |tx| {
-            tx.execute(
-                "DELETE FROM album_release_pins WHERE release_group_mbid = ?1",
-                params![release_group_mbid.to_lowercase()],
-            )
-        })
-        .is_some_and(|deleted| deleted > 0)
     }
 }
 

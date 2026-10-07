@@ -29,6 +29,7 @@ pub mod ports;
 pub mod search;
 pub mod upstream;
 
+use crate::library::operations::port::{EditionChoices, NoEditionChoices};
 use std::collections::HashSet;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
@@ -58,7 +59,7 @@ pub struct Catalog {
     inner: Arc<Inner>,
     follows: Arc<dyn ports::FollowLookup>,
     purchase_links: Arc<dyn ports::PurchaseLinkSource>,
-    pins: Arc<dyn ports::EditionPins>,
+    editions: Arc<dyn EditionChoices>,
 }
 
 struct Inner {
@@ -93,14 +94,14 @@ impl Catalog {
             }),
             follows: Arc::new(ports::NoFollows),
             purchase_links: Arc::new(ports::NoPurchaseLinks),
-            pins: Arc::new(ports::NoEditionPins),
+            editions: Arc::new(NoEditionChoices),
         }
     }
 
-    /// Write edition pins through this store.
+    /// Choose album editions through the library's edition operation.
     #[must_use]
-    pub fn with_edition_pins(mut self, pins: Arc<dyn ports::EditionPins>) -> Self {
-        self.pins = pins;
+    pub fn with_edition_choices(mut self, editions: Arc<dyn EditionChoices>) -> Self {
+        self.editions = editions;
         self
     }
 

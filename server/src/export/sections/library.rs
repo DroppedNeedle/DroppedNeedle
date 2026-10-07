@@ -554,28 +554,6 @@ pub const ALBUM_PINS: TableSection = TableSection {
     left_behind: "",
 };
 
-/// The same pins as identification reads them: one release per release
-/// group. When two albums of one group were pinned differently, the first
-/// pin counts.
-pub const IDENTIFY_PINS: TableSection = TableSection {
-    name: "identify_pin",
-    source: table("library_album_release_pins"),
-    target: Target::Table("album_release_pins"),
-    columns: &[
-        col("release_group_mbid"),
-        col("release_mbid"),
-        col("set_by_user_id"),
-        col("set_at"),
-    ],
-    key: &["release_group_mbid"],
-    // Several albums of one group share the key; the rule makes the first
-    // landing pin win instead of the insert failing on the second.
-    unique: &[&["release_group_mbid"]],
-    parents: &[],
-    user_column: None,
-    left_behind: "",
-};
-
 /// Candidate pairs of artists that may be one artist.
 pub const MERGE_CANDIDATES: TableSection = TableSection {
     name: "artist_merge_candidate",
