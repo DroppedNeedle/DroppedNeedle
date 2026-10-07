@@ -32,6 +32,7 @@ mod compat_wiring;
 mod concerts;
 mod config_secrets;
 mod contract;
+mod discover_page;
 mod discover_queue;
 mod envelope;
 mod events_stream;
