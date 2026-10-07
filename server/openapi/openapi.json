@@ -1293,6 +1293,59 @@
         }
       }
     },
+    "/api/v3/albums/{album_id}/editions/{release_mbid}/tracks": {
+      "get": {
+        "tags": [
+          "crate::reads::catalog::handlers"
+        ],
+        "summary": "The tracklist of one edition, any release, for comparing editions side\nby side before choosing one.",
+        "operationId": "edition_tracks",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Release-group MBID, or a library album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "release_mbid",
+            "in": "path",
+            "description": "Release MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tracklist",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlbumTracksInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "Unknown release"
+          },
+          "503": {
+            "description": "MusicBrainz down"
+          }
+        }
+      }
+    },
     "/api/v3/albums/{album_id}/lastfm": {
       "get": {
         "tags": [
@@ -5547,6 +5600,138 @@
         }
       }
     },
+    "/api/v3/library/albums/{album_id}/edition": {
+      "get": {
+        "tags": [
+          "crate::library::http::edition"
+        ],
+        "summary": "Where the album's edition stands, and why.",
+        "operationId": "get_edition",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The album's edition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionStatusView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "Unknown album"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "crate::library::http::edition"
+        ],
+        "summary": "Choose the album's edition: any release, from this album's release\ngroup or another. Files the edition has no track for keep their\nrecording; nothing automatic changes the choice afterwards.",
+        "operationId": "choose_edition",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChooseEditionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The choice and what it did",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionChoiceView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a release id, or the release fits none of the files"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Unknown album, or MusicBrainz does not know the release"
+          },
+          "503": {
+            "description": "MusicBrainz is not answering"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "crate::library::http::edition"
+        ],
+        "summary": "\"Let DroppedNeedle choose\": drop the person's choice and pick the best\nfit for the files again.",
+        "operationId": "hand_back_edition",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The album's edition, identification queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionStatusView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Unknown album"
+          }
+        }
+      }
+    },
     "/api/v3/library/albums/{album_id}/edition-pin": {
       "get": {
         "tags": [
@@ -5672,6 +5857,94 @@
           },
           "404": {
             "description": "Unknown album id"
+          }
+        }
+      }
+    },
+    "/api/v3/library/albums/{album_id}/edition/confirm": {
+      "post": {
+        "tags": [
+          "crate::library::http::edition"
+        ],
+        "summary": "\"Looks right\": confirm the album's unconfirmed best guess.",
+        "operationId": "confirm_edition",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The album's edition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionStatusView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Unknown album"
+          },
+          "409": {
+            "description": "Nothing waits for confirmation"
+          }
+        }
+      }
+    },
+    "/api/v3/library/albums/{album_id}/edition/undo": {
+      "post": {
+        "tags": [
+          "crate::library::http::edition"
+        ],
+        "summary": "Take back the album's last edition change.",
+        "operationId": "undo_edition",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The album's edition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionStatusView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "No change to take back"
+          },
+          "409": {
+            "description": "The edition changed again since"
           }
         }
       }
@@ -9202,6 +9475,73 @@
           },
           "422": {
             "description": "The file could not be recycled; nothing changed"
+          }
+        }
+      }
+    },
+    "/api/v3/library/unconfirmed": {
+      "get": {
+        "tags": [
+          "crate::library::http::edition"
+        ],
+        "summary": "Albums whose match is a best guess waiting for a look (or, with\n`state=unmatched`, albums nothing fits). Newest first.",
+        "operationId": "list_unconfirmed",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "path",
+            "description": "`unconfirmed` (default) or `unmatched`.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "offset",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of albums",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WaitingAlbumsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown state"
+          },
+          "401": {
+            "description": "Not authenticated"
           }
         }
       }
@@ -15136,6 +15476,56 @@
         }
       }
     },
+    "/api/v3/settings/edition-preferences": {
+      "get": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "Read the edition preferences.",
+        "operationId": "get_edition_preferences",
+        "responses": {
+          "200": {
+            "description": "Edition preferences",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionPreferences"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "crate::settings::handlers"
+        ],
+        "summary": "Save the edition preferences.",
+        "operationId": "put_edition_preferences",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditionPreferences"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionPreferences"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/settings/events": {
       "get": {
         "tags": [
@@ -19727,6 +20117,20 @@
           "is_pinned"
         ],
         "properties": {
+          "barcode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Barcode, when known."
+          },
+          "catalog_number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "First catalog number, when known."
+          },
           "country": {
             "type": [
               "string",
@@ -19748,13 +20152,33 @@
             ],
             "description": "Disambiguation (`deluxe edition`, `remaster`)."
           },
+          "disc_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number of discs (media), when known.",
+            "minimum": 0
+          },
           "is_owned": {
             "type": "boolean",
-            "description": "True when the library's copy is identified as this edition."
+            "description": "True when the library's copy is this edition."
           },
           "is_pinned": {
             "type": "boolean",
-            "description": "True when a curator pinned this edition."
+            "description": "True when a person chose this edition for the library's copy."
+          },
+          "label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "First label, when known."
+          },
+          "media_formats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Media formats (`CD`, `Digital Media`, `12\" Vinyl`), in disc order."
           },
           "packaging": {
             "type": [
@@ -19815,14 +20239,14 @@
               "string",
               "null"
             ],
-            "description": "Pinned edition, if any."
+            "description": "The edition a person chose for the library's copy, if any."
           },
           "selected_basis": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Why that edition: `pin`, `owned`, `file_count` or `ranked`."
+            "description": "Why that edition: `chosen` (by a person), `owned` (the best fit for\nthe library's files), `file_count` or `preferred` (the edition\npreferences, for an album the library does not hold)."
           },
           "selected_release_mbid": {
             "type": [
@@ -20205,7 +20629,7 @@
               "string",
               "null"
             ],
-            "description": "Why that edition: `pin`, `owned`, `file_count` or `ranked`."
+            "description": "Why that edition: `chosen` (by a person), `owned` (the best fit for\nthe library's files), `file_count` or `preferred` (the edition\npreferences, for an album the library does not hold)."
           },
           "selected_release_mbid": {
             "type": [
@@ -23149,6 +23573,19 @@
             "format": "int64",
             "description": "`-wal` file allocation in bytes.",
             "minimum": 0
+          }
+        }
+      },
+      "ChooseEditionBody": {
+        "type": "object",
+        "description": "Choose an edition.",
+        "required": [
+          "release_mbid"
+        ],
+        "properties": {
+          "release_mbid": {
+            "type": "string",
+            "description": "Any MusicBrainz release, from this album's release group or another."
           }
         }
       },
@@ -26286,6 +26723,116 @@
           }
         }
       },
+      "EditionCandidateView": {
+        "type": "object",
+        "description": "One candidate the matcher scored, as the edition picker shows it.",
+        "required": [
+          "release_group_mbid",
+          "album_title",
+          "album_artist_name",
+          "matched_files",
+          "score",
+          "distance",
+          "penalties"
+        ],
+        "properties": {
+          "album_artist_name": {
+            "type": "string"
+          },
+          "album_title": {
+            "type": "string"
+          },
+          "distance": {
+            "type": "number",
+            "format": "double",
+            "description": "Matcher distance, 0 for a perfect match."
+          },
+          "matched_files": {
+            "type": "integer",
+            "description": "Files the release accounts for.",
+            "minimum": 0
+          },
+          "penalties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PenaltyView"
+            },
+            "description": "What the distance is made of, largest share first."
+          },
+          "release_group_mbid": {
+            "type": "string"
+          },
+          "release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "score": {
+            "type": "number",
+            "format": "double",
+            "description": "One minus the distance."
+          }
+        }
+      },
+      "EditionChoiceView": {
+        "type": "object",
+        "description": "What choosing an edition did.",
+        "required": [
+          "album_id",
+          "release_group_mbid",
+          "release_mbid",
+          "retag_files",
+          "extra_track_ids",
+          "missing_titles",
+          "status"
+        ],
+        "properties": {
+          "album_id": {
+            "type": "string"
+          },
+          "extra_track_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Files the edition has no track for. They keep their recording."
+          },
+          "missing_titles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Titles of the edition's tracks no file holds."
+          },
+          "release_group_mbid": {
+            "type": "string"
+          },
+          "release_mbid": {
+            "type": "string"
+          },
+          "retag_files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RetagFileView"
+            },
+            "description": "Files placed on a track of the edition: pass these to a retag\npreview to write the edition's tags into them."
+          },
+          "status": {
+            "$ref": "#/components/schemas/EditionStatusView",
+            "description": "The album's edition as it now stands."
+          }
+        }
+      },
+      "EditionDatePreference": {
+        "type": "string",
+        "description": "Which release date wins when editions otherwise tie.",
+        "enum": [
+          "earliest",
+          "latest",
+          "any"
+        ]
+      },
       "EditionPinBody": {
         "type": "object",
         "description": "Pin-set body.",
@@ -26295,13 +26842,13 @@
         "properties": {
           "release_mbid": {
             "type": "string",
-            "description": "Release MBID to pin. Must be a known edition of the album."
+            "description": "Any MusicBrainz release, from this album's group or another."
           }
         }
       },
       "EditionPinResponse": {
         "type": "object",
-        "description": "Edition-pin display answer. `selected_release_mbid` is the soft display\nhint: the pin when set, else the catalog default. It never becomes\ncatalog identity.",
+        "description": "The album's edition. `selected_release_mbid` is the album's edition\n(its identity row); `pinned_release_mbid` is set when a person chose it.",
         "required": [
           "album_id",
           "hint_source"
@@ -26313,23 +26860,168 @@
           },
           "hint_source": {
             "type": "string",
-            "description": "Where the pick came from: pin, default, or none."
+            "description": "Who decided: `pin` (a person), `default` (automatic best fit), or\n`none` (not identified)."
           },
           "pinned_release_mbid": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Pinned release MBID, when pinned."
+            "description": "The edition, when a person chose it."
           },
           "selected_release_mbid": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Display pick: the pin when set, else the catalog default."
+            "description": "The album's edition."
           }
         }
+      },
+      "EditionPreferences": {
+        "type": "object",
+        "description": "How DroppedNeedle picks between editions of one album when the files\ndo not settle it, and which edition it fetches for an album you do\nnot have yet. A person's choice always wins, then the best fit for the\nfiles, then these preferences, in this order.",
+        "properties": {
+          "avoid_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Release types to avoid unless nothing else fits (`live`,\n`compilation`, `remix`, `soundtrack`, `demo`).",
+            "default": [
+              "live",
+              "compilation"
+            ]
+          },
+          "countries": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Release countries, most wanted first, as two-letter codes (`XW` is\nworldwide). Empty means your store region, then worldwide.",
+            "default": []
+          },
+          "date": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EditionDatePreference",
+                "description": "Earliest, latest, or any release date."
+              }
+            ],
+            "default": "earliest"
+          },
+          "format_order": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Media formats, most wanted first (`digital media`, `cd`, `vinyl`,\n`cassette`). A format matches when its name contains the entry.",
+            "default": [
+              "digital media",
+              "cd",
+              "vinyl",
+              "cassette"
+            ]
+          },
+          "manage_unconfirmed": {
+            "type": "boolean",
+            "description": "Let file tagging and organizing work on albums whose match is still\nunconfirmed. Off: those albums wait until someone confirms them.",
+            "default": false
+          },
+          "status_order": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Release statuses, most wanted first (`official`, `promotion`,\n`bootleg`, `pseudo-release`). Unlisted statuses come last.",
+            "default": [
+              "official",
+              "promotion",
+              "bootleg",
+              "pseudo-release"
+            ]
+          },
+          "version": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EditionVersionPreference",
+                "description": "Standard, deluxe, or either."
+              }
+            ],
+            "default": "standard"
+          }
+        }
+      },
+      "EditionStatusView": {
+        "type": "object",
+        "description": "Where one album's edition stands.",
+        "required": [
+          "album_id",
+          "state",
+          "reason",
+          "candidates",
+          "undo_available"
+        ],
+        "properties": {
+          "album_id": {
+            "type": "string"
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EditionCandidateView"
+            },
+            "description": "The closest candidates, best first (for a guess or no match)."
+          },
+          "chosen_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "When it was chosen (epoch seconds), for a chosen one."
+          },
+          "chosen_by_user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who chose the edition, for a chosen one."
+          },
+          "reason": {
+            "$ref": "#/components/schemas/ReasonView",
+            "description": "Why the edition is what it is, and what to do about it."
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "description": "`chosen` (by a person), `confirmed`, `unconfirmed` (a best guess),\n`unmatched` (keeps its own tags), or `unidentified`."
+          },
+          "undo_available": {
+            "type": "boolean",
+            "description": "The last edition change can still be taken back."
+          }
+        }
+      },
+      "EditionVersionPreference": {
+        "type": "string",
+        "description": "Standard or expanded editions.",
+        "enum": [
+          "standard",
+          "deluxe",
+          "any"
+        ]
       },
       "EmailUpdate": {
         "type": "object",
@@ -38135,6 +38827,26 @@
           }
         }
       },
+      "RetagFileView": {
+        "type": "object",
+        "description": "A file a retag would rewrite to the chosen edition's tags.",
+        "required": [
+          "track_id",
+          "root_id",
+          "rel_path"
+        ],
+        "properties": {
+          "rel_path": {
+            "type": "string"
+          },
+          "root_id": {
+            "type": "string"
+          },
+          "track_id": {
+            "type": "string"
+          }
+        }
+      },
       "RetryAllResponse": {
         "type": "object",
         "description": "Retry-all-failed outcome.",
@@ -42473,6 +43185,85 @@
           "is_public": {
             "type": "boolean",
             "description": "True makes the playlist public; false makes it private."
+          }
+        }
+      },
+      "WaitingAlbumView": {
+        "type": "object",
+        "description": "One album whose match waits for a look.",
+        "required": [
+          "album_id",
+          "title",
+          "artist_name",
+          "state",
+          "reason",
+          "updated_at"
+        ],
+        "properties": {
+          "album_id": {
+            "type": "string"
+          },
+          "artist_name": {
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/ReasonView"
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "description": "`unconfirmed` or `unmatched`."
+          },
+          "title": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "WaitingAlbumsResponse": {
+        "type": "object",
+        "description": "One page of albums waiting for a look.",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WaitingAlbumView"
+            }
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },

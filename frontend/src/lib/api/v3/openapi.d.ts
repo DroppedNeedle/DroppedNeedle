@@ -683,6 +683,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/albums/{album_id}/editions/{release_mbid}/tracks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The tracklist of one edition, any release, for comparing editions side
+         *     by side before choosing one.
+         */
+        get: operations["edition_tracks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/albums/{album_id}/lastfm": {
         parameters: {
             query?: never;
@@ -2548,6 +2568,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/albums/{album_id}/edition": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Where the album's edition stands, and why. */
+        get: operations["get_edition"];
+        /**
+         * Choose the album's edition: any release, from this album's release
+         *     group or another. Files the edition has no track for keep their
+         *     recording; nothing automatic changes the choice afterwards.
+         */
+        put: operations["choose_edition"];
+        post?: never;
+        /**
+         * "Let DroppedNeedle choose": drop the person's choice and pick the best
+         *     fit for the files again.
+         */
+        delete: operations["hand_back_edition"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/albums/{album_id}/edition-pin": {
         parameters: {
             query?: never;
@@ -2562,6 +2608,40 @@ export interface paths {
         post?: never;
         /** Clear the pin for an album. */
         delete: operations["clear_pin_handler"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{album_id}/edition/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** "Looks right": confirm the album's unconfirmed best guess. */
+        post: operations["confirm_edition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{album_id}/edition/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Take back the album's last edition change. */
+        post: operations["undo_edition"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -3792,6 +3872,26 @@ export interface paths {
          *     `delete_file=false`.
          */
         delete: operations["remove_track"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/unconfirmed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Albums whose match is a best guess waiting for a look (or, with
+         *     `state=unmatched`, albums nothing fits). Newest first.
+         */
+        get: operations["list_unconfirmed"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -6207,6 +6307,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/settings/edition-preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read the edition preferences. */
+        get: operations["get_edition_preferences"];
+        /** Save the edition preferences. */
+        put: operations["put_edition_preferences"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/settings/events": {
         parameters: {
             query?: never;
@@ -8422,16 +8540,29 @@ export interface components {
         };
         /** @description One edition (MusicBrainz release) of an album. */
         AlbumEditionItem: {
+            /** @description Barcode, when known. */
+            barcode?: string | null;
+            /** @description First catalog number, when known. */
+            catalog_number?: string | null;
             /** @description Release country. */
             country?: string | null;
             /** @description Release date. */
             date?: string | null;
             /** @description Disambiguation (`deluxe edition`, `remaster`). */
             disambiguation?: string | null;
-            /** @description True when the library's copy is identified as this edition. */
+            /**
+             * Format: int32
+             * @description Number of discs (media), when known.
+             */
+            disc_count?: number;
+            /** @description True when the library's copy is this edition. */
             is_owned: boolean;
-            /** @description True when a curator pinned this edition. */
+            /** @description True when a person chose this edition for the library's copy. */
             is_pinned: boolean;
+            /** @description First label, when known. */
+            label?: string | null;
+            /** @description Media formats (`CD`, `Digital Media`, `12" Vinyl`), in disc order. */
+            media_formats?: string[];
             /** @description Packaging. */
             packaging?: string | null;
             /** @description Release MBID. */
@@ -8452,9 +8583,13 @@ export interface components {
             items: components["schemas"]["AlbumEditionItem"][];
             /** @description Owned edition, if identified. */
             owned_release_mbid?: string | null;
-            /** @description Pinned edition, if any. */
+            /** @description The edition a person chose for the library's copy, if any. */
             pinned_release_mbid?: string | null;
-            /** @description Why that edition: `pin`, `owned`, `file_count` or `ranked`. */
+            /**
+             * @description Why that edition: `chosen` (by a person), `owned` (the best fit for
+             *     the library's files), `file_count` or `preferred` (the edition
+             *     preferences, for an album the library does not hold).
+             */
             selected_basis?: string | null;
             /** @description The edition the album page shows. */
             selected_release_mbid?: string | null;
@@ -8612,7 +8747,11 @@ export interface components {
             country?: string | null;
             /** @description First label. */
             label?: string | null;
-            /** @description Why that edition: `pin`, `owned`, `file_count` or `ranked`. */
+            /**
+             * @description Why that edition: `chosen` (by a person), `owned` (the best fit for
+             *     the library's files), `file_count` or `preferred` (the edition
+             *     preferences, for an album the library does not hold).
+             */
             pick_basis?: string | null;
             /** @description The edition shown. */
             selected_release_mbid?: string | null;
@@ -9949,6 +10088,11 @@ export interface components {
              */
             wal_file_bytes: number;
         };
+        /** @description Choose an edition. */
+        ChooseEditionBody: {
+            /** @description Any MusicBrainz release, from this album's release group or another. */
+            release_mbid: string;
+        };
         /** @description City suggestions. Empty means the geocoder knows no such place. */
         CitySearchResponse: {
             /** @description Suggestions, best first. */
@@ -11277,26 +11421,155 @@ export interface components {
             /** @description Linked download task, when dispatched. */
             task_id?: string | null;
         };
+        /** @description One candidate the matcher scored, as the edition picker shows it. */
+        EditionCandidateView: {
+            album_artist_name: string;
+            album_title: string;
+            /**
+             * Format: double
+             * @description Matcher distance, 0 for a perfect match.
+             */
+            distance: number;
+            /** @description Files the release accounts for. */
+            matched_files: number;
+            /** @description What the distance is made of, largest share first. */
+            penalties: components["schemas"]["PenaltyView"][];
+            release_group_mbid: string;
+            release_mbid?: string | null;
+            /**
+             * Format: double
+             * @description One minus the distance.
+             */
+            score: number;
+        };
+        /** @description What choosing an edition did. */
+        EditionChoiceView: {
+            album_id: string;
+            /** @description Files the edition has no track for. They keep their recording. */
+            extra_track_ids: string[];
+            /** @description Titles of the edition's tracks no file holds. */
+            missing_titles: string[];
+            release_group_mbid: string;
+            release_mbid: string;
+            /**
+             * @description Files placed on a track of the edition: pass these to a retag
+             *     preview to write the edition's tags into them.
+             */
+            retag_files: components["schemas"]["RetagFileView"][];
+            /** @description The album's edition as it now stands. */
+            status: components["schemas"]["EditionStatusView"];
+        };
+        /**
+         * @description Which release date wins when editions otherwise tie.
+         * @enum {string}
+         */
+        EditionDatePreference: "earliest" | "latest" | "any";
         /** @description Pin-set body. */
         EditionPinBody: {
-            /** @description Release MBID to pin. Must be a known edition of the album. */
+            /** @description Any MusicBrainz release, from this album's group or another. */
             release_mbid: string;
         };
         /**
-         * @description Edition-pin display answer. `selected_release_mbid` is the soft display
-         *     hint: the pin when set, else the catalog default. It never becomes
-         *     catalog identity.
+         * @description The album's edition. `selected_release_mbid` is the album's edition
+         *     (its identity row); `pinned_release_mbid` is set when a person chose it.
          */
         EditionPinResponse: {
             /** @description Album id. */
             album_id: string;
-            /** @description Where the pick came from: pin, default, or none. */
+            /**
+             * @description Who decided: `pin` (a person), `default` (automatic best fit), or
+             *     `none` (not identified).
+             */
             hint_source: string;
-            /** @description Pinned release MBID, when pinned. */
+            /** @description The edition, when a person chose it. */
             pinned_release_mbid?: string | null;
-            /** @description Display pick: the pin when set, else the catalog default. */
+            /** @description The album's edition. */
             selected_release_mbid?: string | null;
         };
+        /**
+         * @description How DroppedNeedle picks between editions of one album when the files
+         *     do not settle it, and which edition it fetches for an album you do
+         *     not have yet. A person's choice always wins, then the best fit for the
+         *     files, then these preferences, in this order.
+         */
+        EditionPreferences: {
+            /**
+             * @description Release types to avoid unless nothing else fits (`live`,
+             *     `compilation`, `remix`, `soundtrack`, `demo`).
+             * @default [
+             *       "live",
+             *       "compilation"
+             *     ]
+             */
+            avoid_types: string[];
+            /**
+             * @description Release countries, most wanted first, as two-letter codes (`XW` is
+             *     worldwide). Empty means your store region, then worldwide.
+             * @default []
+             */
+            countries: string[];
+            /** @default earliest */
+            date: components["schemas"]["EditionDatePreference"];
+            /**
+             * @description Media formats, most wanted first (`digital media`, `cd`, `vinyl`,
+             *     `cassette`). A format matches when its name contains the entry.
+             * @default [
+             *       "digital media",
+             *       "cd",
+             *       "vinyl",
+             *       "cassette"
+             *     ]
+             */
+            format_order: string[];
+            /**
+             * @description Let file tagging and organizing work on albums whose match is still
+             *     unconfirmed. Off: those albums wait until someone confirms them.
+             * @default false
+             */
+            manage_unconfirmed: boolean;
+            /**
+             * @description Release statuses, most wanted first (`official`, `promotion`,
+             *     `bootleg`, `pseudo-release`). Unlisted statuses come last.
+             * @default [
+             *       "official",
+             *       "promotion",
+             *       "bootleg",
+             *       "pseudo-release"
+             *     ]
+             */
+            status_order: string[];
+            /** @default standard */
+            version: components["schemas"]["EditionVersionPreference"];
+        };
+        /** @description Where one album's edition stands. */
+        EditionStatusView: {
+            album_id: string;
+            /** @description The closest candidates, best first (for a guess or no match). */
+            candidates: components["schemas"]["EditionCandidateView"][];
+            /**
+             * Format: double
+             * @description When it was chosen (epoch seconds), for a chosen one.
+             */
+            chosen_at?: number | null;
+            /** @description Who chose the edition, for a chosen one. */
+            chosen_by_user_id?: string | null;
+            /** @description Why the edition is what it is, and what to do about it. */
+            reason: components["schemas"]["ReasonView"];
+            release_group_mbid?: string | null;
+            release_mbid?: string | null;
+            /**
+             * @description `chosen` (by a person), `confirmed`, `unconfirmed` (a best guess),
+             *     `unmatched` (keeps its own tags), or `unidentified`.
+             */
+            state: string;
+            /** @description The last edition change can still be taken back. */
+            undo_available: boolean;
+        };
+        /**
+         * @description Standard or expanded editions.
+         * @enum {string}
+         */
+        EditionVersionPreference: "standard" | "deluxe" | "any";
         /** @description Change email. Null or blank clears it. */
         EmailUpdate: {
             /** @description New email, or null to clear. */
@@ -16958,6 +17231,12 @@ export interface components {
             /** @description True when an offline restore of this backup should succeed. */
             restorable: boolean;
         };
+        /** @description A file a retag would rewrite to the chosen edition's tags. */
+        RetagFileView: {
+            rel_path: string;
+            root_id: string;
+            track_id: string;
+        };
         /** @description Retry-all-failed outcome. */
         RetryAllResponse: {
             /**
@@ -18909,6 +19188,29 @@ export interface components {
             /** @description True makes the playlist public; false makes it private. */
             is_public: boolean;
         };
+        /** @description One album whose match waits for a look. */
+        WaitingAlbumView: {
+            album_id: string;
+            artist_name: string;
+            reason: components["schemas"]["ReasonView"];
+            release_group_mbid?: string | null;
+            release_mbid?: string | null;
+            /** @description `unconfirmed` or `unmatched`. */
+            state: string;
+            title: string;
+            /** Format: double */
+            updated_at: number;
+        };
+        /** @description One page of albums waiting for a look. */
+        WaitingAlbumsResponse: {
+            items: components["schemas"]["WaitingAlbumView"][];
+            /** Format: int32 */
+            limit: number;
+            /** Format: int32 */
+            offset: number;
+            /** Format: int64 */
+            total: number;
+        };
         /** @description One durable-work channel's demand. */
         WakeupChannelView: {
             /** @description Channel name. */
@@ -20689,6 +20991,59 @@ export interface operations {
                 content?: never;
             };
             /** @description Unknown album */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description MusicBrainz down */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    edition_tracks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release-group MBID, or a library album id */
+                album_id: string;
+                /** @description Release MBID */
+                release_mbid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tracklist */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumTracksInfo"];
+                };
+            };
+            /** @description Not a MusicBrainz id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown release */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -24596,6 +24951,149 @@ export interface operations {
             };
         };
     };
+    get_edition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The album's edition */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionStatusView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    choose_edition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChooseEditionBody"];
+            };
+        };
+        responses: {
+            /** @description The choice and what it did */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionChoiceView"];
+                };
+            };
+            /** @description Not a release id, or the release fits none of the files */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album, or MusicBrainz does not know the release */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description MusicBrainz is not answering */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    hand_back_edition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The album's edition, identification queued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionStatusView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     get_pin_handler: {
         parameters: {
             query?: never;
@@ -24725,6 +25223,108 @@ export interface operations {
             };
             /** @description Unknown album id */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    confirm_edition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The album's edition */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionStatusView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Nothing waits for confirmation */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    undo_edition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The album's edition */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionStatusView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No change to take back */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The edition changed again since */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -28266,6 +28866,45 @@ export interface operations {
             };
             /** @description The file could not be recycled; nothing changed */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_unconfirmed: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description `unconfirmed` (default) or `unmatched`. */
+                state: string | null;
+                limit: number | null;
+                offset: number | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of albums */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WaitingAlbumsResponse"];
+                };
+            };
+            /** @description Unknown state */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -33091,6 +33730,50 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WantedWatcher"];
+                };
+            };
+        };
+    };
+    get_edition_preferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Edition preferences */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionPreferences"];
+                };
+            };
+        };
+    };
+    put_edition_preferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditionPreferences"];
+            };
+        };
+        responses: {
+            /** @description Saved settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionPreferences"];
                 };
             };
         };
