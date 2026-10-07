@@ -13,6 +13,11 @@
 //! returned handle and polls it; on failover it re-enqueues the task,
 //! which walks to the next folder or release. The adapters never
 //! blocklist on local faults.
+//!
+//! A task started from a manual search fetches the candidate the person
+//! picked on its first attempt (see [`super::search_jobs`]); failover then
+//! searches as usual. Each adapter also answers a manual search with its
+//! ranked candidates.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -26,12 +31,15 @@ use super::downloads::sources::{
     DownloadSource, Materialization, OrphanOwnership, SourceError, SourceHandle, TransferProgress,
 };
 use super::downloads::store::TaskRow;
+use super::search_jobs::candidates::{Candidate, MAX_PER_SOURCE, Pin};
+use super::search_jobs::pinned;
+use super::slskd::folders::{RankRequest, rank_folders};
 use super::slskd::{EnqueueFile, ReqwestSlskdHttp, SlskdError, SlskdRepository};
 use super::target::reasons::TrackReason;
 use super::target::releases::order_releases;
 use super::target::soulseek::{self, SoulseekMiss};
 use super::target::{SearchTarget, TargetError, Targets};
-use super::usenet::newznab::{IndexerResult, NewznabIndexer};
+use super::usenet::newznab::{IndexerResult, NewznabIndexer, usenet_identity};
 use super::usenet::policy::UsenetPolicy;
 use super::usenet::prowlarr::ProwlarrIndexer;
 use super::usenet::sabnzbd::{SabnzbdError, SabnzbdQueue};
@@ -154,13 +162,48 @@ impl SlskdSource {
         self.targets = Some(targets);
         self
     }
+
+    /// A manual search: the album's folders, ranked against the edition's
+    /// tracklist the same way the automatic path ranks them. Blocklisted
+    /// files are left out.
+    pub async fn search_candidates(
+        &self,
+        target: &SearchTarget,
+    ) -> Result<Vec<Candidate>, SourceError> {
+        if !self.repo.is_configured() {
+            return Ok(Vec::new());
+        }
+        let live = self
+            .journal
+            .read_quarantine_set(now_unix_f64(), QUARANTINE_TTL_SECONDS)
+            .await
+            .map_err(SourceError::LocalFault)?;
+        let hits: Vec<_> = self
+            .repo
+            .search_album(&target.artist, &target.album_title, target.year)
+            .await
+            .map_err(slskd_error)?
+            .into_iter()
+            .filter(|hit| !soulseek_hit_quarantined(&hit.username, &hit.filename, &live))
+            .collect();
+        let request = RankRequest {
+            tracklist: &target.tracklist,
+            wanted: &[],
+            single_track: false,
+        };
+        Ok(rank_folders(&hits, request, self.repo.policy())
+            .into_iter()
+            .take(MAX_PER_SOURCE)
+            .map(Candidate::from_folder)
+            .collect())
+    }
 }
 
 impl DownloadSource for SlskdSource {
     async fn enqueue(
         &self,
         task_id: &str,
-        _candidate_index: i64,
+        candidate_index: i64,
     ) -> Result<SourceHandle, SourceError> {
         if !self.repo.is_configured() {
             return Err(SourceError::Unavailable("slskd not configured".to_owned()));
@@ -212,34 +255,54 @@ impl DownloadSource for SlskdSource {
                 .map(|&(disc, track)| TrackPosition { disc, track })
                 .collect();
         }
-        let keep = |hit: &super::slskd::SearchResult| {
-            !soulseek_hit_quarantined(&hit.username, &hit.filename, &live)
-                && !tried.contains(&hit.username)
+        // The folder a person picked from a manual search goes first,
+        // minus any file blocklisted since.
+        let picked = match pinned(&self.journal, &task, "soulseek", candidate_index).await {
+            Some(Pin::Soulseek {
+                username, files, ..
+            }) => files
+                .into_iter()
+                .filter(|file| !soulseek_hit_quarantined(&username, &file.filename, &live))
+                .map(|file| EnqueueFile {
+                    username: username.clone(),
+                    filename: file.filename,
+                    size: file.size,
+                })
+                .collect(),
+            _ => Vec::new(),
         };
-        let choice = soulseek::choose(self.repo.as_ref(), &target, keep)
-            .await
-            .map_err(|miss| match miss {
-                SoulseekMiss::Search(error) => slskd_error(error),
-                SoulseekMiss::Nothing(reason) => SourceError::Rejected(reason),
-            })?;
-        if let (Some(reason), Some(targets)) = (choice.lone_reason, self.targets.as_ref()) {
-            targets.record_lone_track(&task, reason).await;
-        }
-        let payload: Vec<EnqueueFile> = choice
-            .pick
-            .files
-            .iter()
-            .filter(|hit| {
-                !by_name
-                    || crate::acquire::landing::matching::position_in_name(&hit.filename)
-                        .is_none_or(|position| missing.contains(&position))
-            })
-            .map(|hit| EnqueueFile {
-                username: hit.username.clone(),
-                filename: hit.filename.clone(),
-                size: hit.size,
-            })
-            .collect();
+        let payload: Vec<EnqueueFile> = if picked.is_empty() {
+            let keep = |hit: &super::slskd::SearchResult| {
+                !soulseek_hit_quarantined(&hit.username, &hit.filename, &live)
+                    && !tried.contains(&hit.username)
+            };
+            let choice = soulseek::choose(self.repo.as_ref(), &target, keep)
+                .await
+                .map_err(|miss| match miss {
+                    SoulseekMiss::Search(error) => slskd_error(error),
+                    SoulseekMiss::Nothing(reason) => SourceError::Rejected(reason),
+                })?;
+            if let (Some(reason), Some(targets)) = (choice.lone_reason, self.targets.as_ref()) {
+                targets.record_lone_track(&task, reason).await;
+            }
+            choice
+                .pick
+                .files
+                .iter()
+                .filter(|hit| {
+                    !by_name
+                        || crate::acquire::landing::matching::position_in_name(&hit.filename)
+                            .is_none_or(|position| missing.contains(&position))
+                })
+                .map(|hit| EnqueueFile {
+                    username: hit.username.clone(),
+                    filename: hit.filename.clone(),
+                    size: hit.size,
+                })
+                .collect()
+        } else {
+            picked
+        };
         if payload.is_empty() {
             return Err(SourceError::Rejected(
                 "slskd's best remaining peer has none of the missing tracks".to_owned(),
@@ -552,6 +615,21 @@ enum Query<'a> {
 }
 
 impl SabnzbdSource {
+    /// A manual search: the album's releases from the active indexers
+    /// (and usenet-targeting plugin indexers), gated and ordered as the
+    /// automatic path orders them.
+    pub async fn search_candidates(&self, target: &SearchTarget) -> Vec<Candidate> {
+        if !self.queue.is_configured() || !target.has_album() {
+            return Vec::new();
+        }
+        self.candidates(&Query::Album(target))
+            .await
+            .iter()
+            .take(MAX_PER_SOURCE)
+            .map(|hit| Candidate::from_release(hit, target))
+            .collect()
+    }
+
     /// Whether SABnzbd still lists the job in its queue or history (orphan
     /// evidence). A job in neither is gone.
     pub async fn job_present(&self, handle: &SourceHandle) -> Result<bool, SourceError> {
@@ -616,11 +694,26 @@ impl DownloadSource for SabnzbdSource {
             Err(error) => return Err(sab_error(error)),
         }
         let target = resolve_target(self.targets.as_ref(), &task).await?;
-        let pick = self.pick(&task, &target, index).await.ok_or_else(|| {
-            SourceError::Rejected(format!(
-                "usenet has no candidate {candidate_index} for {task_id}"
-            ))
-        })?;
+        let pick = match pinned(&self.journal, &task, "usenet", candidate_index).await {
+            // The release a person picked, found again by its identity: the
+            // NZB link is never stored.
+            Some(Pin::Release { identity }) => self
+                .candidates(&Query::Album(&target))
+                .await
+                .into_iter()
+                .find(|hit| usenet_identity(&hit.usenet.title, hit.usenet.size_bytes) == identity)
+                .ok_or_else(|| {
+                    SourceError::Rejected(
+                        "The Usenet release you picked is no longer listed by your indexers."
+                            .to_owned(),
+                    )
+                })?,
+            _ => self.pick(&task, &target, index).await.ok_or_else(|| {
+                SourceError::Rejected(format!(
+                    "usenet has no candidate {candidate_index} for {task_id}"
+                ))
+            })?,
+        };
         let category = self.category.as_deref().filter(|cat| *cat != "*");
         // Worker-built job name (v2 strategy): the counter keeps failover
         // attempts distinct on the client and matches the orphan shape.

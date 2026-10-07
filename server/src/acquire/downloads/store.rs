@@ -582,22 +582,25 @@ impl<'conn> DownloadStore<'conn> {
         Ok(())
     }
 
-    /// Link one task to its picked candidate: the source identity, the
-    /// search job that produced it, and its position. The worker calls
-    /// this when it enqueues a candidate; the reimport guard reads these
-    /// columns back to tell linked tasks from never-started ones.
+    /// Link one task to the candidate a person picked from a manual
+    /// search: the source, the peer, the search job and the position in
+    /// its list. The worker fetches exactly that candidate first; the
+    /// reimport guard reads these columns back to tell linked tasks from
+    /// never-started ones.
     pub fn link_candidate(
         &self,
         task_id: &str,
-        source_username: &str,
+        source: &str,
+        source_username: Option<&str>,
         search_job_id: &str,
         candidate_index: i64,
         now: f64,
     ) -> Result<(), StoreError> {
         self.conn.execute(
-            "UPDATE download_tasks SET source_username = ?, search_job_id = ?, \
+            "UPDATE download_tasks SET source = ?, source_username = ?, search_job_id = ?, \
                  candidate_index = ?, updated_at = ? WHERE id = ?",
             rusqlite::params![
+                source,
                 source_username,
                 search_job_id,
                 candidate_index,

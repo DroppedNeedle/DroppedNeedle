@@ -11,6 +11,7 @@ mod acquire_imports;
 mod acquire_journey;
 mod acquire_landing;
 mod acquire_requests;
+mod acquire_search_jobs;
 mod acquire_slskd;
 mod acquire_track_album;
 mod acquire_usenet;

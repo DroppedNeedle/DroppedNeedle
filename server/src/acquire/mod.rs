@@ -14,6 +14,8 @@
 //! - [`target`] works out what a task fetches (its edition, tracklist and
 //!   wanted tracks; a single track is fetched as part of its album), with
 //!   [`edition`] answering which edition the library has chosen.
+//! - [`search_jobs`] runs manual album searches: every source's ranked
+//!   candidates for one album, and the pick that starts a download.
 //!
 //! The `db`, `dispatch`, `search`, `sources`, `settings`, `probes`,
 //! `worker`, and `wiring` modules unify the per-area seams onto one
@@ -35,6 +37,7 @@ pub mod plugin_source;
 pub mod probes;
 pub mod requests;
 pub mod search;
+pub mod search_jobs;
 pub mod settings;
 pub mod slskd;
 pub mod sources;

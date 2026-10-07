@@ -38,6 +38,8 @@ pub mod names {
     pub const CONCERTS_NEW: &str = "concerts_new";
     /// One of the user's downloads moved bytes or changed source.
     pub const DOWNLOAD_PROGRESS: &str = "download_progress";
+    /// One of the user's manual album searches moved.
+    pub const SEARCH_JOB_UPDATED: &str = "search_job_updated";
     /// The download queue changed (a task was added, moved status,
     /// switched source or was removed, or a held file came or went).
     pub const DOWNLOADS_CHANGED: &str = "downloads.changed";
@@ -225,6 +227,21 @@ pub struct DownloadProgress {
     pub has_next_source: bool,
 }
 
+/// `search_job_updated`: one of the user's manual album searches started,
+/// finished, failed or was picked from. The web UI refetches the job.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct SearchJobUpdated {
+    /// Id for de-duplication.
+    pub event_id: String,
+    /// The search that moved.
+    pub job_id: String,
+    /// Its status now: `searching`, `completed`, `failed`, `matched` or
+    /// `cancelled`.
+    pub status: String,
+    /// Candidates found so far.
+    pub candidate_count: usize,
+}
+
 /// `downloads.changed`: the download queue moved. Sent to everyone with
 /// no task details; each tab refetches its own (permission-scoped) queue
 /// summary, and the full list when the summary's revision moved.
@@ -260,6 +277,8 @@ pub enum UserNotice {
     ConcertsNew(ConcertsNew),
     /// `download_progress`.
     DownloadProgress(DownloadProgress),
+    /// `search_job_updated`.
+    SearchJobUpdated(SearchJobUpdated),
 }
 
 impl UserNotice {
@@ -277,6 +296,7 @@ impl UserNotice {
             Self::PersonalMixRefreshed(_) => names::PERSONAL_MIX_REFRESHED,
             Self::ConcertsNew(_) => names::CONCERTS_NEW,
             Self::DownloadProgress(_) => names::DOWNLOAD_PROGRESS,
+            Self::SearchJobUpdated(_) => names::SEARCH_JOB_UPDATED,
         }
     }
 
@@ -293,6 +313,7 @@ impl UserNotice {
             Self::PersonalMixRefreshed(payload) => serde_json::to_string(payload),
             Self::ConcertsNew(payload) => serde_json::to_string(payload),
             Self::DownloadProgress(payload) => serde_json::to_string(payload),
+            Self::SearchJobUpdated(payload) => serde_json::to_string(payload),
         }
     }
 }

@@ -22,8 +22,11 @@ use super::downloads::quarantine::QUARANTINE_TTL_SECONDS;
 use super::downloads::sources::{
     DownloadSource, Materialization, SourceError, SourceHandle, TransferProgress,
 };
-use super::target::Targets;
+use super::downloads::store::TaskRow;
+use super::search_jobs::candidates::{Candidate, MAX_PER_SOURCE, Pin};
+use super::search_jobs::pinned;
 use super::target::reasons::TrackReason;
+use super::target::{SearchTarget, Targets};
 use super::usenet::policy::{QualityTier, UsenetPolicy};
 use crate::plugins::capabilities::acquisition::{
     PluginEnqueue, PluginSearchResult, PluginTaskHandle,
@@ -197,6 +200,89 @@ impl PluginDownloadSource {
         &self.key
     }
 
+    /// Blocklisted release identities for this source.
+    async fn quarantined(&self) -> Result<Vec<String>, SourceError> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_secs_f64())
+            .unwrap_or(0.0);
+        Ok(self
+            .journal
+            .read_quarantine_set(now, QUARANTINE_TTL_SECONDS)
+            .await
+            .map_err(SourceError::LocalFault)?
+            .into_iter()
+            .filter(|(source, _)| *source == self.key)
+            .map(|(_, identity)| identity)
+            .collect())
+    }
+
+    /// The album's releases from this source's indexers.
+    async fn album_releases(&self, target: &SearchTarget) -> Vec<PluginSearchResult> {
+        self.host
+            .search_album(
+                &self.key,
+                &target.artist,
+                &target.album_title,
+                target.year.map(i64::from),
+                i64::try_from(target.tracklist.len())
+                    .ok()
+                    .filter(|count| *count > 0),
+            )
+            .await
+    }
+
+    /// Hand one release to the plugin's download client.
+    async fn enqueue_release(
+        &self,
+        task: &TaskRow,
+        release: &PluginSearchResult,
+        index: usize,
+    ) -> Result<SourceHandle, SourceError> {
+        let handle = self
+            .host
+            .enqueue_download(&PluginEnqueue {
+                task_id: task.id.clone(),
+                source: self.key.clone(),
+                files: release.files.clone(),
+                payload: release.payload.clone(),
+                job_name: format!("droppedneedle-{}-{index}", task.id),
+                download_type: task.download_type.clone(),
+            })
+            .await
+            .map_err(source_error)?;
+        Ok(SourceHandle {
+            source: self.key.clone(),
+            username: handle.username,
+            filenames: handle.filenames,
+            job_name: handle.job_name,
+            nzo_id: handle.nzo_id,
+            plugin_token: handle.plugin_token,
+            sizes: Vec::new(),
+        })
+    }
+
+    /// A manual search: the album's releases, ranked and gated, with the
+    /// ones a person must judge (the plugin's weaker matches) included.
+    pub async fn search_candidates(
+        &self,
+        target: &SearchTarget,
+    ) -> Result<Vec<Candidate>, SourceError> {
+        if !target.has_album() {
+            return Ok(Vec::new());
+        }
+        let quarantined = self.quarantined().await?;
+        Ok(rank_plugin_releases(
+            self.album_releases(target).await,
+            &self.policy,
+            &quarantined,
+        )
+        .into_iter()
+        .take(MAX_PER_SOURCE)
+        .map(|scored| Candidate::from_plugin(&self.key, scored))
+        .collect())
+    }
+
     fn plugin_handle(handle: &SourceHandle) -> PluginTaskHandle {
         PluginTaskHandle {
             source: handle.source.clone(),
@@ -231,20 +317,28 @@ impl DownloadSource for PluginDownloadSource {
             .map_err(SourceError::LocalFault)?
             .ok_or_else(|| SourceError::Rejected(format!("unknown download task {task_id}")))?;
         let target = super::sources::resolve_target(self.targets.as_ref(), &task).await?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_secs_f64())
-            .unwrap_or(0.0);
-        let quarantined: Vec<String> = self
-            .journal
-            .read_quarantine_set(now, QUARANTINE_TTL_SECONDS)
-            .await
-            .map_err(SourceError::LocalFault)?
-            .into_iter()
-            .filter(|(source, _)| *source == self.key)
-            .map(|(_, identity)| identity)
-            .collect();
+        let quarantined = self.quarantined().await?;
         let index = candidate_index.max(0) as usize;
+        if let Some(Pin::Release { identity }) =
+            pinned(&self.journal, &task, &self.key, candidate_index).await
+        {
+            // The release a person picked from a manual search, found
+            // again by its identity (any band: they judged it).
+            let release = rank_plugin_releases(
+                self.album_releases(&target).await,
+                &self.policy,
+                &quarantined,
+            )
+            .into_iter()
+            .find(|scored| release_identity(&scored.release) == identity)
+            .ok_or_else(|| {
+                SourceError::Rejected(format!(
+                    "The release you picked is no longer offered by {}.",
+                    self.key
+                ))
+            })?;
+            return self.enqueue_release(&task, &release.release, index).await;
+        }
         let automatic = |results: Vec<PluginSearchResult>| -> Vec<ScoredRelease> {
             rank_plugin_releases(results, &self.policy, &quarantined)
                 .into_iter()
@@ -252,19 +346,7 @@ impl DownloadSource for PluginDownloadSource {
                 .collect()
         };
         let albums = if target.has_album() {
-            automatic(
-                self.host
-                    .search_album(
-                        &self.key,
-                        &target.artist,
-                        &target.album_title,
-                        target.year.map(i64::from),
-                        i64::try_from(target.tracklist.len())
-                            .ok()
-                            .filter(|count| *count > 0),
-                    )
-                    .await,
-            )
+            automatic(self.album_releases(&target).await)
         } else {
             Vec::new()
         };
@@ -299,27 +381,7 @@ impl DownloadSource for PluginDownloadSource {
                 self.key
             ))
         })?;
-        let handle = self
-            .host
-            .enqueue_download(&PluginEnqueue {
-                task_id: task_id.to_owned(),
-                source: self.key.clone(),
-                files: pick.release.files.clone(),
-                payload: pick.release.payload.clone(),
-                job_name: format!("droppedneedle-{task_id}-{index}"),
-                download_type: task.download_type.clone(),
-            })
-            .await
-            .map_err(source_error)?;
-        Ok(SourceHandle {
-            source: self.key.clone(),
-            username: handle.username,
-            filenames: handle.filenames,
-            job_name: handle.job_name,
-            nzo_id: handle.nzo_id,
-            plugin_token: handle.plugin_token,
-            sizes: Vec::new(),
-        })
+        self.enqueue_release(&task, &pick.release, index).await
     }
 
     async fn poll(&self, handle: &SourceHandle) -> Result<TransferProgress, SourceError> {

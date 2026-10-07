@@ -83,6 +83,19 @@ fn pick(identity: Option<&str>, source: &str) -> Option<ChosenEdition> {
     })
 }
 
+/// Whether the library holds a copy of one release group.
+pub async fn library_holds(
+    pool: &SqlitePool,
+    release_group_mbid: &str,
+) -> Result<bool, sqlx::Error> {
+    Ok(
+        crate::reads::catalog::library::LocalCatalog::new(pool.clone())
+            .album(release_group_mbid)
+            .await?
+            .is_some(),
+    )
+}
+
 /// Artist and title of the library's copy of one release group, for
 /// asks that arrive with only the group id.
 pub async fn local_names(

@@ -36,5 +36,5 @@ pub use hub::{EventHub, EventSink, Subscription};
 pub use model::{
     ActivityChanged, AutoDownloadEnqueued, ConcertsNew, DownloadProgress, DownloadsChanged,
     DropImportUpdated, Event, FreeMusicUpdated, PersonalMixRefreshed, PlaylistImported,
-    RequestImported, UserNotice, WantedNotice, new_event_id,
+    RequestImported, SearchJobUpdated, UserNotice, WantedNotice, new_event_id,
 };

@@ -57,6 +57,8 @@ use super::requests::quota::{QuotaLedger, QuotaPolicy};
 use super::requests::sqlite::{RequestStore, WantedStore};
 use super::requests::state::RequestsState;
 use super::search::{FanoutSearch, ReleasePollSlot, SlotPoll};
+use super::search_jobs::SearchJobs;
+use super::search_jobs::store::JobStore;
 use super::settings::{
     ApprovalSeedBridge, CollectionsFollowBridge, ConfigLidarrSettings, ConfigSpotifySettings,
     FollowDecisionBridge, RequestsApprovalBridge, RequestsPendingSource,
@@ -401,6 +403,8 @@ pub struct AcquireSetup {
     pub events: EventSink,
     /// Finished-download import: verify, match, publish or hold.
     pub landing: Arc<LandingService>,
+    /// Manual album searches over the worker's live sources.
+    pub search_jobs: Arc<SearchJobs>,
 }
 
 /// Flows stores plus the loop deps built over them.
@@ -683,6 +687,7 @@ impl AcquireSetup {
             clients: clients.clone(),
         });
         let events = EventSink::default();
+        let search_quota = quota.clone();
         let core = core(
             &db,
             ids.clone(),
@@ -846,6 +851,13 @@ impl AcquireSetup {
             .with_landing(landing.clone())
             .with_settled(settled_hook(core.flows.clone())),
         );
+        let search_jobs = Arc::new(SearchJobs::new(
+            JobStore::new(db.clone()),
+            worker.clone(),
+            clients.targets().clone(),
+            search_quota,
+            events.clone(),
+        ));
 
         Ok(Self {
             db,
@@ -863,6 +875,7 @@ impl AcquireSetup {
             prune,
             events,
             landing,
+            search_jobs,
         })
     }
 
@@ -1051,6 +1064,13 @@ impl AcquireSetup {
             .with_landing(landing.clone())
             .with_settled(settled_hook(core.flows.clone())),
         );
+        let search_jobs = Arc::new(SearchJobs::new(
+            JobStore::new(db.clone()),
+            worker.clone(),
+            clients.targets().clone(),
+            Arc::new(QuotaLedger::unlimited(db.clone())),
+            events.clone(),
+        ));
         let probe_cache = Arc::new(ProbeCache::new(seed_from_config(
             &SlskdConnection::default(),
             &DownloadClients::default(),
@@ -1081,6 +1101,7 @@ impl AcquireSetup {
             prune,
             events,
             landing,
+            search_jobs,
         })
     }
 

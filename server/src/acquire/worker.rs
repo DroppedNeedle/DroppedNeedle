@@ -221,8 +221,23 @@ impl Source {
         }
     }
 
+    /// A manual search on this source: its ranked candidates for the
+    /// target's album.
+    pub async fn search_candidates(
+        &self,
+        target: &super::target::SearchTarget,
+    ) -> Result<Vec<super::search_jobs::candidates::Candidate>, SourceError> {
+        match self {
+            Self::Slskd(source) => source.search_candidates(target).await,
+            Self::Sab(source) => Ok(source.search_candidates(target).await),
+            Self::Plugin(source) => source.search_candidates(target).await,
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Fixed(_) => Ok(Vec::new()),
+        }
+    }
+
     /// Journal source tag (`soulseek`, `usenet`, `plugin:<name>`).
-    fn journal_source(&self) -> &str {
+    pub fn journal_source(&self) -> &str {
         match self {
             Self::Slskd(_) => "soulseek",
             Self::Sab(_) => "usenet",
@@ -405,20 +420,7 @@ struct Pass {
 impl Pass {
     /// Sources in configured try order.
     fn ordered_sources(&self) -> Vec<&Source> {
-        let mut ordered = Vec::with_capacity(self.sources.len());
-        for wanted in &self.config.source_order {
-            for source in self.sources.iter() {
-                if source.journal_source() == wanted {
-                    ordered.push(source);
-                }
-            }
-        }
-        for source in self.sources.iter() {
-            if !ordered.iter().any(|placed| std::ptr::eq(*placed, source)) {
-                ordered.push(source);
-            }
-        }
-        ordered
+        in_try_order(&self.sources, &self.config.source_order)
     }
 
     /// The adapter for one journal source tag.
@@ -427,6 +429,25 @@ impl Pass {
             .iter()
             .find(|source| source.journal_source() == tag)
     }
+}
+
+/// Sources in the configured try order; any the order does not name
+/// come last.
+fn in_try_order<'a>(sources: &'a [Source], order: &[String]) -> Vec<&'a Source> {
+    let mut ordered = Vec::with_capacity(sources.len());
+    for wanted in order {
+        for source in sources {
+            if source.journal_source() == wanted {
+                ordered.push(source);
+            }
+        }
+    }
+    for source in sources {
+        if !ordered.iter().any(|placed| std::ptr::eq(*placed, source)) {
+            ordered.push(source);
+        }
+    }
+    ordered
 }
 
 /// One attempt plus its decoded client handle, when it has one.
@@ -512,6 +533,16 @@ impl DownloadWorker {
     /// The worker tuning as saved right now.
     pub fn current_config(&self) -> WorkerConfig {
         (self.config)()
+    }
+
+    /// The sources turned on right now, in the configured try order.
+    pub fn sources_now(&self) -> Vec<Source> {
+        let sources = (self.sources)();
+        let order = (self.config)().source_order;
+        in_try_order(&sources, &order)
+            .into_iter()
+            .cloned()
+            .collect()
     }
 
     /// Run the next pass now instead of at the next interval.
@@ -724,7 +755,19 @@ impl DownloadWorker {
         // A source's reason (code, sentence, action) becomes the task's
         // message when nothing can serve it.
         let mut reason: Option<String> = None;
-        for source in pass.ordered_sources() {
+        let mut sources = pass.ordered_sources();
+        // A task started from a manual pick tries the picked source first.
+        if handled == 0
+            && task.search_job_id.is_some()
+            && task.candidate_index.is_some()
+            && let Some(at) = sources
+                .iter()
+                .position(|source| source.journal_source() == task.source)
+        {
+            let picked = sources.remove(at);
+            sources.insert(0, picked);
+        }
+        for source in sources {
             // Each source walks its own candidate list: the index is the
             // number of attempts this source already handled.
             let source_index = handled_count(&attempts, Some(source.journal_source()));

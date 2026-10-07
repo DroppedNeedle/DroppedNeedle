@@ -128,6 +128,29 @@ impl Targets {
         }
     }
 
+    /// One edition's audio tracklist, for ranking a manual search. Empty
+    /// when MusicBrainz is not wired, down, or does not know the release;
+    /// folders are then judged on their file counts.
+    pub async fn edition_tracklist(&self, release_mbid: &str) -> Vec<ExpectedTrack> {
+        let Some(lookup) = self.lookup.get() else {
+            return Vec::new();
+        };
+        match lookup.release(release_mbid).await {
+            Ok(Some(found)) => expected_tracks(&found),
+            Ok(None) => {
+                tracing::warn!(
+                    release_mbid,
+                    "MusicBrainz does not know the searched edition"
+                );
+                Vec::new()
+            }
+            Err(error) => {
+                tracing::warn!(release_mbid, %error, "edition tracklist unavailable for a manual search");
+                Vec::new()
+            }
+        }
+    }
+
     /// Record that a track came from a lone-track share, and why.
     pub async fn record_lone_track(&self, task: &TaskRow, reason: TrackReason) {
         tracing::info!(

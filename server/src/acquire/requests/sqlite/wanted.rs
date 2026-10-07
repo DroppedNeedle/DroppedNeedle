@@ -372,6 +372,32 @@ impl WantedStore {
         .await
     }
 
+    /// Remember candidates a person turned down for this album, so the
+    /// watcher can tell them from copies that turn up later (v2
+    /// `add_seen`). Already-known ones keep their first-seen time.
+    pub async fn add_seen(
+        &self,
+        key: &str,
+        candidates: Vec<(String, String)>,
+        now: u64,
+    ) -> Result<(), RequestsError> {
+        let key = key.to_lowercase();
+        self.db
+            .write("wanted.add_seen", move |tx| {
+                for (source, identity) in &candidates {
+                    tx.execute(
+                        "INSERT INTO wanted_seen_candidates (release_group_mbid_lower, source, \
+                         identity, first_seen_at) VALUES (?1, ?2, ?3, ?4) \
+                         ON CONFLICT DO NOTHING",
+                        params![key, source, identity, now as f64],
+                    )?;
+                }
+                Ok(())
+            })
+            .await
+            .map_err(|error| lane_error("wanted.add_seen", error))
+    }
+
     /// Clear one watch's unseen candidates. Owners and admins only.
     pub async fn mark_seen(
         &self,
