@@ -11,9 +11,13 @@
 //!    small to hold the files, at most [`PER_GROUP`] editions of one
 //!    release group and [`FETCH_LIMIT`] in all. Fetched releases are
 //!    kept in the release store and reused for a week.
-//! 4. Resolve file recording MBIDs no candidate carries, in case
+//! 4. List every edition of the release group the files fit best and
+//!    fetch the ones that could hold the files, best agreeing with the
+//!    tags' barcode, disc count, track count and media first, at most
+//!    [`GROUP_FETCH`]. Search alone often misses the edition that fits.
+//! 5. Resolve file recording MBIDs no candidate carries, in case
 //!    MusicBrainz merged them (a few lookups at most).
-//! 5. When the tags are weak, fingerprint the files and add the releases
+//! 6. When the tags are weak, fingerprint the files and add the releases
 //!    most of the prints point at.
 //!
 //! Every MusicBrainz call is identity-critical: an outage defers the job.
@@ -36,6 +40,11 @@ use crate::providers::musicbrainz::Criticality;
 pub const FETCH_LIMIT: usize = 5;
 /// Editions of one release group fetched per album.
 pub const PER_GROUP: usize = 3;
+/// Further editions of the best release group fetched per album.
+pub const GROUP_FETCH: usize = 6;
+/// Releases per page, and pages at most, when listing a group's editions.
+const GROUP_PAGE: u32 = 100;
+const GROUP_PAGES: u32 = 3;
 /// Merged-recording lookups per album.
 const ALIAS_LOOKUPS: usize = 4;
 /// Releases nominated by fingerprints fetched per album.
@@ -136,6 +145,7 @@ impl<R: ReleaseSource, F: FingerprintSource> LiveProviders<R, F> {
             }
         }
 
+        self.recall_group_editions(&local, &mut releases).await?;
         let recording_aliases = self.resolve_aliases(&local, &releases).await?;
         let matches: Vec<_> = releases
             .iter()
@@ -160,6 +170,90 @@ impl<R: ReleaseSource, F: FingerprintSource> LiveProviders<R, F> {
             recording_aliases,
             ..RecallResult::default()
         })
+    }
+
+    /// Once the release group is clear, weigh its other editions too:
+    /// search recall only fetches a few per group, and the edition that
+    /// fits the files is often not among them. Every edition of the group
+    /// is listed from the release index; those big enough to hold the files
+    /// are fetched, the ones whose barcode, disc count, track count and
+    /// format agree with the files first, at most [`GROUP_FETCH`].
+    async fn recall_group_editions(
+        &self,
+        local: &LocalAlbum,
+        releases: &mut Vec<Release>,
+    ) -> Result<(), SourceError> {
+        let group = releases
+            .iter()
+            .map(|release| (release, match_release(local, release, &HashMap::new())))
+            .filter(|(_, matched)| matched.conflicts.is_empty() && matched.names_agree)
+            .min_by(|a, b| a.1.library_distance().total_cmp(&b.1.library_distance()))
+            .map(|(release, _)| release.release_group_id.clone());
+        let Some(group) = group else {
+            return Ok(());
+        };
+        let mut editions = Vec::new();
+        for page in 0..GROUP_PAGES {
+            let found = self
+                .releases
+                .search_editions(&EditionQuery {
+                    title: String::new(),
+                    artist: String::new(),
+                    release_group_mbid: Some(group.clone()),
+                    limit: GROUP_PAGE,
+                    offset: page * GROUP_PAGE,
+                })
+                .await?;
+            let got = found.items.len();
+            editions.extend(found.items);
+            if got == 0 || editions.len() as u64 >= found.total {
+                break;
+            }
+        }
+        let files = local.tracks.len();
+        let hints = &local.hints;
+        let mut wanted: Vec<_> = editions
+            .iter()
+            .filter(|edition| edition.release_group_mbid.eq_ignore_ascii_case(&group))
+            .filter(|edition| {
+                !releases
+                    .iter()
+                    .any(|known| known.answers_to(&edition.release_mbid))
+            })
+            .filter(|edition| edition.track_count == 0 || edition.track_count as usize + 2 >= files)
+            .collect();
+        wanted.sort_by_key(|edition| {
+            let barcode = hints.barcode.as_deref().is_some_and(|wanted| {
+                edition
+                    .barcode
+                    .as_deref()
+                    .and_then(crate::library::matching::EditionHints::barcode_key)
+                    .is_some_and(|key| key == wanted)
+            });
+            let discs = hints
+                .total_discs
+                .is_some_and(|total| total == edition.disc_count);
+            let media = hints.media.as_deref().is_some_and(|media| {
+                let media = media.to_lowercase();
+                edition
+                    .media_formats
+                    .iter()
+                    .any(|format| format.to_lowercase().contains(&media))
+            });
+            (
+                !barcode,
+                !discs,
+                (edition.track_count as usize).abs_diff(files),
+                !media,
+                edition.release_mbid.clone(),
+            )
+        });
+        for edition in wanted.into_iter().take(GROUP_FETCH) {
+            if let Some(release) = self.release(&edition.release_mbid).await? {
+                push_new(releases, release);
+            }
+        }
+        Ok(())
     }
 
     /// Recall for an exact release: that release alone, plus the merged

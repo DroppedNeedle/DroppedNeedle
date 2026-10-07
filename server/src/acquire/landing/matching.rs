@@ -169,6 +169,7 @@ pub fn local_album(files: &[LandedFile], target: &Target) -> LocalAlbum {
         year: files.iter().find_map(|file| file.tag.year).or(target.year),
         is_compilation: files.iter().any(|file| file.tag.compilation),
         tracks,
+        ..LocalAlbum::default()
     }
 }
 

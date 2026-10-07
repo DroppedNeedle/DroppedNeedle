@@ -13,9 +13,12 @@
 //!   are not rivals: they go through edition choice instead.
 //! - Edition choice looks at the group's editions within
 //!   [`EDITION_COHORT`] (0.10, v2's consensus epsilon) of the best and
-//!   prefers the release the tags name, then the
-//!   closest full tracklist (missing tracks count here), then v2's order:
-//!   Official status, earliest date, worldwide country, MBID.
+//!   prefers the release the tags name, then one whose barcode or catalog
+//!   number the tags carry, then the closest full tracklist (missing tracks
+//!   count here), then the fewest contradicted tag hints (media, country,
+//!   disc count), then the closest exact track lengths, then the saved
+//!   edition preferences (v2's order without them: Official status,
+//!   earliest date, worldwide country), then MBID.
 //! - A lone candidate (no other release group plausible) needs v2's
 //!   quorum: two tracks paired within 0.40, or a recording or
 //!   release-track MBID on any file. Without it there is too little to
@@ -31,8 +34,9 @@
 
 use std::cmp::Ordering;
 
-use super::model::{LocalAlbum, Release};
+use super::model::{EditionHints, LocalAlbum, Release};
 use super::score::ReleaseMatch;
+use crate::library::edition_prefs::{EditionFacts, Preferences};
 
 pub const ACCEPT_ALBUM: f64 = 0.20;
 pub const ACCEPT_TRACK: f64 = 0.40;
@@ -76,11 +80,14 @@ pub enum Verdict {
     Insufficient,
 }
 
-/// Edition hints: the release the tags name. A person's choice never
-/// reaches the matcher: a chosen album is not identified automatically.
+/// Edition hints: the release the tags name, and the saved edition
+/// preferences for the last tie-break. A person's choice never reaches the
+/// matcher: a chosen album is not identified automatically.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct EditionPrefs<'a> {
     pub tagged: Option<&'a str>,
+    /// `None` falls back to v2's order: Official, earliest, worldwide.
+    pub preferences: Option<&'a Preferences>,
 }
 
 pub fn eligible(matched: &ReleaseMatch) -> bool {
@@ -103,7 +110,7 @@ pub fn decide(
         matches[**a]
             .library_distance()
             .total_cmp(&matches[**b].library_distance())
-            .then_with(|| edition_order(**a, **b, releases, matches, prefs))
+            .then_with(|| edition_order(**a, **b, local, releases, matches, prefs))
     }) else {
         return if matches.iter().any(|matched| !matched.conflicts.is_empty()) {
             Verdict::Contradictory
@@ -130,7 +137,7 @@ pub fn decide(
                 .eq_ignore_ascii_case(group)
         })
         .filter(|index| matches[**index].library_distance() <= best_distance + EDITION_COHORT)
-        .min_by(|a, b| edition_order(**a, **b, releases, matches, prefs))
+        .min_by(|a, b| edition_order(**a, **b, local, releases, matches, prefs))
     else {
         return Verdict::Insufficient;
     };
@@ -224,6 +231,7 @@ fn every_file_names_its_track(
 fn edition_order(
     a: usize,
     b: usize,
+    local: &LocalAlbum,
     releases: &[Release],
     matches: &[ReleaseMatch],
     prefs: EditionPrefs<'_>,
@@ -232,15 +240,107 @@ fn edition_order(
     let named = |release: &Release, mbid: Option<&str>| -> bool {
         mbid.is_some_and(|mbid| release.answers_to(mbid))
     };
+    let preferred = match prefs.preferences {
+        Some(preferences) => preferences
+            .key(&release_facts(left))
+            .cmp(&preferences.key(&release_facts(right))),
+        None => official(right)
+            .cmp(&official(left))
+            .then_with(|| date_key(left.date.as_deref()).cmp(&date_key(right.date.as_deref())))
+            .then_with(|| worldwide(right).cmp(&worldwide(left))),
+    };
     named(right, prefs.tagged)
         .cmp(&named(left, prefs.tagged))
+        .then_with(|| same_id(right, &local.hints).cmp(&same_id(left, &local.hints)))
         .then_with(|| {
             rounded(matches[a].album_distance()).cmp(&rounded(matches[b].album_distance()))
         })
-        .then_with(|| official(right).cmp(&official(left)))
-        .then_with(|| date_key(left.date.as_deref()).cmp(&date_key(right.date.as_deref())))
-        .then_with(|| worldwide(right).cmp(&worldwide(left)))
+        .then_with(|| hint_misses(left, &local.hints).cmp(&hint_misses(right, &local.hints)))
+        .then_with(|| {
+            length_gap(local, left, &matches[a]).cmp(&length_gap(local, right, &matches[b]))
+        })
+        .then(preferred)
         .then_with(|| left.id.cmp(&right.id))
+}
+
+/// The tags' barcode or catalog number names this release: as strong as
+/// a release id for telling pressings apart.
+fn same_id(release: &Release, hints: &EditionHints) -> bool {
+    let barcode = hints.barcode.as_deref().is_some_and(|wanted| {
+        release
+            .barcode
+            .as_deref()
+            .and_then(EditionHints::barcode_key)
+            .is_some_and(|key| key == wanted)
+    });
+    let catalog = hints.catalog_number.as_deref().is_some_and(|wanted| {
+        release
+            .catalog_numbers
+            .iter()
+            .filter_map(|raw| EditionHints::catalog_key(raw))
+            .any(|key| key == wanted)
+    });
+    barcode || catalog
+}
+
+/// Soft tag hints the release contradicts: media format, country, and the
+/// number of discs (which tells a partial two-disc set from one disc).
+fn hint_misses(release: &Release, hints: &EditionHints) -> usize {
+    let media = hints.media.as_deref().is_some_and(|media| {
+        let media = media.to_lowercase();
+        !release.media.iter().any(|medium| {
+            medium.format.as_deref().is_some_and(|format| {
+                let format = format.to_lowercase();
+                format.contains(&media) || media.contains(&format)
+            })
+        })
+    });
+    let country = hints.country.as_deref().is_some_and(|country| {
+        !release
+            .country
+            .as_deref()
+            .is_some_and(|own| own.eq_ignore_ascii_case(country))
+    });
+    let discs = hints
+        .total_discs
+        .is_some_and(|total| !release.media.is_empty() && release.media.len() != total as usize);
+    usize::from(media) + usize::from(country) + usize::from(discs)
+}
+
+/// Mean gap between the files' exact lengths and the release's track
+/// lengths, in tenths of a second, with no grace: what tells a remaster or
+/// a digital edition from the CD when the tracklists agree.
+fn length_gap(local: &LocalAlbum, release: &Release, matched: &ReleaseMatch) -> u64 {
+    let gaps: Vec<f64> = matched
+        .pairs
+        .iter()
+        .filter_map(|pair| {
+            let file = local.tracks.get(pair.local)?.duration_secs?;
+            let track = release.tracks.get(pair.track)?.length_ms? as f64 / 1000.0;
+            Some((file - track).abs())
+        })
+        .collect();
+    if gaps.is_empty() {
+        return u64::MAX;
+    }
+    let mean = gaps.iter().sum::<f64>() / gaps.len() as f64;
+    (mean * 10.0).round() as u64
+}
+
+/// What the edition preferences read on one release.
+fn release_facts(release: &Release) -> EditionFacts<'_> {
+    EditionFacts {
+        status: release.status.as_deref(),
+        formats: release
+            .media
+            .iter()
+            .filter_map(|medium| medium.format.as_deref())
+            .collect(),
+        country: release.country.as_deref(),
+        date: release.date.as_deref(),
+        text: vec![release.title.as_str()],
+        types: release.secondary_types.iter().map(String::as_str).collect(),
+    }
 }
 
 /// Distances equal to six places tie, so float noise never picks an

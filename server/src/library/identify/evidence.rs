@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use super::models::{CandidateEvidence, EvidenceClass, LocalAlbumFacts, TrackEvidence};
 use crate::library::matching::decide::{ACCEPT_ALBUM, ACCEPT_TRACK, REVIEW_CEILING};
 use crate::library::matching::score::LIBRARY_EXCLUDED;
-use crate::library::matching::{LocalAlbum, LocalTrack, Release, ReleaseMatch};
+use crate::library::matching::{EditionHints, LocalAlbum, LocalTrack, Release, ReleaseMatch};
 
 /// The matcher's view of an album: its facts plus the AcoustID
 /// recordings heard per track.
@@ -27,7 +27,9 @@ pub fn local_album(
                 artist: track.artist_name.clone(),
                 track_number: track.track_number,
                 disc_number: track.disc_number.max(1),
-                duration_secs: track.duration_secs.map(|seconds| seconds as f64),
+                duration_secs: track
+                    .duration_exact
+                    .or(track.duration_secs.map(|seconds| seconds as f64)),
                 recording_mbid: non_blank(track.recording_mbid.as_deref()),
                 release_track_mbid: non_blank(track.release_track_mbid.as_deref()),
                 release_mbid: non_blank(track.release_mbid.as_deref()),
@@ -37,6 +39,51 @@ pub fn local_album(
                     .unwrap_or_default(),
             })
             .collect(),
+        hints: hints(facts),
+    }
+}
+
+/// The edition hints most files agree on.
+fn hints(facts: &LocalAlbumFacts) -> EditionHints {
+    fn common(values: impl Iterator<Item = Option<String>>) -> Option<String> {
+        let mut counts: Vec<(String, usize)> = Vec::new();
+        for value in values.flatten() {
+            match counts.iter_mut().find(|(seen, _)| *seen == value) {
+                Some((_, count)) => *count += 1,
+                None => counts.push((value, 1)),
+            }
+        }
+        counts
+            .into_iter()
+            .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
+            .map(|(value, _)| value)
+    }
+    let tracks = &facts.tracks;
+    EditionHints {
+        media: common(tracks.iter().map(|track| non_blank(track.media.as_deref()))),
+        barcode: common(
+            tracks
+                .iter()
+                .map(|track| track.barcode.as_deref().and_then(EditionHints::barcode_key)),
+        ),
+        catalog_number: common(tracks.iter().map(|track| {
+            track
+                .catalog_number
+                .as_deref()
+                .and_then(EditionHints::catalog_key)
+        })),
+        country: common(tracks.iter().map(|track| {
+            non_blank(track.release_country.as_deref())
+                .filter(|code| code.len() == 2)
+                .map(|code| code.to_ascii_uppercase())
+        })),
+        total_discs: common(tracks.iter().map(|track| {
+            track
+                .total_discs
+                .filter(|total| *total >= 2 && *total >= track.disc_number)
+                .map(|total| total.to_string())
+        }))
+        .and_then(|total| total.parse().ok()),
     }
 }
 

@@ -69,6 +69,19 @@ pub struct AudioTag {
     pub album_artists: Vec<AudioArtistCredit>,
     pub musicbrainz_artist_ids: Vec<String>,
     pub musicbrainz_album_artist_ids: Vec<String>,
+    /// Edition hints: `MEDIA`, `BARCODE`, `CATALOGNUMBER`,
+    /// `RELEASECOUNTRY`, and the disc total.
+    pub edition: EditionTags,
+}
+
+/// The tags that tell editions of one album apart.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EditionTags {
+    pub media: Option<String>,
+    pub barcode: Option<String>,
+    pub catalog_number: Option<String>,
+    pub release_country: Option<String>,
+    pub total_discs: Option<u32>,
 }
 
 /// Read tags plus technical info, like v2's `AudioTagger.read_tags`.
@@ -334,7 +347,24 @@ fn audio_tag_from_values(values_of: impl Fn(ItemKey) -> Vec<String>) -> AudioTag
         musicbrainz_artist_id: first(ItemKey::MusicBrainzArtistId),
         musicbrainz_album_artist_id: first(ItemKey::MusicBrainzReleaseArtistId),
         acoustid_id: first(ItemKey::AcoustId),
+        edition: EditionTags {
+            media: first(ItemKey::OriginalMediaType),
+            barcode: first(ItemKey::Barcode),
+            catalog_number: first(ItemKey::CatalogNumber),
+            release_country: first(ItemKey::ReleaseCountry),
+            total_discs: total_of(&values_of(ItemKey::DiscTotal)),
+        },
     }
+}
+
+/// A disc total: the part after the slash of "1/2", else the plain number.
+fn total_of(values: &[String]) -> Option<u32> {
+    let value = values.first()?;
+    let total = match value.split_once('/') {
+        Some((_, total)) => total,
+        None => value.as_str(),
+    };
+    total.trim().parse().ok().filter(|total| *total > 0)
 }
 
 fn join_all(values: &[String]) -> Option<String> {

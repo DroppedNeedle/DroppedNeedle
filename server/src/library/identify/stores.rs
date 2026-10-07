@@ -3,7 +3,7 @@
 
 use super::models::{
     AlbumIdentity, Alias, ArtistCredit, ArtistIdentity, AutomaticSeal, CreditProof, DecisionSource,
-    IdentifyJob, JobState, LocalAlbumFacts, ReviewItem, ReviewState, TrackIdentity,
+    IdentifyJob, JobState, LocalAlbumFacts, MatchFlag, ReviewItem, ReviewState, TrackIdentity,
 };
 use crate::library::matching::Release;
 
@@ -25,6 +25,13 @@ pub trait IdentityStore: Send + Sync {
     fn accepted_release_mbid_for_artist(&self, _source_local_artist_id: &str) -> Option<String> {
         None
     }
+    /// The album's match flag, if identification is unsure of it.
+    fn match_flag(&self, _local_album_id: &str) -> Option<MatchFlag> {
+        None
+    }
+    /// Record (or with `None`, clear) the album's match flag. Stores that
+    /// keep no flags ignore it.
+    fn set_match_flag(&self, _local_album_id: &str, _flag: Option<&MatchFlag>) {}
     /// Seal an automatic win: the album row and the given track rows, never
     /// over a curator's row. Durable stores do it in one transaction and,
     /// for an exact edition, keep what it replaced so an administrator can

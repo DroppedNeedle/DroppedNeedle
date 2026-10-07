@@ -407,16 +407,19 @@ impl LibrarySetup {
             },
             config: config.clone(),
         });
-        let identify = Arc::new(IdentifyService::new(IdentifyDeps {
-            identities: identify_store.clone(),
-            facts: identify_store.clone(),
-            proofs: identify_store.clone(),
-            aliases: identify_store.clone(),
-            queue: identify_store.clone(),
-            reviews: identify_store.clone(),
-            releases: identify_store.clone(),
-            providers,
-        }));
+        let identify = Arc::new(
+            IdentifyService::new(IdentifyDeps {
+                identities: identify_store.clone(),
+                facts: identify_store.clone(),
+                proofs: identify_store.clone(),
+                aliases: identify_store.clone(),
+                queue: identify_store.clone(),
+                reviews: identify_store.clone(),
+                releases: identify_store.clone(),
+                providers,
+            })
+            .with_preferences(edition_preferences(config.clone())),
+        );
         let (contrib, contrib_worker) = super::contrib::assemble(
             db_path,
             contrib_providers,
@@ -592,4 +595,24 @@ impl LibrarySetup {
             ),
         ]
     }
+}
+
+/// The saved edition preferences, read on every identification so a saved
+/// change applies to the next album. A broken settings file falls back to
+/// the defaults with a log line.
+pub fn edition_preferences(
+    config: Arc<ConfigStore>,
+) -> crate::library::identify::service::PreferenceSource {
+    use crate::runtime_config::sections::{EditionPreferences, GetIt};
+    Arc::new(move || {
+        let saved = config.get::<EditionPreferences>().unwrap_or_else(|error| {
+            tracing::warn!(%error, "edition preferences unreadable; using the defaults");
+            EditionPreferences::default()
+        });
+        let region = config
+            .get::<GetIt>()
+            .map(|section| section.store_region)
+            .unwrap_or_else(|_| GetIt::default().store_region);
+        crate::library::edition_prefs::Preferences::from_settings(&saved, &region)
+    })
 }

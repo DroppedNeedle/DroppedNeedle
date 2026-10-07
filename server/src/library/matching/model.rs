@@ -33,6 +33,43 @@ pub struct LocalAlbum {
     pub year: Option<i32>,
     pub is_compilation: bool,
     pub tracks: Vec<LocalTrack>,
+    /// What the tags say about the edition, album-wide.
+    pub hints: EditionHints,
+}
+
+/// Edition hints file tags carry: soft signals that tell editions with the
+/// same tracklist apart. Each is the value most files agree on.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EditionHints {
+    /// `MEDIA`: `CD`, `Digital Media`, `12" Vinyl`.
+    pub media: Option<String>,
+    /// `BARCODE`, digits only.
+    pub barcode: Option<String>,
+    /// `CATALOGNUMBER`, folded.
+    pub catalog_number: Option<String>,
+    /// `RELEASECOUNTRY`, two letters.
+    pub country: Option<String>,
+    /// `TOTALDISCS`, when the files say there is more than one disc.
+    pub total_discs: Option<u32>,
+}
+
+impl EditionHints {
+    /// Digits of a barcode without leading zeros (UPC and EAN agree).
+    pub fn barcode_key(raw: &str) -> Option<String> {
+        let digits: String = raw.chars().filter(char::is_ascii_digit).collect();
+        let trimmed = digits.trim_start_matches('0');
+        (!trimmed.is_empty()).then(|| trimmed.to_owned())
+    }
+
+    /// A catalog number without spaces, dashes or case.
+    pub fn catalog_key(raw: &str) -> Option<String> {
+        let key: String = raw
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .flat_map(char::to_lowercase)
+            .collect();
+        (!key.is_empty()).then_some(key)
+    }
 }
 
 impl LocalAlbum {

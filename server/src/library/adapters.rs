@@ -338,6 +338,7 @@ fn local_album(
         year: snapshot.year,
         is_compilation: snapshot.is_compilation,
         tracks,
+        ..LocalAlbum::default()
     }
 }
 

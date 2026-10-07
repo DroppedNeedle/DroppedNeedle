@@ -365,14 +365,31 @@ impl LibrarySetup {
         {
             return;
         }
-        store.save_album_identity(AlbumIdentity {
-            local_album_id: album_id.to_owned(),
-            provider: "musicbrainz".to_owned(),
-            release_group_mbid: Some(import.release.release_group_id.clone()),
-            release_mbid: Some(import.release.id.clone()),
-            decision_source: DecisionSource::Automatic,
-            row_revision: current.map_or(1, |row| row.row_revision + 1),
-        });
+        // An album that already has an exact edition keeps it: a download
+        // matched to another edition adds its files without flipping the
+        // album. Files verified against the album's own edition confirm an
+        // unsure match.
+        let held = current
+            .as_ref()
+            .and_then(|row| row.release_mbid.clone())
+            .filter(|held| !import.release.answers_to(held));
+        if held.is_none() {
+            store.save_album_identity(AlbumIdentity {
+                local_album_id: album_id.to_owned(),
+                provider: "musicbrainz".to_owned(),
+                release_group_mbid: Some(import.release.release_group_id.clone()),
+                release_mbid: Some(import.release.id.clone()),
+                decision_source: DecisionSource::Automatic,
+                row_revision: current.as_ref().map_or(1, |row| row.row_revision + 1),
+            });
+            store.set_match_flag(album_id, None);
+        } else {
+            tracing::info!(
+                album = album_id,
+                release = import.release.id,
+                "download matched another edition; the album keeps its own"
+            );
+        }
         for item in &bundle.items {
             let current = store.track_identity(&item.track_id);
             if current
@@ -385,7 +402,10 @@ impl LibrarySetup {
                 local_track_id: item.track_id.clone(),
                 provider: "musicbrainz".to_owned(),
                 recording_mbid: Some(item.identity.recording_mbid.clone()),
-                release_track_mbid: Some(item.identity.release_track_mbid.clone()),
+                // A track of another edition keeps only its recording.
+                release_track_mbid: held
+                    .is_none()
+                    .then(|| item.identity.release_track_mbid.clone()),
                 decision_source: DecisionSource::Automatic,
                 row_revision: current.map_or(1, |row| row.row_revision + 1),
             });

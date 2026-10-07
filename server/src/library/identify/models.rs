@@ -347,6 +347,50 @@ pub struct LocalTrackFacts {
     /// The file's size and mtime revision, which keys stored prints.
     #[serde(default)]
     pub stat_revision: String,
+    /// Length with its fraction of a second, when known.
+    #[serde(default)]
+    pub duration_exact: Option<f64>,
+    /// Edition hints from the tags (`MEDIA`, `BARCODE`, `CATALOGNUMBER`,
+    /// `RELEASECOUNTRY`, `TOTALDISCS`).
+    #[serde(default)]
+    pub media: Option<String>,
+    #[serde(default)]
+    pub barcode: Option<String>,
+    #[serde(default)]
+    pub catalog_number: Option<String>,
+    #[serde(default)]
+    pub release_country: Option<String>,
+    #[serde(default)]
+    pub total_discs: Option<u32>,
+}
+
+/// How sure identification is of an album's match, when it is not sure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MatchFlagState {
+    /// The best guess is applied but nobody confirmed it.
+    Unconfirmed,
+    /// Nothing fits: the album keeps its own tags.
+    Unmatched,
+}
+
+impl MatchFlagState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Unconfirmed => "unconfirmed",
+            Self::Unmatched => "unmatched",
+        }
+    }
+}
+
+/// An album's match flag: why identification is unsure, and the closest
+/// candidates for a person to compare.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchFlag {
+    pub state: MatchFlagState,
+    pub reason_code: String,
+    pub release_mbid: Option<String>,
+    pub candidates: Vec<CandidateEvidence>,
 }
 
 /// Provider recall result: candidate releases with their tracklists,

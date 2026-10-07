@@ -13,20 +13,22 @@ use super::evidence::{candidate_evidence, local_album};
 use super::models::{
     AlbumIdentity, Alias, AliasKind, Appearance, AutomaticSeal, CandidateEvidence, CreditProof,
     DecisionSource, EvidenceClass, IdentificationOutcome, IdentifyJob, IdentifyKind, IdentityBrief,
-    JobState, LocalAlbumFacts, RecallResult, ReviewState, TrackIdentity,
+    JobState, LocalAlbumFacts, MatchFlag, MatchFlagState, RecallResult, ReviewState, TrackIdentity,
 };
 use super::providers::{IdentifyProviders, RecallOutcome};
 use super::queue::{PRIORITY_HISTORICAL_BACKLOG, PRIORITY_NEW_OR_CHANGED, PRIORITY_REVIEW_RETRY};
-use super::review::{file_review, reject_review};
+use super::review::reject_review;
 use super::rules::{
-    SubstitutionCase, SubstitutionVerdict, classify_credit, evaluate_overwrite,
-    evaluate_substitution, retracts_on_contradiction,
+    SubstitutionCase, SubstitutionVerdict, classify_credit, evaluate_substitution,
+    retracts_on_contradiction,
 };
 use super::sources::{EditionPage, EditionQuery, SourceError};
 use super::stores::{
     AliasStore, Approval, AttemptLanding, FactsSource, IdentityStore, ProofStore, QueueStore,
     ReleaseStore, ReviewStore, StoreError, keep_releases, land_job,
 };
+use crate::library::edition_prefs::Preferences;
+use crate::library::matching::decide::{EDITION_COHORT, eligible};
 use crate::library::matching::{
     EditionPrefs, LocalAlbum, ReleaseMatch, Support, Verdict, decide, match_release,
 };
@@ -43,13 +45,28 @@ pub struct IdentifyDeps {
     pub providers: Arc<dyn IdentifyProviders>,
 }
 
+/// Reads the saved edition preferences, per call.
+pub type PreferenceSource = Arc<dyn Fn() -> Preferences + Send + Sync>;
+
 pub struct IdentifyService {
     deps: IdentifyDeps,
+    preferences: PreferenceSource,
 }
 
 impl IdentifyService {
     pub fn new(deps: IdentifyDeps) -> Self {
-        Self { deps }
+        Self {
+            deps,
+            preferences: Arc::new(Preferences::default),
+        }
+    }
+
+    /// Break ties between equally fitting editions with these saved
+    /// preferences (read on every attempt).
+    #[must_use]
+    pub fn with_preferences(mut self, preferences: PreferenceSource) -> Self {
+        self.preferences = preferences;
+        self
     }
 
     /// Enqueue one album. Fresh and changed work runs first, curator
@@ -98,8 +115,41 @@ impl IdentifyService {
                 review_id: None,
             });
         };
-        let RecallOutcome { result: recall, .. } =
-            self.deps.providers.recall_candidates(&facts).await;
+        let current = self.deps.identities.album_identity(&facts.local_album_id);
+        // A person's choice is final: automatic passes never look again.
+        if current
+            .as_ref()
+            .is_some_and(|row| !row.decision_source.automatic_may_overwrite())
+        {
+            land_job(&mut job, AttemptLanding::Done, now_ms, None);
+            self.deps.queue.update(job.clone());
+            return Some(AttemptReport {
+                job,
+                outcome: IdentificationOutcome::Identified,
+                reason_code: "CHOSEN_EDITION_KEPT".to_owned(),
+                review_id: None,
+            });
+        }
+        let RecallOutcome {
+            result: mut recall, ..
+        } = self.deps.providers.recall_candidates(&facts).await;
+        // The edition the album already has is always weighed, so a recall
+        // that missed it cannot flip it.
+        let held = current
+            .as_ref()
+            .and_then(|row| row.release_mbid.clone())
+            .filter(|_| !recall.provider_deferred);
+        if let Some(held) = held.as_deref()
+            && !recall
+                .releases
+                .iter()
+                .any(|release| release.answers_to(held))
+        {
+            let extra = self.deps.providers.recall_release(&facts, held).await;
+            if !extra.result.provider_deferred {
+                recall.releases.extend(extra.result.releases);
+            }
+        }
         if recall.provider_deferred {
             land_job(
                 &mut job,
@@ -119,8 +169,8 @@ impl IdentifyService {
         // for tagging, the others because a curator may approve them.
         // Live recall already stored what it fetched.
         keep_releases(&self.deps.releases, recall.releases.clone()).await;
-        let (scored, decision) = self.score(&facts, &recall);
-        let report = self.apply_decision(&mut job, &facts, &scored, decision, now_ms);
+        let (ranking, decision) = self.ranked(&facts, &recall, held.as_deref());
+        let report = self.apply_decision(&mut job, &facts, &ranking, decision, now_ms);
         self.deps.queue.update(job);
         Some(report)
     }
@@ -152,23 +202,20 @@ impl IdentifyService {
     /// Score every recalled release and decide, the way a queued attempt
     /// does, without sealing anything.
     pub fn rank(&self, facts: &LocalAlbumFacts, recall: &RecallResult) -> Ranking {
-        let (ranking, _) = self.ranked(facts, recall);
+        let (ranking, _) = self.ranked(facts, recall, None);
         ranking
     }
 
     /// Score every recalled release and decide. Candidates come back
-    /// chosen edition first, then by distance; the pin only orders
-    /// editions within one release group and never counts as evidence.
-    fn score(
+    /// chosen edition first, then by distance. `held` is the edition the
+    /// album already has: it stays unless another edition of its group
+    /// fits the files better by more than the edition cohort.
+    fn ranked(
         &self,
         facts: &LocalAlbumFacts,
         recall: &RecallResult,
-    ) -> (Vec<CandidateEvidence>, Decision) {
-        let (ranking, decision) = self.ranked(facts, recall);
-        (ranking.candidates, decision)
-    }
-
-    fn ranked(&self, facts: &LocalAlbumFacts, recall: &RecallResult) -> (Ranking, Decision) {
+        held: Option<&str>,
+    ) -> (Ranking, Decision) {
         let local = local_album(facts, &recall.fingerprint_support);
         let matches: Vec<_> = recall
             .releases
@@ -176,14 +223,43 @@ impl IdentifyService {
             .map(|release| match_release(&local, release, &recall.recording_aliases))
             .collect();
         let tagged = local.tagged_release();
+        let preferences = (self.preferences)();
         let verdict = decide(
             &local,
             &recall.releases,
             &matches,
             EditionPrefs {
                 tagged: tagged.as_deref(),
+                preferences: Some(&preferences),
             },
         );
+        let keep = |index: usize| -> usize {
+            let Some(held) = held else {
+                return index;
+            };
+            let chosen = &recall.releases[index];
+            recall
+                .releases
+                .iter()
+                .position(|release| release.answers_to(held))
+                .filter(|kept| {
+                    let release = &recall.releases[*kept];
+                    let matched = &matches[*kept];
+                    release
+                        .release_group_id
+                        .eq_ignore_ascii_case(&chosen.release_group_id)
+                        && matched.conflicts.is_empty()
+                        && matched.names_agree
+                        && matched.library_distance()
+                            <= matches[index].library_distance() + EDITION_COHORT
+                })
+                .unwrap_or(index)
+        };
+        let verdict = match verdict {
+            Verdict::Identified(index) => Verdict::Identified(keep(index)),
+            Verdict::EditionUncertain(index) => Verdict::EditionUncertain(keep(index)),
+            other => other,
+        };
         let lead = match verdict {
             Verdict::Identified(index) | Verdict::EditionUncertain(index) => Some(index),
             _ => None,
@@ -200,6 +276,15 @@ impl IdentifyService {
             .iter()
             .map(|index| candidate_evidence(&local, &recall.releases[*index], &matches[*index]))
             .collect();
+        // The best guess: the lead, else the closest candidate nothing
+        // rules out (no vetoed file, names agree, within the review
+        // ceiling). Without one the album matches nothing.
+        let guess = order.iter().position(|index| {
+            Some(*index) == lead || {
+                let matched = &matches[*index];
+                eligible(matched) && matched.names_agree && !matched.pairs.is_empty()
+            }
+        });
         let decision = match verdict {
             Verdict::Identified(_) => Decision::Identified(0),
             Verdict::EditionUncertain(_) => Decision::EditionUncertain,
@@ -222,152 +307,95 @@ impl IdentifyService {
             outcome: decision.outcome(),
             reason_code: decision.reason_code(),
             lead_identified: matches!(decision, Decision::Identified(_)),
+            guess,
         };
         (ranking, decision)
     }
 
+    /// Apply a decision. Always pick: a confident match seals; a close
+    /// call, weak evidence or a lone candidate seals the best guess with an
+    /// "unconfirmed" flag; only when every candidate is ruled out does the
+    /// album keep its own tags, flagged unmatched with the closest
+    /// candidates. Nothing waits in a blocking review.
     fn apply_decision(
         &self,
         job: &mut IdentifyJob,
         facts: &LocalAlbumFacts,
-        scored: &[CandidateEvidence],
+        ranking: &Ranking,
         decision: Decision,
         now_ms: u64,
     ) -> AttemptReport {
-        let current = self.deps.identities.album_identity(&facts.local_album_id);
-        let current_source = current.as_ref().map(|row| row.decision_source);
-        let current_rg = current
-            .as_ref()
-            .and_then(|row| row.release_group_mbid.clone());
-        let _ = now_ms;
-        match decision {
-            Decision::Identified(index) => {
-                let winner = &scored[index];
-                // Agreement comes from the two release-group MBIDs: an
-                // Identified winner that agrees with a protected row
-                // quietly reconfirms instead of filing a review.
-                let verdict = evaluate_overwrite(
-                    current_source,
-                    Some(winner.release_group_mbid.as_str()),
-                    current_rg.as_deref(),
-                    false,
-                );
-                match verdict {
-                    super::rules::OverwriteVerdict::MayWrite => {
-                        self.seal_automatic(facts, winner);
-                        land_job(job, AttemptLanding::Done, 0, None);
-                        AttemptReport {
-                            job: job.clone(),
-                            outcome: IdentificationOutcome::Identified,
-                            reason_code: "SUPPORTED".to_owned(),
-                            review_id: None,
-                        }
-                    }
-                    super::rules::OverwriteVerdict::ProtectedFileReview => {
-                        let review = file_review(
-                            self.deps.reviews.as_ref(),
-                            &format!("review-{}-{}", job.id, job.attempts),
-                            &facts.local_album_id,
-                            "PROTECTED_IDENTITY",
-                            scored.to_vec(),
-                        );
-                        land_job(job, AttemptLanding::Done, 0, None);
-                        AttemptReport {
-                            job: job.clone(),
-                            outcome: IdentificationOutcome::Identified,
-                            reason_code: "PROTECTED_IDENTITY".to_owned(),
-                            review_id: Some(review.id),
-                        }
-                    }
-                    super::rules::OverwriteVerdict::QuietReconfirm => {
-                        land_job(job, AttemptLanding::Done, 0, None);
-                        AttemptReport {
-                            job: job.clone(),
-                            outcome: IdentificationOutcome::Identified,
-                            reason_code: "QUIET_RECONFIRM".to_owned(),
-                            review_id: None,
-                        }
-                    }
-                }
+        let scored = &ranking.candidates;
+        let album = facts.local_album_id.as_str();
+        let current = self.deps.identities.album_identity(album);
+        let outcome = decision.outcome();
+        let reason_code = decision.reason_code();
+        let closest: Vec<CandidateEvidence> = scored.iter().take(CLOSEST).cloned().collect();
+        land_job(job, AttemptLanding::Done, now_ms, None);
+        let report = |reason: &str| AttemptReport {
+            job: job.clone(),
+            outcome,
+            reason_code: reason.to_owned(),
+            review_id: None,
+        };
+        if let Decision::Identified(index) = decision {
+            let winner = &scored[index];
+            if self.seal_automatic(facts, winner) {
+                self.deps.identities.set_match_flag(album, None);
             }
-            Decision::Contradictory => {
-                if retracts_on_contradiction(current_source, IdentificationOutcome::Contradictory) {
-                    self.deps
-                        .identities
-                        .clear_album_identity(&facts.local_album_id);
-                }
-                let top_agrees = scored.first().is_some_and(|top| {
-                    current_rg
-                        .as_deref()
-                        .is_some_and(|rg| rg.eq_ignore_ascii_case(&top.release_group_mbid))
-                });
-                if current_source.is_some_and(|s| !s.automatic_may_overwrite()) && top_agrees {
-                    land_job(job, AttemptLanding::Done, 0, None);
-                    return AttemptReport {
-                        job: job.clone(),
-                        outcome: IdentificationOutcome::Contradictory,
-                        reason_code: "QUIET_RECONFIRM".to_owned(),
-                        review_id: None,
-                    };
-                }
-                let review = file_review(
-                    self.deps.reviews.as_ref(),
-                    &format!("review-{}-{}", job.id, job.attempts),
-                    &facts.local_album_id,
-                    "CONFLICTING_TRACK_EVIDENCE",
-                    scored.to_vec(),
-                );
-                land_job(job, AttemptLanding::Done, 0, None);
-                AttemptReport {
-                    job: job.clone(),
-                    outcome: IdentificationOutcome::Contradictory,
-                    reason_code: "CONFLICTING_TRACK_EVIDENCE".to_owned(),
-                    review_id: Some(review.id),
-                }
-            }
-            Decision::Ambiguous(reason) => {
-                let review = file_review(
-                    self.deps.reviews.as_ref(),
-                    &format!("review-{}-{}", job.id, job.attempts),
-                    &facts.local_album_id,
-                    &reason,
-                    scored.to_vec(),
-                );
-                land_job(job, AttemptLanding::Done, 0, None);
-                AttemptReport {
-                    job: job.clone(),
-                    outcome: IdentificationOutcome::Ambiguous,
-                    reason_code: reason,
-                    review_id: Some(review.id),
-                }
-            }
-            Decision::EditionUncertain => {
-                self.seal_edition_uncertain(facts, &current, scored);
-                land_job(job, AttemptLanding::Done, 0, None);
-                AttemptReport {
-                    job: job.clone(),
-                    outcome: IdentificationOutcome::EditionUncertain,
-                    reason_code: "EDITION_UNCERTAIN".to_owned(),
-                    review_id: None,
-                }
-            }
-            Decision::Terminal(outcome, reason) => {
-                land_job(job, AttemptLanding::Done, 0, None);
-                AttemptReport {
-                    job: job.clone(),
-                    outcome,
-                    reason_code: reason,
-                    review_id: None,
-                }
-            }
+            return report("SUPPORTED");
         }
+        if let Some(guess) = ranking.guess.and_then(|index| scored.get(index)) {
+            let flagged = self.deps.identities.match_flag(album).is_some();
+            let same = current.as_ref().is_some_and(|row| {
+                row.release_mbid.is_some()
+                    && row.release_mbid.as_deref().map(str::to_ascii_lowercase)
+                        == guess.release_mbid.as_deref().map(str::to_ascii_lowercase)
+            });
+            // Weaker evidence never demotes a match that was confirmed.
+            if same && !flagged {
+                return report("QUIET_RECONFIRM");
+            }
+            if self.seal_automatic(facts, guess) {
+                self.deps.identities.set_match_flag(
+                    album,
+                    Some(&MatchFlag {
+                        state: MatchFlagState::Unconfirmed,
+                        reason_code: reason_code.clone(),
+                        release_mbid: guess.release_mbid.clone(),
+                        candidates: closest,
+                    }),
+                );
+            }
+            return report(&reason_code);
+        }
+        if matches!(decision, Decision::Contradictory)
+            && retracts_on_contradiction(
+                current.as_ref().map(|row| row.decision_source),
+                IdentificationOutcome::Contradictory,
+            )
+        {
+            self.deps.identities.clear_album_identity(album);
+        }
+        if self.deps.identities.album_identity(album).is_none() {
+            self.deps.identities.set_match_flag(
+                album,
+                Some(&MatchFlag {
+                    state: MatchFlagState::Unmatched,
+                    reason_code: reason_code.clone(),
+                    release_mbid: None,
+                    candidates: closest,
+                }),
+            );
+        }
+        report(&reason_code)
     }
 
     /// Seal an automatic win: album row, supported track rows (curator
     /// tracks keep theirs), and fresh credit proof rows. The store writes
     /// them together, never over a curator's album row, and an exact
     /// edition keeps what it replaced so an administrator can undo it.
-    fn seal_automatic(&self, facts: &LocalAlbumFacts, winner: &CandidateEvidence) {
+    fn seal_automatic(&self, facts: &LocalAlbumFacts, winner: &CandidateEvidence) -> bool {
         let tracks = winner
             .track_evidence
             .iter()
@@ -397,46 +425,7 @@ impl IdentifyService {
                 "a curator decided this album meanwhile; automatic seal skipped"
             );
         }
-    }
-
-    /// Edition-uncertain tier: pin the release GROUP only, never an exact
-    /// edition. Protected identities stay untouched, and a sealed
-    /// automatic exact of the same group holds (no demotion on weaker
-    /// evidence); anything else demotes so the gap stays visible.
-    fn seal_edition_uncertain(
-        &self,
-        facts: &LocalAlbumFacts,
-        current: &Option<AlbumIdentity>,
-        scored: &[CandidateEvidence],
-    ) {
-        let Some(group) = scored.first().map(|top| top.release_group_mbid.clone()) else {
-            return;
-        };
-        let protected = current
-            .as_ref()
-            .is_some_and(|row| !row.decision_source.automatic_may_overwrite());
-        if protected {
-            return;
-        }
-        let held_exact = current.as_ref().is_some_and(|row| {
-            row.decision_source == DecisionSource::Automatic
-                && row.release_mbid.is_some()
-                && row
-                    .release_group_mbid
-                    .as_deref()
-                    .is_some_and(|rg| rg.eq_ignore_ascii_case(&group))
-        });
-        if held_exact {
-            return;
-        }
-        // Through the guarded seal, so a curator's choice that landed after
-        // the read above still wins.
-        self.deps.identities.seal_automatic(&AutomaticSeal {
-            local_album_id: facts.local_album_id.clone(),
-            release_group_mbid: group,
-            release_mbid: None,
-            tracks: Vec::new(),
-        });
+        sealed
     }
 
     /// Bank one proof row per owned-artist credit on supported tracks.
@@ -713,7 +702,12 @@ pub struct Ranking {
     pub reason_code: String,
     /// True when the first candidate would seal on its own.
     pub lead_identified: bool,
+    /// Index into `candidates` of the best guess, when one is not ruled out.
+    pub guess: Option<usize>,
 }
+
+/// Closest candidates kept with an unsure match.
+const CLOSEST: usize = 5;
 
 /// One attempt's report: where the job landed and why.
 #[derive(Debug, Clone)]

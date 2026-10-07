@@ -20,5 +20,7 @@ pub mod strings;
 
 pub use decide::{EditionPrefs, ReviewReason, Verdict, decide, should_fingerprint};
 pub use distance::{Distance, PenaltyShare};
-pub use model::{CreditedArtist, LocalAlbum, LocalTrack, Release, ReleaseMedium, ReleaseTrack};
+pub use model::{
+    CreditedArtist, EditionHints, LocalAlbum, LocalTrack, Release, ReleaseMedium, ReleaseTrack,
+};
 pub use score::{ReleaseMatch, Support, match_release};

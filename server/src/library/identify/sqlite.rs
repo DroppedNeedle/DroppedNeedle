@@ -24,8 +24,8 @@ use sha2::{Digest as _, Sha256};
 use super::models::{
     AlbumIdentity, Alias, AliasKind, ArtistCredit, ArtistIdentity, AutomaticSeal,
     CandidateEvidence, CreditProof, DecisionSource, IdentifyJob, IdentifyKind, JobState,
-    LocalAlbumFacts, LocalTrackFacts, PriorAlbumIdentity, PriorTrackIdentity, ReviewItem,
-    ReviewState, TrackIdentity,
+    LocalAlbumFacts, LocalTrackFacts, MatchFlag, MatchFlagState, PriorAlbumIdentity,
+    PriorTrackIdentity, ReviewItem, ReviewState, TrackIdentity,
 };
 use super::queue::PRIORITY_NEW_OR_CHANGED;
 use super::stores::{
@@ -573,6 +573,56 @@ impl IdentityStore for SqliteIdentifyStore {
         self.write("seal automatic identity", |tx| seal_automatic_tx(tx, seal))
             .unwrap_or(false)
     }
+
+    fn match_flag(&self, local_album_id: &str) -> Option<MatchFlag> {
+        self.read("match flag", |conn| {
+            conn.query_row(
+                "SELECT state, reason_code, release_mbid, candidates_json \
+                 FROM library_album_match_state WHERE local_album_id = ?1",
+                params![local_album_id],
+                |row| {
+                    let state: String = row.get(0)?;
+                    let candidates: String = row.get(3)?;
+                    Ok(MatchFlag {
+                        state: if state == "unmatched" {
+                            MatchFlagState::Unmatched
+                        } else {
+                            MatchFlagState::Unconfirmed
+                        },
+                        reason_code: row.get(1)?,
+                        release_mbid: row.get(2)?,
+                        candidates: serde_json::from_str(&candidates).unwrap_or_default(),
+                    })
+                },
+            )
+            .optional()
+        })
+        .flatten()
+    }
+
+    fn set_match_flag(&self, local_album_id: &str, flag: Option<&MatchFlag>) {
+        self.write("match flag", |tx| match flag {
+            None => tx.execute(
+                "DELETE FROM library_album_match_state WHERE local_album_id = ?1",
+                params![local_album_id],
+            ),
+            Some(flag) => tx.execute(
+                "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+                 release_mbid, candidates_json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+                 ON CONFLICT (local_album_id) DO UPDATE SET state = excluded.state, \
+                 reason_code = excluded.reason_code, release_mbid = excluded.release_mbid, \
+                 candidates_json = excluded.candidates_json, updated_at = excluded.updated_at",
+                params![
+                    local_album_id,
+                    flag.state.as_str(),
+                    flag.reason_code,
+                    flag.release_mbid,
+                    to_json(&flag.candidates)?,
+                    now_ms() as f64 / 1000.0,
+                ],
+            ),
+        });
+    }
 }
 
 /// The raw album identity row, every column the undo puts back.
@@ -762,12 +812,16 @@ impl FactsSource for SqliteIdentifyStore {
                 return Ok(None);
             };
             let mut stmt = conn.prepare(
-                "SELECT id, title, COALESCE(artist_name, ''), track_number, disc_number, \
-                 duration_seconds, embedded_recording_mbid, embedded_release_track_mbid, \
-                 embedded_release_mbid, embedded_release_group_mbid, membership_locked, \
-                 root_id, relative_path, stat_revision \
-                 FROM local_tracks WHERE local_album_id = ?1 AND availability = 'indexed' \
-                 ORDER BY disc_number, track_number, relative_path",
+                "SELECT t.id, t.title, COALESCE(t.artist_name, ''), t.track_number, \
+                 t.disc_number, t.duration_seconds, t.embedded_recording_mbid, \
+                 t.embedded_release_track_mbid, t.embedded_release_mbid, \
+                 t.embedded_release_group_mbid, t.membership_locked, t.root_id, \
+                 t.relative_path, t.stat_revision, h.media, h.barcode, h.catalog_number, \
+                 h.release_country, h.total_discs \
+                 FROM local_tracks t LEFT JOIN local_track_edition_tags h \
+                 ON h.local_track_id = t.id \
+                 WHERE t.local_album_id = ?1 AND t.availability = 'indexed' \
+                 ORDER BY t.disc_number, t.track_number, t.relative_path",
             )?;
             let mut tracks = Vec::new();
             let mut locked = Vec::new();
@@ -789,6 +843,16 @@ impl FactsSource for SqliteIdentifyStore {
                         root_id: row.get(11)?,
                         relative_path: row.get(12)?,
                         stat_revision: row.get(13)?,
+                        duration_exact: row
+                            .get::<_, Option<f64>>(5)?
+                            .filter(|seconds| *seconds > 0.0),
+                        media: row.get(14)?,
+                        barcode: row.get(15)?,
+                        catalog_number: row.get(16)?,
+                        release_country: row.get(17)?,
+                        total_discs: row
+                            .get::<_, Option<i64>>(18)?
+                            .and_then(|total| u32::try_from(total).ok()),
                     },
                     row.get::<_, i64>(10)? != 0,
                 ))

@@ -704,8 +704,12 @@ fn write_item(
             }
         }
     };
+    // Edition hints are kept beside the row and left out of the revision,
+    // so reading them for the first time does not count as a tag change.
     let tag_revision = {
-        let digest = Sha256::digest(format!("{tag:?}").as_bytes());
+        let mut revised = tag.clone();
+        revised.edition = Default::default();
+        let digest = Sha256::digest(format!("{revised:?}").as_bytes());
         digest
             .iter()
             .map(|byte| format!("{byte:02x}"))
@@ -846,6 +850,29 @@ fn write_item(
             Ok((row.get(0)?, row.get(1)?))
         })?;
 
+    let edition = &tag.edition;
+    let blank = |value: &Option<String>| {
+        value
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+    tx.prepare_cached(
+        "INSERT INTO local_track_edition_tags (local_track_id, media, barcode, catalog_number, \
+         release_country, total_discs) VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+         ON CONFLICT (local_track_id) DO UPDATE SET media = excluded.media, \
+         barcode = excluded.barcode, catalog_number = excluded.catalog_number, \
+         release_country = excluded.release_country, total_discs = excluded.total_discs",
+    )?
+    .execute(params![
+        track_id,
+        blank(&edition.media),
+        blank(&edition.barcode),
+        blank(&edition.catalog_number),
+        blank(&edition.release_country),
+        edition.total_discs,
+    ])?;
     tx.prepare_cached("DELETE FROM local_track_artists WHERE local_track_id = ?1")?
         .execute(params![track_id])?;
     let mut track_artist_rows = tx.prepare_cached(
