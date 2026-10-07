@@ -84,6 +84,10 @@ const ADVANCED_SETTINGS_KEPT: &[&str] = &[
     "store_prune_interval_hours",
     "sync_stall_timeout_minutes",
     "sync_max_timeout_hours",
+    "artist_discovery_precache_delay",
+    "artist_discovery_precache_concurrency",
+    "audiodb_prewarm_concurrency",
+    "audiodb_prewarm_delay",
 ];
 
 /// `_internal` allowlist.

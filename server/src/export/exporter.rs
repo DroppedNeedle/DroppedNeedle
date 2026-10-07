@@ -135,6 +135,10 @@ const ADVANCED_KEPT: &[&str] = &[
     "store_prune_interval_hours",
     "sync_stall_timeout_minutes",
     "sync_max_timeout_hours",
+    "artist_discovery_precache_delay",
+    "artist_discovery_precache_concurrency",
+    "audiodb_prewarm_concurrency",
+    "audiodb_prewarm_delay",
 ];
 
 /// `advanced_settings` fields that never survive, even when they match a
@@ -142,10 +146,6 @@ const ADVANCED_KEPT: &[&str] = &[
 const ADVANCED_DROPPED: &[&str] = &[
     "artist_discovery_warm_interval",
     "artist_discovery_warm_delay",
-    "artist_discovery_precache_delay",
-    "artist_discovery_precache_concurrency",
-    "audiodb_prewarm_concurrency",
-    "audiodb_prewarm_delay",
     "cache_ttl_recently_viewed_bytes",
     "cache_ttl_local_files_recently_added",
 ];

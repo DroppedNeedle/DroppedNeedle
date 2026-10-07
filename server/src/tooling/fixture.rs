@@ -298,7 +298,7 @@ fn fixture_config(
         ("audiodb_api_key".to_owned(), json!(secrets.audiodb_key)),
         // Dropped fields: never cross into the export.
         ("artist_discovery_warm_interval".to_owned(), json!(60)),
-        ("audiodb_prewarm_delay".to_owned(), json!(5)),
+        ("cache_ttl_recently_viewed_bytes".to_owned(), json!(7200)),
     ]);
     advanced.insert("cache_ttl_audiodb_found".to_owned(), json!(7200));
     advanced.insert("frontend_ttl_covers".to_owned(), json!(300));

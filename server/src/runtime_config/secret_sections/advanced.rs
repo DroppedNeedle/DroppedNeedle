@@ -4,11 +4,12 @@
 use super::*;
 
 // --- advanced_settings (closed export allowlist) ---------------------------
-// Kept: user-meaningful TTL/perf fields below. Dropped as internal tuning:
-// artist_discovery_warm_interval, artist_discovery_warm_delay,
-// artist_discovery_precache_delay, artist_discovery_precache_concurrency,
-// audiodb_prewarm_concurrency, audiodb_prewarm_delay, cache_ttl_recently_viewed_bytes,
-// cache_ttl_local_files_recently_added.
+// Kept: user-meaningful TTL/perf fields below, including the library
+// precache pacing. Dropped: artist_discovery_warm_interval and
+// artist_discovery_warm_delay (nothing read them in v2 either),
+// cache_ttl_recently_viewed_bytes (v3's image cache is bounded by size,
+// not age) and cache_ttl_local_files_recently_added (v3 reads recently
+// added straight from the library database, with no cache to age).
 // The AudioDB key is encrypted at rest now (v2 stored it plaintext).
 
 /// Advanced tuning: cache TTLs, HTTP trio, batching, queues, AudioDB.
@@ -73,6 +74,14 @@ pub struct AdvancedSettings {
     pub delay_artist: f64,
     /// Album delay.
     pub delay_albums: f64,
+    /// Discovery precache workers.
+    pub artist_discovery_precache_concurrency: i64,
+    /// Pause after each discovery precache artist, seconds.
+    pub artist_discovery_precache_delay: f64,
+    /// AudioDB precache workers.
+    pub audiodb_prewarm_concurrency: i64,
+    /// Pause before each AudioDB precache lookup, seconds.
+    pub audiodb_prewarm_delay: f64,
     /// Memory-cache entries.
     pub memory_cache_max_entries: i64,
     /// Memory-cache cleanup cadence.
@@ -205,6 +214,10 @@ impl Default for AdvancedSettings {
             batch_albums: 8,
             delay_artist: 0.5,
             delay_albums: 0.3,
+            artist_discovery_precache_concurrency: 5,
+            artist_discovery_precache_delay: 0.2,
+            audiodb_prewarm_concurrency: 4,
+            audiodb_prewarm_delay: 0.3,
             memory_cache_max_entries: 10000,
             memory_cache_cleanup_interval: 300,
             cover_memory_cache_max_entries: 128,
@@ -389,6 +402,18 @@ impl Section for AdvancedSettings {
             ("http_max_connections", self.http_max_connections, 50, 500),
             ("batch_artist_images", self.batch_artist_images, 1, 20),
             ("batch_albums", self.batch_albums, 1, 20),
+            (
+                "artist_discovery_precache_concurrency",
+                self.artist_discovery_precache_concurrency,
+                1,
+                8,
+            ),
+            (
+                "audiodb_prewarm_concurrency",
+                self.audiodb_prewarm_concurrency,
+                1,
+                8,
+            ),
             (
                 "memory_cache_max_entries",
                 self.memory_cache_max_entries,
@@ -595,6 +620,18 @@ impl Section for AdvancedSettings {
         let floats: &[(&str, f64, f64, f64)] = &[
             ("delay_artist", self.delay_artist, 0.0, 5.0),
             ("delay_albums", self.delay_albums, 0.0, 5.0),
+            (
+                "artist_discovery_precache_delay",
+                self.artist_discovery_precache_delay,
+                0.0,
+                5.0,
+            ),
+            (
+                "audiodb_prewarm_delay",
+                self.audiodb_prewarm_delay,
+                0.0,
+                5.0,
+            ),
             (
                 "discover_picks_genre_affinity_weight",
                 self.discover_picks_genre_affinity_weight,

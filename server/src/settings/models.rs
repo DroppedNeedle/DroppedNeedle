@@ -682,6 +682,14 @@ pub struct AdvancedSettingsForm {
     pub delay_artist: f64,
     /// Album delay, seconds (0-5).
     pub delay_albums: f64,
+    /// Discovery precache workers (1-8).
+    pub artist_discovery_precache_concurrency: i64,
+    /// Pause after each discovery precache artist, seconds (0-5).
+    pub artist_discovery_precache_delay: f64,
+    /// AudioDB precache workers (1-8).
+    pub audiodb_prewarm_concurrency: i64,
+    /// Pause before each AudioDB precache lookup, seconds (0-5).
+    pub audiodb_prewarm_delay: f64,
     /// Memory-cache entries (1000-100000).
     pub memory_cache_max_entries: i64,
     /// Memory-cache cleanup cadence, seconds (60-3600).
@@ -820,6 +828,10 @@ impl AdvancedSettingsForm {
             batch_albums: section.batch_albums,
             delay_artist: section.delay_artist,
             delay_albums: section.delay_albums,
+            artist_discovery_precache_concurrency: section.artist_discovery_precache_concurrency,
+            artist_discovery_precache_delay: section.artist_discovery_precache_delay,
+            audiodb_prewarm_concurrency: section.audiodb_prewarm_concurrency,
+            audiodb_prewarm_delay: section.audiodb_prewarm_delay,
             memory_cache_max_entries: section.memory_cache_max_entries,
             memory_cache_cleanup_interval: section.memory_cache_cleanup_interval,
             cover_memory_cache_max_entries: section.cover_memory_cache_max_entries,
@@ -906,6 +918,10 @@ impl AdvancedSettingsForm {
             batch_albums: self.batch_albums,
             delay_artist: self.delay_artist,
             delay_albums: self.delay_albums,
+            artist_discovery_precache_concurrency: self.artist_discovery_precache_concurrency,
+            artist_discovery_precache_delay: self.artist_discovery_precache_delay,
+            audiodb_prewarm_concurrency: self.audiodb_prewarm_concurrency,
+            audiodb_prewarm_delay: self.audiodb_prewarm_delay,
             memory_cache_max_entries: self.memory_cache_max_entries,
             memory_cache_cleanup_interval: self.memory_cache_cleanup_interval,
             cover_memory_cache_max_entries: self.cover_memory_cache_max_entries,
