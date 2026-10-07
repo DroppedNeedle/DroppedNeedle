@@ -382,7 +382,9 @@ impl LibrarySetup {
                 decision_source: DecisionSource::Automatic,
                 row_revision: current.as_ref().map_or(1, |row| row.row_revision + 1),
             });
-            store.set_match_flag(album_id, None);
+            if let Err(error) = store.set_match_flag(album_id, None) {
+                tracing::error!(%error, album = album_id, "match flag not cleared after import");
+            }
         } else {
             tracing::info!(
                 album = album_id,

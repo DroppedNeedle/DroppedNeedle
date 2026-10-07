@@ -173,14 +173,15 @@ fn place(
 /// Seal the candidate's release as the album's chosen edition and keep an
 /// undo. Used by every edition choice, including a re-identification's
 /// exact release. `actor` is the person choosing (`None` for a choice
-/// carried from an older pin). `action_id` names the audit row or job the
-/// undo belongs to.
+/// carried from an older pin). `undo_for` names the audit row or job the
+/// undo belongs to; `None` (placing files for a choice already made) keeps
+/// the album's existing undo record as it is.
 pub fn apply_choice(
     tx: &Transaction<'_>,
     album_id: &str,
     candidate: &ReidentificationCandidate,
     actor: Option<&str>,
-    action_id: &str,
+    undo_for: Option<&str>,
     now: f64,
 ) -> Result<EditionChoice, OperationError> {
     let release = candidate
@@ -235,7 +236,9 @@ pub fn apply_choice(
             params![album_id],
         )?;
     }
-    keep_undo(tx, album_id, &before, action_id, now)?;
+    if let Some(action_id) = undo_for {
+        keep_undo(tx, album_id, &before, action_id, now)?;
+    }
     Ok(EditionChoice {
         local_album_id: album_id.to_owned(),
         release_group_mbid: group,
@@ -278,7 +281,7 @@ pub fn choose(
 ) -> Result<EditionChoice, OperationError> {
     let before = album_identity_row(tx, album_id)?;
     let action = uuid::Uuid::new_v4().to_string();
-    let choice = apply_choice(tx, album_id, candidate, actor, &action, now)?;
+    let choice = apply_choice(tx, album_id, candidate, actor, Some(&action), now)?;
     if let Some(actor) = actor {
         settle_reviews(
             tx,
@@ -606,10 +609,11 @@ pub struct PendingRemap {
     pub attempts: i64,
 }
 
-/// Tries before a remap that keeps failing is given up (the choice stays).
-pub const REMAP_ATTEMPTS: i64 = 5;
-/// Seconds between tries while MusicBrainz is down.
+/// First wait, in seconds, after MusicBrainz did not answer; it doubles
+/// with each try up to [`REMAP_RETRY_MAX_SECS`].
 pub const REMAP_RETRY_SECS: f64 = 300.0;
+/// Longest wait between tries while MusicBrainz is down (six hours).
+pub const REMAP_RETRY_MAX_SECS: f64 = 21_600.0;
 
 /// The next album due for a remap, if any.
 pub fn next_remap(conn: &Connection, now: f64) -> rusqlite::Result<Option<PendingRemap>> {
@@ -630,33 +634,74 @@ pub fn next_remap(conn: &Connection, now: f64) -> rusqlite::Result<Option<Pendin
     .optional()
 }
 
-/// Try a remap again later, or give it up after [`REMAP_ATTEMPTS`]. The
-/// album keeps its chosen edition either way; only the file placement
-/// waits.
-pub fn defer_remap(
+/// Whether the queued remap is still the album's latest ask. A person's
+/// newer choice or hand-back removes or replaces the queue row, and the
+/// worker must then leave the album alone.
+pub fn remap_still_wanted(conn: &Connection, pending: &PendingRemap) -> rusqlite::Result<bool> {
+    let queued: Option<String> = conn
+        .query_row(
+            "SELECT release_mbid FROM library_edition_remap_queue WHERE local_album_id = ?1",
+            params![pending.local_album_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(queued.is_some_and(|release| release.eq_ignore_ascii_case(&pending.release_mbid)))
+}
+
+/// MusicBrainz did not answer: try again later, waiting longer each time
+/// (capped). An outage never gives the remap up.
+pub fn retry_remap(tx: &Transaction<'_>, pending: &PendingRemap, now: f64) -> rusqlite::Result<()> {
+    let steps = pending.attempts.clamp(0, 16) as i32;
+    let wait = (REMAP_RETRY_SECS * 2f64.powi(steps)).min(REMAP_RETRY_MAX_SECS);
+    tx.execute(
+        "UPDATE library_edition_remap_queue SET attempts = attempts + 1, \
+         not_before = ?2, last_code = 'MUSICBRAINZ_UNAVAILABLE' WHERE local_album_id = ?1",
+        params![pending.local_album_id, now + wait],
+    )?;
+    Ok(())
+}
+
+/// The chosen release cannot hold these files (MusicBrainz does not know
+/// it, or it fits none of them). The carried choice cannot be honoured, so
+/// the album goes back to automatic best fit, its unplaced tracks with it,
+/// and identification is queued. Nothing a person changed since is
+/// touched: only the carried choice and its own unplaced track rows.
+pub fn give_up_remap(
     tx: &Transaction<'_>,
     pending: &PendingRemap,
     code: &str,
-    retry: bool,
     now: f64,
 ) -> rusqlite::Result<()> {
-    if !retry || pending.attempts + 1 >= REMAP_ATTEMPTS {
-        tracing::warn!(
-            album = pending.local_album_id,
-            release = pending.release_mbid,
-            code,
-            "gave up placing an album's files on its chosen edition; the choice stays"
-        );
+    tracing::warn!(
+        album = pending.local_album_id,
+        release = pending.release_mbid,
+        code,
+        "the carried edition choice cannot hold this album's files; back to automatic choice"
+    );
+    let handed_back = tx.execute(
+        "UPDATE local_album_external_identities SET decision_source = 'automatic', \
+         selected_by_user_id = NULL, selected_at = ?2, row_revision = row_revision + 1 \
+         WHERE local_album_id = ?1 AND provider = ?3 AND decision_source = 'manual' \
+         AND lower(release_mbid) = lower(?4)",
+        params![pending.local_album_id, now, PROVIDER, pending.release_mbid],
+    )?;
+    if handed_back == 1 {
         tx.execute(
-            "DELETE FROM library_edition_remap_queue WHERE local_album_id = ?1",
-            params![pending.local_album_id],
+            "UPDATE local_track_external_identities SET decision_source = 'automatic', \
+             selected_at = ?2, row_revision = row_revision + 1 \
+             WHERE provider = ?3 AND decision_source = 'manual' AND release_mbid IS NULL \
+             AND local_track_id IN (SELECT id FROM local_tracks WHERE local_album_id = ?1)",
+            params![pending.local_album_id, now, PROVIDER],
         )?;
-        return Ok(());
+        crate::library::identify::sqlite::offer_album(
+            tx,
+            &pending.local_album_id,
+            (now * 1000.0) as i64,
+        )?;
     }
     tx.execute(
-        "UPDATE library_edition_remap_queue SET attempts = attempts + 1, \
-         not_before = ?2, last_code = ?3 WHERE local_album_id = ?1",
-        params![pending.local_album_id, now + REMAP_RETRY_SECS, code],
+        "DELETE FROM library_edition_remap_queue WHERE local_album_id = ?1",
+        params![pending.local_album_id],
     )?;
     Ok(())
 }

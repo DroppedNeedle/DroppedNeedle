@@ -339,34 +339,33 @@ impl IdentifyService {
             review_id: None,
         };
         if let Decision::Identified(index) = decision {
-            let winner = &scored[index];
-            if self.seal_automatic(facts, winner) {
-                self.deps.identities.set_match_flag(album, None);
-            }
+            self.seal_automatic(facts, &scored[index], None);
             return report("SUPPORTED");
         }
+        // A confirmed automatic edition stays unless the new evidence rules
+        // it out: a weaker pass never demotes or replaces it.
+        let confirmed_exact = current.as_ref().and_then(|row| {
+            (row.decision_source == DecisionSource::Automatic
+                && self.deps.identities.match_flag(album).is_none())
+            .then(|| row.release_mbid.clone())
+            .flatten()
+        });
+        if let Some(held) = confirmed_exact.as_deref()
+            && !ruled_out(ranking, held)
+        {
+            return report("QUIET_RECONFIRM");
+        }
         if let Some(guess) = ranking.guess.and_then(|index| scored.get(index)) {
-            let flagged = self.deps.identities.match_flag(album).is_some();
-            let same = current.as_ref().is_some_and(|row| {
-                row.release_mbid.is_some()
-                    && row.release_mbid.as_deref().map(str::to_ascii_lowercase)
-                        == guess.release_mbid.as_deref().map(str::to_ascii_lowercase)
-            });
-            // Weaker evidence never demotes a match that was confirmed.
-            if same && !flagged {
-                return report("QUIET_RECONFIRM");
-            }
-            if self.seal_automatic(facts, guess) {
-                self.deps.identities.set_match_flag(
-                    album,
-                    Some(&MatchFlag {
-                        state: MatchFlagState::Unconfirmed,
-                        reason_code: reason_code.clone(),
-                        release_mbid: guess.release_mbid.clone(),
-                        candidates: closest,
-                    }),
-                );
-            }
+            self.seal_automatic(
+                facts,
+                guess,
+                Some(MatchFlag {
+                    state: MatchFlagState::Unconfirmed,
+                    reason_code: reason_code.clone(),
+                    release_mbid: guess.release_mbid.clone(),
+                    candidates: closest,
+                }),
+            );
             return report(&reason_code);
         }
         if matches!(decision, Decision::Contradictory)
@@ -377,8 +376,8 @@ impl IdentifyService {
         {
             self.deps.identities.clear_album_identity(album);
         }
-        if self.deps.identities.album_identity(album).is_none() {
-            self.deps.identities.set_match_flag(
+        if self.deps.identities.album_identity(album).is_none()
+            && let Err(error) = self.deps.identities.set_match_flag(
                 album,
                 Some(&MatchFlag {
                     state: MatchFlagState::Unmatched,
@@ -386,7 +385,9 @@ impl IdentifyService {
                     release_mbid: None,
                     candidates: closest,
                 }),
-            );
+            )
+        {
+            tracing::error!(%error, album, "unmatched flag not recorded");
         }
         report(&reason_code)
     }
@@ -395,7 +396,12 @@ impl IdentifyService {
     /// tracks keep theirs), and fresh credit proof rows. The store writes
     /// them together, never over a curator's album row, and an exact
     /// edition keeps what it replaced so an administrator can undo it.
-    fn seal_automatic(&self, facts: &LocalAlbumFacts, winner: &CandidateEvidence) -> bool {
+    fn seal_automatic(
+        &self,
+        facts: &LocalAlbumFacts,
+        winner: &CandidateEvidence,
+        flag: Option<MatchFlag>,
+    ) -> bool {
         let tracks = winner
             .track_evidence
             .iter()
@@ -416,6 +422,7 @@ impl IdentifyService {
             release_group_mbid: winner.release_group_mbid.clone(),
             release_mbid: winner.release_mbid.clone(),
             tracks,
+            flag,
         });
         if sealed {
             self.bank_proofs(facts, winner);
@@ -704,6 +711,24 @@ pub struct Ranking {
     pub lead_identified: bool,
     /// Index into `candidates` of the best guess, when one is not ruled out.
     pub guess: Option<usize>,
+}
+
+/// True when the new evidence rules `release` out: it was scored and a
+/// file's own id contradicts it, or its album title or artist do not
+/// agree. A release this pass did not score is not ruled out.
+fn ruled_out(ranking: &Ranking, release: &str) -> bool {
+    ranking
+        .candidates
+        .iter()
+        .zip(&ranking.order)
+        .find(|(candidate, _)| {
+            candidate
+                .release_mbid
+                .as_deref()
+                .is_some_and(|mbid| mbid.eq_ignore_ascii_case(release))
+        })
+        .and_then(|(_, index)| ranking.matches.get(*index))
+        .is_some_and(|matched| !matched.conflicts.is_empty() || !matched.names_agree)
 }
 
 /// Closest candidates kept with an unsure match.

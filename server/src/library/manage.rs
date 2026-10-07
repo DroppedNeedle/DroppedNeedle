@@ -343,14 +343,23 @@ impl LibrarySetup {
         if allowed {
             return Ok(());
         }
-        let state = self.identify_store.with_connection(|conn| {
-            conn.query_row(
-                "SELECT state FROM library_album_match_state WHERE local_album_id = ?1",
-                rusqlite::params![album_id],
-                |row| row.get::<_, String>(0),
-            )
-            .ok()
-        });
+        // Only "no row" means confirmed; a read failure refuses management
+        // rather than letting an unsure album's files be changed.
+        let state = self
+            .identify_store
+            .with_connection(|conn| {
+                use rusqlite::OptionalExtension as _;
+                conn.query_row(
+                    "SELECT state FROM library_album_match_state WHERE local_album_id = ?1",
+                    rusqlite::params![album_id],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+            })
+            .map_err(|error| {
+                tracing::error!(%error, album = album_id, "match state unreadable; management refused");
+                ServiceError::internal(&error)
+            })?;
         match state.as_deref() {
             Some("unconfirmed") => Err(ServiceError::Conflict {
                 message: "UNCONFIRMED_MATCH: This album's edition is a best guess nobody has \

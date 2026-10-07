@@ -271,28 +271,24 @@ impl Operations {
         let actor = pending.chosen_by_user_id.as_deref();
         self.write(|tx| {
             let now = now_unix();
-            match outcome {
+            // A person may have chosen again, or handed the album back,
+            // while MusicBrainz was asked: then this remap is stale.
+            if !choice::remap_still_wanted(tx, &pending)? {
+                return Ok(true);
+            }
+            let placed = match outcome {
                 Ok(candidate) => {
-                    match choice::apply_choice(
-                        tx,
-                        &pending.local_album_id,
-                        &candidate,
-                        actor,
-                        "remap",
-                        now,
-                    ) {
-                        Ok(_) => decisions::bump_catalog(tx)?,
-                        Err(OperationError::Invalid(reason) | OperationError::NotFound(reason)) => {
-                            choice::defer_remap(tx, &pending, reason.code, false, now)?;
-                        }
-                        Err(other) => return Err(other),
-                    }
+                    choice::apply_choice(tx, &pending.local_album_id, &candidate, actor, None, now)
+                        .map(|_| ())
                 }
-                Err(OperationError::Unavailable(_)) => {
-                    choice::defer_remap(tx, &pending, "MUSICBRAINZ_UNAVAILABLE", true, now)?;
-                }
+                Err(error) => Err(error),
+            };
+            match placed {
+                Ok(()) => decisions::bump_catalog(tx)?,
+                Err(OperationError::Unavailable(_)) => choice::retry_remap(tx, &pending, now)?,
                 Err(OperationError::Invalid(reason) | OperationError::NotFound(reason)) => {
-                    choice::defer_remap(tx, &pending, reason.code, false, now)?;
+                    choice::give_up_remap(tx, &pending, reason.code, now)?;
+                    decisions::bump_catalog(tx)?;
                 }
                 Err(other) => return Err(other),
             }

@@ -133,6 +133,9 @@ pub struct AutomaticSeal {
     pub release_group_mbid: String,
     pub release_mbid: Option<String>,
     pub tracks: Vec<TrackIdentity>,
+    /// How sure the seal is: `None` is a confident match (any flag
+    /// clears); a flag marks a best guess. Written with the seal.
+    pub flag: Option<MatchFlag>,
 }
 
 /// The album identity row an automatic exact-edition seal replaced, as kept

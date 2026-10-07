@@ -30,8 +30,14 @@ pub trait IdentityStore: Send + Sync {
         None
     }
     /// Record (or with `None`, clear) the album's match flag. Stores that
-    /// keep no flags ignore it.
-    fn set_match_flag(&self, _local_album_id: &str, _flag: Option<&MatchFlag>) {}
+    /// keep no flags accept and ignore it.
+    fn set_match_flag(
+        &self,
+        _local_album_id: &str,
+        _flag: Option<&MatchFlag>,
+    ) -> Result<(), StoreError> {
+        Ok(())
+    }
     /// Seal an automatic win: the album row and the given track rows, never
     /// over a curator's row. Durable stores do it in one transaction and,
     /// for an exact edition, keep what it replaced so an administrator can
@@ -43,6 +49,10 @@ pub trait IdentityStore: Send + Sync {
             .as_ref()
             .is_some_and(|row| !row.decision_source.automatic_may_overwrite())
         {
+            return false;
+        }
+        if let Err(error) = self.set_match_flag(&seal.local_album_id, seal.flag.as_ref()) {
+            tracing::error!(%error, album = seal.local_album_id, "match flag not written");
             return false;
         }
         self.save_album_identity(AlbumIdentity {

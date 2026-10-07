@@ -600,28 +600,18 @@ impl IdentityStore for SqliteIdentifyStore {
         .flatten()
     }
 
-    fn set_match_flag(&self, local_album_id: &str, flag: Option<&MatchFlag>) {
-        self.write("match flag", |tx| match flag {
-            None => tx.execute(
-                "DELETE FROM library_album_match_state WHERE local_album_id = ?1",
-                params![local_album_id],
-            ),
-            Some(flag) => tx.execute(
-                "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
-                 release_mbid, candidates_json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
-                 ON CONFLICT (local_album_id) DO UPDATE SET state = excluded.state, \
-                 reason_code = excluded.reason_code, release_mbid = excluded.release_mbid, \
-                 candidates_json = excluded.candidates_json, updated_at = excluded.updated_at",
-                params![
-                    local_album_id,
-                    flag.state.as_str(),
-                    flag.reason_code,
-                    flag.release_mbid,
-                    to_json(&flag.candidates)?,
-                    now_ms() as f64 / 1000.0,
-                ],
-            ),
-        });
+    fn set_match_flag(
+        &self,
+        local_album_id: &str,
+        flag: Option<&MatchFlag>,
+    ) -> Result<(), StoreError> {
+        self.write("match flag", |tx| {
+            write_match_flag(tx, local_album_id, flag)
+        })
+        .map(|_| ())
+        .ok_or_else(|| StoreError {
+            cause: format!("match flag for album {local_album_id} not written"),
+        })
     }
 }
 
@@ -689,6 +679,35 @@ fn to_json<T: serde::Serialize>(value: &T) -> rusqlite::Result<String> {
         .map_err(|error| rusqlite::Error::ToSqlConversionFailure(error.into()))
 }
 
+/// Record (or with `None`, clear) one album's match flag.
+fn write_match_flag(
+    tx: &rusqlite::Transaction<'_>,
+    local_album_id: &str,
+    flag: Option<&MatchFlag>,
+) -> rusqlite::Result<usize> {
+    match flag {
+        None => tx.execute(
+            "DELETE FROM library_album_match_state WHERE local_album_id = ?1",
+            params![local_album_id],
+        ),
+        Some(flag) => tx.execute(
+            "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+             release_mbid, candidates_json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+             ON CONFLICT (local_album_id) DO UPDATE SET state = excluded.state, \
+             reason_code = excluded.reason_code, release_mbid = excluded.release_mbid, \
+             candidates_json = excluded.candidates_json, updated_at = excluded.updated_at",
+            params![
+                local_album_id,
+                flag.state.as_str(),
+                flag.reason_code,
+                flag.release_mbid,
+                to_json(&flag.candidates)?,
+                now_ms() as f64 / 1000.0,
+            ],
+        ),
+    }
+}
+
 /// One automatic seal in one transaction: read what is there, refuse a
 /// curator's album row, write the album and the revisable track rows, and
 /// for an exact edition keep the rows it replaced for undo.
@@ -730,6 +749,9 @@ fn seal_automatic_tx(
     if written != 1 {
         return Ok(false);
     }
+    // The flag lands with the seal, so a best guess is never applied
+    // without it (and a confident match never keeps a stale one).
+    write_match_flag(tx, album, seal.flag.as_ref())?;
     for track in &seal.tracks {
         let Some(recording) = track.recording_mbid.as_deref() else {
             continue;

@@ -96,7 +96,7 @@ pub fn select_candidate(
             if needs_confirmation && !choice.confirmation {
                 return Err(OperationError::Invalid(reasons::CONFIRMATION_REQUIRED));
             }
-            super::choice::apply_choice(tx, &album_id, &candidate, Some(actor), job_id, now)?;
+            super::choice::apply_choice(tx, &album_id, &candidate, Some(actor), Some(job_id), now)?;
             evaluation.outcome = "identified".into();
             (
                 "IDENTIFIED",
