@@ -607,6 +607,9 @@ pub struct PendingRemap {
     pub release_mbid: String,
     pub chosen_by_user_id: Option<String>,
     pub attempts: i64,
+    /// True when the choice came from a release-group pin fanned out over
+    /// every copy, not from a person pinning this album.
+    pub from_group_pin: bool,
 }
 
 /// First wait, in seconds, after MusicBrainz did not answer; it doubles
@@ -618,7 +621,7 @@ pub const REMAP_RETRY_MAX_SECS: f64 = 21_600.0;
 /// The next album due for a remap, if any.
 pub fn next_remap(conn: &Connection, now: f64) -> rusqlite::Result<Option<PendingRemap>> {
     conn.query_row(
-        "SELECT local_album_id, release_mbid, chosen_by_user_id, attempts \
+        "SELECT local_album_id, release_mbid, chosen_by_user_id, attempts, origin \
          FROM library_edition_remap_queue WHERE not_before <= ?1 \
          ORDER BY queued_at, local_album_id LIMIT 1",
         params![now],
@@ -628,6 +631,7 @@ pub fn next_remap(conn: &Connection, now: f64) -> rusqlite::Result<Option<Pendin
                 release_mbid: row.get(1)?,
                 chosen_by_user_id: row.get(2)?,
                 attempts: row.get(3)?,
+                from_group_pin: row.get::<_, String>(4)? == "group_pin",
             })
         },
     )
@@ -648,21 +652,28 @@ pub fn remap_still_wanted(conn: &Connection, pending: &PendingRemap) -> rusqlite
     Ok(queued.is_some_and(|release| release.eq_ignore_ascii_case(&pending.release_mbid)))
 }
 
-/// MusicBrainz did not answer: try again later, waiting longer each time
-/// (capped). An outage never gives the remap up.
-pub fn retry_remap(tx: &Transaction<'_>, pending: &PendingRemap, now: f64) -> rusqlite::Result<()> {
+/// MusicBrainz did not answer, or the album's files are briefly out of
+/// reach (a scan moving them): try again later, waiting longer each time
+/// (capped). This never gives the remap up.
+pub fn retry_remap(
+    tx: &Transaction<'_>,
+    pending: &PendingRemap,
+    code: &str,
+    now: f64,
+) -> rusqlite::Result<()> {
     let steps = pending.attempts.clamp(0, 16) as i32;
     let wait = (REMAP_RETRY_SECS * 2f64.powi(steps)).min(REMAP_RETRY_MAX_SECS);
     tx.execute(
         "UPDATE library_edition_remap_queue SET attempts = attempts + 1, \
-         not_before = ?2, last_code = 'MUSICBRAINZ_UNAVAILABLE' WHERE local_album_id = ?1",
-        params![pending.local_album_id, now + wait],
+         not_before = ?2, last_code = ?3 WHERE local_album_id = ?1",
+        params![pending.local_album_id, now + wait, code],
     )?;
     Ok(())
 }
 
-/// The chosen release cannot hold these files (MusicBrainz does not know
-/// it, or it fits none of them). The carried choice cannot be honoured, so
+/// The carried choice cannot be honoured: MusicBrainz does not know the
+/// release, or a release-group pin's release fits none of this copy's
+/// files. So
 /// the album goes back to automatic best fit, its unplaced tracks with it,
 /// and identification is queued. Nothing a person changed since is
 /// touched: only the carried choice and its own unplaced track rows.
@@ -705,6 +716,44 @@ pub fn give_up_remap(
     )?;
     Ok(())
 }
+
+/// A person pinned this exact edition but it fits none of the files. Their
+/// choice stays and the track placements stay as they were; the album
+/// shows why, so they can pick another edition or let DroppedNeedle choose.
+pub fn keep_unplaceable_choice(
+    tx: &Transaction<'_>,
+    pending: &PendingRemap,
+    code: &str,
+    now: f64,
+) -> rusqlite::Result<()> {
+    tracing::warn!(
+        album = pending.local_album_id,
+        release = pending.release_mbid,
+        code,
+        "the chosen edition fits none of this album's files; the choice is kept"
+    );
+    tx.execute(
+        "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+         release_mbid, candidates_json, updated_at) VALUES (?1, 'unmatched', ?2, ?3, '[]', ?4) \
+         ON CONFLICT (local_album_id) DO UPDATE SET state = excluded.state, \
+         reason_code = excluded.reason_code, release_mbid = excluded.release_mbid, \
+         updated_at = excluded.updated_at",
+        params![
+            pending.local_album_id,
+            CHOSEN_FITS_NO_FILE,
+            pending.release_mbid,
+            now
+        ],
+    )?;
+    tx.execute(
+        "DELETE FROM library_edition_remap_queue WHERE local_album_id = ?1",
+        params![pending.local_album_id],
+    )?;
+    Ok(())
+}
+
+/// Reason code on an album whose chosen edition fits none of its files.
+pub const CHOSEN_FITS_NO_FILE: &str = "CHOSEN_EDITION_FITS_NO_FILE";
 
 /// Queue the album's files to be placed on its chosen release.
 pub fn queue_remap(

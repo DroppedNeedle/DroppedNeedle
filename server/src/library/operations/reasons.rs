@@ -286,6 +286,11 @@ pub fn match_reason(code: &str) -> Reason {
             "Someone chose this edition, so automatic matching leaves it alone.",
             "Pick another edition, or let DroppedNeedle choose again.",
         ),
+        "CHOSEN_EDITION_FITS_NO_FILE" => reason(
+            "CHOSEN_EDITION_FITS_NO_FILE",
+            "The edition you chose doesn't match these files.",
+            "Pick another edition, or let DroppedNeedle choose.",
+        ),
         "SUPPORTED" => reason(
             "SUPPORTED",
             "This edition fits the files closely: titles, track order and lengths agree.",

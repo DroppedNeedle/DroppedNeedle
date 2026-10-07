@@ -285,9 +285,31 @@ impl Operations {
             };
             match placed {
                 Ok(()) => decisions::bump_catalog(tx)?,
-                Err(OperationError::Unavailable(_)) => choice::retry_remap(tx, &pending, now)?,
-                Err(OperationError::Invalid(reason) | OperationError::NotFound(reason)) => {
+                Err(OperationError::Unavailable(_)) => {
+                    choice::retry_remap(tx, &pending, reasons::MUSICBRAINZ_UNAVAILABLE.code, now)?
+                }
+                // The album's files are out of reach for now (a scan may
+                // be moving them): never a reason to drop the choice.
+                Err(OperationError::NotFound(reason))
+                    if reason.code == reasons::ALBUM_NOT_FOUND.code =>
+                {
+                    choice::retry_remap(tx, &pending, reason.code, now)?
+                }
+                Err(OperationError::NotFound(reason))
+                    if reason.code == reasons::EDITION_NOT_FOUND.code =>
+                {
                     choice::give_up_remap(tx, &pending, reason.code, now)?;
+                    decisions::bump_catalog(tx)?;
+                }
+                Err(OperationError::Invalid(reason))
+                    if reason.code == reasons::EDITION_FITS_NO_FILE.code
+                        && pending.from_group_pin =>
+                {
+                    choice::give_up_remap(tx, &pending, reason.code, now)?;
+                    decisions::bump_catalog(tx)?;
+                }
+                Err(OperationError::Invalid(reason) | OperationError::NotFound(reason)) => {
+                    choice::keep_unplaceable_choice(tx, &pending, reason.code, now)?;
                     decisions::bump_catalog(tx)?;
                 }
                 Err(other) => return Err(other),

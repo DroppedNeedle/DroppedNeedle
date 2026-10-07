@@ -350,9 +350,10 @@ impl LibrarySetup {
             .with_connection(|conn| {
                 use rusqlite::OptionalExtension as _;
                 conn.query_row(
-                    "SELECT state FROM library_album_match_state WHERE local_album_id = ?1",
+                    "SELECT state, reason_code FROM library_album_match_state \
+                     WHERE local_album_id = ?1",
                     rusqlite::params![album_id],
-                    |row| row.get::<_, String>(0),
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
                 )
                 .optional()
             })
@@ -360,7 +361,16 @@ impl LibrarySetup {
                 tracing::error!(%error, album = album_id, "match state unreadable; management refused");
                 ServiceError::internal(&error)
             })?;
-        match state.as_deref() {
+        if let Some((_, code)) = state
+            .as_ref()
+            .filter(|(_, code)| code.starts_with("CHOSEN_"))
+        {
+            let reason = super::operations::reasons::match_reason(code);
+            return Err(ServiceError::Conflict {
+                message: format!("{}: {} {}", reason.code, reason.message, reason.action),
+            });
+        }
+        match state.as_ref().map(|(state, _)| state.as_str()) {
             Some("unconfirmed") => Err(ServiceError::Conflict {
                 message: "UNCONFIRMED_MATCH: This album's edition is a best guess nobody has \
                           confirmed yet, so its files are left alone. Confirm the match on the \

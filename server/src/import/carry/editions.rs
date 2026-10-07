@@ -10,10 +10,9 @@
 //! - an edition pin: the album's identity becomes the pinned release
 //!   group and release, chosen by the person who pinned it (`manual`). A
 //!   manual identity is the curator's own later word and is left alone.
-//!   When the pinned release differs from the identity the album had, that
-//!   identity's automatic track mappings belonged to another release and
-//!   go; the album is queued so the library places its files on the pinned
-//!   release once MusicBrainz is reachable. The pin rows are then removed:
+//!   The album is queued so the library places its files on the pinned
+//!   release once MusicBrainz is reachable; until then its track mappings
+//!   stay as they were. The pin rows are then removed:
 //!   the identity row is the album's one record of its edition;
 //! - an active custom edition: the album's identity becomes the custom
 //!   edition's release group with no exact release, as v2 sealed it, and
@@ -99,19 +98,8 @@ pub(crate) async fn apply(
          AND EXISTS (SELECT 1 FROM main.library_album_release_pins p \
          WHERE p.local_album_id = e.local_album_id)"
     );
-    // Automatic track mappings made for a release the pin replaces.
-    run(
-        conn,
-        &format!(
-            "DELETE FROM main.local_track_external_identities \
-             WHERE decision_source IN {REVISABLE} AND local_track_id IN \
-             (SELECT t.id FROM main.local_tracks t \
-              JOIN main.local_album_external_identities e ON e.local_album_id = t.local_album_id \
-              WHERE {pinned} AND e.release_mbid IS NOT {release})",
-            release = pin("release_mbid"),
-        ),
-    )
-    .await?;
+    // Track mappings stay as they are until the files are placed on the
+    // pinned release; nothing is wiped up front.
     let mut sticky = run(
         conn,
         &format!(

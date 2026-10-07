@@ -58,7 +58,10 @@ CREATE TABLE IF NOT EXISTS library_edition_remap_queue (
     queued_at REAL NOT NULL,
     attempts INTEGER NOT NULL DEFAULT 0,
     not_before REAL NOT NULL DEFAULT 0,
-    last_code TEXT
+    last_code TEXT,
+    -- 'album_pin': a person pinned this album; 'group_pin': the album got
+    -- the choice from a release-group pin covering every copy.
+    origin TEXT NOT NULL DEFAULT 'album_pin' CHECK(origin IN ('album_pin', 'group_pin'))
 );
 
 CREATE TABLE IF NOT EXISTS local_track_edition_tags (
@@ -73,6 +76,18 @@ CREATE TABLE IF NOT EXISTS local_track_edition_tags (
 
 -- Release-group pins name no album. Each one becomes a pin on every live
 -- album of that group the matcher picked, unless the album has its own pin.
+-- The albums that got their choice this way are remembered for the queue.
+CREATE TEMP TABLE IF NOT EXISTS edition_group_pinned (local_album_id TEXT PRIMARY KEY);
+INSERT OR IGNORE INTO edition_group_pinned (local_album_id)
+SELECT e.local_album_id
+FROM album_release_pins g
+JOIN local_album_external_identities e
+    ON lower(e.release_group_mbid) = lower(g.release_group_mbid) AND e.provider = 'musicbrainz'
+JOIN local_albums a ON a.id = e.local_album_id
+WHERE a.retired_into_album_id IS NULL
+  AND e.decision_source IN ('automatic', 'embedded')
+  AND e.local_album_id NOT IN (SELECT local_album_id FROM library_album_release_pins);
+
 INSERT OR IGNORE INTO library_album_release_pins (local_album_id, release_group_mbid,
     release_mbid, set_by_user_id, set_at)
 SELECT e.local_album_id, g.release_group_mbid, g.release_mbid, g.set_by_user_id, g.set_at
@@ -92,19 +107,8 @@ WHERE local_album_id IN (
     WHERE provider = 'musicbrainz' AND decision_source = 'manual')
    OR local_album_id NOT IN (SELECT id FROM local_albums WHERE retired_into_album_id IS NULL);
 
--- Track rows that mapped the files onto another release lose their
--- release placement (the recording stays); the remap worker places them
--- on the chosen release.
-UPDATE local_track_external_identities
-SET release_mbid = NULL, release_track_mbid = NULL, medium_position = NULL,
-    release_track_position = NULL, decision_source = 'manual',
-    row_revision = row_revision + 1
-WHERE provider = 'musicbrainz'
-  AND local_track_id IN (
-    SELECT t.id FROM local_tracks t
-    JOIN library_album_release_pins p ON p.local_album_id = t.local_album_id
-    WHERE lower(COALESCE(local_track_external_identities.release_mbid, ''))
-          <> lower(p.release_mbid));
+-- Track rows keep their placements until the remap worker places them
+-- on the chosen release; nothing is wiped up front.
 
 UPDATE local_album_external_identities
 SET release_group_mbid = (SELECT p.release_group_mbid FROM library_album_release_pins p
@@ -128,10 +132,12 @@ SELECT p.local_album_id, 'musicbrainz', p.release_group_mbid, p.release_mbid, 'm
 FROM library_album_release_pins p;
 
 INSERT OR IGNORE INTO library_edition_remap_queue (local_album_id, release_mbid,
-    chosen_by_user_id, queued_at)
+    chosen_by_user_id, queued_at, origin)
 SELECT p.local_album_id, lower(p.release_mbid),
     (SELECT u.id FROM auth_users u WHERE u.id = p.set_by_user_id),
-    CAST(strftime('%s', 'now') AS REAL)
+    CAST(strftime('%s', 'now') AS REAL),
+    CASE WHEN p.local_album_id IN (SELECT local_album_id FROM edition_group_pinned)
+         THEN 'group_pin' ELSE 'album_pin' END
 FROM library_album_release_pins p;
 
 -- A converted choice is a person's word: the album is confirmed.
@@ -140,6 +146,7 @@ WHERE local_album_id IN (SELECT local_album_id FROM library_album_release_pins);
 
 DELETE FROM library_album_release_pins;
 DELETE FROM album_release_pins;
+DROP TABLE IF EXISTS edition_group_pinned;
 
 -- Cached catalog reads refresh.
 INSERT INTO library_catalog_revision (singleton, value) VALUES (1, 0)

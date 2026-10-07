@@ -101,6 +101,9 @@ pub fn edition_status(
         .as_ref()
         .is_some_and(|(_, _, source, _, _)| source == "manual" || source == "legacy_import");
     let (state, reason) = match (&identity, &flagged) {
+        // A chosen edition stays chosen; a flag on it explains a problem
+        // with the choice (it fits none of the files).
+        (_, Some((_, code, _))) if protected => (EditionState::Chosen, reasons::match_reason(code)),
         _ if protected => (EditionState::Chosen, reasons::match_reason("CHOSEN")),
         (_, Some((state, code, _))) if state == "unmatched" => {
             (EditionState::Unmatched, reasons::match_reason(code))
