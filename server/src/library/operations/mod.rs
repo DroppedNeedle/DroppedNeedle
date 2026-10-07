@@ -13,12 +13,15 @@
 //! decisions, `reidentify` the candidate evaluation, and `service` the
 //! entry points the HTTP handlers and the loop call.
 
+pub mod choice;
 pub mod control;
 pub mod decisions;
 pub mod models;
+pub mod port;
 pub mod reasons;
 pub mod reidentify;
 pub mod service;
+pub mod status;
 pub mod store;
 
 use std::time::Duration;
@@ -51,7 +54,7 @@ async fn run_loop(setup: LibrarySetup, mut shutdown: watch::Receiver<bool>) {
         if *shutdown.borrow() {
             break;
         }
-        if tick(&setup, &ops, &worker).await {
+        if tick(&setup, &ops, &worker).await || remap_tick(&setup, &ops).await {
             continue;
         }
         tokio::select! {
@@ -90,6 +93,31 @@ pub async fn tick(setup: &LibrarySetup, ops: &Operations, worker: &str) -> bool 
         }
         Err(error) => {
             tracing::error!(%error, "library operation step panicked");
+            false
+        }
+    }
+}
+
+/// Place the files of one album whose chosen edition still waits for them.
+/// True when one was handled.
+async fn remap_tick(setup: &LibrarySetup, ops: &Operations) -> bool {
+    let (setup, ops) = (setup.clone(), ops.clone());
+    let handle = tokio::runtime::Handle::current();
+    let outcome = tokio::task::spawn_blocking(move || {
+        if !setup.coordinator.current().is_empty() {
+            return Ok(false);
+        }
+        handle.block_on(ops.remap_next())
+    })
+    .await;
+    match outcome {
+        Ok(Ok(handled)) => handled,
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "placing files on a chosen edition failed");
+            false
+        }
+        Err(error) => {
+            tracing::error!(%error, "placing files on a chosen edition panicked");
             false
         }
     }

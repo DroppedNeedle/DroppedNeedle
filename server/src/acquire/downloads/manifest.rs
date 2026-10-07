@@ -91,7 +91,7 @@ pub struct TrackAlbumContext {
     /// Album year, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub year: Option<i32>,
-    /// Why this edition: `edition_pin`, `library_edition`,
+    /// Why this edition: `manual_identity`, `library_edition`,
     /// `requested_release`, or `best_official`.
     pub basis: String,
     /// Positions of the requested recording on the release.

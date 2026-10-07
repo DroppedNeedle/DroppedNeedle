@@ -10,16 +10,17 @@ use std::sync::Arc;
 
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
-use super::decisions;
 use super::models::{
-    CandidateChoice, Control, OperationDetail, OperationError, OperationJob, ReidentifyInput,
-    ReleaseSearch, UndoOutcome,
+    CandidateChoice, Control, EditionChoice, OperationDetail, OperationError, OperationJob,
+    ReidentificationCandidate, ReidentifyInput, ReleaseSearch, UndoOutcome,
 };
 use super::reasons;
 use super::reidentify::{MAX_ATTEMPTS, RETRY_SECS, evaluation, unavailable};
 use super::store::{self, NewReidentification};
+use super::{choice, decisions};
 use crate::ids::IdGenerator;
 use crate::library::clock::now_unix;
+use crate::library::identify::models::IdentifyKind;
 use crate::library::identify::service::IdentifyService;
 use crate::library::identify::sources::EditionQuery;
 use crate::library::identify::sqlite::SqliteIdentifyStore;
@@ -58,6 +59,14 @@ impl Operations {
         op: impl FnOnce(&Connection) -> Result<T, OperationError>,
     ) -> Result<T, OperationError> {
         self.store.with_connection(|conn| op(conn))
+    }
+
+    /// Run a read on the store's connection. Blocking.
+    pub fn read_with<T>(
+        &self,
+        op: impl FnOnce(&Connection) -> rusqlite::Result<T>,
+    ) -> Result<T, OperationError> {
+        self.read(|conn| Ok(op(conn)?))
     }
 
     fn write<T>(
@@ -130,11 +139,7 @@ impl Operations {
         let release_mbid = input
             .release_mbid
             .as_deref()
-            .map(|raw| {
-                uuid::Uuid::parse_str(raw.trim())
-                    .map(|id| id.hyphenated().to_string())
-                    .map_err(|_| OperationError::Invalid(reasons::RELEASE_MBID_INVALID))
-            })
+            .map(parse_release)
             .transpose()?;
         let new = NewReidentification {
             job_id: self.ids.new_id(),
@@ -157,6 +162,142 @@ impl Operations {
         user_id: &str,
     ) -> Result<OperationJob, OperationError> {
         self.write(|tx| decisions::select_candidate(tx, job_id, choice, user_id, now_unix()))
+    }
+
+    /// Choose the album's edition: any MusicBrainz release, from the
+    /// album's release group or another one. MusicBrainz is asked for the
+    /// release's tracklist, the files are placed on it where they fit, and
+    /// the release becomes the album's protected edition.
+    pub async fn choose_edition(
+        &self,
+        album_id: &str,
+        raw_release: &str,
+        actor: Option<&str>,
+    ) -> Result<EditionChoice, OperationError> {
+        let release = parse_release(raw_release)?;
+        let candidate = self.candidate_for(album_id, &release).await?;
+        let (ops, album, actor) = (self.clone(), album_id.to_owned(), actor.map(str::to_owned));
+        tokio::task::spawn_blocking(move || {
+            ops.write(|tx| choice::choose(tx, &album, &candidate, actor.as_deref(), now_unix()))
+        })
+        .await
+        .map_err(|error| OperationError::Store(error.to_string()))?
+    }
+
+    /// The release scored against the album's files, as a candidate.
+    async fn candidate_for(
+        &self,
+        album_id: &str,
+        release_mbid: &str,
+    ) -> Result<ReidentificationCandidate, OperationError> {
+        let facts = {
+            let store = self.store.clone();
+            let album = album_id.to_owned();
+            tokio::task::spawn_blocking(move || store.album_facts(&album))
+                .await
+                .map_err(|error| OperationError::Store(error.to_string()))?
+        }
+        .filter(|facts| !facts.tracks.is_empty())
+        .ok_or(OperationError::NotFound(reasons::ALBUM_NOT_FOUND))?;
+        let recall = self.identify.recall(&facts, Some(release_mbid)).await;
+        if recall.provider_deferred {
+            return Err(OperationError::Unavailable(
+                recall
+                    .failure_code
+                    .unwrap_or_else(|| "musicbrainz_unavailable".to_owned()),
+            ));
+        }
+        if recall.releases.is_empty() {
+            return Err(OperationError::NotFound(reasons::EDITION_NOT_FOUND));
+        }
+        let ranking = self.identify.rank(&facts, &recall);
+        evaluation(&facts, &recall, &ranking, true)
+            .candidates
+            .into_iter()
+            .next()
+            .ok_or(OperationError::NotFound(reasons::EDITION_NOT_FOUND))
+    }
+
+    /// "Let DroppedNeedle choose": hand the album's edition back to
+    /// automatic best fit and queue an identification. Blocking.
+    pub fn hand_back_edition(&self, album_id: &str, actor: &str) -> Result<(), OperationError> {
+        let known = self.read(|conn| Ok(store::album_revisions(conn, album_id)?))?;
+        if known.is_none() {
+            return Err(OperationError::NotFound(reasons::ALBUM_NOT_FOUND));
+        }
+        self.write(|tx| choice::hand_back(tx, album_id, actor, now_unix()))?;
+        let revision = self
+            .store
+            .input_revision(album_id)
+            .ok_or_else(|| OperationError::Store("album revision unreadable".to_owned()))?;
+        let queued = self.identify.enqueue_album(
+            &self.ids.new_id(),
+            album_id,
+            IdentifyKind::Manual,
+            &revision,
+            Some(actor),
+            crate::library::clock::now_ms(),
+        );
+        if queued.is_none() {
+            tracing::warn!(
+                album = album_id,
+                "edition handed back but the identification was not queued"
+            );
+        }
+        Ok(())
+    }
+
+    /// "Looks right": confirm the album's unconfirmed match. Blocking.
+    pub fn confirm_match(&self, album_id: &str, actor: &str) -> Result<(), OperationError> {
+        self.write(|tx| choice::confirm(tx, album_id, actor, now_unix()))
+    }
+
+    /// Take back the album's last edition change. Blocking.
+    pub fn undo_edition_choice(&self, album_id: &str, actor: &str) -> Result<(), OperationError> {
+        self.write(|tx| choice::undo(tx, album_id, actor, now_unix()))
+    }
+
+    /// Place the files of the next album whose chosen edition still waits
+    /// for them (pins converted by an upgrade, v2 imports). True when one
+    /// was handled. Store calls block: run this on a blocking thread.
+    pub async fn remap_next(&self) -> Result<bool, OperationError> {
+        let now = now_unix();
+        let Some(pending) = self.read(|conn| Ok(choice::next_remap(conn, now)?))? else {
+            return Ok(false);
+        };
+        let outcome = self
+            .candidate_for(&pending.local_album_id, &pending.release_mbid)
+            .await;
+        let actor = pending.chosen_by_user_id.as_deref();
+        self.write(|tx| {
+            let now = now_unix();
+            match outcome {
+                Ok(candidate) => {
+                    match choice::apply_choice(
+                        tx,
+                        &pending.local_album_id,
+                        &candidate,
+                        actor,
+                        "remap",
+                        now,
+                    ) {
+                        Ok(_) => decisions::bump_catalog(tx)?,
+                        Err(OperationError::Invalid(reason) | OperationError::NotFound(reason)) => {
+                            choice::defer_remap(tx, &pending, reason.code, false, now)?;
+                        }
+                        Err(other) => return Err(other),
+                    }
+                }
+                Err(OperationError::Unavailable(_)) => {
+                    choice::defer_remap(tx, &pending, "MUSICBRAINZ_UNAVAILABLE", true, now)?;
+                }
+                Err(OperationError::Invalid(reason) | OperationError::NotFound(reason)) => {
+                    choice::defer_remap(tx, &pending, reason.code, false, now)?;
+                }
+                Err(other) => return Err(other),
+            }
+            Ok(true)
+        })
     }
 
     /// Undo the album's last automatic edition. Blocking.
@@ -353,6 +494,21 @@ impl Operations {
         let found = evaluation(&facts, &recall, &ranking, exact.is_some());
         self.write(|tx| store::finish_evaluation(tx, &job.id, worker, &found, now_unix()))
     }
+}
+
+/// A MusicBrainz release id, hyphenated and lowercase.
+fn parse_release(raw: &str) -> Result<String, OperationError> {
+    uuid::Uuid::parse_str(raw.trim())
+        .map(|id| id.hyphenated().to_string())
+        .map_err(|_| OperationError::Invalid(reasons::RELEASE_MBID_INVALID))
+}
+
+/// Whether the album's last edition change can still be undone. Blocking.
+pub fn edition_undo_available(
+    setup: &LibrarySetup,
+    album_id: &str,
+) -> Result<bool, OperationError> {
+    Operations::new(setup).read(|conn| Ok(choice::undo_available(conn, album_id)?))
 }
 
 /// The live automatic-edition undo for one album: the revisions to echo.

@@ -96,7 +96,7 @@ pub fn select_candidate(
             if needs_confirmation && !choice.confirmation {
                 return Err(OperationError::Invalid(reasons::CONFIRMATION_REQUIRED));
             }
-            seal_exact_release(tx, &album_id, &candidate, actor, now)?;
+            super::choice::apply_choice(tx, &album_id, &candidate, Some(actor), job_id, now)?;
             evaluation.outcome = "identified".into();
             (
                 "IDENTIFIED",
@@ -150,7 +150,10 @@ pub fn select_candidate(
     job_after(tx, job_id)
 }
 
-fn album_identity(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<AlbumIdentity>> {
+pub(super) fn album_identity(
+    conn: &Connection,
+    album_id: &str,
+) -> rusqlite::Result<Option<AlbumIdentity>> {
     conn.query_row(
         "SELECT release_group_mbid, release_mbid, decision_source, row_revision \
          FROM local_album_external_identities WHERE local_album_id = ?1 AND provider = ?2",
@@ -184,18 +187,19 @@ fn is_mbid(value: &str) -> bool {
 
 /// Write the album's identity as a curator decision. Row revisions only
 /// move forward.
-fn seal_album(
+pub(super) fn seal_album(
     tx: &Transaction<'_>,
     album_id: &str,
     release_group: &str,
     release: Option<&str>,
-    actor: &str,
+    actor: Option<&str>,
     now: f64,
 ) -> rusqlite::Result<()> {
     tx.execute(
         "INSERT INTO local_album_external_identities (local_album_id, provider, \
          release_group_mbid, release_mbid, decision_source, selected_by_user_id, \
-         selected_at, row_revision) VALUES (?1, ?2, ?3, ?4, 'manual', ?5, ?6, 1) \
+         selected_at, row_revision) VALUES (?1, ?2, ?3, ?4, 'manual', \
+         (SELECT id FROM auth_users WHERE id = ?5), ?6, 1) \
          ON CONFLICT (local_album_id, provider) DO UPDATE SET \
          release_group_mbid = excluded.release_group_mbid, \
          release_mbid = excluded.release_mbid, decision_source = 'manual', \
@@ -206,109 +210,10 @@ fn seal_album(
     Ok(())
 }
 
-/// Accept the candidate's exact release: every indexed file must map to
-/// its own release track.
-fn seal_exact_release(
-    tx: &Transaction<'_>,
+pub(super) fn indexed_track_ids(
+    conn: &Connection,
     album_id: &str,
-    candidate: &ReidentificationCandidate,
-    actor: &str,
-    now: f64,
-) -> Result<(), OperationError> {
-    let indexed = indexed_track_ids(tx, album_id)?;
-    let release = candidate.evidence.release_mbid.clone();
-    let mapping = exact_mapping(&indexed, candidate).filter(|_| release.is_some());
-    let Some(mapping) = mapping else {
-        return Err(OperationError::Invalid(
-            reasons::EXACT_RELEASE_MAPPING_INCOMPLETE,
-        ));
-    };
-    seal_album(
-        tx,
-        album_id,
-        &candidate.evidence.release_group_mbid,
-        release.as_deref(),
-        actor,
-        now,
-    )?;
-    for track in mapping {
-        upsert_track_identity(
-            tx,
-            &TrackRow {
-                local_track_id: &track.local_track_id,
-                recording_mbid: &track.recording_mbid,
-                release_mbid: release.as_deref(),
-                release_track_mbid: Some(&track.release_track_mbid),
-                medium_position: Some(track.disc_number),
-                release_track_position: Some(track.position),
-                decision_source: "manual",
-            },
-            now,
-        )?;
-    }
-    tx.execute(
-        "DELETE FROM library_custom_edition_active WHERE local_album_id = ?1",
-        params![album_id],
-    )?;
-    tx.execute(
-        "DELETE FROM library_management_exclusions WHERE local_album_id = ?1",
-        params![album_id],
-    )?;
-    Ok(())
-}
-
-/// One file's place on the accepted release.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MappedTrack {
-    pub local_track_id: String,
-    pub recording_mbid: String,
-    pub release_track_mbid: String,
-    pub disc_number: u32,
-    pub position: u32,
-}
-
-/// Every indexed file mapped to its own release track, or `None` (v2
-/// `_complete_track_identity_mapping`).
-pub fn exact_mapping(
-    indexed: &[String],
-    candidate: &ReidentificationCandidate,
-) -> Option<Vec<MappedTrack>> {
-    let mut mapped: Vec<MappedTrack> = Vec::new();
-    for evidence in &candidate.evidence.track_evidence {
-        if evidence.classification == EvidenceClass::Contradictory {
-            return None;
-        }
-        let place = candidate
-            .tracks
-            .iter()
-            .find(|track| track.local_track_id == evidence.local_track_id)?;
-        let track = MappedTrack {
-            local_track_id: evidence.local_track_id.clone(),
-            recording_mbid: evidence.recording_mbid.clone()?,
-            release_track_mbid: evidence.release_track_mbid.clone()?,
-            disc_number: place.disc_number.filter(|disc| *disc > 0)?,
-            position: place.position.filter(|position| *position > 0)?,
-        };
-        if mapped.iter().any(|seen| {
-            seen.local_track_id == track.local_track_id
-                || seen.release_track_mbid == track.release_track_mbid
-        }) {
-            return None;
-        }
-        mapped.push(track);
-    }
-    let mut mapped_ids: Vec<&str> = mapped.iter().map(|t| t.local_track_id.as_str()).collect();
-    let mut wanted: Vec<&str> = indexed.iter().map(String::as_str).collect();
-    mapped_ids.sort_unstable();
-    wanted.sort_unstable();
-    if mapped_ids != wanted {
-        return None;
-    }
-    mapped.sort_by_key(|track| indexed.iter().position(|id| *id == track.local_track_id));
-    Some(mapped)
-}
-
-fn indexed_track_ids(conn: &Connection, album_id: &str) -> rusqlite::Result<Vec<String>> {
+) -> rusqlite::Result<Vec<String>> {
     let mut stmt = conn.prepare(
         "SELECT id FROM local_tracks WHERE local_album_id = ?1 AND availability = 'indexed' \
          ORDER BY id",
@@ -318,18 +223,18 @@ fn indexed_track_ids(conn: &Connection, album_id: &str) -> rusqlite::Result<Vec<
 }
 
 /// One track identity row to write.
-struct TrackRow<'a> {
-    local_track_id: &'a str,
-    recording_mbid: &'a str,
-    release_mbid: Option<&'a str>,
-    release_track_mbid: Option<&'a str>,
-    medium_position: Option<u32>,
-    release_track_position: Option<u32>,
-    decision_source: &'a str,
+pub(super) struct TrackRow<'a> {
+    pub local_track_id: &'a str,
+    pub recording_mbid: &'a str,
+    pub release_mbid: Option<&'a str>,
+    pub release_track_mbid: Option<&'a str>,
+    pub medium_position: Option<u32>,
+    pub release_track_position: Option<u32>,
+    pub decision_source: &'a str,
 }
 
 /// Write one track identity; an existing row takes the next revision.
-fn upsert_track_identity(
+pub(super) fn upsert_track_identity(
     tx: &Transaction<'_>,
     row: &TrackRow<'_>,
     now: f64,
@@ -385,7 +290,7 @@ fn leave_unmanaged(
             album_id,
             &candidate.evidence.release_group_mbid,
             None,
-            actor,
+            Some(actor),
             now,
         )?;
     }
@@ -549,7 +454,7 @@ fn seal_custom_edition(
         album_id,
         &candidate.evidence.release_group_mbid,
         None,
-        actor,
+        Some(actor),
         now,
     )?;
     // Supported recordings from the candidate; otherwise a file keeps the
@@ -761,7 +666,7 @@ fn manifest_tracks(conn: &Connection, album_id: &str) -> rusqlite::Result<Vec<Ma
 }
 
 /// Close the album's pending reviews: the administrator decided.
-fn settle_reviews(
+pub(super) fn settle_reviews(
     tx: &Transaction<'_>,
     album_id: &str,
     state: &str,
@@ -782,17 +687,17 @@ fn now_ms() -> i64 {
 }
 
 /// One audit row for a catalog decision.
-struct CatalogAction<'a> {
-    actor: &'a str,
-    kind: &'a str,
-    album_id: &'a str,
-    job_id: Option<&'a str>,
-    before: serde_json::Value,
-    after: serde_json::Value,
-    reason: &'a str,
+pub(super) struct CatalogAction<'a> {
+    pub actor: &'a str,
+    pub kind: &'a str,
+    pub album_id: &'a str,
+    pub job_id: Option<&'a str>,
+    pub before: serde_json::Value,
+    pub after: serde_json::Value,
+    pub reason: &'a str,
 }
 
-fn record_action(
+pub(super) fn record_action(
     tx: &Transaction<'_>,
     action: CatalogAction<'_>,
     now: f64,
@@ -801,7 +706,7 @@ fn record_action(
     tx.execute(
         "INSERT INTO library_catalog_actions (id, actor_user_id, action_kind, local_album_id, \
          operation_job_id, before_json, after_json, reason_code, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+         VALUES (?1, (SELECT id FROM auth_users WHERE id = ?2), ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             id,
             action.actor,
@@ -818,7 +723,7 @@ fn record_action(
 }
 
 /// Move the catalog revision so cached reads of the album refresh.
-fn bump_catalog(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+pub(super) fn bump_catalog(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     tx.execute(
         "INSERT INTO library_catalog_revision (singleton, value) VALUES (1, 0) \
          ON CONFLICT (singleton) DO NOTHING",
@@ -1019,7 +924,7 @@ pub fn undo_automatic_edition(
 /// Write one snapshot track row back exactly; an existing row takes the
 /// next revision. An attempt pruned since the snapshot restores as no
 /// attempt rather than failing the foreign key.
-fn restore_track_row(
+pub(super) fn restore_track_row(
     tx: &Transaction<'_>,
     row: &PriorTrackIdentity,
     now: f64,

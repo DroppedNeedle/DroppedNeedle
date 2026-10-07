@@ -41,8 +41,7 @@ pub fn release_order(
         (
             match edition.basis {
                 EditionBasis::Manual => 0,
-                EditionBasis::Pin => 1,
-                EditionBasis::BestFit => 2,
+                EditionBasis::BestFit => 1,
             },
             edition.release_mbid.clone(),
         )
@@ -128,11 +127,11 @@ mod tests {
             "g-album".to_owned(),
             ChosenEdition {
                 release_mbid: "deluxe".to_owned(),
-                basis: EditionBasis::Pin,
+                basis: EditionBasis::Manual,
             },
         );
         let order = release_order(&candidates, &library, Some("single"));
-        assert_eq!(order[0], ("deluxe".to_owned(), "edition_pin"));
+        assert_eq!(order[0], ("deluxe".to_owned(), "manual_identity"));
         assert_eq!(order[1], ("single".to_owned(), "requested_release"));
     }
 }

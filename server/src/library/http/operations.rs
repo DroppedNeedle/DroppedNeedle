@@ -113,7 +113,7 @@ impl IntoResponse for OperationsHttpError {
 }
 
 /// Run blocking operation work off the async workers.
-async fn blocking<T: Send + 'static>(
+pub(super) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, OperationError> + Send + 'static,
 ) -> Result<T, OperationsHttpError> {
     tokio::task::spawn_blocking(work)
@@ -273,7 +273,8 @@ pub struct OperationControlBody {
 #[derive(Debug, Clone, Copy, Default, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DecisionModeBody {
-    /// Accept the candidate's exact release; every file must map to it.
+    /// Make the candidate's release the album's edition; files it has no
+    /// track for keep their recording.
     #[default]
     ExactRelease,
     /// Keep the release group and seal the files as they are.

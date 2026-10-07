@@ -135,6 +135,38 @@ pub const EXACT_RELEASE_MAPPING_INCOMPLETE: Reason = reason(
     "Choose Custom edition, get the missing tracks, or leave the album unmanaged.",
 );
 
+// Choosing an edition.
+pub const EDITION_NOT_FOUND: Reason = reason(
+    "EDITION_NOT_FOUND",
+    "MusicBrainz does not know this release.",
+    "Check the release ID, or pick an edition from the list.",
+);
+pub const EDITION_FITS_NO_FILE: Reason = reason(
+    "EDITION_FITS_NO_FILE",
+    "None of this album's files match a track on that edition, so it is probably another album.",
+    "Pick an edition that holds these songs, or search MusicBrainz for the right album.",
+);
+pub const NO_EDITION_CHOICE: Reason = reason(
+    "NO_EDITION_CHOICE",
+    "There is no edition choice on this album to take back.",
+    "Nothing to do; pick an edition if you want to change it.",
+);
+pub const EDITION_CHOICE_STALE: Reason = reason(
+    STALE,
+    "The album's edition changed after your choice, so undoing it would bring back an outdated match.",
+    "Reload the album and pick the edition you want.",
+);
+pub const NOTHING_TO_CONFIRM: Reason = reason(
+    "NOTHING_TO_CONFIRM",
+    "This album has no match waiting for confirmation.",
+    "Nothing to do; pick another edition if this one is wrong.",
+);
+pub const NO_MATCH_TO_CONFIRM: Reason = reason(
+    "NO_MATCH_TO_CONFIRM",
+    "This album has no MusicBrainz match yet, so there is nothing to confirm.",
+    "Pick an edition for it instead.",
+);
+
 // A custom edition cannot be sealed.
 pub const CUSTOM_EDITION_NEEDS_CONFIRMATION: Reason = reason(
     NOT_SEALABLE,
@@ -241,6 +273,67 @@ pub fn terminal(code: &str) -> Reason {
             "UNDESCRIBED_ENDING",
             "This operation ended in a way this version does not describe.",
             "Start the operation again if you still need it.",
+        ),
+    }
+}
+
+/// Why an album's edition is what it is, by the reason code
+/// identification stored. Every answer says what to do next.
+pub fn match_reason(code: &str) -> Reason {
+    match code {
+        "CHOSEN" => reason(
+            "CHOSEN",
+            "Someone chose this edition, so automatic matching leaves it alone.",
+            "Pick another edition, or let DroppedNeedle choose again.",
+        ),
+        "SUPPORTED" => reason(
+            "SUPPORTED",
+            "This edition fits the files closely: titles, track order and lengths agree.",
+            "Nothing to do; pick another edition if it is wrong.",
+        ),
+        "EDITION_UNCERTAIN" => reason(
+            "EDITION_UNCERTAIN",
+            "The album is clear, but this is a live or compilation release, so the exact edition is a best guess.",
+            "Check the tracklist; confirm it or pick another edition.",
+        ),
+        "AMBIGUOUS_CANDIDATES" => reason(
+            "AMBIGUOUS_CANDIDATES",
+            "Two different albums fit the files about equally well; this one fit slightly better.",
+            "Compare the candidates and confirm the right one.",
+        ),
+        "WEAK_MATCH" => reason(
+            "WEAK_MATCH",
+            "This edition is the closest fit, but some titles, lengths or track counts differ.",
+            "Check the tracklist; confirm it or pick another edition.",
+        ),
+        "INSUFFICIENT_EVIDENCE" => reason(
+            "INSUFFICIENT_EVIDENCE",
+            "Only one release came close and the files carry too little to be sure.",
+            "Check the tracklist; confirm it or pick another edition.",
+        ),
+        "CONFLICTING_TRACK_EVIDENCE" => reason(
+            "CONFLICTING_TRACK_EVIDENCE",
+            "The IDs in the files point away from every release MusicBrainz offered, so the album keeps its own tags.",
+            "Pick the right edition yourself, or fix the tags and rescan.",
+        ),
+        "NO_CANDIDATE" => reason(
+            "NO_CANDIDATE",
+            "MusicBrainz has no release that looks like this album, so it keeps its own tags.",
+            "Search MusicBrainz for the release, or fix the album title and artist tags and rescan.",
+        ),
+        "UNIDENTIFIED" => reason(
+            "UNIDENTIFIED",
+            "This album has not been matched to MusicBrainz yet.",
+            "Wait for identification to run, or pick an edition yourself.",
+        ),
+        other => reason(
+            "UNDESCRIBED_MATCH",
+            if other.is_empty() {
+                "This album's match has no recorded reason."
+            } else {
+                "This album's match has a reason this version does not describe."
+            },
+            "Check the tracklist; confirm it or pick another edition.",
         ),
     }
 }
