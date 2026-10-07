@@ -52,6 +52,17 @@ export const LibraryV3Api = {
 		v3('/api/v3/library/albums/{id}/status', { path: { id: albumId } }),
 	membership: () => v3('/api/v3/library/membership'),
 	resolveTracks: () => v3('/api/v3/library/resolve-tracks'),
+	// The album's edition: read, choose, hand back, confirm, undo.
+	edition: (albumId: string) =>
+		v3('/api/v3/library/albums/{album_id}/edition', { path: { album_id: albumId } }),
+	editionConfirm: (albumId: string) =>
+		v3('/api/v3/library/albums/{album_id}/edition/confirm', { path: { album_id: albumId } }),
+	editionUndo: (albumId: string) =>
+		v3('/api/v3/library/albums/{album_id}/edition/undo', { path: { album_id: albumId } }),
+	unconfirmed: (state: 'unconfirmed' | 'unmatched', limit: number, offset: number) =>
+		v3('/api/v3/library/unconfirmed', { query: { state, limit, offset } }),
+	managePreview: () => v3('/api/v3/library/manage/preview'),
+	manageApply: () => v3('/api/v3/library/manage/apply'),
 	albumCopies: (albumId: string) =>
 		v3('/api/v3/library/albums/{id}/copies', { path: { id: albumId } }),
 	albumTracks: (albumId: string, params: LibraryV3PageParams) =>
@@ -96,8 +107,6 @@ export const LibraryV3Api = {
 	lyrics: (trackId: string) => v3('/api/v3/library/tracks/{id}/lyrics', { path: { id: trackId } }),
 	recentlyAdded: (limit: number) => v3('/api/v3/library/recently-added', { query: { limit } }),
 	stats: () => v3('/api/v3/library/stats'),
-	editionPin: (albumId: string) =>
-		v3('/api/v3/library/albums/{album_id}/edition-pin', { path: { album_id: albumId } }),
 	approveReview: (reviewId: string) =>
 		v3('/api/v3/library/reviews/{id}/approve', { path: { id: reviewId } }),
 	rejectReview: (reviewId: string) =>

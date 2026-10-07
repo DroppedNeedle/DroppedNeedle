@@ -138,20 +138,6 @@ export const API = {
 	library: {
 		cachedAlbumArtwork: (albumId: string, coverVersion: number) =>
 			`/api/v1/library/albums/${encodeURIComponent(albumId)}/artwork/cached?v=${coverVersion}`,
-		editionConversionPreflight: (albumId: string) =>
-			`/api/v1/library/albums/${encodeURIComponent(albumId)}/edition-conversions/preflight`,
-		editionConversion: (jobId: string) =>
-			`/api/v1/library/edition-conversions/${encodeURIComponent(jobId)}`,
-		editionConversionPreview: (jobId: string) =>
-			`/api/v1/library/edition-conversions/${encodeURIComponent(jobId)}/preview`,
-		editionConversionStart: (jobId: string) =>
-			`/api/v1/library/edition-conversions/${encodeURIComponent(jobId)}/start`,
-		editionConversionRetry: (jobId: string) =>
-			`/api/v1/library/edition-conversions/${encodeURIComponent(jobId)}/retry`,
-		editionConversionRecheck: (jobId: string) =>
-			`/api/v1/library/edition-conversions/${encodeURIComponent(jobId)}/recheck`,
-		editionConversionCancel: (jobId: string) =>
-			`/api/v1/library/edition-conversions/${encodeURIComponent(jobId)}/cancel`,
 		reviews: (
 			params: {
 				cursor?: string;

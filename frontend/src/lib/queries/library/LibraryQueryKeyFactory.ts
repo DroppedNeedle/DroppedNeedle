@@ -79,8 +79,10 @@ export const LibraryQueryKeyFactory = {
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'album-search', q] as const,
 		stats: (userId: LibraryV3UserId) =>
 			[...LibraryQueryKeyFactory.catalog.root(userId), 'stats'] as const,
-		editionPin: (userId: LibraryV3UserId, albumId: string) =>
-			[...LibraryQueryKeyFactory.catalog.root(userId), 'edition-pin', albumId] as const
+		edition: (userId: LibraryV3UserId, albumId: string) =>
+			[...LibraryQueryKeyFactory.catalog.root(userId), 'edition', albumId] as const,
+		unconfirmed: (userId: LibraryV3UserId, state: string, offset: number) =>
+			[...LibraryQueryKeyFactory.catalog.root(userId), 'unconfirmed', state, offset] as const
 	},
 	activityPrefix: () => [...LibraryQueryKeyFactory.all, 'activity'] as const,
 	activity: (userId: LibraryV3UserId) =>
@@ -156,10 +158,6 @@ export const LibraryQueryKeyFactory = {
 			cursor ?? 'first'
 		] as const,
 	album: (mbid: string) => [...LibraryQueryKeyFactory.all, 'album', mbid] as const,
-	editionConversionsPrefix: (userId: LibraryV3UserId) =>
-		[...LibraryQueryKeyFactory.all, 'edition-conversions', userIdSegment(userId)] as const,
-	editionConversion: (userId: LibraryV3UserId, jobId: string | null) =>
-		[...LibraryQueryKeyFactory.editionConversionsPrefix(userId), jobId ?? 'inactive'] as const,
 	reidentificationReleases: (
 		userId: LibraryV3UserId,
 		albumId: string,

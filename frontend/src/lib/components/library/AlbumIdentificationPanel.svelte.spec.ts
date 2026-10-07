@@ -4,7 +4,6 @@ import { render } from 'vitest-browser-svelte';
 import { ApiError } from '$lib/api/client';
 import type { LibraryAlbumDetail } from '$lib/types';
 import type { OperationResponse } from '$lib/queries/library/LibraryOperationsTypes';
-import type { EditionConversionStatus } from '$lib/queries/library/EditionConversionQueries.svelte';
 
 const album: LibraryAlbumDetail = {
 	id: 'album-1',
@@ -137,10 +136,7 @@ const h = vi.hoisted(() => ({
 	resetSelect: vi.fn(),
 	selectError: null as ApiError | null,
 	queryError: false,
-	conversionData: null as EditionConversionStatus | null,
-	conversionPreflightData: null as EditionConversionStatus | null,
-	conversionStart: vi.fn(),
-	conversionRefetch: vi.fn()
+	chooseEdition: vi.fn()
 }));
 
 vi.mock('$lib/stores/authStore.svelte', () => ({
@@ -192,27 +188,11 @@ vi.mock('$lib/queries/library/LibraryCatalogMutations.svelte', () => ({
 		reset: h.resetSelect
 	})
 }));
-vi.mock('$lib/queries/library/EditionConversionQueries.svelte', () => ({
-	getEditionConversionQuery: () => ({
-		get data() {
-			return h.conversionData ?? undefined;
-		},
-		refetch: h.conversionRefetch
-	}),
-	createEditionConversionPreflight: () => ({
-		mutateAsync: vi.fn(),
-		isPending: false,
-		reset: vi.fn(),
-		get data() {
-			return h.conversionPreflightData ?? undefined;
-		}
-	}),
-	createEditionConversionPreview: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	startEditionConversion: () => ({ mutateAsync: h.conversionStart, isPending: false }),
-	retryEditionConversion: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	recheckEditionConversion: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	cancelEditionConversion: () => ({ mutateAsync: vi.fn(), isPending: false })
+vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
+	chooseAlbumEdition: () => ({ mutateAsync: h.chooseEdition, isPending: false }),
+	acquireEdition: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
+
 vi.mock('$lib/queries/library/LibraryOperationMutations.svelte', () => ({
 	controlLibraryOperation: (action: string) => ({
 		mutateAsync: action === 'pause' ? h.pause : action === 'resume' ? h.resume : h.stop
@@ -227,10 +207,7 @@ beforeEach(() => {
 	h.jobs = {};
 	h.queryError = false;
 	h.selectError = null;
-	h.conversionData = null;
-	h.conversionPreflightData = null;
-	h.conversionStart.mockResolvedValue(undefined);
-	h.conversionRefetch.mockResolvedValue(undefined);
+	h.chooseEdition.mockResolvedValue({ missing_titles: [], release_group_mbid: 'rg' });
 	h.start.mockResolvedValue(job({ state: 'queued' }));
 	h.select.mockResolvedValue(job({ state: 'succeeded' }));
 	h.pause.mockResolvedValue(job({ state: 'paused' }));

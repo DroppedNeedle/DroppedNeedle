@@ -31,7 +31,7 @@ describe('LibraryQueryKeyFactory.catalog', () => {
 			catalog.search(userId, 'abba'),
 			catalog.albumSearch(userId, 'abba'),
 			catalog.stats(userId),
-			catalog.editionPin(userId, 'album-1')
+			catalog.edition(userId, 'album-1')
 		];
 		expect(keys.length).toBeGreaterThan(0);
 		for (const key of keys) {

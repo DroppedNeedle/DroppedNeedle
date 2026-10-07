@@ -33,7 +33,8 @@
 		Landmark,
 		Blocks,
 		PanelLeft,
-		Activity
+		Activity,
+		Disc3
 	} from 'lucide-svelte';
 	import JellyfinIcon from '$lib/components/JellyfinIcon.svelte';
 	import NavidromeIcon from '$lib/components/NavidromeIcon.svelte';
@@ -66,6 +67,9 @@
 
 	const tabs = [
 		{ id: 'library', label: 'Library', tier: 'setup', icon: Music },
+		...(authStore.isAdmin
+			? [{ id: 'editions', label: 'Editions', tier: 'setup', icon: Disc3 }]
+			: []),
 		...(authStore.isAdmin
 			? [
 					{ id: 'free-music', label: 'Free Music', tier: 'setup', icon: Landmark },

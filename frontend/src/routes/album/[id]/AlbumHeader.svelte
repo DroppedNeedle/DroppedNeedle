@@ -23,23 +23,17 @@
 		TrendingUp,
 		TriangleAlert,
 		ChevronDown,
-		Pin
+		Hand
 	} from 'lucide-svelte';
 	import { rescanAlbum } from '$lib/queries/library/LibraryMutations.svelte';
 	import { requestUpgradeAlbum } from '$lib/queries/downloads/UpgradeQueries.svelte';
-	import {
-		acquireEdition,
-		clearEditionPin,
-		getAlbumEditionsQuery,
-		setEditionPin
-	} from '$lib/queries/albums/EditionQueries.svelte';
+	import { acquireEdition, getAlbumEditionsQuery } from '$lib/queries/albums/EditionQueries.svelte';
 	import type { AlbumEditionItem } from '$lib/types';
-	import { ApiError } from '$lib/api/client';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { deckSampler } from '$lib/stores/deckSampler.svelte';
 	import LocalAlbumIdentificationControl from './LocalAlbumIdentificationControl.svelte';
-	import EditionPinConflictDialog from './EditionPinConflictDialog.svelte';
+	import EditionPicker from '$lib/components/library/EditionPicker.svelte';
 	import AlbumDownloadButton from './AlbumDownloadButton.svelte';
 
 	interface Props {
@@ -203,8 +197,6 @@
 				? "Upgrade this edition's below-cutoff tracks"
 				: "Request this edition's missing tracks and upgrade its below-cutoff ones"
 	);
-	const pinMutation = setEditionPin();
-	const clearPinMutation = clearEditionPin();
 	const acquireMutation = acquireEdition();
 
 	// SvelteKit reuses this component instance across album navigations, so the
@@ -225,53 +217,12 @@
 		return bits.join(' · ') || e.release_mbid.slice(0, 8);
 	}
 
-	// 409 means this release group matches several local albums: the RG-keyed
-	// pin cannot address one copy, so the pending intent moves to the picker
-	let conflictDialog = $state<{ showModal: () => void } | null>(null);
-	let pendingIntent = $state<string | null | undefined>(undefined);
-
-	async function handlePickEdition(releaseMbid: string | null) {
-		// the DaisyUI dropdown is focus-driven: blur the trigger so the menu
-		// closes on selection instead of hanging over the refreshed page
-		(document.activeElement as HTMLElement | null)?.blur();
-		// the group pin lands on the library's one copy, when there is exactly one
-		const copyIds = localCopies.flatMap((copy) => (copy.id ? [copy.id] : []));
-		const localId = copyIds.length === 1 ? copyIds[0] : undefined;
-		try {
-			if (releaseMbid === null) {
-				await clearPinMutation.mutateAsync({
-					mbid: editionsMbid,
-					userId: authStore.user?.id,
-					localId
-				});
-				toastStore.show({ message: 'Edition back to automatic.', type: 'success' });
-			} else {
-				await pinMutation.mutateAsync({
-					mbid: editionsMbid,
-					releaseMbid,
-					userId: authStore.user?.id,
-					localId
-				});
-				toastStore.show({ message: 'Edition pinned.', type: 'success' });
-			}
-			// the pin changes the served tracklist: reload the page and its library status
-			onrefresh();
-		} catch (e) {
-			// Per-album pins need a known library-local id: with no addressable
-			// copies (unowned RG) the RG route stays authoritative and the
-			// failure surfaces as a toast, never a per-album call.
-			const actionableCopies = localCopies.filter((copy) => Boolean(copy.id));
-			if (e instanceof ApiError && e.status === 409 && actionableCopies.length > 0) {
-				pendingIntent = releaseMbid;
-				conflictDialog?.showModal();
-				return;
-			}
-			toastStore.show({
-				message: e instanceof Error ? e.message : 'Could not change the edition',
-				type: 'error'
-			});
-		}
-	}
+	// One picker for every way of choosing an edition. The choice lands on a
+	// library copy; with several copies the picker asks which one.
+	let picker = $state<{ open: () => void } | null>(null);
+	const pickerCopies = $derived(
+		localCopies.flatMap((copy) => (copy.id ? [{ id: copy.id, title: copy.title }] : []))
+	);
 
 	// after a successful acquire the button parks as "Queued" (server-side dedup
 	// makes a re-click harmless, but the UI shouldn't invite one)
@@ -381,57 +332,19 @@
 
 			{#if authStore.isTrusted && downloadClientConfigured && !loadingTracks && editions.length > 0}
 				<div class="flex flex-wrap items-center gap-2">
-					<div class="dropdown">
-						<button type="button" class="btn btn-ghost btn-xs gap-1" tabindex="0">
-							{#if hasEffectivePin}
-								<Pin class="h-3 w-3 text-primary" />
-							{/if}
-							Edition: {hasEffectivePin
-								? currentEdition
-									? editionLabel(currentEdition)
-									: 'Automatic'
-								: currentEdition
-									? `Automatic · ${editionLabel(currentEdition)}`
-									: 'Automatic'}
-							<ChevronDown class="h-3 w-3" />
-						</button>
-						<ul
-							class="dropdown-content menu menu-sm z-50 mt-1 max-h-72 w-80 flex-nowrap overflow-y-auto rounded-box border border-base-300 bg-base-100 p-1 shadow-lg"
+					<span class="inline-flex items-center gap-1 text-xs text-base-content/70">
+						{#if hasEffectivePin}
+							<Hand class="h-3 w-3 text-primary" aria-label="Chosen by a person" />
+						{/if}
+						Edition: {currentEdition
+							? `${hasEffectivePin ? '' : 'Automatic · '}${editionLabel(currentEdition)}`
+							: 'Automatic'}
+					</span>
+					{#if pickerCopies.length}
+						<button type="button" class="btn btn-ghost btn-xs" onclick={() => picker?.open()}
+							>Change edition</button
 						>
-							<li>
-								<button
-									type="button"
-									class:font-semibold={!hasEffectivePin}
-									onclick={() => void handlePickEdition(null)}
-								>
-									Automatic (best match for this library)
-								</button>
-							</li>
-							{#each editions as edition (edition.release_mbid)}
-								<li>
-									<button
-										type="button"
-										class="justify-between gap-2"
-										class:font-semibold={edition.is_pinned}
-										onclick={() => void handlePickEdition(edition.release_mbid)}
-									>
-										<span class="truncate">{editionLabel(edition)}</span>
-										<span class="flex shrink-0 gap-1">
-											{#if edition.is_owned}
-												<span class="badge badge-success badge-xs">owned</span>
-											{/if}
-											{#if !hasEffectivePin && edition.release_mbid === editionsQuery.data?.selected_release_mbid}
-												<span class="badge badge-info badge-xs">automatic</span>
-											{/if}
-											{#if edition.is_pinned}
-												<span class="badge badge-primary badge-xs">pinned</span>
-											{/if}
-										</span>
-									</button>
-								</li>
-							{/each}
-						</ul>
-					</div>
+					{/if}
 					{#if currentEdition}
 						{#if libraryComplete && !libraryBelowCutoff}
 							<span
@@ -644,13 +557,14 @@
 		</div>
 	</div>
 </div>
-<EditionPinConflictDialog
-	bind:this={conflictDialog}
-	releaseMbid={pendingIntent ?? null}
-	{localCopies}
-	{onrefresh}
-	onclose={() => (pendingIntent = undefined)}
-/>
+{#if pickerCopies.length}
+	<EditionPicker
+		bind:this={picker}
+		groupMbid={editionsMbid}
+		copies={pickerCopies}
+		onchanged={onrefresh}
+	/>
+{/if}
 
 <style>
 	.album-hero {

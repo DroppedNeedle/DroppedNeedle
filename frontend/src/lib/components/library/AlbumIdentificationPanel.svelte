@@ -33,17 +33,7 @@
 		reenableAlbumManagement,
 		selectReidentificationCandidate
 	} from '$lib/queries/library/LibraryCatalogMutations.svelte';
-	import {
-		cancelEditionConversion,
-		createEditionConversionPreflight,
-		createEditionConversionPreview,
-		getEditionConversionQuery,
-		recheckEditionConversion,
-		retryEditionConversion,
-		startEditionConversion
-	} from '$lib/queries/library/EditionConversionQueries.svelte';
-	import { rememberLibraryManagementPreviewToken } from '$lib/queries/library-management/LibraryManagementPreviewTokens';
-	import { withBasePath } from '$lib/utils/basePath';
+	import { acquireEdition, chooseAlbumEdition } from '$lib/queries/albums/EditionQueries.svelte';
 
 	interface Props {
 		album: LibraryAlbumDetail;
@@ -71,39 +61,17 @@
 	let confirmationCandidate = $state<Candidate | null>(null);
 	let selectedCandidateKey = $state<string | null>(null);
 	let jobId = $state<string | null>(null);
-	let conversionJobId = $state<string | null>(null);
-	let conversionPreflightToken = $state<string | null>(null);
 	let openedAutomatically = $state(false);
 	const storageKey = $derived(
 		`droppedneedle:album-identification:${userStorageSegment(authStore.user?.id)}:${album.id}`
-	);
-	const conversionStorageKey = $derived(
-		conversionJobId
-			? `droppedneedle:edition-conversion-preflight:${userStorageSegment(authStore.user?.id)}:${conversionJobId}`
-			: null
 	);
 	const attentionDescriptionId = $derived(`reidentify-attention-${album.id}`);
 	const operation = getLibraryOperationQuery(() => jobId);
 	const start = reidentifyLibraryAlbum();
 	const selectCandidate = selectReidentificationCandidate();
 	const reenableManagement = reenableAlbumManagement();
-	const conversionPreflight = createEditionConversionPreflight();
-	const conversionStart = startEditionConversion();
-	const conversionPreview = createEditionConversionPreview();
-	const conversionRetry = retryEditionConversion();
-	const conversionRecheck = recheckEditionConversion();
-	const conversionCancel = cancelEditionConversion();
-	const conversionQuery = getEditionConversionQuery(
-		() => authStore.user?.id,
-		() => conversionJobId
-	);
-	const conversionCandidate = $derived(conversionQuery.data ?? conversionPreflight.data ?? null);
-	const conversion = $derived(
-		conversionCandidate &&
-			['preflight', 'acquiring', 'ready', 'needs_recheck'].includes(conversionCandidate.state)
-			? conversionCandidate
-			: null
-	);
+	const chooseEdition = chooseAlbumEdition();
+	const acquire = acquireEdition();
 	const pause = controlLibraryOperation('pause');
 	const resume = controlLibraryOperation('resume');
 	const stop = controlLibraryOperation('stop');
@@ -123,18 +91,6 @@
 	$effect(() => {
 		if (typeof sessionStorage === 'undefined') return;
 		jobId = sessionStorage.getItem(storageKey);
-	});
-
-	$effect(() => {
-		if (!conversionJobId && album.active_edition_conversion?.job_id) {
-			conversionJobId = album.active_edition_conversion.job_id;
-		}
-	});
-
-	$effect(() => {
-		if (typeof sessionStorage === 'undefined' || !conversionStorageKey || conversionPreflightToken)
-			return;
-		conversionPreflightToken = sessionStorage.getItem(conversionStorageKey);
 	});
 
 	$effect(() => {
@@ -314,77 +270,22 @@
 		dialog.close();
 	}
 
-	async function prepareEditionConversion(candidate: Candidate): Promise<void> {
-		if (!candidate.evidence.release_mbid) return;
-		const result = await conversionPreflight.mutateAsync({
-			albumId: album.id,
-			releaseGroupMbid: candidate.evidence.release_group_mbid,
-			releaseMbid: candidate.evidence.release_mbid
+	// Make the candidate's release the album's edition (files it has no track
+	// for keep their own), then ask for the tracks the edition has and the
+	// files lack.
+	async function useEditionAndFetchMissing(candidate: Candidate): Promise<void> {
+		const release = candidate.evidence.release_mbid;
+		if (!release) return;
+		const choice = await chooseEdition.mutateAsync({
+			userId: authStore.user?.id,
+			localId: album.id,
+			rgMbid: candidate.evidence.release_group_mbid,
+			releaseMbid: release
 		});
-		conversionJobId = result.job_id;
-		conversionPreflightToken = result.preflight_token;
-		if (result.preflight_token) {
-			try {
-				sessionStorage.setItem(
-					`droppedneedle:edition-conversion-preflight:${userStorageSegment(authStore.user?.id)}:${result.job_id}`,
-					result.preflight_token
-				);
-			} catch {
-				// The server-side preflight remains durable if browser storage is unavailable.
-			}
+		if (choice.missing_titles.length) {
+			await acquire.mutateAsync({ mbid: choice.release_group_mbid });
 		}
-	}
-
-	async function confirmEditionConversion(): Promise<void> {
-		if (!conversion || !conversionPreflightToken) return;
-		await conversionStart.mutateAsync({
-			jobId: conversion.job_id,
-			preflightToken: conversionPreflightToken,
-			expectedRevision: conversion.row_revision
-		});
-		if (conversionStorageKey) {
-			try {
-				sessionStorage.removeItem(conversionStorageKey);
-			} catch {
-				// A consumed token is harmless if browser storage cannot be updated.
-			}
-		}
-		conversionPreflightToken = null;
-		await conversionQuery.refetch();
-	}
-
-	async function cancelConversion(): Promise<void> {
-		if (!conversion) return;
-		await conversionCancel.mutateAsync({
-			jobId: conversion.job_id,
-			expectedRevision: conversion.row_revision
-		});
-		if (conversionStorageKey) {
-			try {
-				sessionStorage.removeItem(conversionStorageKey);
-			} catch {
-				// The cancelled server job remains authoritative.
-			}
-		}
-		conversionPreflightToken = null;
-		await conversionQuery.refetch();
-		conversionJobId = null;
-		conversionPreflight.reset();
-	}
-
-	async function openFinalPreview(): Promise<void> {
-		if (!conversion) return;
-		const result = await conversionPreview.mutateAsync({
-			jobId: conversion.job_id,
-			expectedRevision: conversion.row_revision
-		});
-		if (!result.status.final_preview_job_id) return;
-		rememberLibraryManagementPreviewToken(result.status.final_preview_job_id, result.preview_token);
-		window.location.assign(
-			withBasePath(
-				`/library/management/previews/${encodeURIComponent(result.status.final_preview_job_id)}`
-			)
-		);
+		dialog.close();
 	}
 
 	function candidateErrorMessage(): string {
@@ -516,110 +417,6 @@
 								expectedRevision: album.management_exclusion_revision
 							})}>Re-enable management</button
 					>
-				</section>
-			{/if}
-
-			{#if conversion}
-				<section class="identification-conversion" aria-labelledby="edition-conversion-title">
-					<header>
-						<div>
-							<p class="identification-kicker">Match exact edition</p>
-							<h3 id="edition-conversion-title" class="hero-title text-xl font-bold">
-								{conversion.album_title}
-							</h3>
-							<p>{conversion.artist_name}</p>
-						</div>
-						<span class="badge badge-outline">{conversion.state.replaceAll('_', ' ')}</span>
-					</header>
-					<div class="identification-conversion-counts">
-						<span><strong>{conversion.kept_count}</strong> keep</span>
-						<span><strong>{conversion.acquire_count}</strong> acquire</span>
-						<span><strong>{conversion.recycle_count}</strong> recycle</span>
-					</div>
-					{#if conversion.state === 'preflight'}
-						<p class="identification-conversion-note">
-							No library files change while the missing recordings are acquired and verified.
-						</p>
-						{#if !conversion.download_source_ready}
-							<p class="identification-policy-note" data-tone="warning">
-								<CircleAlert class="h-4 w-4 shrink-0" /> Set up any music acquisition source before starting
-								this conversion.
-							</p>
-						{/if}
-						<button
-							class="btn btn-primary btn-sm gap-2"
-							disabled={!conversion.download_source_ready ||
-								!conversionPreflightToken ||
-								conversionStart.isPending}
-							onclick={() => void confirmEditionConversion()}
-						>
-							<Download class="h-4 w-4" /> Confirm and acquire missing tracks
-						</button>
-					{:else if conversion.state === 'acquiring'}
-						<progress
-							class="progress progress-primary w-full"
-							value={conversion.staged_count}
-							max={Math.max(1, conversion.acquire_count)}
-							aria-label="Edition acquisition progress"
-						></progress>
-						<p class="identification-conversion-note">
-							{conversion.staged_count} of {conversion.acquire_count} acquired and verified.
-						</p>
-						{#if conversion.failed_count}
-							<button
-								class="btn btn-outline btn-sm"
-								disabled={conversionRetry.isPending}
-								onclick={() =>
-									void conversionRetry
-										.mutateAsync({
-											jobId: conversion.job_id,
-											targetOrdinals: conversion.targets
-												.filter((target) => target.state === 'failed')
-												.map((target) => target.ordinal),
-											expectedRevision: conversion.row_revision
-										})
-										.then(() => conversionQuery.refetch())}
-								>Retry {conversion.failed_count} unresolved</button
-							>
-						{/if}
-					{:else if conversion.state === 'needs_recheck'}
-						<p class="identification-policy-note" data-tone="warning">
-							<CircleAlert class="h-4 w-4 shrink-0" /> The album or its provider identity changed. Recheck
-							before continuing.
-						</p>
-						<button
-							class="btn btn-primary btn-sm gap-2"
-							disabled={conversionRecheck.isPending}
-							onclick={() =>
-								void conversionRecheck
-									.mutateAsync({
-										jobId: conversion.job_id,
-										expectedRevision: conversion.row_revision
-									})
-									.then(() => conversionQuery.refetch())}
-							><RefreshCw class="h-4 w-4" /> Recheck album</button
-						>
-					{:else if conversion.state === 'ready'}
-						<p class="identification-conversion-note">
-							Every exact-release track has one verified source. Review the single sealed file plan
-							before anything changes.
-						</p>
-						<button
-							class="btn btn-primary btn-sm gap-2"
-							disabled={conversionPreview.isPending}
-							onclick={() => void openFinalPreview()}
-						>
-							<FileCheck class="h-4 w-4" /> Review final changes
-						</button>
-					{/if}
-					{#if ['preflight', 'acquiring', 'ready', 'needs_recheck'].includes(conversion.state)}
-						<button
-							class="btn btn-ghost btn-sm text-error"
-							disabled={conversionCancel.isPending}
-							onclick={() => void cancelConversion().catch(() => undefined)}
-							>Cancel conversion</button
-						>
-					{/if}
 				</section>
 			{/if}
 
@@ -1082,18 +879,18 @@
 										<div class="identification-choice-icon"><Download class="h-5 w-5" /></div>
 										<h5>Match this edition's track list</h5>
 										<p>
-											Keep verified local audio, acquire {selectedCandidate.evidence
-												.unmatched_expected_tracks.length} missing tracks, and recycle conflicts only
-											after one final preview.
+											Make this the album's edition. Your files that fit it are placed on its
+											tracks, the rest keep their own tags, and its {selectedCandidate.evidence
+												.unmatched_expected_tracks.length} missing tracks are requested.
 										</p>
 										<button
 											class="btn btn-outline btn-sm"
 											disabled={!selectedCandidate.evidence.release_mbid ||
-												conversionPreflight.isPending ||
-												Boolean(conversion)}
+												chooseEdition.isPending ||
+												acquire.isPending}
 											onclick={() =>
-												void prepareEditionConversion(selectedCandidate).catch(() => undefined)}
-											>Prepare conversion</button
+												void useEditionAndFetchMissing(selectedCandidate).catch(() => undefined)}
+											>Use this edition and get missing tracks</button
 										>
 									</article>
 									<article>

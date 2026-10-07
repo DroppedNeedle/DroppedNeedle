@@ -44,13 +44,13 @@ vi.mock('$lib/stores/authStore.svelte', () => ({
 
 import {
 	acquireEdition,
+	chooseAlbumEdition,
 	clearEditionPin,
-	clearLocalAlbumEditionPin,
 	editionsKey,
+	getAlbumEditionStatusQuery,
 	getAlbumEditionsQuery,
-	getLocalAlbumEditionPinQuery,
-	setEditionPin,
-	setLocalAlbumEditionPin
+	handBackAlbumEdition,
+	setEditionPin
 } from './EditionQueries.svelte';
 
 type EditionQueryOptions = {
@@ -121,7 +121,7 @@ it('pins by group on v3 and refreshes the group and its one copy', async () => {
 	const invalidated = h.invalidate.mock.calls.map(([arg]) => arg.queryKey);
 	expect(invalidated).toContainEqual(editionsKey('user-a', 'release-group'));
 	expect(invalidated).toContainEqual(editionsKey('user-b', 'release-group'));
-	expect(invalidated).toContainEqual(['library', 'catalog', 'user-a', 'edition-pin', 'local-1']);
+	expect(invalidated).toContainEqual(['library', 'catalog', 'user-a', 'edition', 'local-1']);
 	expect(invalidated).toContainEqual(['library', 'catalog', 'user-a', 'album-detail', 'local-1']);
 	expect(h.removeTracks).toHaveBeenCalledWith('release-group');
 	expect(h.removeBasic).toHaveBeenCalledWith('release-group');
@@ -134,9 +134,9 @@ it('keeps acquire invalidation scoped to the authenticated download queue', asyn
 	expect(h.v3.POST).toHaveBeenCalledWith('/api/v3/albums/release-group/edition/acquire');
 });
 
-it('addresses per-copy pins by local id and scopes the key by user', () => {
+it('reads one copy edition by local id and scopes the key by user', () => {
 	const queryFor = (userId: string | undefined, localId: string) =>
-		getLocalAlbumEditionPinQuery(
+		getAlbumEditionStatusQuery(
 			() => userId,
 			() => localId,
 			() => true
@@ -146,14 +146,7 @@ it('addresses per-copy pins by local id and scopes the key by user', () => {
 		'library',
 		'catalog',
 		'user-a',
-		'edition-pin',
-		'local-1'
-	]);
-	expect(queryFor(undefined, 'local-1').queryKey).toEqual([
-		'library',
-		'catalog',
-		null,
-		'edition-pin',
+		'edition',
 		'local-1'
 	]);
 	expect(queryFor('user-a', 'local-1').queryKey).not.toEqual(
@@ -161,20 +154,20 @@ it('addresses per-copy pins by local id and scopes the key by user', () => {
 	);
 });
 
-it('refuses per-album pins carrying an RG MBID or a missing local id', async () => {
-	const pin = setLocalAlbumEditionPin() as unknown as EditionMutationOptions;
-	const clear = clearLocalAlbumEditionPin() as unknown as EditionMutationOptions;
+it('refuses edition choices carrying an RG MBID or a missing local id', async () => {
+	const choose = chooseAlbumEdition() as unknown as EditionMutationOptions;
+	const handBack = handBackAlbumEdition() as unknown as EditionMutationOptions;
 	expect(() =>
-		pin.mutationFn({
+		choose.mutationFn({
 			userId: 'user-a',
 			localId: 'release-group',
 			rgMbid: 'release-group',
 			releaseMbid: 'release'
 		})
-	).toThrow('RG MBIDs cannot pin through the per-album edition route.');
+	).toThrow('Choose the edition on the library copy, not the release group.');
 	expect(() =>
-		clear.mutationFn({ userId: 'user-a', localId: '', rgMbid: 'release-group' })
-	).toThrow('Missing local album id for the edition pin.');
+		handBack.mutationFn({ userId: 'user-a', localId: '', rgMbid: 'release-group' })
+	).toThrow('Missing local album id for the edition.');
 	expect(h.v3.PUT).not.toHaveBeenCalled();
 	expect(h.v3.DELETE).not.toHaveBeenCalled();
 });

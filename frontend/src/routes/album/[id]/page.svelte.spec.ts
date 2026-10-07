@@ -196,9 +196,13 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	setEditionPin: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	clearEditionPin: () => ({ mutateAsync: vi.fn(), isPending: false }),
 	acquireEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	getLocalAlbumEditionPinQuery: () => ({ data: undefined, isLoading: false, isError: false }),
-	setLocalAlbumEditionPin: () => ({ mutateAsync: vi.fn(), isPending: false }),
-	clearLocalAlbumEditionPin: () => ({ mutateAsync: vi.fn(), isPending: false })
+	getAlbumEditionStatusQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getEditionTracksQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	chooseAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	handBackAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	confirmAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	undoAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	retagAfterChoice: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 
 vi.mock('$lib/queries/downloads/UpgradeQueries.svelte', () => ({

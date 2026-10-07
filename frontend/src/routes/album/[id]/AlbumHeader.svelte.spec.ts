@@ -9,15 +9,12 @@ import type {
 	LibraryAlbumDetail,
 	LibraryAlbumSummary
 } from '$lib/types';
-import { ApiError } from '$lib/api/client';
 
 const h = vi.hoisted(() => ({
 	editions: undefined as AlbumEditionsResponse | undefined,
 	setPin: vi.fn(),
 	clearPin: vi.fn(),
-	acquire: vi.fn(),
-	setLocalPin: vi.fn(),
-	clearLocalPin: vi.fn()
+	acquire: vi.fn()
 }));
 
 vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
@@ -29,8 +26,13 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 	setEditionPin: () => ({ mutateAsync: h.setPin, isPending: false }),
 	clearEditionPin: () => ({ mutateAsync: h.clearPin, isPending: false }),
 	acquireEdition: () => ({ mutateAsync: h.acquire, isPending: false }),
-	setLocalAlbumEditionPin: () => ({ mutateAsync: h.setLocalPin, isPending: false }),
-	clearLocalAlbumEditionPin: () => ({ mutateAsync: h.clearLocalPin, isPending: false })
+	getAlbumEditionStatusQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getEditionTracksQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	chooseAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	handBackAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	confirmAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	undoAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	retagAfterChoice: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 
 vi.mock('$lib/queries/library/LibraryMutations.svelte', () => ({
@@ -218,97 +220,6 @@ async function renderHeader({
 	});
 	return onrefresh;
 }
-
-// Native <dialog> content leaves the accessibility tree when closed, so a
-// getByRole locator never resolves there. Assert on the open property instead.
-async function expectConflictDialogClosed(): Promise<void> {
-	await vi.waitFor(() => {
-		const conflict = [...document.querySelectorAll('dialog')].find((dialog) =>
-			dialog.textContent?.includes('Which copy should this edition apply to?')
-		);
-		expect(conflict?.open).toBe(false);
-	});
-}
-
-describe('AlbumHeader automatic edition selection', () => {
-	beforeEach(() => {
-		h.setPin.mockReset().mockResolvedValue(undefined);
-		h.clearPin.mockReset().mockResolvedValue(undefined);
-		h.setLocalPin.mockReset().mockResolvedValue(undefined);
-		h.clearLocalPin.mockReset().mockResolvedValue(undefined);
-		h.acquire.mockReset().mockResolvedValue({
-			status: 'already_complete',
-			message: 'Edition already complete'
-		});
-		h.editions = {
-			items: [
-				{
-					release_mbid: 'release-11',
-					track_count: 11,
-					title: 'Avalon',
-					disambiguation: null,
-					date: '2008-08-04',
-					country: 'XW',
-					packaging: null,
-					status: 'Official',
-					is_owned: false,
-					is_pinned: false
-				},
-				{
-					release_mbid: 'release-20',
-					track_count: 20,
-					title: 'Avalon',
-					disambiguation: null,
-					date: '2008-08-05',
-					country: 'US',
-					packaging: null,
-					status: 'Official',
-					is_owned: false,
-					is_pinned: false
-				}
-			],
-			pinned_release_mbid: null,
-			owned_release_mbid: null,
-			selected_release_mbid: 'release-11'
-		};
-	});
-
-	it('pins an unowned RG through the RG URL without touching the per-album route', async () => {
-		const onrefresh = await renderHeader({ localCopies: [] });
-
-		await page.getByRole('button', { name: 'Edition: Automatic · 2008 · US · 20 tracks' }).click();
-		await page.getByRole('button', { name: '2008 · XW · 11 tracks' }).click();
-		await vi.waitFor(() => {
-			expect(h.setPin).toHaveBeenCalledWith({
-				mbid: album.musicbrainz_id,
-				releaseMbid: 'release-11'
-			});
-			expect(onrefresh).toHaveBeenCalledOnce();
-		});
-		expect(h.setLocalPin).not.toHaveBeenCalled();
-		expect(h.clearLocalPin).not.toHaveBeenCalled();
-	});
-
-	it('pins the chosen copy through the local URL, then refreshes and closes', async () => {
-		h.setPin.mockRejectedValue(new ApiError(409, 'Multiple albums match', 'CONFLICT'));
-		const onrefresh = await renderHeader({ localCopies: [localAlbum] });
-
-		await page.getByRole('button', { name: 'Edition: Automatic · 2008 · US · 20 tracks' }).click();
-		await page.getByRole('button', { name: '2008 · XW · 11 tracks' }).click();
-		await expect
-			.element(page.getByRole('heading', { name: 'Which copy should this edition apply to?' }))
-			.toBeVisible();
-
-		await page.getByRole('button', { name: /Avalon/ }).click();
-		await vi.waitFor(() => {
-			expect(h.setLocalPin).toHaveBeenCalledWith(
-				expect.objectContaining({ localId: 'local-album-1', releaseMbid: 'release-11' })
-			);
-			expect(onrefresh).toHaveBeenCalledOnce();
-		});
-		await expectConflictDialogClosed();
-	});
-});
 
 describe('AlbumHeader album download button', () => {
 	beforeEach(() => {

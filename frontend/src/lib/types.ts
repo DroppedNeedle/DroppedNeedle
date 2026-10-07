@@ -1092,6 +1092,9 @@ export type FreeMusicSettings = components['schemas']['FreeMusic'];
 // mirrors backend api/v1/schemas/settings.py (GetItSettings)
 export type GetItSettings = components['schemas']['GetIt'];
 
+// How editions are ranked when the files do not settle it.
+export type EditionPreferences = components['schemas']['EditionPreferences'];
+
 export type PurchaseLink = components['schemas']['PurchaseLink'];
 
 // mirrors backend api/v1/schemas/settings.py (EventsSettings)

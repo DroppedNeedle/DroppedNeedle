@@ -29,9 +29,6 @@ const h = vi.hoisted(() => ({
 				selected_release_mbid: string | null;
 		  }
 		| undefined,
-	localPin: { pinned_release_mbid: null as string | null },
-	setLocalPin: vi.fn(),
-	clearLocalPin: vi.fn(),
 	toast: vi.fn()
 }));
 
@@ -156,15 +153,14 @@ vi.mock('$lib/queries/albums/EditionQueries.svelte', () => ({
 		isLoading: false,
 		isError: false
 	}),
-	getLocalAlbumEditionPinQuery: () => ({
-		get data() {
-			return h.localPin;
-		},
-		isLoading: false,
-		isError: false
-	}),
-	setLocalAlbumEditionPin: () => ({ mutateAsync: h.setLocalPin, isPending: false }),
-	clearLocalAlbumEditionPin: () => ({ mutateAsync: h.clearLocalPin, isPending: false })
+	acquireEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	getAlbumEditionStatusQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	getEditionTracksQuery: () => ({ data: undefined, isLoading: false, isError: false }),
+	chooseAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	handBackAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	confirmAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	undoAlbumEdition: () => ({ mutateAsync: vi.fn(), isPending: false }),
+	retagAfterChoice: () => ({ mutateAsync: vi.fn(), isPending: false })
 }));
 
 vi.mock('$lib/queries/library/LibraryOperationQueries.svelte', () => ({
@@ -245,9 +241,6 @@ beforeEach(() => {
 	h.isAdmin = false;
 	h.isTrusted = false;
 	h.editions = undefined;
-	h.localPin = { pinned_release_mbid: null };
-	h.setLocalPin.mockResolvedValue(undefined);
-	h.clearLocalPin.mockResolvedValue(undefined);
 	album.management_identity_readiness = 'exact_release_required';
 	album.identification_status = 'local_metadata';
 	album.musicbrainz_release_group_id = null;
@@ -256,88 +249,6 @@ beforeEach(() => {
 	album.display_release_mbid = null;
 	album.pick_basis = null;
 	delete album.download_allowed;
-});
-
-describe('local-only album page', () => {
-	it('shows the edition picker to trusted users', async () => {
-		h.isTrusted = true;
-		album.musicbrainz_release_group_id = 'rg-1';
-		album.album_identity_state = 'release_group_linked';
-		h.editions = {
-			items: [
-				{
-					release_mbid: 'rel-1',
-					track_count: 10,
-					title: 'Album',
-					disambiguation: null,
-					date: '2020-01-01',
-					country: 'XW',
-					packaging: null,
-					status: 'Official',
-					is_owned: false,
-					is_pinned: false
-				}
-			],
-			pinned_release_mbid: null,
-			owned_release_mbid: null,
-			selected_release_mbid: 'rel-1'
-		};
-		await render(LocalAlbumPage, {
-			props: { albumId: album.id }
-		} as unknown as Parameters<typeof render>[1]);
-
-		await expect.element(page.getByRole('button', { name: /Edition:/ })).toBeVisible();
-	});
-
-	it('pins an edition through the per-copy local URL', async () => {
-		h.isTrusted = true;
-		album.musicbrainz_release_group_id = 'rg-1';
-		h.editions = {
-			items: [
-				{
-					release_mbid: 'release-11',
-					track_count: 11,
-					title: 'Local Only Album',
-					disambiguation: null,
-					date: '2008-08-04',
-					country: 'XW',
-					packaging: null,
-					status: 'Official',
-					is_owned: false,
-					is_pinned: false
-				},
-				{
-					release_mbid: 'release-20',
-					track_count: 20,
-					title: 'Local Only Album',
-					disambiguation: null,
-					date: '2008-08-05',
-					country: 'US',
-					packaging: null,
-					status: 'Official',
-					is_owned: false,
-					is_pinned: false
-				}
-			],
-			pinned_release_mbid: null,
-			owned_release_mbid: null,
-			selected_release_mbid: 'release-20'
-		};
-		await render(LocalAlbumPage, {
-			props: { albumId: album.id }
-		} as unknown as Parameters<typeof render>[1]);
-
-		await page.getByRole('button', { name: 'Edition: Automatic · 2008 · US · 20 tracks' }).click();
-		await page.getByRole('button', { name: '2008 · XW · 11 tracks' }).click();
-		await vi.waitFor(() => {
-			expect(h.setLocalPin).toHaveBeenCalledWith({
-				userId: 'user-1',
-				localId: 'local-album-1',
-				rgMbid: 'rg-1',
-				releaseMbid: 'release-11'
-			});
-		});
-	});
 });
 
 describe('local album page track menu', () => {

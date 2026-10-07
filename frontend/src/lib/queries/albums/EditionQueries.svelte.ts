@@ -2,6 +2,7 @@ import { createMutation, createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
+import type { components } from '$lib/api/v3/openapi';
 import { CACHE_TTL } from '$lib/constants';
 import { purchaseOptionsKey } from '$lib/queries/albums/GetItQueries.svelte';
 import { CATALOG_ENDPOINTS } from '$lib/queries/catalog/endpoints';
@@ -42,7 +43,7 @@ export const getAlbumEditionsQuery = (
 	}));
 
 /**
- * A pin changes which release the group serves. This marks the group's
+ * An edition choice changes which release the group serves. This marks the group's
  * edition list and purchase links stale and drops the album page's cached
  * header and tracklist; with a copy id it also refreshes that copy's pin and
  * library album detail. It does not wait for the refetches, and it leaves the
@@ -62,7 +63,7 @@ function invalidatePinScope(variables: {
 	}
 	if (localId) {
 		keys.push(
-			LibraryQueryKeyFactory.catalog.editionPin(userId, localId),
+			LibraryQueryKeyFactory.catalog.edition(userId, localId),
 			LibraryQueryKeyFactory.catalog.albumDetail(userId, localId)
 		);
 	}
@@ -116,65 +117,132 @@ export function acquireEdition() {
 	}));
 }
 
-// Per-album edition pins (#382): one MusicBrainz release group can match
-// several local albums, so the RG-keyed pin above 409s on those. These
-// local-id routes address a single copy and never conflict.
-// localAlbumId is a library-local album id (LibraryAlbumSummary.id /
-// LibraryAlbumDetail.id) - never an RG MBID. Unowned RGs (no local copies)
-// stay on the RG-keyed pin above; only a known local id may enter here.
-// The pin key lives in the library catalog keys so it clears with the user.
-const localAlbumEditionPinKey = LibraryQueryKeyFactory.catalog.editionPin;
+// One library album's edition (library-local album id, never an RG MBID).
+// The album identity row is the edition: choosing one goes through the
+// library's one edition operation, which accepts any MusicBrainz release.
+export type EditionStatus = components['schemas']['EditionStatusView'];
+export type EditionChoice = components['schemas']['EditionChoiceView'];
+export type WaitingAlbums = components['schemas']['WaitingAlbumsResponse'];
 
-export const getLocalAlbumEditionPinQuery = (
+const editionKey = LibraryQueryKeyFactory.catalog.edition;
+
+export const getAlbumEditionStatusQuery = (
 	getUserId: Getter<EditionUserId>,
 	getLocalId: Getter<string>,
-	getEnabled: Getter<boolean>
+	getEnabled: Getter<boolean> = () => true
 ) =>
 	createQuery(() => ({
-		queryKey: localAlbumEditionPinKey(getUserId(), getLocalId()),
+		queryKey: editionKey(getUserId(), getLocalId()),
 		enabled: getEnabled() && !!getUserId() && !!getLocalId(),
 		staleTime: CACHE_TTL.ALBUM_DETAIL_EDITIONS,
-		queryFn: ({ signal }) => api.global.v3.GET(LibraryV3Api.editionPin(getLocalId()), { signal })
+		queryFn: ({ signal }) => api.global.v3.GET(LibraryV3Api.edition(getLocalId()), { signal })
 	}));
 
-type LocalEditionPinVariables = {
-	userId: EditionUserId;
-	localId: string;
-	rgMbid: string;
-	releaseMbid: string;
-};
+export const getEditionTracksQuery = (
+	getGroup: Getter<string>,
+	getRelease: Getter<string | null>
+) =>
+	createQuery(() => ({
+		queryKey: ['albums', 'edition-tracks', getRelease()] as const,
+		enabled: !!getGroup() && !!getRelease(),
+		staleTime: CACHE_TTL.ALBUM_DETAIL_EDITIONS,
+		queryFn: ({ signal }) =>
+			api.global.v3.GET(CATALOG_ENDPOINTS.editionTracks(getGroup(), getRelease() ?? ''), {
+				signal
+			})
+	}));
 
-type LocalEditionClearVariables = {
-	userId: EditionUserId;
-	localId: string;
-	rgMbid: string;
-};
+export const getWaitingAlbumsQuery = (
+	getUserId: Getter<EditionUserId>,
+	getState: Getter<'unconfirmed' | 'unmatched'>,
+	getOffset: Getter<number>,
+	limit = 50
+) =>
+	createQuery(() => ({
+		queryKey: LibraryQueryKeyFactory.catalog.unconfirmed(getUserId(), getState(), getOffset()),
+		enabled: !!getUserId(),
+		queryFn: ({ signal }) =>
+			api.global.v3.GET(LibraryV3Api.unconfirmed(getState(), limit, getOffset()), { signal })
+	}));
+
+type EditionTarget = { userId: EditionUserId; localId: string; rgMbid?: string };
 
 // Guards the per-album boundary: the local id must be known, and it must not
-// be the RG MBID itself (an RG id here addresses nothing when unowned and
-// resolves ambiguously when owned - both are RG-route work).
-function assertLocalAlbumId(localId: string, rgMbid: string): void {
-	if (!localId) throw new Error('Missing local album id for the edition pin.');
+// be the RG MBID itself.
+function assertLocalAlbumId(localId: string, rgMbid?: string): void {
+	if (!localId) throw new Error('Missing local album id for the edition.');
 	if (rgMbid && localId === rgMbid)
-		throw new Error('RG MBIDs cannot pin through the per-album edition route.');
+		throw new Error('Choose the edition on the library copy, not the release group.');
 }
 
-export function setLocalAlbumEditionPin() {
+/** Refresh everything an edition change touches. */
+function invalidateEditionScope({ userId, localId, rgMbid }: EditionTarget): void {
+	invalidatePinScope({ userId, rgMbid: rgMbid ?? '', localId });
+	void invalidateQueriesWithPersister({ queryKey: editionKey(userId, localId) });
+	void invalidateQueriesWithPersister({
+		queryKey: [...LibraryQueryKeyFactory.catalog.root(userId), 'unconfirmed']
+	});
+}
+
+export function chooseAlbumEdition() {
 	return createMutation(() => ({
-		mutationFn: ({ localId, rgMbid, releaseMbid }: LocalEditionPinVariables) => {
+		mutationFn: ({ localId, rgMbid, releaseMbid }: EditionTarget & { releaseMbid: string }) => {
 			assertLocalAlbumId(localId, rgMbid);
-			return api.global.v3.PUT(LibraryV3Api.editionPin(localId), { release_mbid: releaseMbid });
+			return api.global.v3.PUT(LibraryV3Api.edition(localId), { release_mbid: releaseMbid });
 		},
-		onSuccess: (_d, { userId, localId, rgMbid }) => invalidatePinScope({ userId, rgMbid, localId })
+		onSuccess: (_d, variables) => invalidateEditionScope(variables)
 	}));
 }
 
-export function clearLocalAlbumEditionPin() {
+export function handBackAlbumEdition() {
 	return createMutation(() => ({
-		mutationFn: ({ localId, rgMbid }: LocalEditionClearVariables) => {
+		mutationFn: ({ localId, rgMbid }: EditionTarget) => {
 			assertLocalAlbumId(localId, rgMbid);
-			return api.global.v3.DELETE(LibraryV3Api.editionPin(localId));
+			return api.global.v3.DELETE(LibraryV3Api.edition(localId));
 		},
-		onSuccess: (_d, { userId, localId, rgMbid }) => invalidatePinScope({ userId, rgMbid, localId })
+		onSuccess: (_d, variables) => invalidateEditionScope(variables)
+	}));
+}
+
+export function confirmAlbumEdition() {
+	return createMutation(() => ({
+		mutationFn: ({ localId }: EditionTarget) =>
+			api.global.v3.POST(LibraryV3Api.editionConfirm(localId)),
+		onSuccess: (_d, variables) => invalidateEditionScope(variables)
+	}));
+}
+
+export function undoAlbumEdition() {
+	return createMutation(() => ({
+		mutationFn: ({ localId }: EditionTarget) =>
+			api.global.v3.POST(LibraryV3Api.editionUndo(localId)),
+		onSuccess: (_d, variables) => invalidateEditionScope(variables)
+	}));
+}
+
+/**
+ * Write the chosen edition's tags into the files it placed: a sealed retag
+ * preview, applied at once (the person already asked for it).
+ */
+export function retagAfterChoice() {
+	return createMutation(() => ({
+		mutationFn: async ({
+			localId,
+			files
+		}: EditionTarget & { files: EditionChoice['retag_files'] }) => {
+			const preview = await api.global.v3.POST(LibraryV3Api.managePreview(), {
+				album_id: localId,
+				kind: 'retag',
+				items: files.map((file) => ({
+					root_id: file.root_id,
+					rel_path: file.rel_path,
+					managed_updates: {}
+				}))
+			});
+			return api.global.v3.POST(LibraryV3Api.manageApply(), {
+				preview_token: preview.preview_token
+			});
+		},
+		onSuccess: (_d, variables) => invalidateEditionScope(variables)
 	}));
 }
