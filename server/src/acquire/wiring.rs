@@ -716,6 +716,7 @@ impl AcquireSetup {
             }),
             ledger: core.requests.store.clone(),
             watches: core.requests.wanted.clone(),
+            search_jobs: JobStore::new(db.clone()),
         });
 
         // Imports deps.
@@ -1084,6 +1085,7 @@ impl AcquireSetup {
             settings: Arc::new(PruneSettings::default),
             ledger: core.requests.store.clone(),
             watches: core.requests.wanted.clone(),
+            search_jobs: JobStore::new(db.clone()),
         });
         Ok(Self {
             db,

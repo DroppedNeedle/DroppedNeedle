@@ -93,6 +93,9 @@ pub enum PickRefusal {
 
 const PICK_REFUSED: &str = "search-job-pick-refused:";
 
+/// How long an unpicked job is kept after it last changed: a week.
+pub const PRUNE_AFTER_SECONDS: f64 = 7.0 * 86_400.0;
+
 fn now() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -240,6 +243,32 @@ impl JobStore {
                     )?;
                 }
                 Ok(moved > 0)
+            })
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    /// Delete jobs nobody needs any more: unpicked ones (searching,
+    /// completed, failed, cancelled) last touched more than
+    /// [`PRUNE_AFTER_SECONDS`] before `now`, and picked ones whose download
+    /// finished or was removed. A picked task that outlives its job just
+    /// searches as usual on failover. Answers how many rows went.
+    pub async fn prune(&self, now: f64) -> Result<u64, String> {
+        let cutoff = now - PRUNE_AFTER_SECONDS;
+        self.db
+            .write_background("search_jobs.prune", move |tx| {
+                let stale = tx.execute(
+                    "DELETE FROM search_jobs WHERE status IN (?1, ?2, ?3, ?4) \
+                     AND updated_at < ?5",
+                    params![SEARCHING, COMPLETED, FAILED, CANCELLED, cutoff],
+                )?;
+                let picked = tx.execute(
+                    "DELETE FROM search_jobs WHERE status = ?1 AND NOT EXISTS ( \
+                     SELECT 1 FROM download_tasks t WHERE t.search_job_id = search_jobs.id \
+                     AND t.status IN ('queued', 'downloading', 'processing'))",
+                    params![MATCHED],
+                )?;
+                Ok(u64::try_from(stale + picked).unwrap_or(u64::MAX))
             })
             .await
             .map_err(|error| error.to_string())

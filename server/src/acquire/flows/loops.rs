@@ -32,6 +32,7 @@ use crate::acquire::requests::error::RequestsError;
 use crate::acquire::requests::ledger::{RequestRecord, WATCH_WATCHING, WantedWatch};
 use crate::acquire::requests::models::RequestKind;
 use crate::acquire::requests::sqlite::{RequestStore, WantedStore};
+use crate::acquire::search_jobs::store::JobStore;
 use crate::events::{AutoDownloadEnqueued, UserNotice, WantedNotice};
 use crate::reads::catalog::mapping::{should_include_release, type_set};
 use crate::runtime_config::sections::UserPreferences;
@@ -1132,6 +1133,8 @@ pub struct PruneDeps {
     pub ledger: RequestStore,
     /// Wanted watches.
     pub watches: WantedStore,
+    /// Manual album searches.
+    pub search_jobs: JobStore,
 }
 
 /// What one prune removed.
@@ -1143,11 +1146,14 @@ pub struct PruneSummary {
     pub watches: u64,
     /// Seen-candidate rows deleted.
     pub seen: u64,
+    /// Manual search jobs deleted.
+    pub search_jobs: u64,
 }
 
 /// One prune at `now`: terminal requests and stopped or fulfilled watches
 /// past the retention window go (v2 `prune_stores_periodically`). The
-/// window is clamped to the settings' 30..3650 days.
+/// window is clamped to the settings' 30..3650 days. Manual search jobs
+/// keep their own, shorter window (see [`JobStore::prune`]).
 pub async fn prune_tick(now: i64, deps: &PruneDeps) -> Result<PruneSummary, RequestsError> {
     let days = (deps.settings)().retention_days.clamp(30, 3650);
     let cutoff = u64::try_from(now)
@@ -1155,10 +1161,16 @@ pub async fn prune_tick(now: i64, deps: &PruneDeps) -> Result<PruneSummary, Requ
         .saturating_sub(days * 86_400);
     let requests = deps.ledger.prune_terminal(cutoff).await?;
     let (watches, seen) = deps.watches.prune(cutoff).await?;
+    let search_jobs = deps
+        .search_jobs
+        .prune(now as f64)
+        .await
+        .map_err(|cause| RequestsError::internal(&cause))?;
     Ok(PruneSummary {
         requests,
         watches,
         seen,
+        search_jobs,
     })
 }
 

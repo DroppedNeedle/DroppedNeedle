@@ -36,6 +36,7 @@ use droppedneedle::acquire::requests::{
     models::RequestKind,
     sqlite::{RequestStore, WantedStore},
 };
+use droppedneedle::acquire::search_jobs::store::JobStore;
 use droppedneedle::db::{DbConfig, DbRuntime, JobState, open_runtime};
 use droppedneedle::runtime_config::sections::UserPreferences;
 
@@ -623,6 +624,7 @@ async fn prune_drops_only_settled_rows_past_retention() {
         settings: Arc::new(PruneSettings::default),
         ledger: ledger.clone(),
         watches: WantedStore::new(db.clone()),
+        search_jobs: JobStore::new(db.clone()),
     };
 
     let summary = prune_tick(NOW + 200 * 86_400, &deps).await.unwrap();
