@@ -204,9 +204,11 @@ impl RecycleBin {
     }
 
     /// Delete entries older than the retention window; returns how many
-    /// entries were removed. Never touches anything outside the root.
-    /// Entry age comes from the directory name stamp; unparseable names
-    /// fall back to mtime.
+    /// entries were removed. Never touches anything outside the root, and
+    /// inside it only the entries DroppedNeedle made: directories named
+    /// `<UTC stamp>-<random hex>`. Anything else stays, however old, since
+    /// a `.recycle` folder may belong to someone else (a Samba
+    /// `vfs_recycle` share uses that name too). Age comes from the stamp.
     pub fn prune(&self, now: SystemTime) -> Result<usize, RecycleError> {
         // Belt and suspenders behind `guarded`: a `/` root never prunes.
         if self.root.parent().is_none() {
@@ -228,51 +230,43 @@ impl RecycleBin {
                 detail: source.to_string(),
             })?;
             let path = entry.path();
-            let expired =
-                entry_expired(&path, now, cutoff_secs).map_err(|detail| RecycleError::Io {
-                    path: path.clone(),
-                    detail,
-                })?;
+            let Some(created) = entry
+                .file_name()
+                .to_str()
+                .and_then(owned_entry_stamp)
+                .filter(|_| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+            else {
+                continue;
+            };
+            let expired = now.duration_since(created).unwrap_or_default().as_secs() > cutoff_secs;
             if !expired {
                 continue;
             }
-            if path.is_dir() {
-                std::fs::remove_dir_all(&path).map_err(|source| RecycleError::Io {
-                    path: path.clone(),
-                    detail: source.to_string(),
-                })?;
-            } else {
-                std::fs::remove_file(&path).map_err(|source| RecycleError::Io {
-                    path: path.clone(),
-                    detail: source.to_string(),
-                })?;
-            }
+            std::fs::remove_dir_all(&path).map_err(|source| RecycleError::Io {
+                path: path.clone(),
+                detail: source.to_string(),
+            })?;
             removed += 1;
         }
         Ok(removed)
     }
 }
 
-/// True when a recycle entry is older than the cutoff. The stamp is
-/// authoritative: a cross-filesystem move rewrites mtimes, so mtime
-/// alone would lie about an entry's real age.
-fn entry_expired(path: &Path, now: SystemTime, cutoff_secs: u64) -> Result<bool, String> {
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default();
-    let stamp = name.split('-').next().unwrap_or_default();
-    if stamp.len() == RECYCLE_STAMP_FORMAT_LEN
-        && let Some(created) = parse_stamp(stamp)
+/// The creation time of a bin entry DroppedNeedle made, or `None` for
+/// any other name. Ours are `<YYYYMMDDTHHMMSS>-<8 or more lowercase hex>`;
+/// the stamp is authoritative because a cross-filesystem move rewrites
+/// mtimes.
+fn owned_entry_stamp(name: &str) -> Option<SystemTime> {
+    let (stamp, unique) = name.split_once('-')?;
+    if stamp.len() != RECYCLE_STAMP_FORMAT_LEN
+        || unique.len() < 8
+        || !unique
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     {
-        let age = now.duration_since(created).unwrap_or_default().as_secs();
-        return Ok(age > cutoff_secs);
+        return None;
     }
-    let mtime = std::fs::symlink_metadata(path)
-        .map_err(|err| err.to_string())?
-        .modified()
-        .map_err(|err| err.to_string())?;
-    Ok(now.duration_since(mtime).unwrap_or_default().as_secs() > cutoff_secs)
+    parse_stamp(stamp)
 }
 
 /// Parse a `YYYYMMDDTHHMMSS` UTC stamp without external date crates.
@@ -385,6 +379,28 @@ mod tests {
             policy.evaluate(name, false, Some(owned)),
             OrphanDecision::Keep
         );
+    }
+
+    #[test]
+    fn prune_only_touches_our_entries() {
+        let scratch = crate::tooling::scratch::ScratchDir::new("recycle-prune").expect("scratch");
+        let root = scratch.to_path_buf().join(".recycle");
+        for name in [
+            "20200101T000000-0a1b2c3d",
+            "20200101T000000-notours",
+            "old-user-file",
+        ] {
+            std::fs::create_dir_all(root.join(name)).expect("mkdir");
+        }
+        std::fs::write(root.join("20200101T000000-deadbeef"), b"a file").expect("file");
+        let removed = RecycleBin::at(root.clone(), 30)
+            .prune(SystemTime::now())
+            .expect("prune");
+        assert_eq!(removed, 1);
+        assert!(!root.join("20200101T000000-0a1b2c3d").exists());
+        assert!(root.join("20200101T000000-notours").exists());
+        assert!(root.join("old-user-file").exists());
+        assert!(root.join("20200101T000000-deadbeef").exists());
     }
 
     #[test]
