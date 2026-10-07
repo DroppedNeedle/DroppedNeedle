@@ -21,6 +21,7 @@
 //! - [`personal_mix::JOB_NAME`]: daily personal-mix rebuilds.
 //! - [`playlist_sync::JOB_NAME`]: Navidrome playlist file sync.
 //! - [`events_watcher::JOB_NAME`]: daily live-events sweep.
+//! - [`discovery_demand::JOB_NAME`]: the discover warm cycle.
 //!
 //! On-demand entries, registered only while running:
 //!
@@ -35,6 +36,7 @@
 //! shares the registry for its tick loops rather than running its own.
 
 pub mod checkpoint;
+pub mod discovery_demand;
 pub mod events_kick;
 pub mod events_watcher;
 pub mod media;
@@ -60,4 +62,5 @@ pub const BOOT_JOBS: &[&str] = &[
     personal_mix::JOB_NAME,
     playlist_sync::JOB_NAME,
     events_watcher::JOB_NAME,
+    discovery_demand::JOB_NAME,
 ];

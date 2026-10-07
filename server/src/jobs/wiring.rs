@@ -25,6 +25,7 @@ use crate::auth::users::{UsersDeps, roles::Role};
 use crate::concerts::ConcertsSweep;
 use crate::db::{CheckpointService, DurableWorkWakeups, WriteLane};
 use crate::jobs::checkpoint::{self, CheckpointRunner};
+use crate::jobs::discovery_demand::{self, DemandTick, NoDemand};
 use crate::jobs::events_kick::{self, EventsKick, FnKick, KickOutcome};
 use crate::jobs::events_watcher::{self, PollTimeSource, SystemWatchClock};
 use crate::jobs::media::{MediaJobs, RegistryFeed, RemoteSessionPollers};
@@ -275,6 +276,7 @@ pub struct JobsSetup {
     watcher: Option<ConcertsSweep>,
     config: Option<Arc<ConfigStore>>,
     mixer: Arc<dyn PersonalMixer>,
+    demand: Arc<dyn DemandTick>,
 }
 
 impl JobsSetup {
@@ -312,12 +314,19 @@ impl JobsSetup {
             watcher,
             config: Some(config),
             mixer: Arc::new(UnwiredMixer),
+            demand: Arc::new(NoDemand),
         }
     }
 
     /// The personal-mix builder the daily refresh loop drives.
     pub fn with_mixer(mut self, mixer: Arc<dyn PersonalMixer>) -> Self {
         self.mixer = mixer;
+        self
+    }
+
+    /// The discover warm pass the warm-cycle loop drives.
+    pub fn with_discovery_demand(mut self, demand: Arc<dyn DemandTick>) -> Self {
+        self.demand = demand;
         self
     }
 
@@ -341,6 +350,7 @@ impl JobsSetup {
             watcher: None,
             config: None,
             mixer: Arc::new(UnwiredMixer),
+            demand: Arc::new(NoDemand),
         }
     }
 
@@ -428,6 +438,13 @@ impl JobsSetup {
         )
         .await
         .map_err(|_| format!("{} is already running", events_watcher::JOB_NAME))?;
+        discovery_demand::spawn_on(
+            &self.registry,
+            Arc::clone(&self.demand),
+            discovery_demand::default_schedule(),
+        )
+        .await
+        .map_err(|_| format!("{} is already running", discovery_demand::JOB_NAME))?;
         Ok(())
     }
 

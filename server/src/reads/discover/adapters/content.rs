@@ -197,4 +197,8 @@ impl DiscoverContent for LiveContent {
             Ok(())
         })
     }
+
+    fn run_due_tick(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async move { self.page.run_due(None).await })
+    }
 }

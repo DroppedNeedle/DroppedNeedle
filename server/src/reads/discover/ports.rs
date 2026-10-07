@@ -110,6 +110,11 @@ pub trait DiscoverContent: Send + Sync {
         &'a self,
         user_id: &'a str,
     ) -> BoxFuture<'a, Result<(), ProviderFailure>>;
+    /// One pass of the warm cycle: rebuild what recent activity says is
+    /// due. Content without a warm cycle does nothing.
+    fn run_due_tick(&self) -> BoxFuture<'_, ()> {
+        Box::pin(async {})
+    }
 }
 
 /// What asked for a queue build.

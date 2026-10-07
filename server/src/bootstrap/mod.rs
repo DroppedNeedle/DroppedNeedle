@@ -420,7 +420,10 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         },
         concerts.sweep(),
     )
-    .with_mixer(mix_hooks.clone());
+    .with_mixer(mix_hooks.clone())
+    .with_discovery_demand(Arc::new(crate::jobs::discovery_demand::ContentDemand(
+        reads.discover.content.clone(),
+    )));
     let admin = admin.with_precache(jobs.precache_trigger());
     let effects: Arc<dyn SaveEffects> = Arc::new(LiveSaveEffects::new(
         provider_cache.clone(),
