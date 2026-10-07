@@ -2,11 +2,11 @@ import { createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { authStore } from '$lib/stores/authStore.svelte';
 import type { HeldListResponse } from '$lib/types';
 
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
+import { DOWNLOAD_HELD_ENDPOINTS } from './endpoints';
 
 // Tracks held for an "import anyway" review. Two callers: the Downloads dashboard (no
 // filter, cross-album triage) and the album page (scoped to one release group). Keyed under
@@ -23,5 +23,5 @@ export const getHeldImportsQuery = (
 		staleTime: 30_000,
 		queryKey: DownloadQueryKeyFactory.held(authStore.user?.id, getMbid()),
 		queryFn: ({ signal }) =>
-			api.global.get<HeldListResponse>(API.downloads.held(getMbid()), { signal })
+			api.global.get<HeldListResponse>(DOWNLOAD_HELD_ENDPOINTS.list(getMbid()), { signal })
 	}));

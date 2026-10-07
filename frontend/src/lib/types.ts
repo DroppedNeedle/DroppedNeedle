@@ -2247,9 +2247,14 @@ export interface HeldImport {
 	duration_seconds: number | null;
 	expected_duration_seconds: number | null;
 	reason: string;
+	/** The reason as one plain sentence, and what to do about it. */
+	reason_text: string | null;
+	reason_action: string | null;
 	reason_detail: string | null;
 	source: string;
 	source_task_id: string | null;
+	/** `upgrade` files replace the library's copy only when better. */
+	origin: string;
 	created_at: number;
 	evidence_title: string | null;
 	evidence_artist: string | null;

@@ -1,7 +1,6 @@
 import { createMutation } from '@tanstack/svelte-query';
 
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { LibraryQueryKeyFactory } from '$lib/queries/library/LibraryQueryKeyFactory';
 import { REQUESTS_ENDPOINTS } from '$lib/queries/requests/endpoints';
@@ -14,7 +13,7 @@ import { toastStore } from '$lib/stores/toast';
 import { batchRequestCopy, requestStatusCopy } from '$lib/utils/acquisitionLabels';
 import { albumRequestOutcome } from '$lib/utils/requestOutcome';
 import { DownloadQueryKeyFactory } from './DownloadQueryKeyFactory';
-import { DOWNLOAD_TASKS_ENDPOINTS } from './endpoints';
+import { DOWNLOAD_HELD_ENDPOINTS, DOWNLOAD_TASKS_ENDPOINTS } from './endpoints';
 
 // Response mirrors for the consolidated request paths that are not shared with
 // the application-wide type contract.
@@ -368,12 +367,17 @@ function invalidateAlbum(releaseGroupMbid?: string | null) {
 export function importHeldTrack() {
 	return createMutation(() => ({
 		mutationFn: (input: HeldActionInput) =>
-			api.global.post<{ status: string; final_path: string | null }>(
-				API.downloads.heldImport(input.id),
+			api.global.post<{ status: string; final_path: string | null; message: string | null }>(
+				DOWNLOAD_HELD_ENDPOINTS.import(input.id),
 				{}
 			),
-		onSuccess: (_data: { status: string }, input: HeldActionInput) => {
-			toastStore.show({ message: 'Imported', type: 'success' });
+		onSuccess: (data: { message: string | null }, input: HeldActionInput) => {
+			// An upgrade file no better than the library's copy is dropped and
+			// the copy kept; the server says so in `message`.
+			toastStore.show({
+				message: data.message ?? 'Imported',
+				type: data.message ? 'info' : 'success'
+			});
 			void invalidateTasks();
 			invalidateAlbum(input.release_group_mbid);
 		},
@@ -385,7 +389,7 @@ export function importHeldTrack() {
 export function discardHeldTrack() {
 	return createMutation(() => ({
 		mutationFn: (input: HeldActionInput) =>
-			api.global.post<{ status: string }>(API.downloads.heldDiscard(input.id), {}),
+			api.global.post<{ status: string }>(DOWNLOAD_HELD_ENDPOINTS.discard(input.id), {}),
 		onSuccess: () => {
 			toastStore.show({ message: 'Discarded', type: 'info' });
 			void invalidateTasks();
@@ -407,7 +411,7 @@ export interface HeldReverifyResponse {
 export function reverifyHeldTrack() {
 	return createMutation(() => ({
 		mutationFn: (input: HeldActionInput) =>
-			api.global.post<HeldReverifyResponse>(API.downloads.heldReverify(input.id), {}),
+			api.global.post<HeldReverifyResponse>(DOWNLOAD_HELD_ENDPOINTS.reverify(input.id), {}),
 		onSuccess: (data: HeldReverifyResponse, input: HeldActionInput) => {
 			if (data.status === 'imported') {
 				toastStore.show({ message: 'Re-check confirmed it: imported', type: 'success' });
@@ -446,7 +450,7 @@ export interface HeldBulkReverifyInput {
 export function reverifyHeldBulk() {
 	return createMutation(() => ({
 		mutationFn: (input: HeldBulkReverifyInput) =>
-			api.global.post<HeldBulkReverifyResponse>(API.downloads.heldReverifyBulk(), {
+			api.global.post<HeldBulkReverifyResponse>(DOWNLOAD_HELD_ENDPOINTS.reverifyBulk(), {
 				held_ids: input.held_ids ?? null
 			}),
 		onSuccess: (data: HeldBulkReverifyResponse) => {
@@ -490,7 +494,7 @@ export function retryHeldManagementUnit() {
 	return createMutation(() => ({
 		mutationFn: (input: HeldManagementActionInput) =>
 			api.global.post<{ status: string; files: number }>(
-				API.downloads.heldManagementRetry(input.taskId),
+				DOWNLOAD_HELD_ENDPOINTS.managementRetry(input.taskId),
 				{}
 			),
 		onSuccess: (data: { files: number }, input: HeldManagementActionInput) => {
@@ -525,7 +529,7 @@ export function discardHeldManagementUnit() {
 	return createMutation(() => ({
 		mutationFn: (input: HeldManagementActionInput) =>
 			api.global.post<{ status: string; files: number }>(
-				API.downloads.heldManagementDiscard(input.taskId),
+				DOWNLOAD_HELD_ENDPOINTS.managementDiscard(input.taskId),
 				{}
 			),
 		onSuccess: (data: { files: number }) => {
@@ -552,7 +556,7 @@ export function discardHeldVerdict() {
 	return createMutation(() => ({
 		mutationFn: (input: HeldManagementActionInput) =>
 			api.global.post<{ status: string; files: number }>(
-				API.downloads.heldVerdictDiscard(input.taskId),
+				DOWNLOAD_HELD_ENDPOINTS.verdictDiscard(input.taskId),
 				{}
 			),
 		onSuccess: (data: { files: number }) => {

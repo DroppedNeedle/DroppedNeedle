@@ -87,7 +87,7 @@ const transportRules = [
 // registry), grouped by feature: edition conversions, scan diagnostics,
 // reviews, bulk review and management operations, repairs and identity
 // preparations, Library Management previews and recovery, cache sync, Free
-// Music, drop import, the download queue, held imports and upgrades. When a
+// Music, drop import and manual download search. When a
 // route lands, its call moves onto a v3() template and its builder leaves
 // that file.
 const WAITING_ON_BACKEND = ['src/lib/constants.ts'];

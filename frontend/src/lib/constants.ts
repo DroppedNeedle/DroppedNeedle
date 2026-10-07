@@ -363,25 +363,5 @@ export const API = {
 		jobs: (all: boolean = false) => `/api/v1/import/jobs${all ? '?all=true' : ''}`,
 		match: (itemId: number) => `/api/v1/import/items/${itemId}/match`,
 		discard: (itemId: number) => `/api/v1/import/items/${itemId}/discard`
-	},
-	downloads: {
-		held: (releaseGroupMbid?: string) => {
-			const params = new URLSearchParams();
-			if (releaseGroupMbid) params.set('release_group_mbid', releaseGroupMbid);
-			const qs = params.toString();
-			return `/api/v1/downloads/held${qs ? `?${qs}` : ''}`;
-		},
-		heldImport: (id: number) => `/api/v1/downloads/held/${id}/import`,
-		heldDiscard: (id: number) => `/api/v1/downloads/held/${id}/discard`,
-		heldReverify: (id: number) => `/api/v1/downloads/held/${id}/reverify`,
-		heldReverifyBulk: () => '/api/v1/downloads/held/reverify',
-		heldManagementRetry: (taskId: string) => `/api/v1/downloads/held/management/${taskId}/retry`,
-		heldManagementDiscard: (taskId: string) =>
-			`/api/v1/downloads/held/management/${taskId}/discard`,
-		heldVerdictDiscard: (taskId: string) => `/api/v1/downloads/held/verdict/${taskId}/discard`,
-		heldAudio: (id: number) => `/api/v1/downloads/held/${id}/audio`,
-		cutoffUnmet: () => '/api/v1/downloads/cutoff-unmet',
-		upgradeAlbum: () => '/api/v1/downloads/upgrade/album',
-		upgradeTrack: () => '/api/v1/downloads/upgrade/track'
 	}
 } as const;

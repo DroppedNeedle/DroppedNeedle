@@ -12,7 +12,7 @@
 	import { Check, Pause, Play, RotateCcw, X } from 'lucide-svelte';
 
 	import { getApiUrl } from '$lib/api/api-utils';
-	import { API } from '$lib/constants';
+	import { DOWNLOAD_HELD_ENDPOINTS } from '$lib/queries/downloads/endpoints';
 	import {
 		discardHeldTrack,
 		importHeldTrack,
@@ -46,13 +46,18 @@
 			? err.message
 			: null;
 	});
-	// collision holds verified the file - only the destination is taken, so the lead
-	// sentence differs from the couldn't-confirm-it recording copy below.
+	// The server explains every hold in one plain sentence plus what to do; older rows
+	// without it fall back to the copy below (a collision verified the file - only the
+	// destination is taken).
 	const header = $derived(
-		held.reason === 'target_occupied'
-			? 'Downloaded and verified, but the destination is taken.'
-			: "Downloaded, but couldn't confirm it's the right recording."
+		held.reason_text ??
+			(held.reason === 'target_occupied'
+				? 'Downloaded and verified, but the destination is taken.'
+				: "Downloaded, but couldn't confirm it's the right recording.")
 	);
+	// Only an AcoustID hold can be re-checked; the server refuses the rest.
+	const canRecheck = $derived(held.reason === 'fingerprint_mismatch');
+	const isUpgrade = $derived(held.origin === 'upgrade');
 	// what the rejecting check SAW - the reason we couldn't auto-confirm it, so the human
 	// decides informed. The evidence source depends on the hold reason: AcoustID's
 	// identification (fingerprint_mismatch), the file's own tags (tag_mismatch), the
@@ -94,7 +99,7 @@
 
 	function ensureSource(): void {
 		if (audioEl && !sourced) {
-			audioEl.src = getApiUrl(API.downloads.heldAudio(held.id));
+			audioEl.src = getApiUrl(DOWNLOAD_HELD_ENDPOINTS.audio(held.id));
 			sourced = true;
 		}
 	}
@@ -132,6 +137,9 @@
 		{header}{#if evidence}
 			{evidence}.{/if}
 	</p>
+	{#if held.reason_action}
+		<p class="text-xs text-base-content/70">{held.reason_action}</p>
+	{/if}
 	{#if expectedLength != null && total > 0}
 		<p class="text-[11px] tabular-nums text-base-content/50">
 			File length {fmt(total)} · expected {fmt(expectedLength)}
@@ -194,9 +202,12 @@
 					{ onSuccess: () => (done = true) }
 				)}
 			disabled={busy}
-			title="Add this file to your library anyway"
+			title={isUpgrade
+				? 'Replace your current copy with this file if it is better. The old file goes to the recycle bin'
+				: 'Add this file to your library anyway'}
 		>
-			<Check class="h-3.5 w-3.5" /> Import anyway
+			<Check class="h-3.5 w-3.5" />
+			{isUpgrade ? 'Import upgrade' : 'Import anyway'}
 		</button>
 		<button
 			class="btn btn-ghost btn-xs text-base-content/60 hover:text-error"
@@ -210,22 +221,24 @@
 		>
 			<X class="h-3.5 w-3.5" /> Discard
 		</button>
-		<button
-			class="btn btn-ghost btn-xs"
-			onclick={() =>
-				reverifyMut.mutate(
-					{ id: held.id, release_group_mbid: held.release_group_mbid },
-					{ onSuccess: handleReverifySuccess }
-				)}
-			disabled={busy}
-			title="Run the fingerprint check again. Confident matches import automatically"
-		>
-			{#if reverifyMut.isPending}
-				<span class="loading loading-spinner loading-xs" aria-hidden="true"></span> Checking...
-			{:else}
-				<RotateCcw class="h-3.5 w-3.5" /> Re-check
-			{/if}
-		</button>
+		{#if canRecheck}
+			<button
+				class="btn btn-ghost btn-xs"
+				onclick={() =>
+					reverifyMut.mutate(
+						{ id: held.id, release_group_mbid: held.release_group_mbid },
+						{ onSuccess: handleReverifySuccess }
+					)}
+				disabled={busy}
+				title="Run the fingerprint check again. Confident matches import automatically"
+			>
+				{#if reverifyMut.isPending}
+					<span class="loading loading-spinner loading-xs" aria-hidden="true"></span> Checking...
+				{:else}
+					<RotateCcw class="h-3.5 w-3.5" /> Re-check
+				{/if}
+			</button>
+		{/if}
 	</div>
 	{#if actionError}
 		<p class="text-xs text-error" role="alert">{actionError}</p>

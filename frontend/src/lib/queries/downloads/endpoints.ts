@@ -4,8 +4,6 @@ import { v3 } from '$lib/api/v3/endpoint';
 // built through the typed registry: every template is a literal the
 // contract-coverage gate verifies against the generated spec, and hooks
 // import from here so a route rename touches this file only.
-// Held and upgrade surfaces have no v3 HTTP equivalent yet and stay on
-// their v1 builders until they land.
 export const DOWNLOAD_SETTINGS_ENDPOINTS = {
 	slskdConfig: () => v3('/api/v3/settings/download-client/config'),
 	slskdTest: () => v3('/api/v3/settings/download-client/test'),
@@ -69,4 +67,35 @@ export const DOWNLOAD_SEARCH_ENDPOINTS = {
 	pick: (jobId: string) => v3('/api/v3/downloads/search/{job_id}/pick', byJob(jobId)),
 	dismiss: (jobId: string) => v3('/api/v3/downloads/search/{job_id}/dismiss', byJob(jobId)),
 	cancel: (jobId: string) => v3('/api/v3/downloads/search/{job_id}/cancel', byJob(jobId))
+} as const;
+
+// v3 held-import review URLs: the held list (all, or one album's), the
+// per-file actions and audio preview, and the per-download actions.
+const byHeld = (id: number) => ({ path: { held_id: id } });
+const bySourceTask = (taskId: string) => ({ path: { source_task_id: taskId } });
+
+export const DOWNLOAD_HELD_ENDPOINTS = {
+	list: (releaseGroupMbid?: string) =>
+		v3('/api/v3/downloads/held', {
+			query: { release_group_mbid: releaseGroupMbid || undefined }
+		}),
+	import: (id: number) => v3('/api/v3/downloads/held/{held_id}/import', byHeld(id)),
+	discard: (id: number) => v3('/api/v3/downloads/held/{held_id}/discard', byHeld(id)),
+	reverify: (id: number) => v3('/api/v3/downloads/held/{held_id}/reverify', byHeld(id)),
+	reverifyBulk: () => v3('/api/v3/downloads/held/reverify'),
+	audio: (id: number) => v3('/api/v3/downloads/held/{held_id}/audio', byHeld(id)),
+	managementRetry: (taskId: string) =>
+		v3('/api/v3/downloads/held/management/{source_task_id}/retry', bySourceTask(taskId)),
+	managementDiscard: (taskId: string) =>
+		v3('/api/v3/downloads/held/management/{source_task_id}/discard', bySourceTask(taskId)),
+	verdictDiscard: (taskId: string) =>
+		v3('/api/v3/downloads/held/verdict/{source_task_id}/discard', bySourceTask(taskId))
+} as const;
+
+// v3 quality-upgrade URLs: the below-cutoff worklist and the album and
+// track upgrade asks.
+export const DOWNLOAD_UPGRADE_ENDPOINTS = {
+	cutoffUnmet: () => v3('/api/v3/downloads/cutoff-unmet'),
+	album: () => v3('/api/v3/downloads/upgrade/album'),
+	track: () => v3('/api/v3/downloads/upgrade/track')
 } as const;

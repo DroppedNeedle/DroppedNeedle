@@ -100,7 +100,10 @@ function held(track: number): HeldImport {
 		evidence_artist: 'Poppy',
 		evidence_score: null,
 		management_retry_count: 0,
-		management_next_retry_at: null
+		management_next_retry_at: null,
+		reason_text: null,
+		reason_action: null,
+		origin: 'user'
 	};
 }
 
