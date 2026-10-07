@@ -1113,8 +1113,16 @@ impl AcquireSetup {
     /// principal-translation layer (both extract the requests
     /// `Principal`) so their handlers keep working unchanged.
     pub fn gated_router(&self) -> Router {
+        let upgrades = super::downloads::upgrades::Upgrades::new(
+            self.flows.worklist.clone(),
+            self.flows.sweep_deps.policy.clone(),
+            self.dispatch.clone(),
+        );
         let legs = super::requests::requests_core_routes(self.requests.clone())
-            .merge(super::downloads::downloads_core_routes(self.worker.clone()))
+            .merge(super::downloads::downloads_core_routes(
+                self.worker.clone(),
+                upgrades,
+            ))
             .merge(super::downloads::search_core_routes(
                 self.search_jobs.clone(),
             ));

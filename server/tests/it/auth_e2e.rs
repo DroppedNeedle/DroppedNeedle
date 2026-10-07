@@ -1359,6 +1359,48 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/downloads/search/{job_id}/cancel",
         Posture::User,
     ),
+    // Held imports: own files for users, every file for admins; the
+    // per-download library actions are admin only. Upgrades are curator.
+    ("GET", "/api/v3/downloads/held", Posture::User),
+    ("POST", "/api/v3/downloads/held/reverify", Posture::User),
+    (
+        "POST",
+        "/api/v3/downloads/held/{held_id}/import",
+        Posture::User,
+    ),
+    (
+        "POST",
+        "/api/v3/downloads/held/{held_id}/discard",
+        Posture::User,
+    ),
+    (
+        "POST",
+        "/api/v3/downloads/held/{held_id}/reverify",
+        Posture::User,
+    ),
+    (
+        "GET",
+        "/api/v3/downloads/held/{held_id}/audio",
+        Posture::User,
+    ),
+    (
+        "POST",
+        "/api/v3/downloads/held/management/{source_task_id}/retry",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/downloads/held/management/{source_task_id}/discard",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/downloads/held/verdict/{source_task_id}/discard",
+        Posture::User,
+    ),
+    ("GET", "/api/v3/downloads/cutoff-unmet", Posture::Curator),
+    ("POST", "/api/v3/downloads/upgrade/album", Posture::Curator),
+    ("POST", "/api/v3/downloads/upgrade/track", Posture::Curator),
     // Stage-4 library reads.
     ("GET", "/api/v3/library/albums", Posture::User),
     ("GET", "/api/v3/library/albums/{id}", Posture::User),

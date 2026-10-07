@@ -16,11 +16,17 @@
 //! - [`landing_rows`] held files and per-landing import decisions.
 //! - [`queue`] the queue view and its actions, over [`queue_rows`].
 //! - [`reasons`] why a task sits where it does, in plain words.
-//! - [`http`] the queue routes.
+//! - [`held`] the held-import review, over [`held_rows`].
+//! - [`upgrades`] the quality-upgrade worklist and asks.
+//! - [`http`] the queue routes, plus [`held_http`] for held files and
+//!   upgrades.
 //!
 //! Quirk citations name the v2 behavior each port preserves, so a reader
 //! can diff against the Python without guessing.
 
+pub mod held;
+pub mod held_http;
+pub mod held_rows;
 pub mod http;
 pub mod landing_rows;
 pub mod manifest;
@@ -33,6 +39,7 @@ pub mod recovery;
 pub mod sources;
 pub mod state;
 pub mod store;
+pub mod upgrades;
 pub mod watchdog;
 
 #[cfg(any(test, feature = "test-support"))]

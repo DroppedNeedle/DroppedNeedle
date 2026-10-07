@@ -149,7 +149,7 @@ pub struct LandingReport {
 
 /// Hold codes that say nothing against the source: the files were fine,
 /// the library side could not take them yet.
-fn is_local_hold(code: &str) -> bool {
+pub fn is_local_hold(code: &str) -> bool {
     matches!(code, "target_occupied" | UPGRADE_PENDING | UPGRADE_BLOCKED)
 }
 
@@ -455,7 +455,10 @@ impl LandingService {
                     .await;
                 let tier = landing.audio[*file].tier();
                 if !copies.is_empty() && copies.iter().all(|copy| quality::beats(tier, copy.tier)) {
-                    replaces.insert(*file, copies.into_iter().map(|copy| copy.track_id).collect());
+                    replaces.insert(
+                        *file,
+                        copies.into_iter().map(|copy| copy.track_id).collect(),
+                    );
                     plan.import.push((*file, track));
                 }
             }

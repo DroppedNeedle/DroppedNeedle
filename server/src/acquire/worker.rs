@@ -557,6 +557,11 @@ impl DownloadWorker {
         self
     }
 
+    /// The landing, when imports are wired.
+    pub fn landing(&self) -> Option<&Arc<LandingService>> {
+        self.landing.as_ref()
+    }
+
     /// Resolve requests as soon as a landing settles a task.
     pub fn with_settled(mut self, hook: SettledHook) -> Self {
         self.settled = Some(hook);

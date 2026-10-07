@@ -4147,6 +4147,323 @@
         }
       }
     },
+    "/api/v3/downloads/cutoff-unmet": {
+      "get": {
+        "tags": [
+          "crate::acquire::downloads::held_http"
+        ],
+        "summary": "Albums below the quality cutoff, worst first; empty while upgrades are\noff. Admins and trusted users. `GET /api/v3/downloads/cutoff-unmet`.",
+        "operationId": "cutoff_unmet_handler",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CutoffUnmetResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/held": {
+      "get": {
+        "tags": [
+          "crate::acquire::downloads::held_http"
+        ],
+        "summary": "Held files the viewer may act on, newest first; one album's with\n`release_group_mbid`. `GET /api/v3/downloads/held`.",
+        "operationId": "list_held_handler",
+        "parameters": [
+          {
+            "name": "release_group_mbid",
+            "in": "query",
+            "description": "Only this album's held files.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeldListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/held/management/{source_task_id}/discard": {
+      "post": {
+        "tags": [
+          "crate::acquire::downloads::held_http"
+        ],
+        "summary": "Delete every file of a download that waits on the library. Admin only.\n`POST /api/v3/downloads/held/management/{source_task_id}/discard`.",
+        "operationId": "discard_local_handler",
+        "parameters": [
+          {
+            "name": "source_task_id",
+            "in": "path",
+            "description": "Download task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeldUnitResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/held/management/{source_task_id}/retry": {
+      "post": {
+        "tags": [
+          "crate::acquire::downloads::held_http"
+        ],
+        "summary": "Import every file of a download that waits on the library (a taken\ndestination, an old copy that could not be recycled). Admin only.\n`POST /api/v3/downloads/held/management/{source_task_id}/retry`.",
+        "operationId": "retry_local_handler",
+        "parameters": [
+          {
+            "name": "source_task_id",
+            "in": "path",
+            "description": "Download task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeldUnitResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/held/reverify": {
+      "post": {
+        "tags": [
+          "crate::acquire::downloads::held_http"
+        ],
+        "summary": "Re-check AcoustID holds in bulk (at most 25 checks a call; other holds\nanswer `skipped`). `POST /api/v3/downloads/held/reverify`.",
+        "operationId": "reverify_bulk_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HeldBulkReverifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeldBulkReverifyResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/held/verdict/{source_task_id}/discard": {
+      "post": {
+        "tags": [
+          "crate::acquire::downloads::held_http"
+        ],
+        "summary": "Delete every file a download's checks held and clear its wrong-product\nverdict. `POST /api/v3/downloads/held/verdict/{source_task_id}/discard`.",
+        "operationId": "discard_verdict_handler",
+        "parameters": [
+          {
+            "name": "source_task_id",
+            "in": "path",
+            "description": "Download task id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeldUnitResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/held/{held_id}/audio": {
+      "get": {
+        "tags": [
+          "crate::acquire::downloads::held_http"
+        ],
+        "summary": "Play a held file for the review, with byte ranges so the player can\nseek. `GET /api/v3/downloads/held/{held_id}/audio`.",
+        "operationId": "held_audio_handler",
+        "parameters": [
+          {
+            "name": "held_id",
+            "in": "path",
+            "description": "Held file id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The held file",
+            "content": {
+              "application/octet-stream": {}
+            }
+          },
+          "206": {
+            "description": "The requested byte range",
+            "content": {
+              "application/octet-stream": {}
+            }
+          },
+          "416": {
+            "description": "The range lies outside the file"
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/held/{held_id}/discard": {
+      "post": {
+        "tags": [
+          "crate::acquire::downloads::held_http"
+        ],
+        "summary": "Delete a held file; the album's automatic retry resumes.\n`POST /api/v3/downloads/held/{held_id}/discard`.",
+        "operationId": "discard_held_handler",
+        "parameters": [
+          {
+            "name": "held_id",
+            "in": "path",
+            "description": "Held file id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeldActionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/held/{held_id}/import": {
+      "post": {
+        "tags": [
+          "crate::acquire::downloads::held_http"
+        ],
+        "summary": "Import a held file as it is, into the album's chosen edition. For an\nupgrade, the library's copy is replaced only by a better file and goes\nto the recycle bin. `POST /api/v3/downloads/held/{held_id}/import`.",
+        "operationId": "import_held_handler",
+        "parameters": [
+          {
+            "name": "held_id",
+            "in": "path",
+            "description": "Held file id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeldActionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/held/{held_id}/reverify": {
+      "post": {
+        "tags": [
+          "crate::acquire::downloads::held_http"
+        ],
+        "summary": "Fingerprint an AcoustID-held file again and import it when AcoustID\nnow agrees. `POST /api/v3/downloads/held/{held_id}/reverify`.",
+        "operationId": "reverify_held_handler",
+        "parameters": [
+          {
+            "name": "held_id",
+            "in": "path",
+            "description": "Held file id",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeldReverifyResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/downloads/quarantine": {
       "get": {
         "tags": [
@@ -4690,6 +5007,68 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RetryDownloadResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/upgrade/album": {
+      "post": {
+        "tags": [
+          "crate::acquire::downloads::held_http"
+        ],
+        "summary": "Fetch a better copy of an album below the cutoff. Admins and trusted\nusers. `POST /api/v3/downloads/upgrade/album`.",
+        "operationId": "upgrade_album_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpgradeAlbumRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpgradeRequestResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/upgrade/track": {
+      "post": {
+        "tags": [
+          "crate::acquire::downloads::held_http"
+        ],
+        "summary": "Fetch a better copy of one track below the cutoff. Admins and trusted\nusers. `POST /api/v3/downloads/upgrade/track`.",
+        "operationId": "upgrade_track_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpgradeTrackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpgradeRequestResponse"
                 }
               }
             }
@@ -24487,6 +24866,78 @@
           }
         }
       },
+      "CutoffUnmetItem": {
+        "type": "object",
+        "description": "One album below the quality cutoff.",
+        "required": [
+          "release_group_mbid",
+          "current_tier",
+          "track_count"
+        ],
+        "properties": {
+          "album_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "artist_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "artist_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "current_tier": {
+            "type": "string",
+            "description": "The album's worst file tier."
+          },
+          "release_group_mbid": {
+            "type": "string"
+          },
+          "track_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "CutoffUnmetResponse": {
+        "type": "object",
+        "description": "The upgrade worklist.",
+        "required": [
+          "items",
+          "cutoff",
+          "upgrade_allowed"
+        ],
+        "properties": {
+          "cutoff": {
+            "type": "string",
+            "description": "The tier albums must reach."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CutoffUnmetItem"
+            },
+            "description": "Empty while upgrades are switched off."
+          },
+          "upgrade_allowed": {
+            "type": "boolean"
+          }
+        }
+      },
       "DecadeShelf": {
         "type": "object",
         "description": "One decade shelf. Shelves carry counts; fetch the shelf's albums\nthrough browse with the same `decade` value.",
@@ -28756,6 +29207,335 @@
           "status": {
             "type": "string",
             "description": "Service state, `ok` when serving."
+          }
+        }
+      },
+      "HeldActionResponse": {
+        "type": "object",
+        "description": "What an import or discard did.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "final_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Where the imported file now lives."
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A note when the outcome needs one (an upgrade's file that was no\nbetter than the library's copy)."
+          },
+          "status": {
+            "type": "string",
+            "description": "`imported` or `discarded`."
+          }
+        }
+      },
+      "HeldBulkReverifyItem": {
+        "type": "object",
+        "description": "One file of a bulk re-check.",
+        "required": [
+          "held_id",
+          "status"
+        ],
+        "properties": {
+          "final_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "held_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why a file was skipped or failed."
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "description": "`imported`, `still_held`, `skipped` or `error`."
+          }
+        }
+      },
+      "HeldBulkReverifyRequest": {
+        "type": "object",
+        "description": "Bulk re-check: these held ids, in order, or every held file.",
+        "properties": {
+          "held_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        }
+      },
+      "HeldBulkReverifyResponse": {
+        "type": "object",
+        "description": "A bulk re-check's results.",
+        "required": [
+          "results"
+        ],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HeldBulkReverifyItem"
+            }
+          }
+        }
+      },
+      "HeldImportResponse": {
+        "type": "object",
+        "description": "One held file.",
+        "required": [
+          "id",
+          "reason",
+          "source",
+          "origin",
+          "created_at",
+          "management_retry_count"
+        ],
+        "properties": {
+          "album_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "artist_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "disc_number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "duration_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "evidence_artist": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "evidence_score": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "evidence_title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the rejecting check saw: the title and artist AcoustID heard\nor the file's tags name, and AcoustID's score."
+          },
+          "expected_duration_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "file_format": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "management_next_retry_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "management_retry_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "origin": {
+            "type": "string",
+            "description": "`user`, `upgrade`, ... An upgrade's file replaces the library's\ncopy only when it is better."
+          },
+          "original_filename": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "description": "Stable reason code (`fingerprint_mismatch`, `target_occupied`, ...)."
+          },
+          "reason_action": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What the person can do about it."
+          },
+          "reason_detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Specifics: which file, which marker."
+          },
+          "reason_text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The reason as one plain sentence."
+          },
+          "recording_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "release_track_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "description": "`soulseek`, `usenet` or `plugin:<key>`."
+          },
+          "source_task_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "track_number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "track_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "HeldListResponse": {
+        "type": "object",
+        "description": "Held files, newest first.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HeldImportResponse"
+            }
+          }
+        }
+      },
+      "HeldReverifyResponse": {
+        "type": "object",
+        "description": "What a fingerprint re-check did.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "final_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "description": "`imported` when AcoustID now agrees, else `still_held`."
+          }
+        }
+      },
+      "HeldUnitResponse": {
+        "type": "object",
+        "description": "A per-download held action's outcome.",
+        "required": [
+          "status",
+          "files"
+        ],
+        "properties": {
+          "files": {
+            "type": "integer",
+            "description": "Files acted on.",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string",
+            "description": "`imported` or `discarded`."
           }
         }
       },
@@ -43476,6 +44256,103 @@
               "null"
             ],
             "description": "Preferred source type."
+          }
+        }
+      },
+      "UpgradeAlbumRequest": {
+        "type": "object",
+        "description": "Upgrade one album.",
+        "required": [
+          "release_group_mbid",
+          "artist_name",
+          "album_title"
+        ],
+        "properties": {
+          "album_title": {
+            "type": "string"
+          },
+          "artist_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "artist_name": {
+            "type": "string"
+          },
+          "release_group_mbid": {
+            "type": "string"
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "UpgradeRequestResponse": {
+        "type": "object",
+        "description": "What an upgrade ask did.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "`queued`, or `satisfied` when nothing needed queueing (the copy\nmeets the cutoff, upgrades are off, or it is already downloading)."
+          },
+          "task_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "UpgradeTrackRequest": {
+        "type": "object",
+        "description": "Upgrade one track.",
+        "required": [
+          "recording_mbid",
+          "artist_name",
+          "track_title"
+        ],
+        "properties": {
+          "album_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "artist_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "artist_name": {
+            "type": "string"
+          },
+          "duration_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "recording_mbid": {
+            "type": "string"
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "track_title": {
+            "type": "string"
           }
         }
       },

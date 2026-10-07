@@ -485,6 +485,21 @@ impl DownloadWorker {
         }
     }
 
+    /// A task a person completed by hand (its last held files imported):
+    /// announce it and resolve its requests like a landing would.
+    pub async fn announce_completed(&self, task: &TaskRow) {
+        crate::acquire::plugin_events::download_event(
+            &self.plugins,
+            crate::plugins::runtime::EventKind::DownloadCompleted,
+            task,
+            &task.source,
+            "completed",
+        );
+        if let Some(hook) = &self.settled {
+            hook(task.clone(), TaskStatus::Completed).await;
+        }
+    }
+
     /// Drop a task's poll memory and landing waits.
     fn forget_landing(&self, task_id: &str) {
         if let Ok(mut cache) = self.poll_cache.lock() {

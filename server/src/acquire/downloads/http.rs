@@ -2,7 +2,8 @@
 //! actions (cancel, retry, next source, reimport), the bulk actions
 //! (clear, stop all retries, retry all failed), the activity summary, the
 //! admin quarantine list, and manual album searches (start, view, pick,
-//! dismiss, cancel).
+//! dismiss, cancel). The held-import and upgrade routes live in
+//! [`super::held_http`] and mount here.
 //!
 //! Every route sits inside the session gate. Tasks follow v2's ownership:
 //! admins see and act on every task, everyone else on their own (another
@@ -21,10 +22,13 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
+use super::held::HeldImports;
+use super::held_http::{self, ReviewState};
 use super::queue::{DownloadQueue, QueueError, TaskFile, TaskView};
 use super::queue_rows::{ListFilter, Viewer};
 use super::state::TaskStatus;
 use super::store::QuarantineRow;
+use super::upgrades::Upgrades;
 use crate::acquire::requests::{
     auth::Principal,
     error::RequestsError,
@@ -755,11 +759,65 @@ pub async fn reimport_task_handler(
 
 /// Queue routes without an auth layer. The app mounts this inside the
 /// session gate under the shared principal-translation layer.
-pub fn downloads_core_routes(worker: Arc<DownloadWorker>) -> Router {
+pub fn downloads_core_routes(worker: Arc<DownloadWorker>, upgrades: Upgrades) -> Router {
+    let review = ReviewState {
+        held: HeldImports::new(worker.clone()),
+        upgrades,
+    };
     let state = DownloadsState {
         queue: DownloadQueue::new(worker.clone()),
         worker,
     };
+    let review = Router::new()
+        .route(
+            "/downloads/held",
+            routing::get(held_http::list_held_handler),
+        )
+        .route(
+            "/downloads/held/reverify",
+            routing::post(held_http::reverify_bulk_handler),
+        )
+        .route(
+            "/downloads/held/{held_id}/import",
+            routing::post(held_http::import_held_handler),
+        )
+        .route(
+            "/downloads/held/{held_id}/discard",
+            routing::post(held_http::discard_held_handler),
+        )
+        .route(
+            "/downloads/held/{held_id}/reverify",
+            routing::post(held_http::reverify_held_handler),
+        )
+        .route(
+            "/downloads/held/{held_id}/audio",
+            routing::get(held_http::held_audio_handler),
+        )
+        .route(
+            "/downloads/held/management/{source_task_id}/retry",
+            routing::post(held_http::retry_local_handler),
+        )
+        .route(
+            "/downloads/held/management/{source_task_id}/discard",
+            routing::post(held_http::discard_local_handler),
+        )
+        .route(
+            "/downloads/held/verdict/{source_task_id}/discard",
+            routing::post(held_http::discard_verdict_handler),
+        )
+        .route(
+            "/downloads/cutoff-unmet",
+            routing::get(held_http::cutoff_unmet_handler),
+        )
+        .route(
+            "/downloads/upgrade/album",
+            routing::post(held_http::upgrade_album_handler),
+        )
+        .route(
+            "/downloads/upgrade/track",
+            routing::post(held_http::upgrade_track_handler),
+        )
+        .with_state(review);
     Router::new()
         .route("/downloads/tasks", routing::get(list_tasks_handler))
         .route("/downloads/tasks/{task_id}", routing::get(get_task_handler))
@@ -805,12 +863,18 @@ pub fn downloads_core_routes(worker: Arc<DownloadWorker>) -> Router {
             routing::delete(delete_quarantine_handler),
         )
         .with_state(state)
+        .merge(review)
 }
 
-/// Queue routes behind the header test gate.
+/// Queue routes behind the header test gate, with upgrades switched off.
 #[cfg(any(test, feature = "test-support"))]
 pub fn downloads_router(worker: Arc<DownloadWorker>) -> Router {
-    downloads_core_routes(worker).layer(axum::middleware::from_fn(
+    let upgrades = Upgrades::new(
+        crate::acquire::flows::stores::UpgradeWorklist::new(worker.journal().db().clone()),
+        Arc::new(crate::acquire::flows::stores::UpgradePolicy::default),
+        Arc::new(crate::acquire::flows::seams::ScriptedDownloads::new()),
+    );
+    downloads_core_routes(worker, upgrades).layer(axum::middleware::from_fn(
         crate::acquire::requests::auth::gate,
     ))
 }
