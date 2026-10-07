@@ -344,10 +344,6 @@ export const API = {
 		previewArtwork: (jobId: string, ordinal: number, sha256: string) =>
 			`/api/v1/library/management/previews/${encodeURIComponent(jobId)}/items/${ordinal}/artwork/${encodeURIComponent(sha256)}`
 	},
-	cacheSync: {
-		status: () => '/api/v1/cache/sync/status',
-		cancel: () => '/api/v1/cache/sync/cancel'
-	},
 	// profile + connections + spotify builders lived here until the profile
 	// seam migration moved them onto the v3 registry (their endpoints.ts
 	// files); only stragglers with out-of-scope consumers remain.

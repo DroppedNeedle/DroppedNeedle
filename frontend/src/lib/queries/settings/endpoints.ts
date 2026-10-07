@@ -31,5 +31,12 @@ export const SETTINGS_ENDPOINTS = {
 // Server-wide cache maintenance (admin).
 export const ADMIN_CACHE_ENDPOINTS = {
 	stats: () => v3('/api/v3/admin/cache/stats'),
-	clear: () => v3('/api/v3/admin/cache/clear')
+	clear: () => v3('/api/v3/admin/cache/clear'),
+	precacheRun: () => v3('/api/v3/admin/precache/run')
+} as const;
+
+// Library image refresh progress (any user) and cancel (curators).
+export const CACHE_SYNC_ENDPOINTS = {
+	status: () => v3('/api/v3/cache/sync/status'),
+	cancel: () => v3('/api/v3/cache/sync/cancel')
 } as const;

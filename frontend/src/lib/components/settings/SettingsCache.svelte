@@ -2,12 +2,15 @@
 	import { ApiError } from '$lib/api/client';
 	import {
 		createClearCacheMutation,
+		createPrecacheRunMutation,
 		getCacheStatsQuery,
 		type CacheClearBody
 	} from '$lib/queries/settings/AdminCacheQueries.svelte';
+	import { syncStatus } from '$lib/stores/syncStatus.svelte';
 
 	const statsQuery = getCacheStatsQuery();
 	const clearMutation = createClearCacheMutation();
+	const precacheMutation = createPrecacheRunMutation();
 
 	let message = $state('');
 	let messageType = $state<'success' | 'error'>('success');
@@ -30,17 +33,49 @@
 		clearTimer = type === 'success' ? setTimeout(() => (message = ''), 5000) : null;
 	}
 
-	async function clearCache(source: string | null) {
-		const prompt = source
-			? `Clear the cached ${source} responses?`
-			: 'Clear every cached provider response? They are fetched again on demand.';
+	function formatBytes(bytes: number): string {
+		if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+		if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+		return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+	}
+
+	const PROMPTS: Record<string, string> = {
+		all: 'Clear every cached provider response and image? They are fetched again on demand.',
+		covers: 'Delete the cached album covers and artist images? They are fetched again on demand.'
+	};
+
+	async function clear(body: CacheClearBody, prompt: string) {
 		if (!confirm(prompt)) return;
-		const body: CacheClearBody = source ? { scope: 'source', source } : { scope: 'all' };
 		try {
 			const result = await clearMutation.mutateAsync(body);
 			showMessage(result.message, 'success');
 		} catch (error) {
 			showMessage(error instanceof ApiError ? error.message : "Couldn't clear the cache", 'error');
+		}
+	}
+
+	function clearSource(source: string) {
+		return clear({ scope: 'source', source }, `Clear the cached ${source} responses?`);
+	}
+
+	async function refreshImages() {
+		try {
+			await precacheMutation.mutateAsync();
+			syncStatus.undismiss();
+			syncStatus.checkStatus();
+			showMessage(
+				'Library image refresh started. Progress shows at the bottom of the page.',
+				'success'
+			);
+		} catch (error) {
+			showMessage(
+				error instanceof ApiError && error.status === 409
+					? 'A library image refresh is already running.'
+					: error instanceof ApiError
+						? error.message
+						: "Couldn't start the refresh",
+				'error'
+			);
 		}
 	}
 </script>
@@ -49,8 +84,8 @@
 	<div class="card-body">
 		<h2 class="card-title text-2xl mb-4">Cache management</h2>
 		<p class="text-base-content/70 mb-6">
-			Provider responses (MusicBrainz, Last.fm, ListenBrainz and the rest) are kept in memory and
-			refetched on demand once cleared.
+			Provider responses (MusicBrainz, Last.fm, ListenBrainz and the rest) are kept in memory, and
+			album covers and artist images on disk. Anything cleared is fetched again on demand.
 		</p>
 
 		{#if statsQuery.isPending}
@@ -62,9 +97,34 @@
 				<span>Admin access is required to view cache statistics.</span>
 			</div>
 		{:else if stats}
-			<div class="stat mb-6 px-0">
-				<div class="stat-title">Cached provider responses</div>
-				<div class="stat-value text-primary">{stats.entries}</div>
+			<div class="stats stats-vertical sm:stats-horizontal bg-base-100 mb-6 w-full">
+				<div class="stat">
+					<div class="stat-title">Cached provider responses</div>
+					<div class="stat-value text-primary">{stats.entries}</div>
+				</div>
+				<div class="stat">
+					<div class="stat-title">Cached images</div>
+					<div class="stat-value text-primary">{stats.cover_images}</div>
+					<div class="stat-desc">{formatBytes(stats.cover_bytes)} on disk</div>
+				</div>
+			</div>
+
+			<div class="space-y-2 mb-6">
+				<h3 class="text-xl font-semibold">Library images</h3>
+				<p class="text-sm text-base-content/70">
+					Fetch artist images, album covers and page details for your whole library now, so pages
+					load fast later. It runs in the background and skips anything already cached.
+				</p>
+				<button
+					class="btn btn-primary btn-sm"
+					onclick={refreshImages}
+					disabled={precacheMutation.isPending || syncStatus.isActive}
+				>
+					{#if precacheMutation.isPending}
+						<span class="loading loading-spinner loading-sm"></span>
+					{/if}
+					{syncStatus.isActive ? 'Refresh running' : 'Refresh library images'}
+				</button>
 			</div>
 
 			<div class="space-y-4">
@@ -73,15 +133,22 @@
 					{#each stats.sources ?? [] as source (source)}
 						<button
 							class="btn btn-outline btn-sm"
-							onclick={() => clearCache(source)}
+							onclick={() => clearSource(source)}
 							disabled={clearMutation.isPending}
 						>
 							Clear {source}
 						</button>
 					{/each}
 					<button
+						class="btn btn-outline btn-sm"
+						onclick={() => clear({ scope: 'covers' }, PROMPTS.covers)}
+						disabled={clearMutation.isPending}
+					>
+						Clear images
+					</button>
+					<button
 						class="btn btn-error btn-sm"
-						onclick={() => clearCache(null)}
+						onclick={() => clear({ scope: 'all' }, PROMPTS.all)}
 						disabled={clearMutation.isPending}
 					>
 						{#if clearMutation.isPending}

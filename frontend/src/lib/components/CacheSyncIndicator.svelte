@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { syncStatus } from '$lib/stores/syncStatus.svelte';
 	import { playerStore } from '$lib/stores/player.svelte';
+	import { authStore } from '$lib/stores/authStore.svelte';
 	import {
 		Users,
 		Disc3,
@@ -24,6 +25,17 @@
 	let PhaseIcon = $derived(
 		syncStatus.phase ? (phaseIcons[syncStatus.phase] ?? LoaderCircle) : LoaderCircle
 	);
+
+	let stopping = $state(false);
+
+	async function stop() {
+		stopping = true;
+		try {
+			await syncStatus.cancelSync();
+		} finally {
+			stopping = false;
+		}
+	}
 
 	let isComplete = $derived(!syncStatus.isActive && !syncStatus.error && syncStatus.showIndicator);
 
@@ -150,6 +162,17 @@
 					{#if syncStatus.currentItem}
 						<div class="text-xs text-base-content/35 truncate mt-1">
 							{syncStatus.currentItem}
+						</div>
+					{/if}
+
+					{#if authStore.isTrusted}
+						<div class="flex justify-end mt-2">
+							<button class="btn btn-ghost btn-xs" onclick={stop} disabled={stopping}>
+								{#if stopping}
+									<span class="loading loading-spinner loading-xs"></span>
+								{/if}
+								Stop
+							</button>
 						</div>
 					{/if}
 				{/if}

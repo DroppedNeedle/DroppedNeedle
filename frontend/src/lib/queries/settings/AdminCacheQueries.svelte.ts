@@ -21,6 +21,11 @@ export const getCacheStatsQuery = () =>
 		queryFn: ({ signal }) => api.global.v3.GET(ADMIN_CACHE_ENDPOINTS.stats(), { signal })
 	}));
 
+export const createPrecacheRunMutation = () =>
+	createMutation(() => ({
+		mutationFn: () => api.global.v3.POST(ADMIN_CACHE_ENDPOINTS.precacheRun())
+	}));
+
 export const createClearCacheMutation = () =>
 	createMutation(() => ({
 		mutationFn: (body: CacheClearBody) => api.global.v3.POST(ADMIN_CACHE_ENDPOINTS.clear(), body),
