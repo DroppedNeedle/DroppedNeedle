@@ -117,7 +117,8 @@ const previewResult: MembershipPreviewResponse = {
 	identity_conflicts: [],
 	aliases: ['artist-2'],
 	automatic_groups: [],
-	reference_counts: detail.reference_counts
+	reference_counts: detail.reference_counts,
+	edition_changes: []
 };
 
 const h = vi.hoisted(() => ({

@@ -1,12 +1,15 @@
 import { createMutation } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { toastStore } from '$lib/stores/toast';
 import { invalidateLibraryCatalog } from './LibraryCatalogInvalidation';
 import { LibraryV3Api } from './LibraryV3Api';
 import { toOperationResponse } from './libraryOperationAdapters';
 import { createUuid } from '$lib/utils/uuid';
-import type { MembershipPreviewResponse, OperationResponse } from './LibraryOperationsTypes';
+import type {
+	CatalogCorrectionResponse,
+	MembershipPreviewResponse,
+	OperationResponse
+} from './LibraryOperationsTypes';
 
 export interface MembershipPreviewInput {
 	track_ids: string[];
@@ -14,22 +17,13 @@ export interface MembershipPreviewInput {
 	target_album_id?: string | null;
 	title?: string | null;
 	album_artist_name?: string | null;
+	identity_choice?: 'detach' | 'retain_manual';
 }
 
 export interface ArtistMergePreviewInput {
 	source_artist_ids: string[];
 	surviving_artist_id: string;
 	expected_revisions: Record<string, number>;
-}
-
-interface CatalogCorrectionResponse {
-	kind: string;
-	track_ids: string[];
-	source_album_ids: string[];
-	target_album_id: string | null;
-	surviving_artist_id: string | null;
-	retired_artist_ids: string[];
-	catalog_revision: number;
 }
 
 // Re-identification evaluates candidates as an operation the user confirms:
@@ -106,58 +100,82 @@ export function reenableAlbumManagement() {
 	}));
 }
 
-export function previewAlbumMembership(kind: 'split' | 'merge' | 'move' | 'reset') {
+type MembershipKind = 'split' | 'merge' | 'move' | 'reset';
+
+function previewUrl(kind: MembershipKind, albumId: string) {
+	switch (kind) {
+		case 'split':
+			return LibraryV3Api.splitPreview(albumId);
+		case 'merge':
+			return LibraryV3Api.mergePreview();
+		case 'move':
+			return LibraryV3Api.movePreview();
+		case 'reset':
+			return LibraryV3Api.resetGroupingPreview(albumId);
+	}
+}
+
+function applyUrl(kind: MembershipKind, albumId: string) {
+	switch (kind) {
+		case 'split':
+			return LibraryV3Api.split(albumId);
+		case 'merge':
+			return LibraryV3Api.merge();
+		case 'move':
+			return LibraryV3Api.move();
+		case 'reset':
+			return LibraryV3Api.resetGrouping(albumId);
+	}
+}
+
+const errorMessage = (error: unknown, fallback: string) =>
+	error instanceof Error && error.message ? error.message : fallback;
+
+// Album organization: the preview runs the change and rolls it back, so it
+// shows exactly what applying does; the token it returns applies only that.
+export function previewAlbumMembership(kind: MembershipKind) {
 	return createMutation(() => ({
-		mutationFn: (input: { albumId: string; request: MembershipPreviewInput }) => {
-			const url =
-				kind === 'split'
-					? API.library.previewAlbumSplit(input.albumId)
-					: kind === 'merge'
-						? API.library.previewAlbumMerge()
-						: kind === 'move'
-							? API.library.previewTrackMove()
-							: API.library.previewResetAlbumGrouping(input.albumId);
-			return api.global.post<MembershipPreviewResponse>(url, input.request);
-		}
+		mutationFn: (input: {
+			albumId: string;
+			request: MembershipPreviewInput;
+		}): Promise<MembershipPreviewResponse> =>
+			api.global.v3.POST(previewUrl(kind, input.albumId), input.request)
 	}));
 }
 
-export function applyAlbumMembership(kind: 'split' | 'merge' | 'move' | 'reset') {
+export function applyAlbumMembership(kind: MembershipKind) {
 	return createMutation(() => ({
 		mutationFn: (input: {
 			albumId: string;
 			request: MembershipPreviewInput;
 			previewToken: string;
-			identityChoice: 'detach' | 'retain_manual';
-		}) => {
-			const url =
-				kind === 'split'
-					? API.library.splitAlbum(input.albumId)
-					: kind === 'merge'
-						? API.library.mergeAlbums()
-						: kind === 'move'
-							? API.library.moveTracks()
-							: API.library.resetAlbumGrouping(input.albumId);
-			return api.global.post<CatalogCorrectionResponse>(url, {
+		}): Promise<CatalogCorrectionResponse> =>
+			api.global.v3.POST(applyUrl(kind, input.albumId), {
 				...input.request,
 				preview_token: input.previewToken,
-				idempotency_key: createUuid(),
-				identity_choice: input.identityChoice
-			});
-		},
+				idempotency_key: createUuid()
+			}),
 		onSuccess: async () => {
 			await invalidateLibraryCatalog();
 			toastStore.show({ message: 'Album organization updated', type: 'success' });
 		},
-		onError: () =>
-			toastStore.show({ message: 'Album organization changed; preview it again', type: 'error' })
+		onError: (error) =>
+			toastStore.show({
+				message: errorMessage(error, 'Album organization changed; preview it again'),
+				type: 'error'
+			})
 	}));
 }
 
 export function previewArtistMerge() {
 	return createMutation(() => ({
-		mutationFn: (input: ArtistMergePreviewInput) =>
-			api.global.post<MembershipPreviewResponse>(API.library.previewArtistMerge(), input)
+		mutationFn: (input: ArtistMergePreviewInput): Promise<MembershipPreviewResponse> =>
+			api.global.v3.POST(LibraryV3Api.artistMergePreview(), input),
+		onError: (error) =>
+			toastStore.show({
+				message: errorMessage(error, 'Could not preview this artist merge'),
+				type: 'error'
+			})
 	}));
 }
 
@@ -168,8 +186,8 @@ export function applyArtistMerge() {
 				preview_token: string;
 				provider_choice: 'detach' | 'retain_survivor';
 			}
-		) =>
-			api.global.post<CatalogCorrectionResponse>(API.library.mergeArtists(), {
+		): Promise<CatalogCorrectionResponse> =>
+			api.global.v3.POST(LibraryV3Api.artistMerge(), {
 				...input,
 				idempotency_key: createUuid()
 			}),
@@ -177,7 +195,10 @@ export function applyArtistMerge() {
 			await invalidateLibraryCatalog();
 			toastStore.show({ message: 'Artists merged', type: 'success' });
 		},
-		onError: () =>
-			toastStore.show({ message: 'The artists changed; preview the merge again', type: 'error' })
+		onError: (error) =>
+			toastStore.show({
+				message: errorMessage(error, 'The artists changed; preview the merge again'),
+				type: 'error'
+			})
 	}));
 }

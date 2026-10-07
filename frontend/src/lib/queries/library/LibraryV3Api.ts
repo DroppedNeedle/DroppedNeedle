@@ -140,6 +140,24 @@ export const LibraryV3Api = {
 		v3('/api/v3/library/albums/{album_id}/undo-automatic-edition', {
 			path: { album_id: albumId }
 		}),
+	// Catalog corrections: each change is previewed, then applied with the
+	// preview's token.
+	splitPreview: (albumId: string) =>
+		v3('/api/v3/library/albums/{album_id}/split-preview', { path: { album_id: albumId } }),
+	split: (albumId: string) =>
+		v3('/api/v3/library/albums/{album_id}/split', { path: { album_id: albumId } }),
+	mergePreview: () => v3('/api/v3/library/albums/merge-preview'),
+	merge: () => v3('/api/v3/library/albums/merge'),
+	movePreview: () => v3('/api/v3/library/tracks/move-preview'),
+	move: () => v3('/api/v3/library/tracks/move'),
+	resetGroupingPreview: (albumId: string) =>
+		v3('/api/v3/library/albums/{album_id}/reset-grouping-preview', {
+			path: { album_id: albumId }
+		}),
+	resetGrouping: (albumId: string) =>
+		v3('/api/v3/library/albums/{album_id}/reset-grouping', { path: { album_id: albumId } }),
+	artistMergePreview: () => v3('/api/v3/library/artists/merge-preview'),
+	artistMerge: () => v3('/api/v3/library/artists/merge'),
 	scanRuns: () => v3('/api/v3/library/scan/runs'),
 	scanRun: (runId: string) => v3('/api/v3/library/scan/runs/{id}', { path: { id: runId } }),
 	currentScanRuns: () => v3('/api/v3/library/scan/runs/current'),

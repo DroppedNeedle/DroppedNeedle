@@ -26,6 +26,7 @@
 	let targetSearch = $state('');
 	let targetAlbumId = $state<string | null>(null);
 	let identityChoice = $state<'detach' | 'retain_manual'>('detach');
+	let newTitle = $state('');
 	let confirmed = $state(false);
 	let stalePreview = $state(false);
 	let previewResult = $state<MembershipPreviewResponse | null>(null);
@@ -71,6 +72,8 @@
 		selectedTrackIds = next === 'reset' || next === 'merge' ? tracks.map((track) => track.id) : [];
 		targetSearch = '';
 		targetAlbumId = null;
+		newTitle = '';
+		identityChoice = 'detach';
 		confirmed = false;
 		stalePreview = false;
 		previewMutation.reset();
@@ -87,14 +90,25 @@
 		previewResult = null;
 	}
 
+	// Revisions are sent only when the page knows them; the preview token
+	// guards the change either way.
 	function request(): MembershipPreviewInput {
-		const revisions: Record<string, number> = { [album.id]: album.row_revision };
-		if (targetAlbum.data) revisions[targetAlbum.data.id] = targetAlbum.data.row_revision;
+		const revisions: Record<string, number> = {};
+		if (album.row_revision > 0) revisions[album.id] = album.row_revision;
+		if (targetAlbum.data && targetAlbum.data.row_revision > 0)
+			revisions[targetAlbum.data.id] = targetAlbum.data.row_revision;
 		return {
 			track_ids: selectedTrackIds,
 			expected_album_revisions: revisions,
-			target_album_id: targetAlbumId
+			target_album_id: targetAlbumId,
+			title: action === 'split' && newTitle.trim() ? newTitle.trim() : null,
+			identity_choice: identityChoice
 		};
+	}
+
+	function chooseIdentity(choice: 'detach' | 'retain_manual'): void {
+		identityChoice = choice;
+		void preview();
 	}
 
 	async function preview(): Promise<void> {
@@ -116,8 +130,7 @@
 			await applyMutation.mutateAsync({
 				albumId: album.id,
 				request: request(),
-				previewToken: previewResult.preview_token,
-				identityChoice
+				previewToken: previewResult.preview_token
 			});
 			dialog.close();
 		} catch {
@@ -129,6 +142,18 @@
 	}
 
 	const needsTarget = $derived(action === 'merge' || action === 'move');
+	const previewError = $derived(
+		previewMutation.error instanceof Error && previewMutation.error.message
+			? previewMutation.error.message
+			: 'Could not preview this grouping change.'
+	);
+	const trackTitle = (id: string) => tracks.find((track) => track.id === id)?.title ?? id;
+	const editionTone: Record<string, string> = {
+		kept: 'text-base-content/70',
+		moved: 'text-success',
+		remap_queued: 'text-info',
+		cleared: 'text-warning'
+	};
 	const canPreview = $derived(
 		selectedTrackIds.length > 0 && (!needsTarget || (targetAlbumId !== null && !!targetAlbum.data))
 	);
@@ -183,7 +208,7 @@
 		{/if}
 		{#if previewMutation.isError}
 			<div class="alert alert-error mt-4 text-sm">
-				Could not preview this grouping change. Nothing has been changed.
+				{previewError} Nothing has been changed.
 			</div>
 		{/if}
 
@@ -224,7 +249,23 @@
 			</section>
 		{/if}
 
-		{#if action !== 'reset'}
+		{#if action === 'split'}
+			<label class="mt-5 block">
+				<span class="font-semibold">New album title</span>
+				<span class="block text-xs text-base-content/55">Leave empty to keep "{album.title}".</span>
+				<input
+					class="input input-bordered mt-2 w-full"
+					placeholder={album.title}
+					bind:value={newTitle}
+					oninput={() => {
+						previewMutation.reset();
+						previewResult = null;
+					}}
+				/>
+			</label>
+		{/if}
+
+		{#if action === 'split' || action === 'move'}
 			<fieldset class="mt-5">
 				<legend class="font-semibold">Tracks included</legend>
 				<div
@@ -243,6 +284,16 @@
 					{/each}
 				</div>
 			</fieldset>
+		{:else if action === 'merge'}
+			<p class="mt-5 text-sm text-base-content/70">
+				All {tracks.length} tracks of "{album.title}" move to the album you pick, and this album
+				folds into it. Old links to this album keep working.
+			</p>
+		{:else}
+			<p class="mt-5 text-sm text-base-content/70">
+				Every track of "{album.title}" goes back to where a library scan would put it, using its
+				tags and folder. The preview shows where each one lands.
+			</p>
 		{/if}
 
 		{#if previewResult}
@@ -252,42 +303,73 @@
 				aria-labelledby="organization-preview-title"
 			>
 				<h3 id="organization-preview-title" class="font-semibold">Preview</h3>
-				<p class="mt-1 text-sm">
-					{result.track_ids.length} tracks · {result.source_album_ids.length} source albums · {result
-						.aliases.length}
-					aliases retained
-				</p>
-				{#if Object.keys(result.reference_counts).length}
-					<dl class="mt-3 grid gap-2 text-sm sm:grid-cols-3">
-						{#each Object.entries(result.reference_counts) as [kind, count] (kind)}
-							<div>
-								<dt class="text-base-content/55">{kind.replaceAll('_', ' ')}</dt>
-								<dd class="font-semibold">{count}</dd>
-							</div>
+				<ul class="mt-2 space-y-2 text-sm">
+					{#each result.automatic_groups as group, index (group.local_album_id ?? `new-${index}`)}
+						<li>
+							<span class="font-semibold"
+								>{group.track_ids.length}
+								{group.track_ids.length === 1 ? 'track' : 'tracks'}</span
+							>
+							go to
+							<strong>{group.title}</strong>
+							{#if group.album_artist_name}<span class="text-base-content/60">
+									by {group.album_artist_name}</span
+								>{/if}
+							<span class="badge badge-ghost badge-sm ml-1"
+								>{group.created ? 'new album' : 'existing album'}</span
+							>
+							{#if group.track_ids.length <= 6}
+								<span class="block text-xs text-base-content/55">
+									{group.track_ids.map(trackTitle).join(', ')}
+								</span>
+							{/if}
+						</li>
+					{/each}
+				</ul>
+				{#if result.aliases.length}
+					<p class="mt-2 text-sm text-base-content/70">
+						{result.aliases.length === 1 ? 'One album' : `${result.aliases.length} albums`} will be left
+						empty and fold into the album above. Links to it keep working.
+					</p>
+				{/if}
+				{#if result.edition_changes.length}
+					<h4 class="mt-4 text-sm font-semibold">Editions</h4>
+					<ul class="mt-1 space-y-1 text-sm">
+						{#each result.edition_changes as change, index (`${change.local_album_id}-${change.change}-${index}`)}
+							<li class={editionTone[change.change] ?? ''}>
+								<strong>{change.album_title || 'New album'}:</strong>
+								{change.reason.message}
+								{#if change.change === 'cleared'}
+									<span class="block text-xs text-base-content/60">{change.reason.action}</span>
+								{/if}
+							</li>
 						{/each}
-					</dl>
+					</ul>
 				{/if}
 				{#if result.identity_conflicts.length}
 					<div class="alert alert-warning mt-3 text-sm">
 						<div class="w-full">
 							<p>
-								External identities conflict. Choose what the resulting local album should retain.
+								These albums are matched to different editions. Choose what the album that receives
+								the tracks keeps; the preview updates.
 							</p>
 							<label class="mt-2 flex items-center gap-2"
 								><input
 									type="radio"
+									name="identity-choice"
 									class="radio radio-sm"
-									bind:group={identityChoice}
-									value="detach"
-								/> Detach conflicting identities</label
+									checked={identityChoice === 'detach'}
+									onchange={() => chooseIdentity('detach')}
+								/> Drop all of them and let DroppedNeedle identify the album again</label
 							>
 							<label class="mt-2 flex items-center gap-2"
 								><input
 									type="radio"
+									name="identity-choice"
 									class="radio radio-sm"
-									bind:group={identityChoice}
-									value="retain_manual"
-								/> Retain the target identity for manual review</label
+									checked={identityChoice === 'retain_manual'}
+									onchange={() => chooseIdentity('retain_manual')}
+								/> Keep the edition of the album that receives the tracks</label
 							>
 						</div>
 					</div>

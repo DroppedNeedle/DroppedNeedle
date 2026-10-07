@@ -473,22 +473,11 @@ export interface OperationListResponse {
 	next_cursor: string | null;
 }
 
-export interface MembershipPreviewResponse {
-	preview_token: string;
-	source_album_ids: string[];
-	target_album_id: string | null;
-	track_ids: string[];
-	identity_conflicts: string[];
-	aliases: string[];
-	automatic_groups: Array<{
-		local_album_id: string;
-		title: string;
-		album_artist_name: string;
-		track_ids: string[];
-		reason_code: string;
-	}>;
-	reference_counts: Record<string, number>;
-}
+// Catalog correction previews (album split, merge, move, reset grouping,
+// artist merge) share one generated shape.
+export type MembershipPreviewResponse = components['schemas']['MembershipPreviewResponse'];
+export type CatalogCorrectionResponse = components['schemas']['CatalogCorrectionResponse'];
+export type EditionChange = components['schemas']['EditionChangeView'];
 
 export interface SuggestedEditionSummary {
 	release_mbid: string;

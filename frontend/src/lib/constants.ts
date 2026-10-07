@@ -174,17 +174,6 @@ export const API = {
 		reviewRetry: (reviewId: string) => `/api/v1/library/reviews/${reviewId}/retry`,
 		bulkReviewPreview: () => '/api/v1/library/reviews/bulk-preview',
 		bulkReviewApply: () => '/api/v1/library/reviews/bulk-apply',
-		previewAlbumSplit: (albumId: string) => `/api/v1/library/albums/${albumId}/split-preview`,
-		splitAlbum: (albumId: string) => `/api/v1/library/albums/${albumId}/split`,
-		previewAlbumMerge: () => '/api/v1/library/albums/merge-preview',
-		mergeAlbums: () => '/api/v1/library/albums/merge',
-		previewTrackMove: () => '/api/v1/library/tracks/move-preview',
-		moveTracks: () => '/api/v1/library/tracks/move',
-		previewResetAlbumGrouping: (albumId: string) =>
-			`/api/v1/library/albums/${albumId}/reset-grouping-preview`,
-		resetAlbumGrouping: (albumId: string) => `/api/v1/library/albums/${albumId}/reset-grouping`,
-		previewArtistMerge: () => '/api/v1/library/artists/merge-preview',
-		mergeArtists: () => '/api/v1/library/artists/merge',
 		identityRepairs: (limit?: number, cursor?: string) => {
 			const query = new URLSearchParams();
 			if (limit !== undefined) query.set('limit', String(limit));

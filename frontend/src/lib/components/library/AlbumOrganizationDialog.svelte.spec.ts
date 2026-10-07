@@ -88,7 +88,8 @@ const previewResult: MembershipPreviewResponse = {
 	identity_conflicts: ['rg-1'],
 	aliases: ['album-1'],
 	automatic_groups: [],
-	reference_counts: { playlists: 2, play_history: 7 }
+	reference_counts: { playlists: 2, play_history: 7 },
+	edition_changes: []
 };
 
 const h = vi.hoisted(() => ({
