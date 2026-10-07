@@ -305,6 +305,7 @@ pub fn reads_inputs(
         ),
         youtube_quota_path: dir.join("youtube_quota.json"),
         lastfm_key: Arc::new(|| None),
+        discover_warmer: false,
     }
 }
 

@@ -84,6 +84,7 @@ impl ReadsSetup {
                 youtube_quota_path: inputs.youtube_quota_path.clone(),
                 users: users.clone(),
                 lastfm_key: inputs.lastfm_key.clone(),
+                discover_warmer: inputs.discover_warmer,
             },
             ids.clone(),
         );
@@ -328,6 +329,8 @@ pub struct ReadsInputs {
     pub youtube_quota_path: std::path::PathBuf,
     /// The instance Last.fm API key, read per call (Last.fm charts).
     pub lastfm_key: catalog::upstream::InstanceLastFmKey,
+    /// Whether the discover warm cycle runs (`DISCOVER_WARMER_ENABLED`).
+    pub discover_warmer: bool,
 }
 
 /// Production platform states: local and Cover Art Archive art through

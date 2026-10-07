@@ -1,16 +1,17 @@
-//! Discover and home shelves before their builders are ported.
+//! Discover and home content behind one port.
 //!
-//! The v2 shelf builders (because-you-listen-to, fresh releases, daily
-//! mixes) are a later port. Until then the pages answer with no shelves
-//! at all rather than invented rows, and the integration status is read
-//! from the settings the way v2 read it. Interactions that only make sense
-//! with a builder behind them (activity, refresh) answer "not available".
+//! Discover is served by the live page ([`LiveDiscover`]): built in the
+//! background, kept as a snapshot, refreshed on demand and by the warm
+//! cycle. Home shelves are not ported yet, so home answers with no shelves
+//! rather than invented rows. Both carry the integration status read from
+//! the settings the way v2 read it.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
+use crate::reads::discover::adapters::page::{GENRE_ARTWORK_SCHEMA, LiveDiscover};
 use crate::reads::discover::{
     models::{DiscoverActivityResponse, DiscoverResponse, HomeResponse, IntegrationStatus},
     ports::{BoxFuture, DiscoverContent, ProviderFailure},
@@ -23,20 +24,35 @@ use crate::runtime_config::{
     },
 };
 
-/// Genre artwork schema the frontend expects (v2 default).
-const GENRE_ARTWORK_SCHEMA: &str = "v2";
-
-/// Shelves with nothing invented: empty pages and the real integration
-/// status.
-pub struct UnbuiltContent {
-    config: Arc<ConfigStore>,
-    pool: SqlitePool,
+fn read<T: Default>(name: &str, value: Result<T, crate::runtime_config::ConfigError>) -> T {
+    value.unwrap_or_else(|error| {
+        tracing::warn!(%error, section = name, "cannot read settings; treating as off");
+        T::default()
+    })
 }
 
-impl UnbuiltContent {
-    /// Read settings from `config` and the catalog from `pool`.
-    pub fn new(config: Arc<ConfigStore>, pool: SqlitePool) -> Self {
-        Self { config, pool }
+/// Whether some download client is set up: slskd or SABnzbd with a URL
+/// and a key.
+pub fn download_client_ready(config: &ConfigStore) -> bool {
+    let slskd = read("slskd", config.get_raw::<SlskdConnection>());
+    let sabnzbd = read("download_clients", config.get_raw::<DownloadClients>()).sabnzbd;
+    (slskd.enabled && !slskd.url.is_empty() && !slskd.api_key.is_empty())
+        || (sabnzbd.enabled && !sabnzbd.url.is_empty() && !sabnzbd.api_key.is_empty())
+}
+
+/// The live discover page plus home without shelves, with the real
+/// integration status.
+pub struct LiveContent {
+    config: Arc<ConfigStore>,
+    pool: SqlitePool,
+    page: LiveDiscover,
+}
+
+impl LiveContent {
+    /// Read settings from `config` and the catalog from `pool`; discover
+    /// comes from `page`.
+    pub fn new(config: Arc<ConfigStore>, pool: SqlitePool, page: LiveDiscover) -> Self {
+        Self { config, pool, page }
     }
 
     /// True when the user switched the Discover Queue section off on the
@@ -59,12 +75,6 @@ impl UnbuiltContent {
     /// The v2 integration flags, read from the current settings. A section
     /// that cannot be read counts as off, with a log line.
     fn status(&self) -> IntegrationStatus {
-        fn read<T: Default>(name: &str, value: Result<T, crate::runtime_config::ConfigError>) -> T {
-            value.unwrap_or_else(|error| {
-                tracing::warn!(%error, section = name, "cannot read settings; treating as off");
-                T::default()
-            })
-        }
         let lb = read(
             "listenbrainz",
             self.config.get_raw::<ListenBrainzConnection>(),
@@ -74,15 +84,12 @@ impl UnbuiltContent {
         let jellyfin = read("jellyfin", self.config.get_raw::<JellyfinConnection>());
         let navidrome = read("navidrome", self.config.get_raw::<NavidromeConnection>());
         let plex = read("plex", self.config.get_raw::<PlexConnection>());
-        let slskd = read("slskd", self.config.get_raw::<SlskdConnection>());
-        let sabnzbd = read("download_clients", self.config.get_raw::<DownloadClients>()).sabnzbd;
         IntegrationStatus {
             listenbrainz: lb.enabled && !lb.username.is_empty(),
             jellyfin: jellyfin.enabled
                 && !jellyfin.jellyfin_url.is_empty()
                 && !jellyfin.api_key.is_empty(),
-            download_client: (slskd.enabled && !slskd.url.is_empty() && !slskd.api_key.is_empty())
-                || (sabnzbd.enabled && !sabnzbd.url.is_empty() && !sabnzbd.api_key.is_empty()),
+            download_client: download_client_ready(&self.config),
             youtube: youtube.enabled,
             lastfm: lastfm.enabled,
             navidrome: navidrome.enabled
@@ -103,7 +110,7 @@ impl UnbuiltContent {
     }
 }
 
-impl DiscoverContent for UnbuiltContent {
+impl DiscoverContent for LiveContent {
     fn discover<'a>(
         &'a self,
         user_id: &'a str,
@@ -111,39 +118,11 @@ impl DiscoverContent for UnbuiltContent {
         let status = self.status();
         Box::pin(async move {
             let queue_hidden = self.queue_section_hidden(user_id).await;
-            Ok(DiscoverResponse {
-                because_you_listen_to: Vec::new(),
-                // The queue deck is built; the page shows its entry point
-                // unless the user turned the section off.
-                discover_queue_enabled: !queue_hidden,
-                fresh_releases: None,
-                missing_essentials: None,
-                rediscover: None,
-                artists_you_might_like: None,
-                popular_in_your_genres: None,
-                genre_list: None,
-                globally_trending: None,
-                weekly_exploration: None,
-                integration_status: Some(status),
-                service_prompts: Vec::new(),
-                genre_artwork: HashMap::new(),
-                genre_artwork_schema_version: GENRE_ARTWORK_SCHEMA.to_owned(),
-                lastfm_weekly_artist_chart: None,
-                lastfm_weekly_album_chart: None,
-                lastfm_recent_scrobbles: None,
-                daily_mixes: Vec::new(),
-                radio_sections: Vec::new(),
-                top_picks: None,
-                listeners_like_you: None,
-                anniversaries: None,
-                new_from_followed: None,
-                unexplored_genres: None,
-                generated_at: None,
-                refresh_started_at: None,
-                section_status: HashMap::new(),
-                refreshing: false,
-                service_status: None,
-            })
+            let mut page = self.page.page(user_id, status).await;
+            // The queue deck is built; the page shows its entry point
+            // unless the user turned the section off.
+            page.discover_queue_enabled = !queue_hidden;
+            Ok(page)
         })
     }
 
@@ -196,27 +175,26 @@ impl DiscoverContent for UnbuiltContent {
 
     fn record_activity<'a>(
         &'a self,
-        _user_id: &'a str,
-        _feature: &'a str,
-        _artist_mbid: Option<&'a str>,
-        _section: Option<&'a str>,
-        _provider: Option<&'a str>,
+        user_id: &'a str,
+        feature: &'a str,
+        artist_mbid: Option<&'a str>,
+        section: Option<&'a str>,
+        provider: Option<&'a str>,
     ) -> BoxFuture<'a, Result<DiscoverActivityResponse, ProviderFailure>> {
-        Box::pin(async {
-            Err(ProviderFailure::not_built(
-                "Discover personalization is not built in this version yet.",
-            ))
+        Box::pin(async move {
+            self.page
+                .record_activity(user_id, feature, artist_mbid, section, provider)
+                .await
         })
     }
 
     fn trigger_refresh<'a>(
         &'a self,
-        _user_id: &'a str,
+        user_id: &'a str,
     ) -> BoxFuture<'a, Result<(), ProviderFailure>> {
-        Box::pin(async {
-            Err(ProviderFailure::not_built(
-                "Refreshing discover is not built in this version yet.",
-            ))
+        Box::pin(async move {
+            self.page.refresh(user_id).await;
+            Ok(())
         })
     }
 }

@@ -217,6 +217,21 @@ pub async fn record_activity(
             "Unknown provider '{provider}'; want lastfm or listenbrainz"
         )));
     }
+    if body.feature == "artist" {
+        let valid_artist = body
+            .artist_mbid
+            .as_deref()
+            .is_some_and(crate::providers::musicbrainz::is_valid_mbid);
+        if !valid_artist || body.section.is_none() || body.provider.is_none() {
+            return Err(ServiceError::InvalidInput(
+                "Artist activity needs an artist MBID, a section and a provider".to_owned(),
+            ));
+        }
+    } else if body.artist_mbid.is_some() || body.section.is_some() || body.provider.is_some() {
+        return Err(ServiceError::InvalidInput(
+            "Artist, section and provider only go with the artist feature".to_owned(),
+        ));
+    }
     Ok(deps
         .content
         .record_activity(
@@ -408,7 +423,7 @@ pub async fn ignore_queue_item(
         .start_build(user_id, QueueTrigger::Request { force: true })
         .await;
     match deps.content.trigger_refresh(user_id).await {
-        // No discover builder yet: the ignore still stands, nothing to rebuild.
+        // Content without a builder: the ignore still stands, nothing to rebuild.
         Ok(()) | Err(ProviderFailure::NotBuilt(_)) => Ok(()),
         Err(other) => Err(other.into()),
     }

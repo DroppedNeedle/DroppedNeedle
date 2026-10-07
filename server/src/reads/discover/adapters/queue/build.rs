@@ -70,17 +70,20 @@ fn card(
 }
 
 /// Trim and lowercase an id; blank reads as `None`.
-fn normalize(mbid: Option<&str>) -> Option<String> {
+pub(in crate::reads::discover::adapters) fn normalize(mbid: Option<&str>) -> Option<String> {
     mbid.map(|value| value.trim().to_ascii_lowercase())
         .filter(|value| !value.is_empty())
 }
 
-fn is_various_artists(mbid: Option<&str>) -> bool {
+pub(in crate::reads::discover::adapters) fn is_various_artists(mbid: Option<&str>) -> bool {
     normalize(mbid).as_deref() == Some(VARIOUS_ARTISTS_MBID)
 }
 
 /// Log a failed read and carry on with an empty answer.
-fn or_empty<T: Default>(what: &str, result: SourceResult<T>) -> T {
+pub(in crate::reads::discover::adapters) fn or_empty<T: Default>(
+    what: &str,
+    result: SourceResult<T>,
+) -> T {
     result.unwrap_or_else(|cause| {
         tracing::warn!(read = what, %cause, "discover queue read failed; skipping it");
         T::default()
@@ -88,7 +91,7 @@ fn or_empty<T: Default>(what: &str, result: SourceResult<T>) -> T {
 }
 
 /// Run one read under the per-call timeout.
-async fn timed<T: Default>(
+pub(in crate::reads::discover::adapters) async fn timed<T: Default>(
     what: &str,
     read: impl std::future::Future<Output = SourceResult<T>>,
 ) -> T {
@@ -177,7 +180,7 @@ fn lower_ids(items: &[QueueItemLight]) -> HashSet<String> {
 /// Seed artists from the user's listening: Last.fm top artists for a
 /// Last.fm user, else ListenBrainz top artists over widening windows,
 /// else Jellyfin's most played and favorite artists.
-async fn seed_artists(
+pub(in crate::reads::discover::adapters) async fn seed_artists(
     ctx: &BuildContext<'_>,
     user_id: &str,
     user: &UserMusic,
@@ -254,7 +257,7 @@ async fn seed_artists(
 }
 
 /// Release groups the user has played, so deep cuts skip them.
-async fn listened_albums(
+pub(in crate::reads::discover::adapters) async fn listened_albums(
     ctx: &BuildContext<'_>,
     user: &UserMusic,
     source: MusicSource,
@@ -370,7 +373,7 @@ async fn listenbrainz_pools(
 
 /// One pool per seed: the top albums of each artist ListenBrainz calls
 /// similar to it.
-async fn similar_artist_pools(
+pub(in crate::reads::discover::adapters) async fn similar_artist_pools(
     ctx: &BuildContext<'_>,
     user_id: &str,
     seeds: &[ArtistRow],
@@ -640,7 +643,7 @@ async fn deep_cuts(
 
 /// One pool per seed from Last.fm: similar artists' top albums, matched
 /// to release groups.
-async fn lastfm_pools(
+pub(in crate::reads::discover::adapters) async fn lastfm_pools(
     ctx: &BuildContext<'_>,
     user_id: &str,
     seeds: &[ArtistRow],

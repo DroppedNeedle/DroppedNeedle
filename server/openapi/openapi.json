@@ -2961,16 +2961,6 @@
           },
           "401": {
             "description": "Not authenticated"
-          },
-          "503": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
           }
         }
       }
@@ -3008,16 +2998,6 @@
           },
           "401": {
             "description": "Not authenticated"
-          },
-          "503": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
           }
         }
       }
@@ -3920,16 +3900,6 @@
           },
           "401": {
             "description": "Not authenticated"
-          },
-          "503": {
-            "description": "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorEnvelope"
-                }
-              }
-            }
           }
         }
       }
@@ -24897,15 +24867,15 @@
           "generation": {
             "type": "integer",
             "format": "int64",
-            "description": "Personalization generation (bumps when the profile changes)."
+            "description": "The MusicBrainz source generation (bumps when the source changes)."
           },
           "source_id": {
             "type": "string",
-            "description": "Active source id."
+            "description": "The MusicBrainz source id."
           },
           "source_mode": {
             "type": "string",
-            "description": "Active source mode."
+            "description": "The MusicBrainz source tier the activity was recorded under."
           }
         }
       },
@@ -25263,7 +25233,7 @@
           },
           "section_status": {
             "type": "object",
-            "description": "Per-section build status (`ready`, `building`, `degraded`).",
+            "description": "Status per page zone (`picks`, `lounge`, `weekly`, `made`,\n`because`, `fresh`, `library`, `genres`, `trending`): `loading`\nbefore the first page, `updating` while a rebuild runs, else\n`ready` or `empty`.",
             "additionalProperties": {
               "type": "string"
             },
@@ -28856,7 +28826,7 @@
               "object",
               "null"
             ],
-            "description": "Per-service degradation notes (`ok`/`degraded`/`down`).",
+            "description": "Services that let the last build down: `unavailable` when every\nread failed, `degraded` while ListenBrainz refuses popularity reads.",
             "additionalProperties": {
               "type": "string"
             },

@@ -348,7 +348,8 @@ pub struct HomeResponse {
     /// Discover teaser shelf.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discover_preview: Option<DiscoverPreview>,
-    /// Per-service degradation notes (`ok`/`degraded`/`down`).
+    /// Services that let the last build down: `unavailable` when every
+    /// read failed, `degraded` while ListenBrainz refuses popularity reads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service_status: Option<std::collections::HashMap<String, String>>,
     /// True while a fuller build runs in the background (the UI polls).
@@ -667,7 +668,10 @@ pub struct DiscoverResponse {
     /// Refresh-start timestamp (unix seconds), when refreshing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refresh_started_at: Option<i64>,
-    /// Per-section build status (`ready`, `building`, `degraded`).
+    /// Status per page zone (`picks`, `lounge`, `weekly`, `made`,
+    /// `because`, `fresh`, `library`, `genres`, `trending`): `loading`
+    /// before the first page, `updating` while a rebuild runs, else
+    /// `ready` or `empty`.
     #[serde(default)]
     pub section_status: std::collections::HashMap<String, String>,
     /// True while a fuller build runs in the background (the UI polls).
@@ -697,11 +701,11 @@ pub struct DiscoverActivityRequest {
 /// Personalization cursor after recording activity.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DiscoverActivityResponse {
-    /// Active source mode.
+    /// The MusicBrainz source tier the activity was recorded under.
     pub source_mode: String,
-    /// Active source id.
+    /// The MusicBrainz source id.
     pub source_id: String,
-    /// Personalization generation (bumps when the profile changes).
+    /// The MusicBrainz source generation (bumps when the source changes).
     pub generation: i64,
 }
 

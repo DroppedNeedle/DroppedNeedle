@@ -9,6 +9,7 @@
 pub mod charts;
 pub mod content;
 pub mod ownership;
+pub mod page;
 pub mod previews;
 pub mod queue;
 pub mod unbuilt;
@@ -60,6 +61,8 @@ pub struct DiscoverInputs {
     pub users: UsersDeps,
     /// The instance Last.fm API key, read per call.
     pub lastfm_key: InstanceLastFmKey,
+    /// Whether the discover warm cycle runs (the deployment kill switch).
+    pub discover_warmer: bool,
 }
 
 /// Build the production discover deps.
@@ -109,11 +112,21 @@ pub fn production_deps(inputs: DiscoverInputs, ids: Arc<dyn IdGenerator>) -> Rea
             Arc::new(unbuilt::UnavailableYouTube)
         }
     };
-    let queues = live_queue(&inputs, youtube.clone());
+    let sources = Arc::new(live_sources(&inputs));
+    let queues = live_queue(&inputs, sources.clone(), youtube.clone());
+    let page = page::LiveDiscover::new(page::PageInputs {
+        sources,
+        queue_db: queue::store::QueueDb::new(inputs.pool.clone(), inputs.lane.clone()),
+        db: page::store::PageDb::new(inputs.pool.clone(), inputs.lane.clone()),
+        config: inputs.config.clone(),
+        queues: queues.clone(),
+        warmer_enabled: inputs.discover_warmer,
+    });
     ReadsDeps {
-        content: Arc::new(content::UnbuiltContent::new(
+        content: Arc::new(content::LiveContent::new(
             inputs.config,
             inputs.pool.clone(),
+            page,
         )),
         queues,
         batches: Arc::new(unbuilt::UnavailableBatches),
@@ -127,8 +140,8 @@ pub fn production_deps(inputs: DiscoverInputs, ids: Arc<dyn IdGenerator>) -> Rea
     }
 }
 
-/// The queue deck over the live providers and the queue tables.
-fn live_queue(inputs: &DiscoverInputs, youtube: Arc<dyn YouTubeSource>) -> Arc<dyn QueueStore> {
+/// The live provider reads the queue and the page share.
+fn live_sources(inputs: &DiscoverInputs) -> queue::live_sources::LiveSources {
     let upstream = Upstream::from_clients(
         inputs.http.clone(),
         inputs.no_redirect.clone(),
@@ -145,6 +158,22 @@ fn live_queue(inputs: &DiscoverInputs, youtube: Arc<dyn YouTubeSource>) -> Arc<d
         Arc::new(CredentialCoder::new(inputs.users.crypto.clone())),
         Arc::new(ConfigServers::new(inputs.config.clone())),
     ));
+    queue::live_sources::LiveSources::new(
+        upstream,
+        inputs.providers.clone(),
+        inputs.http.clone(),
+        inputs.listenbrainz_links.clone(),
+        jellyfin,
+        inputs.pool.clone(),
+    )
+}
+
+/// The queue deck over the live providers and the queue tables.
+fn live_queue(
+    inputs: &DiscoverInputs,
+    sources: Arc<queue::live_sources::LiveSources>,
+    youtube: Arc<dyn YouTubeSource>,
+) -> Arc<dyn QueueStore> {
     let db = queue::store::QueueDb::new(inputs.pool.clone(), inputs.lane.clone());
     let cache = inputs.providers.cache.clone();
     let config = inputs.config.clone();
@@ -157,19 +186,5 @@ fn live_queue(inputs: &DiscoverInputs, youtube: Arc<dyn YouTubeSource>) -> Arc<d
             });
         queue::QueueSettings::from_advanced(&advanced)
     });
-    let sources = queue::live_sources::LiveSources::new(
-        upstream,
-        inputs.providers.clone(),
-        inputs.http.clone(),
-        inputs.listenbrainz_links.clone(),
-        jellyfin,
-        inputs.pool.clone(),
-    );
-    Arc::new(queue::LiveQueue::new(
-        Arc::new(sources),
-        db,
-        youtube,
-        cache,
-        settings,
-    ))
+    Arc::new(queue::LiveQueue::new(sources, db, youtube, cache, settings))
 }

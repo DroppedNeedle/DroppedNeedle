@@ -10566,12 +10566,12 @@ export interface components {
         DiscoverActivityResponse: {
             /**
              * Format: int64
-             * @description Personalization generation (bumps when the profile changes).
+             * @description The MusicBrainz source generation (bumps when the source changes).
              */
             generation: number;
-            /** @description Active source id. */
+            /** @description The MusicBrainz source id. */
             source_id: string;
-            /** @description Active source mode. */
+            /** @description The MusicBrainz source tier the activity was recorded under. */
             source_mode: string;
         };
         /**
@@ -10670,7 +10670,12 @@ export interface components {
             refresh_started_at?: number | null;
             /** @description True while a fuller build runs in the background (the UI polls). */
             refreshing?: boolean;
-            /** @description Per-section build status (`ready`, `building`, `degraded`). */
+            /**
+             * @description Status per page zone (`picks`, `lounge`, `weekly`, `made`,
+             *     `because`, `fresh`, `library`, `genres`, `trending`): `loading`
+             *     before the first page, `updating` while a rebuild runs, else
+             *     `ready` or `empty`.
+             */
             section_status?: {
                 [key: string]: string;
             };
@@ -12458,7 +12463,10 @@ export interface components {
             refreshing?: boolean;
             /** @description Connect-a-service cards. */
             service_prompts?: components["schemas"]["ServicePrompt"][];
-            /** @description Per-service degradation notes (`ok`/`degraded`/`down`). */
+            /**
+             * @description Services that let the last build down: `unavailable` when every
+             *     read failed, `degraded` while ListenBrainz refuses popularity reads.
+             */
             service_status?: {
                 [key: string]: string;
             } | null;
@@ -22603,15 +22611,6 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
-            };
         };
     };
     record_activity: {
@@ -22649,15 +22648,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
             };
         };
     };
@@ -23542,15 +23532,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-            /** @description Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE) */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorEnvelope"];
-                };
             };
         };
     };

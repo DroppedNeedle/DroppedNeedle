@@ -1,6 +1,6 @@
 //! Discover routes over the discover ports: the session challenge, input
 //! validation, batch isolation between users, redacted now-playing rows,
-//! fixed 5xx envelopes, and the refresh loop cadence and shutdown.
+//! and fixed 5xx envelopes.
 
 use std::sync::Arc;
 
@@ -17,9 +17,6 @@ use droppedneedle::ids::IdGenerator;
 use droppedneedle::reads::discover::fakes::{
     FakeBatches, FakeCharts, FakeContent, FakeNowPlaying, FakePreviews, FakeQueues, FakeRadio,
     FakeYouTube, ManualClock,
-};
-use droppedneedle::reads::discover::refresh::{
-    ManualSleeper, RefreshRegistry, RefreshScope, run_refresh_loop,
 };
 use droppedneedle::reads::discover::services::ReadsDeps;
 use serde_json::{Value, json};
@@ -347,63 +344,6 @@ async fn failing_charts_render_fixed_502_without_leaks() {
     for marker in LEAK_MARKERS {
         assert!(!raw.contains(marker), "leaked {marker}");
     }
-}
-
-// ---------------------------------------------------------------------------
-// Refresh loop: honest intervals and shutdown
-// ---------------------------------------------------------------------------
-
-#[tokio::test]
-async fn loop_uses_honest_intervals_and_stops_on_shutdown() {
-    let registry = Arc::new(RefreshRegistry::new());
-    let sleeper = ManualSleeper::new();
-    let runs = Arc::new(std::sync::Mutex::new(0usize));
-    let task_registry = registry.clone();
-    let task_sleeper = sleeper.clone();
-    let task_runs = runs.clone();
-    let task = tokio::spawn(async move {
-        run_refresh_loop(task_registry, task_sleeper, RefreshScope::Discover, || {
-            let task_runs = task_runs.clone();
-            async move {
-                *task_runs.lock().unwrap() += 1;
-                Ok(())
-            }
-        })
-        .await;
-    });
-    // First sleep parks on the discover interval; wake it twice, then stop.
-    // Progress is polled with yields only: no clock waits anywhere.
-    for _ in 0..100 {
-        if sleeper.waits() == 1 {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-    assert_eq!(sleeper.waits(), 1);
-    sleeper.wake();
-    for _ in 0..100 {
-        if sleeper.requested().len() == 2 {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-    sleeper.wake();
-    for _ in 0..100 {
-        if sleeper.requested().len() == 3 {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
-    sleeper.shut_down();
-    task.await.unwrap();
-    assert_eq!(*runs.lock().unwrap(), 2);
-    assert!(
-        sleeper
-            .requested()
-            .iter()
-            .all(|each| *each == RefreshScope::Discover.interval())
-    );
-    assert!(!registry.is_live(RefreshScope::Discover));
 }
 
 /// Your-top charts are fetched for the calling user only.

@@ -39,17 +39,18 @@ use crate::remotes::models::SourceName;
 /// How long a popularity refusal keeps Last.fm standing in.
 const POPULARITY_DOWN_FOR: Duration = Duration::from_secs(10 * 60);
 /// Cache lifetime of per-user listening statistics.
-const USER_STATS_TTL: Duration = Duration::from_secs(5 * 60);
+pub(in crate::reads::discover::adapters) const USER_STATS_TTL: Duration =
+    Duration::from_secs(5 * 60);
 /// Cache lifetime of artist-level and chart reads.
-const ARTIST_TTL: Duration = Duration::from_secs(60 * 60);
+pub(in crate::reads::discover::adapters) const ARTIST_TTL: Duration = Duration::from_secs(60 * 60);
 
 /// The live provider reads.
 pub struct LiveSources {
-    upstream: Upstream,
+    pub(in crate::reads::discover::adapters) upstream: Upstream,
     listenbrainz: Option<ListenBrainzClient<CorePacer, CoreSink>>,
     links: Arc<dyn ListenBrainzLinkStore>,
-    jellyfin: Arc<ConnectionResolver>,
-    http: reqwest::Client,
+    pub(in crate::reads::discover::adapters) jellyfin: Arc<ConnectionResolver>,
+    pub(in crate::reads::discover::adapters) http: reqwest::Client,
     pool: SqlitePool,
     popularity_down_until: Mutex<Option<Instant>>,
 }
@@ -88,13 +89,20 @@ impl LiveSources {
         }
     }
 
-    fn lb(&self) -> SourceResult<&ListenBrainzClient<CorePacer, CoreSink>> {
+    pub(in crate::reads::discover::adapters) fn lb(
+        &self,
+    ) -> SourceResult<&ListenBrainzClient<CorePacer, CoreSink>> {
         self.listenbrainz
             .as_ref()
             .ok_or_else(|| "no listenbrainz limiter".to_owned())
     }
 
-    async fn cached<T, Fut>(&self, key: String, ttl: Duration, fetch: Fut) -> SourceResult<T>
+    pub(in crate::reads::discover::adapters) async fn cached<T, Fut>(
+        &self,
+        key: String,
+        ttl: Duration,
+        fetch: Fut,
+    ) -> SourceResult<T>
     where
         T: Serialize + DeserializeOwned,
         Fut: Future<Output = SourceResult<T>>,
@@ -104,7 +112,10 @@ impl LiveSources {
 
     /// The user's ListenBrainz identity, lending the token to reads that
     /// ListenBrainz gates for anonymous callers.
-    async fn credentials(&self, user_id: &str) -> ListenBrainzCredentials {
+    pub(in crate::reads::discover::adapters) async fn credentials(
+        &self,
+        user_id: &str,
+    ) -> ListenBrainzCredentials {
         let username = self.links.status(user_id).await.map(|link| link.username);
         let user_token = match username {
             Some(_) => self.links.token_for(user_id).await,
@@ -124,7 +135,7 @@ impl LiveSources {
         }
     }
 
-    fn listenbrainz_result<T: Default>(
+    pub(in crate::reads::discover::adapters) fn listenbrainz_result<T: Default>(
         &self,
         outcome: listenbrainz::Outcome<T>,
     ) -> SourceResult<T> {
@@ -138,7 +149,10 @@ impl LiveSources {
         }
     }
 
-    async fn lastfm(&self, user_id: &str) -> Option<(CatalogLastFm, LastFmCredentials)> {
+    pub(in crate::reads::discover::adapters) async fn lastfm(
+        &self,
+        user_id: &str,
+    ) -> Option<(CatalogLastFm, LastFmCredentials)> {
         self.upstream.lastfm(user_id).await
     }
 
@@ -159,7 +173,7 @@ impl LiveSources {
         }
     }
 
-    fn musicbrainz(
+    pub(in crate::reads::discover::adapters) fn musicbrainz(
         &self,
         priority: RequestPriority,
     ) -> crate::reads::catalog::upstream::CatalogMusicBrainz {
@@ -167,7 +181,9 @@ impl LiveSources {
     }
 }
 
-fn lastfm_result<T: Default>(outcome: lastfm::Outcome<T>) -> SourceResult<T> {
+pub(in crate::reads::discover::adapters) fn lastfm_result<T: Default>(
+    outcome: lastfm::Outcome<T>,
+) -> SourceResult<T> {
     match outcome {
         lastfm::Outcome::Found(value) => Ok(value),
         lastfm::Outcome::Missing => Ok(T::default()),
@@ -201,7 +217,7 @@ fn first_youtube(relations: &[Relation]) -> Option<String> {
         .find(|url| url.contains("youtube.com") || url.contains("youtu.be"))
 }
 
-fn credit_name(credit: &[ArtistCreditName]) -> String {
+pub(in crate::reads::discover::adapters) fn credit_name(credit: &[ArtistCreditName]) -> String {
     credit
         .iter()
         .map(|entry| {

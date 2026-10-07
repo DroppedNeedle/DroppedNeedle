@@ -197,7 +197,6 @@ pub struct RemoveBatchQuery {
     responses(
         (status = 200, description = "Discover shelves", body = DiscoverResponse),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn get_discover(
@@ -217,7 +216,6 @@ pub async fn get_discover(
     responses(
         (status = 202, description = "Refresh triggered", body = RefreshResponse),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn refresh_discover(
@@ -239,7 +237,6 @@ pub async fn refresh_discover(
         (status = 200, description = "Personalization cursor", body = DiscoverActivityResponse),
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn record_activity(

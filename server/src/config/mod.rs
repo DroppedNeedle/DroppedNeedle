@@ -84,6 +84,10 @@ pub struct AppConfig {
     pub http: HttpSettings,
     /// Bound on draining connections and stopping background work.
     pub shutdown_grace: Duration,
+    /// Keep each user's discover page and queue deck warm in the
+    /// background while they use them (`DISCOVER_WARMER_ENABLED`, on by
+    /// default). Off, pages still build when someone opens them.
+    pub discover_warmer: bool,
     /// Mounts the `__test__` failure hooks. Constructor-only on purpose: no
     /// environment variable can switch these on in a production binary.
     #[cfg(any(test, feature = "test-support"))]
@@ -125,6 +129,7 @@ impl AppConfig {
             timezone: None,
             http: HttpSettings::default(),
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
+            discover_warmer: true,
             #[cfg(any(test, feature = "test-support"))]
             test_hooks: false,
             debug_cors: false,
@@ -223,6 +228,18 @@ impl AppConfig {
         }
         if let Some(seconds) = env("SHUTDOWN_GRACE_PERIOD") {
             config.shutdown_grace = parse_seconds("SHUTDOWN_GRACE_PERIOD", &seconds)?;
+        }
+        if let Some(value) = env("DISCOVER_WARMER_ENABLED") {
+            config.discover_warmer = match value.to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => true,
+                "0" | "false" | "no" | "off" => false,
+                _ => {
+                    return Err(ConfigError::InvalidSwitch {
+                        name: "DISCOVER_WARMER_ENABLED",
+                        value,
+                    });
+                }
+            };
         }
         Ok(config)
     }
@@ -335,6 +352,14 @@ pub enum ConfigError {
     /// A seconds value is not a positive number of at most one day.
     #[error("invalid {name} value {value:?}: expected seconds above zero")]
     InvalidSeconds {
+        /// Variable name.
+        name: &'static str,
+        /// The value as given.
+        value: String,
+    },
+    /// An on/off variable holds something other than true or false.
+    #[error("invalid {name} value {value:?}: expected true or false")]
+    InvalidSwitch {
         /// Variable name.
         name: &'static str,
         /// The value as given.

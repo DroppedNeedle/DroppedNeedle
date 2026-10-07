@@ -75,6 +75,11 @@ pub const DEPLOYMENT_VARS: &[DeploymentVar] = &[
         note: "Peers whose X-Forwarded-* headers are honored.",
     },
     DeploymentVar {
+        env_name: "DISCOVER_WARMER_ENABLED",
+        default: "true",
+        note: "Keeps each user's discover page and queue deck fresh in the background while they use them.",
+    },
+    DeploymentVar {
         env_name: "SLSKD_DOWNLOADS_PATH",
         default: "/data/downloads/slskd",
         note: "slskd completed-downloads directory inside the container.",

@@ -18,7 +18,6 @@ pub mod fakes;
 pub mod handlers;
 pub mod models;
 pub mod ports;
-pub mod refresh;
 pub mod services;
 
 pub use error::ReadsError;
