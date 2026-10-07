@@ -13894,7 +13894,7 @@
         "tags": [
           "crate::acquire::requests::views"
         ],
-        "summary": "Refresh one user's personal mix.\n`POST /api/v3/requests/personal-mix/refresh`. Repeat calls while a build\nruns answer `already_running`; unlinked users get 400.",
+        "summary": "Refresh one user's personal mix.\n`POST /api/v3/requests/personal-mix/refresh`. Repeat calls while a build\nruns answer `already_running`; unlinked users get 400, and a server\nwithout the mix builder 409.",
         "operationId": "refresh_mix_handler",
         "responses": {
           "200": {
@@ -13906,6 +13906,12 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "ListenBrainz is not connected"
+          },
+          "409": {
+            "description": "Weekly Mix is not available on this server"
           }
         }
       }

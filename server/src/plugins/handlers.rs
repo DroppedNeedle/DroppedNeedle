@@ -1073,11 +1073,10 @@ async fn prefs_response(deps: &ScrobbleHttpDeps, user_id: &str, role: Role) -> S
         primary_music_source: prefs.primary_music_source,
         now_playing_visibility: prefs.now_playing_visibility,
         auto_request_personal_mix: prefs.auto_request_personal_mix,
-        auto_request_state: deps.mix_state.auto_request_state(
-            user_id,
-            role.as_str(),
-            prefs.auto_request_personal_mix,
-        ),
+        auto_request_state: deps
+            .mix_state
+            .auto_request_state(user_id, role.as_str(), prefs.auto_request_personal_mix)
+            .await,
     }
 }
 

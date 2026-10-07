@@ -39,6 +39,7 @@ use std::time::Duration;
 
 use super::{DegradationSink, Pacer};
 
+pub mod playlists;
 pub mod stats;
 
 /// Default API host (v2 `LISTENBRAINZ_API_URL`).

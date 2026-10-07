@@ -467,11 +467,16 @@ pub async fn revoke_mix_handler(
 
 /// Refresh one user's personal mix.
 /// `POST /api/v3/requests/personal-mix/refresh`. Repeat calls while a build
-/// runs answer `already_running`; unlinked users get 400.
+/// runs answer `already_running`; unlinked users get 400, and a server
+/// without the mix builder 409.
 #[utoipa::path(
     post,
     path = "/api/v3/requests/personal-mix/refresh",
-    responses((status = 200, body = RefreshResponse))
+    responses(
+        (status = 200, body = RefreshResponse),
+        (status = 400, description = "ListenBrainz is not connected"),
+        (status = 409, description = "Weekly Mix is not available on this server"),
+    )
 )]
 pub async fn refresh_mix_handler(
     State(state): State<RequestsState>,

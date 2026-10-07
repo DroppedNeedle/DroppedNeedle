@@ -32,6 +32,12 @@ pub trait PersonalMixer: Send + Sync + 'static {
     fn run_for_all_users(&self) -> BoxFuture<'_, Result<(), String>>;
 }
 
+impl<T: PersonalMixer + ?Sized> PersonalMixer for Arc<T> {
+    fn run_for_all_users(&self) -> BoxFuture<'_, Result<(), String>> {
+        T::run_for_all_users(self)
+    }
+}
+
 /// The cadence: daily with a 5-minute spread and a slow backoff
 /// (failures here usually mean a provider is down, not a blip).
 pub fn default_schedule() -> Schedule {

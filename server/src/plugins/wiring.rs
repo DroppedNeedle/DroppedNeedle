@@ -295,6 +295,18 @@ impl PluginsSetup {
         self
     }
 
+    /// Route the personal-mix toggle and its grant state through the
+    /// requests service's approval queue.
+    pub fn with_mix_grants(
+        mut self,
+        hook: Arc<dyn super::scrobble::MixApprovalHook>,
+        state: Arc<dyn super::scrobble::MixStateReader>,
+    ) -> Self {
+        self.scrobble.deps.mix_hook = hook;
+        self.scrobble.mix_state = state;
+        self
+    }
+
     /// The plugin host, for dispatches outside the route layer.
     pub fn host(&self) -> &Arc<PluginHost> {
         &self.host

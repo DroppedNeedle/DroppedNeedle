@@ -9,7 +9,8 @@
 //!
 //! Seams owned elsewhere: [`dispatch::DownloadDispatch`] (the downloads
 //! module implements durable fetch; intake only starts, cancels, and
-//! polls through it) and the mix build behind the refresh key. The wanted
+//! polls through it) and [`mix::PersonalMixBuilder`], which the refresh
+//! route and the daily sweep both drive. The wanted
 //! watcher loop shares the wanted rows through [`sqlite::WantedStore`].
 
 pub mod auth;
@@ -19,6 +20,8 @@ pub mod error;
 pub mod http;
 pub mod intake;
 pub mod ledger;
+pub mod mix;
+pub mod mix_sources;
 pub mod models;
 pub mod quota;
 pub mod service;

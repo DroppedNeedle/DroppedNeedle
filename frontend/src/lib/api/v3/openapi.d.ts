@@ -5648,7 +5648,8 @@ export interface paths {
         /**
          * Refresh one user's personal mix.
          *     `POST /api/v3/requests/personal-mix/refresh`. Repeat calls while a build
-         *     runs answer `already_running`; unlinked users get 400.
+         *     runs answer `already_running`; unlinked users get 400, and a server
+         *     without the mix builder 409.
          */
         post: operations["refresh_mix_handler"];
         delete?: never;
@@ -31903,6 +31904,20 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["RequestsRefreshResponse"];
                 };
+            };
+            /** @description ListenBrainz is not connected */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Weekly Mix is not available on this server */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

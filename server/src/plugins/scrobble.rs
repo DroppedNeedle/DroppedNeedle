@@ -575,7 +575,12 @@ impl ListenBrainzLinkStore for SqliteListenBrainzLinkStore {
 /// updates notify it without depending on that service.
 pub trait MixApprovalHook: Send + Sync {
     /// The auto-request toggle changed value.
-    fn on_auto_request_toggled(&self, user_id: &str, role: &str, enabled: bool);
+    fn on_auto_request_toggled<'a>(
+        &'a self,
+        user_id: &'a str,
+        role: &'a str,
+        enabled: bool,
+    ) -> BoxFuture<'a, ()>;
 }
 
 /// No-op hook for tests and for builds without the requests service wired.
@@ -583,7 +588,14 @@ pub trait MixApprovalHook: Send + Sync {
 pub struct NoopMixApprovalHook;
 
 impl MixApprovalHook for NoopMixApprovalHook {
-    fn on_auto_request_toggled(&self, _user_id: &str, _role: &str, _enabled: bool) {}
+    fn on_auto_request_toggled<'a>(
+        &'a self,
+        _user_id: &'a str,
+        _role: &'a str,
+        _enabled: bool,
+    ) -> BoxFuture<'a, ()> {
+        Box::pin(async {})
+    }
 }
 
 /// Cache invalidation after a link mutation. v2 resets the ListenBrainz
@@ -628,7 +640,12 @@ impl VisibilityHook for NoopVisibilityHook {
 /// it. Admins read `approved` by role whenever the toggle is on.
 pub trait MixStateReader: Send + Sync {
     /// Standing-grant state for one user.
-    fn auto_request_state(&self, user_id: &str, role: &str, toggle_on: bool) -> String;
+    fn auto_request_state<'a>(
+        &'a self,
+        user_id: &'a str,
+        role: &'a str,
+        toggle_on: bool,
+    ) -> BoxFuture<'a, String>;
 }
 
 /// Static reader for tests: `none` off, `pending` on for non-admins,
@@ -637,14 +654,20 @@ pub trait MixStateReader: Send + Sync {
 pub struct StaticMixState;
 
 impl MixStateReader for StaticMixState {
-    fn auto_request_state(&self, _user_id: &str, role: &str, toggle_on: bool) -> String {
-        if !toggle_on {
-            "none".to_owned()
+    fn auto_request_state<'a>(
+        &'a self,
+        _user_id: &'a str,
+        role: &'a str,
+        toggle_on: bool,
+    ) -> BoxFuture<'a, String> {
+        let state = if !toggle_on {
+            "none"
         } else if role == "admin" {
-            "approved".to_owned()
+            "approved"
         } else {
-            "pending".to_owned()
-        }
+            "pending"
+        };
+        Box::pin(async move { state.to_owned() })
     }
 }
 
@@ -791,7 +814,8 @@ pub async fn update_prefs(
         && enabled != before.auto_request_personal_mix
     {
         deps.mix_hook
-            .on_auto_request_toggled(user_id, role, enabled);
+            .on_auto_request_toggled(user_id, role, enabled)
+            .await;
     }
     Ok(deps.prefs.get(user_id).await)
 }

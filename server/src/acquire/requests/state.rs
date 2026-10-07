@@ -39,7 +39,13 @@ pub struct RequestsState {
     /// The plugin host, once boot attached it: new requests are announced
     /// to `subscriber` plugins.
     pub plugins: crate::acquire::wiring::PluginSlot,
+    /// The personal-mix builder, once boot has built it. It needs this
+    /// state for album intake, so it is set after construction.
+    pub mixer: MixSlot,
 }
+
+/// The slot the personal-mix builder goes into.
+pub type MixSlot = Arc<std::sync::OnceLock<Arc<super::mix::PersonalMixBuilder>>>;
 
 impl RequestsState {
     /// State over one database, one quota ledger and one dispatch.
@@ -59,6 +65,7 @@ impl RequestsState {
             library: db.clone(),
             follow_sink: None,
             plugins: Default::default(),
+            mixer: Default::default(),
         }
     }
 

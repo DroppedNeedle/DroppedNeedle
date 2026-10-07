@@ -17,8 +17,6 @@ use crate::acquire::db::AcquireDb;
 pub struct PersonalMixStore {
     db: AcquireDb,
     refresh_running: Mutex<HashSet<String>>,
-    #[cfg(any(test, feature = "test-support"))]
-    unlinked: std::sync::RwLock<HashSet<String>>,
 }
 
 impl PersonalMixStore {
@@ -27,8 +25,6 @@ impl PersonalMixStore {
         Self {
             db,
             refresh_running: Mutex::new(HashSet::new()),
-            #[cfg(any(test, feature = "test-support"))]
-            unlinked: std::sync::RwLock::new(HashSet::new()),
         }
     }
 
@@ -50,26 +46,13 @@ impl PersonalMixStore {
             .map_err(|error| lane_error("mix.file", error))
     }
 
-    /// Mark one user unlinked (fixtures only).
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn seed_unlinked(&self, user_id: &str) {
-        if let Ok(mut unlinked) = self.unlinked.write() {
-            unlinked.insert(user_id.to_owned());
-        }
-    }
-
-    /// Whether one user may build a mix. Linking lives with the
-    /// ListenBrainz connection; every user reads as linked until that port
-    /// arrives.
-    pub fn is_linked(&self, user_id: &str) -> bool {
-        #[cfg(any(test, feature = "test-support"))]
-        if let Ok(unlinked) = self.unlinked.read()
-            && unlinked.contains(user_id)
-        {
-            return false;
-        }
-        let _ = user_id;
-        true
+    /// One user's approval state, if a row exists.
+    pub async fn state(&self, user_id: &str) -> Result<Option<String>, RequestsError> {
+        sqlx::query_scalar("SELECT state FROM personal_mix_approvals WHERE user_id = ?")
+            .bind(user_id)
+            .fetch_optional(self.db.pool())
+            .await
+            .map_err(|error| read_error("mix.state", error))
     }
 
     /// Pending approvals, oldest first.

@@ -362,6 +362,32 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
     }
     let concerts = crate::concerts::ConcertsSetup::from_runtime(&runtime, &http, &config_store)
         .with_events(Arc::new(events.clone()));
+    // Your Weekly Mix: one builder behind the refresh route, the daily
+    // loop and the scrobble-settings toggle.
+    let mix_events = crate::events::EventSink::default();
+    mix_events.attach(&events);
+    if let Some(builder) = crate::acquire::requests::mix_sources::live_builder(
+        &acquire.requests,
+        providers.clone(),
+        http.shared().clone(),
+        Arc::new(SqliteListenBrainzLinkStore::new(
+            runtime.pool().clone(),
+            runtime.lane().clone(),
+            crypto.clone(),
+        )),
+        Arc::new(crate::plugins::scrobble::SqliteScrobblePrefsStore::new(
+            runtime.pool().clone(),
+            runtime.lane().clone(),
+        )),
+        reads.collections.stores.playlists.clone(),
+        mix_events,
+    ) && acquire.requests.mixer.set(builder).is_err()
+    {
+        tracing::warn!("personal mix builder was already set");
+    }
+    let mix_hooks = Arc::new(crate::acquire::requests::mix::MixGrantHooks::new(
+        acquire.requests.mixer.clone(),
+    ));
     // The one registry every background job registers on.
     let jobs = JobsSetup::build(
         auth.users.clone(),
@@ -376,7 +402,8 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
             pool: Some(runtime.pool().clone()),
         },
         concerts.sweep(),
-    );
+    )
+    .with_mixer(mix_hooks.clone());
     let admin = admin.with_precache(jobs.precache_trigger());
     let effects: Arc<dyn SaveEffects> = Arc::new(LiveSaveEffects::new(
         provider_cache.clone(),
@@ -417,7 +444,8 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         runtime.pool().clone(),
         runtime.lane().clone(),
     )
-    .with_presence(Arc::new(media.playback.presence.clone()));
+    .with_presence(Arc::new(media.playback.presence.clone()))
+    .with_mix_grants(mix_hooks.clone(), mix_hooks);
     plugins.sync_ticks().await;
 
     let mut background = Background::new(config.shutdown_grace);

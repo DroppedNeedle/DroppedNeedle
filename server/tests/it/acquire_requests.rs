@@ -5,7 +5,26 @@
 //! a scratch database. The scripted dispatch stands in for the downloads
 //! side; every row it touches is a real SQLite row.
 
+use std::collections::HashMap;
 use std::sync::Arc;
+
+use droppedneedle::acquire::requests::mix::{
+    MixGrantHooks, MixSources, PersonalMixBuilder, SkipReason,
+};
+use droppedneedle::events::EventSink;
+use droppedneedle::plugins::scrobble::{
+    MemoryScrobblePrefsStore, MixApprovalHook as _, MixStateReader as _, ScrobblePrefsPatch,
+    ScrobblePrefsStore as _,
+};
+use droppedneedle::providers::listenbrainz::playlists::{
+    RecommendationPlaylist, RecommendationTrack,
+};
+use droppedneedle::providers::listenbrainz::{
+    ListenBrainzCredentials, SimilarArtist, TopRecording, TopReleaseGroup,
+};
+use droppedneedle::reads::collections::db::CollectionsDb;
+use droppedneedle::reads::collections::store::playlists::PlaylistStore;
+use futures_util::future::BoxFuture;
 
 use axum::{
     Router,
@@ -461,24 +480,118 @@ async fn auto_download_approvals() {
     assert_eq!(rejected["message"], "Auto-download rejected for 2 artists");
 }
 
-// Personal-mix approvals decide once; refresh guards a running build.
+/// ListenBrainz stand-in: one weekly-jams playlist with two tracks on two
+/// albums, no similar artists.
+struct FakeMix;
+
+const MIX_REC_A: &str = "aaaa0000-0000-4000-8000-000000000001";
+const MIX_REC_B: &str = "aaaa0000-0000-4000-8000-000000000002";
+
+impl MixSources for FakeMix {
+    fn identity<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, Option<ListenBrainzCredentials>> {
+        Box::pin(async move {
+            (user_id == "u-ada").then(|| ListenBrainzCredentials {
+                username: Some("ada".to_owned()),
+                user_token: Some("token".to_owned()),
+            })
+        })
+    }
+    fn linked_users(&self) -> BoxFuture<'_, Result<Vec<String>, String>> {
+        Box::pin(async { Ok(vec!["u-ada".to_owned()]) })
+    }
+    fn recommendation_playlists<'a>(
+        &'a self,
+        _creds: &'a ListenBrainzCredentials,
+    ) -> BoxFuture<'a, Result<Vec<RecommendationPlaylist>, String>> {
+        Box::pin(async {
+            Ok(vec![RecommendationPlaylist {
+                playlist_id: "jams".to_owned(),
+                source_patch: "weekly-jams".to_owned(),
+            }])
+        })
+    }
+    fn playlist_tracks<'a>(
+        &'a self,
+        _id: &'a str,
+        _creds: &'a ListenBrainzCredentials,
+    ) -> BoxFuture<'a, Result<Vec<RecommendationTrack>, String>> {
+        let track = |title: &str, rec: &str| RecommendationTrack {
+            title: title.to_owned(),
+            creator: "Band".to_owned(),
+            album: format!("{title} LP"),
+            recording_mbid: Some(rec.to_owned()),
+            artist_mbids: Vec::new(),
+            caa_release_mbid: None,
+        };
+        Box::pin(async move { Ok(vec![track("One", MIX_REC_A), track("Two", MIX_REC_B)]) })
+    }
+    fn release_groups<'a>(
+        &'a self,
+        _recs: &'a [String],
+        _creds: &'a ListenBrainzCredentials,
+    ) -> BoxFuture<'a, Result<HashMap<String, String>, String>> {
+        Box::pin(async {
+            Ok(HashMap::from([
+                (MIX_REC_A.to_owned(), MBID_A.to_owned()),
+                (MIX_REC_B.to_owned(), MBID_B.to_owned()),
+            ]))
+        })
+    }
+    fn similar_artists<'a>(
+        &'a self,
+        _mbid: &'a str,
+        _limit: usize,
+    ) -> BoxFuture<'a, Result<Vec<SimilarArtist>, String>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+    fn top_release_groups<'a>(
+        &'a self,
+        _mbid: &'a str,
+        _count: usize,
+    ) -> BoxFuture<'a, Result<Vec<TopReleaseGroup>, String>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
+    fn top_recording<'a>(
+        &'a self,
+        _mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<TopRecording>, String>> {
+        Box::pin(async { Ok(None) })
+    }
+}
+
+// The weekly mix journey: the toggle queues an approval, the admin grants
+// it, a build writes the playlist and requests the missing albums without
+// a per-request approval wait, a reject turns the toggle off, and the
+// refresh route needs a ListenBrainz link.
 #[tokio::test]
-async fn personal_mix_approvals_and_refresh() {
-    let (state, _db, _dispatch) = setup().await;
-    state
-        .mixes
-        .file_pending("u-ada", 1_700_000_000)
-        .await
-        .unwrap();
-    let (_, pending) = call(
-        &state,
-        Method::GET,
-        "/requests/personal-mix-approvals",
-        Some(ADMIN),
-        None,
-    )
-    .await;
-    assert_eq!(pending["items"][0]["user_name"], "Ada");
+async fn personal_mix_grant_build_and_refresh() {
+    let (state, db, dispatch) = setup().await;
+    let prefs = Arc::new(MemoryScrobblePrefsStore::new());
+    let playlists = PlaylistStore::new(CollectionsDb::new(db.pool().clone(), db.lane().clone()));
+    let builder = Arc::new(PersonalMixBuilder::new(
+        Arc::new(FakeMix),
+        prefs.clone(),
+        playlists.clone(),
+        state.clone(),
+        EventSink::default(),
+    ));
+    assert!(state.mixer.set(builder.clone()).is_ok());
+    let hooks = MixGrantHooks::new(state.mixer.clone());
+
+    prefs
+        .upsert(
+            "u-ada",
+            &ScrobblePrefsPatch {
+                auto_request_personal_mix: Some(true),
+                ..ScrobblePrefsPatch::default()
+            },
+        )
+        .await;
+    hooks.on_auto_request_toggled("u-ada", "user", true).await;
+    assert_eq!(
+        hooks.auto_request_state("u-ada", "user", true).await,
+        "pending"
+    );
     let approve = "/requests/personal-mix-approvals/u-ada/approve";
     assert_eq!(
         call(&state, Method::POST, approve, Some(ADMIN), None)
@@ -486,6 +599,26 @@ async fn personal_mix_approvals_and_refresh() {
             .1["success"],
         true
     );
+    assert_eq!(
+        hooks.auto_request_state("u-ada", "user", true).await,
+        "approved"
+    );
+
+    let built = builder.build_for_user("u-ada", false).await.unwrap();
+    assert_eq!(
+        (built.track_count, built.requested_albums, built.skipped),
+        (2, 2, None)
+    );
+    let playlist = built.playlist_id.expect("mix playlist");
+    assert_eq!(playlists.tracks(&playlist).await.unwrap().len(), 2);
+    assert_eq!(
+        dispatch.take_calls().len(),
+        2,
+        "granted asks dispatch straight away"
+    );
+    let again = builder.build_for_user("u-ada", false).await.unwrap();
+    assert_eq!(again.skipped, Some(SkipReason::Fresh));
+
     let revoke = "/requests/personal-mix-approvals/u-ada/revoke";
     assert_eq!(
         call(&state, Method::POST, revoke, Some(ADMIN), None)
@@ -493,14 +626,20 @@ async fn personal_mix_approvals_and_refresh() {
             .1["success"],
         true
     );
+    assert!(
+        !prefs.get("u-ada").await.auto_request_personal_mix,
+        "revoke turns the toggle off"
+    );
+
     let refresh = "/requests/personal-mix/refresh";
     assert_eq!(
         call(&state, Method::POST, refresh, Some(ADA), None).await.1["status"],
         "started"
     );
     assert_eq!(
-        call(&state, Method::POST, refresh, Some(ADA), None).await.1["status"],
-        "already_running"
+        call(&state, Method::POST, refresh, Some(BOB), None).await.0,
+        StatusCode::BAD_REQUEST,
+        "no ListenBrainz link"
     );
 }
 

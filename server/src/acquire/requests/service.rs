@@ -67,6 +67,8 @@ pub struct RequestsService {
     follow_sink: Option<Arc<dyn FollowDecisionSink>>,
     /// Plugin host for `request_created` events, when attached.
     plugins: crate::acquire::wiring::PluginSlot,
+    /// The personal-mix builder, when boot wired one.
+    mixer: super::state::MixSlot,
 }
 
 impl RequestsService {
@@ -83,6 +85,7 @@ impl RequestsService {
             library: state.library.clone(),
             follow_sink: state.follow_sink.clone(),
             plugins: state.plugins.clone(),
+            mixer: state.mixer.clone(),
         }
     }
 
@@ -112,6 +115,26 @@ impl RequestsService {
         &self,
         principal: &Principal,
         body: &AlbumIntake,
+    ) -> Result<IntakeResponse, RequestsError> {
+        self.intake_album(principal, body, false).await
+    }
+
+    /// Ask for one album under a standing grant (the personal mix's
+    /// approved auto-request): no per-request approval wait, quotas still
+    /// apply.
+    pub async fn request_album_granted(
+        &self,
+        principal: &Principal,
+        body: &AlbumIntake,
+    ) -> Result<IntakeResponse, RequestsError> {
+        self.intake_album(principal, body, true).await
+    }
+
+    async fn intake_album(
+        &self,
+        principal: &Principal,
+        body: &AlbumIntake,
+        granted: bool,
     ) -> Result<IntakeResponse, RequestsError> {
         let role = principal.role;
         let mbid = validate_mbid(&body.musicbrainz_id)?;
@@ -155,7 +178,7 @@ impl RequestsService {
             .transpose()?
             .map(|release| release.to_lowercase());
         let release_mbid = self.chosen_release(&mbid).await.or(asked);
-        let needs_approval = !role.auto_approves();
+        let needs_approval = !granted && !role.auto_approves();
         let record = self.new_album_record(
             principal,
             &mbid,
@@ -1518,6 +1541,10 @@ impl RequestsService {
         {
             return Ok(no_match());
         }
+        // A rejection also turns the user's toggle off (v2).
+        if let Some(mixer) = self.mixer.get() {
+            mixer.clear_intent(user_id).await;
+        }
         Ok(ActionResponse {
             success: true,
             message: "Weekly Mix auto-request rejected".to_owned(),
@@ -1538,22 +1565,29 @@ impl RequestsService {
         {
             return Ok(no_match());
         }
+        if let Some(mixer) = self.mixer.get() {
+            mixer.clear_intent(user_id).await;
+        }
         Ok(ActionResponse {
             success: true,
             message: "Weekly Mix auto-request revoked".to_owned(),
         })
     }
 
-    /// Refresh one user's personal mix. The build runs behind a key the mix
-    /// builder owns; while it runs, repeat calls answer
-    /// `already_running` instead of stacking builds (v2
-    /// `me_connections.refresh_personal_mix` quirk, including the
-    /// lost-the-race reply).
+    /// Refresh one user's personal mix. The build runs in the background
+    /// (a cold build waits on ListenBrainz pacing for minutes) and lands as
+    /// a `personal_mix_refreshed` event. While it runs, repeat calls answer
+    /// `already_running` instead of stacking builds (v2).
     pub async fn refresh_personal_mix(
         &self,
         principal: &Principal,
     ) -> Result<RefreshResponse, RequestsError> {
-        if !self.mixes.is_linked(&principal.user_id) {
+        let Some(mixer) = self.mixer.get() else {
+            return Err(RequestsError::Conflict {
+                message: "Weekly Mix is not available on this server.".to_owned(),
+            });
+        };
+        if !mixer.is_linked(&principal.user_id).await {
             return Err(RequestsError::InvalidInput {
                 message: "Connect ListenBrainz first to build Your Weekly Mix".to_owned(),
             });
@@ -1563,6 +1597,7 @@ impl RequestsService {
                 status: "already_running".to_owned(),
             });
         }
+        mixer.spawn_refresh(principal.user_id.clone());
         Ok(RefreshResponse {
             status: "started".to_owned(),
         })

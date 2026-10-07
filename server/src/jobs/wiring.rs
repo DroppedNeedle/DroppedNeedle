@@ -12,8 +12,8 @@
 //! [`StoreKind`] seam so the setup type stays concrete. Loop backends are
 //! real where they exist (checkpoint passes, the now-playing feed and its
 //! upstream session pollers, the Navidrome playlist export, events
-//! settings reads, the concerts sweep) and no-ops where their services do
-//! not exist yet (the personal mixer); each interim adapter says what is
+//! settings reads, the concerts sweep, the personal mix) and no-ops where
+//! their services do not exist yet; each interim adapter says what is
 //! missing.
 
 use std::sync::Arc;
@@ -122,8 +122,8 @@ impl CheckpointRunner for CheckpointInput {
     }
 }
 
-/// Personal-mix refresh without a mixer: cycles succeed without rebuilding
-/// until the all-users mixer lands behind this seam.
+/// Personal-mix refresh without a mixer (test states, or a boot that
+/// wired none): cycles succeed without rebuilding anything.
 #[derive(Clone, Debug, Default)]
 pub struct UnwiredMixer;
 
@@ -274,6 +274,7 @@ pub struct JobsSetup {
     poll_time: EventsPollTime,
     watcher: Option<ConcertsSweep>,
     config: Option<Arc<ConfigStore>>,
+    mixer: Arc<dyn PersonalMixer>,
 }
 
 impl JobsSetup {
@@ -310,7 +311,14 @@ impl JobsSetup {
             },
             watcher,
             config: Some(config),
+            mixer: Arc::new(UnwiredMixer),
         }
+    }
+
+    /// The personal-mix builder the daily refresh loop drives.
+    pub fn with_mixer(mut self, mixer: Arc<dyn PersonalMixer>) -> Self {
+        self.mixer = mixer;
+        self
     }
 
     /// Test bundle: memory rows, skipped checkpoint passes, sync off, and the
@@ -332,6 +340,7 @@ impl JobsSetup {
             poll_time: EventsPollTime { store: None },
             watcher: None,
             config: None,
+            mixer: Arc::new(UnwiredMixer),
         }
     }
 
@@ -398,7 +407,7 @@ impl JobsSetup {
         .map_err(|_| format!("{} is already running", presence::JOB_NAME))?;
         personal_mix::spawn_on(
             &self.registry,
-            UnwiredMixer,
+            Arc::clone(&self.mixer),
             personal_mix::default_schedule(),
         )
         .await
