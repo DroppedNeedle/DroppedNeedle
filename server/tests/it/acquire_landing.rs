@@ -397,3 +397,216 @@ async fn finished_downloads_land_in_the_library_or_wait_for_review() {
     assert_eq!(unexplained, 0);
     assert!(!acquire.flows.library.contains(BAD_GROUP).await);
 }
+
+/// POST or GET one held-import route as `identity` (`user:role:name`).
+async fn held_call(
+    worker: &Arc<DownloadWorker>,
+    method: &str,
+    uri: &str,
+    identity: &str,
+) -> (axum::http::StatusCode, serde_json::Value) {
+    use tower::ServiceExt as _;
+    let request = axum::http::Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("x-slice-principal", identity)
+        .body(axum::body::Body::empty())
+        .expect("request");
+    let response = droppedneedle::acquire::downloads::downloads_router(worker.clone())
+        .oneshot(request)
+        .await
+        .expect("response");
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .expect("body");
+    (status, serde_json::from_slice(&bytes).unwrap_or_default())
+}
+
+fn files_under(dir: &Path, extension: &str) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return found;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            found.extend(files_under(&path, extension));
+        } else if path.extension().is_some_and(|ext| ext == extension) {
+            found.push(path);
+        }
+    }
+    found
+}
+
+// A held upgrade file a person imports replaces the library's weaker copy,
+// which goes to the recycle bin (never deleted); another user's held file
+// answers 404; a discarded file is deleted and leaves the list.
+#[tokio::test]
+async fn held_files_import_as_upgrades_or_discard() {
+    let auth = droppedneedle::auth::wiring::AuthSetup::for_tests().expect("test auth");
+    let ids: Arc<dyn IdGenerator> = Arc::new(UuidGenerator);
+    let mut reads = droppedneedle::reads::ReadsSetup::for_tests(auth.users.clone(), ids.clone())
+        .expect("reads bundle");
+    let acquire = droppedneedle::acquire::AcquireSetup::for_tests(
+        auth.users.clone(),
+        ids.clone(),
+        &mut reads.collections,
+    )
+    .expect("acquire bundle");
+    acquire
+        .db
+        .add_user("u-ada", "Ada", "user")
+        .await
+        .expect("user");
+    let dir = acquire
+        .db
+        .path()
+        .parent()
+        .expect("scratch dir")
+        .to_path_buf();
+    let config = Arc::new(
+        ConfigStore::open(
+            &dir.join("config.json"),
+            Crypto::from_key_bytes(&[7u8; 32]).expect("key"),
+        )
+        .expect("config"),
+    );
+    let library = LibrarySetup::for_tests_at(auth.users.clone(), ids, acquire.db.path(), config)
+        .expect("library bundle");
+    let music = dir.join("music");
+    std::fs::create_dir_all(&music).expect("music root");
+    library
+        .add_root(
+            Some("music".to_owned()),
+            music.to_string_lossy().into_owned(),
+            EffectivePolicy::Automatic,
+        )
+        .expect("root adds");
+    let release = release(
+        GOOD_RELEASE,
+        GOOD_GROUP,
+        &["Mysterons", "Sour Times"],
+        &[None, None],
+    );
+    let first = release.tracks[0].clone();
+    let releases: Arc<dyn ReleaseSource> = Arc::new(Releases(vec![release]));
+    let pool = acquire.db.pool().clone();
+    let acquire = acquire.with_library(Arc::new(LibraryLanding::new(
+        library.clone(),
+        releases,
+        pool,
+    )));
+    let worker = |paths: Vec<PathBuf>| {
+        Arc::new(
+            DownloadWorker::fixed(
+                acquire.journal.clone(),
+                vec![Source::Fixed(Arc::new(FixedSource::new(paths)))],
+                WorkerConfig {
+                    staging_root: acquire.staging_root.clone(),
+                    ..WorkerConfig::default()
+                },
+            )
+            .with_landing(acquire.landing.clone()),
+        )
+    };
+
+    // The library holds an MP3 of the first track, from an earlier download.
+    let mp3 = land_file(
+        &dir.join("downloads/mp3"),
+        "01 - Mysterons.mp3",
+        "mp3_full_01.mp3",
+        "Mysterons",
+        1,
+    );
+    acquire
+        .journal
+        .run("test.seed", |store| {
+            store.insert_task(&new_task("t-mp3", GOOD_GROUP), 1.0)
+        })
+        .await
+        .expect("task");
+    let mp3_worker = worker(vec![mp3]);
+    for pass in 1..10 {
+        mp3_worker.run_once(pass).await;
+        mp3_worker.wait_for_landings().await;
+        let task = acquire.journal.read_task("t-mp3").await.unwrap().unwrap();
+        if task.status.is_terminal() {
+            break;
+        }
+    }
+    let old_copy = music.join("Portishead/Dummy/0101 Mysterons.mp3");
+    assert!(old_copy.is_file(), "the MP3 is in the library");
+
+    // A better FLAC of that track waits as a held upgrade file, plus one
+    // held file of someone else's and one to discard.
+    let held_dir = dir.join("held");
+    let flac = land_file(&held_dir, "up.flac", "flac_full_01.flac", "Mysterons", 1);
+    let spare = land_file(&held_dir, "spare.flac", "flac_full_02.flac", "Roads", 2);
+    let (track_id, recording_id) = (first.id.clone(), first.recording_id.clone());
+    let seeded: Vec<i64> = acquire
+        .db
+        .write("test.held", move |tx| {
+            let mut ids = Vec::new();
+            for (user, path, reason, origin) in [
+                ("u-ada", &flac, "fingerprint_mismatch", "upgrade"),
+                ("u-bob", &flac, "fingerprint_mismatch", "upgrade"),
+                ("u-ada", &spare, "tag_mismatch", "user"),
+            ] {
+                tx.execute(
+                    "INSERT INTO held_imports (user_id, release_group_mbid, release_mbid, \
+                     release_track_mbid, recording_mbid, track_number, disc_number, held_path, \
+                     reason, source, source_task_id, origin, created_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, 1, 1, ?6, ?7, 'soulseek', 't-up', ?8, 1.0)",
+                    rusqlite::params![
+                        user,
+                        GOOD_GROUP,
+                        GOOD_RELEASE,
+                        track_id,
+                        recording_id,
+                        path.to_string_lossy(),
+                        reason,
+                        origin
+                    ],
+                )?;
+                ids.push(tx.last_insert_rowid());
+            }
+            Ok(ids)
+        })
+        .await
+        .expect("held rows");
+    let review = worker(Vec::new());
+    const ADA: &str = "u-ada:user:Ada";
+
+    let import = |id: i64| format!("/downloads/held/{id}/import");
+    let (status, _) = held_call(&review, "POST", &import(seeded[1]), ADA).await;
+    assert_eq!(status, 404, "someone else's held file is not found");
+
+    let (status, body) = held_call(&review, "POST", &import(seeded[0]), ADA).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["status"], "imported");
+    let new_copy = music.join("Portishead/Dummy/0101 Mysterons.flac");
+    assert!(new_copy.is_file(), "the FLAC replaced it: {body}");
+    assert!(!old_copy.exists(), "the MP3 left the album folder");
+    let recycled = files_under(&music.join(".recycle"), "mp3");
+    assert_eq!(recycled.len(), 1, "the MP3 went to the recycle bin");
+    let formats: Vec<String> = sqlx::query_scalar(
+        "SELECT file_format FROM local_tracks WHERE availability = 'indexed' \
+         AND relative_path LIKE '%Mysterons%'",
+    )
+    .fetch_all(acquire.db.pool())
+    .await
+    .expect("catalog");
+    assert_eq!(formats, vec!["flac".to_owned()]);
+
+    let discard = format!("/downloads/held/{}/discard", seeded[2]);
+    let (status, body) = held_call(&review, "POST", &discard, ADA).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        !held_dir.join("spare.flac").exists(),
+        "discarded file deleted"
+    );
+    let (status, body) = held_call(&review, "GET", "/downloads/held", ADA).await;
+    assert_eq!(status, 200);
+    assert_eq!(body["items"].as_array().map(Vec::len), Some(0), "{body}");
+}
