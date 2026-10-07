@@ -30,10 +30,24 @@ pub struct ImportFile {
     pub track: usize,
 }
 
+/// A library file holding a track an upgrade may replace.
+#[derive(Debug, Clone)]
+pub struct OwnedCopy {
+    pub track_id: String,
+    /// Quality tier of the file (see [`super::quality::tier_for`]).
+    pub tier: &'static str,
+}
+
+/// Files moved into the recycle bin, as (where it was, where it is now).
+pub use crate::library::mutations::Recycled;
+
 /// A verified download to publish into the library.
 #[derive(Debug, Clone)]
 pub struct ImportRequest {
     pub task_id: String,
+    /// Name of the hidden staging folder, when it must differ from the
+    /// task id (a held file imported while its task may land again).
+    pub staging: Option<String>,
     /// The matched release; files are tagged from it.
     pub release: Release,
     pub files: Vec<ImportFile>,
@@ -99,6 +113,28 @@ pub trait LandingLibrary: Send + Sync {
     /// The worst tier the library holds for a release group, for the
     /// upgrade floor. `None` when it holds nothing.
     fn held_tier<'a>(&'a self, release_group_mbid: &'a str) -> BoxFuture<'a, Option<String>>;
+
+    /// The library's copies of one release track (matched by release
+    /// track, else recording), for an upgrade to compare against.
+    fn owned_copies<'a>(
+        &'a self,
+        release_group_mbid: &'a str,
+        release_track_mbid: &'a str,
+        recording_mbid: &'a str,
+    ) -> BoxFuture<'a, Vec<OwnedCopy>>;
+
+    /// Move library tracks' files into the recycle bin and take them out
+    /// of the catalog, all or nothing. `actor` is the user the change is
+    /// recorded for. Answers the moves, or a plain sentence on failure.
+    fn recycle(
+        &self,
+        track_ids: Vec<String>,
+        actor: String,
+    ) -> BoxFuture<'_, Result<Recycled, String>>;
+
+    /// Undo [`Self::recycle`]: put the files back and rescan their
+    /// folders. False when a file could not be put back.
+    fn put_back(&self, moved: Recycled, actor: String) -> BoxFuture<'_, bool>;
 
     /// AcoustID recordings heard in each file, by the caller's key. Empty
     /// when no AcoustID key is set or nothing could be looked up.

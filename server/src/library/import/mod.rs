@@ -63,6 +63,8 @@ pub struct ImportSource {
 #[derive(Debug, Clone)]
 pub struct DownloadImport {
     pub task_id: String,
+    /// Staging folder name when it must differ from the task id.
+    pub staging: Option<String>,
     pub release: Release,
     pub files: Vec<ImportSource>,
 }
@@ -123,7 +125,10 @@ impl LibrarySetup {
             .ok()
             .filter(|template| !template.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_NAMING_TEMPLATE.to_owned());
-        let task_dir = format!("{HIDDEN_PREFIX}import/{}", safe_name(&import.task_id));
+        let task_dir = format!(
+            "{HIDDEN_PREFIX}import/{}",
+            safe_name(import.staging.as_deref().unwrap_or(&import.task_id))
+        );
         let mut placements = Vec::with_capacity(import.files.len());
         for (ordinal, file) in import.files.iter().enumerate() {
             let track = import.release.tracks.get(file.track).ok_or_else(|| {

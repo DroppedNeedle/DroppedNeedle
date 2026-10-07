@@ -133,6 +133,11 @@ pub const CATALOG: &[Reason] = &[
         "Review the held files and import them to replace your current copies.",
     ),
     reason(
+        "upgrade_blocked",
+        "A better file arrived, but your current copy could not be moved to the recycle bin, so it was kept.",
+        "Check that the recycle bin folder exists and can be written, then import the held file.",
+    ),
+    reason(
         "no_tracks",
         "No file of the download could be imported.",
         "Review the held files, or let DroppedNeedle try another source.",

@@ -43,7 +43,7 @@ use std::sync::{Arc, OnceLock};
 use self::decision::{Decision, Outcome, check_files, decide};
 use self::hold::HoldItem;
 use self::matching::{FilePlan, FoundRelease, MatchSummary, find};
-use self::ports::{ImportFailure, ImportFile, ImportRequest, LandingLibrary};
+use self::ports::{ImportFailure, ImportFile, ImportRequest, LandingLibrary, Recycled};
 use self::probe::{LandedFile, Landing};
 use self::specs::{Check, Disposition, QualityPolicy, Rejection, Target, Verdict};
 use super::dispatch::Journal;
@@ -54,9 +54,14 @@ use super::downloads::store::{TaskDetails, TaskRow};
 /// The library port, set once the library bundle exists.
 pub type LibrarySlot = Arc<OnceLock<Arc<dyn LandingLibrary>>>;
 
-/// Hold code for better files of an album the library already holds:
-/// kept until the upgrade replaces the old files.
+/// Hold code for better files of an album the library already holds.
+/// Landings no longer write it (an upgrade replaces the old file at
+/// once); rows from earlier versions still carry it.
 pub const UPGRADE_PENDING: &str = "upgrade_pending";
+
+/// Hold code for a better file whose old copy could not be moved to the
+/// recycle bin, so the old file stays and the new one waits.
+pub const UPGRADE_BLOCKED: &str = "upgrade_blocked";
 
 /// One file or folder a download client reported, with the byte size it
 /// advertised for that exact file when it did (Soulseek does).
@@ -145,7 +150,7 @@ pub struct LandingReport {
 /// Hold codes that say nothing against the source: the files were fine,
 /// the library side could not take them yet.
 fn is_local_hold(code: &str) -> bool {
-    matches!(code, "target_occupied" | UPGRADE_PENDING)
+    matches!(code, "target_occupied" | UPGRADE_PENDING | UPGRADE_BLOCKED)
 }
 
 /// The landing service the worker calls.
@@ -430,19 +435,29 @@ impl LandingService {
                     .to_owned(),
             });
         }
-        // An upgrade brings better files for tracks the library holds: they
-        // wait for the replacement step instead of counting as landed.
+        // An upgrade replaces the library's copy of a track only when the
+        // new file is strictly better (v2 replace-on-import). Equal or
+        // worse leaves the library alone and the file is dropped.
         let upgrade = target.origin == "upgrade";
+        let mut replaces: HashMap<usize, Vec<String>> = HashMap::new();
         if upgrade {
             for file in &plan.owned {
-                let track = found.scored.pair_for(*file).map(|pair| pair.track);
-                held.push(Held {
-                    file: &landing.audio[*file],
-                    track,
-                    code: UPGRADE_PENDING,
-                    detail: "better files for tracks the library holds; kept for the upgrade"
-                        .to_owned(),
-                });
+                let Some(track) = found.scored.pair_for(*file).map(|pair| pair.track) else {
+                    continue;
+                };
+                let release_track = &found.release.tracks[track];
+                let copies = library
+                    .owned_copies(
+                        &found.release.release_group_id,
+                        &release_track.id,
+                        &release_track.recording_id,
+                    )
+                    .await;
+                let tier = landing.audio[*file].tier();
+                if !copies.is_empty() && copies.iter().all(|copy| quality::beats(tier, copy.tier)) {
+                    replaces.insert(*file, copies.into_iter().map(|copy| copy.track_id).collect());
+                    plan.import.push((*file, track));
+                }
             }
         }
         let heard_check = self
@@ -450,10 +465,36 @@ impl LandingService {
             .await;
         decision.checks.extend(heard_check);
 
+        // The old copies go to the recycle bin before the new files are
+        // placed (they usually take the same path). A copy that cannot be
+        // moved keeps its file, and the better one is held instead.
+        let mut recycled: HashMap<usize, Recycled> = HashMap::new();
+        let mut kept = Vec::with_capacity(plan.import.len());
+        for (file, track) in plan.import.drain(..) {
+            let Some(old) = replaces.remove(&file) else {
+                kept.push((file, track));
+                continue;
+            };
+            match library.recycle(old, task.user_id.clone()).await {
+                Ok(moved) => {
+                    recycled.insert(file, moved);
+                    kept.push((file, track));
+                }
+                Err(detail) => held.push(Held {
+                    file: &landing.audio[file],
+                    track: Some(track),
+                    code: UPGRADE_BLOCKED,
+                    detail,
+                }),
+            }
+        }
+        plan.import = kept;
+
         let mut imported_tracks: Vec<usize> = Vec::new();
         let mut imported_sources = Vec::new();
         if !plan.import.is_empty() {
             let request = ImportRequest {
+                staging: None,
                 task_id: task.id.clone(),
                 release: found.release.clone(),
                 files: plan
@@ -470,12 +511,17 @@ impl LandingService {
                     let skipped: HashMap<usize, String> = receipt.skipped.into_iter().collect();
                     for (index, (file, track)) in plan.import.iter().enumerate() {
                         match skipped.get(&index) {
-                            Some(detail) => held.push(Held {
-                                file: &landing.audio[*file],
-                                track: Some(*track),
-                                code: "target_occupied",
-                                detail: detail.clone(),
-                            }),
+                            Some(detail) => {
+                                if let Some(moved) = recycled.remove(file) {
+                                    library.put_back(moved, task.user_id.clone()).await;
+                                }
+                                held.push(Held {
+                                    file: &landing.audio[*file],
+                                    track: Some(*track),
+                                    code: "target_occupied",
+                                    detail: detail.clone(),
+                                });
+                            }
                             None => {
                                 imported_tracks.push(*track);
                                 imported_sources.push(landing.audio[*file].path.clone());
@@ -491,10 +537,16 @@ impl LandingService {
                     );
                 }
                 Err(ImportFailure::LocalFault(detail)) => {
+                    for (_, moved) in recycled.drain() {
+                        library.put_back(moved, task.user_id.clone()).await;
+                    }
                     decision.outcome = Outcome::Reject(local_fault(detail));
                     return Acted::decided(decision, 0);
                 }
                 Err(ImportFailure::Occupied(detail)) => {
+                    for (_, moved) in recycled.drain() {
+                        library.put_back(moved, task.user_id.clone()).await;
+                    }
                     for (file, track) in &plan.import {
                         held.push(Held {
                             file: &landing.audio[*file],
@@ -570,6 +622,13 @@ impl LandingService {
             })
         } else if let Some((code, detail)) = first_hold {
             Outcome::Hold { code, detail }
+        } else if upgrade {
+            Outcome::Reject(Rejection {
+                code: "not_an_upgrade",
+                disposition: Disposition::Permanent,
+                quarantine: None,
+                detail: "no file beats the copy the library holds".to_owned(),
+            })
         } else {
             Outcome::Hold {
                 code: "no_tracks",

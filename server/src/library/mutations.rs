@@ -125,7 +125,12 @@ pub struct Removed {
     pub track_ids: Vec<String>,
     /// The removed album's release group, when it was identified.
     pub release_group_mbid: Option<String>,
+    /// Files moved into the recycle bin.
+    pub recycled: Recycled,
 }
+
+/// Files moved into the recycle bin, as (where it was, where it is now).
+pub type Recycled = Vec<(PathBuf, PathBuf)>;
 
 /// What happens outside the library once an album is removed: its
 /// download records and wanted watch are cleaned up. Acquisition fills the
@@ -193,11 +198,13 @@ impl<'a> Mutations<'a> {
             )
             .optional()
         })?;
-        let track_ids = self.remove_tracks(&tracks, delete_files, reason_code, actor)?;
+        let (track_ids, recycled) =
+            self.remove_tracks(&tracks, delete_files, reason_code, actor)?;
         Ok(Removed {
             id: canonical,
             track_ids,
             release_group_mbid,
+            recycled,
         })
     }
 
@@ -225,12 +232,64 @@ impl<'a> Mutations<'a> {
         } else {
             "CATALOG_REMOVAL"
         };
-        let track_ids = self.remove_tracks(&[track], delete_file, reason_code, actor)?;
+        let (track_ids, recycled) =
+            self.remove_tracks(&[track], delete_file, reason_code, actor)?;
         Ok(Removed {
             id: track_id.to_owned(),
             track_ids,
             release_group_mbid: None,
+            recycled,
         })
+    }
+
+    /// Undo recycle moves (an upgrade whose new file could not be placed):
+    /// each file goes back where it was, then the folders are rescanned so
+    /// the catalog lists them again. Answers false when a file could not
+    /// be put back; it stays in the recycle bin and the error is logged.
+    pub fn put_back(&self, moved: &[(PathBuf, PathBuf)], actor: &str) -> bool {
+        let reason = restore(moved);
+        let restored = reason.code != RESTORE_FAILED.code;
+        let registry = self.setup.live_registry();
+        let mut scopes: BTreeMap<(String, String), ScanScope> = BTreeMap::new();
+        for (original, _) in moved {
+            let Some(root) = registry
+                .roots()
+                .iter()
+                .find(|root| original.starts_with(&root.path))
+            else {
+                continue;
+            };
+            let relative = original
+                .parent()
+                .and_then(|parent| parent.strip_prefix(&root.path).ok())
+                .map(|parent| parent.to_string_lossy().replace('\\', "/"))
+                .filter(|parent| !parent.is_empty())
+                .unwrap_or_else(|| ".".to_owned());
+            let full = root.path.join(&relative);
+            scopes
+                .entry((root.id.clone(), relative.clone()))
+                .or_insert_with(|| ScanScope {
+                    root_id: root.id.clone(),
+                    scope_id: Some(format!("restore:{relative}")),
+                    relative_path: relative,
+                    root_path: Some(root.path.to_string_lossy().into_owned()),
+                    effective_policy: root.policy_for(&full),
+                    policy_revision: registry.policy_revision().to_owned(),
+                    estimated_count: None,
+                });
+        }
+        if !scopes.is_empty()
+            && let Err(error) = self.setup.coordinator.request_run(&ScanRequest {
+                kind: ScanKind::RescanFiles,
+                trigger: ScanTrigger::Manual,
+                scopes: scopes.into_values().collect(),
+                requested_by_user_id: Some(actor.to_owned()),
+                policy_revision: registry.policy_revision().to_owned(),
+            })
+        {
+            tracing::warn!(%error, "rescan after putting files back was refused; run a scan");
+        }
+        restored
     }
 
     /// Queue a file rescan over the folders holding the album's files.
@@ -330,8 +389,8 @@ impl<'a> Mutations<'a> {
         recycle: bool,
         reason_code: &str,
         actor: &str,
-    ) -> Result<Vec<String>, MutationError> {
-        let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
+    ) -> Result<(Vec<String>, Recycled), MutationError> {
+        let mut moved: Recycled = Vec::new();
         let mut guards = Vec::new();
         if recycle {
             let registry = self.setup.live_registry();
@@ -388,7 +447,7 @@ impl<'a> Mutations<'a> {
                     recycled = moved.len(),
                     "library removal"
                 );
-                Ok(changed)
+                Ok((changed, moved))
             }
             Err(error) => {
                 if !moved.is_empty() {
