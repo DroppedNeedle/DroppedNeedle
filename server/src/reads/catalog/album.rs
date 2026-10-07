@@ -832,6 +832,26 @@ impl Catalog {
         serde_json::from_value(value).map_err(|error| CatalogError::Internal(error.to_string()))
     }
 
+    /// `GET /albums/{album_id}/editions/{release_mbid}/tracks`: one
+    /// release's tracklist (cached like every release lookup).
+    pub async fn edition_tracks(&self, raw_release: &str) -> Result<AlbumTracksInfo, CatalogError> {
+        let id = checked_mbid(raw_release, "release")?;
+        let release = self
+            .release_detail(&id)
+            .await?
+            .ok_or(CatalogError::NotFound)?;
+        Ok(AlbumTracksInfo {
+            total_tracks: u32::try_from(release.tracks.len()).unwrap_or(u32::MAX),
+            total_length: (release.total_length > 0).then_some(release.total_length),
+            tracks: release.tracks,
+            label: release.label,
+            barcode: release.barcode,
+            country: release.country,
+            selected_release_mbid: Some(id),
+            pick_basis: None,
+        })
+    }
+
     /// `POST /albums/{album_id}/refresh`: drop the album's cached
     /// MusicBrainz, artwork and store answers, then rebuild the header.
     pub async fn album_refresh(&self, raw_id: &str) -> Result<AlbumBasicInfo, CatalogError> {

@@ -354,6 +354,30 @@ pub async fn album_editions(
     answer(&deps, deps.catalog.album_editions(&id).await)
 }
 
+/// The tracklist of one edition, any release, for comparing editions side
+/// by side before choosing one.
+#[utoipa::path(
+    get,
+    path = "/api/v3/albums/{album_id}/editions/{release_mbid}/tracks",
+    params(
+        ("album_id" = String, Path, description = "Release-group MBID, or a library album id"),
+        ("release_mbid" = String, Path, description = "Release MBID"),
+    ),
+    responses(
+        (status = 200, description = "Tracklist", body = AlbumTracksInfo),
+        (status = 400, description = "Not a MusicBrainz id"),
+        (status = 401, description = "Not authenticated"),
+        (status = 404, description = "Unknown release"),
+        (status = 503, description = "MusicBrainz down"),
+    )
+)]
+pub async fn edition_tracks(
+    State(deps): State<CatalogDeps>,
+    Path((_album, release)): Path<(String, String)>,
+) -> Answer<AlbumTracksInfo> {
+    answer(&deps, deps.catalog.edition_tracks(&release).await)
+}
+
 /// Drop the album's cached upstream answers and rebuild the header.
 #[utoipa::path(
     post,

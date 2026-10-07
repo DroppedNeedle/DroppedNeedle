@@ -275,6 +275,7 @@ use crate::{
         crate::reads::catalog::handlers::album_basic,
         crate::reads::catalog::handlers::album_tracks,
         crate::reads::catalog::handlers::album_editions,
+        crate::reads::catalog::handlers::edition_tracks,
         crate::reads::catalog::handlers::album_refresh,
         crate::reads::catalog::handlers::set_album_edition,
         crate::reads::catalog::handlers::clear_album_edition,

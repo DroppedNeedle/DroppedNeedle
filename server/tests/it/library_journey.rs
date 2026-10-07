@@ -2599,3 +2599,157 @@ async fn removal_recycles_files_and_rescan_targets_the_album() {
         "an album that was never excluded reports false"
     );
 }
+
+/// One edition operation: a person chooses another edition (partial
+/// mapping), automatic passes leave it alone, undo takes it back, and
+/// "Let DroppedNeedle choose" returns the album to its best fit.
+#[tokio::test]
+async fn library_journey_choose_edition() {
+    use droppedneedle::library::identify::stores::IdentityStore as _;
+
+    const OTHER: &str = "0f6e7a1c-2b3d-4e5f-8a9b-1c2d3e4f5a6b";
+    let lib = Lib::open("edition").await;
+    let admin = setup_admin(lib.router(), "owner", "owner-password-1").await;
+    let auth = bearer(&admin);
+    let headers = [("authorization", auth.as_str())];
+    let music = lib.dir.join("music");
+    plant(&music, "album-e/01.flac", "flac_full_01.flac");
+    plant(&music, "album-e/02.flac", "flac_full_02.flac");
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/roots",
+        &headers,
+        Some(json!({"id": "music", "path": music.to_string_lossy()})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let (_, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/scan",
+        &headers,
+        Some(json!({})),
+    )
+    .await;
+    let run_id = body["run_id"].as_str().expect("run id").to_owned();
+    drain_scans(&lib.library).await;
+    let (_, body) = call(
+        lib.router(),
+        "GET",
+        &format!("/api/v3/library/scan/runs/{run_id}"),
+        &headers,
+        None,
+    )
+    .await;
+    let track_id = body["files"][0]["track_id"]
+        .as_str()
+        .expect("track")
+        .to_owned();
+    let (_, body) = call(
+        lib.router(),
+        "GET",
+        &format!("/api/v3/library/tracks/{track_id}"),
+        &headers,
+        None,
+    )
+    .await;
+    let album = body["album_id"].as_str().expect("album id").to_owned();
+    let fit = tagged_release(&lib.library, &album);
+    // Another edition of the group holding only the first song.
+    let mut other = fit.clone();
+    other.id = OTHER.to_owned();
+    other.tracks.truncate(1);
+    other.tracks[0].id = "other-track-0".to_owned();
+    lib.library
+        .test_providers
+        .as_ref()
+        .expect("scripted")
+        .set_recall(RecallResult {
+            releases: vec![fit.clone(), other.clone()],
+            ..RecallResult::default()
+        });
+    assert_eq!(lib.library.identify_tick().await, 1);
+    let edition = format!("/api/v3/library/albums/{album}/edition");
+    let (_, body) = call(lib.router(), "GET", &edition, &headers, None).await;
+    assert_eq!(body["state"], json!("confirmed"), "{body}");
+    assert_eq!(body["release_mbid"], json!(fit.id));
+
+    // Choose the smaller edition: one file placed, one kept as an extra.
+    let (status, body) = call(
+        lib.router(),
+        "PUT",
+        &edition,
+        &headers,
+        Some(json!({"release_mbid": OTHER})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["retag_files"].as_array().map(Vec::len), Some(1));
+    assert_eq!(body["extra_track_ids"].as_array().map(Vec::len), Some(1));
+    assert_eq!(body["status"]["state"], json!("chosen"));
+    assert_eq!(body["status"]["undo_available"], json!(true));
+
+    // An automatic pass never flips the choice.
+    let (status, _) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/identify",
+        &headers,
+        Some(json!({"album_id": album})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    lib.library.identify_tick().await;
+    let kept = lib
+        .library
+        .identify_store
+        .album_identity(&album)
+        .expect("row");
+    assert_eq!(kept.release_mbid.as_deref(), Some(OTHER));
+
+    // Undo brings back the automatic best fit.
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        &format!("{edition}/undo"),
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["state"], json!("confirmed"));
+    assert_eq!(body["release_mbid"], json!(fit.id));
+
+    // Choose again, then let DroppedNeedle choose: best fit again.
+    let (status, _) = call(
+        lib.router(),
+        "PUT",
+        &edition,
+        &headers,
+        Some(json!({"release_mbid": OTHER})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body) = call(lib.router(), "DELETE", &edition, &headers, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    lib.library.identify_tick().await;
+    let back = lib
+        .library
+        .identify_store
+        .album_identity(&album)
+        .expect("row");
+    assert_eq!(back.release_mbid.as_deref(), Some(fit.id.as_str()));
+
+    // A release MusicBrainz does not know is refused with a reason.
+    let (status, body) = call(
+        lib.router(),
+        "PUT",
+        &edition,
+        &headers,
+        Some(json!({"release_mbid": "11111111-2222-4333-8444-555555555555"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(body["error"]["code"], json!("EDITION_NOT_FOUND"));
+}

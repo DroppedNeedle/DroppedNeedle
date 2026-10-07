@@ -2142,6 +2142,47 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/library/albums/{album_id}/management/re-enable",
         Posture::Admin,
     ),
+    (
+        "GET",
+        "/api/v3/settings/edition-preferences",
+        Posture::Admin,
+    ),
+    (
+        "PUT",
+        "/api/v3/settings/edition-preferences",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/albums/{album_id}/editions/{release_mbid}/tracks",
+        Posture::User,
+    ),
+    (
+        "GET",
+        "/api/v3/library/albums/{album_id}/edition",
+        Posture::User,
+    ),
+    (
+        "PUT",
+        "/api/v3/library/albums/{album_id}/edition",
+        Posture::Curator,
+    ),
+    (
+        "DELETE",
+        "/api/v3/library/albums/{album_id}/edition",
+        Posture::Curator,
+    ),
+    (
+        "POST",
+        "/api/v3/library/albums/{album_id}/edition/confirm",
+        Posture::Curator,
+    ),
+    (
+        "POST",
+        "/api/v3/library/albums/{album_id}/edition/undo",
+        Posture::Curator,
+    ),
+    ("GET", "/api/v3/library/unconfirmed", Posture::User),
 ];
 
 /// Fill `{param}` segments with a dummy id.

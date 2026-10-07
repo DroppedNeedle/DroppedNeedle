@@ -314,6 +314,10 @@ pub fn router(deps: CatalogDeps) -> Router {
         .route("/albums/{album_id}/basic", get(handlers::album_basic))
         .route("/albums/{album_id}/tracks", get(handlers::album_tracks))
         .route("/albums/{album_id}/editions", get(handlers::album_editions))
+        .route(
+            "/albums/{album_id}/editions/{release_mbid}/tracks",
+            get(handlers::edition_tracks),
+        )
         .route("/albums/{album_id}/refresh", post(handlers::album_refresh))
         .route(
             "/albums/{album_id}/edition",
