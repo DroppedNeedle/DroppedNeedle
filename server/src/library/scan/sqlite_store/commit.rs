@@ -1236,6 +1236,155 @@ pub(super) fn commit_window(
     }
 }
 
+/// Where a scan would file a stored track if no manual grouping held it,
+/// read from the names the catalog row already carries. Used to reset a
+/// manual grouping. Returns the album id and whether that album was
+/// created here; `None` for an unknown track.
+///
+/// The album is found the way a scan finds it ([`resolve_album`]). When no
+/// live album fits, an album with the track's key that a manual change
+/// retired into the track's current album comes back (so a split followed
+/// by a reset restores the original album id); otherwise a new album row
+/// is made from the track's names, which the next scan refreshes.
+pub(crate) fn automatic_album_for(
+    tx: &Connection,
+    track_id: &str,
+    now: f64,
+) -> rusqlite::Result<Option<(String, bool)>> {
+    struct Stored {
+        album_id: String,
+        root_id: String,
+        relative_path: String,
+        release_mbid: Option<String>,
+        album_title: String,
+        album_artist: String,
+        from_tags: bool,
+        album_artist_sort: Option<String>,
+        year: Option<i64>,
+        genre: Option<String>,
+        is_compilation: i64,
+    }
+    let stored = tx
+        .query_row(
+            "SELECT local_album_id, root_id, relative_path, embedded_release_mbid, album_title, \
+             COALESCE(album_artist_name, ?2), \
+             album_title_provenance = 'tag' AND album_artist_provenance = 'tag', \
+             album_artist_sort, year, genre, is_compilation FROM local_tracks WHERE id = ?1",
+            params![track_id, UNKNOWN_ARTIST],
+            |row| {
+                Ok(Stored {
+                    album_id: row.get(0)?,
+                    root_id: row.get(1)?,
+                    relative_path: row.get(2)?,
+                    release_mbid: row.get(3)?,
+                    album_title: row.get(4)?,
+                    album_artist: row.get(5)?,
+                    from_tags: row.get(6)?,
+                    album_artist_sort: row.get(7)?,
+                    year: row.get(8)?,
+                    genre: row.get(9)?,
+                    is_compilation: row.get(10)?,
+                })
+            },
+        )
+        .optional()?;
+    let Some(stored) = stored else {
+        return Ok(None);
+    };
+    let directory = grouping_directory(&stored.relative_path);
+    let names = AlbumNames {
+        release_mbid: stored
+            .release_mbid
+            .as_deref()
+            .map(str::trim)
+            .filter(|mbid| !mbid.is_empty()),
+        from_tags: stored.from_tags,
+        directory: &directory,
+        title_folded: fold_text(&stored.album_title),
+        artist_folded: fold_text(&stored.album_artist),
+    };
+    let place = Place {
+        run_id: None,
+        root_id: &stored.root_id,
+        directory: &directory,
+    };
+    let album_id = resolve_album(tx, &names, &place, Some(&stored.album_id), false)?;
+    let exists: bool = tx
+        .prepare_cached("SELECT EXISTS(SELECT 1 FROM local_albums WHERE id = ?1)")?
+        .query_row(params![album_id], |row| row.get(0))?;
+    if exists {
+        return Ok(Some((album_id, false)));
+    }
+    let key = names.key();
+    let retired: Option<String> = tx
+        .query_row(
+            "SELECT id FROM local_albums WHERE grouping_key = ?1 AND retired_into_album_id = ?2 \
+             ORDER BY created_at, id LIMIT 1",
+            params![key, stored.album_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(revived) = retired {
+        tx.execute(
+            "UPDATE local_albums SET retired_into_album_id = NULL, grouping_source = 'automatic', \
+             grouping_locked = 0, updated_at = ?2, row_revision = row_revision + 1 WHERE id = ?1",
+            params![revived, now],
+        )?;
+        tx.execute(
+            "DELETE FROM local_album_aliases WHERE alias = ?1 AND kind = 'merged_album'",
+            params![revived],
+        )?;
+        return Ok(Some((revived, false)));
+    }
+    // An artist already known by this name keeps its row; else the same
+    // stable id a scan would give it.
+    let known: Option<String> = tx
+        .query_row(
+            "SELECT id FROM local_artists WHERE folded_name = ?1 \
+             AND retired_into_artist_id IS NULL ORDER BY created_at, id LIMIT 1",
+            params![fold_text(&stored.album_artist)],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let credit = Credit {
+        name: stored.album_artist.clone(),
+        sort_name: stored.album_artist_sort.clone(),
+        credited_name: stored.album_artist.clone(),
+        join_phrase: String::new(),
+    };
+    let artist_id = match known {
+        Some(id) => id,
+        None => upsert_artist(tx, &credit, now)?,
+    };
+    tx.execute(
+        "INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded, \
+         album_artist_name, album_artist_name_folded, album_artist_id, album_artist_sort_name, \
+         year, primary_genre, is_compilation, grouping_source, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'automatic', ?13, ?13)",
+        params![
+            album_id,
+            stored.root_id,
+            key,
+            stored.album_title,
+            fold_text(&stored.album_title),
+            stored.album_artist,
+            fold_text(&stored.album_artist),
+            artist_id,
+            stored.album_artist_sort,
+            stored.year,
+            stored.genre,
+            stored.is_compilation,
+            now,
+        ],
+    )?;
+    tx.execute(
+        "INSERT INTO local_album_artists (local_album_id, position, local_artist_id, role, \
+         credited_name, join_phrase) VALUES (?1, 0, ?2, 'main', ?3, '')",
+        params![album_id, artist_id, stored.album_artist],
+    )?;
+    Ok(Some((album_id, true)))
+}
+
 /// The track id a file imported to `(root, relative path)` will get: the
 /// row already at that path (a track whose file went missing), else the
 /// stable id a scan would give a new path. `None` when that stable id is
