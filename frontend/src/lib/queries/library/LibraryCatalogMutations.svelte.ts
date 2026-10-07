@@ -91,7 +91,7 @@ export function selectReidentificationCandidate() {
 export function reenableAlbumManagement() {
 	return createMutation(() => ({
 		mutationFn: (input: { albumId: string; expectedRevision: number }) =>
-			api.global.post<{ reenabled: boolean }>(API.library.reenableAlbumManagement(input.albumId), {
+			api.global.v3.POST(LibraryV3Api.reenableManagement(input.albumId), {
 				expected_exclusion_revision: input.expectedRevision
 			}),
 		onSuccess: async () => {

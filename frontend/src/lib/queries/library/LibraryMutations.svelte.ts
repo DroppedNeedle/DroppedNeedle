@@ -1,5 +1,4 @@
 import { createMutation } from '@tanstack/svelte-query';
-import { API } from '$lib/constants';
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/authStore.svelte';
 import { libraryStore } from '$lib/stores/library';
@@ -15,18 +14,18 @@ import { albumSourceMatchCache } from '$lib/utils/albumDetailCache';
 import type {
 	AlbumRemoveResponse,
 	TargetCatalogRemovalResponse,
-	LibraryActionResponse,
 	LibraryAlbumStatus,
-	StatusMessageResponse,
 	LibraryScanSchedule
 } from '$lib/types';
 
 export function removeLibraryAlbum() {
 	return createMutation(() => ({
-		mutationFn: ({ mbid, stopWanted }: { mbid: string; stopWanted: boolean }) =>
-			api.global.delete<AlbumRemoveResponse | TargetCatalogRemovalResponse>(
-				`${API.library.removeAlbum(mbid)}?delete_files=true&stop_wanted=${stopWanted}`
-			),
+		// stopWanted stays in the signature for the dialog; the v3 route
+		// leaves wanted watches alone.
+		mutationFn: ({ mbid }: { mbid: string; stopWanted: boolean }) =>
+			api.global.v3.DELETE(LibraryV3Api.removeAlbum(mbid)) as Promise<
+				AlbumRemoveResponse | TargetCatalogRemovalResponse
+			>,
 		onSuccess: async (result, { mbid: requestedMbid }) => {
 			const responseMbids =
 				'album_mbid' in result ? [result.album_mbid, ...result.removed_mbids] : [result.id];
@@ -79,8 +78,7 @@ const RESCAN_REFRESH_DELAYS_MS = [2500, 6000];
 
 export function rescanAlbum() {
 	return createMutation(() => ({
-		mutationFn: (mbid: string) =>
-			api.global.post<LibraryActionResponse>(API.library.rescanAlbum(mbid), {}),
+		mutationFn: (mbid: string) => api.global.v3.POST(LibraryV3Api.rescanAlbum(mbid)),
 		onSuccess: (_data, mbid) => {
 			const invalidate = () =>
 				invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.album(mbid) });
@@ -113,7 +111,7 @@ export function saveLibraryScanSchedule() {
 export function removeLibraryTrack() {
 	return createMutation(() => ({
 		mutationFn: ({ fileId }: { fileId: string; albumMbid: string; albumCacheKey: string }) =>
-			api.global.delete<StatusMessageResponse>(API.library.removeTrack(fileId)),
+			api.global.v3.DELETE(LibraryV3Api.removeTrack(fileId)),
 		onSuccess: async (_data, { albumMbid, albumCacheKey }) => {
 			albumSourceMatchCache.remove(albumCacheKey);
 			await invalidateQueriesWithPersister({

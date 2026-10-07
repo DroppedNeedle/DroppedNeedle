@@ -2527,3 +2527,75 @@ async fn artist_duplicate_groups_list_open_and_dismiss() {
     let (status, _) = call(lib.router(), "GET", &path, &headers, None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+/// Removing with files moves them into the root's recycle bin, never
+/// deletes them; the catalog rows turn missing and a rescan request
+/// covers the album's folder.
+#[tokio::test]
+async fn removal_recycles_files_and_rescan_targets_the_album() {
+    use droppedneedle::library::mutations::Mutations;
+    use droppedneedle::library::scan::CatalogStore as _;
+
+    let (scratch, library, music) = bare_library("lib-remove");
+    let first = plant(&music, "Band/LP/01.flac", "flac_full_01.flac");
+    let second = plant(&music, "Band/LP/02.flac", "flac_full_01.flac");
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "Band/LP/01.flac")
+        .expect("track indexed");
+    let album: String = droppedneedle::db::open_connection(&scratch.to_path_buf().join("app.db"))
+        .expect("db opens")
+        .query_row(
+            "SELECT local_album_id FROM local_tracks WHERE id = ?1",
+            [&track],
+            |row| row.get(0),
+        )
+        .expect("album id");
+    library
+        .scan_store
+        .execute_batch_for_tests(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+        )
+        .expect("admin row");
+
+    let rescan = Mutations::new(&library)
+        .rescan_album(&album, "admin")
+        .expect("rescan requested");
+    assert!(!rescan.run_id.is_empty());
+    drain_scans(&library).await;
+
+    let removed = Mutations::new(&library)
+        .remove_track(&track, true, "admin")
+        .expect("track removed");
+    assert_eq!(removed.track_ids, vec![track.clone()]);
+    assert!(!first.exists(), "the file left the album folder");
+    let bin = music.join(".recycle");
+    assert_eq!(std::fs::read_dir(&bin).expect("bin exists").count(), 1);
+
+    let removed = Mutations::new(&library)
+        .remove_album(&album, true, "admin")
+        .expect("album removed");
+    assert_eq!(
+        removed.track_ids.len(),
+        1,
+        "only the indexed track remained"
+    );
+    assert!(!second.exists());
+    assert_eq!(std::fs::read_dir(&bin).expect("bin").count(), 2);
+    assert_eq!(
+        library
+            .scan_store
+            .query_i64_for_tests("SELECT COUNT(*) FROM local_tracks WHERE availability = 'missing'")
+            .expect("count"),
+        2,
+        "rows stay, marked missing"
+    );
+    assert!(
+        !Mutations::new(&library)
+            .reenable_management(&album, 1, "admin")
+            .expect("re-enable answers"),
+        "an album that was never excluded reports false"
+    );
+}

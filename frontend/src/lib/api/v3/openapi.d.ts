@@ -2526,6 +2526,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/albums/{album_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove an album from the library. With `delete_files` its files move
+         *     into the recycle bin; nothing is deleted outright.
+         */
+        delete: operations["remove_album"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/albums/{album_id}/edition-pin": {
         parameters: {
             query?: never;
@@ -2540,6 +2560,23 @@ export interface paths {
         post?: never;
         /** Clear the pin for an album. */
         delete: operations["clear_pin_handler"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{album_id}/management/re-enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Let library management change an album again after it was excluded. */
+        post: operations["reenable_management"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2577,6 +2614,23 @@ export interface paths {
          *     its own.
          */
         post: operations["reidentify_album"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{album_id}/rescan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rescan the folders holding one album's files. */
+        post: operations["rescan_album"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3716,6 +3770,26 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/tracks/{track_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove one track. Its file moves into the recycle bin unless
+         *     `delete_file=false`.
+         */
+        delete: operations["remove_track"];
         options?: never;
         head?: never;
         patch?: never;
@@ -8487,6 +8561,17 @@ export interface components {
             provider?: string | null;
             /** @description Sampled tracks in album order. */
             tracks?: components["schemas"]["PreviewTrackItem"][];
+        };
+        /** @description The rescan request's answer. */
+        AlbumRescanResponse: {
+            /** @description `started`, `queued`, `coalesced`, `expanded` or `conflict`. */
+            disposition: string;
+            /** @description Why the run waits, when it does. */
+            queued_reason?: string | null;
+            /** @description Run id (fresh or merged into a waiting run). */
+            run_id: string;
+            /** @description Run state after the request. */
+            state: string;
         };
         /** @description One track on an album page. */
         AlbumTrack: {
@@ -16102,6 +16187,19 @@ export interface components {
             /** @description Track count. */
             track_count: number;
         };
+        /** @description Re-enable body: the exclusion revision the page showed. */
+        ReenableBody: {
+            /**
+             * Format: int64
+             * @description Row revision of the exclusion being cleared.
+             */
+            expected_exclusion_revision: number;
+        };
+        /** @description Re-enable answer. */
+        ReenableResponse: {
+            /** @description False when the album was not excluded. */
+            reenabled: boolean;
+        };
         /** @description Acknowledgement of a triggered background refresh. */
         RefreshResponse: {
             /** @description Human message. */
@@ -16563,6 +16661,15 @@ export interface components {
              * @description Release year, when known.
              */
             year?: number | null;
+        };
+        /** @description What a removal took out of the catalog. */
+        RemovalResponse: {
+            /** @description The removed album (canonical local id) or track id. */
+            id: string;
+            /** @description Track ids now gone from the catalog. */
+            removed_track_ids: string[];
+            /** @description Always true on a 200. */
+            success: boolean;
         };
         /** @description Bulk-remove body. */
         RemoveTracksBody: {
@@ -24419,6 +24526,69 @@ export interface operations {
             };
         };
     };
+    remove_album: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id or release-group MBID */
+                album_id: string;
+                /**
+                 * @description Move the album's files into the recycle bin too. Off by default:
+                 *     the album only leaves the catalog.
+                 */
+                delete_files: boolean;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Album removed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemovalResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Album not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Library busy or a file is outside the library folders */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A file could not be recycled; nothing changed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     get_pin_handler: {
         parameters: {
             query?: never;
@@ -24555,6 +24725,61 @@ export interface operations {
             };
         };
     };
+    reenable_management: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id or release-group MBID */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReenableBody"];
+            };
+        };
+        responses: {
+            /** @description Re-enable answer */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReenableResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Album not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The exclusion changed; reload and retry */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     search_reidentification_releases: {
         parameters: {
             query?: never;
@@ -24680,6 +24905,57 @@ export interface operations {
                 content?: never;
             };
             /** @description The album moved, is excluded, or needs the Local metadata confirmation */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    rescan_album: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id or release-group MBID */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Rescan requested */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlbumRescanResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Album not found or has no files */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The library could not start a scan */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -27920,6 +28196,69 @@ export interface operations {
             };
             /** @description Unknown track */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    remove_track: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local track id */
+                track_id: string;
+                /**
+                 * @description Move the track's file into the recycle bin too. On by default, as
+                 *     in v2 (where it deleted the file outright).
+                 */
+                delete_file: boolean;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Track removed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemovalResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Track not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Library busy or the file is outside the library folders */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The file could not be recycled; nothing changed */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

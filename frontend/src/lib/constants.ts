@@ -138,9 +138,6 @@ export const API = {
 	library: {
 		cachedAlbumArtwork: (albumId: string, coverVersion: number) =>
 			`/api/v1/library/albums/${encodeURIComponent(albumId)}/artwork/cached?v=${coverVersion}`,
-		rescanAlbum: (mbid: string) => `/api/v1/library/albums/${mbid}/rescan`,
-		reenableAlbumManagement: (albumId: string) =>
-			`/api/v1/library/albums/${encodeURIComponent(albumId)}/management/re-enable`,
 		editionConversionPreflight: (albumId: string) =>
 			`/api/v1/library/albums/${encodeURIComponent(albumId)}/edition-conversions/preflight`,
 		editionConversion: (jobId: string) =>
@@ -155,7 +152,6 @@ export const API = {
 			`/api/v1/library/edition-conversions/${encodeURIComponent(jobId)}/recheck`,
 		editionConversionCancel: (jobId: string) =>
 			`/api/v1/library/edition-conversions/${encodeURIComponent(jobId)}/cancel`,
-		removeTrack: (fileId: string) => `/api/v1/library/tracks/${fileId}`,
 		reviews: (
 			params: {
 				cursor?: string;
@@ -263,8 +259,7 @@ export const API = {
 			`/api/v1/library/management/identity-preparations/${encodeURIComponent(jobId)}/apply`,
 		discardIdentityPreparation: (jobId: string) =>
 			`/api/v1/library/management/identity-preparations/${encodeURIComponent(jobId)}/discard`,
-		scanDiagnostics: (runId: string) => `/api/v1/library/scan-runs/${runId}/diagnostics`,
-		removeAlbum: (mbid: string) => `/api/v1/library/album/${mbid}`
+		scanDiagnostics: (runId: string) => `/api/v1/library/scan-runs/${runId}/diagnostics`
 	},
 	libraryManagement: {
 		activationPreviews: () => '/api/v1/settings/library-management/activation-previews',

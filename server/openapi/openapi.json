@@ -5482,6 +5482,62 @@
         }
       }
     },
+    "/api/v3/library/albums/{album_id}": {
+      "delete": {
+        "tags": [
+          "crate::library::http::mutations"
+        ],
+        "summary": "Remove an album from the library. With `delete_files` its files move\ninto the recycle bin; nothing is deleted outright.",
+        "operationId": "remove_album",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id or release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "delete_files",
+            "in": "path",
+            "description": "Move the album's files into the recycle bin too. Off by default:\nthe album only leaves the catalog.",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Album removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemovalResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Album not found"
+          },
+          "409": {
+            "description": "Library busy or a file is outside the library folders"
+          },
+          "422": {
+            "description": "A file could not be recycled; nothing changed"
+          }
+        }
+      }
+    },
     "/api/v3/library/albums/{album_id}/edition-pin": {
       "get": {
         "tags": [
@@ -5607,6 +5663,60 @@
           },
           "404": {
             "description": "Unknown album id"
+          }
+        }
+      }
+    },
+    "/api/v3/library/albums/{album_id}/management/re-enable": {
+      "post": {
+        "tags": [
+          "crate::library::http::mutations"
+        ],
+        "summary": "Let library management change an album again after it was excluded.",
+        "operationId": "reenable_management",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id or release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReenableBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Re-enable answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReenableResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Album not found"
+          },
+          "409": {
+            "description": "The exclusion changed; reload and retry"
           }
         }
       }
@@ -5769,6 +5879,50 @@
           },
           "409": {
             "description": "The album moved, is excluded, or needs the Local metadata confirmation"
+          }
+        }
+      }
+    },
+    "/api/v3/library/albums/{album_id}/rescan": {
+      "post": {
+        "tags": [
+          "crate::library::http::mutations"
+        ],
+        "summary": "Rescan the folders holding one album's files.",
+        "operationId": "rescan_album",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id or release-group MBID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Rescan requested",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlbumRescanResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Album not found or has no files"
+          },
+          "409": {
+            "description": "The library could not start a scan"
           }
         }
       }
@@ -8983,6 +9137,62 @@
           },
           "404": {
             "description": "Unknown track"
+          }
+        }
+      }
+    },
+    "/api/v3/library/tracks/{track_id}": {
+      "delete": {
+        "tags": [
+          "crate::library::http::mutations"
+        ],
+        "summary": "Remove one track. Its file moves into the recycle bin unless\n`delete_file=false`.",
+        "operationId": "remove_track",
+        "parameters": [
+          {
+            "name": "track_id",
+            "in": "path",
+            "description": "Local track id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "delete_file",
+            "in": "path",
+            "description": "Move the track's file into the recycle bin too. On by default, as\nin v2 (where it deleted the file outright).",
+            "required": true,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Track removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemovalResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Track not found"
+          },
+          "409": {
+            "description": "Library busy or the file is outside the library folders"
+          },
+          "422": {
+            "description": "The file could not be recycled; nothing changed"
           }
         }
       }
@@ -19862,6 +20072,36 @@
               "$ref": "#/components/schemas/PreviewTrackItem"
             },
             "description": "Sampled tracks in album order."
+          }
+        }
+      },
+      "AlbumRescanResponse": {
+        "type": "object",
+        "description": "The rescan request's answer.",
+        "required": [
+          "run_id",
+          "disposition",
+          "state"
+        ],
+        "properties": {
+          "disposition": {
+            "type": "string",
+            "description": "`started`, `queued`, `coalesced`, `expanded` or `conflict`."
+          },
+          "queued_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the run waits, when it does."
+          },
+          "run_id": {
+            "type": "string",
+            "description": "Run id (fresh or merged into a waiting run)."
+          },
+          "state": {
+            "type": "string",
+            "description": "Run state after the request."
           }
         }
       },
@@ -36107,6 +36347,33 @@
           }
         }
       },
+      "ReenableBody": {
+        "type": "object",
+        "description": "Re-enable body: the exclusion revision the page showed.",
+        "required": [
+          "expected_exclusion_revision"
+        ],
+        "properties": {
+          "expected_exclusion_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Row revision of the exclusion being cleared."
+          }
+        }
+      },
+      "ReenableResponse": {
+        "type": "object",
+        "description": "Re-enable answer.",
+        "required": [
+          "reenabled"
+        ],
+        "properties": {
+          "reenabled": {
+            "type": "boolean",
+            "description": "False when the album was not excluded."
+          }
+        }
+      },
       "RefreshResponse": {
         "type": "object",
         "description": "Acknowledgement of a triggered background refresh.",
@@ -37230,6 +37497,32 @@
             ],
             "format": "int32",
             "description": "Release year, when known."
+          }
+        }
+      },
+      "RemovalResponse": {
+        "type": "object",
+        "description": "What a removal took out of the catalog.",
+        "required": [
+          "success",
+          "id",
+          "removed_track_ids"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The removed album (canonical local id) or track id."
+          },
+          "removed_track_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Track ids now gone from the catalog."
+          },
+          "success": {
+            "type": "boolean",
+            "description": "Always true on a 200."
           }
         }
       },

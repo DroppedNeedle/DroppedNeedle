@@ -5,6 +5,7 @@ pub mod contrib;
 pub mod error;
 pub mod handlers;
 pub mod models;
+pub mod mutations;
 pub mod operations;
 pub mod reconcile;
 pub mod routes;

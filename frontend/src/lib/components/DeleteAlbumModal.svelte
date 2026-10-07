@@ -49,7 +49,7 @@
 		<p class="py-4 text-base-content/70">
 			Remove <span class="font-semibold text-base-content">{albumTitle}</span> by
 			<span class="font-semibold text-base-content">{artistName}</span> from your library? The album's
-			local files will be permanently deleted from disk - this can't be undone.
+			files move to the recycle bin, so you can get them back from there if you change your mind.
 		</p>
 		<label class="flex cursor-pointer items-start gap-3 rounded-box bg-base-200 p-3 text-sm">
 			<input

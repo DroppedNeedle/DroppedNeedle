@@ -37,7 +37,7 @@ describe('DeleteAlbumModal', () => {
 
 		await expect.element(page.getByRole('heading', { name: 'Remove Album' })).toBeVisible();
 		await expect.element(page.getByText(/Blue Lines/)).toBeVisible();
-		await expect.element(page.getByText(/permanently deleted from disk/)).toBeVisible();
+		await expect.element(page.getByText(/move to the recycle bin/)).toBeVisible();
 		await expect.element(page.getByText(/also remove/i)).not.toBeInTheDocument();
 		await expect.element(page.getByText(/Checking artist impact/i)).not.toBeInTheDocument();
 	});

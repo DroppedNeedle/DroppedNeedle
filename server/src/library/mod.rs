@@ -28,6 +28,7 @@ pub mod import;
 mod loops;
 pub mod manage;
 pub mod matching;
+pub mod mutations;
 pub mod operations;
 pub mod publish;
 pub mod reconcile;

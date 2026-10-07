@@ -2122,6 +2122,26 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/library/artists/duplicate-groups/{group_id}/dismiss",
         Posture::Admin,
     ),
+    (
+        "DELETE",
+        "/api/v3/library/albums/{album_id}",
+        Posture::Admin,
+    ),
+    (
+        "DELETE",
+        "/api/v3/library/tracks/{track_id}",
+        Posture::Curator,
+    ),
+    (
+        "POST",
+        "/api/v3/library/albums/{album_id}/rescan",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/albums/{album_id}/management/re-enable",
+        Posture::Admin,
+    ),
 ];
 
 /// Fill `{param}` segments with a dummy id.
