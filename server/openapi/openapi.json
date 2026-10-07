@@ -4244,6 +4244,175 @@
         }
       }
     },
+    "/api/v3/downloads/search/album": {
+      "post": {
+        "tags": [
+          "crate::acquire::downloads::http"
+        ],
+        "summary": "Search every download source for one album. The search runs in the\nbackground; follow it with `search_job_updated` events or by reading\nthe job. `POST /api/v3/downloads/search/album`.",
+        "operationId": "search_album_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchAlbumRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchAlbumResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/search/{job_id}": {
+      "get": {
+        "tags": [
+          "crate::acquire::downloads::http"
+        ],
+        "summary": "One of your manual searches and its candidates.\n`GET /api/v3/downloads/search/{job_id}`.",
+        "operationId": "search_job_handler",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Search job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchJobResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/search/{job_id}/cancel": {
+      "post": {
+        "tags": [
+          "crate::acquire::downloads::http"
+        ],
+        "summary": "Close a search without downloading anything.\n`POST /api/v3/downloads/search/{job_id}/cancel`.",
+        "operationId": "cancel_search_handler",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Search job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DownloadActionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/search/{job_id}/dismiss": {
+      "post": {
+        "tags": [
+          "crate::acquire::downloads::http"
+        ],
+        "summary": "\"None of these, keep watching\": close the search and put the album on\nthe wanted watchlist. `POST /api/v3/downloads/search/{job_id}/dismiss`.",
+        "operationId": "dismiss_search_handler",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Search job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DismissSearchResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v3/downloads/search/{job_id}/pick": {
+      "post": {
+        "tags": [
+          "crate::acquire::downloads::http"
+        ],
+        "summary": "Download one candidate. The download fetches exactly that candidate\nfirst. `POST /api/v3/downloads/search/{job_id}/pick`.",
+        "operationId": "pick_candidate_handler",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Search job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PickRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PickResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v3/downloads/stop-all-retries": {
       "post": {
         "tags": [
@@ -4534,7 +4703,7 @@
           "events"
         ],
         "summary": "Live events for the signed-in user.",
-        "description": "Event names: `activity.changed` and `snapshot` (now playing) go to\neveryone; `wanted_new_candidates`, `wanted_auto_dispatched`,\n`wanted_fulfilled`, `auto_download_enqueued`, `request_imported`,\n`playlist_imported`, `drop_import_updated`, `free_music_updated`,\n`personal_mix_refreshed` and `concerts_new` go only to the user they\nconcern. Each `data:` line is one JSON payload (see the `ActivityChanged`,\n`NowPlayingSnapshot`, `WantedNotice`, `AutoDownloadEnqueued`,\n`RequestImported`, `PlaylistImported`, `DropImportUpdated`,\n`FreeMusicUpdated`, `PersonalMixRefreshed` and `ConcertsNew` schemas).",
+        "description": "Event names: `activity.changed` and `snapshot` (now playing) go to\neveryone; `wanted_new_candidates`, `wanted_auto_dispatched`,\n`wanted_fulfilled`, `auto_download_enqueued`, `request_imported`,\n`playlist_imported`, `drop_import_updated`, `free_music_updated`,\n`personal_mix_refreshed`, `concerts_new` and `search_job_updated` go\nonly to the user they concern. Each `data:` line is one JSON payload (see the `ActivityChanged`,\n`NowPlayingSnapshot`, `WantedNotice`, `AutoDownloadEnqueued`,\n`RequestImported`, `PlaylistImported`, `DropImportUpdated`,\n`FreeMusicUpdated`, `PersonalMixRefreshed`, `ConcertsNew` and\n`SearchJobUpdated` schemas).",
         "operationId": "events_stream",
         "responses": {
           "200": {
@@ -23070,6 +23239,72 @@
           }
         }
       },
+      "CandidateFile": {
+        "type": "object",
+        "description": "One file a candidate would fetch.",
+        "required": [
+          "filename",
+          "size",
+          "extension"
+        ],
+        "properties": {
+          "bitrate": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Bitrate in kbps for lossy files."
+          },
+          "duration_seconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Advertised length in seconds."
+          },
+          "extension": {
+            "type": "string",
+            "description": "Lowercase extension."
+          },
+          "filename": {
+            "type": "string",
+            "description": "File path as the source names it."
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Size in bytes, 0 when unknown."
+          }
+        }
+      },
+      "CandidateNote": {
+        "type": "object",
+        "description": "Why a candidate sits where it does: one stable code and one sentence.",
+        "required": [
+          "code",
+          "text"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Stable code (`complete`, `incomplete`, `lengths`, `quality`,\n`no_tracklist`, `names_album`, `title_unclear`, `strong`, `weak`)."
+          },
+          "text": {
+            "type": "string",
+            "description": "What the candidate looks like, in one sentence."
+          }
+        }
+      },
+      "CandidateTier": {
+        "type": "string",
+        "description": "How strongly a candidate is recommended.",
+        "enum": [
+          "recommended",
+          "possible"
+        ]
+      },
       "CandidateView": {
         "type": "object",
         "description": "One scored candidate inside a review.",
@@ -25625,6 +25860,23 @@
           "source": {
             "$ref": "#/components/schemas/SourceName",
             "description": "Owning source."
+          }
+        }
+      },
+      "DismissSearchResponse": {
+        "type": "object",
+        "description": "\"None of these\": the album is on the watchlist.",
+        "required": [
+          "success",
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "type": "string",
+            "description": "The album's watch state (`watching` normally)."
+          },
+          "success": {
+            "type": "boolean"
           }
         }
       },
@@ -34338,6 +34590,32 @@
           }
         }
       },
+      "PickRequest": {
+        "type": "object",
+        "description": "Pick one candidate.",
+        "required": [
+          "candidate_index"
+        ],
+        "properties": {
+          "candidate_index": {
+            "type": "integer",
+            "description": "`candidate_index` of the candidate to download.",
+            "minimum": 0
+          }
+        }
+      },
+      "PickResponse": {
+        "type": "object",
+        "description": "The download a pick started.",
+        "required": [
+          "task_id"
+        ],
+        "properties": {
+          "task_id": {
+            "type": "string"
+          }
+        }
+      },
       "PlaybackProgressRequest": {
         "type": "object",
         "description": "Heartbeat for a live session: keeps presence alive and the scrubber live.",
@@ -40014,6 +40292,66 @@
           }
         }
       },
+      "SearchAlbumRequest": {
+        "type": "object",
+        "description": "Start a manual search for one album.",
+        "required": [
+          "artist_name",
+          "album_title"
+        ],
+        "properties": {
+          "album_title": {
+            "type": "string",
+            "description": "Album title."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Album artist."
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Release group. An album the library already holds is not searched."
+          },
+          "release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The edition to rank folders against (its tracklist)."
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Release year, when known."
+          }
+        }
+      },
+      "SearchAlbumResponse": {
+        "type": "object",
+        "description": "What starting a search did.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "job_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The job to follow, while searching."
+          },
+          "status": {
+            "type": "string",
+            "description": "`searching`, or `already_in_library` when nothing was searched."
+          }
+        }
+      },
       "SearchBucketResponse": {
         "type": "object",
         "description": "One bucket drill-down page.",
@@ -40062,6 +40400,250 @@
                 "description": "Standout hit, present only on the first page and only when one\nscored high enough to headline."
               }
             ]
+          }
+        }
+      },
+      "SearchCandidateView": {
+        "type": "object",
+        "description": "One candidate as the search page shows it.",
+        "required": [
+          "candidate_index",
+          "source",
+          "title",
+          "tier",
+          "note",
+          "files",
+          "file_count",
+          "size_bytes"
+        ],
+        "properties": {
+          "candidate_index": {
+            "type": "integer",
+            "description": "Position in the job's list; send it back to pick this one.",
+            "minimum": 0
+          },
+          "file_count": {
+            "type": "integer",
+            "description": "Files in the candidate (0 when the source does not say).",
+            "minimum": 0
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CandidateFile"
+            },
+            "description": "Files it would fetch, when the source lists them."
+          },
+          "format": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Format label (`FLAC`, `MP3 320`, `lossless`), when known."
+          },
+          "grabs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Usenet: how often it was grabbed, when the indexer says."
+          },
+          "has_free_slot": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Soulseek: the peer has a free upload slot."
+          },
+          "indexer": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Usenet: the indexer that listed it."
+          },
+          "note": {
+            "$ref": "#/components/schemas/CandidateNote",
+            "description": "Why, in one sentence."
+          },
+          "posted_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Usenet: when it was posted (unix seconds)."
+          },
+          "queue_length": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Soulseek: files waiting in the peer's upload queue."
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total size in bytes (0 when unknown).",
+            "minimum": 0
+          },
+          "source": {
+            "type": "string",
+            "description": "`soulseek`, `usenet` or `plugin:<name>`."
+          },
+          "tier": {
+            "$ref": "#/components/schemas/CandidateTier",
+            "description": "How strongly it is recommended."
+          },
+          "title": {
+            "type": "string",
+            "description": "Folder name or release title."
+          },
+          "tracks_matched": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Edition tracks it holds (Soulseek, when the tracklist is known).",
+            "minimum": 0
+          },
+          "tracks_total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Tracks on the edition, when known.",
+            "minimum": 0
+          },
+          "upload_speed": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Soulseek: the peer's upload speed in bytes per second."
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Soulseek peer or plugin account, when there is one."
+          }
+        }
+      },
+      "SearchJobResponse": {
+        "type": "object",
+        "description": "One manual search and what it found.",
+        "required": [
+          "job_id",
+          "status",
+          "artist_name",
+          "album_title",
+          "candidate_count",
+          "candidates"
+        ],
+        "properties": {
+          "album_title": {
+            "type": "string"
+          },
+          "artist_name": {
+            "type": "string"
+          },
+          "candidate_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchCandidateView"
+            },
+            "description": "Best first within each source; sources in the configured order."
+          },
+          "job_id": {
+            "type": "string"
+          },
+          "reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DownloadReason",
+                "description": "Why the search failed or found nothing, and what to do."
+              }
+            ]
+          },
+          "release_group_mbid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The edition the candidates were ranked against."
+          },
+          "status": {
+            "type": "string",
+            "description": "`searching`, `completed`, `failed`, `matched` (a download started)\nor `cancelled`."
+          },
+          "task_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The download a pick started."
+          },
+          "tracks_total": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Tracks on that edition, when its tracklist could be read.",
+            "minimum": 0
+          },
+          "year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        }
+      },
+      "SearchJobUpdated": {
+        "type": "object",
+        "description": "`search_job_updated`: one of the user's manual album searches started,\nfinished, failed or was picked from. The web UI refetches the job.",
+        "required": [
+          "event_id",
+          "job_id",
+          "status",
+          "candidate_count"
+        ],
+        "properties": {
+          "candidate_count": {
+            "type": "integer",
+            "description": "Candidates found so far.",
+            "minimum": 0
+          },
+          "event_id": {
+            "type": "string",
+            "description": "Id for de-duplication."
+          },
+          "job_id": {
+            "type": "string",
+            "description": "The search that moved."
+          },
+          "status": {
+            "type": "string",
+            "description": "Its status now: `searching`, `completed`, `failed`, `matched` or\n`cancelled`."
           }
         }
       },

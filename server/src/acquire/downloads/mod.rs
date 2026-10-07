@@ -37,7 +37,7 @@ pub mod watchdog;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use http::downloads_router;
-pub use http::{ReimportResponse, downloads_core_routes};
+pub use http::{ReimportResponse, downloads_core_routes, search_core_routes};
 pub use manifest::{
     DownloadManifest, ExpectedFile, ExpectedTrack, ManifestCodec, RecordedReason, TaskHandle,
     TrackAlbumContext, TrackPosition,

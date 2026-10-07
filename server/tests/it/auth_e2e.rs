@@ -1341,6 +1341,24 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/downloads/quarantine/{quarantine_id}",
         Posture::Admin,
     ),
+    // Manual album searches: the owner's own jobs (admins may dismiss).
+    ("POST", "/api/v3/downloads/search/album", Posture::User),
+    ("GET", "/api/v3/downloads/search/{job_id}", Posture::User),
+    (
+        "POST",
+        "/api/v3/downloads/search/{job_id}/pick",
+        Posture::User,
+    ),
+    (
+        "POST",
+        "/api/v3/downloads/search/{job_id}/dismiss",
+        Posture::User,
+    ),
+    (
+        "POST",
+        "/api/v3/downloads/search/{job_id}/cancel",
+        Posture::User,
+    ),
     // Stage-4 library reads.
     ("GET", "/api/v3/library/albums", Posture::User),
     ("GET", "/api/v3/library/albums/{id}", Posture::User),

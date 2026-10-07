@@ -1,7 +1,8 @@
 //! Download queue HTTP: the queue list and task views, the per-task
 //! actions (cancel, retry, next source, reimport), the bulk actions
-//! (clear, stop all retries, retry all failed), the activity summary, and
-//! the admin quarantine list.
+//! (clear, stop all retries, retry all failed), the activity summary, the
+//! admin quarantine list, and manual album searches (start, view, pick,
+//! dismiss, cancel).
 //!
 //! Every route sits inside the session gate. Tasks follow v2's ownership:
 //! admins see and act on every task, everyone else on their own (another
@@ -29,6 +30,8 @@ use crate::acquire::requests::{
     error::RequestsError,
     http::{HttpError, ValidJson, ValidQuery},
 };
+use crate::acquire::search_jobs::candidates::SearchCandidateView;
+use crate::acquire::search_jobs::{AlbumSearch, JobView, SearchJobError, SearchJobs, StartOutcome};
 use crate::acquire::worker::{DownloadWorker, ReimportError};
 
 /// Reimport outcome: the task as the import left it.
@@ -810,4 +813,257 @@ pub fn downloads_router(worker: Arc<DownloadWorker>) -> Router {
     downloads_core_routes(worker).layer(axum::middleware::from_fn(
         crate::acquire::requests::auth::gate,
     ))
+}
+
+// Manual album searches.
+
+/// Start a manual search for one album.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct SearchAlbumRequest {
+    /// Album artist.
+    pub artist_name: String,
+    /// Album title.
+    pub album_title: String,
+    /// Release year, when known.
+    #[serde(default)]
+    pub year: Option<i32>,
+    /// Release group. An album the library already holds is not searched.
+    #[serde(default)]
+    pub release_group_mbid: Option<String>,
+    /// The edition to rank folders against (its tracklist).
+    #[serde(default)]
+    pub release_mbid: Option<String>,
+}
+
+/// What starting a search did.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct SearchAlbumResponse {
+    /// `searching`, or `already_in_library` when nothing was searched.
+    pub status: String,
+    /// The job to follow, while searching.
+    pub job_id: Option<String>,
+}
+
+/// One manual search and what it found.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct SearchJobResponse {
+    pub job_id: String,
+    /// `searching`, `completed`, `failed`, `matched` (a download started)
+    /// or `cancelled`.
+    pub status: String,
+    pub artist_name: String,
+    pub album_title: String,
+    pub year: Option<i32>,
+    pub release_group_mbid: Option<String>,
+    /// The edition the candidates were ranked against.
+    pub release_mbid: Option<String>,
+    /// Tracks on that edition, when its tracklist could be read.
+    pub tracks_total: Option<usize>,
+    pub candidate_count: usize,
+    /// Best first within each source; sources in the configured order.
+    pub candidates: Vec<SearchCandidateView>,
+    /// Why the search failed or found nothing, and what to do.
+    pub reason: Option<DownloadReason>,
+    /// The download a pick started.
+    pub task_id: Option<String>,
+}
+
+/// Pick one candidate.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct PickRequest {
+    /// `candidate_index` of the candidate to download.
+    pub candidate_index: usize,
+}
+
+/// The download a pick started.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct PickResponse {
+    pub task_id: String,
+}
+
+/// "None of these": the album is on the watchlist.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct DismissSearchResponse {
+    pub success: bool,
+    /// The album's watch state (`watching` normally).
+    pub state: String,
+}
+
+impl From<SearchJobError> for HttpError {
+    fn from(error: SearchJobError) -> Self {
+        HttpError(match error {
+            SearchJobError::NotFound => RequestsError::NotFound,
+            SearchJobError::Forbidden => RequestsError::Forbidden {
+                message: "You can only use your own searches.".to_owned(),
+            },
+            SearchJobError::Invalid(message) => RequestsError::InvalidInput { message },
+            SearchJobError::Conflict(message) => RequestsError::Conflict { message },
+            SearchJobError::Refused(error) => error,
+            SearchJobError::Internal(cause) => RequestsError::internal(&cause),
+        })
+    }
+}
+
+impl From<JobView> for SearchJobResponse {
+    fn from(view: JobView) -> Self {
+        let reason = view.reason().map(|reason| DownloadReason {
+            code: reason.code().to_owned(),
+            text: reason.text().to_owned(),
+            action: reason.action().to_owned(),
+        });
+        let payload = view.payload.unwrap_or_default();
+        let candidates: Vec<SearchCandidateView> = payload
+            .candidates
+            .into_iter()
+            .map(|candidate| candidate.view)
+            .collect();
+        Self {
+            job_id: view.row.id,
+            status: view.row.status,
+            artist_name: view.row.artist_name,
+            album_title: view.row.album_title,
+            year: view.row.year,
+            release_group_mbid: view.row.release_group_mbid,
+            release_mbid: payload.release_mbid,
+            tracks_total: payload.tracks_total,
+            candidate_count: candidates.len(),
+            candidates,
+            reason,
+            task_id: view.task_id,
+        }
+    }
+}
+
+/// Search every download source for one album. The search runs in the
+/// background; follow it with `search_job_updated` events or by reading
+/// the job. `POST /api/v3/downloads/search/album`.
+#[utoipa::path(
+    post,
+    path = "/api/v3/downloads/search/album",
+    request_body = SearchAlbumRequest,
+    responses((status = 200, body = SearchAlbumResponse))
+)]
+pub async fn search_album_handler(
+    State(search): State<Arc<SearchJobs>>,
+    principal: Principal,
+    ValidJson(body): ValidJson<SearchAlbumRequest>,
+) -> Result<Json<SearchAlbumResponse>, HttpError> {
+    let ask = AlbumSearch {
+        artist_name: body.artist_name,
+        album_title: body.album_title,
+        year: body.year,
+        release_group_mbid: body.release_group_mbid,
+        release_mbid: body.release_mbid,
+    };
+    Ok(Json(match search.start(&principal, ask).await? {
+        StartOutcome::Searching(job_id) => SearchAlbumResponse {
+            status: "searching".to_owned(),
+            job_id: Some(job_id),
+        },
+        StartOutcome::AlreadyInLibrary => SearchAlbumResponse {
+            status: "already_in_library".to_owned(),
+            job_id: None,
+        },
+    }))
+}
+
+/// One of your manual searches and its candidates.
+/// `GET /api/v3/downloads/search/{job_id}`.
+#[utoipa::path(
+    get,
+    path = "/api/v3/downloads/search/{job_id}",
+    params(("job_id" = String, Path, description = "Search job id")),
+    responses((status = 200, body = SearchJobResponse))
+)]
+pub async fn search_job_handler(
+    State(search): State<Arc<SearchJobs>>,
+    principal: Principal,
+    Path(job_id): Path<String>,
+) -> Result<Json<SearchJobResponse>, HttpError> {
+    Ok(Json(search.get(&principal, &job_id).await?.into()))
+}
+
+/// Download one candidate. The download fetches exactly that candidate
+/// first. `POST /api/v3/downloads/search/{job_id}/pick`.
+#[utoipa::path(
+    post,
+    path = "/api/v3/downloads/search/{job_id}/pick",
+    params(("job_id" = String, Path, description = "Search job id")),
+    request_body = PickRequest,
+    responses((status = 200, body = PickResponse))
+)]
+pub async fn pick_candidate_handler(
+    State(search): State<Arc<SearchJobs>>,
+    principal: Principal,
+    Path(job_id): Path<String>,
+    ValidJson(body): ValidJson<PickRequest>,
+) -> Result<Json<PickResponse>, HttpError> {
+    let task_id = search
+        .pick(&principal, &job_id, body.candidate_index)
+        .await?;
+    Ok(Json(PickResponse { task_id }))
+}
+
+/// "None of these, keep watching": close the search and put the album on
+/// the wanted watchlist. `POST /api/v3/downloads/search/{job_id}/dismiss`.
+#[utoipa::path(
+    post,
+    path = "/api/v3/downloads/search/{job_id}/dismiss",
+    params(("job_id" = String, Path, description = "Search job id")),
+    responses((status = 200, body = DismissSearchResponse))
+)]
+pub async fn dismiss_search_handler(
+    State(search): State<Arc<SearchJobs>>,
+    principal: Principal,
+    Path(job_id): Path<String>,
+) -> Result<Json<DismissSearchResponse>, HttpError> {
+    let state = search.dismiss(&principal, &job_id).await?;
+    Ok(Json(DismissSearchResponse {
+        success: true,
+        state,
+    }))
+}
+
+/// Close a search without downloading anything.
+/// `POST /api/v3/downloads/search/{job_id}/cancel`.
+#[utoipa::path(
+    post,
+    path = "/api/v3/downloads/search/{job_id}/cancel",
+    params(("job_id" = String, Path, description = "Search job id")),
+    responses((status = 200, body = DownloadActionResponse))
+)]
+pub async fn cancel_search_handler(
+    State(search): State<Arc<SearchJobs>>,
+    principal: Principal,
+    Path(job_id): Path<String>,
+) -> Result<Json<DownloadActionResponse>, HttpError> {
+    search.cancel(&principal, &job_id).await?;
+    Ok(Json(DownloadActionResponse { success: true }))
+}
+
+/// Manual search routes without an auth layer, mounted beside the queue
+/// routes inside the session gate.
+pub fn search_core_routes(search: Arc<SearchJobs>) -> Router {
+    Router::new()
+        .route(
+            "/downloads/search/album",
+            routing::post(search_album_handler),
+        )
+        .route(
+            "/downloads/search/{job_id}",
+            routing::get(search_job_handler),
+        )
+        .route(
+            "/downloads/search/{job_id}/pick",
+            routing::post(pick_candidate_handler),
+        )
+        .route(
+            "/downloads/search/{job_id}/dismiss",
+            routing::post(dismiss_search_handler),
+        )
+        .route(
+            "/downloads/search/{job_id}/cancel",
+            routing::post(cancel_search_handler),
+        )
+        .with_state(search)
 }

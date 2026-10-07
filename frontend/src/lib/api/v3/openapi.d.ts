@@ -2002,6 +2002,107 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/downloads/search/album": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Search every download source for one album. The search runs in the
+         *     background; follow it with `search_job_updated` events or by reading
+         *     the job. `POST /api/v3/downloads/search/album`.
+         */
+        post: operations["search_album_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/downloads/search/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One of your manual searches and its candidates.
+         *     `GET /api/v3/downloads/search/{job_id}`.
+         */
+        get: operations["search_job_handler"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/downloads/search/{job_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Close a search without downloading anything.
+         *     `POST /api/v3/downloads/search/{job_id}/cancel`.
+         */
+        post: operations["cancel_search_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/downloads/search/{job_id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * "None of these, keep watching": close the search and put the album on
+         *     the wanted watchlist. `POST /api/v3/downloads/search/{job_id}/dismiss`.
+         */
+        post: operations["dismiss_search_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/downloads/search/{job_id}/pick": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Download one candidate. The download fetches exactly that candidate
+         *     first. `POST /api/v3/downloads/search/{job_id}/pick`.
+         */
+        post: operations["pick_candidate_handler"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/downloads/stop-all-retries": {
         parameters: {
             query?: never;
@@ -2178,11 +2279,12 @@ export interface paths {
          *     everyone; `wanted_new_candidates`, `wanted_auto_dispatched`,
          *     `wanted_fulfilled`, `auto_download_enqueued`, `request_imported`,
          *     `playlist_imported`, `drop_import_updated`, `free_music_updated`,
-         *     `personal_mix_refreshed` and `concerts_new` go only to the user they
-         *     concern. Each `data:` line is one JSON payload (see the `ActivityChanged`,
+         *     `personal_mix_refreshed`, `concerts_new` and `search_job_updated` go
+         *     only to the user they concern. Each `data:` line is one JSON payload (see the `ActivityChanged`,
          *     `NowPlayingSnapshot`, `WantedNotice`, `AutoDownloadEnqueued`,
          *     `RequestImported`, `PlaylistImported`, `DropImportUpdated`,
-         *     `FreeMusicUpdated`, `PersonalMixRefreshed` and `ConcertsNew` schemas).
+         *     `FreeMusicUpdated`, `PersonalMixRefreshed`, `ConcertsNew` and
+         *     `SearchJobUpdated` schemas).
          */
         get: operations["events_stream"];
         put?: never;
@@ -9885,6 +9987,43 @@ export interface components {
              */
             expected_row_revision: number;
         };
+        /** @description One file a candidate would fetch. */
+        CandidateFile: {
+            /**
+             * Format: int32
+             * @description Bitrate in kbps for lossy files.
+             */
+            bitrate?: number | null;
+            /**
+             * Format: double
+             * @description Advertised length in seconds.
+             */
+            duration_seconds?: number | null;
+            /** @description Lowercase extension. */
+            extension: string;
+            /** @description File path as the source names it. */
+            filename: string;
+            /**
+             * Format: int64
+             * @description Size in bytes, 0 when unknown.
+             */
+            size: number;
+        };
+        /** @description Why a candidate sits where it does: one stable code and one sentence. */
+        CandidateNote: {
+            /**
+             * @description Stable code (`complete`, `incomplete`, `lengths`, `quality`,
+             *     `no_tracklist`, `names_album`, `title_unclear`, `strong`, `weak`).
+             */
+            code: string;
+            /** @description What the candidate looks like, in one sentence. */
+            text: string;
+        };
+        /**
+         * @description How strongly a candidate is recommended.
+         * @enum {string}
+         */
+        CandidateTier: "recommended" | "possible";
         /** @description One scored candidate inside a review. */
         CandidateView: {
             /** @description Candidate album artist. */
@@ -10849,6 +10988,12 @@ export interface components {
             hubs: components["schemas"]["DiscoveryHubView"][];
             /** @description Owning source. */
             source: components["schemas"]["SourceName"];
+        };
+        /** @description "None of these": the album is on the watchlist. */
+        DismissSearchResponse: {
+            /** @description The album's watch state (`watching` normally). */
+            state: string;
+            success: boolean;
         };
         /** @description Change display name. */
         DisplayNameUpdate: {
@@ -15239,6 +15384,15 @@ export interface components {
              */
             track_count: number;
         };
+        /** @description Pick one candidate. */
+        PickRequest: {
+            /** @description `candidate_index` of the candidate to download. */
+            candidate_index: number;
+        };
+        /** @description The download a pick started. */
+        PickResponse: {
+            task_id: string;
+        };
         /** @description Heartbeat for a live session: keeps presence alive and the scrubber live. */
         PlaybackProgressRequest: {
             /** @description Reporting device slug. */
@@ -17776,6 +17930,29 @@ export interface components {
             /** @description Track title. */
             track_name: string;
         };
+        /** @description Start a manual search for one album. */
+        SearchAlbumRequest: {
+            /** @description Album title. */
+            album_title: string;
+            /** @description Album artist. */
+            artist_name: string;
+            /** @description Release group. An album the library already holds is not searched. */
+            release_group_mbid?: string | null;
+            /** @description The edition to rank folders against (its tracklist). */
+            release_mbid?: string | null;
+            /**
+             * Format: int32
+             * @description Release year, when known.
+             */
+            year?: number | null;
+        };
+        /** @description What starting a search did. */
+        SearchAlbumResponse: {
+            /** @description The job to follow, while searching. */
+            job_id?: string | null;
+            /** @description `searching`, or `already_in_library` when nothing was searched. */
+            status: string;
+        };
         /** @description One bucket drill-down page. */
         SearchBucketResponse: {
             /** @description Echoed bucket name. */
@@ -17795,6 +17972,101 @@ export interface components {
             /** @description Provider health for this bucket. */
             status: components["schemas"]["SearchRemoteStatus"];
             top_result?: null | components["schemas"]["SearchResultItem"];
+        };
+        /** @description One candidate as the search page shows it. */
+        SearchCandidateView: {
+            /** @description Position in the job's list; send it back to pick this one. */
+            candidate_index: number;
+            /** @description Files in the candidate (0 when the source does not say). */
+            file_count: number;
+            /** @description Files it would fetch, when the source lists them. */
+            files: components["schemas"]["CandidateFile"][];
+            /** @description Format label (`FLAC`, `MP3 320`, `lossless`), when known. */
+            format?: string | null;
+            /**
+             * Format: int64
+             * @description Usenet: how often it was grabbed, when the indexer says.
+             */
+            grabs?: number | null;
+            /** @description Soulseek: the peer has a free upload slot. */
+            has_free_slot?: boolean | null;
+            /** @description Usenet: the indexer that listed it. */
+            indexer?: string | null;
+            /** @description Why, in one sentence. */
+            note: components["schemas"]["CandidateNote"];
+            /**
+             * Format: double
+             * @description Usenet: when it was posted (unix seconds).
+             */
+            posted_at?: number | null;
+            /**
+             * Format: int64
+             * @description Soulseek: files waiting in the peer's upload queue.
+             */
+            queue_length?: number | null;
+            /**
+             * Format: int64
+             * @description Total size in bytes (0 when unknown).
+             */
+            size_bytes: number;
+            /** @description `soulseek`, `usenet` or `plugin:<name>`. */
+            source: string;
+            /** @description How strongly it is recommended. */
+            tier: components["schemas"]["CandidateTier"];
+            /** @description Folder name or release title. */
+            title: string;
+            /** @description Edition tracks it holds (Soulseek, when the tracklist is known). */
+            tracks_matched?: number | null;
+            /** @description Tracks on the edition, when known. */
+            tracks_total?: number | null;
+            /**
+             * Format: int64
+             * @description Soulseek: the peer's upload speed in bytes per second.
+             */
+            upload_speed?: number | null;
+            /** @description Soulseek peer or plugin account, when there is one. */
+            username?: string | null;
+        };
+        /** @description One manual search and what it found. */
+        SearchJobResponse: {
+            album_title: string;
+            artist_name: string;
+            candidate_count: number;
+            /** @description Best first within each source; sources in the configured order. */
+            candidates: components["schemas"]["SearchCandidateView"][];
+            job_id: string;
+            reason?: null | components["schemas"]["DownloadReason"];
+            release_group_mbid?: string | null;
+            /** @description The edition the candidates were ranked against. */
+            release_mbid?: string | null;
+            /**
+             * @description `searching`, `completed`, `failed`, `matched` (a download started)
+             *     or `cancelled`.
+             */
+            status: string;
+            /** @description The download a pick started. */
+            task_id?: string | null;
+            /** @description Tracks on that edition, when its tracklist could be read. */
+            tracks_total?: number | null;
+            /** Format: int32 */
+            year?: number | null;
+        };
+        /**
+         * @description `search_job_updated`: one of the user's manual album searches started,
+         *     finished, failed or was picked from. The web UI refetches the job.
+         */
+        SearchJobUpdated: {
+            /** @description Candidates found so far. */
+            candidate_count: number;
+            /** @description Id for de-duplication. */
+            event_id: string;
+            /** @description The search that moved. */
+            job_id: string;
+            /**
+             * @description Its status now: `searching`, `completed`, `failed`, `matched` or
+             *     `cancelled`.
+             */
+            status: string;
         };
         /**
          * @description Which bucket a result came from.
@@ -23857,6 +24129,121 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RetryAllResponse"];
+                };
+            };
+        };
+    };
+    search_album_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SearchAlbumRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchAlbumResponse"];
+                };
+            };
+        };
+    };
+    search_job_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Search job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchJobResponse"];
+                };
+            };
+        };
+    };
+    cancel_search_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Search job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DownloadActionResponse"];
+                };
+            };
+        };
+    };
+    dismiss_search_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Search job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DismissSearchResponse"];
+                };
+            };
+        };
+    };
+    pick_candidate_handler: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Search job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PickRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PickResponse"];
                 };
             };
         };

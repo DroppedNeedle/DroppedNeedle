@@ -1135,7 +1135,10 @@ impl AcquireSetup {
     /// `Principal`) so their handlers keep working unchanged.
     pub fn gated_router(&self) -> Router {
         let legs = super::requests::requests_core_routes(self.requests.clone())
-            .merge(super::downloads::downloads_core_routes(self.worker.clone()));
+            .merge(super::downloads::downloads_core_routes(self.worker.clone()))
+            .merge(super::downloads::search_core_routes(
+                self.search_jobs.clone(),
+            ));
         let requests = legs.layer(axum::middleware::from_fn_with_state(
             self.users.clone(),
             translate_principal,

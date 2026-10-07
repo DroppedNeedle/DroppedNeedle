@@ -96,11 +96,12 @@ pub fn router(hub: EventHub, sessions: SessionCheck) -> Router {
 /// everyone; `wanted_new_candidates`, `wanted_auto_dispatched`,
 /// `wanted_fulfilled`, `auto_download_enqueued`, `request_imported`,
 /// `playlist_imported`, `drop_import_updated`, `free_music_updated`,
-/// `personal_mix_refreshed` and `concerts_new` go only to the user they
-/// concern. Each `data:` line is one JSON payload (see the `ActivityChanged`,
+/// `personal_mix_refreshed`, `concerts_new` and `search_job_updated` go
+/// only to the user they concern. Each `data:` line is one JSON payload (see the `ActivityChanged`,
 /// `NowPlayingSnapshot`, `WantedNotice`, `AutoDownloadEnqueued`,
 /// `RequestImported`, `PlaylistImported`, `DropImportUpdated`,
-/// `FreeMusicUpdated`, `PersonalMixRefreshed` and `ConcertsNew` schemas).
+/// `FreeMusicUpdated`, `PersonalMixRefreshed`, `ConcertsNew` and
+/// `SearchJobUpdated` schemas).
 #[utoipa::path(
     get,
     path = "/api/v3/events/stream",
