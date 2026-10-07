@@ -22,6 +22,7 @@ pub mod activity;
 pub mod adapters;
 mod clock;
 pub mod contrib;
+pub mod edition_prefs;
 pub mod http;
 pub mod identify;
 pub mod import;

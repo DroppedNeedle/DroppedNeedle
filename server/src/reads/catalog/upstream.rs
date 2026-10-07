@@ -38,6 +38,10 @@ pub trait CatalogSettings: Send + Sync {
     fn primary_source(&self) -> MusicSource;
     /// Two-letter store region for purchase lookups.
     fn store_region(&self) -> String;
+    /// How to pick an edition of an album the library does not hold.
+    fn edition_preferences(&self) -> crate::library::edition_prefs::Preferences {
+        crate::library::edition_prefs::Preferences::default()
+    }
 }
 
 /// Read one section, falling back to its default with a log line: a
@@ -76,6 +80,14 @@ impl CatalogSettings for ConfigStore {
 
     fn store_region(&self) -> String {
         or_default("get_it", self.get::<GetIt>()).store_region
+    }
+
+    fn edition_preferences(&self) -> crate::library::edition_prefs::Preferences {
+        let saved = or_default(
+            "edition_preferences",
+            self.get::<crate::runtime_config::sections::EditionPreferences>(),
+        );
+        crate::library::edition_prefs::Preferences::from_settings(&saved, &self.store_region())
     }
 }
 

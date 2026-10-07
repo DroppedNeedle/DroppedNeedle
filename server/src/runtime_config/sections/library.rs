@@ -141,3 +141,128 @@ impl Section for FilesystemWatcher {
         Ok(())
     }
 }
+
+// --- edition_preferences ----------------------------------------------------
+
+/// Which release date wins when editions otherwise tie.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EditionDatePreference {
+    /// The earliest release: usually the original.
+    #[default]
+    Earliest,
+    /// The latest release: usually the newest remaster.
+    Latest,
+    /// Dates do not matter.
+    Any,
+}
+
+/// Standard or expanded editions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EditionVersionPreference {
+    /// The plain album.
+    #[default]
+    Standard,
+    /// Deluxe, expanded and anniversary editions.
+    Deluxe,
+    /// Either.
+    Any,
+}
+
+/// How DroppedNeedle picks between editions of one album when the files
+/// do not settle it, and which edition it fetches for an album you do
+/// not have yet. A person's choice always wins, then the best fit for the
+/// files, then these preferences, in this order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(default)]
+pub struct EditionPreferences {
+    /// Release statuses, most wanted first (`official`, `promotion`,
+    /// `bootleg`, `pseudo-release`). Unlisted statuses come last.
+    pub status_order: Vec<String>,
+    /// Media formats, most wanted first (`digital media`, `cd`, `vinyl`,
+    /// `cassette`). A format matches when its name contains the entry.
+    pub format_order: Vec<String>,
+    /// Release countries, most wanted first, as two-letter codes (`XW` is
+    /// worldwide). Empty means your store region, then worldwide.
+    pub countries: Vec<String>,
+    /// Earliest, latest, or any release date.
+    pub date: EditionDatePreference,
+    /// Standard, deluxe, or either.
+    pub version: EditionVersionPreference,
+    /// Release types to avoid unless nothing else fits (`live`,
+    /// `compilation`, `remix`, `soundtrack`, `demo`).
+    pub avoid_types: Vec<String>,
+    /// Let file tagging and organizing work on albums whose match is still
+    /// unconfirmed. Off: those albums wait until someone confirms them.
+    pub manage_unconfirmed: bool,
+}
+
+impl Default for EditionPreferences {
+    fn default() -> Self {
+        let owned = |items: &[&str]| items.iter().map(|item| (*item).to_owned()).collect();
+        Self {
+            status_order: owned(&["official", "promotion", "bootleg", "pseudo-release"]),
+            format_order: owned(&["digital media", "cd", "vinyl", "cassette"]),
+            countries: Vec::new(),
+            date: EditionDatePreference::Earliest,
+            version: EditionVersionPreference::Standard,
+            avoid_types: owned(&["live", "compilation"]),
+            manage_unconfirmed: false,
+        }
+    }
+}
+
+impl Section for EditionPreferences {
+    const KEY: &'static str = "edition_preferences";
+
+    fn validate(&self) -> Result<(), ConfigError> {
+        let country_ok = |code: &String| {
+            let code = code.trim();
+            code.len() == 2 && code.bytes().all(|byte| byte.is_ascii_alphabetic())
+        };
+        if let Some(bad) = self.countries.iter().find(|code| !country_ok(code)) {
+            return Err(ConfigError::Validation {
+                section: Self::KEY,
+                field: "countries",
+                reason: format!("must be two-letter country codes, got {bad:?}"),
+            });
+        }
+        for (field, list) in [
+            ("status_order", &self.status_order),
+            ("format_order", &self.format_order),
+            ("avoid_types", &self.avoid_types),
+        ] {
+            if list.len() > 32 || list.iter().any(|entry| entry.trim().len() > 64) {
+                return Err(ConfigError::Validation {
+                    section: Self::KEY,
+                    field,
+                    reason: "at most 32 entries of at most 64 characters".to_owned(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn normalize(&mut self) {
+        let clean = |list: &mut Vec<String>, upper: bool| {
+            let mut seen: Vec<String> = Vec::new();
+            for entry in list.drain(..) {
+                let entry = entry.trim();
+                let entry = if upper {
+                    entry.to_ascii_uppercase()
+                } else {
+                    entry.to_lowercase()
+                };
+                if !entry.is_empty() && !seen.contains(&entry) {
+                    seen.push(entry);
+                }
+            }
+            *list = seen;
+        };
+        clean(&mut self.status_order, false);
+        clean(&mut self.format_order, false);
+        clean(&mut self.countries, true);
+        clean(&mut self.avoid_types, false);
+    }
+}

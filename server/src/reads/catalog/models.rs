@@ -478,7 +478,8 @@ pub struct AlbumTracksInfo {
     /// The edition shown.
     pub selected_release_mbid: Option<String>,
     /// Why that edition: `chosen` (by a person), `owned` (the best fit for
-    /// the library's files), `file_count` or `ranked`.
+    /// the library's files), `file_count` or `preferred` (the edition
+    /// preferences, for an album the library does not hold).
     pub pick_basis: Option<String>,
 }
 
@@ -568,7 +569,8 @@ pub struct AlbumEditionsResponse {
     /// The edition the album page shows.
     pub selected_release_mbid: Option<String>,
     /// Why that edition: `chosen` (by a person), `owned` (the best fit for
-    /// the library's files), `file_count` or `ranked`.
+    /// the library's files), `file_count` or `preferred` (the edition
+    /// preferences, for an album the library does not hold).
     pub selected_basis: Option<String>,
 }
 

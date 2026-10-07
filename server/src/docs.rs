@@ -626,6 +626,8 @@ use crate::{
         crate::settings::handlers::put_free_music,
         crate::settings::handlers::get_get_it,
         crate::settings::handlers::put_get_it,
+        crate::settings::handlers::get_edition_preferences,
+        crate::settings::handlers::put_edition_preferences,
         crate::settings::handlers::get_security,
         crate::settings::handlers::put_security,
         crate::settings::handlers::verify_hibp,

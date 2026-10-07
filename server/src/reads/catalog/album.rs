@@ -480,7 +480,7 @@ impl Catalog {
     /// Pick the edition: the library copy's edition (a person's choice or
     /// the matcher's best fit for the files; the identity row is the one
     /// record of it), then the release closest to the library's file count,
-    /// then MusicBrainz's best. The library's edition stands even when the
+    /// then the saved edition preferences. The library's edition stands even when the
     /// group lookup does not list it (MusicBrainz lists at most 25).
     async fn select_edition(&self, group: &GroupDetail) -> Result<Selection, CatalogError> {
         let evidence = self
@@ -502,8 +502,8 @@ impl Catalog {
                 .map(|(_, release)| release.id.clone())
         }) {
             (Some(closest), Some("file_count"))
-        } else if let Some(first) = ranked.first() {
-            (Some(first.id.clone()), Some("ranked"))
+        } else if let Some(first) = self.preferred(&ranked) {
+            (Some(first), Some("preferred"))
         } else {
             (None, None)
         };
@@ -513,6 +513,33 @@ impl Catalog {
             owned: evidence.owned_release,
             chosen: evidence.chosen_release,
         })
+    }
+
+    /// The edition the saved edition preferences pick, MusicBrainz's rank
+    /// breaking ties: what the page shows, and what a request fetches, for
+    /// an album the library does not hold.
+    fn preferred(&self, ranked: &[&ReleaseSummary]) -> Option<String> {
+        let prefs = self.upstream().settings().edition_preferences();
+        ranked
+            .iter()
+            .enumerate()
+            .min_by_key(|(rank, release)| {
+                let facts = crate::library::edition_prefs::EditionFacts {
+                    status: release.status.as_deref(),
+                    formats: release.formats.iter().map(String::as_str).collect(),
+                    country: release.country.as_deref(),
+                    date: release.date.as_deref(),
+                    text: release
+                        .title
+                        .iter()
+                        .chain(release.disambiguation.iter())
+                        .map(String::as_str)
+                        .collect(),
+                    types: Vec::new(),
+                };
+                (prefs.key(&facts), *rank)
+            })
+            .map(|(_, release)| release.id.clone())
     }
 
     async fn tracks_for_group(&self, group: &GroupDetail) -> Result<AlbumTracksInfo, CatalogError> {

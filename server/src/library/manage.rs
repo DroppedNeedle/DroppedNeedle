@@ -328,6 +328,46 @@ impl LibrarySetup {
             })
     }
 
+    /// File management waits for an album whose match is a best guess
+    /// (or matches nothing) until someone confirms it, unless the edition
+    /// preferences let it manage unconfirmed matches.
+    fn unconfirmed_gate(&self, album_id: &str) -> Result<(), ServiceError> {
+        let allowed = self
+            .config
+            .get::<crate::runtime_config::sections::EditionPreferences>()
+            .map(|prefs| prefs.manage_unconfirmed)
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "edition preferences unreadable; unconfirmed albums wait");
+                false
+            });
+        if allowed {
+            return Ok(());
+        }
+        let state = self.identify_store.with_connection(|conn| {
+            conn.query_row(
+                "SELECT state FROM library_album_match_state WHERE local_album_id = ?1",
+                rusqlite::params![album_id],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+        });
+        match state.as_deref() {
+            Some("unconfirmed") => Err(ServiceError::Conflict {
+                message: "UNCONFIRMED_MATCH: This album's edition is a best guess nobody has \
+                          confirmed yet, so its files are left alone. Confirm the match on the \
+                          album page, or turn on \"Also manage unconfirmed matches\" in \
+                          Settings > Edition preferences."
+                    .to_owned(),
+            }),
+            Some("unmatched") => Err(ServiceError::Conflict {
+                message: "UNMATCHED_ALBUM: Nothing on MusicBrainz fits this album, so it keeps \
+                          its own tags. Pick its edition on the album page first."
+                    .to_owned(),
+            }),
+            _ => Ok(()),
+        }
+    }
+
     /// Accepted exact identity for one track (management needs an
     /// accepted exact MusicBrainz release plus a full track mapping).
     fn resolve_identity(
@@ -551,6 +591,7 @@ impl LibrarySetup {
                 ),
             });
         }
+        self.unconfirmed_gate(album_id)?;
         let mut plan_items = Vec::with_capacity(items.len());
         let mut docs = BTreeMap::new();
         let mut files = Vec::with_capacity(items.len());

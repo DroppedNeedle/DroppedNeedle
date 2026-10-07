@@ -68,6 +68,7 @@ pub const KNOWN_TOP_LEVEL_KEYS: &[&str] = &[
     "primary_music_source",
     "free_music",
     "get_it",
+    "edition_preferences",
     "plugins",
     "instance_id",
     "_internal",

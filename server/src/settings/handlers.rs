@@ -41,9 +41,9 @@ use crate::runtime_config::secret_sections::{
     SabnzbdConnection, SlskdConnection, WrappedSettings, YouTubeConnection,
 };
 use crate::runtime_config::sections::{
-    ConnectApps, DownloadPolicy, FilesystemWatcher, FreeMusic, GetIt, HomeSettings,
-    LibraryManagementProfile, LibraryScanSchedule, PrimaryMusicSource, ScrobbleSettings,
-    SecuritySettings, UserPreferences, WantedWatcher,
+    ConnectApps, DownloadPolicy, EditionPreferences, FilesystemWatcher, FreeMusic, GetIt,
+    HomeSettings, LibraryManagementProfile, LibraryScanSchedule, PrimaryMusicSource,
+    ScrobbleSettings, SecuritySettings, UserPreferences, WantedWatcher,
 };
 
 type JsonResult<T> = Result<Json<T>, SettingsError>;
@@ -247,6 +247,32 @@ pub async fn put_get_it(
     State(settings): State<SettingsSetup>,
     ValidJson(body): ValidJson<GetIt>,
 ) -> JsonResult<GetIt> {
+    settings.service().save(body).await.map(Json)
+}
+
+/// Read the edition preferences.
+#[utoipa::path(
+    get,
+    path = "/api/v3/settings/edition-preferences",
+    responses((status = 200, description = "Edition preferences", body = EditionPreferences))
+)]
+pub async fn get_edition_preferences(
+    State(settings): State<SettingsSetup>,
+) -> JsonResult<EditionPreferences> {
+    settings.service().get().map(Json)
+}
+
+/// Save the edition preferences.
+#[utoipa::path(
+    put,
+    path = "/api/v3/settings/edition-preferences",
+    request_body = EditionPreferences,
+    responses((status = 200, description = "Saved settings", body = EditionPreferences))
+)]
+pub async fn put_edition_preferences(
+    State(settings): State<SettingsSetup>,
+    ValidJson(body): ValidJson<EditionPreferences>,
+) -> JsonResult<EditionPreferences> {
     settings.service().save(body).await.map(Json)
 }
 

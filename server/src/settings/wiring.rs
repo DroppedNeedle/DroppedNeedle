@@ -331,6 +331,10 @@ impl SettingsSetup {
                 get(h::get_free_music).put(h::put_free_music),
             )
             .route("/settings/get-it", get(h::get_get_it).put(h::put_get_it))
+            .route(
+                "/settings/edition-preferences",
+                get(h::get_edition_preferences).put(h::put_edition_preferences),
+            )
             .route("/settings/events", get(h::get_events).put(h::put_events))
             .route(
                 "/settings/events/test-ticketmaster",

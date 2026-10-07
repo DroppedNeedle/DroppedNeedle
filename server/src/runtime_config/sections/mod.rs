@@ -78,6 +78,7 @@ impl PlainSection for MusicBrainzSettings {}
 impl PlainSection for LyricsSettings {}
 impl PlainSection for InternalState {}
 impl PlainSection for LibraryManagement {}
+impl PlainSection for EditionPreferences {}
 
 /// Reject `value` outside `min..=max` with a typed validation error.
 pub fn check_range<T>(
