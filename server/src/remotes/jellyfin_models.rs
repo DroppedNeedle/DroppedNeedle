@@ -210,6 +210,9 @@ pub struct UserData {
     /// Plays.
     #[serde(default)]
     pub play_count: Option<i64>,
+    /// When the user last played the item (ISO 8601), when known.
+    #[serde(default)]
+    pub last_played_date: Option<String>,
 }
 
 /// `/System/Info`.

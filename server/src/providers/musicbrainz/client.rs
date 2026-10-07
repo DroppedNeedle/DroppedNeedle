@@ -325,6 +325,27 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         .await
     }
 
+    /// Search artists carrying one tag (v2 `search_artists_by_tag`),
+    /// spelling variants included.
+    pub async fn search_artists_by_tag(
+        &self,
+        tag: &str,
+        limit: u32,
+        criticality: Criticality,
+    ) -> Result<SearchPage<ArtistSearchHit>, MbError> {
+        let query = super::build_tag_query(tag);
+        self.search_page(
+            "/artist",
+            &query,
+            limit,
+            0,
+            "artists",
+            "search_artists_by_tag",
+            criticality,
+        )
+        .await
+    }
+
     /// Search artists by name.
     pub async fn search_artists(
         &self,

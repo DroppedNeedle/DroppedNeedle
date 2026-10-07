@@ -172,6 +172,32 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
             .await
     }
 
+    /// Users whose listening is most like `username`'s, most similar first
+    /// (`/1/user/{user}/similar-users`). Only the user names are kept.
+    pub async fn similar_users(&self, username: &str) -> Outcome<Vec<String>> {
+        if username.is_empty() {
+            return Outcome::Found(Vec::new());
+        }
+        let endpoint = format!("/1/user/{}/similar-users", path_segment(username));
+        let payload = match self.public_get(&endpoint, &[]).await {
+            Ok(Some(payload)) => payload,
+            Ok(None) => return Outcome::Found(Vec::new()),
+            Err(outcome) => return outcome,
+        };
+        Outcome::Found(
+            payload
+                .get("payload")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|row| row.get("user_name")?.as_str())
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned)
+                .collect(),
+        )
+    }
+
     /// A user's listens per genre, largest first
     /// (`/1/stats/user/{user}/genre-activity`, summed over its hourly
     /// buckets as v2 did).

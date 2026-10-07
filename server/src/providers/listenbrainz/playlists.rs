@@ -25,6 +25,19 @@ pub struct RecommendationPlaylist {
     pub playlist_id: String,
     /// The algorithm that made it, such as `weekly-jams`.
     pub source_patch: String,
+    /// The playlist's full identifier URL on ListenBrainz.
+    pub identifier: String,
+}
+
+/// One playlist with its header fields.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PlaylistPage {
+    /// Playlist title, empty when absent.
+    pub title: String,
+    /// Creation date as ListenBrainz sends it, empty when absent.
+    pub date: String,
+    /// Tracks in playlist order.
+    pub tracks: Vec<RecommendationTrack>,
 }
 
 /// One track of a recommendation playlist. Title and creator are required;
@@ -43,6 +56,8 @@ pub struct RecommendationTrack {
     pub artist_mbids: Vec<String>,
     /// Release the cover art comes from, when known.
     pub caa_release_mbid: Option<String>,
+    /// Track length in milliseconds, when known.
+    pub duration_ms: Option<i64>,
 }
 
 impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
@@ -87,24 +102,62 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
         playlist_id: &str,
         creds: &ListenBrainzCredentials,
     ) -> Outcome<Vec<RecommendationTrack>> {
+        match self.playlist(playlist_id, creds).await {
+            Outcome::Found(page) => Outcome::Found(page.tracks),
+            Outcome::Missing => Outcome::Missing,
+            Outcome::Unavailable {
+                retry_after_secs,
+                message,
+                recorded,
+            } => Outcome::Unavailable {
+                retry_after_secs,
+                message,
+                recorded,
+            },
+        }
+    }
+
+    /// One playlist with its title and date (`GET /1/playlist/{id}`). A
+    /// missing playlist reads as an empty page.
+    pub async fn playlist(
+        &self,
+        playlist_id: &str,
+        creds: &ListenBrainzCredentials,
+    ) -> Outcome<PlaylistPage> {
+        let empty = PlaylistPage {
+            title: String::new(),
+            date: String::new(),
+            tracks: Vec::new(),
+        };
         if playlist_id.is_empty() {
-            return Outcome::Found(Vec::new());
+            return Outcome::Found(empty);
         }
         let endpoint = format!("/1/playlist/{}", path_segment(playlist_id));
         let payload = match self.get(&endpoint, &[], creds, false, &[404]).await {
             Ok(Body::Json(payload)) => payload,
             Ok(Body::NoContent | Body::InvalidJson) | Err(RequestFailure::Accepted(_)) => {
-                return Outcome::Found(Vec::new());
+                return Outcome::Found(empty);
             }
             Err(RequestFailure::Outcome(outcome)) => return outcome,
         };
-        let tracks = payload
-            .get("playlist")
+        let playlist = payload.get("playlist");
+        let field = |key: &str| {
+            playlist
+                .and_then(|playlist| playlist.get(key))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_owned()
+        };
+        let tracks = playlist
             .and_then(|playlist| playlist.get("track"))
             .and_then(serde_json::Value::as_array)
             .cloned()
             .unwrap_or_default();
-        Outcome::Found(tracks.iter().filter_map(parse_track).collect())
+        Outcome::Found(PlaylistPage {
+            title: field("title"),
+            date: field("date"),
+            tracks: tracks.iter().filter_map(parse_track).collect(),
+        })
     }
 }
 
@@ -127,6 +180,7 @@ fn parse_playlist_header(playlist: &serde_json::Value) -> Option<RecommendationP
     Some(RecommendationPlaylist {
         playlist_id: playlist_id.to_owned(),
         source_patch,
+        identifier: identifier.to_owned(),
     })
 }
 
@@ -177,5 +231,9 @@ fn parse_track(track: &serde_json::Value) -> Option<RecommendationTrack> {
         recording_mbid,
         artist_mbids,
         caa_release_mbid,
+        duration_ms: track
+            .get("duration")
+            .and_then(serde_json::Value::as_i64)
+            .filter(|ms| *ms > 0),
     })
 }

@@ -244,6 +244,21 @@ pub struct TopItem {
     pub image_url: String,
 }
 
+/// One scrobble from a user's recent tracks (v2 `LastFmRecentTrack`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecentTrack {
+    /// Track title.
+    pub name: String,
+    /// Credited artist name.
+    pub artist_name: String,
+    /// Album title, empty when Last.fm has none.
+    pub album_name: String,
+    /// MusicBrainz release id of the album, when Last.fm knows it.
+    pub album_mbid: Option<String>,
+    /// Artwork URL (extralarge preferred), empty when none was sent.
+    pub image_url: String,
+}
+
 /// Last.fm client. Holds no credentials; every method takes the calling
 /// user's. Stateless apart from its ports; cheap to clone.
 #[derive(Debug, Clone)]
@@ -521,6 +536,85 @@ impl<P: Pacer, S: DegradationSink> LastFmClient<P, S> {
             ],
         )
         .await
+    }
+
+    /// `user.getWeeklyArtistChart`: the user's artists this week, most
+    /// played first (v2 `get_user_weekly_artist_chart`).
+    pub async fn user_weekly_artist_chart(
+        &self,
+        creds: &LastFmCredentials,
+        username: &str,
+    ) -> Outcome<Vec<TopItem>> {
+        self.list_items(
+            "user.getWeeklyArtistChart",
+            "weeklyartistchart",
+            "artist",
+            creds,
+            &[("user", username)],
+        )
+        .await
+    }
+
+    /// `user.getWeeklyAlbumChart`: the user's albums this week, most played
+    /// first (v2 `get_user_weekly_album_chart`). Album MBIDs name releases.
+    pub async fn user_weekly_album_chart(
+        &self,
+        creds: &LastFmCredentials,
+        username: &str,
+    ) -> Outcome<Vec<TopItem>> {
+        self.list_items(
+            "user.getWeeklyAlbumChart",
+            "weeklyalbumchart",
+            "album",
+            creds,
+            &[("user", username)],
+        )
+        .await
+    }
+
+    /// `tag.getTopArtists`: the most played artists carrying one tag (v2
+    /// `get_tag_top_artists`).
+    pub async fn tag_top_artists(
+        &self,
+        creds: &LastFmCredentials,
+        tag: &str,
+        limit: u32,
+    ) -> Outcome<Vec<TopItem>> {
+        let limit_text = limit.to_string();
+        self.list_items(
+            "tag.getTopArtists",
+            "topartists",
+            "artist",
+            creds,
+            &[("tag", tag), ("limit", &limit_text)],
+        )
+        .await
+    }
+
+    /// `user.getRecentTracks`: the user's latest scrobbles, newest first
+    /// (v2 `get_user_recent_tracks`).
+    pub async fn user_recent_tracks(
+        &self,
+        creds: &LastFmCredentials,
+        username: &str,
+        limit: u32,
+    ) -> Outcome<Vec<RecentTrack>> {
+        let limit_text = limit.to_string();
+        let params = [("user", username), ("limit", limit_text.as_str())];
+        let payload = match self
+            .request("user.getRecentTracks", creds, &params, false, false)
+            .await
+        {
+            Ok(payload) => payload,
+            Err(outcome) => return outcome,
+        };
+        let items = payload
+            .get("recenttracks")
+            .and_then(|list| list.get("track"))
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        Outcome::Found(items.iter().filter_map(parse_recent_track).collect())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1083,8 +1177,10 @@ fn parse_top_item(item: &serde_json::Value) -> Option<TopItem> {
         return None;
     }
     let artist_name = match item.get("artist") {
+        // Charts send `{"#text": ...}` where top lists send `{"name": ...}`.
         Some(serde_json::Value::Object(artist)) => artist
             .get("name")
+            .or_else(|| artist.get("#text"))
             .and_then(serde_json::Value::as_str)
             .unwrap_or(""),
         Some(serde_json::Value::String(artist)) => artist.as_str(),
@@ -1095,6 +1191,29 @@ fn parse_top_item(item: &serde_json::Value) -> Option<TopItem> {
         artist_name: artist_name.to_owned(),
         mbid: mbid_or_none(item.get("mbid")),
         playcount: lenient_int(item.get("playcount")),
+        image_url: pick_image(item.get("image")),
+    })
+}
+
+fn parse_recent_track(item: &serde_json::Value) -> Option<RecentTrack> {
+    let item = item.as_object()?;
+    let name = item.get("name")?.as_str()?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let text_of = |key: &str| {
+        item.get(key)
+            .and_then(|value| value.get("#text").or_else(|| value.get("name")))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_owned()
+    };
+    Some(RecentTrack {
+        name: name.to_owned(),
+        artist_name: text_of("artist"),
+        album_name: text_of("album"),
+        album_mbid: mbid_or_none(item.get("album").and_then(|album| album.get("mbid"))),
         image_url: pick_image(item.get("image")),
     })
 }

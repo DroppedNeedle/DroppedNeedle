@@ -507,6 +507,7 @@ impl MixSources for FakeMix {
             Ok(vec![RecommendationPlaylist {
                 playlist_id: "jams".to_owned(),
                 source_patch: "weekly-jams".to_owned(),
+                identifier: "https://listenbrainz.org/playlist/jams".to_owned(),
             }])
         })
     }
@@ -522,6 +523,7 @@ impl MixSources for FakeMix {
             recording_mbid: Some(rec.to_owned()),
             artist_mbids: Vec::new(),
             caa_release_mbid: None,
+            duration_ms: None,
         };
         Box::pin(async move { Ok(vec![track("One", MIX_REC_A), track("Two", MIX_REC_B)]) })
     }

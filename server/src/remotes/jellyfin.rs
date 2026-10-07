@@ -516,6 +516,38 @@ impl JellyfinAdapter {
             .collect())
     }
 
+    /// Most-played artists with the play data behind them: play count and
+    /// the last play (v2 `get_most_played_artists` as Rediscover reads it).
+    pub async fn most_played_artist_plays(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<ArtistPlays>, AdapterError> {
+        self.require_configured()?;
+        if self.user_id.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut query = params(&[
+            ("sortBy", "PlayCount"),
+            ("sortOrder", "Descending"),
+            ("enableUserData", "true"),
+        ]);
+        query.push(("limit".to_owned(), limit.to_string()));
+        let page = self.items("/Artists", &query).await?;
+        Ok(page
+            .items
+            .iter()
+            .filter(|item| item.play_count() > 0)
+            .map(|item| ArtistPlays {
+                artist: artist_view(item),
+                play_count: item.play_count(),
+                last_played: item
+                    .user_data
+                    .as_ref()
+                    .and_then(|data| data.last_played_date.clone()),
+            })
+            .collect())
+    }
+
     /// Most-played albums: `PlayCount` sort with the zero-play filter
     /// (v2 `get_most_played_albums`).
     pub async fn most_played_albums(&self, limit: i64) -> Result<Vec<AlbumView>, AdapterError> {
@@ -1165,6 +1197,17 @@ fn album_view(item: &Item) -> AlbumView {
         release_group_mbid: item.provider("MusicBrainzReleaseGroup"),
         artist_mbid: item.provider("MusicBrainzArtist"),
     }
+}
+
+/// One artist with the user's play data.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArtistPlays {
+    /// The artist row.
+    pub artist: ArtistView,
+    /// The user's plays.
+    pub play_count: i64,
+    /// The user's last play (ISO 8601), when known.
+    pub last_played: Option<String>,
 }
 
 fn artist_view(item: &Item) -> ArtistView {
