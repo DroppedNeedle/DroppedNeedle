@@ -115,6 +115,10 @@ pub struct LibraryRecovery {
 // Bundle.
 // ---------------------------------------------------------------------------
 
+/// What runs after a scan completes. Boot fills it once the jobs exist;
+/// until then completed scans call nothing.
+pub type ScanCompletedSlot = Arc<std::sync::OnceLock<Arc<dyn Fn() + Send + Sync>>>;
+
 /// Everything `create_app` needs to mount the library engine, built once.
 #[derive(Clone)]
 pub struct LibrarySetup {
@@ -178,6 +182,9 @@ pub struct LibrarySetup {
     pub events: crate::events::EventSink,
     /// Download and wanted cleanup after an album removal, set at boot.
     pub removal_hook: super::mutations::AlbumRemovalSlot,
+    /// Called after each scan run completes (the library image refresh
+    /// kick), set at boot.
+    pub scan_completed: ScanCompletedSlot,
     /// Scratch state of a test bundle, removed with the last clone.
     #[cfg(any(test, feature = "test-support"))]
     pub scratch: Option<Arc<crate::tooling::scratch::ScratchDir>>,
@@ -377,6 +384,8 @@ impl LibrarySetup {
         let fs = FsCoordinator::new();
         let events = crate::events::EventSink::default();
         let scan_events = events.clone();
+        let scan_completed: ScanCompletedSlot = Default::default();
+        let completed_hook = Arc::clone(&scan_completed);
         let coordinator = Arc::new(
             ScanCoordinator::new(
                 scan_store.clone(),
@@ -396,6 +405,12 @@ impl LibrarySetup {
                     "library scan event"
                 );
                 scan_events.poke_activity();
+                if event.state == crate::library::scan::models::ScanState::Completed
+                    && event.event == "scan.transition"
+                    && let Some(hook) = completed_hook.get()
+                {
+                    hook();
+                }
             }))),
         );
         let providers = make_providers(ProviderParts {
@@ -454,6 +469,7 @@ impl LibrarySetup {
             root_dirs,
             events,
             removal_hook: Default::default(),
+            scan_completed,
             #[cfg(any(test, feature = "test-support"))]
             scratch: None,
         })

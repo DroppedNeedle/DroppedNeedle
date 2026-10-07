@@ -209,6 +209,11 @@ impl PrecacheWork for UnwiredPrecacheWork {
 /// waited 30 seconds for the sync task).
 pub const PRECACHE_CANCEL_GRACE: Duration = Duration::from_secs(30);
 
+/// Quiet time after the last completed scan before the automatic library
+/// image refresh starts. It lets identification of new files settle and
+/// folds a burst of scans (one per root, or a watcher storm) into one run.
+pub const SCAN_PRECACHE_DEBOUNCE: Duration = Duration::from_secs(120);
+
 /// The production precache trigger: one supervised run per call through the
 /// shared registry. Watchdog limits re-read the advanced settings on every
 /// run; an unwired store or unreadable section falls back to the shipped
@@ -241,6 +246,40 @@ impl PrecacheTrigger {
             settler.settle(&outcome);
         });
         Ok(handle)
+    }
+
+    /// The hook completed scans call, as v2 refreshed after every library
+    /// sync: each call restarts a [`SCAN_PRECACHE_DEBOUNCE`] wait, and the
+    /// last one starts a run with no user (so no discovery phase, like v2's
+    /// automatic syncs). A run already going is left alone.
+    pub fn after_scan_hook(&self) -> Arc<dyn Fn() + Send + Sync> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let trigger = self.clone();
+        let latest = Arc::new(AtomicU64::new(0));
+        Arc::new(move || {
+            if trigger.sources.is_none() {
+                return;
+            }
+            let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+                tracing::warn!("scan finished outside the runtime; library image refresh skipped");
+                return;
+            };
+            let ticket = latest.fetch_add(1, Ordering::SeqCst) + 1;
+            let trigger = trigger.clone();
+            let latest = Arc::clone(&latest);
+            runtime.spawn(async move {
+                tokio::time::sleep(SCAN_PRECACHE_DEBOUNCE).await;
+                if latest.load(Ordering::SeqCst) != ticket {
+                    return;
+                }
+                match trigger.run(None).await {
+                    Ok(_) => tracing::info!("library image refresh started after a scan"),
+                    Err(_) => {
+                        tracing::debug!("library image refresh already running; scan kick skipped")
+                    }
+                }
+            });
+        })
     }
 
     /// Where the current run stands.

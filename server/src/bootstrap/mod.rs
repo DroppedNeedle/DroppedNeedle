@@ -429,6 +429,14 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         None => admin,
     }
     .with_precache(jobs.precache_trigger());
+    // Completed scans refresh the library's images, as v2 did after a sync.
+    if library
+        .scan_completed
+        .set(jobs.precache_trigger().after_scan_hook())
+        .is_err()
+    {
+        tracing::warn!("scan completion hook was already set");
+    }
     let effects: Arc<dyn SaveEffects> = Arc::new(LiveSaveEffects::new(
         provider_cache.clone(),
         jobs.events_kick(),
