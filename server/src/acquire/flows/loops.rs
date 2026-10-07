@@ -25,8 +25,8 @@ use super::seams::{
     ObservedRelease, ReleasePoll, TickSink,
 };
 use super::stores::{
-    AdminDirectory, FeedRelease, FollowCursor, FollowStore, LibraryPresence, PendingRelease,
-    UpgradePolicy, UpgradeWorklist,
+    AdminDirectory, CutoffList, FeedRelease, FollowCursor, FollowStore, LibraryPresence,
+    PendingRelease, UpgradePolicy,
 };
 use crate::acquire::requests::error::RequestsError;
 use crate::acquire::requests::ledger::{RequestRecord, WATCH_WATCHING, WantedWatch};
@@ -1025,9 +1025,9 @@ pub struct SweepDeps {
     /// Policy source, re-read every pass so enabling needs no restart.
     pub policy: Arc<dyn Fn() -> UpgradePolicy + Send + Sync>,
     /// Cutoff-unmet worklist.
-    pub worklist: UpgradeWorklist,
+    pub worklist: Arc<dyn CutoffList>,
     /// Admin directory for sweep ownership.
-    pub admins: Arc<AdminDirectory>,
+    pub admins: AdminDirectory,
     /// Download dispatch.
     pub downloads: Arc<dyn DownloadDispatch>,
     /// Durable ticks.
@@ -1049,14 +1049,14 @@ pub async fn sweep_tick(now: i64, state: &mut LoopState, deps: &SweepDeps) -> Sw
     if !(policy.upgrade_allowed && policy.scan_enabled) {
         return SweepSummary::default();
     }
-    let Some(owner) = deps.admins.oldest_admin() else {
+    let Some(owner) = deps.admins.oldest_admin().await else {
         return SweepSummary {
             skipped_no_admin: true,
             ..SweepSummary::default()
         };
     };
     let mut summary = SweepSummary::default();
-    let items = match deps.worklist.list_cutoff_unmet().await {
+    let items = match deps.worklist.cutoff_unmet(&policy.cutoff).await {
         Ok(items) => items,
         Err(error) => {
             tracing::warn!(?error, "upgrade sweep could not read the worklist");

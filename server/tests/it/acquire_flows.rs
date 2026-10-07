@@ -27,8 +27,8 @@ use droppedneedle::acquire::flows::{
         SystemClock, VerifyVerdict,
     },
     stores::{
-        AdminDirectory, FollowStore, LibraryPresence, QuarantineStore, UpgradeItem, UpgradePolicy,
-        UpgradeWorklist,
+        AdminDirectory, FollowStore, LibraryPresence, MemoryWorklist, QuarantineStore, UpgradeItem,
+        UpgradePolicy,
     },
 };
 use droppedneedle::acquire::requests::{
@@ -322,38 +322,45 @@ async fn follow_poll_baselines_then_emits() {
 #[tokio::test]
 async fn upgrade_sweep_gates_and_cap() {
     let db = AcquireDb::scratch().unwrap();
-    let worklist = UpgradeWorklist::new(db.clone());
-    worklist
-        .set(
-            (0..4)
-                .map(|n| UpgradeItem {
-                    rg_mbid: format!("rg-{n}"),
-                    artist: "A".to_owned(),
-                    title: "T".to_owned(),
-                })
-                .collect(),
-        )
-        .await
-        .unwrap();
-    let admins = Arc::new(AdminDirectory::new());
+    let worklist = MemoryWorklist(
+        (0..4)
+            .map(|n| UpgradeItem {
+                rg_mbid: format!("rg-{n}"),
+                artist: "A".to_owned(),
+                title: "T".to_owned(),
+                current_tier: "low",
+                track_count: 1,
+                year: None,
+                artist_mbid: None,
+            })
+            .collect(),
+    );
+    let admins = AdminDirectory::over_users(db.clone());
     let downloads = Arc::new(ScriptedDownloads::new());
     downloads.mark_in_library("rg-0");
     let policy = UpgradePolicy {
         upgrade_allowed: true,
+        cutoff: "lossless".to_owned(),
         scan_enabled: true,
         max_per_run: 2,
         interval_hours: 12,
     };
     let deps = SweepDeps {
         policy: Arc::new(move || policy.clone()),
-        worklist,
-        admins: admins.clone(),
+        worklist: Arc::new(worklist),
+        admins,
         downloads: downloads.clone(),
         ticks: Arc::new(MemoryTicks::new()),
     };
     let idle = sweep_tick(NOW, &mut LoopState::new(), &deps).await;
     assert!(idle.skipped_no_admin);
-    admins.set(vec!["admin-1".to_owned()]);
+    sqlx::query(
+        "INSERT INTO auth_users (id, display_name, role, created_at) \
+         VALUES ('admin-1', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
     let swept = sweep_tick(NOW, &mut LoopState::new(), &deps).await;
     assert_eq!(swept.enqueued, 2, "already-in-library never counts");
     let grabs = downloads.upgrades();

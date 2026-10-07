@@ -416,14 +416,14 @@ pub struct FlowsBundle {
     pub ledger: RequestStore,
     /// Follow-poll cursors.
     pub follows: FlowsFollowStore,
-    /// Upgrade worklist (empty until a library scan fills it).
+    /// Upgrade worklist, read from the catalog.
     pub worklist: UpgradeWorklist,
     /// Drop-import quarantine.
     pub quarantine: QuarantineStore,
     /// Library presence, read from the catalog.
     pub library: Arc<LibraryPresence>,
-    /// Sweep ownership directory (refreshed from auth at boot).
-    pub admins: Arc<AdminDirectory>,
+    /// Sweep ownership directory, read from the accounts.
+    pub admins: AdminDirectory,
     /// Plugin ticks.
     pub ticks: Arc<dyn TickSink>,
     /// Free-music landing handoff (memory records; file staging waits on
@@ -669,6 +669,7 @@ impl AcquireSetup {
             let section: DownloadPolicy = plain(&sweep_store);
             UpgradePolicy {
                 upgrade_allowed: section.upgrade_allowed,
+                cutoff: section.quality_cutoff.clone(),
                 scan_enabled: section.background_upgrade_scan_enabled,
                 max_per_run: clamp_usize(section.background_upgrade_max_per_run).max(1),
                 interval_hours: clamp_u64(section.background_upgrade_scan_interval_hours).max(1),
@@ -1107,30 +1108,6 @@ impl AcquireSetup {
         })
     }
 
-    /// Refresh the sweep ownership directory from auth (oldest admin
-    /// first). Boot calls this once; the sweep skips cleanly when no
-    /// admin exists.
-    pub async fn refresh_admins(&self) {
-        let rows = match self.users.users.list(10_000, 0).await {
-            Ok((rows, _)) => rows,
-            Err(error) => {
-                tracing::warn!(
-                    ?error,
-                    "admin directory refresh failed; upgrade sweep idles"
-                );
-                return;
-            }
-        };
-        let mut admins: Vec<_> = rows
-            .iter()
-            .filter(|row| row.role == AuthRole::Admin)
-            .collect();
-        admins.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
-        self.flows
-            .admins
-            .set(admins.iter().map(|row| row.id.clone()).collect());
-    }
-
     /// Relative-path routers for nesting under `/api/v3` inside the
     /// session gate. The requests and task legs share one
     /// principal-translation layer (both extract the requests
@@ -1374,7 +1351,7 @@ fn flows_bundle(
     let worklist = UpgradeWorklist::new(db.clone());
     let quarantine = QuarantineStore::new(db.clone());
     let library = Arc::new(LibraryPresence::over_catalog(db.pool().clone()));
-    let admins = Arc::new(AdminDirectory::new());
+    let admins = AdminDirectory::over_users(db.clone());
     let handoff = Arc::new(MemoryHandoff::new());
     let ops = OpStore::new(db.clone());
     let wanted_deps = Arc::new(WantedDeps {
@@ -1406,7 +1383,7 @@ fn flows_bundle(
     });
     let sweep_deps = Arc::new(SweepDeps {
         policy: upgrade_policy,
-        worklist: worklist.clone(),
+        worklist: Arc::new(worklist.clone()),
         admins: admins.clone(),
         downloads: dispatch.clone(),
         ticks: ticks.clone(),

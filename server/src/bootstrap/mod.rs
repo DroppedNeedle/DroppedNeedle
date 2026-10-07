@@ -328,7 +328,6 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
     {
         tracing::warn!("album removal cleanup was already attached");
     }
-    acquire.refresh_admins().await;
     // Startup recovery before serving traffic. Re-running after a clean
     // shutdown is a no-op: nothing destructive repeats.
     let recovery = acquire
