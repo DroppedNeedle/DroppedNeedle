@@ -143,12 +143,14 @@ fn decide(
     distinct: usize,
     choice: IdentityChoice,
 ) -> Verdict {
-    let take = |index: usize, reason: Reason| {
-        if incoming[index].custom {
-            Verdict::DropAll(reasons::EDITION_CUSTOM_CLEARED)
-        } else {
-            Verdict::Take(index, reason)
+    // A custom edition cannot move; the receiving album then keeps its own
+    // when that names the same edition.
+    let take = |index: usize, reason: Reason| match (incoming[index].custom, own) {
+        (false, _) => Verdict::Take(index, reason),
+        (true, Some(own)) if own.key() == incoming[index].key() => {
+            Verdict::KeepOwn(reasons::EDITION_KEPT)
         }
+        (true, _) => Verdict::DropAll(reasons::EDITION_CUSTOM_CLEARED),
     };
     let incoming_pin = incoming.iter().position(Identity::pinned);
     let pins: BTreeSet<String> = own
@@ -323,11 +325,13 @@ pub(super) fn settle(tx: &Transaction<'_>, s: &Settle<'_>) -> rusqlite::Result<S
     Ok(Settled { conflicts, changes })
 }
 
-/// An album emptied with nowhere clear to go loses its edition; a review
-/// on it keeps what was dropped.
+/// An album emptied with nowhere clear to go loses its edition. The review
+/// that keeps what was dropped goes on `successor`, the album the old one
+/// now points to (the old album's own reviews close when it retires).
 pub(super) fn drop_scattered(
     tx: &Transaction<'_>,
     album_id: &str,
+    successor: &str,
 ) -> rusqlite::Result<Option<EditionChange>> {
     let Some(found) = identity(tx, album_id)? else {
         return Ok(None);
@@ -335,7 +339,7 @@ pub(super) fn drop_scattered(
     let title = album_title(tx, album_id)?;
     let dropped = vec![found.dropped()];
     drop_edition(tx, album_id)?;
-    open_review(tx, album_id, reasons::EDITION_ALBUM_GONE, &title, &dropped)?;
+    open_review(tx, successor, reasons::EDITION_ALBUM_GONE, &title, &dropped)?;
     Ok(Some(EditionChange {
         album_id: album_id.to_owned(),
         album_title: title,
@@ -394,8 +398,15 @@ fn open_review(
     title: &str,
     dropped: &[DroppedEdition],
 ) -> rusqlite::Result<()> {
+    let mut seen = BTreeSet::new();
     let candidates: Vec<CandidateEvidence> = dropped
         .iter()
+        .filter(|edition| {
+            seen.insert((
+                edition.release_group_mbid.to_lowercase(),
+                edition.release_mbid.as_deref().map(str::to_lowercase),
+            ))
+        })
         .map(|edition| CandidateEvidence {
             candidate_key: format!(
                 "{}:{}",
@@ -500,6 +511,9 @@ mod tests {
             assert_eq!(case(None, &pin_in, choice), "take");
             assert_eq!(case(Some(&auto_own), &same_pin_in, choice), "take");
         }
+        let mut custom_same = edition("src", "r1", "manual");
+        custom_same.custom = true;
+        assert_eq!(case(Some(&auto_own), &[custom_same], Detach), "keep");
         assert_eq!(case(Some(&auto_own), &auto_in, Detach), "drop");
         assert_eq!(case(Some(&auto_own), &auto_in, RetainManual), "keep");
         let two_pins = [edition("a", "r2", "manual"), edition("b", "r3", "manual")];

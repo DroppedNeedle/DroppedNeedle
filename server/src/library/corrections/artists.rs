@@ -15,6 +15,7 @@ use serde::Serialize;
 use super::edition::placeholders;
 use super::models::{ArtistMergeOutcome, ArtistMergeRequest, CorrectionError, ProviderChoice};
 use super::reasons;
+use crate::library::identify::sqlite::retarget_references;
 
 const VARIOUS_ARTISTS_ID: &str = "00000000-0000-4000-8000-000000000001";
 const UNKNOWN_ARTIST_ID: &str = "00000000-0000-4000-8000-000000000002";
@@ -267,14 +268,6 @@ fn retire_artist(
          VALUES (?1, ?2, 'merged_artist', ?3)",
         "UPDATE library_migration_provenance SET target_id = ?2 \
          WHERE target_kind = 'local_artist' AND target_id = ?1",
-        "INSERT OR IGNORE INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
-         SELECT user_id, item_kind, ?2, created_at FROM library_user_favorites \
-         WHERE item_kind = 'artist' AND item_id = ?1",
-        "DELETE FROM library_user_favorites WHERE item_kind = 'artist' AND item_id = ?1",
-        "UPDATE library_play_history SET local_artist_id = ?2 WHERE local_artist_id = ?1",
-        "UPDATE library_playlist_tracks SET local_artist_id = ?2 WHERE local_artist_id = ?1",
-        "UPDATE library_compat_id_map SET internal_id = ?2 \
-         WHERE kind = 'artist' AND internal_id = ?1",
         "UPDATE library_artist_credit_proofs SET local_artist_id = ?2, updated_at = ?3, \
          row_revision = row_revision + 1 WHERE local_artist_id = ?1",
         "UPDATE OR IGNORE library_identify_credit_proofs SET source_local_artist_id = ?2 \
@@ -284,6 +277,9 @@ fn retire_artist(
          row_revision = row_revision + 1 WHERE state = 'open' \
          AND (left_artist_id = ?1 OR right_artist_id = ?1)",
     ];
+    // Favorites (with their names), playlist entries, play history and
+    // app ids, the same way identify merges move them.
+    retarget_references(tx, "artist", artist, survivor)?;
     for sql in moves {
         let mut stmt = tx.prepare(sql)?;
         let values = [

@@ -1083,9 +1083,19 @@ pub(crate) fn retarget_references(
         "artist" => "local_artist_id",
         _ => "local_track_id",
     };
+    // Copy, then delete: favorite names reference the favorite's key
+    // without ON UPDATE, so the key cannot change in place. Deleting the
+    // old favorite cascades to its name.
     tx.execute(
-        "UPDATE OR IGNORE library_user_favorites SET item_id = ?1 \
+        "INSERT OR IGNORE INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
+         SELECT user_id, item_kind, ?1, created_at FROM library_user_favorites \
          WHERE item_kind = ?2 AND item_id = ?3",
+        params![surviving_id, item_kind, retired_id],
+    )?;
+    tx.execute(
+        "INSERT OR IGNORE INTO library_user_favorite_names (user_id, item_kind, item_id, \
+         display_name) SELECT user_id, item_kind, ?1, display_name \
+         FROM library_user_favorite_names WHERE item_kind = ?2 AND item_id = ?3",
         params![surviving_id, item_kind, retired_id],
     )?;
     tx.execute(
@@ -1541,6 +1551,20 @@ impl ReviewStore for SqliteIdentifyStore {
             seal_album_identity(&tx, &approval.album)?;
             for track in &approval.tracks {
                 seal_track_identity(&tx, track)?;
+            }
+            // A candidate without track evidence (an edition a catalog
+            // correction dropped, restored from its review) names the
+            // release only: the remap worker places the files on it.
+            if approval.tracks.is_empty()
+                && let Some(release) = approval.album.release_mbid.as_deref()
+            {
+                crate::library::operations::choice::queue_remap(
+                    &tx,
+                    &approval.album.local_album_id,
+                    release,
+                    Some(&approval.by_user_id),
+                    crate::library::clock::now_unix(),
+                )?;
             }
             bump_identification_stream(&tx)?;
             tx.commit()?;

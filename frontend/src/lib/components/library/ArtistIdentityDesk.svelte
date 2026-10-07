@@ -202,6 +202,7 @@
 		stalePreview = false;
 		previewResult = null;
 		previewRequest = request;
+		previewSequence += 1;
 		try {
 			previewResult = await previewArtist.mutateAsync({
 				...request,
@@ -217,15 +218,21 @@
 
 	// The preview token covers the provider choice, so a changed choice is
 	// previewed again before it can be applied.
+	// Only the latest request's answer counts: a slower, older preview
+	// must not replace the one for the current choice.
+	let previewSequence = 0;
 	async function chooseProvider(choice: 'detach' | 'retain_survivor'): Promise<void> {
 		if (!previewRequest) return;
 		providerChoice = choice;
 		confirmed = false;
+		previewResult = null;
 		const request = previewRequest;
+		const sequence = ++previewSequence;
 		try {
-			previewResult = await previewArtist.mutateAsync({ ...request, provider_choice: choice });
+			const result = await previewArtist.mutateAsync({ ...request, provider_choice: choice });
+			if (sequence === previewSequence) previewResult = result;
 		} catch {
-			previewResult = null;
+			if (sequence === previewSequence) previewResult = null;
 		}
 	}
 

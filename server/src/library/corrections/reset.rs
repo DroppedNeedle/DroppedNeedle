@@ -78,7 +78,7 @@ pub(super) fn reset(
         if let Some((_, successor)) = shares.first() {
             let successor = (*successor).clone();
             if !unique {
-                scattered = edition::drop_scattered(tx, &album.id)?;
+                scattered = edition::drop_scattered(tx, &album.id, &successor)?;
             }
             retire(tx, &album.id, &successor, now)?;
             retired.push((album.id.clone(), Some(successor)));

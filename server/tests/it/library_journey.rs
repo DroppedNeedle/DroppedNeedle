@@ -2907,6 +2907,8 @@ async fn library_journey_catalog_corrections() {
     db.execute_batch(&format!(
         "INSERT INTO library_user_favorites (user_id, item_kind, item_id, created_at) \
          VALUES ('listener', 'album', '{album_b}', 1); \
+         INSERT INTO library_user_favorite_names (user_id, item_kind, item_id, display_name) \
+         VALUES ('listener', 'album', '{album_b}', 'Album B'); \
          INSERT INTO library_play_history (id, user_id, local_album_id, track_name, \
          artist_name, played_at) VALUES ('play-1', 'listener', '{album_b}', 'Song', \
          'Artist', '2026-01-01T00:00:00Z');"
@@ -2950,7 +2952,8 @@ async fn library_journey_catalog_corrections() {
     assert_eq!(status, StatusCode::OK, "{body}");
     let (favorite, played): (String, String) = db
         .query_row(
-            "SELECT (SELECT item_id FROM library_user_favorites WHERE user_id = 'listener'), \
+            "SELECT (SELECT item_id FROM library_user_favorite_names WHERE user_id = 'listener' \
+             AND display_name = 'Album B'), \
              (SELECT local_album_id FROM library_play_history WHERE id = 'play-1')",
             [],
             |row| Ok((row.get(0)?, row.get(1)?)),

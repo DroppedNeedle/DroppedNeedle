@@ -47,10 +47,24 @@ pub fn verify(
     if issued > now + 60 || now - issued > TTL_SECS {
         return Err(TokenFault::Expired);
     }
-    if token != issue(signer, actor, material, issued) {
+    if !same_bytes(
+        token.as_bytes(),
+        issue(signer, actor, material, issued).as_bytes(),
+    ) {
         return Err(TokenFault::Stale);
     }
     Ok(())
+}
+
+/// Equality that takes the same time wherever the inputs differ, so a
+/// forged token learns nothing from how fast it is refused.
+fn same_bytes(left: &[u8], right: &[u8]) -> bool {
+    left.len() == right.len()
+        && left
+            .iter()
+            .zip(right)
+            .fold(0u8, |diff, (a, b)| diff | (a ^ b))
+            == 0
 }
 
 /// Why a token does not apply.
