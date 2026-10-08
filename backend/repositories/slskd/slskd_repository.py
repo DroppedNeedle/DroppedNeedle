@@ -43,6 +43,9 @@ _DISC_DIR = re.compile(r"\b(?:Disc|CD)\s*\d+\b", re.IGNORECASE)
 _LOSSLESS_EXT = {"flac", "alac", "wav", "ape", "wv"}
 _NO_TIMESTAMP = datetime.min.replace(tzinfo=timezone.utc)
 _MAX_WALK_ENTRIES = 10_000
+# A track rung returning a single hit is not a usable candidate pool: keep
+# escalating instead of ending the ladder there (#542).
+_TRACK_LADDER_MIN_RESULTS = 2
 
 
 def _normalised_filename(value: str) -> str:
@@ -245,12 +248,24 @@ class SlskdRepository:
         timeout: float = 30.0,
     ) -> list[DownloadSearchResult]:
         # like search_album but every rung keeps the track title so the TrackMatcher
-        # can pick the right recording
+        # can pick the right recording. A qualified title can return one hit on the
+        # exact rungs while its stripped variant returns the real pool, so keep
+        # escalating past a near-empty rung - but only while a stripped rung is
+        # reachable. A plain title keeps the old stop-at-the-first-hit rule, so the
+        # common case never pays for extra searches (#542).
+        stripped_available = (
+            self._stripped_track_title(track_title) != " ".join(track_title.split())
+        )
+        best: list[DownloadSearchResult] = []
         for query in self._track_query_ladder(artist_name, track_title, album_title):
             results = await self._run_search(query, timeout)
-            if results:
+            if len(results) > len(best):
+                best = results
+            if results and (
+                len(results) >= _TRACK_LADDER_MIN_RESULTS or not stripped_available
+            ):
                 return results
-        return []
+        return best
 
     async def enqueue(self, request: EnqueueRequest) -> TaskHandle:
         """Enqueue files for one peer. Correlation key is (username, filenames)
@@ -1121,6 +1136,19 @@ class SlskdRepository:
         return " ".join(stripped.split())
 
     @staticmethod
+    def _stripped_track_title(track: str) -> str:
+        """Track title without qualifier parentheticals or brackets.
+
+        ``Tom's Diner (7" version)`` -> ``Tom's Diner``;
+        ``Song [Live at Leeds]`` -> ``Song``. Unlike the album variant this
+        keeps a colon tail - ``Suite: Judy Blue Eyes`` is one title, not a
+        title and a subtitle. Last-resort rungs only: the TrackMatcher still
+        verifies the qualifier (#542)."""
+        stripped = re.sub(r"\([^()]*\)", " ", track)
+        stripped = re.sub(r"\[[^\[\]]*\]", " ", stripped)
+        return " ".join(stripped.split())
+
+    @staticmethod
     def _album_query_ladder(artist: str, album: str, year: int | None) -> list[str]:
         """Most-specific-first album queries: artist+album+year -> artist+album
         -> edition-stripped title rungs -> artist. Every rung queries the
@@ -1165,21 +1193,32 @@ class SlskdRepository:
 
     @staticmethod
     def _track_query_ladder(artist: str, track: str, album: str | None) -> list[str]:
-        """Most-specific-first track queries: artist+track+album -> artist+track.
-        Keeps the track title at every rung so the TrackMatcher can match.
-        Queries the primary credited artist only (same AND-zeroing defect as
-        ``_album_query_ladder``, issue #373).
-        Wildcard blocked-artist variants interleave as in ``_album_query_ladder``."""
+        """Most-specific-first track queries: artist+track+album -> artist+track
+        -> qualifier-stripped title rungs. Keeps the track title at every rung
+        so the TrackMatcher can match. Queries the primary credited artist only
+        (same AND-zeroing defect as ``_album_query_ladder``, issue #373).
+        Wildcard blocked-artist variants interleave as in ``_album_query_ladder``.
+        The stripped rungs mirror ``_album_query_ladder``'s edition-stripped
+        rungs (issue #542)."""
         primary = SlskdRepository._primary_artist(artist)
         wc = SlskdRepository._wildcard_artist(SlskdRepository._sanitize_query(primary))
-        return SlskdRepository._dedupe_queries(
-            [
-                SlskdRepository._build_track_query(primary, track, album),
-                SlskdRepository._build_track_query(wc, track, album),
-                SlskdRepository._build_track_query(primary, track, None),
-                SlskdRepository._build_track_query(wc, track, None),
-            ]
-        )
+        queries = [
+            SlskdRepository._build_track_query(primary, track, album),
+            SlskdRepository._build_track_query(wc, track, album),
+            SlskdRepository._build_track_query(primary, track, None),
+            SlskdRepository._build_track_query(wc, track, None),
+        ]
+        stripped = SlskdRepository._stripped_track_title(track)
+        if stripped and stripped != " ".join(track.split()):
+            queries.extend(
+                [
+                    SlskdRepository._build_track_query(primary, stripped, album),
+                    SlskdRepository._build_track_query(wc, stripped, album),
+                    SlskdRepository._build_track_query(primary, stripped, None),
+                    SlskdRepository._build_track_query(wc, stripped, None),
+                ]
+            )
+        return SlskdRepository._dedupe_queries(queries)
 
     @staticmethod
     def _wildcard_artist(artist: str) -> str:
