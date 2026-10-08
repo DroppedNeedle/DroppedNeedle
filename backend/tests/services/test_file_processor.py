@@ -3517,3 +3517,39 @@ async def test_folder_occupied_target_attributed_to_other_album_is_collision(
     held = await store.list_held_imports("user-a", "user")
     assert len(held) == 1
     assert held[0].reason == TARGET_OCCUPIED
+
+
+@pytest.mark.asyncio
+async def test_locate_source_uses_the_settling_locator_when_offered(tmp_path):
+    fp, _manager, _client, _library, _downloads = _make_processor(tmp_path)
+    calls: list[str] = []
+
+    class _Settling:
+        async def locate_settled(self, handle, remote_filename, size=None):
+            calls.append("settled")
+            return None
+
+        async def get_file_path(self, handle, remote_filename, size=None):
+            calls.append("plain")
+            return None
+
+    fp._client = _Settling()
+    expected = ExpectedFile(filename="A/track.flac", size=1)
+    assert await fp._locate_source(_manifest(expected), expected) is None
+    assert calls == ["settled"]
+
+
+@pytest.mark.asyncio
+async def test_locate_source_falls_back_to_a_single_locate(tmp_path):
+    fp, _manager, _client, _library, _downloads = _make_processor(tmp_path)
+    calls: list[str] = []
+
+    class _Plain:
+        async def get_file_path(self, handle, remote_filename, size=None):
+            calls.append("plain")
+            return None
+
+    fp._client = _Plain()
+    expected = ExpectedFile(filename="A/track.flac", size=1)
+    assert await fp._locate_source(_manifest(expected), expected) is None
+    assert calls == ["plain"]

@@ -2101,6 +2101,30 @@ class FileProcessor:
         except Exception:  # noqa: BLE001 - a probe must never fail the import
             return None
 
+    async def _locate_source(
+        self, manifest: DownloadManifest, expected: ExpectedFile
+    ) -> Path | None:
+        """Resolve an expected file, settling slskd's completed-before-move window.
+
+        Duck-typed: only the slskd repository offers ``locate_settled`` (a separate
+        method so ``get_file_path`` stays byte-identical); other clients resolve in
+        one shot. slskd reports a transfer Completed before it moves the file out of
+        the incomplete directory, so the first locate can land inside that window and
+        miss a file that is on the mount a moment later (#540).
+        """
+        client = self._client_for_manifest(manifest)
+        settle = getattr(client, "locate_settled", None)
+        if settle is not None:
+            try:
+                return await settle(
+                    manifest.handle, expected.filename, expected.size
+                )
+            except Exception:  # noqa: BLE001 - settle trouble falls back to one locate
+                pass
+        return await client.get_file_path(
+            manifest.handle, expected.filename, expected.size
+        )
+
     async def _process_one(
         self,
         expected: ExpectedFile,
@@ -2117,9 +2141,7 @@ class FileProcessor:
                 reason=SOURCE_FILE_MISSING,
                 filename=expected.filename,
             )
-        source = await client.get_file_path(
-            manifest.handle, expected.filename, expected.size
-        )
+        source = await self._locate_source(manifest, expected)
 
         # distinguish a bad downloads mount (environment fault) from a single missing
         # file: a bad mount fails this file with a sanitized reason but never
