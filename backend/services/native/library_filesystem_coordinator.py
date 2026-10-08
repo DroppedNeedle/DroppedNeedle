@@ -282,14 +282,21 @@ MANAGEMENT_ARTIFACT_PREFIX = ".droppedneedle-management-"
 # files must never surface as library tracks, but an unrelated dot-prefixed
 # user folder must keep scanning (#465).
 RECYCLE_BIN_DIRECTORY_NAME = ".recycle"
+# The default download staging directory (#547). When downloads stage inside
+# the library root (e.g. "<first library path>/.incoming") for atomic moves,
+# an exact name match ensures in-flight and leftover staging files never index
+# as library tracks or albums.
+STAGING_DIRECTORY_NAME = ".incoming"
 
 
 def is_management_artifact(path: Path) -> bool:
     """Return whether a path is a management artifact (reserved hidden
-    namespace or the default recycle bin directory)."""
+    namespace, default recycle bin directory, or download staging directory)."""
 
     return any(
-        part.startswith(MANAGEMENT_ARTIFACT_PREFIX) or part == RECYCLE_BIN_DIRECTORY_NAME
+        part.startswith(MANAGEMENT_ARTIFACT_PREFIX)
+        or part == RECYCLE_BIN_DIRECTORY_NAME
+        or part == STAGING_DIRECTORY_NAME
         for part in path.parts
     )
 
