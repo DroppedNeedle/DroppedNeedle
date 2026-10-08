@@ -35,11 +35,24 @@ class TestIsManagementArtifact:
     def test_management_namespace_still_excluded(self) -> None:
         assert is_management_artifact(Path(f"{MANAGEMENT_ARTIFACT_PREFIX}scan-1"))
 
+    def test_staging_directory_is_excluded(self) -> None:
+        """The download staging directory (.incoming) must be excluded from scanning
+        and filesystem reconcile (#547)."""
+        assert is_management_artifact(Path(".incoming"))
+        assert is_management_artifact(Path("music/.incoming/slskd/track.flac"))
+        assert is_management_artifact(
+            Path("music/.incoming/.slskd-incomplete/track.flac")
+        )
+
     def test_ordinary_dot_directory_is_not_excluded(self) -> None:
         """Only the exact reserved names are excluded - an unrelated
         dot-prefixed user folder must keep scanning."""
         assert not is_management_artifact(Path(".config"))
         assert not is_management_artifact(Path("music/Artist/.recycled-mix/track.flac"))
+        assert not is_management_artifact(
+            Path("music/Artist/.incoming-archive/track.flac")
+        )
+        assert not is_management_artifact(Path("music/Artist/incoming/track.flac"))
 
 
 @pytest.mark.asyncio
