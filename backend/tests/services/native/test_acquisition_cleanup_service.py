@@ -660,6 +660,74 @@ async def test_repaired_publisher_attention_returns_to_cleanup(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_rolled_back_bundle_does_not_park_a_fresh_cleanup(tmp_path: Path):
+    """A rolled_back publish left nothing in the library, so a fresh cleanup pass
+    must not park the attempt for attention (#541)."""
+    now = [10.0]
+    root = tmp_path / "sab"
+    workspace = root / f"droppedneedle-{'a' * 32}-0"
+    workspace.mkdir(parents=True)
+    store = _store(tmp_path)
+    attempt = await _attempt(store, root, workspace=workspace, bundle_ids=["bundle"])
+    library = _LibraryStore()
+    library.bundles["bundle"] = "rolled_back"
+    client = _Client(
+        DownloadMaterialization(
+            state="completed",
+            mount_root=str(root),
+            workspace_path=str(workspace),
+            mount_healthy=True,
+        )
+    )
+    service = AcquisitionCleanupService(
+        store, library, lambda source: client, lambda: root, clock=lambda: now[0]
+    )
+    await service.cleanup_now(attempt.id, worker_id="test")
+    current = await store.get_download_attempt(attempt.id)
+    assert current.state != "needs_attention"
+    assert current.error_code != "publisher_needs_attention"
+
+
+@pytest.mark.asyncio
+async def test_rolled_back_bundle_lets_a_parked_attempt_resolve(tmp_path: Path):
+    """The issue's case: an attempt parked while its bundle needed attention, then
+    the publish rolled back. The attention pass must settle it instead of deferring
+    on it forever (#541)."""
+    now = [10.0]
+    root = tmp_path / "sab"
+    workspace = root / f"droppedneedle-{'a' * 32}-0"
+    workspace.mkdir(parents=True)
+    store = _store(tmp_path)
+    attempt = await _attempt(store, root, workspace=workspace, bundle_ids=["bundle"])
+    library = _LibraryStore()
+    library.bundles["bundle"] = "needs_attention"
+    client = _Client(
+        DownloadMaterialization(
+            state="completed",
+            mount_root=str(root),
+            workspace_path=str(workspace),
+            mount_healthy=True,
+        )
+    )
+    service = AcquisitionCleanupService(
+        store, library, lambda source: client, lambda: root, clock=lambda: now[0]
+    )
+    await service.cleanup_now(attempt.id, worker_id="blocked")
+    attention = await store.get_download_attempt(attempt.id)
+    assert attention.state == "needs_attention"
+    assert attention.error_code == "publisher_needs_attention"
+
+    library.bundles["bundle"] = "rolled_back"
+    now[0] = attention.next_retry_at
+    await service.run_once("attention")
+    assert (await store.get_download_attempt(attempt.id)).state == "cleanup_pending"
+
+    await service.run_once("cleanup")
+    assert (await store.get_download_attempt(attempt.id)).state == "complete"
+    assert not workspace.exists()
+
+
+@pytest.mark.asyncio
 async def test_health_warning_starts_after_three_failures_and_auto_heals(
     tmp_path: Path,
 ):
