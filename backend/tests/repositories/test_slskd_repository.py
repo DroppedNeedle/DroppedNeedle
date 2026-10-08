@@ -308,6 +308,43 @@ def test_track_query_ladder_queries_primary_artist_only():
     assert all("Featured" not in query for query in ladder)
 
 
+def test_stripped_track_title_drops_qualifiers_keeps_colon():
+    assert (
+        SlskdRepository._stripped_track_title("Tom's Diner (7\" version)")
+        == "Tom's Diner"
+    )
+    assert SlskdRepository._stripped_track_title("Song [Live at Leeds]") == "Song"
+    # a colon is part of a track title, unlike the album ladder's subtitle tail.
+    assert (
+        SlskdRepository._stripped_track_title("Suite: Judy Blue Eyes")
+        == "Suite: Judy Blue Eyes"
+    )
+    assert SlskdRepository._stripped_track_title("(Reprise)") == ""
+
+
+def test_track_query_ladder_appends_stripped_rungs_for_qualified_title():
+    ladder = SlskdRepository._track_query_ladder(
+        "Artist", "Song (Radio Edit)", "Album"
+    )
+    assert ladder == [
+        "Artist Song Radio Edit Album",
+        "*rtist Song Radio Edit Album",
+        "Artist Song Radio Edit",
+        "*rtist Song Radio Edit",
+        "Artist Song Album",
+        "*rtist Song Album",
+        "Artist Song",
+        "*rtist Song",
+    ]
+    # an unqualified title adds no stripped rungs.
+    assert SlskdRepository._track_query_ladder("Artist", "Song", "Album") == [
+        "Artist Song Album",
+        "*rtist Song Album",
+        "Artist Song",
+        "*rtist Song",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_search_album_issues_primary_artist_query_first():
     fake = _LadderFake({})
@@ -399,6 +436,61 @@ async def test_search_track_keeps_title_and_does_not_go_artist_only():
         "Artist Song",
         "*rtist Song",
     ]
+
+
+@pytest.mark.asyncio
+async def test_search_track_escalates_past_a_single_hit():
+    # #542: a qualified title can return one hit on the exact rung; the ladder
+    # must keep going and hand the scorer the stripped rung's larger pool.
+    exact = SlskdRepository._build_track_query("Artist", "Song (Radio Edit)", "Album")
+    stripped = SlskdRepository._build_track_query("Artist", "Song", "Album")
+    fake = _LadderFake(
+        {
+            exact: _one_file(filename="bob\\Album\\01 - Song (Radio Edit).flac"),
+            stripped: _one_file(username="bob", filename="bob\\Album\\01 - Song.flac")
+            + _one_file(username="alice", filename="alice\\Album\\01 - Song.flac"),
+        }
+    )
+    repo = SlskdRepository(
+        client=fake, url="u", api_key="k", downloads_mount=Path("/dl")
+    )
+    results = await repo.search_track("Artist", "Song (Radio Edit)", "Album")
+    assert len(results) == 2  # the stripped rung's larger pool won
+    assert fake.queries == [
+        exact,
+        SlskdRepository._build_track_query("*rtist", "Song (Radio Edit)", "Album"),
+        SlskdRepository._build_track_query("Artist", "Song (Radio Edit)", None),
+        SlskdRepository._build_track_query("*rtist", "Song (Radio Edit)", None),
+        stripped,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_search_track_keeps_the_best_set_when_every_rung_is_thin():
+    # A single hit does not end the ladder; it runs to the end and returns the
+    # largest set it saw (#542).
+    q0 = SlskdRepository._build_track_query("Artist", "Song (Radio Edit)", "Album")
+    fake = _LadderFake({q0: _one_file()})
+    repo = SlskdRepository(
+        client=fake, url="u", api_key="k", downloads_mount=Path("/dl")
+    )
+    results = await repo.search_track("Artist", "Song (Radio Edit)", "Album")
+    assert len(results) == 1
+    assert len(fake.queries) == 8  # exact rungs + the four stripped rungs
+
+
+@pytest.mark.asyncio
+async def test_search_track_plain_title_still_stops_at_the_first_hit():
+    # No qualifier to strip: a single hit ends the ladder as before, so the
+    # escalation never adds searches a plain title cannot benefit from (#542).
+    q0 = SlskdRepository._build_track_query("Artist", "Song", "Album")
+    fake = _LadderFake({q0: _one_file()})
+    repo = SlskdRepository(
+        client=fake, url="u", api_key="k", downloads_mount=Path("/dl")
+    )
+    results = await repo.search_track("Artist", "Song", "Album")
+    assert len(results) == 1
+    assert fake.queries == [q0]
 
 
 @pytest.mark.asyncio
