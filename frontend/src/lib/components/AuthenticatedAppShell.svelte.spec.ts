@@ -286,7 +286,9 @@ describe('AuthenticatedAppShell sidebar scroll at short desktop heights (#281)',
 
 		scrollToSidebarBottom();
 
-		// The last control (Open toggle) sits below Log out: fully scrolled it must
+		await expect.element(page.getByText('Hide sidebar')).not.toBeVisible();
+
+		// The last control (sidebar toggle) sits below Log out: fully scrolled it must
 		// sit inside the viewport AND clear of the fixed player bar (pb-24)
 		await vi.waitFor(
 			() => {
@@ -307,7 +309,7 @@ describe('AuthenticatedAppShell sidebar scroll at short desktop heights (#281)',
 		// pb-24 keeps the controls clear of the fixed player bar
 		expect(footer.className).toContain('pb-24');
 		const control = footer.lastElementChild;
-		if (!(control instanceof HTMLElement)) throw new Error('Open toggle did not render');
+		if (!(control instanceof HTMLElement)) throw new Error('sidebar toggle did not render');
 		return control;
 	}
 
@@ -324,6 +326,13 @@ describe('AuthenticatedAppShell sidebar scroll at short desktop heights (#281)',
 		const width = sidebarInner().getBoundingClientRect().width;
 		// is-drawer-open:w-64 applies once the toggle is checked
 		expect(width, `expanded sidebar width, checked=${toggle.checked}`).toBe(256);
+		const settings = page.getByRole('link', { name: 'Settings' });
+		await expect.element(settings).toBeVisible();
+		expect(settings.element().textContent).toContain('Settings');
+		const logout = page.getByRole('button', { name: 'Log out' });
+		await expect.element(logout).toBeVisible();
+		expect(logout.element().textContent).toContain('Log out');
+		await expect.element(page.getByText('Hide sidebar')).toBeVisible();
 
 		scrollToSidebarBottom();
 		await vi.waitFor(
