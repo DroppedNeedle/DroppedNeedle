@@ -44,6 +44,12 @@ _MAX_TREE_ENTRIES = 100_000
 _ATTENTION_RECHECK_SECONDS = 3600.0
 _UNRESOLVED_JOB_RETRIES = 4
 
+# Bundle states that count as settled for cleanup. A rolled_back publish left
+# nothing in the library and has no resolve path of its own, so it must not hold
+# an attempt in needs_attention forever (#541). needs_attention stays blocking:
+# that bundle waits for a human repair.
+_SETTLED_BUNDLE_STATES = frozenset({"completed", "resolved", "rolled_back"})
+
 # A folder qualifies as orphan debris only when no attempt journal owns it; the age
 # floor must comfortably exceed any crash window between SABnzbd materialising a
 # job and its attempt row being journaled (plus a full download+unpack), so a live
@@ -190,7 +196,7 @@ class AcquisitionCleanupService:
             bundle = await self._library_store.get_library_management_import_bundle(
                 bundle_id
             )
-            if bundle is None or bundle.state not in {"completed", "resolved"}:
+            if bundle is None or bundle.state not in _SETTLED_BUNDLE_STATES:
                 bundles_resolved = False
                 break
         if not bundles_resolved:
@@ -260,9 +266,9 @@ class AcquisitionCleanupService:
             )
             if bundle is None:
                 raise _UnsafeCleanup("publisher_barrier_missing")
-            if bundle.state in {"completed", "resolved"}:
+            if bundle.state in _SETTLED_BUNDLE_STATES:
                 continue
-            if bundle.state in {"needs_attention", "rolled_back"}:
+            if bundle.state == "needs_attention":
                 raise _UnsafeCleanup("publisher_needs_attention")
             updated = await self._store.transition_download_attempt(
                 attempt.id,
