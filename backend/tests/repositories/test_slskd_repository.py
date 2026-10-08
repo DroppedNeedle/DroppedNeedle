@@ -1863,3 +1863,73 @@ async def test_health_check_401_end_to_end_renders_auth_template():
         slskd_mock.reset_state()
         _slskd_circuit_breaker.reset()
         _slskd_verify_circuit_breaker.reset()
+
+
+# --- locate_settled: slskd marks a transfer Completed before it moves the file out
+# of the incomplete directory, so a locate issued right after completion can miss a
+# file that is on the mount a moment later (#540). ---
+
+
+def _settle_handle() -> TaskHandle:
+    return TaskHandle(source="soulseek", username="peer", filenames=["A/track.flac"])
+
+
+@pytest.mark.asyncio
+async def test_locate_settled_returns_once_the_file_appears(monkeypatch, tmp_path):
+    repo = SlskdRepository(client=None, url="", api_key="", downloads_mount=tmp_path)
+    target = tmp_path / "track.flac"
+    target.write_bytes(b"x")
+    calls: list[bool] = []
+
+    def _fake_locate(username, remote_filename, size=None, *, log_miss=True):
+        calls.append(log_miss)
+        return target if len(calls) == 3 else None
+
+    sleeps: list[float] = []
+
+    async def _fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(repo, "_locate_file", _fake_locate)
+    monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
+    located = await repo.locate_settled(_settle_handle(), "A/track.flac", 1)
+    assert located == target
+    assert len(calls) == 3
+    assert sleeps == [0.5, 0.5]
+    assert calls == [False, False, False]  # a rescued file logs no miss
+
+
+@pytest.mark.asyncio
+async def test_locate_settled_gives_up_after_the_window(monkeypatch, tmp_path):
+    repo = SlskdRepository(client=None, url="", api_key="", downloads_mount=tmp_path)
+    calls: list[bool] = []
+
+    def _fake_locate(username, remote_filename, size=None, *, log_miss=True):
+        calls.append(log_miss)
+        return None
+
+    sleeps: list[float] = []
+
+    async def _fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(repo, "_locate_file", _fake_locate)
+    monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
+    assert await repo.locate_settled(_settle_handle(), "A/track.flac", 1) is None
+    assert calls == [False, False, False, False, True]  # only the last miss logs
+    assert sleeps == [0.5, 0.5, 0.5, 0.5]
+
+
+@pytest.mark.asyncio
+async def test_locate_settled_logs_exactly_one_warning_when_it_fails(
+    monkeypatch, tmp_path, caplog
+):
+    repo = SlskdRepository(client=None, url="", api_key="", downloads_mount=tmp_path)
+
+    async def _fake_sleep(seconds):
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
+    with caplog.at_level(logging.WARNING):
+        assert await repo.locate_settled(_settle_handle(), "A/track.flac", 1) is None
+    assert caplog.text.count("slskd file not locatable") == 1

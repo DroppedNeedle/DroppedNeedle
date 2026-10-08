@@ -43,6 +43,11 @@ _DISC_DIR = re.compile(r"\b(?:Disc|CD)\s*\d+\b", re.IGNORECASE)
 _LOSSLESS_EXT = {"flac", "alac", "wav", "ape", "wv"}
 _NO_TIMESTAMP = datetime.min.replace(tzinfo=timezone.utc)
 _MAX_WALK_ENTRIES = 10_000
+# slskd reports a transfer Completed before it moves the file out of the
+# incomplete directory (#540), so a locate issued right after completion can miss
+# a file that is on the mount a moment later. Bounded settle window.
+_LOCATE_SETTLE_ATTEMPTS = 5
+_LOCATE_SETTLE_INTERVAL_SECONDS = 0.5
 
 
 def _normalised_filename(value: str) -> str:
@@ -355,8 +360,42 @@ class SlskdRepository:
             self._locate_file, handle.username, remote_filename, size
         )
 
+    async def locate_settled(
+        self, handle: TaskHandle, remote_filename: str, size: int | None = None
+    ) -> Path | None:
+        """Resolve a finished transfer, retrying briefly while slskd finishes the move.
+
+        slskd reports a transfer as ``Completed, Succeeded`` before it moves the file
+        out of the incomplete directory into the downloads directory, so a locate
+        issued the moment the poll sees Completed can land inside that window and miss
+        a file that is on the mount a moment later (#540). Bounded: at most
+        ``_LOCATE_SETTLE_ATTEMPTS`` locates spaced by ``_LOCATE_SETTLE_INTERVAL_SECONDS``.
+        Intermediate misses are silent; only a miss after the full window logs, so a
+        genuine failure reads exactly like a single failed locate. Never called by
+        ``get_file_path`` (which stays byte-identical).
+        """
+        last = _LOCATE_SETTLE_ATTEMPTS - 1
+        for attempt in range(_LOCATE_SETTLE_ATTEMPTS):
+            located = await asyncio.to_thread(
+                self._locate_file,
+                handle.username,
+                remote_filename,
+                size,
+                log_miss=(attempt == last),
+            )
+            if located is not None:
+                return located
+            if attempt < last:
+                await asyncio.sleep(_LOCATE_SETTLE_INTERVAL_SECONDS)
+        return None
+
     def _locate_file(
-        self, username: str, remote_filename: str, size: int | None = None
+        self,
+        username: str,
+        remote_filename: str,
+        size: int | None = None,
+        *,
+        log_miss: bool = True,
     ) -> Path | None:
         """Resolve a finished transfer inside the mounted slskd downloads directory.
 
@@ -607,6 +646,8 @@ class SlskdRepository:
             observed candidate count; budget exhaustion adds a flag. Never
             candidate paths, usernames, hosts, secrets, remote full paths, or
             exception text."""
+            if not log_miss:
+                return
             try:
                 top_level = sum(1 for _ in mount.iterdir())
             except (OSError, RuntimeError):
