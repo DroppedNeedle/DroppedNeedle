@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 
 import pytest
@@ -5,8 +6,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 
-from core.exceptions import ConfigurationError, ExternalServiceError
-from repositories.lastfm_repository import LastFmRepository, LASTFM_ERROR_MAP
+from core.exceptions import (
+    ConfigurationError,
+    ExternalServiceError,
+    ResourceNotFoundError,
+)
+from repositories import lastfm_repository as lastfm_module
+from repositories.lastfm_repository import (
+    LASTFM_ERROR_MAP,
+    LastFmRepository,
+    _lastfm_circuit_breaker,
+)
 
 
 def _make_cache() -> AsyncMock:
@@ -95,6 +105,115 @@ class TestHandleErrorResponse:
                 "error": 17,
                 "message": "Login: User required to be logged in",
             })
+
+    def test_error_6_raises_resource_not_found(self):
+        repo = _make_repo()
+        with pytest.raises(ResourceNotFoundError, match="Not found"):
+            repo._handle_error_response({"error": 6, "message": "Album not found"})
+
+
+class TestHttpStatusClassification:
+    """A 404 is Last.fm saying the entity is not in its catalogue, not a
+    service failure: it must not be retried and must not count against the
+    circuit breaker (#548)."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated_rate_limiter(self, monkeypatch):
+        """Replace the shared token bucket so these tests neither wait on it
+        nor drain it for the tests that run after them."""
+        monkeypatch.setattr(lastfm_module, "_lastfm_rate_limiter", AsyncMock())
+
+    @pytest.fixture
+    def lastfm_breaker(self):
+        _lastfm_circuit_breaker.reset()
+        yield _lastfm_circuit_breaker
+        _lastfm_circuit_breaker.reset()
+
+    @pytest.mark.asyncio
+    async def test_http_404_raises_resource_not_found_and_is_not_retried(self):
+        http_client = AsyncMock(spec=httpx.AsyncClient)
+        http_client.get = AsyncMock(
+            return_value=MagicMock(
+                status_code=404,
+                text='{"error":6,"message":"Album not found"}',
+            )
+        )
+        repo = LastFmRepository(
+            http_client=http_client,
+            cache=_make_cache(),
+            api_key="key",
+            shared_secret="sec",
+        )
+        with pytest.raises(
+            ResourceNotFoundError, match=r"Last\.fm request failed \(404\)"
+        ):
+            await repo._request(
+                "album.getinfo", {"artist": "Pink Floyd", "album": "The Wall"}
+            )
+        assert http_client.get.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_http_404_does_not_trip_the_circuit_breaker(self, lastfm_breaker):
+        http_client = AsyncMock(spec=httpx.AsyncClient)
+        http_client.get = AsyncMock(
+            return_value=MagicMock(status_code=404, text="Not Found")
+        )
+        repo = LastFmRepository(
+            http_client=http_client,
+            cache=_make_cache(),
+            api_key="key",
+            shared_secret="sec",
+        )
+        for _ in range(5):
+            with pytest.raises(ResourceNotFoundError):
+                await repo._request(
+                    "album.getinfo", {"artist": "Pink Floyd", "album": "The Wall"}
+                )
+        assert lastfm_breaker.failure_count == 0
+        assert not lastfm_breaker.is_open()
+
+    @pytest.mark.asyncio
+    async def test_get_album_info_returns_none_on_404(self, lastfm_breaker):
+        http_client = AsyncMock(spec=httpx.AsyncClient)
+        http_client.get = AsyncMock(
+            return_value=MagicMock(status_code=404, text="Not Found")
+        )
+        repo = LastFmRepository(
+            http_client=http_client,
+            cache=_make_cache(),
+            api_key="key",
+            shared_secret="sec",
+        )
+        assert await repo.get_album_info("Pink Floyd", "The Wall") is None
+        assert http_client.get.call_count == 1
+        assert lastfm_breaker.failure_count == 0
+
+    @pytest.mark.asyncio
+    async def test_http_500_still_retries_and_counts_against_the_breaker(
+        self, lastfm_breaker, monkeypatch
+    ):
+        async def _no_sleep(_seconds: float) -> None:
+            return None
+
+        monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+        http_client = AsyncMock(spec=httpx.AsyncClient)
+        http_client.get = AsyncMock(
+            return_value=MagicMock(status_code=500, text="oops")
+        )
+        repo = LastFmRepository(
+            http_client=http_client,
+            cache=_make_cache(),
+            api_key="key",
+            shared_secret="sec",
+        )
+        with pytest.raises(
+            ExternalServiceError, match=r"Last\.fm request failed \(500\)"
+        ):
+            await repo._request(
+                "album.getinfo", {"artist": "Pink Floyd", "album": "The Wall"}
+            )
+        assert http_client.get.call_count == 3
+        assert lastfm_breaker.failure_count == 1
 
 
 class TestConfigureMethod:

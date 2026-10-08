@@ -255,6 +255,15 @@ class LastFmRepository:
             record_provider_call("lastfm", None, response.status_code, response=response)
 
             if response.status_code != 200:
+                if response.status_code == 404:
+                    # Last.fm answers 404 for entities outside its catalogue
+                    # (e.g. albums it has never indexed). That is a not-found
+                    # result, not a service failure: it must not be retried or
+                    # counted against the circuit breaker (#548).
+                    raise ResourceNotFoundError(
+                        "Last.fm request failed (404)",
+                        response.text,
+                    )
                 raise ExternalServiceError(
                     f"Last.fm request failed ({response.status_code})",
                     response.text,
