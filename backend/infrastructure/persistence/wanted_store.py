@@ -225,6 +225,58 @@ class WantedStore(PersistenceBase):
 
         return await self._write(operation)
 
+    async def delete_watch(self, release_group_mbid: str) -> bool:
+        """Delete a watch and its seen-candidate rows (the user-facing remove).
+
+        Stop only parks a watch; the retention prune is the only other way out and
+        it runs at ``request_history_retention_days`` (180 by default), which is far
+        too long to stare at something explicitly stopped (#550)."""
+        def operation(conn: sqlite3.Connection) -> bool:
+            key = release_group_mbid.lower()
+            conn.execute(
+                "DELETE FROM wanted_seen_candidates WHERE release_group_mbid_lower = ?",
+                (key,),
+            )
+            cursor = conn.execute(
+                "DELETE FROM wanted_watches WHERE release_group_mbid_lower = ?", (key,)
+            )
+            return cursor.rowcount > 0
+
+        return await self._write(operation)
+
+    async def delete_terminal_watches(self, user_id: str | None = None) -> int:
+        """Delete every stopped/fulfilled watch, optionally scoped to one user.
+
+        ``user_id=None`` is the admin scope (every user's terminal watches)."""
+        def operation(conn: sqlite3.Connection) -> int:
+            if user_id is None:
+                conn.execute(
+                    "DELETE FROM wanted_seen_candidates "
+                    "WHERE release_group_mbid_lower IN ("
+                    "SELECT release_group_mbid_lower FROM wanted_watches "
+                    "WHERE state IN ('stopped','fulfilled'))"
+                )
+                cursor = conn.execute(
+                    "DELETE FROM wanted_watches "
+                    "WHERE state IN ('stopped','fulfilled')"
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM wanted_seen_candidates "
+                    "WHERE release_group_mbid_lower IN ("
+                    "SELECT release_group_mbid_lower FROM wanted_watches "
+                    "WHERE state IN ('stopped','fulfilled') AND user_id = ?)",
+                    (user_id,),
+                )
+                cursor = conn.execute(
+                    "DELETE FROM wanted_watches "
+                    "WHERE state IN ('stopped','fulfilled') AND user_id = ?",
+                    (user_id,),
+                )
+            return cursor.rowcount
+
+        return await self._write(operation)
+
     async def mark_fulfilled(
         self, release_group_mbid: str, outcome: str, now: float | None = None
     ) -> None:
