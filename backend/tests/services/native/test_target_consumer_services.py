@@ -2396,7 +2396,7 @@ async def test_isolated_target_compat_routes_browse_play_and_write_stable_refere
     )
     album_info = client.get(
         "/subsonic/rest/getAlbumInfo2", params={**query, "id": local_album["id"]}
-    ).json()["subsonic-response"]["albumInfo2"]
+    ).json()["subsonic-response"]["albumInfo"]
     artists = client.get("/subsonic/rest/getArtists", params=query).json()[
         "subsonic-response"
     ]["artists"]["index"]

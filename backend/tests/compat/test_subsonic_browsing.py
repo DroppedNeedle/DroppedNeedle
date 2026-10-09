@@ -339,7 +339,7 @@ async def test_artist_info_cover_urls_absolute_without_base(compat_env):
 
 async def test_album_info_cover_urls_absolute_without_base(compat_env):
     album_id = _get(compat_env, "getAlbumList2", type="newest")["albumList2"]["album"][0]["id"]
-    info = _get(compat_env, "getAlbumInfo2", id=album_id)["albumInfo2"]
+    info = _get(compat_env, "getAlbumInfo2", id=album_id)["albumInfo"]
     _assert_cover_urls("http://testserver", info, album_id)
 
 
@@ -373,7 +373,7 @@ async def test_album_info_cover_urls_include_base_once(compat_env):
     ]["album"]
     album_id = albums[0]["id"]
     info = _sub(client.get("/subsonic/rest/getAlbumInfo2", params={**q, "id": album_id}))[
-        "albumInfo2"
+        "albumInfo"
     ]
     _assert_cover_urls("http://testserver/dn", info, album_id)
 
