@@ -17,8 +17,8 @@ async def test_album_and_artist_info_validate_target_and_return_truthful_mbid(co
     album = _body(compat_env.client.get(
         "/subsonic/rest/getAlbumInfo2", params={**query, "id": album_id}
     ))
-    assert album["albumInfo2"]["musicBrainzId"] == compat_env.ids["rg"]
-    assert "getCoverArt" in album["albumInfo2"]["smallImageUrl"]
+    assert album["albumInfo"]["musicBrainzId"] == compat_env.ids["rg"]
+    assert "getCoverArt" in album["albumInfo"]["smallImageUrl"]
 
     artists, _ = await compat_env.view.get_artists()
     artist_id = encode("artist", artists[0].artist_mbid)

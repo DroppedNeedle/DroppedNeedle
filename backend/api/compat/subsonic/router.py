@@ -1553,7 +1553,7 @@ async def _get_album_info(c: Ctx) -> Response:
         raise SubsonicError(70, "Album not found")
     cover_id = encode("album", release_group_mbid)
     return c.render(
-        "albumInfo" if c.endpoint_name == "getalbuminfo" else "albumInfo2",
+        "albumInfo",
         m.SAlbumInfo(
             musicBrainzId=(
                 album.musicbrainz_release_group_id

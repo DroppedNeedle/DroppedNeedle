@@ -73,7 +73,7 @@
     "getSimilarSongs": {"state": "partial", "response_key": "similarSongs", "service": "compat discovery", "parameters": ["id", "count?"]},
 
     "getAlbumInfo": {"state": "full", "response_key": "albumInfo", "service": "library metadata", "parameters": ["id"]},
-    "getAlbumInfo2": {"state": "full", "response_key": "albumInfo2", "service": "library metadata", "parameters": ["id"]},
+    "getAlbumInfo2": {"state": "full", "response_key": "albumInfo", "service": "library metadata", "parameters": ["id"]},
     "getLyrics": {"state": "full", "response_key": "lyrics", "service": "native lyrics", "parameters": ["artist?", "title"]},
     "getLyricsBySongId": {"state": "full", "response_key": "lyricsList", "service": "native lyrics", "parameters": ["id"], "extension": "songLyrics:1"},
     "reportPlayback": {"state": "full", "methods": ["GET", "POST_FORM", "POST_JSON"], "response_key": null, "service": "playback report", "parameters": ["mediaId", "mediaType", "positionMs", "state", "playbackRate?", "ignoreScrobble?"], "extension": "playbackReport:1"},
