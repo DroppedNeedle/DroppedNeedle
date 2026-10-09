@@ -35,6 +35,7 @@ from api.v1.schemas.settings import (
     EventsSettings,
     FreeMusicSettings,
     GetItSettings,
+    PlaylistTrackRequestSettings,
     TICKETMASTER_KEY_MASK,
     SKIDDLE_KEY_MASK,
     WrappedSettings,
@@ -633,6 +634,31 @@ async def update_get_it_settings(
     # fresh key.
     preferences_service.save_get_it_settings(settings)
     return preferences_service.get_get_it_settings()
+
+
+@router.get(
+    "/playlist-track-requests",
+    response_model=PlaylistTrackRequestSettings,
+    dependencies=[Depends(_admin_guard)],
+)
+async def get_playlist_track_request_settings(
+    preferences_service: PreferencesService = Depends(get_preferences_service),
+):
+    return preferences_service.get_playlist_track_request_settings()
+
+
+@router.put(
+    "/playlist-track-requests",
+    response_model=PlaylistTrackRequestSettings,
+    dependencies=[Depends(_admin_guard)],
+)
+async def update_playlist_track_request_settings(
+    settings: PlaylistTrackRequestSettings = MsgSpecBody(PlaylistTrackRequestSettings),
+    preferences_service: PreferencesService = Depends(get_preferences_service),
+):
+    # Read per request by the playlist routes; nothing to clear.
+    preferences_service.save_playlist_track_request_settings(settings)
+    return preferences_service.get_playlist_track_request_settings()
 
 
 @router.get(

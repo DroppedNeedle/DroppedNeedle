@@ -446,6 +446,13 @@ _ADMIN_ENDPOINTS = [
     ),
     # Get it purchase-link settings (admin, settings router)
     ("GET", "/api/v1/settings/get-it", None),
+    # "Request all tracks" defaults (#204): configured by admins only.
+    ("GET", "/api/v1/settings/playlist-track-requests", None),
+    (
+        "PUT",
+        "/api/v1/settings/playlist-track-requests",
+        {"mode": "review", "compilation_policy": "flag"},
+    ),
     (
         "PUT",
         "/api/v1/settings/get-it",
@@ -979,6 +986,15 @@ _USER_ENDPOINTS = [
     ("GET", "/api/v1/me/connections/spotify/auth/url", None),
     ("GET", "/api/v1/me/spotify/playlists", None),
     ("POST", "/api/v1/playlists/pl-1/request-missing", None),
+    # "Request all tracks" (#204): any signed-in owner; ownership is the body's job.
+    ("GET", "/api/v1/playlists/track-request-settings", None),
+    ("POST", "/api/v1/playlists/pl-1/resolve-tracks", {}),
+    ("POST", "/api/v1/playlists/pl-1/request-tracks", {"mode": "review"}),
+    (
+        "POST",
+        "/api/v1/playlists/pl-1/tracks/t-1/choose-home",
+        {"recording_mbid": "rec-1", "release_group_mbid": "rg-1"},
+    ),
     # Following hub. The old per-feed GET /following/events stream was removed;
     # the mux replacement below is inventoried via the one-event fixture.
     ("GET", "/api/v1/events/stream", None),
@@ -1095,6 +1111,24 @@ def _deny_admin():
     raise HTTPException(status_code=403, detail="Admin access required")
 
 
+def _track_request_service_stub():
+    """Benign "Request all tracks" service: the spawned job finishes at once."""
+    from api.v1.schemas.request import BatchRequestResponse
+    from api.v1.schemas.settings import PlaylistTrackRequestSettings
+    from models.release_home import CompilationPolicy
+    from services.playlist_track_resolver import ResolutionSummary
+
+    svc = MagicMock()
+    svc.defaults.return_value = PlaylistTrackRequestSettings()
+    svc.policy.return_value = CompilationPolicy.MATCH_PLAYLIST
+    svc.resolve = AsyncMock(return_value=ResolutionSummary())
+    svc.request_resolved = AsyncMock(
+        return_value=BatchRequestResponse(success=True, message="ok")
+    )
+    svc.choose_home = AsyncMock(side_effect=HTTPException(status_code=404))
+    return svc
+
+
 def _client(scenario: str):
     """scenario in {"none", "user", "admin"}."""
     app = FastAPI()
@@ -1146,6 +1180,9 @@ def _client(scenario: str):
     for provider in _SERVICE_PROVIDERS:
         app.dependency_overrides[provider] = lambda: AsyncMock()
     app.dependency_overrides[get_discovery_demand_service] = lambda: MagicMock()
+    app.dependency_overrides[
+        playlists_routes.get_playlist_track_request_service
+    ] = _track_request_service_stub
     target_native = AsyncMock()
     target_native.artists.return_value = ([], 0)
     target_native.albums.return_value = ([], 0)

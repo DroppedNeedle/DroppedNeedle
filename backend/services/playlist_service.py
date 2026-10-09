@@ -190,6 +190,12 @@ class PlaylistService:
         self._auth_store = auth_store
         self._library_db = library_db  # LibraryDB; needed by add_file_id_entry (Q11)
 
+    @property
+    def repository(self) -> Any:
+        """The async playlist repository this service is composed over (legacy
+        or target tables), for collaborators that work on its rows (#204)."""
+        return self._repo
+
     async def _load_owned_or_raise(
         self,
         playlist_id: str,

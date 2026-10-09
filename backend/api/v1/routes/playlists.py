@@ -1,5 +1,9 @@
+import asyncio
+import logging
+import uuid
 from typing import Annotated
 
+import msgspec
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
@@ -8,6 +12,7 @@ from api.v1.schemas.playlists import (
     AddTracksRequest,
     AddTracksResponse,
     CheckTrackMembershipRequest,
+    ChooseTrackHomeRequest,
     CheckTrackMembershipResponse,
     CoverUploadResponse,
     CreatePlaylistRequest,
@@ -19,15 +24,28 @@ from api.v1.schemas.playlists import (
     RemoveTracksRequest,
     ReorderTrackRequest,
     ReorderTrackResponse,
+    RequestTracksRequest,
     ResolveSourcesResponse,
+    ResolveTracksRequest,
     SetPlaylistPublicRequest,
+    TrackRequestJobResponse,
     UpdatePlaylistRequest,
     UpdateTrackRequest,
 )
 from api.v1.schemas.request import BatchRequestResponse
+from api.v1.schemas.settings import PlaylistTrackRequestSettings
 from core.dependencies import JellyfinLibraryServiceDep, LocalFilesServiceDep, NavidromeLibraryServiceDep, PlexLibraryServiceDep, PlaylistServiceDep, get_navidrome_folder_scope_service, get_request_service
+from core.dependencies import (
+    get_album_service,
+    get_musicbrainz_repository,
+    get_preferences_service,
+    get_sse_publisher,
+)
 from core.dependencies.type_aliases import CurrentUserDep
 from core.exceptions import PlaylistNotFoundError
+from core.task_registry import TaskRegistry
+from infrastructure.queue.priority_queue import RequestPriority
+from models.release_home import CompilationPolicy
 from infrastructure.msgspec_fastapi import MsgSpecBody, MsgSpecRoute
 from services.playlist_service import (
     PlaylistSummaryView,
@@ -35,6 +53,11 @@ from services.playlist_service import (
     RedactedSummaryView,
 )
 from services.navidrome_folder_scope_service import NavidromeFolderScopeService
+from services.playlist_service import PlaylistService
+from services.playlist_track_request_service import PlaylistTrackRequestService
+from services.playlist_track_resolver import PlaylistTrackResolver
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     route_class=MsgSpecRoute,
@@ -100,7 +123,128 @@ def _track_to_response(t) -> PlaylistTrackResponse:
         created_at=t.created_at,
         plex_rating_key=getattr(t, "plex_rating_key", None),
         library_file_id=getattr(t, "library_file_id", None),
+        recording_mbid=getattr(t, "recording_mbid", None),
+        target_release_group_mbid=getattr(t, "target_release_group_mbid", None),
+        home_tier=getattr(t, "home_tier", None),
+        resolution_status=getattr(t, "resolution_status", None),
+        flag_options=getattr(t, "flag_options", None),
     )
+
+
+def get_playlist_track_request_service(
+    playlist_service: PlaylistServiceDep,
+    request_service=Depends(get_request_service),
+    album_service=Depends(get_album_service),
+) -> PlaylistTrackRequestService:
+    """"Request all tracks" (#204) over whichever playlist backend, request
+    service and album service this application is composed with."""
+    repository = playlist_service.repository
+    mb_repo = get_musicbrainz_repository()
+
+    def resolver() -> PlaylistTrackResolver:
+        return PlaylistTrackResolver(
+            playlist_repo=repository,
+            mb_repo=mb_repo,
+            album_service=album_service,
+            canonical_store=getattr(mb_repo, "mb_canonical_store", None),
+            # A whole playlist's lookups must not starve interactive pages.
+            priority=RequestPriority.BACKGROUND_SYNC,
+        )
+
+    return PlaylistTrackRequestService(
+        playlist_repo=repository,
+        resolver_factory=resolver,
+        request_service=request_service,
+        preferences_service=get_preferences_service(),
+    )
+
+
+PlaylistTrackRequestServiceDep = Annotated[
+    PlaylistTrackRequestService, Depends(get_playlist_track_request_service)
+]
+
+
+async def _require_owned_playlist(
+    service: PlaylistService, playlist_id: str, current_user
+) -> None:
+    """Track resolution and requests act on the owner's playlist only."""
+    result = await service.get_playlist_with_tracks(playlist_id, current_user)
+    if isinstance(result, RedactedDetailView) or not result.is_owner:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+
+async def _run_track_job(
+    svc: PlaylistTrackRequestService,
+    *,
+    job: str,
+    playlist_id: str,
+    policy: CompilationPolicy,
+    user_id: str,
+    user_role: str,
+    requested_by_name: str | None,
+) -> None:
+    """Background resolve and/or request; the outcome goes to the user's SSE
+    channel, since a large playlist takes minutes at MusicBrainz's 1 req/s."""
+    payload: dict = {"playlist_id": playlist_id, "event_id": uuid.uuid4().hex}
+    try:
+        if job in ("resolve", "resolve_and_request"):
+            summary = await svc.resolve(playlist_id, policy)
+            payload["summary"] = summary.to_json()
+        if job in ("request", "resolve_and_request"):
+            result = await svc.request_resolved(
+                playlist_id,
+                user_id=user_id,
+                user_role=user_role,
+                requested_by_name=requested_by_name,
+            )
+            payload["result"] = msgspec.to_builtins(result)
+        event = "playlist_tracks_requested" if "result" in payload else (
+            "playlist_tracks_resolved"
+        )
+    except Exception:  # noqa: BLE001 - reported to the client, never raised
+        logger.exception("playlist.tracks job=%s playlist=%s failed", job, playlist_id)
+        event = "playlist_tracks_failed"
+        payload["message"] = "Couldn't finish this playlist's tracks"
+    try:
+        await get_sse_publisher().publish(f"user:{user_id}", event, payload)
+    except Exception:  # noqa: BLE001
+        logger.warning("playlist.tracks job=%s could not signal completion", job)
+
+
+def _start_track_job(
+    svc: PlaylistTrackRequestService,
+    *,
+    job: str,
+    playlist_id: str,
+    policy: CompilationPolicy,
+    current_user,
+) -> TrackRequestJobResponse:
+    # One job per playlist: a second click while one runs is a no-op.
+    task_key = f"playlist:tracks:{playlist_id}"
+    registry = TaskRegistry.get_instance()
+    if registry.is_running(task_key):
+        return TrackRequestJobResponse(
+            playlist_id=playlist_id, status="already_running", job=job
+        )
+    task = asyncio.create_task(
+        _run_track_job(
+            svc,
+            job=job,
+            playlist_id=playlist_id,
+            policy=policy,
+            user_id=current_user.id,
+            user_role=current_user.role,
+            requested_by_name=current_user.display_name,
+        )
+    )
+    try:
+        registry.register(task_key, task)
+    except RuntimeError:
+        task.cancel()
+        return TrackRequestJobResponse(
+            playlist_id=playlist_id, status="already_running", job=job
+        )
+    return TrackRequestJobResponse(playlist_id=playlist_id, status="started", job=job)
 
 
 def _summary_view_to_response(
@@ -170,6 +314,16 @@ async def check_track_membership(
     tracks = [(t.track_name, t.artist_name, t.album_name) for t in body.tracks]
     membership = await service.check_track_membership(tracks, user_id=current_user.id)
     return CheckTrackMembershipResponse(membership=membership)
+
+
+@router.get("/track-request-settings", response_model=PlaylistTrackRequestSettings)
+async def get_track_request_settings(
+    current_user: CurrentUserDep,
+    svc: PlaylistTrackRequestServiceDep,
+) -> PlaylistTrackRequestSettings:
+    """The admin-configured defaults for "Request all tracks", readable by
+    every signed-in user so the action can preselect them."""
+    return svc.defaults()
 
 
 @router.post("", response_model=PlaylistDetailResponse, status_code=201)
@@ -477,3 +631,76 @@ async def request_missing_tracks(
         user_role=current_user.role,
         requested_by_name=current_user.display_name,
     )
+
+
+@router.post(
+    "/{playlist_id}/resolve-tracks",
+    response_model=TrackRequestJobResponse,
+    status_code=202,
+)
+async def resolve_playlist_tracks(
+    playlist_id: str,
+    service: PlaylistServiceDep,
+    current_user: CurrentUserDep,
+    svc: PlaylistTrackRequestServiceDep,
+    body: ResolveTracksRequest = MsgSpecBody(ResolveTracksRequest),
+) -> TrackRequestJobResponse:
+    """Work out which album every track would come from (Review mode). The
+    summary arrives as the ``playlist_tracks_resolved`` SSE event."""
+    await _require_owned_playlist(service, playlist_id, current_user)
+    return _start_track_job(
+        svc,
+        job="resolve",
+        playlist_id=playlist_id,
+        policy=svc.policy(body.compilation_policy),
+        current_user=current_user,
+    )
+
+
+@router.post(
+    "/{playlist_id}/request-tracks",
+    response_model=TrackRequestJobResponse,
+    status_code=202,
+)
+async def request_playlist_tracks(
+    playlist_id: str,
+    service: PlaylistServiceDep,
+    current_user: CurrentUserDep,
+    svc: PlaylistTrackRequestServiceDep,
+    body: RequestTracksRequest = MsgSpecBody(RequestTracksRequest),
+) -> TrackRequestJobResponse:
+    """Request every missing track individually (#204). ``auto`` resolves
+    first; ``review`` requests what an earlier resolve stored. The outcome
+    arrives as the ``playlist_tracks_requested`` SSE event."""
+    await _require_owned_playlist(service, playlist_id, current_user)
+    mode = body.mode or svc.defaults().mode
+    return _start_track_job(
+        svc,
+        job="resolve_and_request" if mode == "auto" else "request",
+        playlist_id=playlist_id,
+        policy=svc.policy(body.compilation_policy),
+        current_user=current_user,
+    )
+
+
+@router.post(
+    "/{playlist_id}/tracks/{track_id}/choose-home",
+    response_model=PlaylistTrackResponse,
+)
+async def choose_track_home(
+    playlist_id: str,
+    track_id: str,
+    service: PlaylistServiceDep,
+    current_user: CurrentUserDep,
+    svc: PlaylistTrackRequestServiceDep,
+    body: ChooseTrackHomeRequest = MsgSpecBody(ChooseTrackHomeRequest),
+) -> PlaylistTrackResponse:
+    """Pick which offered album a flagged track comes from."""
+    await _require_owned_playlist(service, playlist_id, current_user)
+    track = await svc.choose_home(
+        playlist_id,
+        track_id,
+        recording_mbid=body.recording_mbid,
+        release_group_mbid=body.release_group_mbid,
+    )
+    return _track_to_response(track)
