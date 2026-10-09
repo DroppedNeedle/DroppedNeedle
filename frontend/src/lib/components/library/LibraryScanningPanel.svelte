@@ -367,7 +367,7 @@
 							{/if}
 						</details>{/if}
 					{#if queuedRun}
-						<p class="rounded-box bg-info/10 p-3 text-sm text-info-content">
+						<p class="rounded-box bg-info/10 p-3 text-sm text-base-content">
 							Queued follow-up: {queuedRun.kind.replaceAll('_', ' ')} will start after the active scan.
 						</p>
 					{/if}
