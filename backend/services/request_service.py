@@ -29,6 +29,9 @@ _ACTIVE_REQUEST_STATUSES = frozenset(
     {"pending", "downloading", "queued", "awaiting_approval"}
 )
 _CANCELLING_STATUS = "cancelling"
+# Same bound as BatchAlbumRequest.items; larger playlists report the rest as
+# overflow so the client can ask again.
+MAX_TRACK_BATCH = 500
 
 
 def _generation_of(value: object | None) -> int | None:
@@ -1047,6 +1050,225 @@ class RequestService:
         except Exception as error:  # noqa: BLE001
             logger.exception("Batch request failed")
             raise ExternalServiceError("Batch request failed") from error
+
+    async def request_track_batch(
+        self,
+        items: list[dict],
+        *,
+        user_id: str,
+        user_role: str,
+        requested_by_name: str | None = None,
+    ) -> BatchRequestResponse:
+        """Record and role-gate many exact recordings (#204 "Request all tracks").
+
+        ``request_batch`` for the ``track:`` request namespace: each item is
+        ``{recording_mbid, artist_name, track_title, album_title?,
+        duration_seconds?, release_group_mbid?, artist_mbid?}``. Active track
+        requests are skipped (the requester attaches as a listener), at most
+        :data:`MAX_TRACK_BATCH` items are taken and the rest reported as
+        ``overflow``, quota is charged once for the new items, and approved
+        roles dispatch sequentially through the same acquisition path as a
+        single-track request.
+        """
+        if user_role is None:
+            raise ExternalServiceError("User role is required to submit a request.")
+
+        def key_of(item: dict) -> str:
+            return str(item.get("recording_mbid") or "").strip().casefold()
+
+        unique: list[dict] = []
+        seen: set[str] = set()
+        duplicate_count = 0
+        for item in items:
+            key = key_of(item)
+            if not key or key in seen:
+                duplicate_count += 1
+                continue
+            seen.add(key)
+            unique.append(item)
+        overflow = max(0, len(unique) - MAX_TRACK_BATCH)
+        unique = unique[:MAX_TRACK_BATCH]
+
+        needs_approval = user_role not in ("trusted", "admin")
+        initial_status = "awaiting_approval" if needs_approval else "pending"
+
+        try:
+            active = await self._request_history.async_existing_requested_mbids(
+                [key_of(item) for item in unique], request_kind="track"
+            )
+            new_items = [
+                item for item in unique if f"track:{key_of(item)}" not in active
+            ]
+            existing_ids = [
+                key_of(item) for item in unique if f"track:{key_of(item)}" in active
+            ]
+            skipped = duplicate_count + len(existing_ids)
+            if existing_ids:
+                await self._request_history.async_add_requesters(
+                    existing_ids, user_id, requested_by_name, request_kind="track"
+                )
+            if not new_items:
+                return BatchRequestResponse(
+                    success=True,
+                    message="All tracks already requested",
+                    requested=0,
+                    skipped=skipped,
+                    overflow=overflow,
+                    status="already_requested",
+                )
+
+            if self._quota is not None:
+                await self._quota.check_request_quota(
+                    user_id, user_role, len(new_items)
+                )
+                await self._quota.check_storage_admission(user_id, "user")
+
+            records = [
+                {
+                    "musicbrainz_id": key_of(item),
+                    "artist_name": item.get("artist_name") or "Unknown",
+                    "album_title": item.get("album_title") or "Single track",
+                    "artist_mbid": item.get("artist_mbid"),
+                    "track_title": item.get("track_title") or "",
+                    "duration_seconds": item.get("duration_seconds"),
+                    "track_release_group_mbid": item.get("release_group_mbid"),
+                    "request_kind": "track",
+                }
+                for item in new_items
+            ]
+            bulk_result = await self._request_history.async_bulk_record_requests(
+                records,
+                user_id=user_id,
+                requested_by_name=requested_by_name,
+                initial_status=initial_status,
+                request_kind="track",
+                dispatch_authorized=not needs_approval,
+            )
+            # Exact winners only; a concurrent request may own some keys.
+            generation_by_key: dict[str, int | None] = {}
+            for result in bulk_result or []:
+                result_id = getattr(result, "musicbrainz_id", None)
+                if result_id is not None:
+                    generation_by_key[str(result_id).casefold()] = _generation_of(
+                        result
+                    )
+            created = [
+                record
+                for record in records
+                if record["musicbrainz_id"] in generation_by_key
+            ]
+            raced = [
+                record["musicbrainz_id"]
+                for record in records
+                if record["musicbrainz_id"] not in generation_by_key
+            ]
+            skipped += len(raced)
+            if raced:
+                await self._request_history.async_add_requesters(
+                    raced, user_id, requested_by_name, request_kind="track"
+                )
+            if not created:
+                return BatchRequestResponse(
+                    success=True,
+                    message="All tracks already requested",
+                    requested=0,
+                    skipped=skipped,
+                    overflow=overflow,
+                    status="already_requested",
+                )
+            for record in created:
+                self._emit_request_created(
+                    request_id=record["musicbrainz_id"],
+                    user_id=user_id,
+                    release_group_mbid=record["track_release_group_mbid"] or "",
+                    status=initial_status,
+                )
+            if needs_approval:
+                return BatchRequestResponse(
+                    success=True,
+                    message="Track requests submitted, awaiting admin approval",
+                    requested=len(created),
+                    skipped=skipped,
+                    overflow=overflow,
+                    status="awaiting_approval",
+                )
+
+            dispatched = 0
+            in_library = 0
+            for record in created:
+                recording = record["musicbrainz_id"]
+                generation = generation_by_key.get(recording)
+                task_id: str | None = None
+                try:
+                    task_id = await self._acquisition.request_track(
+                        user_id=user_id,
+                        recording_mbid=recording,
+                        artist_name=record["artist_name"],
+                        track_title=record["track_title"],
+                        album_title=record["album_title"],
+                        duration_seconds=record["duration_seconds"],
+                        release_group_mbid=record["track_release_group_mbid"],
+                        artist_mbid=record["artist_mbid"],
+                        origin="user",
+                        release_mbid=None,
+                    )
+                    kwargs: dict[str, object] = {"request_kind": "track"}
+                    if generation is not None:
+                        kwargs["expected_generation"] = generation
+                    if task_id == ALREADY_IN_LIBRARY:
+                        kwargs["completed_at"] = datetime.now(timezone.utc).isoformat()
+                        await self._request_history.async_update_status(
+                            recording, "imported", **kwargs
+                        )
+                        self._emit_request_fulfilled(
+                            request_id=recording,
+                            user_id=user_id,
+                            release_group_mbid=record["track_release_group_mbid"]
+                            or "",
+                            status="imported",
+                        )
+                        in_library += 1
+                        continue
+                    linked = await self._request_history.async_update_download_task_id(
+                        recording, task_id, **kwargs
+                    )
+                    if not _mutation_won(linked):
+                        await self._cancel_orphan_task(task_id, user_id)
+                        raise ExternalServiceError(
+                            "Request generation changed while starting download"
+                        )
+                    dispatched += 1
+                except ValidationError:
+                    await self._mark_failed(
+                        recording, "track", expected_generation=generation
+                    )
+                except ExternalServiceError:
+                    logger.warning(
+                        "Track batch request generation changed for %s", recording
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception("Track batch dispatch failed for %s", recording)
+                    await self._cancel_orphan_task(task_id, user_id)
+                    await self._mark_failed(
+                        recording, "track", expected_generation=generation
+                    )
+
+            message = f"Track requests accepted: {dispatched} started"
+            if in_library:
+                message += f", {in_library} already in library"
+            return BatchRequestResponse(
+                success=True,
+                message=message,
+                requested=dispatched,
+                skipped=skipped + in_library,
+                overflow=overflow,
+                status="pending" if dispatched or in_library else "failed",
+            )
+        except (ExternalServiceError, ValidationError):
+            raise
+        except Exception as error:  # noqa: BLE001
+            logger.exception("Track batch request failed")
+            raise ExternalServiceError("Track batch request failed") from error
 
     async def cancel_batch(
         self,
