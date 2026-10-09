@@ -51,6 +51,8 @@ logger = logging.getLogger(__name__)
 
 
 _SOURCE_MB_RECORDING_LOOKUP = "mb-recording-lookup"
+# Stays far below SQLite's bound-parameter limit (999 on older builds).
+_IN_CLAUSE_CHUNK = 500
 
 
 def _provenance(
@@ -566,33 +568,37 @@ class MbCanonicalStore(PersistenceBase):
         fresh_after = time.time() - max_age_seconds
 
         def operation(conn: sqlite3.Connection) -> dict[str, list[RecordingHome]]:
-            placeholders = ",".join("?" for _ in normalized)
-            fetched = conn.execute(
-                "SELECT recording_mbid_lower FROM recording_release_group_fetch "
-                f"WHERE recording_mbid_lower IN ({placeholders}) "
-                "AND source_mode = ? AND source_id = ? AND source_generation = ? "
-                "AND saved_at >= ?",
-                [
-                    *normalized,
-                    source_context.source_mode,
-                    source_context.source_id,
-                    source_context.generation,
-                    fresh_after,
-                ],
-            ).fetchall()
-            result: dict[str, list[RecordingHome]] = {
-                str(row["recording_mbid_lower"]): [] for row in fetched
-            }
-            if not result:
-                return result
+            result: dict[str, list[RecordingHome]] = {}
+            for start in range(0, len(normalized), _IN_CLAUSE_CHUNK):
+                chunk = normalized[start : start + _IN_CLAUSE_CHUNK]
+                placeholders = ",".join("?" for _ in chunk)
+                fetched = conn.execute(
+                    "SELECT recording_mbid_lower FROM recording_release_group_fetch "
+                    f"WHERE recording_mbid_lower IN ({placeholders}) "
+                    "AND source_mode = ? AND source_id = ? "
+                    "AND source_generation = ? AND saved_at >= ?",
+                    [
+                        *chunk,
+                        source_context.source_mode,
+                        source_context.source_id,
+                        source_context.generation,
+                        fresh_after,
+                    ],
+                ).fetchall()
+                result.update((str(row["recording_mbid_lower"]), []) for row in fetched)
             fresh = sorted(result)
-            placeholders = ",".join("?" for _ in fresh)
-            rows = conn.execute(
-                "SELECT * FROM recording_release_groups "
-                f"WHERE recording_mbid_lower IN ({placeholders}) "
-                "ORDER BY recording_mbid_lower, rg_mbid_lower",
-                fresh,
-            ).fetchall()
+            rows: list[sqlite3.Row] = []
+            for start in range(0, len(fresh), _IN_CLAUSE_CHUNK):
+                chunk = fresh[start : start + _IN_CLAUSE_CHUNK]
+                placeholders = ",".join("?" for _ in chunk)
+                rows.extend(
+                    conn.execute(
+                        "SELECT * FROM recording_release_groups "
+                        f"WHERE recording_mbid_lower IN ({placeholders}) "
+                        "ORDER BY recording_mbid_lower, rg_mbid_lower",
+                        chunk,
+                    ).fetchall()
+                )
             for row in rows:
                 result[str(row["recording_mbid_lower"])].append(
                     RecordingHome(

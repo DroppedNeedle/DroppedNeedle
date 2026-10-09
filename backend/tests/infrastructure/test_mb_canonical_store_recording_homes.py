@@ -141,3 +141,17 @@ def test_tables_survive_reconstruction(db_path):
     }
     conn.close()
     assert {"recording_release_groups", "recording_release_group_fetch"} <= tables
+
+
+@pytest.mark.asyncio
+async def test_batch_read_beyond_sqlite_parameter_limit(store):
+    recordings = [f"rec-{i:04d}" for i in range(1200)]
+    for recording in recordings:
+        await store.save_recording_release_groups(
+            recording, [_home(f"rg-{recording}")], source_context=_CONTEXT
+        )
+    got = await store.get_recording_release_groups(
+        recordings, source_context=_CONTEXT, max_age_seconds=_DAY
+    )
+    assert len(got) == 1200
+    assert got["rec-1199"][0].release_group_mbid == "rg-rec-1199"

@@ -248,6 +248,10 @@ _RECORDING_HOMES_PAGE_SIZE = 100
 # first 1000, which still carries its original album in practice.
 _RECORDING_HOMES_MAX_PAGES = 10
 _RECORDING_HOMES_MAX_AGE_SECONDS = 30 * 86400
+# Only these statuses make a release unofficial. Many older releases carry no
+# status at all; treating that as unofficial would sink an artist's original
+# album below the compilations that do have one.
+_UNOFFICIAL_RELEASE_STATUSES = frozenset({"bootleg", "cancelled"})
 
 
 def _artist_credit_phrase(artist_credit: list[dict[str, Any]]) -> str:
@@ -264,7 +268,8 @@ def _recording_homes_from_releases(
 ) -> list[RecordingHome]:
     """Collapse a recording's releases to one home per release group.
 
-    A group counts as official when any of the recording's releases in it is.
+    A group counts as official unless every one of the recording's releases
+    in it is a bootleg (or cancelled); a missing status is not evidence.
     """
     homes: dict[str, RecordingHome] = {}
     for release in releases:
@@ -272,7 +277,9 @@ def _recording_homes_from_releases(
         rg_id = normalize_mb_id(rg.get("id"))
         if not rg_id:
             continue
-        official = (release.get("status") or "").casefold() == "official"
+        official = (
+            release.get("status") or ""
+        ).casefold() not in _UNOFFICIAL_RELEASE_STATUSES
         current = homes.get(rg_id)
         if current is not None:
             if official and not current.official:
@@ -298,15 +305,19 @@ def recording_home_candidates(
     """Bind a recording's homes to the artist of the track being placed.
 
     Blank or Various Artists track artists credit every home, keeping the
-    tiering purely type-based.
+    tiering purely type-based. So does an artist matching no home at all (a
+    "CCR" spelling, a transliteration): otherwise every album would fall to
+    OTHER, below the compilations, inverting the preference.
     """
-    want_artist = _artist_preference_active(track_artist)
-    return [
-        home.to_candidate(
-            credits_track_artist=not want_artist
-            or _artist_name_matches(track_artist or "", home.artist_credit)
-        )
+    credits = [
+        _artist_name_matches(track_artist or "", home.artist_credit)
         for home in homes
+    ]
+    if not _artist_preference_active(track_artist) or not any(credits):
+        credits = [True] * len(homes)
+    return [
+        home.to_candidate(credits_track_artist=credited)
+        for home, credited in zip(homes, credits, strict=True)
     ]
 
 

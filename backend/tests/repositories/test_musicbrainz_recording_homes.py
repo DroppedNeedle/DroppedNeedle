@@ -210,3 +210,39 @@ def test_tiering_of_browsed_homes():
     assert classify_home(tiers["rg-single"]) is HomeTier.SINGLE
     assert classify_home(tiers["rg-chronicle"]) is HomeTier.ARTIST_COMPILATION
     assert classify_home(tiers["rg-va"]) is HomeTier.OTHER_COMPILATION
+
+
+def test_missing_status_is_not_unofficial():
+    """Older releases often carry no status; only bootleg/cancelled demote."""
+    homes = {
+        home.release_group_mbid: home
+        for home in _recording_homes_from_releases(
+            [
+                _release("rg-no-status", status=None),
+                _release("rg-bootleg", status="Bootleg"),
+                _release("rg-promo", status="Promotion"),
+                _release("rg-cancelled", status="Cancelled"),
+            ]
+        )
+    }
+    assert homes["rg-no-status"].official
+    assert homes["rg-promo"].official
+    assert not homes["rg-bootleg"].official
+    assert not homes["rg-cancelled"].official
+
+
+def test_unmatched_track_artist_keeps_album_above_compilations():
+    """A spelling no credit matches ("CCR") must not drop every album to
+    OTHER, below the compilations."""
+    homes = _recording_homes_from_releases(
+        [
+            _release("rg-willy"),
+            _release("rg-chronicle", secondary=("Compilation",)),
+            _release("rg-va", credit=_VA, secondary=("Compilation",)),
+        ]
+    )
+    candidates = recording_home_candidates(homes, "CCR")
+    assert all(c.credits_track_artist for c in candidates)
+    assert best_home(candidates).release_group_mbid == "rg-willy"
+    by_id = {c.release_group_mbid: c for c in candidates}
+    assert classify_home(by_id["rg-va"]) is HomeTier.OTHER_COMPILATION
