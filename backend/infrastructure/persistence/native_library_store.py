@@ -1917,6 +1917,14 @@ class NativeLibraryStore(PersistenceBase):
                 "ADD COLUMN reidentification_attempt_count INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE library_identification_jobs ADD COLUMN attention_cause TEXT",
                 "ALTER TABLE local_tracks ADD COLUMN release_type TEXT",
+                # "Request all tracks" song identity + resolution (#204).
+                "ALTER TABLE library_playlist_tracks ADD COLUMN recording_mbid TEXT",
+                "ALTER TABLE library_playlist_tracks ADD COLUMN isrc TEXT",
+                "ALTER TABLE library_playlist_tracks "
+                "ADD COLUMN target_release_group_mbid TEXT",
+                "ALTER TABLE library_playlist_tracks ADD COLUMN home_tier TEXT",
+                "ALTER TABLE library_playlist_tracks ADD COLUMN resolution_status TEXT",
+                "ALTER TABLE library_playlist_tracks ADD COLUMN flag_options TEXT",
                 "ALTER TABLE local_tracks ADD COLUMN title_provenance TEXT NOT NULL DEFAULT 'absent' CHECK(title_provenance IN ('tag','parsed','placeholder','absent'))",
                 "ALTER TABLE local_tracks ADD COLUMN album_title_provenance TEXT NOT NULL DEFAULT 'absent' CHECK(album_title_provenance IN ('tag','parsed','placeholder','absent'))",
                 "ALTER TABLE local_tracks ADD COLUMN album_artist_provenance TEXT NOT NULL DEFAULT 'absent' CHECK(album_artist_provenance IN ('tag','parsed','placeholder','absent'))",
@@ -5770,6 +5778,8 @@ class NativeLibraryStore(PersistenceBase):
                     local_album_id,
                     local_artist_id,
                     None,
+                    track.get("recording_mbid"),
+                    track.get("isrc"),
                 )
                 connection.execute(
                     "INSERT INTO library_playlist_tracks "
@@ -5777,8 +5787,9 @@ class NativeLibraryStore(PersistenceBase):
                     "album_id, artist_id, track_source_id, cover_url, source_type, "
                     "available_sources, format, track_number, disc_number, duration, "
                     "created_at, plex_rating_key, library_file_id, local_track_id, "
-                    "local_album_id, local_artist_id, reference_tombstone_id) "
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "local_album_id, local_artist_id, reference_tombstone_id, "
+                    "recording_mbid, isrc) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     values,
                 )
                 created.append(
@@ -5799,6 +5810,45 @@ class NativeLibraryStore(PersistenceBase):
         if result:
             await self._invalidate()
         return result
+
+    async def update_target_playlist_track_resolutions(
+        self, playlist_id: str, updates: dict[str, dict[str, Any]]
+    ) -> int:
+        """Store "Request all tracks" verdicts (#204), track_id -> fields.
+
+        ``recording_mbid`` of None keeps the stored recording. Derived state:
+        neither ``updated_at`` nor the library revision moves.
+        """
+        if not updates:
+            return 0
+
+        def operation(connection: sqlite3.Connection) -> int:
+            updated = 0
+            for track_id, fields in updates.items():
+                cursor = connection.execute(
+                    "UPDATE library_playlist_tracks SET "
+                    "recording_mbid = COALESCE(?, recording_mbid), "
+                    "target_release_group_mbid = ?, home_tier = ?, "
+                    "resolution_status = ?, flag_options = ? "
+                    "WHERE id = ? AND playlist_id = ?",
+                    (
+                        fields.get("recording_mbid"),
+                        fields.get("target_release_group_mbid"),
+                        fields.get("home_tier"),
+                        fields.get("resolution_status"),
+                        (
+                            json.dumps(fields["flag_options"])
+                            if fields.get("flag_options") is not None
+                            else None
+                        ),
+                        track_id,
+                        playlist_id,
+                    ),
+                )
+                updated += cursor.rowcount
+            return updated
+
+        return await self._write(operation)
 
     async def list_target_playlist_tracks(
         self, playlist_id: str

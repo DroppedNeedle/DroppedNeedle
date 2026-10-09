@@ -1,6 +1,7 @@
 """PlaylistTrackResolver: song identity, homes, studio substitutes and
 persistence over a real playlist DB with a fake MusicBrainz (#204)."""
 
+import sqlite3
 import threading
 
 import pytest
@@ -14,7 +15,9 @@ from models.release_home import (
     ResolutionStatus,
 )
 from repositories.async_playlist_repository import AsyncPlaylistRepository
+from infrastructure.persistence.native_library_store import NativeLibraryStore
 from repositories.playlist_repository import PlaylistRepository, TrackResolution
+from services.native.target_reference_adapters import TargetPlaylistRepository
 from services.playlist_track_resolver import (
     PlaylistTrackResolver,
     same_song,
@@ -101,16 +104,24 @@ def _rg(rg_id, title, date, secondary=()):
     }
 
 
-@pytest.fixture
-def playlists(tmp_path):
-    repo = PlaylistRepository(
-        db_path=tmp_path / "library.db", write_lock=threading.Lock()
+@pytest.fixture(params=["legacy", "target"])
+def playlists(request, tmp_path):
+    """Both playlist backends: the legacy table and the target tables that the
+    production application (target_main) serves."""
+    if request.param == "legacy":
+        repo = PlaylistRepository(
+            db_path=tmp_path / "library.db", write_lock=threading.Lock()
+        )
+        return AsyncPlaylistRepository(repo)
+    with sqlite3.connect(tmp_path / "auth.db") as conn:
+        conn.execute("CREATE TABLE auth_users (id TEXT PRIMARY KEY)")
+    return TargetPlaylistRepository(
+        NativeLibraryStore(tmp_path / "target.db", threading.Lock())
     )
-    return AsyncPlaylistRepository(repo)
 
 
 async def _playlist(playlists, *tracks):
-    record = await playlists.create_playlist("CCR")
+    record = await playlists.create_playlist("CCR", user_id="user-1")
     defaults = {"artist_name": CCR, "album_name": "Chronicle", "source_type": ""}
     await playlists.add_tracks(record.id, [{**defaults, **t} for t in tracks])
     return record.id, await playlists.get_tracks(record.id)
@@ -134,7 +145,13 @@ async def test_isrc_tracks_resolve_to_studio_albums_and_persist(playlists):
             "rec-dmt": [WILLY, CHRONICLE, VA_60S],
         }
     )
-    store = FakeStore({"USFI86900001": ["rec-fs"], "USFI86900002": ["rec-pm"], "USFI86900003": ["rec-dmt"]})
+    store = FakeStore(
+        {
+            "USFI86900001": ["rec-fs"],
+            "USFI86900002": ["rec-pm"],
+            "USFI86900003": ["rec-dmt"],
+        }
+    )
     pid, _ = await _playlist(
         playlists,
         {"track_name": "Fortunate Son", "isrc": "USFI86900001"},
@@ -246,7 +263,11 @@ async def test_owned_chosen_and_unidentifiable_tracks(playlists):
     mb = FakeMb({"rec-fs": [WILLY]})
     pid, tracks = await _playlist(
         playlists,
-        {"track_name": "Owned", "recording_mbid": "rec-fs", "library_file_id": "f1"},
+        {
+            "track_name": "Owned",
+            "recording_mbid": "rec-fs",
+            "available_sources": ["navidrome"],
+        },
         {"track_name": "Chosen", "recording_mbid": "rec-fs"},
         {"track_name": "Nothing to go on"},
         {"track_name": "On nothing", "recording_mbid": "rec-orphan"},
