@@ -6,6 +6,7 @@ from repositories.playlist_repository import (
     PlaylistRepository,
     PlaylistSummaryRecord,
     PlaylistTrackRecord,
+    TrackResolution,
     _UNSET,
 )
 
@@ -112,6 +113,15 @@ class AsyncPlaylistRepository:
     ) -> int:
         return await asyncio.to_thread(
             self._repo.batch_link_library_files, playlist_id, updates,
+        )
+
+    async def batch_update_resolutions(
+        self,
+        playlist_id: str,
+        updates: dict[str, TrackResolution],
+    ) -> int:
+        return await asyncio.to_thread(
+            self._repo.batch_update_resolutions, playlist_id, updates,
         )
 
     async def get_streamable_counts(self) -> dict[str, tuple[int, int]]:

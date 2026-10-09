@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import threading
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -8,6 +9,31 @@ from uuid import uuid4
 
 
 _UNSET = object()
+
+# Per-track source resolution for "Request all tracks" (#204). ``isrc`` and
+# ``recording_mbid`` identify the song; the rest is the resolver's verdict:
+# the release group to source it from, that group's HomeTier label,
+# resolved/flagged/unresolved, and the candidate homes offered when flagged.
+_RESOLUTION_COLUMNS = (
+    ("recording_mbid", "TEXT"),
+    ("isrc", "TEXT"),
+    ("target_release_group_mbid", "TEXT"),
+    ("home_tier", "TEXT"),
+    ("resolution_status", "TEXT"),
+    ("flag_options", "TEXT"),
+)
+
+
+@dataclass(frozen=True, slots=True)
+class TrackResolution:
+    """The resolver's verdict for one playlist entry. ``recording_mbid`` of
+    None keeps the stored recording (a substituted recording replaces it)."""
+
+    target_release_group_mbid: Optional[str]
+    home_tier: Optional[str]
+    resolution_status: str
+    recording_mbid: Optional[str] = None
+    flag_options: Optional[list[dict]] = None
 
 
 class PlaylistRecord:
@@ -77,6 +103,8 @@ class PlaylistTrackRecord:
         "album_name", "album_id", "artist_id", "track_source_id", "cover_url",
         "source_type", "available_sources", "format", "track_number", "disc_number",
         "duration", "created_at", "plex_rating_key", "library_file_id",
+        "recording_mbid", "isrc", "target_release_group_mbid", "home_tier",
+        "resolution_status", "flag_options",
     )
 
     def __init__(
@@ -100,6 +128,12 @@ class PlaylistTrackRecord:
         created_at: str,
         plex_rating_key: Optional[str] = None,
         library_file_id: Optional[str] = None,
+        recording_mbid: Optional[str] = None,
+        isrc: Optional[str] = None,
+        target_release_group_mbid: Optional[str] = None,
+        home_tier: Optional[str] = None,
+        resolution_status: Optional[str] = None,
+        flag_options: Optional[list[dict]] = None,
     ):
         self.id = id
         self.playlist_id = playlist_id
@@ -120,6 +154,12 @@ class PlaylistTrackRecord:
         self.created_at = created_at
         self.plex_rating_key = plex_rating_key
         self.library_file_id = library_file_id
+        self.recording_mbid = recording_mbid
+        self.isrc = isrc
+        self.target_release_group_mbid = target_release_group_mbid
+        self.home_tier = home_tier
+        self.resolution_status = resolution_status
+        self.flag_options = flag_options
 
 def get_cache_dir() -> Path:
       from core.config import get_settings
@@ -224,6 +264,14 @@ class PlaylistRepository:
                 SET cover_url = '/api/v1/covers/' || SUBSTR(cover_url, LENGTH('/api/covers/') + 1)
                 WHERE cover_url LIKE '/api/covers/%'
             """)
+            for column, column_type in _RESOLUTION_COLUMNS:
+                try:
+                    conn.execute(
+                        f"ALTER TABLE playlist_tracks ADD COLUMN {column} {column_type}"
+                    )
+                    conn.commit()
+                except sqlite3.OperationalError:
+                    pass
             try:
                 conn.execute("ALTER TABLE playlists ADD COLUMN source_ref TEXT")
                 conn.commit()
@@ -527,8 +575,8 @@ class PlaylistRepository:
                     "(id, playlist_id, position, track_name, artist_name, album_name, "
                     "album_id, artist_id, track_source_id, cover_url, source_type, "
                     "available_sources, format, track_number, disc_number, duration, "
-                    "plex_rating_key, library_file_id, created_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "plex_rating_key, library_file_id, recording_mbid, isrc, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         track_id, playlist_id, pos,
                         track["track_name"], track["artist_name"], track["album_name"],
@@ -537,7 +585,8 @@ class PlaylistRepository:
                         track["source_type"], available_sources_json,
                         track.get("format"), track.get("track_number"), track.get("disc_number"),
                         track.get("duration"), track.get("plex_rating_key"),
-                        track.get("library_file_id"), now,
+                        track.get("library_file_id"), track.get("recording_mbid"),
+                        track.get("isrc"), now,
                     ),
                 )
                 created_records.append(PlaylistTrackRecord(
@@ -552,6 +601,8 @@ class PlaylistRepository:
                     duration=track.get("duration"), created_at=now,
                     plex_rating_key=track.get("plex_rating_key"),
                     library_file_id=track.get("library_file_id"),
+                    recording_mbid=track.get("recording_mbid"),
+                    isrc=track.get("isrc"),
                 ))
 
             conn.execute(
@@ -745,6 +796,42 @@ class PlaylistRepository:
                 conn.commit()
         return updated
 
+    def batch_update_resolutions(
+        self,
+        playlist_id: str,
+        updates: dict[str, TrackResolution],
+    ) -> int:
+        """Store the resolver's verdict per entry (track_id -> resolution).
+        Does not touch ``updated_at``: resolution is derived state, not an edit."""
+        if not updates:
+            return 0
+        updated = 0
+        with self._write_lock:
+            conn = self._get_connection()
+            for track_id, resolution in updates.items():
+                cur = conn.execute(
+                    "UPDATE playlist_tracks SET "
+                    "recording_mbid = COALESCE(?, recording_mbid), "
+                    "target_release_group_mbid = ?, home_tier = ?, "
+                    "resolution_status = ?, flag_options = ? "
+                    "WHERE id = ? AND playlist_id = ?",
+                    (
+                        resolution.recording_mbid,
+                        resolution.target_release_group_mbid,
+                        resolution.home_tier,
+                        resolution.resolution_status,
+                        json.dumps(resolution.flag_options)
+                        if resolution.flag_options is not None
+                        else None,
+                        track_id,
+                        playlist_id,
+                    ),
+                )
+                updated += cur.rowcount
+            if updated:
+                conn.commit()
+        return updated
+
     def get_streamable_counts(self) -> dict[str, tuple[int, int]]:
         """playlist_id -> (count, total duration seconds) over entries linked to a
         library file - what the compat shims can actually serve. Unlinked entries
@@ -826,6 +913,7 @@ class PlaylistRepository:
             created_at=row["created_at"],
             plex_rating_key=new_plex_rating_key,
             library_file_id=new_library_file_id,
+            **self._resolution_fields(row),
         )
 
     def get_tracks(self, playlist_id: str) -> list[PlaylistTrackRecord]:
@@ -915,6 +1003,26 @@ class PlaylistRepository:
             return None
 
     @staticmethod
+    def _parse_flag_options(raw: Optional[str]) -> Optional[list[dict]]:
+        if raw is None:
+            return None
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        return parsed if isinstance(parsed, list) else None
+
+    @classmethod
+    def _resolution_fields(cls, row: sqlite3.Row) -> dict:
+        keys = row.keys()
+        fields = {
+            column: row[column] if column in keys else None
+            for column, _type in _RESOLUTION_COLUMNS
+        }
+        fields["flag_options"] = cls._parse_flag_options(fields["flag_options"])
+        return fields
+
+    @staticmethod
     def _row_to_playlist(row: sqlite3.Row) -> PlaylistRecord:
         return PlaylistRecord(
             id=row["id"],
@@ -949,4 +1057,5 @@ class PlaylistRepository:
             created_at=row["created_at"],
             plex_rating_key=row["plex_rating_key"] if "plex_rating_key" in row.keys() else None,
             library_file_id=row["library_file_id"] if "library_file_id" in row.keys() else None,
+            **cls._resolution_fields(row),
         )

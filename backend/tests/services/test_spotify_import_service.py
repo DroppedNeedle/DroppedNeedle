@@ -629,3 +629,27 @@ def test_cover_fetcher_alias_shape():
 
     typed: CoverFetcher = fetcher
     assert typed is fetcher
+
+
+@pytest.mark.asyncio
+async def test_populate_persists_normalized_isrc_per_track(tmp_path):
+    """#204: every track keeps its ISRC (upper-cased); malformed or missing
+    ISRCs are stored as NULL rather than garbage."""
+    cdn = SpotifyCdnMock()
+    svc, playlists = _real_service(tmp_path, cdn, images=[])
+    client = await svc._client_factory.resolve_spotify("user-1")
+    client.get_playlist_tracks.return_value = [
+        {**_TRACK, "name": "Valid", "external_ids": {"isrc": " usum71703861 "}},
+        {**_TRACK, "name": "Malformed", "external_ids": {"isrc": "nope"}},
+        {**_TRACK, "name": "Missing"},
+    ]
+
+    record = await _import_one(svc, playlists, tmp_path)
+
+    tracks = await playlists.get_tracks(record.id)
+    assert [(t.track_name, t.isrc) for t in tracks] == [
+        ("Valid", "USUM71703861"),
+        ("Malformed", None),
+        ("Missing", None),
+    ]
+    assert all(t.recording_mbid is None for t in tracks)

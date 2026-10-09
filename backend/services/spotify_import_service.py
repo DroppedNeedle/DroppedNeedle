@@ -319,6 +319,9 @@ class SpotifyImportService:
             else:
                 cover_url = _best_image_url(album.get("images") or [])
             duration_ms = track.get("duration_ms")
+            # Kept per track so "Request all tracks" (#204) can resolve each
+            # song's recording later without re-reading Spotify.
+            isrc = ((track.get("external_ids") or {}).get("isrc") or "").strip().upper()
             track_dicts.append(
                 {
                     "track_name": track.get("name") or "",
@@ -330,6 +333,7 @@ class SpotifyImportService:
                     "disc_number": track.get("disc_number"),
                     "duration": duration_ms // 1000 if duration_ms else None,
                     "cover_url": cover_url,
+                    "isrc": isrc if is_valid_isrc(isrc) else None,
                 }
             )
 
