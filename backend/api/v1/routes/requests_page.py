@@ -18,6 +18,7 @@ from api.v1.schemas.requests_page import (
     RequestHistoryResponse,
     RetryRequestResponse,
     WantedActionResponse,
+    WantedRemovalResponse,
     WantedRetryingItem,
     WantedWatchesResponse,
     WantedWatchItem,
@@ -237,6 +238,26 @@ async def mark_wanted_candidates_seen(
     musicbrainz_id = _validated_album_mbid(musicbrainz_id)
     watch = await watcher.mark_seen(musicbrainz_id, current_user.id, current_user.role)
     return WantedActionResponse(success=True, state=watch.state)
+
+
+@router.delete("/wanted/{musicbrainz_id}", response_model=WantedRemovalResponse)
+async def remove_wanted_watch(
+    current_user: CurrentUserDep,
+    musicbrainz_id: str,
+    watcher: WantedWatcherService = Depends(get_wanted_watcher_service),
+):
+    musicbrainz_id = _validated_album_mbid(musicbrainz_id)
+    removed = await watcher.remove(musicbrainz_id, current_user.id, current_user.role)
+    return WantedRemovalResponse(success=removed, removed=1 if removed else 0)
+
+
+@router.post("/wanted/clear-terminal", response_model=WantedRemovalResponse)
+async def clear_terminal_wanted_watches(
+    current_user: CurrentUserDep,
+    watcher: WantedWatcherService = Depends(get_wanted_watcher_service),
+):
+    removed = await watcher.clear_terminal(current_user.id, current_user.role)
+    return WantedRemovalResponse(success=True, removed=removed)
 
 
 @router.get("/pending-approvals", response_model=ActiveRequestsResponse)

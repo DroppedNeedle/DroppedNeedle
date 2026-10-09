@@ -270,3 +270,52 @@ async def test_prune_drops_old_terminal_and_orphaned_seen(store, tmp_path: Path)
     assert (await store.get_watch("rg-fresh-stopped")).state == "stopped"
     assert (await store.get_watch("rg-watching")).state == "watching"
     assert await store.seen_identities("rg-watching") == {("soulseek", "keep\x1fme")}
+
+
+@pytest.mark.asyncio
+async def test_delete_watch_removes_the_watch_and_its_seen_rows(store):
+    await _watch(store, "rg-gone")
+    await store.record_cycle(
+        "rg-gone", outcome="new_manual", next_check_at=time.time() + 60,
+        quiet=False, seen=[("soulseek", "a\x1fb")],
+    )
+    assert await store.delete_watch("rg-gone") is True
+    assert await store.get_watch("rg-gone") is None
+    assert await store.seen_identities("rg-gone") == set()
+
+
+@pytest.mark.asyncio
+async def test_delete_watch_is_false_for_an_unknown_watch(store):
+    assert await store.delete_watch("rg-nope") is False
+
+
+@pytest.mark.asyncio
+async def test_delete_terminal_watches_keeps_active_ones(store):
+    await _watch(store, "rg-stopped")
+    await _watch(store, "rg-fulfilled")
+    await _watch(store, "rg-watching")
+    await store.stop_watch("rg-stopped")
+    await store.mark_fulfilled("rg-fulfilled", outcome="imported")
+    await store.record_cycle(
+        "rg-stopped", outcome="no_results", next_check_at=time.time() + 60,
+        quiet=True, seen=[("soulseek", "a\x1fb")],
+    )
+    assert await store.delete_terminal_watches("user-a") == 2
+    assert await store.get_watch("rg-stopped") is None
+    assert await store.get_watch("rg-fulfilled") is None
+    assert (await store.get_watch("rg-watching")).state == "watching"
+    assert await store.seen_identities("rg-stopped") == set()
+
+
+@pytest.mark.asyncio
+async def test_delete_terminal_watches_scopes_by_user(store):
+    await _watch(store, "rg-mine", user_id="user-a")
+    await _watch(store, "rg-theirs", user_id="user-b")
+    await store.stop_watch("rg-mine")
+    await store.stop_watch("rg-theirs")
+    assert await store.delete_terminal_watches("user-a") == 1
+    assert await store.get_watch("rg-mine") is None
+    assert (await store.get_watch("rg-theirs")).state == "stopped"
+    # the admin scope (None) sweeps the rest
+    assert await store.delete_terminal_watches(None) == 1
+    assert await store.get_watch("rg-theirs") is None

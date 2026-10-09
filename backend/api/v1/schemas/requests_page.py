@@ -195,3 +195,8 @@ class WantedWatchesResponse(AppStruct):
 class WantedActionResponse(AppStruct):
     success: bool
     state: str  # the watch's state after the action
+
+
+class WantedRemovalResponse(AppStruct):
+    success: bool
+    removed: int  # watches deleted: 0/1 for a single watch, N for a terminal sweep

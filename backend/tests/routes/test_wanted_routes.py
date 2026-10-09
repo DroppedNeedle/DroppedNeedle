@@ -28,6 +28,7 @@ _ENDPOINTS = [
     ("POST", f"/requests/wanted/{VALID_MBID}/stop"),
     ("POST", f"/requests/wanted/{VALID_MBID}/resume"),
     ("POST", f"/requests/wanted/{VALID_MBID}/seen"),
+    ("DELETE", f"/requests/wanted/{VALID_MBID}"),
 ]
 
 
@@ -93,7 +94,7 @@ def test_unauthenticated_gets_401(tmp_path, method, path):
     assert client.request(method, path).status_code == 401
 
 
-@pytest.mark.parametrize("method,path", _ENDPOINTS[1:])  # the mutating three
+@pytest.mark.parametrize("method,path", _ENDPOINTS[1:])  # the mutating endpoints
 def test_non_owner_gets_403(tmp_path, method, path):
     client = _client(tmp_path, user_id="someone-else")
     assert client.request(method, path).status_code == 403
@@ -363,3 +364,44 @@ def test_wanted_route_over_multipage_history_is_bounded_and_correct(
     }
     # Bounded reads: zero per-row task round trips on the interactive path.
     assert get_task_calls["n"] == 0
+
+
+def test_remove_deletes_the_watch_and_its_seen_rows(tmp_path):
+    client = _client(tmp_path)
+    store = client.wanted_store
+    asyncio.run(
+        store.record_cycle(
+            VALID_MBID, outcome="new_manual", next_check_at=time.time() + 3600,
+            quiet=False, seen=[("soulseek", "a\x1fb")],
+        )
+    )
+    assert client.delete(f"/requests/wanted/{VALID_MBID}").status_code == 200
+    assert client.get("/requests/wanted").json()["count"] == 0
+    assert asyncio.run(store.seen_identities(VALID_MBID)) == set()
+
+
+def test_remove_unknown_watch_is_404(tmp_path):
+    client = _client(tmp_path)
+    assert client.delete(f"/requests/wanted/{MISSING_MBID}").status_code == 404
+
+
+def test_clear_terminal_removes_only_stopped_and_fulfilled(tmp_path):
+    client = _client(tmp_path)
+    store = client.wanted_store
+    asyncio.run(store.stop_watch(VALID_MBID))  # the owner's watch -> stopped
+    resp = client.post("/requests/wanted/clear-terminal")
+    assert resp.status_code == 200
+    assert resp.json() == {"success": True, "removed": 1}
+    assert client.get("/requests/wanted").json()["count"] == 0
+    # another user's active watch is untouched
+    assert asyncio.run(store.get_watch(OTHER_MBID)) is not None
+
+
+def test_clear_terminal_admin_sweeps_every_user(tmp_path):
+    client = _client(tmp_path, role="admin", user_id="admin-id")
+    store = client.wanted_store
+    asyncio.run(store.stop_watch(VALID_MBID))
+    asyncio.run(store.stop_watch(OTHER_MBID))
+    resp = client.post("/requests/wanted/clear-terminal")
+    assert resp.json()["removed"] == 2
+    assert client.get("/requests/wanted").json()["count"] == 0

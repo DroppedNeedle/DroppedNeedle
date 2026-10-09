@@ -321,6 +321,31 @@ class WantedWatcherService:
         await self._store.clear_new_candidates(release_group_mbid)
         return await self._owned_watch(release_group_mbid, user_id, user_role)
 
+    async def remove(
+        self, release_group_mbid: str, user_id: str, user_role: str
+    ) -> bool:
+        """Per-want Remove (#550): delete the watch instead of parking it.
+
+        Stop only changes state; the retention prune is the other way out and it
+        runs at ``request_history_retention_days`` (180 by default), which is far
+        too long to stare at something explicitly stopped."""
+        await self._owned_watch(release_group_mbid, user_id, user_role)
+        removed = await self._store.delete_watch(release_group_mbid)
+        if removed:
+            logger.info(
+                "wanted.removed", extra={"release_group_mbid": release_group_mbid}
+            )
+        return removed
+
+    async def clear_terminal(self, user_id: str, user_role: str) -> int:
+        """Clear every stopped/fulfilled watch the caller can see (#550)."""
+        removed = await self._store.delete_terminal_watches(
+            None if user_role == "admin" else user_id
+        )
+        if removed:
+            logger.info("wanted.cleared_terminal", extra={"count": removed})
+        return removed
+
     async def _retrying_page(
         self,
         status: str,
