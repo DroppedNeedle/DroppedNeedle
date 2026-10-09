@@ -13,7 +13,7 @@ when a *different* recording is substituted (see :func:`recording_version_flags`
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from enum import IntEnum
+from enum import IntEnum, StrEnum
 from typing import Any
 
 import msgspec
@@ -59,6 +59,29 @@ class HomeTier(IntEnum):
     @property
     def is_compilation(self) -> bool:
         return self in (HomeTier.ARTIST_COMPILATION, HomeTier.OTHER_COMPILATION)
+
+
+class ResolutionStatus(StrEnum):
+    """Stored per playlist entry in ``playlist_tracks.resolution_status``."""
+
+    RESOLVED = "resolved"
+    FLAGGED = "flagged"
+    """Only compilations carry the exact recording; waiting on the user."""
+    UNRESOLVED = "unresolved"
+    """No recording, or a recording on no release group."""
+    CHOSEN = "chosen"
+    """The user picked the home; the resolver never overrides it."""
+
+
+class CompilationPolicy(StrEnum):
+    """What to do when a track's exact recording only exists on compilations."""
+
+    MATCH_PLAYLIST = "match_playlist"
+    """Keep the recording; consolidate onto as few compilations as possible."""
+    STUDIO = "studio"
+    """Swap to the same song on one of the artist's studio albums, if found."""
+    FLAG = "flag"
+    """Hold the track and offer the options to the user."""
 
 
 class HomeCandidate(msgspec.Struct, frozen=True):
