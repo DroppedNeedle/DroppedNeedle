@@ -86,6 +86,27 @@ async def test_rate_limit_backs_off_member():
 
 
 @pytest.mark.asyncio
+async def test_ladder_retries_with_ascii_hyphen_when_the_title_has_a_unicode_hyphen():
+    """#522: Prowlarr/indexers return 0 for MusicBrainz's U+2010 "D-DAY" but find
+    the release for the ASCII hyphen. A genuine clean empty on the canonical query
+    must fall through to the normalized rung, which folds the dash."""
+    queries: list[str] = []
+    indexer = _indexer("prowlarr")
+
+    async def search(query, categories, **kwargs):
+        queries.append(query)
+        if "‐" in query:
+            return []
+        return await ProwlarrClient.search(indexer._client, query, categories, **kwargs)
+
+    indexer._client.search = search  # type: ignore[method-assign]
+    results = await indexer.search_album("Agust D", "D‐DAY")
+
+    assert queries == ["Agust D D‐DAY", "Agust D D-DAY"]
+    assert len(results) == 1
+
+
+@pytest.mark.asyncio
 async def test_search_cache_serves_repeat_query():
     calls = {"n": 0}
     inner = _indexer("prowlarr")
