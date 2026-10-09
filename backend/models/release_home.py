@@ -119,6 +119,7 @@ class RecordingHome(msgspec.Struct, frozen=True):
     is_various: bool
     artist_credit: str
     first_release_date: str | None = None
+    artist_mbids: tuple[str, ...] = ()
 
     def to_candidate(self, *, credits_track_artist: bool) -> HomeCandidate:
         return HomeCandidate(

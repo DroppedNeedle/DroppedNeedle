@@ -55,7 +55,7 @@ async def test_round_trip_preserves_every_field(store):
         first_release_date=None,
         primary_type=None,
     )
-    album = _home("RG-Willy")
+    album = _home("RG-Willy", artist_mbids=("ccr", "fogerty"))
     await store.save_recording_release_groups(
         "REC-1", [comp, album], source_context=_CONTEXT
     )
@@ -65,7 +65,12 @@ async def test_round_trip_preserves_every_field(store):
     )
 
     # MBIDs are normalized to lower case; rows come back ordered by MBID.
-    assert got == {"rec-1": [comp, _home("rg-willy", title="Rg-Willy")]}
+    assert got == {
+        "rec-1": [
+            comp,
+            _home("rg-willy", title="Rg-Willy", artist_mbids=("ccr", "fogerty")),
+        ]
+    }
 
 
 @pytest.mark.asyncio

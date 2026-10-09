@@ -295,6 +295,12 @@ def _recording_homes_from_releases(
             is_various=is_various_artist_credit(credit),
             artist_credit=_artist_credit_phrase(credit),
             first_release_date=rg.get("first-release-date") or None,
+            artist_mbids=tuple(
+                artist_id
+                for entry in credit
+                if isinstance(entry, dict)
+                and (artist_id := normalize_mb_id((entry.get("artist") or {}).get("id")))
+            ),
         )
     return [homes[key] for key in sorted(homes)]
 

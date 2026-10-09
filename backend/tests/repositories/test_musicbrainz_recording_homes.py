@@ -78,6 +78,8 @@ def test_collapse_to_release_groups_any_official_wins():
     assert by_id["rg-va"].is_various
     assert by_id["rg-chronicle"].secondary_types == ("Compilation",)
     assert by_id["rg-willy"].artist_credit == "Creedence Clearwater Revival"
+    assert by_id["rg-willy"].artist_mbids == ("ccr",)
+    assert by_id["rg-va"].artist_mbids == (VARIOUS_ARTISTS_MBID,)
 
 
 def test_candidates_bind_track_artist():

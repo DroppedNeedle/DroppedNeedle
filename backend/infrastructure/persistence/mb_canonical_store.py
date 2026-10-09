@@ -178,6 +178,7 @@ class MbCanonicalStore(PersistenceBase):
                     is_various INTEGER NOT NULL DEFAULT 0,
                     artist_credit TEXT NOT NULL DEFAULT '',
                     first_release_date TEXT,
+                    artist_mbids TEXT NOT NULL DEFAULT '[]',
                     PRIMARY KEY (recording_mbid_lower, rg_mbid_lower)
                 )
                 """
@@ -206,6 +207,11 @@ class MbCanonicalStore(PersistenceBase):
             _safe_alter(
                 conn,
                 "ALTER TABLE release_to_rg ADD COLUMN official_evidence INTEGER NOT NULL DEFAULT 0",
+            )
+            _safe_alter(
+                conn,
+                "ALTER TABLE recording_release_groups "
+                "ADD COLUMN artist_mbids TEXT NOT NULL DEFAULT '[]'",
             )
             self._ratchet_source_labels(conn)
             conn.commit()
@@ -610,6 +616,7 @@ class MbCanonicalStore(PersistenceBase):
                         is_various=bool(row["is_various"]),
                         artist_credit=str(row["artist_credit"]),
                         first_release_date=row["first_release_date"],
+                        artist_mbids=tuple(json.loads(row["artist_mbids"])),
                     )
                 )
             return result
@@ -646,8 +653,8 @@ class MbCanonicalStore(PersistenceBase):
                 INSERT INTO recording_release_groups (
                     recording_mbid_lower, rg_mbid_lower, title, primary_type,
                     secondary_types, official, is_various, artist_credit,
-                    first_release_date
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    first_release_date, artist_mbids
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -660,6 +667,7 @@ class MbCanonicalStore(PersistenceBase):
                         int(home.is_various),
                         home.artist_credit,
                         home.first_release_date,
+                        json.dumps(list(home.artist_mbids)),
                     )
                     for rg, home in sorted(rows.items())
                 ],
