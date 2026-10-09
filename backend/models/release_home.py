@@ -80,6 +80,36 @@ class HomeCandidate(msgspec.Struct, frozen=True):
     first_release_date: str | None = None
 
 
+class RecordingHome(msgspec.Struct, frozen=True):
+    """A release group a recording appears on, independent of any playlist.
+
+    This is what is persisted per recording; ``credits_track_artist`` depends
+    on the track being placed, so it is decided per track via
+    :meth:`to_candidate`.
+    """
+
+    release_group_mbid: str
+    title: str
+    primary_type: str | None
+    secondary_types: tuple[str, ...]
+    official: bool
+    is_various: bool
+    artist_credit: str
+    first_release_date: str | None = None
+
+    def to_candidate(self, *, credits_track_artist: bool) -> HomeCandidate:
+        return HomeCandidate(
+            release_group_mbid=self.release_group_mbid,
+            title=self.title,
+            primary_type=self.primary_type,
+            secondary_types=self.secondary_types,
+            official=self.official,
+            is_various=self.is_various,
+            credits_track_artist=credits_track_artist,
+            first_release_date=self.first_release_date,
+        )
+
+
 def _fold(value: Any) -> str:
     return str(value).strip().casefold() if value is not None else ""
 

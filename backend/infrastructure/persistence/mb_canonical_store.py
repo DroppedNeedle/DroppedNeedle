@@ -1,6 +1,6 @@
 """MB Localization P1: durable canonical maps (ST2 core).
 
-A SQLite-backed store beneath the in-process memory cache holding three
+A SQLite-backed store beneath the in-process memory cache holding four
 MusicBrainz-derived mapping families:
 
 - ``canonical_redirect`` - recording merge-redirect resolution (#6). The
@@ -11,6 +11,10 @@ MusicBrainz-derived mapping families:
   the F-MATCH-05 sentinel discipline; transient failures write nothing.
 - ``recording_isrc`` - ISRC → recording mbid pairs from Spotify-import
   /isrc/ lookups (#22).
+- ``recording_release_groups`` - every release group a recording appears on,
+  with the type/status/credit facts home tiering needs (#204). A row in
+  ``recording_release_group_fetch`` marks the recording as fully browsed, so
+  a recording on no release group is an authoritative empty list.
 
 Provenance: every row stamps opaque ``source_mode``, ``source_id``, and
 ``source_generation`` fields. The legacy ``source_host`` columns remain only
@@ -25,6 +29,7 @@ the same category as ``local_album_external_identities``.
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import time
@@ -33,6 +38,7 @@ from typing import Any
 
 from core.exceptions import ConfigurationError
 from infrastructure.persistence._database import PersistenceBase, _safe_alter
+from models.release_home import RecordingHome
 from repositories.musicbrainz_base import (
     MB_TRUSTED_IDENTITY_ORIGINS,
     MbSourceContext,
@@ -94,8 +100,9 @@ def _legacy_source_host(
 
 class MbCanonicalStore(PersistenceBase):
     """Owns tables: ``canonical_redirect``, ``release_to_rg``,
-    ``recording_isrc``. Shares the library database file and write lock with
-    every other store; never creates a second database file."""
+    ``recording_isrc``, ``recording_release_groups``,
+    ``recording_release_group_fetch``. Shares the library database file and
+    write lock with every other store; never creates a second database file."""
 
     connection_label = "mb_canonical_store"
 
@@ -143,6 +150,33 @@ class MbCanonicalStore(PersistenceBase):
                     recording_mbid_lower TEXT NOT NULL,
                     first_seen_at REAL NOT NULL,
                     PRIMARY KEY (isrc, recording_mbid_lower)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS recording_release_group_fetch (
+                    recording_mbid_lower TEXT PRIMARY KEY,
+                    source_mode TEXT NOT NULL DEFAULT '',
+                    source_id TEXT NOT NULL DEFAULT '',
+                    source_generation INTEGER NOT NULL DEFAULT 0,
+                    saved_at REAL NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS recording_release_groups (
+                    recording_mbid_lower TEXT NOT NULL,
+                    rg_mbid_lower TEXT NOT NULL,
+                    title TEXT NOT NULL DEFAULT '',
+                    primary_type TEXT,
+                    secondary_types TEXT NOT NULL DEFAULT '[]',
+                    official INTEGER NOT NULL DEFAULT 0,
+                    is_various INTEGER NOT NULL DEFAULT 0,
+                    artist_credit TEXT NOT NULL DEFAULT '',
+                    first_release_date TEXT,
+                    PRIMARY KEY (recording_mbid_lower, rg_mbid_lower)
                 )
                 """
             )
@@ -510,6 +544,133 @@ class MbCanonicalStore(PersistenceBase):
                     (isrc, rec, source_mode, source_id, source_generation, now)
                     for isrc, rec in clean
                 ],
+            )
+            conn.commit()
+
+        await mb_publish_if_current(source_context, lambda: self._write(operation))
+
+    async def get_recording_release_groups(
+        self,
+        recording_mbids: list[str],
+        *,
+        source_context: MbSourceContext,
+        max_age_seconds: float,
+    ) -> dict[str, list[RecordingHome]]:
+        """Return the homes of every recording browsed within ``max_age_seconds``
+        under the captured source context. Recordings never browsed (or stale)
+        are absent; a browsed recording on no release group maps to ``[]``."""
+        source_context = _require_source_context(source_context)
+        normalized = sorted({normalize_mb_id(m) for m in recording_mbids if m})
+        if not normalized:
+            return {}
+        fresh_after = time.time() - max_age_seconds
+
+        def operation(conn: sqlite3.Connection) -> dict[str, list[RecordingHome]]:
+            placeholders = ",".join("?" for _ in normalized)
+            fetched = conn.execute(
+                "SELECT recording_mbid_lower FROM recording_release_group_fetch "
+                f"WHERE recording_mbid_lower IN ({placeholders}) "
+                "AND source_mode = ? AND source_id = ? AND source_generation = ? "
+                "AND saved_at >= ?",
+                [
+                    *normalized,
+                    source_context.source_mode,
+                    source_context.source_id,
+                    source_context.generation,
+                    fresh_after,
+                ],
+            ).fetchall()
+            result: dict[str, list[RecordingHome]] = {
+                str(row["recording_mbid_lower"]): [] for row in fetched
+            }
+            if not result:
+                return result
+            fresh = sorted(result)
+            placeholders = ",".join("?" for _ in fresh)
+            rows = conn.execute(
+                "SELECT * FROM recording_release_groups "
+                f"WHERE recording_mbid_lower IN ({placeholders}) "
+                "ORDER BY recording_mbid_lower, rg_mbid_lower",
+                fresh,
+            ).fetchall()
+            for row in rows:
+                result[str(row["recording_mbid_lower"])].append(
+                    RecordingHome(
+                        release_group_mbid=str(row["rg_mbid_lower"]),
+                        title=str(row["title"]),
+                        primary_type=row["primary_type"],
+                        secondary_types=tuple(json.loads(row["secondary_types"])),
+                        official=bool(row["official"]),
+                        is_various=bool(row["is_various"]),
+                        artist_credit=str(row["artist_credit"]),
+                        first_release_date=row["first_release_date"],
+                    )
+                )
+            return result
+
+        return await self._read(operation)
+
+    async def save_recording_release_groups(
+        self,
+        recording_mbid: str,
+        homes: list[RecordingHome],
+        *,
+        source_context: MbSourceContext,
+    ) -> None:
+        """Replace a recording's homes with a complete browse result."""
+        source_context = _require_source_context(source_context)
+        recording = normalize_mb_id(recording_mbid)
+        if not recording:
+            return
+        source_mode, source_id, source_generation = _provenance(source_context)
+        rows = {
+            normalize_mb_id(home.release_group_mbid): home
+            for home in homes
+            if home.release_group_mbid
+        }
+        now = time.time()
+
+        def operation(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                "DELETE FROM recording_release_groups WHERE recording_mbid_lower = ?",
+                (recording,),
+            )
+            conn.executemany(
+                """
+                INSERT INTO recording_release_groups (
+                    recording_mbid_lower, rg_mbid_lower, title, primary_type,
+                    secondary_types, official, is_various, artist_credit,
+                    first_release_date
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        recording,
+                        rg,
+                        home.title,
+                        home.primary_type,
+                        json.dumps(list(home.secondary_types)),
+                        int(home.official),
+                        int(home.is_various),
+                        home.artist_credit,
+                        home.first_release_date,
+                    )
+                    for rg, home in sorted(rows.items())
+                ],
+            )
+            conn.execute(
+                """
+                INSERT INTO recording_release_group_fetch (
+                    recording_mbid_lower, source_mode, source_id,
+                    source_generation, saved_at
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(recording_mbid_lower) DO UPDATE SET
+                    source_mode = excluded.source_mode,
+                    source_id = excluded.source_id,
+                    source_generation = excluded.source_generation,
+                    saved_at = excluded.saved_at
+                """,
+                (recording, source_mode, source_id, source_generation, now),
             )
             conn.commit()
 
