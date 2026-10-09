@@ -280,6 +280,16 @@ def test_normalize_newznab_query_folds_typographic_quotes():
     )
 
 
+def test_normalize_newznab_query_folds_unicode_dashes_to_ascii_hyphen():
+    """#522: MusicBrainz stores "D-DAY" with U+2010; indexers only know the ASCII
+    hyphen, so the ladder's normalized rung has to fold every Unicode dash."""
+    assert normalize_newznab_query("Agust D D‐DAY") == "Agust D D-DAY"
+    for dash in ("‐", "‑", "‒", "–", "—", "―", "−"):
+        assert normalize_newznab_query(f"Artist A{dash}B") == "Artist A-B", hex(ord(dash))
+    # the ASCII hyphen is meaningful in scene names and must survive untouched
+    assert normalize_newznab_query("Artist A-B") == "Artist A-B"
+
+
 def test_normalize_newznab_query_idempotent_and_clean_safe():
     assert normalize_newznab_query("Radiohead In Rainbows") == "Radiohead In Rainbows"
     once = normalize_newznab_query("Drake Honestly, Nevermind!")
@@ -297,6 +307,20 @@ async def test_ladder_retries_with_normalized_query_on_zero_results():
     assert newznab_mock.received_q == [
         "Drake Honestly, Nevermind",
         "Drake Honestly Nevermind",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ladder_retries_when_the_title_has_a_unicode_hyphen():
+    """#522: the canonical query carries MusicBrainz's U+2010 and finds nothing;
+    the normalized rung sends the ASCII hyphen and finds the release."""
+    newznab_mock.reset_state()
+    idx = NewznabIndexer([_entry(newznab_mock.drunkenslug_handler, indexer_id="ds", name="DS")])
+    results = await idx.search_album("Drake", "Honestly‐Nevermind")
+    assert len(results) == 1
+    assert newznab_mock.received_q == [
+        "Drake Honestly‐Nevermind",
+        "Drake Honestly-Nevermind",
     ]
 
 

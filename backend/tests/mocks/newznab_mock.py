@@ -163,6 +163,9 @@ def _xml(body: str, status: int = 200) -> httpx.Response:
 _GATED_Q_MARKER = "honestly"  # Drake "Honestly, Nevermind" stand-in
 _NORESULT_MARKER = "xyzzynomatch"  # punctuation-clean query matching nothing
 _PUNCTUATION_CHARS = frozenset({",", "'", '"', "?", "!", ";", ":", "&", "‘", "’", "“", "”"})
+# A typographic hyphen (U+2010, what MusicBrainz stores for e.g. "D-DAY") returns 0
+# on a real indexer while the ASCII "-" returns the release (#522).
+_UNICODE_DASH_CHARS = frozenset({"‐"})
 
 _GATED_RELEASE_FEED = """<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:newznab="http://www.newznab.com/DTD/2010/feeds/attributes/">
@@ -209,7 +212,7 @@ def _free_text_feed(q: str | None, default: str) -> str:
     punctuation-free rung, empty on the canonical punctuated rung."""
     low = (q or "").lower()
     if _GATED_Q_MARKER in low:
-        if any(ch in (q or "") for ch in _PUNCTUATION_CHARS):
+        if any(ch in (q or "") for ch in _PUNCTUATION_CHARS | _UNICODE_DASH_CHARS):
             return _DS_EMPTY
         return _GATED_RELEASE_FEED
     if _NORESULT_MARKER in low:

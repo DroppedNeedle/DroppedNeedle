@@ -50,17 +50,29 @@ _TYPOGRAPHIC_QUOTES = {
     "\u201e": '"',
     "\u201f": '"',
 }
+# MusicBrainz writes some titles with a typographic dash (Agust D's "D-DAY" is stored
+# with U+2010 HYPHEN), but scene release names - and so indexer search - only carry the
+# ASCII hyphen: the U+2010 query returns 0 results while the "-" one returns the
+# release (#522). Fold every Unicode dash and the minus sign to "-" (kept, not
+# stripped: the hyphen is meaningful in scene names).
+_UNICODE_DASHES = dict.fromkeys(
+    (*(chr(code) for code in range(0x2010, 0x2016)), "\u2212"), "-"
+)
+_QUERY_FOLD_CHARS = {**_TYPOGRAPHIC_QUOTES, **_UNICODE_DASHES}
 _QUERY_STRIP_CHARS = frozenset({",", "'", '"', "?", "!", ";", ":", "&"})
 
 
 def normalize_newznab_query(query: str) -> str:
     """Punctuation-normalized free-text query rung (#259, decision LADDER).
 
+    Also folds Unicode dashes to ASCII "-" so a MusicBrainz title that uses a
+    typographic hyphen (#522) reaches the indexer in the form scene names use.
+
     Outbound-query-only: the canonical MusicBrainz title still flows untouched
     to the scorer/import and to the structured ``t=music`` params. Idempotent
     and a no-op on punctuation-free input.
     """
-    folded = "".join(_TYPOGRAPHIC_QUOTES.get(ch, ch) for ch in query)
+    folded = "".join(_QUERY_FOLD_CHARS.get(ch, ch) for ch in query)
     stripped = "".join("" if ch in _QUERY_STRIP_CHARS else ch for ch in folded)
     return " ".join(stripped.split())
 
