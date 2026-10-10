@@ -332,3 +332,164 @@ async def test_remove_ghost_album_with_recycle_cleans_catalog(tmp_path: Path) ->
     )
     row = await store.get_target_track("track-ghost")
     assert row is not None and row["availability"] == "missing"
+
+
+# --- #526: an import never attaches a track to a retired album row -------------
+
+
+def _retire(db_path: Path, album_id: str, into: str | None) -> None:
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "UPDATE local_albums SET retired_into_album_id = ? WHERE id = ?",
+            (into, album_id),
+        )
+
+
+async def _minted_album_id(
+    service: TargetImportLibraryService, resolver: LibraryPolicyResolver, audio: Path
+) -> str:
+    """The album id an identity-less import of ``audio`` derives from its grouping key."""
+    write = await service._build_published_import_write(
+        audio,
+        _tag(),
+        _info(audio.stat().st_size),
+        resolver=resolver,
+        release_group_mbid=None,
+        release_mbid=None,
+        recording_mbid=None,
+        source="download",
+        download_task_id=None,
+        source_path=None,
+        file_mtime=None,
+    )
+    return write.album.id
+
+
+def _local_only_audio(root: Path) -> Path:
+    audio = root / "Regrouped Dir" / "01.flac"
+    audio.parent.mkdir(parents=True)
+    audio.write_bytes(b"audio")
+    return audio
+
+
+@pytest.mark.asyncio
+async def test_local_only_import_follows_a_retired_row_to_its_successor(
+    tmp_path: Path,
+) -> None:
+    """A local_only album has no provider identity, so the id comes from the grouping
+    key alone. When an earlier regrouping retired that row into a survivor, the import
+    used to write the track to the retired row: the visible album lost it and it was
+    orphaned behind a 308."""
+    db_path, root, store, service, resolver = _setup(tmp_path)
+    audio = _local_only_audio(root)
+    minted = await _minted_album_id(service, resolver, audio)
+    await store.create_catalog_membership(
+        _membership("album-active", "track-active", policy_revision=resolver.policy_revision)
+    )
+    await store.create_catalog_membership(
+        _membership(
+            minted,
+            "track-retired",
+            file_path="/music/retired/01.flac",
+            policy_revision=resolver.policy_revision,
+        )
+    )
+    _retire(db_path, minted, "album-active")
+
+    track_id = await service.upsert_file(
+        audio, _tag(), _info(audio.stat().st_size), release_group_mbid=None
+    )
+
+    track = await store.get_target_track(track_id)
+    assert track is not None and track["local_album_id"] == "album-active"
+    assert _album_count(db_path) == 2  # nothing new was minted
+    with sqlite3.connect(db_path) as connection:
+        orphaned = connection.execute(
+            "SELECT COUNT(*) FROM local_tracks WHERE local_album_id = ? AND id = ?",
+            (minted, track_id),
+        ).fetchone()[0]
+    assert orphaned == 0
+
+
+@pytest.mark.asyncio
+async def test_published_builder_follows_a_retired_row_to_its_successor(
+    tmp_path: Path,
+) -> None:
+    db_path, root, store, service, resolver = _setup(tmp_path)
+    audio = _local_only_audio(root)
+    minted = await _minted_album_id(service, resolver, audio)
+    await store.create_catalog_membership(
+        _membership("album-active", "track-active", policy_revision=resolver.policy_revision)
+    )
+    await store.create_catalog_membership(
+        _membership(
+            minted,
+            "track-retired",
+            file_path="/music/retired/01.flac",
+            policy_revision=resolver.policy_revision,
+        )
+    )
+    _retire(db_path, minted, "album-active")
+
+    assert await _minted_album_id(service, resolver, audio) == "album-active"
+
+
+@pytest.mark.asyncio
+async def test_import_follows_a_chain_of_retirements_to_the_active_album(
+    tmp_path: Path,
+) -> None:
+    """Retire sites never re-point older pointers, so A -> B -> C happens when B is
+    later retired into C. The import has to land on C, not stop at B."""
+    db_path, root, store, service, resolver = _setup(tmp_path)
+    audio = _local_only_audio(root)
+    minted = await _minted_album_id(service, resolver, audio)
+    for album_id, track_id, path in (
+        ("album-c", "track-c", "/music/c/01.flac"),
+        ("album-b", "track-b", "/music/b/01.flac"),
+        (minted, "track-a", "/music/a/01.flac"),
+    ):
+        await store.create_catalog_membership(
+            _membership(
+                album_id, track_id, file_path=path, policy_revision=resolver.policy_revision
+            )
+        )
+    _retire(db_path, "album-b", "album-c")
+    _retire(db_path, minted, "album-b")
+
+    track_id = await service.upsert_file(
+        audio, _tag(), _info(audio.stat().st_size), release_group_mbid=None
+    )
+
+    track = await store.get_target_track(track_id)
+    assert track is not None and track["local_album_id"] == "album-c"
+
+
+@pytest.mark.asyncio
+async def test_resolve_active_album_id_edge_cases(tmp_path: Path) -> None:
+    db_path, _root, store, _service, resolver = _setup(tmp_path)
+    for album_id, track_id, path in (
+        ("album-live", "track-live", "/music/live/01.flac"),
+        ("album-old", "track-old", "/music/old/01.flac"),
+        ("album-x", "track-x", "/music/x/01.flac"),
+        ("album-y", "track-y", "/music/y/01.flac"),
+    ):
+        await store.create_catalog_membership(
+            _membership(
+                album_id, track_id, file_path=path, policy_revision=resolver.policy_revision
+            )
+        )
+    _retire(db_path, "album-old", "album-live")
+
+    assert await store.resolve_active_album_id("album-live") == "album-live"
+    assert await store.resolve_active_album_id("album-old") == "album-live"
+    # an id that was never written (a freshly derived uuid5) is passed through untouched
+    assert await store.resolve_active_album_id("never-written") == "never-written"
+
+    # a pointer to a row that no longer exists leaves the id as it was (today's behaviour)
+    _retire(db_path, "album-x", "album-gone")
+    assert await store.resolve_active_album_id("album-x") == "album-x"
+
+    # a pointer cycle must terminate instead of looping forever
+    _retire(db_path, "album-x", "album-y")
+    _retire(db_path, "album-y", "album-x")
+    assert await store.resolve_active_album_id("album-x") in {"album-x", "album-y"}

@@ -286,6 +286,17 @@ class TargetImportLibraryService:
             return None
         return await self._store.find_import_reuse_album_id(release_group_mbid)
 
+    async def _import_album_id(
+        self, release_group_mbid: str | None, grouping_key: str
+    ) -> str:
+        """The album an import writes to: the provider owner, else the grouping-key id,
+        in both cases resolved to the active row (#526). A grouping-key id can name a
+        row an earlier regrouping retired, and a track written there is orphaned."""
+        album_id = await self._import_reuse_album_id(
+            release_group_mbid
+        ) or grouping_album_id(grouping_key)
+        return await self._store.resolve_active_album_id(album_id)
+
     async def _upsert_file_once(
         self,
         audio_path: Path,
@@ -319,9 +330,7 @@ class TargetImportLibraryService:
             f"{root.id}:{directory}:{normalize_group_value(album_title)}:"
             f"{normalize_group_value(album_artist)}"
         )
-        album_id = await self._import_reuse_album_id(
-            release_group_mbid
-        ) or grouping_album_id(grouping_key)
+        album_id = await self._import_album_id(release_group_mbid, grouping_key)
         existing = await self._store.get_target_track_by_path(str(audio_path))
         track_id = (
             str(existing["id"])
@@ -604,9 +613,7 @@ class TargetImportLibraryService:
             f"{root.id}:{directory}:{normalize_group_value(album_title)}:"
             f"{normalize_group_value(album_artist)}"
         )
-        album_id = await self._import_reuse_album_id(
-            release_group_mbid
-        ) or grouping_album_id(grouping_key)
+        album_id = await self._import_album_id(release_group_mbid, grouping_key)
         existing = await self._store.get_target_track_by_path(str(audio_path))
         track_id = (
             str(existing["id"])

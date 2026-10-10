@@ -2521,6 +2521,39 @@ class NativeLibraryStore(PersistenceBase):
 
         return await self._read(operation)
 
+    async def resolve_active_album_id(self, album_id: str) -> str:
+        """Issue #526: follow ``retired_into_album_id`` to the active album.
+
+        An import derives its album id from the grouping key alone when the album has
+        no provider identity, and that uuid5 can name a row a regrouping already
+        retired. Writing the track there orphans it behind the 308, so the id is
+        resolved through the retirement pointers first. Retire sites never re-point
+        older pointers, so A -> B -> C is possible and every hop is followed.
+
+        An id that was never written (a fresh uuid5), a pointer to a row that no
+        longer exists, and a pointer cycle all leave the id at the last row that does
+        exist, i.e. exactly what an import did before this lookup existed.
+        """
+
+        def operation(connection: sqlite3.Connection) -> str:
+            current = last_existing = album_id
+            seen: set[str] = set()
+            while current not in seen:
+                seen.add(current)
+                row = connection.execute(
+                    "SELECT retired_into_album_id FROM local_albums WHERE id = ?",
+                    (current,),
+                ).fetchone()
+                if row is None:
+                    return last_existing
+                last_existing = current
+                if row["retired_into_album_id"] is None:
+                    return current
+                current = str(row["retired_into_album_id"])
+            return last_existing
+
+        return await self._read(operation)
+
     @classmethod
     def _resolve_unique_target_subject_id(
         cls, connection: sqlite3.Connection, *, kind: str, identifier: str
