@@ -373,6 +373,14 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         })
     }
 
+    /// Keep before-state snapshots for this many days (the Library
+    /// Management undo retention). Values below one keep the default.
+    pub fn set_undo_retention_days(&mut self, days: i64) {
+        if days >= 1 {
+            self.undo_retention_days = days;
+        }
+    }
+
     /// Arm one crash-injection point. Tests only; production never calls this.
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_crash_point(&mut self, point: Option<CrashPoint>) {
@@ -719,14 +727,20 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             )));
         }
         let prepared = staged.iter().find(|file| file.journal_id == journal.id);
+        // A same-path write, or a case-only rename on a filesystem that
+        // folds case (the new name reaches the source itself): both set
+        // the original aside under a journaled backup, then publish.
         let same_path_self = match prepared {
-            Some(file) if file.kind == PlanKind::SamePath => {
+            Some(file) => {
                 let source = self
                     .sandbox
                     .resolve_no_symlink(&file.source_root, &file.source_rel)?;
-                source == dest
+                match file.kind {
+                    PlanKind::SamePath => source == dest,
+                    PlanKind::Move => paths::same_file(&source, &dest),
+                }
             }
-            _ => false,
+            None => false,
         };
         match std::fs::symlink_metadata(&dest) {
             Ok(meta) => {
@@ -914,7 +928,10 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 let dest = self
                     .sandbox
                     .resolve_no_symlink(&journal.dest_root, &journal.dest_rel)?;
+                // After a case-only rename on a case-folding filesystem the
+                // old name reaches the published file: never delete it.
                 if source != dest
+                    && !paths::same_file(&source, &dest)
                     && let Ok(bytes) = paths::read_regular_file(&source)
                 {
                     let expected = journal.source_sha256.as_deref().unwrap_or_default();

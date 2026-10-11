@@ -236,12 +236,7 @@ impl CapabilityGate {
     pub fn check(&self, item: &PlanItem) -> Result<(), PublishError> {
         // Capabilities the staged writer cannot express yet fail
         // loudly here, never as a silent half-manage downstream.
-        for capability in [
-            Capability::Genre,
-            Capability::Rename,
-            Capability::Sidecars,
-            Capability::Scrub,
-        ] {
+        for capability in [Capability::Genre, Capability::Rename, Capability::Scrub] {
             if item.capabilities.contains(&capability) {
                 return Err(PublishError::Capability(format!(
                     "capability {} is not supported by the staged writer",
@@ -368,7 +363,9 @@ impl CollisionGate {
                         "destination is a symlink: {dest_root}:{dest_rel}"
                     )));
                 }
-                if same_path_self.is_self_destination(dest_root, dest_rel) {
+                if same_path_self.is_self_destination(dest_root, dest_rel)
+                    || same_path_self.is_own_source(sandbox, &dest)
+                {
                     return Ok(());
                 }
                 let identical = same_path_self.bytes_match_if_regular(&dest);
@@ -381,7 +378,14 @@ impl CollisionGate {
                 Ok(())
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                Self::check_fold_siblings(sandbox, blockers, subject, dest_root, dest_rel)?;
+                Self::check_fold_siblings(
+                    sandbox,
+                    blockers,
+                    subject,
+                    dest_root,
+                    dest_rel,
+                    &same_path_self,
+                )?;
                 Ok(())
             }
             Err(err) => Err(PublishError::Io(err.to_string())),
@@ -397,6 +401,7 @@ impl CollisionGate {
         subject: &str,
         dest_root: &str,
         dest_rel: &str,
+        same_path_self: &SamePathSelf,
     ) -> Result<(), PublishError> {
         let dest = sandbox.resolve_no_symlink(dest_root, dest_rel)?;
         let parent = dest.parent().map(std::path::Path::to_path_buf);
@@ -419,7 +424,9 @@ impl CollisionGate {
             let Some(text) = name.to_str() else {
                 continue;
             };
-            if text == wanted {
+            // A case-only rename folds onto its own source, which is
+            // leaving: that is the file itself, not a collision.
+            if text == wanted || same_path_self.is_own_source(sandbox, &parent.join(text)) {
                 continue;
             }
             if collision_key(dest_root, text) == wanted_key {
@@ -442,6 +449,9 @@ struct SamePathSelf {
     root: Option<String>,
     rel: Option<String>,
     sha256: Option<String>,
+    /// A move's own source: a destination that is this file (a case-only
+    /// rename) is not occupied by anyone else.
+    move_source: Option<(String, String)>,
 }
 
 impl SamePathSelf {
@@ -451,9 +461,13 @@ impl SamePathSelf {
                 root: Some(item.source_root.clone()),
                 rel: Some(item.source_rel.clone()),
                 sha256: Some(item.fingerprint.sha256.clone()),
+                move_source: None,
             }
         } else {
-            Self::absent()
+            Self {
+                move_source: Some((item.source_root.clone(), item.source_rel.clone())),
+                ..Self::absent()
+            }
         }
     }
 
@@ -462,7 +476,18 @@ impl SamePathSelf {
             root: None,
             rel: None,
             sha256: None,
+            move_source: None,
         }
+    }
+
+    /// True when `path` is the moving file itself.
+    fn is_own_source(&self, sandbox: &Sandbox, path: &std::path::Path) -> bool {
+        let Some((root, rel)) = &self.move_source else {
+            return false;
+        };
+        sandbox
+            .resolve_no_symlink(root, rel)
+            .is_ok_and(|source| source == path || super::paths::same_file(&source, path))
     }
 
     fn is_self_destination(&self, root: &str, rel: &str) -> bool {

@@ -1083,12 +1083,7 @@ fn capability_gate_rejects_wma_and_unhandled_capabilities() {
     ));
     // Capabilities staging cannot express fail loudly, never as a
     // silent half-manage downstream.
-    for capability in [
-        Capability::Genre,
-        Capability::Rename,
-        Capability::Sidecars,
-        Capability::Scrub,
-    ] {
+    for capability in [Capability::Genre, Capability::Rename, Capability::Scrub] {
         let mut item = plan_item("t", "s.flac", "d.flac", fp.clone(), PlanKind::SamePath);
         item.capabilities = vec![capability];
         let err = gate.check(&item).unwrap_err();

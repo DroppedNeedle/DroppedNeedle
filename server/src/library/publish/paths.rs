@@ -202,6 +202,27 @@ pub fn read_regular_file(path: &Path) -> Result<Vec<u8>, PublishError> {
     std::fs::read(path).map_err(PublishError::from)
 }
 
+/// True when two paths name the same file on disk: a case-only rename
+/// on a filesystem that folds case reaches its own source through the
+/// new name. Missing files are never the same file.
+pub fn same_file(left: &Path, right: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        match (
+            std::fs::symlink_metadata(left),
+            std::fs::symlink_metadata(right),
+        ) {
+            (Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        left == right
+    }
+}
+
 /// Unicode/case-fold collision key: NFC normalization plus full
 /// casefold, so names that differ only by case or by canonically
 /// equivalent sequences can never publish side by side.
