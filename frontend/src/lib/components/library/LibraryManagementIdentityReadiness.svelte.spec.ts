@@ -171,6 +171,12 @@ beforeEach(() => {
 		review_id: null,
 		finding_code: 'mapping_ready',
 		reason_code: 'EXACT_RELEASE_MAPPING_SUPPORTED',
+		reason: {
+			code: 'EXACT_RELEASE_MAPPING_SUPPORTED',
+			message:
+				"Every file fits a track of the album's release, but not all of them are placed yet.",
+			action: 'Apply the report to place them.'
+		},
 		confidence: 'supported',
 		apply_eligible: true,
 		state: 'open',
@@ -192,7 +198,8 @@ describe('LibraryManagementIdentityReadiness', () => {
 		await expect.element(page.getByText('Juturna')).toBeVisible();
 		await expect.element(page.getByText('Circa Survive')).toBeVisible();
 		await expect.element(page.getByText('2005')).toBeVisible();
-		await expect.element(page.getByText(/Exact track map verified/)).toBeVisible();
+		await expect.element(page.getByText(/not all of them are placed yet/)).toBeVisible();
+		await expect.element(page.getByText('Apply the report to place them.')).toBeVisible();
 		await expect
 			.element(page.getByRole('button', { name: /Mappings ready/ }))
 			.toHaveTextContent('1');
@@ -276,6 +283,12 @@ describe('LibraryManagementIdentityReadiness', () => {
 			review_id: null,
 			finding_code: 'exact_release_auto_accepted',
 			reason_code: 'EXACT_EDITION_AUTO_ACCEPTED',
+			reason: {
+				code: 'EXACT_EDITION_AUTO_ACCEPTED',
+				message:
+					'Automatic edition acceptance applied the one edition that clearly fits every file. It stays unconfirmed until someone looks at it.',
+				action: 'Confirm it from the album page, or undo it here.'
+			},
 			confidence: 'complete',
 			apply_eligible: false,
 			state: 'applied',
@@ -291,7 +304,9 @@ describe('LibraryManagementIdentityReadiness', () => {
 		await render(LibraryManagementIdentityReadiness, { roots });
 		await page.getByRole('button', { name: /Auto-accepted/ }).click();
 
-		await expect.element(page.getByText('Edition accepted automatically')).toBeVisible();
+		await expect
+			.element(page.getByText(/applied the one edition that clearly fits every file/))
+			.toBeVisible();
 		const undo = page.getByRole('button', { name: 'Undo' });
 		await expect.element(undo).toBeVisible();
 		await undo.click();

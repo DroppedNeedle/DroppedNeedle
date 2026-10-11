@@ -75,8 +75,15 @@ const h = vi.hoisted(() => ({
 							local_album_id: 'album-1',
 							evidence_id: 'evidence-1',
 							review_id: 'review-1',
+							album_title: 'Juturna',
+							album_artist_name: 'Circa Survive',
 							finding_code: 'safe_detach',
 							reason_code: 'ZERO_SUPPORT',
+							reason: {
+								code: 'ZERO_SUPPORT',
+								message: 'Not one file fits the release this album is linked to.',
+								action: 'Apply the report to remove the link; the album is then matched again.'
+							},
 							confidence: 'complete',
 							apply_eligible: true,
 							state: 'open',
@@ -163,6 +170,12 @@ describe('LibraryRepairPanel', () => {
 
 		h.repairs = { data: { pages: [{ items: [repair()] }] }, isLoading: false };
 		await render(LibraryRepairPanel);
+		await page.getByRole('button', { name: 'View report' }).last().click();
+		await expect.element(page.getByText('Juturna · Circa Survive')).toBeVisible();
+		await expect
+			.element(page.getByText('Not one file fits the release this album is linked to.'))
+			.toBeVisible();
+		await expect.element(page.getByText(/the album is then matched again/)).toBeVisible();
 		await page.getByRole('button', { name: 'Apply safe repairs...' }).last().click();
 		await expect.element(page.getByText(/Local files, album IDs/).last()).toBeVisible();
 		await expect.element(page.getByText('3 identities are eligible.')).toBeVisible();
