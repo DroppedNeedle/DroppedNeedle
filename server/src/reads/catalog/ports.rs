@@ -92,3 +92,46 @@ impl PurchaseLinkSource for NoPurchaseLinks {
         Box::pin(async { Vec::new() })
     }
 }
+
+/// Artist and album details from providers below the first-party sources
+/// (the plugins' `metadata_provider` capability). Failures are the
+/// provider's to log; they read as empty details.
+pub trait DetailsSource: Send + Sync {
+    /// Details about one artist.
+    fn artist<'a>(
+        &'a self,
+        name: &'a str,
+        mbid: &'a str,
+    ) -> BoxFuture<'a, super::models::PluginDetails>;
+
+    /// Details about one album.
+    fn album<'a>(
+        &'a self,
+        artist: &'a str,
+        title: &'a str,
+        mbid: &'a str,
+    ) -> BoxFuture<'a, super::models::PluginDetails>;
+}
+
+/// No details providers.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoDetails;
+
+impl DetailsSource for NoDetails {
+    fn artist<'a>(
+        &'a self,
+        _name: &'a str,
+        _mbid: &'a str,
+    ) -> BoxFuture<'a, super::models::PluginDetails> {
+        Box::pin(async { super::models::PluginDetails::default() })
+    }
+
+    fn album<'a>(
+        &'a self,
+        _artist: &'a str,
+        _title: &'a str,
+        _mbid: &'a str,
+    ) -> BoxFuture<'a, super::models::PluginDetails> {
+        Box::pin(async { super::models::PluginDetails::default() })
+    }
+}

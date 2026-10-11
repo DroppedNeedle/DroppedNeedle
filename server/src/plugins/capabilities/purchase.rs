@@ -7,6 +7,7 @@
 //! links to the top.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::json;
@@ -15,6 +16,10 @@ use super::super::host::PluginHost;
 use super::super::protocol::methods;
 use super::super::runtime::PluginPurchaseLink;
 use super::{call, decode};
+use crate::reads::catalog::models::PurchaseKind;
+use crate::reads::catalog::ports::{
+    BoxFuture, ExtraPurchaseLink, PurchaseLinkSource, PurchaseQuery,
+};
 
 /// Budget per plugin.
 const PURCHASE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -66,5 +71,38 @@ impl PluginHost {
             }
         }
         links
+    }
+}
+
+/// The album page's extra purchase links, answered by the plugins.
+pub struct PluginPurchaseLinks(pub Arc<PluginHost>);
+
+impl PurchaseLinkSource for PluginPurchaseLinks {
+    fn token(&self) -> String {
+        self.0
+            .serving("purchase_links")
+            .iter()
+            .map(|plugin| plugin.manifest.name.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    fn links<'a>(&'a self, query: &'a PurchaseQuery) -> BoxFuture<'a, Vec<ExtraPurchaseLink>> {
+        Box::pin(async move {
+            self.0
+                .gather_purchase_links(&query.artist, &query.title, &query.release_group_mbid)
+                .await
+                .into_iter()
+                .map(|link| ExtraPurchaseLink {
+                    kind: Some(match link.kind.as_str() {
+                        "physical" => PurchaseKind::Physical,
+                        "free" => PurchaseKind::Free,
+                        _ => PurchaseKind::Digital,
+                    }),
+                    url: link.url,
+                    label: Some(link.label),
+                })
+                .collect()
+        })
     }
 }

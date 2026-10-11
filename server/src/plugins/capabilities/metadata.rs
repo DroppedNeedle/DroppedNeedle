@@ -13,6 +13,7 @@
 //! Plugins are asked in name order under a 15 second budget each; one
 //! that fails or answers `null` ("not mine") adds nothing.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -21,6 +22,8 @@ use serde_json::json;
 use super::super::host::PluginHost;
 use super::super::protocol::methods;
 use super::{call, decode};
+use crate::reads::catalog::models::PluginDetails;
+use crate::reads::catalog::ports::{BoxFuture, DetailsSource};
 
 /// Budget per plugin.
 const METADATA_TIMEOUT: Duration = Duration::from_secs(15);
@@ -126,6 +129,46 @@ impl PluginHost {
         }))
         .await;
         answers.into_iter().flatten().collect()
+    }
+}
+
+/// Every plugin's answer merged by the gap rule, as the catalog shows it.
+fn merged(answers: &[PluginEnrichment]) -> PluginDetails {
+    let mut fields = EnrichmentFields::default();
+    for answer in answers {
+        fields.fill_gaps(answer);
+    }
+    PluginDetails {
+        biography: fields.biography,
+        links: fields
+            .links
+            .into_iter()
+            .filter(|link| link.starts_with("https://") || link.starts_with("http://"))
+            .collect(),
+        tags: fields
+            .tags
+            .into_iter()
+            .map(|tag| tag.trim().to_owned())
+            .collect(),
+        image_url: fields.image_url,
+    }
+}
+
+/// The artist and album pages' plugin details.
+pub struct PluginDetailsSource(pub Arc<PluginHost>);
+
+impl DetailsSource for PluginDetailsSource {
+    fn artist<'a>(&'a self, name: &'a str, mbid: &'a str) -> BoxFuture<'a, PluginDetails> {
+        Box::pin(async move { merged(&self.0.enrich_artist(name, Some(mbid)).await) })
+    }
+
+    fn album<'a>(
+        &'a self,
+        artist: &'a str,
+        title: &'a str,
+        mbid: &'a str,
+    ) -> BoxFuture<'a, PluginDetails> {
+        Box::pin(async move { merged(&self.0.enrich_album(artist, title, Some(mbid)).await) })
     }
 }
 

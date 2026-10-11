@@ -1536,6 +1536,11 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/albums/{album_id}/purchase-options",
         Posture::User,
     ),
+    (
+        "GET",
+        "/api/v3/albums/{album_id}/plugin-details",
+        Posture::User,
+    ),
     // Stage-4 discover + queue + radio + batches.
     ("GET", "/api/v3/discover", Posture::User),
     ("POST", "/api/v3/discover/refresh", Posture::User),

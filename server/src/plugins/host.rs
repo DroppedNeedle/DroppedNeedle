@@ -132,7 +132,7 @@ struct Running {
 pub struct PluginHost {
     me: Weak<PluginHost>,
     dir: PathBuf,
-    config: Arc<ConfigStore>,
+    pub(super) config: Arc<ConfigStore>,
     launcher: Arc<dyn PluginLauncher>,
     plugins: Mutex<HashMap<String, LoadedPlugin>>,
     running: Mutex<HashMap<String, Running>>,
@@ -142,6 +142,8 @@ pub struct PluginHost {
     state: Mutex<Option<Arc<dyn PluginStateStore>>>,
     /// Subscriber fan-out and publish bookkeeping.
     pub(super) events: EventState,
+    /// Library writes per plugin (`host.library.write`).
+    pub(super) library_writes: super::capabilities::library_files::LibraryWrites,
 }
 
 impl PluginHost {
@@ -163,6 +165,7 @@ impl PluginHost {
             generation: AtomicU64::new(0),
             state: Mutex::new(None),
             events: EventState::default(),
+            library_writes: Default::default(),
         })
     }
 
@@ -735,6 +738,27 @@ impl HostServices for HostRequests {
                         .await
                         .map_err(|reason| RpcError::new(codes::HOST_REFUSED, reason))?;
                     Ok(serde_json::json!({}))
+                }
+                methods::HOST_LIBRARY_WRITE => {
+                    let rel_path = params
+                        .get("rel_path")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let data = params
+                        .get("data_base64")
+                        .and_then(Value::as_str)
+                        .and_then(|text| {
+                            use base64::Engine as _;
+                            base64::engine::general_purpose::STANDARD.decode(text).ok()
+                        })
+                        .ok_or_else(|| {
+                            RpcError::new(codes::INVALID_PARAMS, "data_base64 must be base64 text")
+                        })?;
+                    let path = host
+                        .write_library_file(plugin, rel_path, data)
+                        .await
+                        .map_err(|reason| RpcError::new(codes::HOST_REFUSED, reason))?;
+                    Ok(serde_json::json!({ "path": path }))
                 }
                 other => Err(RpcError::new(
                     codes::METHOD_NOT_FOUND,

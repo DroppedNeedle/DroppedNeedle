@@ -1460,6 +1460,47 @@
         }
       }
     },
+    "/api/v3/albums/{album_id}/plugin-details": {
+      "get": {
+        "tags": [
+          "crate::reads::catalog::handlers"
+        ],
+        "summary": "What metadata plugins add about the album: notes, tags, links and an\nimage. Empty when no plugin knows the album.",
+        "operationId": "album_plugin_details",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Release-group MBID, or a library album id identified as one",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Plugin details; empty when no plugin answers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginDetails"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a MusicBrainz id"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "503": {
+            "description": "MusicBrainz down"
+          }
+        }
+      }
+    },
     "/api/v3/albums/{album_id}/purchase-options": {
       "get": {
         "tags": [
@@ -29479,6 +29520,11 @@
             "description": "Terms a candidate must carry.",
             "default": []
           },
+          "search_review": {
+            "type": "string",
+            "description": "When an automatic download waits for a hand pick: `when_unsure`\n(no candidate looks like the whole album in an accepted quality),\n`always`, or `off` (grab the best guess).",
+            "default": "when_unsure"
+          },
           "source_selection_mode": {
             "type": "string",
             "description": "Source-vs-quality selection.",
@@ -40572,6 +40618,44 @@
           "username": {
             "type": "string",
             "description": "Linked username."
+          }
+        }
+      },
+      "PluginDetails": {
+        "type": "object",
+        "description": "`GET /albums/{album_id}/plugin-details`: what metadata plugins add\nabout an album. Each field is the first plugin's answer (plugins asked\nin name order); links and tags gather every plugin's, without repeats.\nThe page shows these below its own sources and only fills gaps.",
+        "required": [
+          "links",
+          "tags"
+        ],
+        "properties": {
+          "biography": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Notes or biography."
+          },
+          "image_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Image (`http(s)` only)."
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "External links (`http(s)` only)."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tags or genres."
           }
         }
       },

@@ -73,6 +73,8 @@ pub mod methods {
     pub const HOST_STATE_GET: &str = "host.state.get";
     /// Plugin-to-host: write one durable state key.
     pub const HOST_STATE_SET: &str = "host.state.set";
+    /// Plugin-to-host: add one new file to the music library.
+    pub const HOST_LIBRARY_WRITE: &str = "host.library.write";
     /// Plugin-to-host notification: one log line.
     pub const HOST_LOG: &str = "host.log";
 }

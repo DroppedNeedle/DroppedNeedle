@@ -737,6 +737,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/albums/{album_id}/plugin-details": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What metadata plugins add about the album: notes, tags, links and an
+         *     image. Empty when no plugin knows the album.
+         */
+        get: operations["album_plugin_details"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/albums/{album_id}/purchase-options": {
         parameters: {
             query?: never;
@@ -12500,6 +12520,13 @@ export interface components {
              */
             required_terms: string[];
             /**
+             * @description When an automatic download waits for a hand pick: `when_unsure`
+             *     (no candidate looks like the whole album in an accepted quality),
+             *     `always`, or `off` (grab the best guess).
+             * @default when_unsure
+             */
+            search_review: string;
+            /**
              * @description Source-vs-quality selection.
              * @default source_first
              */
@@ -17643,6 +17670,22 @@ export interface components {
             service: string;
             /** @description Linked username. */
             username?: string;
+        };
+        /**
+         * @description `GET /albums/{album_id}/plugin-details`: what metadata plugins add
+         *     about an album. Each field is the first plugin's answer (plugins asked
+         *     in name order); links and tags gather every plugin's, without repeats.
+         *     The page shows these below its own sources and only fills gaps.
+         */
+        PluginDetails: {
+            /** @description Notes or biography. */
+            biography?: string | null;
+            /** @description Image (`http(s)` only). */
+            image_url?: string | null;
+            /** @description External links (`http(s)` only). */
+            links: string[];
+            /** @description Tags or genres. */
+            tags: string[];
         };
         /** @description One plugin as the admin UI sees it. */
         PluginInfo: {
@@ -23449,6 +23492,50 @@ export interface operations {
             };
             /** @description Not authenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    album_plugin_details: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Release-group MBID, or a library album id identified as one */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Plugin details; empty when no plugin answers */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginDetails"];
+                };
+            };
+            /** @description Not a MusicBrainz id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description MusicBrainz down */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

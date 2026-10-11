@@ -16,6 +16,7 @@
 	import AlbumTrackList from './AlbumTrackList.svelte';
 	import AlbumDiscovery from './AlbumDiscovery.svelte';
 	import WhereToBuy from './WhereToBuy.svelte';
+	import AlbumPluginDetails from './AlbumPluginDetails.svelte';
 	import { albumHref } from '$lib/utils/entityRoutes';
 	import LibraryAlbumCard from '$lib/components/library/LibraryAlbumCard.svelte';
 	import { getLibraryAlbumCopiesQuery } from '$lib/queries/library/LibraryQueries.svelte';
@@ -292,6 +293,12 @@
 					loading={state.loadingLastfm}
 				/>
 			{/if}
+
+			<AlbumPluginDetails
+				releaseGroupMbid={album.musicbrainz_id}
+				hasNotes={!!state.lastfmEnrichment?.summary}
+				knownTags={(state.lastfmEnrichment?.tags ?? []).map((tag) => tag.name)}
+			/>
 
 			<AlbumDiscovery
 				moreByArtist={state.moreByArtist}

@@ -480,13 +480,21 @@ impl Catalog {
                 return Ok(ArtistExtendedInfo::default());
             }
         };
-        let (biography, images) = tokio::join!(
+        let (biography, images, plugins) = tokio::join!(
             self.biography(&detail),
-            self.fetch_artist_images(&detail.mbid, &detail.name)
+            self.fetch_artist_images(&detail.mbid, &detail.name),
+            self.details.artist(&detail.name, &detail.mbid)
         );
+        // Plugin details sit below Wikipedia and Wikidata: they only fill
+        // what those left empty.
+        let filled = |first: Option<String>, plugin: Option<String>| {
+            first
+                .filter(|text| !text.trim().is_empty())
+                .or(plugin.filter(|text| !text.trim().is_empty()))
+        };
         Ok(ArtistExtendedInfo {
-            description: biography.description,
-            image: biography.image,
+            description: filled(biography.description, plugins.biography),
+            image: filled(biography.image, plugins.image_url),
             images: images.unwrap_or_default(),
         })
     }

@@ -201,16 +201,24 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         runtime.pool().clone(),
         runtime.lane().clone(),
     ))
-    .with_catalog(Catalog::new(
-        Upstream::new(
-            &http,
-            providers.clone(),
-            config_store.clone(),
-            auth.users.clone(),
+    .with_catalog(
+        Catalog::new(
+            Upstream::new(
+                &http,
+                providers.clone(),
+                config_store.clone(),
+                auth.users.clone(),
+            )
+            .with_instance_lastfm_key(instance_lastfm_key(auth.users.lastfm_switch.clone())),
+            LocalCatalog::new(runtime.pool().clone()),
         )
-        .with_instance_lastfm_key(instance_lastfm_key(auth.users.lastfm_switch.clone())),
-        LocalCatalog::new(runtime.pool().clone()),
-    ));
+        .with_purchase_links(Arc::new(
+            crate::plugins::capabilities::purchase::PluginPurchaseLinks(plugin_host.clone()),
+        ))
+        .with_details(Arc::new(
+            crate::plugins::capabilities::metadata::PluginDetailsSource(plugin_host.clone()),
+        )),
+    );
     let connect_apps = match config_store.get::<ConnectApps>() {
         Ok(settings) => settings,
         Err(error) => {

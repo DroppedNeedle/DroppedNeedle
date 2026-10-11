@@ -18,8 +18,8 @@ use super::models::{
     AlbumTracksInfo, ArtistExtendedInfo, ArtistInfo, ArtistLastFmQuery,
     ArtistPurchaseOptionsResponse, ArtistPurchaseQuery, ArtistReleases, DiscoveryQuery,
     GroupEditionPinBody, GroupEditionPinResponse, LastFmAlbumEnrichment, LastFmArtistEnrichment,
-    MoreByArtistResponse, PurchaseOptionsResponse, ReleasesQuery, SimilarAlbumsResponse,
-    SimilarArtistsResponse, TopAlbumsResponse, TopSongsResponse,
+    MoreByArtistResponse, PluginDetails, PurchaseOptionsResponse, ReleasesQuery,
+    SimilarAlbumsResponse, SimilarArtistsResponse, TopAlbumsResponse, TopSongsResponse,
 };
 
 type Answer<T> = Result<Json<T>, CatalogHttpError>;
@@ -529,6 +529,26 @@ pub async fn album_lastfm(
             .album_lastfm(&user, &id, &query.artist_name, &query.album_name)
             .await,
     )
+}
+
+/// What metadata plugins add about the album: notes, tags, links and an
+/// image. Empty when no plugin knows the album.
+#[utoipa::path(
+    get,
+    path = "/api/v3/albums/{album_id}/plugin-details",
+    params(("album_id" = String, Path, description = "Release-group MBID, or a library album id identified as one")),
+    responses(
+        (status = 200, description = "Plugin details; empty when no plugin answers", body = PluginDetails),
+        (status = 400, description = "Not a MusicBrainz id"),
+        (status = 401, description = "Not authenticated"),
+        (status = 503, description = "MusicBrainz down"),
+    )
+)]
+pub async fn album_plugin_details(
+    State(deps): State<CatalogDeps>,
+    Path(id): Path<String>,
+) -> Answer<PluginDetails> {
+    answer(&deps, deps.catalog.album_plugin_details(&id).await)
 }
 
 /// Where to buy the album.

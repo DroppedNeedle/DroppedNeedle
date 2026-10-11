@@ -428,6 +428,17 @@ class PluginContext:
     async def state_set(self, key: str, value: str) -> None:
         await self._server.request("host.state.set", {"key": key, "value": str(value)})
 
+    async def write_library_file(self, rel_path: str, data: bytes) -> str:
+        """Add one new file under the first library folder; answers its path.
+        Existing files are never replaced. Up to 100 MiB a day per plugin."""
+        import base64
+
+        answer = await self._server.request(
+            "host.library.write",
+            {"rel_path": rel_path, "data_base64": base64.b64encode(bytes(data)).decode("ascii")},
+        )
+        return (answer or {}).get("path", "")
+
 
 # --------------------------------------------------------------------------
 # Protocol

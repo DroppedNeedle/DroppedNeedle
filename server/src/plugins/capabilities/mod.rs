@@ -7,6 +7,7 @@
 
 pub mod acquisition;
 pub mod events;
+pub mod library_files;
 pub mod metadata;
 pub mod purchase;
 pub mod routes;

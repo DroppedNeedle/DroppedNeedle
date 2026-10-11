@@ -17,8 +17,8 @@ use super::mapping;
 use super::models::GroupEditionPinResponse;
 use super::models::{
     AlbumBasicInfo, AlbumEditionItem, AlbumEditionsResponse, AlbumImages, AlbumInfo, AlbumTrack,
-    AlbumTracksInfo, CatalogSource, LastFmAlbumEnrichment, LastFmTag, PurchaseKind, PurchaseLink,
-    PurchaseOptionsResponse,
+    AlbumTracksInfo, CatalogSource, LastFmAlbumEnrichment, LastFmTag, PluginDetails, PurchaseKind,
+    PurchaseLink, PurchaseOptionsResponse,
 };
 use super::ports::PurchaseQuery;
 use super::{Catalog, MISS_TTL, is_mbid, mb_error, mb_retry, record_mb_down, secs};
@@ -1146,6 +1146,20 @@ impl Catalog {
             },
             complete,
         ))
+    }
+
+    /// `GET /albums/{album_id}/plugin-details`: what metadata plugins add
+    /// about the album. Not cached: plugins answer under their own time
+    /// budget, and none installed answers empty at once.
+    pub async fn album_plugin_details(&self, raw_id: &str) -> Result<PluginDetails, CatalogError> {
+        let id = self.album_id(raw_id).await?;
+        let Some(group) = self.group_detail(&id).await? else {
+            return Ok(PluginDetails::default());
+        };
+        Ok(self
+            .details
+            .album(&group.credit, &group.title, &group.mbid)
+            .await)
     }
 
     /// `GET /albums/{album_id}/lastfm`: Last.fm summary and tags with the

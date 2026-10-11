@@ -191,10 +191,10 @@ server carries on as if the plugin had said nothing.
 | Capability | Methods | Time limit | When a plugin fails |
 |---|---|---|---|
 | `scrobbler` | `on_scrobble(event)` | 10 s | the play is still recorded |
-| `purchase_links` (not shown yet) | `purchase_links(artist, album, release_group_mbid)` | 10 s | no links from it |
+| `purchase_links` | `purchase_links(artist, album, release_group_mbid)` | 10 s | no links from it |
 | `subscriber` | `on_event(event)` | 5 s | that event is skipped |
 | `publisher` | `handle_route(method, subpath, query, body)` for `[[route]]`s; `await ctx.publish(kind, payload)` | 5 s | the route answers 502 |
-| `metadata_provider` (not shown yet) | `enrich_artist(...)`, `enrich_album(...)` | 15 s | nothing is filled in |
+| `metadata_provider` | `enrich_artist(...)`, `enrich_album(...)` | 15 s | nothing is filled in |
 | `scheduler` | `on_tick()` | the interval | the next tick runs as normal |
 | `streaming_source` | `resolve_stream(recording_mbid, user_id)` | 5 s | the next plugin is asked |
 | `indexer` | `search_album(...)`, `search_track(...)` | 35 s | no results from it |
@@ -214,9 +214,8 @@ Example: `examples/plugins/webhook-scrobbler`.
 
 ### purchase_links
 
-**Not shown yet.** The server accepts and runs `purchase_links` plugins, but
-the album page in this version does not ask them for links yet. The
-contract below is what the page will use.
+The album page's "Where to buy" list asks every `purchase_links` plugin
+after the links MusicBrainz knows, and adds theirs to it.
 
 `purchase_links(artist, album, release_group_mbid)` returns a list of
 `PluginPurchaseLink(label, url, kind)`, where `kind` is `digital`, `physical`
@@ -281,9 +280,9 @@ Example: `examples/plugins/events-echo-toy`.
 
 ### metadata_provider
 
-**Not shown yet.** The server accepts and runs `metadata_provider` plugins,
-but the artist and album pages in this version do not ask them yet. The
-contract and merge rules below are what the pages will use.
+The artist page asks `enrich_artist` when it loads the biography, and the
+album page asks `enrich_album` for a small "From plugins" card under the
+Last.fm notes.
 
 `enrich_artist(*, artist_name, mbid=None, timeout=...)` and
 `enrich_album(*, artist_name, album_title, mbid=None, timeout=...)` return a
@@ -295,6 +294,11 @@ contract and merge rules below are what the pages will use.
 | biography | kept | the first plugin biography |
 | links, tags | kept, plugin entries added after | plugin entries |
 | image | kept | the first plugin image URL |
+
+On the artist page a plugin biography or image shows only when Wikipedia and
+Wikidata have none. On the album page the plugin notes show only when Last.fm
+has none, and only tags Last.fm did not already list are added. Links show
+as they come.
 
 Example: `examples/plugins/metadata-joke-toy`.
 
@@ -309,6 +313,16 @@ For state that should survive restarts, use `await ctx.state_set(key, value)`
 and `await ctx.state_get(key)`: small strings (up to 1 MiB each) that the
 server keeps in its database for you (at most 1000 keys and 64 MiB per
 plugin). Files in `ctx.data_dir` also survive.
+
+To put a file into the music library itself, use
+`await ctx.write_library_file(rel_path, data)`. It adds one new file under
+your first library folder and answers the full path. The path is relative,
+in lowercase letters, digits, `_`, `-`, `.` and `/`, without hidden or `..`
+parts. A file that already exists is never replaced: the call fails
+instead. Each plugin may write 100 MiB a day; past that the call fails until
+older writes are a day old. Files a plugin adds are picked up by the next
+library scan like any other file. A single call carries at most about 6 MiB,
+because each message to the server is capped at 8 MiB.
 
 Example: `examples/plugins/http-catalog`.
 
@@ -412,6 +426,8 @@ only, from inside the plugin folder. `external_url` shows a link instead.
 - `ctx.logger`: a logger; its lines land in the server log under the
   plugin's name.
 - `ctx.publish(kind, payload)`, `ctx.state_get(key)`, `ctx.state_set(key, value)`.
+- `ctx.write_library_file(rel_path, data)`: add one new file to the library
+  (see the scheduler section).
 - `ctx.scoring.album_match(artist, album, title)` and `track_match(...)`:
   optional 0-1 word-overlap scores for indexers.
 - `ctx.name`, `ctx.plugin_dir`, `ctx.data_dir`.
@@ -433,7 +449,9 @@ too, one entry per line.
 2. If you used `ctx.http` like `httpx`, it keeps working for the common calls
    above. Streaming responses and client options are not there.
 3. Anything that reached into the server's own Python code no longer exists;
-   use `ctx` instead.
+   use `ctx` instead. `plugin_write_library_file(plugin_name=..., rel_path=...,
+   data=...)` becomes `await ctx.write_library_file(rel_path, data)`. Paths may
+   now contain dots, and an existing file is never replaced (v2 replaced it).
 4. State you kept in memory is lost when the plugin restarts (it is a separate
    process now). Keep anything important in `ctx.state_set` or in files under
    `ctx.data_dir`.
@@ -511,6 +529,7 @@ Answer an unknown method with error code `-32601`; the server treats that as
 | `host.publish` | `{kind, payload, causation_id?}` | `{ok, status, retry_after, error}` |
 | `host.state.get` | `{key}` | `{value}` (`null` when unset) |
 | `host.state.set` | `{key, value}` | `{}` |
+| `host.library.write` | `{rel_path, data_base64}` | `{path}`; refused (-32001) for a bad path, an existing file or over the daily allowance |
 
 State keys are 1-64 lowercase letters, digits, `_`, `-` or `/`, starting
 with a letter or digit; values are strings up to 1 MiB. One plugin may keep

@@ -61,6 +61,8 @@ export const CATALOG_ENDPOINTS = {
 		}),
 	albumPurchaseOptions: (albumId: string) =>
 		v3('/api/v3/albums/{album_id}/purchase-options', { path: { album_id: albumId } }),
+	albumPluginDetails: (albumId: string) =>
+		v3('/api/v3/albums/{album_id}/plugin-details', { path: { album_id: albumId } }),
 	editions: (albumId: string) =>
 		v3('/api/v3/albums/{album_id}/editions', { path: { album_id: albumId } }),
 	editionTracks: (albumId: string, releaseMbid: string) =>

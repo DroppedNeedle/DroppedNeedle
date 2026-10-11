@@ -396,6 +396,22 @@ pub struct PurchaseOptionsResponse {
     pub bandcamp_search_url: String,
 }
 
+/// `GET /albums/{album_id}/plugin-details`: what metadata plugins add
+/// about an album. Each field is the first plugin's answer (plugins asked
+/// in name order); links and tags gather every plugin's, without repeats.
+/// The page shows these below its own sources and only fills gaps.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct PluginDetails {
+    /// Notes or biography.
+    pub biography: Option<String>,
+    /// External links (`http(s)` only).
+    pub links: Vec<String>,
+    /// Tags or genres.
+    pub tags: Vec<String>,
+    /// Image (`http(s)` only).
+    pub image_url: Option<String>,
+}
+
 /// `GET /artists/{artist_mbid}/purchase-options`: the artist's own store
 /// pages (Bandcamp, merch shop).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

@@ -77,6 +77,7 @@ pub mod journal;
 pub mod operations;
 pub mod paths;
 pub mod planner;
+pub mod plugin_files;
 pub mod publisher;
 pub mod recovery;
 pub mod snapshots;

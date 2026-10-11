@@ -35,3 +35,16 @@ export const getArtistPurchaseOptionsQuery = (mbid: Getter<string>, name: Getter
 		queryFn: ({ signal }) =>
 			api.global.v3.GET(CATALOG_ENDPOINTS.artistPurchaseOptions(mbid(), name()), { signal })
 	}));
+
+// Notes, tags and links metadata plugins add about one album. Lazy like the
+// purchase links; empty when no plugin knows the album.
+export const pluginDetailsKey = (mbid: string) => ['albums', 'plugin-details', mbid] as const;
+
+export const getAlbumPluginDetailsQuery = (mbid: Getter<string>) =>
+	createQuery(() => ({
+		queryKey: pluginDetailsKey(mbid()),
+		enabled: !!mbid(),
+		staleTime: 60 * 60 * 1000,
+		queryFn: ({ signal }) =>
+			api.global.v3.GET(CATALOG_ENDPOINTS.albumPluginDetails(mbid()), { signal })
+	}));

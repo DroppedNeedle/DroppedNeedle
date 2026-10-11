@@ -60,6 +60,7 @@ pub struct Catalog {
     inner: Arc<Inner>,
     follows: Arc<dyn ports::FollowLookup>,
     purchase_links: Arc<dyn ports::PurchaseLinkSource>,
+    details: Arc<dyn ports::DetailsSource>,
     editions: Arc<dyn EditionChoices>,
 }
 
@@ -95,6 +96,7 @@ impl Catalog {
             }),
             follows: Arc::new(ports::NoFollows),
             purchase_links: Arc::new(ports::NoPurchaseLinks),
+            details: Arc::new(ports::NoDetails),
             editions: Arc::new(NoEditionChoices),
         }
     }
@@ -111,6 +113,14 @@ impl Catalog {
     #[must_use]
     pub fn with_purchase_links(mut self, source: Arc<dyn ports::PurchaseLinkSource>) -> Self {
         self.purchase_links = source;
+        self
+    }
+
+    /// Fill gaps in artist and album pages (the plugins'
+    /// `metadata_provider`) from this source.
+    #[must_use]
+    pub fn with_details(mut self, source: Arc<dyn ports::DetailsSource>) -> Self {
+        self.details = source;
         self
     }
 
@@ -325,6 +335,10 @@ pub fn router(deps: CatalogDeps) -> Router {
             put(handlers::set_album_edition).delete(handlers::clear_album_edition),
         )
         .route("/albums/{album_id}/similar", get(handlers::similar_albums))
+        .route(
+            "/albums/{album_id}/plugin-details",
+            get(handlers::album_plugin_details),
+        )
         .route(
             "/albums/{album_id}/more-by-artist",
             get(handlers::more_by_artist),
