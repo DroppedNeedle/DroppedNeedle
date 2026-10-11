@@ -18,9 +18,9 @@
 //!
 //! The streaming open hands its direct lease back inside [`StreamMedia`],
 //! so a caller that moves it into the response body bounds response
-//! concurrency, not only opens (the compat adapters do). Remote reads are
-//! whole and direct-only (the ffmpeg service takes a local path;
-//! per-source server-side transcode stays a remotes-adapter concern).
+//! concurrency, not only opens (the compat adapters do). Remote reads
+//! stream by range and are direct-only (the ffmpeg service takes a local
+//! path; per-source server-side transcode stays a remotes-adapter concern).
 //!
 //! [`StreamEngine`]: super::routes::StreamEngine
 //! [`decide()`]: super::transcode::decide
@@ -62,6 +62,28 @@ pub trait RemoteReader: Send + Sync {
         key: &str,
         user_id: &str,
     ) -> impl Future<Output = Result<RemoteMedia, StreamFault>> + Send;
+
+    /// Open one remote object for streaming; `head_only` needs only its
+    /// metadata. The default reads it whole through [`Self::fetch`].
+    fn open_stream(
+        &self,
+        source: AudioSource,
+        key: &str,
+        user_id: &str,
+        head_only: bool,
+    ) -> impl Future<Output = Result<StreamMedia, StreamFault>> + Send {
+        let _ = head_only;
+        async move {
+            let media = self.fetch(source, key, user_id).await?;
+            Ok(StreamMedia::from(OpenMedia {
+                content_type: media.content_type,
+                total_len: media.bytes.len() as u64,
+                transcoded: false,
+                estimated_len: None,
+                bytes: media.bytes,
+            }))
+        }
+    }
 }
 
 /// One source-keyed gateway: sandboxed local reads, injected remote reads,
@@ -153,10 +175,11 @@ impl<R: RemoteReader, T: Transcoder> StreamEngine for Gateway<R, T> {
         let mut media = match request.source {
             AudioSource::Local => self.stream_local(&request, head_only).await?,
             AudioSource::Plugin => self.stream_plugin(&request, head_only).await?,
-            source => self
-                .open_remote(source, &request)
-                .await
-                .map(StreamMedia::from)?,
+            source => {
+                self.remote
+                    .open_stream(source, &request.key, &request.user_id, head_only)
+                    .await?
+            }
         };
         media.lease = Some(lease);
         Ok(media)
@@ -335,6 +358,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             .as_deref()
             .is_some_and(|format| format.eq_ignore_ascii_case("raw"));
         let start_seconds = request.params.start_seconds;
+        let settings = &self.settings;
         // Compat verdict carry: the protocol modules decide with real source
         // bitrate facts, while this re-run sees `bitrate_kbps: None`, so a
         // bitrate-triggered same-codec plan would land direct here. When the
@@ -343,11 +367,11 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
         // win, since a forced plan must never spawn ffmpeg when the policy
         // says direct.
         if request.params.force_transcode
-            && self.settings.transcoding_enabled
+            && settings.transcoding_enabled
             && self.ffmpeg_present
             && !force_original
         {
-            return forced_plan(&request.params, &self.settings, start_seconds);
+            return forced_plan(&request.params, settings, start_seconds);
         }
         decide(
             &track,
@@ -355,7 +379,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             request.params.max_bitrate_kbps,
             force_original,
             start_seconds,
-            &self.settings,
+            settings,
             self.ffmpeg_present,
         )
     }

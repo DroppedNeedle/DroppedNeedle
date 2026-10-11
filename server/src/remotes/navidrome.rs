@@ -745,12 +745,18 @@ impl NavidromeAdapter {
         .await
     }
 
-    /// Direct audio bytes for one song id via `/rest/stream` (v2
-    /// `build_stream_url` target, fetched whole for the gateway seam).
-    pub async fn audio_bytes(&self, id: &str) -> Result<(Vec<u8>, String), AdapterError> {
+    /// The direct audio request for one song id via `/rest/stream` (v2
+    /// `build_stream_url` target). The caller sends it, by range when it
+    /// seeks.
+    pub fn audio_request(&self, id: &str) -> Result<reqwest::Request, AdapterError> {
         self.require_configured()?;
-        self.get_bytes("/rest/stream", &params(&[("id", id)]), "audio/mpeg")
-            .await
+        let mut query = auth_params(&self.username, &self.password);
+        query.extend(params(&[("id", id)]));
+        self.client
+            .get(format!("{}/rest/stream", self.base_url))
+            .query(&query)
+            .build()
+            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))
     }
 
     /// Now-playing report via `/rest/scrobble` with `submission=false`

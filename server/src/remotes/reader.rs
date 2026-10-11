@@ -2,7 +2,8 @@
 //!
 //! [`RemotesRemoteReader`] implements the gateway's [`RemoteReader`] seam:
 //! it resolves the caller's stored connection for the requested source,
-//! builds that source's adapter, and fetches whole audio bytes. Folder
+//! builds that source's adapter, and streams the audio by range (or reads
+//! it whole for the compat whole-object path). Folder
 //! scoping does not apply (byte reads address ids, not catalogs), and
 //! server-side transcode is not supported for remotes, so transcode hints
 //! never reach this layer.
@@ -10,7 +11,8 @@
 use std::sync::Arc;
 
 use crate::stream::gateway::{RemoteMedia, RemoteReader};
-use crate::stream::routes::{AudioSource, StreamFault};
+use crate::stream::ranged;
+use crate::stream::routes::{AudioSource, MediaBody, StreamFault, StreamMedia};
 
 use super::adapter::AdapterError;
 use super::connections::{
@@ -52,13 +54,13 @@ impl RemotesRemoteReader {
     }
 }
 
-impl RemoteReader for RemotesRemoteReader {
-    async fn fetch(
+impl RemotesRemoteReader {
+    /// The caller's adapter for one remote source.
+    async fn handle(
         &self,
         source: AudioSource,
-        key: &str,
         user_id: &str,
-    ) -> Result<RemoteMedia, StreamFault> {
+    ) -> Result<super::adapter::RemoteHandle, StreamFault> {
         let name = match source {
             AudioSource::Local => {
                 // The gateway serves local reads itself and never routes
@@ -83,7 +85,7 @@ impl RemoteReader for RemotesRemoteReader {
                 ResolveError::Stale => StreamFault::Upstream { source },
                 ResolveError::Store(cause) => StreamFault::Internal { cause },
             })?;
-        let handle = match name {
+        Ok(match name {
             SourceName::Jellyfin => super::adapter::RemoteHandle::Jellyfin(JellyfinAdapter::new(
                 self.http.clone(),
                 resolved.base_url,
@@ -105,16 +107,148 @@ impl RemoteReader for RemotesRemoteReader {
                 resolved.client_id,
                 resolved.section_ids,
             )),
-        };
-        let (bytes, content_type) = handle
-            .audio_bytes(key)
-            .await
-            .map_err(|error| map_fault(source, error))?;
-        Ok(RemoteMedia {
-            content_type,
-            bytes,
         })
     }
+
+    /// Resolve and send the audio request for one key.
+    async fn audio_response(
+        &self,
+        source: AudioSource,
+        key: &str,
+        user_id: &str,
+    ) -> Result<(reqwest::Response, Option<reqwest::Request>), StreamFault> {
+        let request = self
+            .handle(source, user_id)
+            .await?
+            .audio_request(key)
+            .map_err(|error| map_fault(source, error))?;
+        let again = request.try_clone();
+        let response = send(&self.http, request)
+            .await
+            .map_err(|error| map_fault(source, error))?;
+        Ok((response, again))
+    }
+}
+
+impl RemoteReader for RemotesRemoteReader {
+    async fn fetch(
+        &self,
+        source: AudioSource,
+        key: &str,
+        user_id: &str,
+    ) -> Result<RemoteMedia, StreamFault> {
+        let (response, _) = self.audio_response(source, key, user_id).await?;
+        let content_type = content_type(&response);
+        let bytes = response.bytes().await.map_err(|cause| {
+            tracing::warn!(cause = %cause.without_url(), source = source.as_str(), "remote audio read failed");
+            StreamFault::Upstream { source }
+        })?;
+        Ok(RemoteMedia {
+            content_type,
+            bytes: bytes.to_vec(),
+        })
+    }
+
+    async fn open_stream(
+        &self,
+        source: AudioSource,
+        key: &str,
+        user_id: &str,
+        head_only: bool,
+    ) -> Result<StreamMedia, StreamFault> {
+        let (response, again) = self.audio_response(source, key, user_id).await?;
+        let content_type = content_type(&response);
+        let sized = response.content_length().filter(|len| *len > 0);
+        let media = match (sized, again) {
+            // A sized answer streams by range, so players can seek.
+            (Some(total), Some(again)) => StreamMedia {
+                content_type,
+                total_len: total,
+                transcoded: false,
+                estimated_len: None,
+                body: if head_only {
+                    MediaBody::Empty
+                } else {
+                    MediaBody::Spans(ranged::spans(
+                        response,
+                        ranged::response_chunks,
+                        range_reopen(self.http.clone(), again),
+                    ))
+                },
+                lease: None,
+            },
+            // No size: streamed whole and unranged, like a transcode.
+            _ => StreamMedia {
+                content_type,
+                total_len: 0,
+                transcoded: true,
+                estimated_len: None,
+                body: if head_only {
+                    MediaBody::Empty
+                } else {
+                    MediaBody::Chunks(ranged::response_chunks(response))
+                },
+                lease: None,
+            },
+        };
+        Ok(media)
+    }
+}
+
+/// How long a remote server may take to start answering an audio request.
+const SEND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Send one audio request and require a success status. Only the start of
+/// the answer is timed; the body is paced by the chunk idle timeout, so a
+/// long track is never cut off mid-play.
+async fn send(
+    http: &reqwest::Client,
+    request: reqwest::Request,
+) -> Result<reqwest::Response, AdapterError> {
+    let response = tokio::time::timeout(SEND_TIMEOUT, http.execute(request))
+        .await
+        .map_err(|_| AdapterError::Transport("the server did not answer in time".to_owned()))?
+        .map_err(|cause| {
+            AdapterError::Transport(cause.without_url().to_string().chars().take(200).collect())
+        })?;
+    let status = response.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err(AdapterError::Auth);
+    }
+    if status == reqwest::StatusCode::NOT_FOUND {
+        return Err(AdapterError::NotFound);
+    }
+    if !status.is_success() {
+        return Err(AdapterError::Api(format!(
+            "audio request failed ({status})"
+        )));
+    }
+    Ok(response)
+}
+
+/// Re-send the audio request with a `Range` header.
+fn range_reopen(http: reqwest::Client, request: reqwest::Request) -> ranged::RangeOpen {
+    Box::new(move |range| {
+        Box::pin(async move {
+            let mut request = request;
+            let value = reqwest::header::HeaderValue::from_str(&range)
+                .map_err(|error| error.to_string())?;
+            request.headers_mut().insert(reqwest::header::RANGE, value);
+            send(&http, request)
+                .await
+                .map_err(|error| error.to_string())
+        })
+    })
+}
+
+/// The upstream content type, or `audio/mpeg` when it names none.
+fn content_type(response: &reqwest::Response) -> String {
+    response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("audio/mpeg")
+        .to_owned()
 }
 
 /// Map an adapter failure onto the gateway fault spelling. Upstream detail

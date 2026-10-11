@@ -1,16 +1,16 @@
 //! Byte plumbing for `streaming_source` plugins that answer with a URL.
 //!
-//! A direct play is proxied by range: the first open learns the size, and
-//! a seek asks the upstream for just the bytes it needs (an upstream that
-//! ignores `Range` is skipped forward instead). A transcode spools the URL
-//! into a temp file first, because ffmpeg only ever reads local files; the
-//! file lives as long as the transcode body and is removed when it ends.
+//! A direct play is proxied by range through [`super::ranged`]. A
+//! transcode spools the URL into a temp file first, because ffmpeg only
+//! ever reads local files; the file lives as long as the transcode body
+//! and is removed when it ends.
 
 use std::path::{Path, PathBuf};
 
-use futures_util::{StreamExt as _, TryStreamExt as _};
+use futures_util::StreamExt as _;
 
-use super::routes::{ChunkStream, SpanOpener};
+use super::ranged;
+use super::routes::SpanOpener;
 use crate::plugins::capabilities::stream::{PROXY_MAX_BYTES, open_url, proxy_chunks};
 
 /// The audio format a plugin URL carries: the URL path's extension, else
@@ -48,71 +48,14 @@ pub fn url_format(url: &reqwest::Url, content_type: &str) -> String {
         .unwrap_or_default()
 }
 
-/// `take` bytes of `chunks` after skipping the first `skip`. Ending short
-/// fails the stream, so a response never sends less than it advertised.
-pub fn byte_window(chunks: ChunkStream, skip: u64, take: u64) -> ChunkStream {
-    futures_util::stream::unfold(Some((chunks, skip, take)), |state| async move {
-        let (mut chunks, mut skip, remaining) = state?;
-        if remaining == 0 {
-            return None;
-        }
-        loop {
-            match chunks.next().await {
-                Some(Ok(mut chunk)) => {
-                    let len = chunk.len() as u64;
-                    if skip >= len {
-                        skip -= len;
-                        continue;
-                    }
-                    chunk.drain(..usize::try_from(skip).unwrap_or(chunk.len()));
-                    let keep = remaining.min(chunk.len() as u64);
-                    chunk.truncate(usize::try_from(keep).unwrap_or(chunk.len()));
-                    return Some((Ok(chunk), Some((chunks, 0, remaining - keep))));
-                }
-                Some(Err(error)) => return Some((Err(error), None)),
-                None => {
-                    return Some((
-                        Err(std::io::Error::new(
-                            std::io::ErrorKind::UnexpectedEof,
-                            "plugin stream ended before the advertised length",
-                        )),
-                        None,
-                    ));
-                }
-            }
-        }
-    })
-    .boxed()
-}
-
-/// Span opener over a sized plugin URL. `first` is the open that learned
-/// the size: a span from byte 0 reuses it, any other span drops it and
-/// asks the upstream for that range, re-checking every redirect hop.
+/// Span opener over a sized plugin URL; every range request re-checks
+/// each redirect hop, like the first open.
 pub fn spans(client: reqwest::Client, url: reqwest::Url, first: reqwest::Response) -> SpanOpener {
-    Box::new(move |start, len| {
-        if start == 0 {
-            return byte_window(proxy_chunks(first).boxed(), 0, len);
-        }
-        drop(first);
-        if len == 0 {
-            return futures_util::stream::empty().boxed();
-        }
-        let range = format!("bytes={}-{}", start, start.saturating_add(len - 1));
-        futures_util::stream::once(async move {
-            let response = open_url(&client, url, Some(&range))
-                .await
-                .map_err(std::io::Error::other)?;
-            match response.status().as_u16() {
-                206 => Ok(byte_window(proxy_chunks(response).boxed(), 0, len)),
-                200 => Ok(byte_window(proxy_chunks(response).boxed(), start, len)),
-                status => Err(std::io::Error::other(format!(
-                    "plugin stream range answered {status}"
-                ))),
-            }
-        })
-        .try_flatten()
-        .boxed()
-    })
+    ranged::spans(
+        first,
+        |response| proxy_chunks(response).boxed(),
+        Box::new(move |range| Box::pin(async move { open_url(&client, url, Some(&range)).await })),
+    )
 }
 
 /// A plugin URL copied to a local temp file for ffmpeg. Dropping it
@@ -180,22 +123,6 @@ pub fn within_cap(len: u64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn chunks(parts: &[&[u8]]) -> ChunkStream {
-        let parts: Vec<_> = parts.iter().map(|part| Ok(part.to_vec())).collect();
-        futures_util::stream::iter(parts).boxed()
-    }
-
-    #[tokio::test]
-    async fn window_skips_and_cuts_across_chunks() {
-        let out: Vec<u8> = byte_window(chunks(&[b"abc", b"defg", b"hij"]), 2, 6)
-            .try_concat()
-            .await
-            .unwrap();
-        assert_eq!(out, b"cdefgh");
-        let short = byte_window(chunks(&[b"abc"]), 1, 5).try_concat().await;
-        assert!(short.is_err());
-    }
 
     #[test]
     fn format_prefers_the_url_extension_then_the_hint() {

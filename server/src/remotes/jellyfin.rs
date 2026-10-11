@@ -920,17 +920,22 @@ impl JellyfinAdapter {
             .await
     }
 
-    /// Direct audio bytes for one item (`/Audio/{id}/stream?static=true`,
+    /// The direct audio request for one item (`/Audio/{id}/stream?static=true`,
     /// v2 `get_playback_url` direct landing without the playback-info round
-    /// trip; server-side transcode is not supported here).
-    pub async fn audio_bytes(&self, id: &str) -> Result<(Vec<u8>, String), AdapterError> {
+    /// trip; server-side transcode is not supported here). The caller
+    /// sends it, by range when it seeks.
+    pub fn audio_request(&self, id: &str) -> Result<reqwest::Request, AdapterError> {
         self.require_configured()?;
         let mut query = params(&[("static", "true")]);
         if !self.user_id.is_empty() {
             query.push(("userId".to_owned(), self.user_id.clone()));
         }
-        self.get_bytes(&format!("/Audio/{id}/stream"), &query, "audio/mpeg")
-            .await
+        self.client
+            .get(format!("{}/Audio/{id}/stream", self.base_url))
+            .header("Authorization", self.auth_header())
+            .query(&query)
+            .build()
+            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))
     }
 
     /// Session report to `/Sessions/Playing`, `/Sessions/Playing/Progress`,

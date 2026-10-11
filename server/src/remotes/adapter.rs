@@ -739,14 +739,15 @@ impl RemoteHandle {
         }
     }
 
-    /// Direct audio bytes plus content type. The key is source-native: a
-    /// Jellyfin item id, a Navidrome song id, or a Plex part key. This is
-    /// the stream gateway's remote read; folder scoping does not apply.
-    pub async fn audio_bytes(&self, key: &str) -> Result<(Vec<u8>, String), AdapterError> {
+    /// The direct audio request for one key, unsent. The key is
+    /// source-native: a Jellyfin item id, a Navidrome song id, or a Plex
+    /// part key. This is the stream gateway's remote read; folder scoping
+    /// does not apply.
+    pub fn audio_request(&self, key: &str) -> Result<reqwest::Request, AdapterError> {
         match self {
-            Self::Jellyfin(inner) => inner.audio_bytes(key).await,
-            Self::Navidrome(inner) => inner.audio_bytes(key).await,
-            Self::Plex(inner) => inner.audio_bytes(key).await,
+            Self::Jellyfin(inner) => inner.audio_request(key),
+            Self::Navidrome(inner) => inner.audio_request(key),
+            Self::Plex(inner) => inner.audio_request(key),
         }
     }
 

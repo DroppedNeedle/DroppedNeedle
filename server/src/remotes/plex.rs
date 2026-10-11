@@ -784,14 +784,18 @@ impl PlexAdapter {
         .await
     }
 
-    /// Direct audio bytes for one part key (v2 `proxy_get_stream` target,
-    /// fetched whole for the gateway seam). Keys are validated exactly as
-    /// in v2: a leading slash is added, `..` segments and non-part paths
-    /// are rejected without any request.
-    pub async fn audio_bytes(&self, part_key: &str) -> Result<(Vec<u8>, String), AdapterError> {
+    /// The direct audio request for one part key (v2 `proxy_get_stream`
+    /// target). Keys are validated exactly as in v2: a leading slash is
+    /// added, `..` segments and non-part paths are rejected without any
+    /// request. The caller sends it, by range when it seeks.
+    pub fn audio_request(&self, part_key: &str) -> Result<reqwest::Request, AdapterError> {
         self.require_configured()?;
         let key = validated_part_key(part_key)?;
-        self.get_bytes(&key, &[], false, "audio/mpeg").await
+        self.client
+            .get(format!("{}{key}", self.base_url()))
+            .headers(self.headers())
+            .build()
+            .map_err(|cause| AdapterError::Transport(trim_cause(cause)))
     }
 
     /// Playback-state report via `/:/timeline` (v2 `now_playing`): `state`
