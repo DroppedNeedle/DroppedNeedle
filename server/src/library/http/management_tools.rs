@@ -111,7 +111,6 @@ pub struct ManagementTagEditorFieldView {
     /// `string`, `integer`, `boolean`, or `ordered_strings`.
     pub cardinality: String,
     /// The file's value now: text, a number, true/false, a list, or null.
-    #[schema(value_type = Object)]
     pub current_value: serde_json::Value,
     pub override_id: Option<String>,
     /// `replace`, `preserve`, or `clear`.
@@ -189,7 +188,6 @@ pub struct ManagementTagEditFieldBody {
     /// Text, a number, true/false, a list, or null to clear. Ignored for
     /// a reset.
     #[serde(default)]
-    #[schema(value_type = Object)]
     pub value: serde_json::Value,
 }
 
