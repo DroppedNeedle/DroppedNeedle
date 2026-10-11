@@ -6,6 +6,7 @@ pub mod corrections;
 pub mod edition;
 pub mod error;
 pub mod handlers;
+pub mod management;
 pub mod models;
 pub mod mutations;
 pub mod operations;

@@ -3875,6 +3875,188 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/management/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Management history, newest first. */
+        get: operations["list_management_operations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/operations/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One management operation. */
+        get: operations["get_management_operation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/operations/{job_id}/results": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A page of an applied operation's files with their outcome. */
+        get: operations["list_management_operation_results"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/operations/{job_id}/undo-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview undoing an applied operation. Apply the undo preview like any
+         *     other.
+         */
+        post: operations["create_management_undo_preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/previews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Make a management preview. Planning runs in the background; poll the
+         *     preview until it is ready.
+         */
+        post: operations["create_management_preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/previews/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One preview with its summary. */
+        get: operations["get_management_preview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/previews/{job_id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply a ready preview: its albums are written one at a time in the
+         *     background. Watch the operation for progress.
+         */
+        post: operations["apply_management_preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/previews/{job_id}/discard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Set a preview aside without changing any file. */
+        post: operations["discard_management_preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/previews/{job_id}/items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A page of the files a preview planned. */
+        get: operations["list_management_preview_items"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/previews/{job_id}/reissue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A new confirmation token for your own ready preview (the old one
+         *     stops working).
+         */
+        post: operations["reissue_management_preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/mbids": {
         parameters: {
             query?: never;
@@ -15232,6 +15414,306 @@ export interface components {
             field: string;
             /** @default replace */
             mode: components["schemas"]["FieldMode"];
+        };
+        /** @description Apply a ready preview. */
+        ManagementApplyBody: {
+            /** @description Must be true: the administrator confirmed the change. */
+            confirmation?: boolean;
+            /** Format: int64 */
+            expected_operation_row_revision: number;
+            idempotency_key: string;
+            preview_token: string;
+        };
+        /** @description Catalog filter for a `filter` selection. */
+        ManagementCatalogFilterBody: {
+            album_artist_only?: boolean;
+            artist_ids?: string[];
+            /** Format: int64 */
+            from_year?: number | null;
+            genre?: string | null;
+            search?: string | null;
+            /** Format: int64 */
+            to_year?: number | null;
+        };
+        /** @description Discard a preview. */
+        ManagementDiscardBody: {
+            /** Format: int64 */
+            expected_operation_row_revision: number;
+        };
+        /** @description One row of management history. */
+        ManagementHistoryItemView: {
+            activation_preview: boolean;
+            /** Format: int64 */
+            blocked_count: number;
+            /** Format: int64 */
+            eligible_count: number;
+            /** Format: double */
+            expires_at?: number | null;
+            mode: string;
+            operation: components["schemas"]["OperationView"];
+            origin: string;
+            phase: string;
+            profile_id: string;
+            profile_name: string;
+            profile_revision: string;
+            selection: Record<string, never>;
+            target_root_id?: string | null;
+            /** Format: int64 */
+            warning_count: number;
+        };
+        /** @description One page of history, newest first. */
+        ManagementHistoryPage: {
+            items: components["schemas"]["ManagementHistoryItemView"][];
+            /** @description Pass back as `cursor` for the next page; null on the last. */
+            next_cursor?: string | null;
+        };
+        /** @description A management job: a preview, an apply in progress, or a finished one. */
+        ManagementJobView: {
+            /** Format: int64 */
+            baseline_available_count: number;
+            /** Format: int64 */
+            catalog_revision: number;
+            /** Format: int64 */
+            completed_count: number;
+            control_request: string;
+            /** Format: double */
+            created_at: number;
+            /** Format: int64 */
+            expected_work_count: number;
+            expired: boolean;
+            /** Format: double */
+            expires_at?: number | null;
+            external_refreshes: Record<string, never>[];
+            /** Format: int64 */
+            failed_count: number;
+            job_id: string;
+            /** @description For an undo: the operation it puts back. */
+            linked_job_id?: string | null;
+            /** @description `preview`, `apply`, or `undo` (v2 history may show others). */
+            mode: string;
+            /** Format: int64 */
+            operation_event_revision: number;
+            /**
+             * Format: int64
+             * @description Echo this on apply, discard and undo preview.
+             */
+            operation_row_revision: number;
+            origin: string;
+            /** @description `planning`, `ready`, `applying`, `undoing`, or `complete`. */
+            phase: string;
+            policy_revision: string;
+            profile_id: string;
+            profile_name: string;
+            profile_revision: string;
+            proposed_settings_revision?: string | null;
+            ready_for_confirmation: boolean;
+            selection: Record<string, never>;
+            settings_revision: string;
+            /** Format: int64 */
+            skipped_count: number;
+            stale: boolean;
+            /** Format: int64 */
+            stale_input_count: number;
+            /** @description Why the preview can no longer be applied, in words. */
+            stale_reasons: string[];
+            stale_sample_relative_paths: string[];
+            /**
+             * @description The operation state: `queued`, `running`, `paused`, `ready`,
+             *     `succeeded`, `failed`, `cancelled`, or `stopped`.
+             */
+            state: string;
+            /** Format: int64 */
+            succeeded_count: number;
+            summary: components["schemas"]["ManagementSummaryView"];
+            target_root_id?: string | null;
+            terminal_code?: string | null;
+            terminal_reason?: null | components["schemas"]["ReasonView"];
+            /**
+             * Format: int64
+             * @description Files whose change can still be undone.
+             */
+            undo_available_count: number;
+            /** Format: int64 */
+            undo_expired_count: number;
+            /** Format: double */
+            undo_expires_at?: number | null;
+            /** Format: double */
+            updated_at: number;
+            /** Format: double */
+            worker_heartbeat_at?: number | null;
+            /** Format: double */
+            worker_lease_expires_at?: number | null;
+            worker_stalled: boolean;
+        };
+        /** @description One page of planned files. */
+        ManagementPlanItemPage: {
+            has_more: boolean;
+            items: components["schemas"]["ManagementPlanItemView"][];
+            /** Format: int64 */
+            next_after_ordinal?: number | null;
+        };
+        /** @description One planned file. */
+        ManagementPlanItemView: {
+            artwork_choices: Record<string, never>[];
+            /**
+             * Format: int64
+             * @description The album this file is planned with; albums apply as a whole.
+             */
+            bundle_ordinal: number;
+            /** @description `audio_format`, `warnings`, `blockers`, and catalog facts. */
+            capability: Record<string, never>;
+            collisions: Record<string, never>[];
+            /** @description `fields`: the tags the file ends up with, `[{name, value}]`. */
+            desired_document: Record<string, never>;
+            destination_relative_path?: string | null;
+            destination_root_id?: string | null;
+            /**
+             * @description `field_mutations` (`{name, operation, before, after}`),
+             *     `tags_changed`, `path_changed`, `sidecars`.
+             */
+            diff: Record<string, never>;
+            /** @description `eligible`, `warning`, `blocked`, or `stale`. */
+            eligibility: string;
+            /** Format: int64 */
+            estimated_temporary_bytes: number;
+            local_album_id?: string | null;
+            local_track_id?: string | null;
+            /** Format: int64 */
+            ordinal: number;
+            reason?: null | components["schemas"]["ManagementReasonView"];
+            reason_code?: string | null;
+            source_relative_path?: string | null;
+            source_root_id?: string | null;
+        };
+        /** @description Make a preview. */
+        ManagementPreviewCreateBody: {
+            /** @description The library policy revision the page loaded; refused when it moved. */
+            expected_policy_revision: string;
+            /** @description The settings revision the page loaded; refused when it moved. */
+            expected_settings_revision: string;
+            /** @description Makes a retried request return the same preview. */
+            idempotency_key?: string | null;
+            overrides?: null | components["schemas"]["LibraryManagementRootOverrides"];
+            profile_id: string;
+            selection: components["schemas"]["ManagementSelectionBody"];
+            /** @description Move the files into this library folder instead of their own. */
+            target_root_id?: string | null;
+        };
+        /**
+         * @description A new preview and the token that applies it. Keep the token: it is
+         *     shown once (ask for a new one with reissue).
+         */
+        ManagementPreviewCreatedResponse: {
+            /** Format: double */
+            created_at: number;
+            /** @description True when the idempotency key named an existing preview. */
+            existing: boolean;
+            /** Format: double */
+            expires_at: number;
+            job_id: string;
+            preview_token: string;
+        };
+        /** @description A new token for a ready preview. */
+        ManagementPreviewReissueResponse: {
+            /** Format: double */
+            created_at: number;
+            /** Format: double */
+            expires_at: number;
+            job_id: string;
+            preview_token: string;
+        };
+        /**
+         * @description Why a file is left alone or failed: a stable code, a plain sentence,
+         *     and what to do about it. v2 history carries only the code.
+         */
+        ManagementReasonView: {
+            action: string;
+            code: string;
+            message: string;
+        };
+        /** @description One file after apply. */
+        ManagementResultItemView: {
+            failure_code?: string | null;
+            failure_reason?: null | components["schemas"]["ManagementReasonView"];
+            journal_states: string[];
+            plan: components["schemas"]["ManagementPlanItemView"];
+            result: Record<string, never>;
+            /** @description `pending`, `running`, `succeeded`, `failed`, or `not_scheduled`. */
+            work_state: string;
+        };
+        /** @description One page of results. */
+        ManagementResultPage: {
+            has_more: boolean;
+            items: components["schemas"]["ManagementResultItemView"][];
+            /** Format: int64 */
+            next_after_ordinal?: number | null;
+        };
+        /**
+         * @description A preview's scope: library folders, artists, albums, files, or a
+         *     catalog filter.
+         */
+        ManagementSelectionBody: {
+            catalog_filter?: null | components["schemas"]["ManagementCatalogFilterBody"];
+            ids?: string[];
+            kind: components["schemas"]["ManagementSelectionKind"];
+        };
+        /**
+         * @description What a preview covers.
+         * @enum {string}
+         */
+        ManagementSelectionKind: "roots" | "artists" | "albums" | "tracks" | "filter";
+        /** @description What a preview counted. */
+        ManagementSummaryView: {
+            /** Format: int64 */
+            artwork_change_count: number;
+            /** Format: int64 */
+            blocked_count: number;
+            /** Format: int64 */
+            bundle_count: number;
+            deferred_sources: {
+                [key: string]: number;
+            };
+            /** Format: int64 */
+            eligible_count: number;
+            /** Format: int64 */
+            estimated_temporary_bytes: number;
+            /** Format: int64 */
+            expanded_track_count: number;
+            /** @description Files per audio format. */
+            formats: {
+                [key: string]: number;
+            };
+            /** Format: int64 */
+            item_count: number;
+            metadata_snapshot_ids: string[];
+            /** Format: int64 */
+            no_change_count: number;
+            /** Format: int64 */
+            path_change_count: number;
+            /** @description Files per reason code. */
+            reasons: {
+                [key: string]: number;
+            };
+            /** @description Files per library folder. */
+            roots: {
+                [key: string]: number;
+            };
+            /** Format: int64 */
+            selected_item_count?: number | null;
+            /** Format: int64 */
+            sidecar_change_count: number;
+            /** Format: int64 */
+            stale_count: number;
+            /** Format: int64 */
+            tag_change_count: number;
+            /** Format: int64 */
+            warning_count: number;
+        };
+        /** @description Preview undoing an applied job. */
+        ManagementUndoPreviewBody: {
+            /** Format: int64 */
+            expected_operation_row_revision: number;
+            idempotency_key: string;
         };
         /** @description MBID match result: the remote album behind a MusicBrainz id. */
         MatchView: {
@@ -29422,6 +29904,547 @@ export interface operations {
                 content?: never;
             };
             /** @description Undo blocked for a file */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_management_operations: {
+        parameters: {
+            query?: {
+                /** @description Rows per page, 1 to 50 (default 50). */
+                limit?: number;
+                /** @description Cursor from the previous page. */
+                cursor?: string;
+                origin?: string;
+                profile_id?: string;
+                root_id?: string;
+                state?: string;
+                mode?: string;
+                created_from?: number;
+                created_to?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description History page */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementHistoryPage"];
+                };
+            };
+            /** @description Bad cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_management_operation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Management job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Operation */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementJobView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_management_operation_results: {
+        parameters: {
+            query?: {
+                after_ordinal?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Management job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Results */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementResultPage"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    create_management_undo_preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Management job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManagementUndoPreviewBody"];
+            };
+        };
+        responses: {
+            /** @description Undo preview queued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementPreviewCreatedResponse"];
+                };
+            };
+            /** @description Bad body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not a finished apply, or nothing to undo */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    create_management_preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManagementPreviewCreateBody"];
+            };
+        };
+        responses: {
+            /** @description Preview queued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementPreviewCreatedResponse"];
+                };
+            };
+            /** @description Bad selection, profile or destination */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Settings or library policy changed since the page loaded */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_management_preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Management job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementJobView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    apply_management_preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Management job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManagementApplyBody"];
+            };
+        };
+        responses: {
+            /** @description Apply queued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationView"];
+                };
+            };
+            /** @description Not confirmed, or wrong token */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Preview expired, stale, or nothing to write */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    discard_management_preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Management job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManagementDiscardBody"];
+            };
+        };
+        responses: {
+            /** @description Discarded preview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementJobView"];
+                };
+            };
+            /** @description Bad body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Stale revision or already applying */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_management_preview_items: {
+        parameters: {
+            query?: {
+                /** @description Return files after this ordinal (-1 for the first page). */
+                after_ordinal?: number;
+                /** @description Files per page, 1 to 200 (default 100). */
+                limit?: number;
+                /** @description `eligible`, `warning`, `blocked`, or `stale`. */
+                eligibility?: string;
+                reason_code?: string;
+                root_id?: string;
+                album_id?: string;
+                audio_format?: string;
+                /** @description `tags`, `path`, `sidecars`, or `no_change`. */
+                change_kind?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Management job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Planned files */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementPlanItemPage"];
+                };
+            };
+            /** @description Bad filter */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    reissue_management_preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Management job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description New token */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementPreviewReissueResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required, or another administrator's preview */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Preview no longer ready */
             409: {
                 headers: {
                     [name: string]: unknown;

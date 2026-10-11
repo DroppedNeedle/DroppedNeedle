@@ -2128,6 +2128,57 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/library/contributions/musicbrainz/callback",
         Posture::Public,
     ),
+    // Library Management jobs: admin-only, as in v2.
+    (
+        "POST",
+        "/api/v3/library/management/previews",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/library/management/previews/{job_id}",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/library/management/previews/{job_id}/items",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/management/previews/{job_id}/discard",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/management/previews/{job_id}/apply",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/management/previews/{job_id}/reissue",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/library/management/operations",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/library/management/operations/{job_id}",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/library/management/operations/{job_id}/results",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/management/operations/{job_id}/undo-preview",
+        Posture::Admin,
+    ),
     // Library operations: admin-only, as in v2.
     ("GET", "/api/v3/library/operations/{job_id}", Posture::Admin),
     (

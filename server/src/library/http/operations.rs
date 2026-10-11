@@ -462,7 +462,7 @@ fn candidate_view(
     }
 }
 
-fn job_view(job: &OperationJob) -> OperationView {
+pub(super) fn job_view(job: &OperationJob) -> OperationView {
     OperationView {
         id: job.id.clone(),
         kind: job.kind.clone(),

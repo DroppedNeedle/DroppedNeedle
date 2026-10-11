@@ -9041,6 +9041,628 @@
         }
       }
     },
+    "/api/v3/library/management/operations": {
+      "get": {
+        "tags": [
+          "crate::library::http::management"
+        ],
+        "summary": "Management history, newest first.",
+        "operationId": "list_management_operations",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Rows per page, 1 to 50 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor from the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "origin",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "profile_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "root_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "created_from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "format": "double"
+            }
+          },
+          {
+            "name": "created_to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "History page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementHistoryPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad cursor"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/operations/{job_id}": {
+      "get": {
+        "tags": [
+          "crate::library::http::management"
+        ],
+        "summary": "One management operation.",
+        "operationId": "get_management_operation",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Management job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementJobView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown job"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/operations/{job_id}/results": {
+      "get": {
+        "tags": [
+          "crate::library::http::management"
+        ],
+        "summary": "A page of an applied operation's files with their outcome.",
+        "operationId": "list_management_operation_results",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Management job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after_ordinal",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementResultPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown job"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/operations/{job_id}/undo-preview": {
+      "post": {
+        "tags": [
+          "crate::library::http::management"
+        ],
+        "summary": "Preview undoing an applied operation. Apply the undo preview like any\nother.",
+        "operationId": "create_management_undo_preview",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Management job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManagementUndoPreviewBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Undo preview queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementPreviewCreatedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad body"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown job"
+          },
+          "409": {
+            "description": "Not a finished apply, or nothing to undo"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/previews": {
+      "post": {
+        "tags": [
+          "crate::library::http::management"
+        ],
+        "summary": "Make a management preview. Planning runs in the background; poll the\npreview until it is ready.",
+        "operationId": "create_management_preview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManagementPreviewCreateBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Preview queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementPreviewCreatedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad selection, profile or destination"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "409": {
+            "description": "Settings or library policy changed since the page loaded"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/previews/{job_id}": {
+      "get": {
+        "tags": [
+          "crate::library::http::management"
+        ],
+        "summary": "One preview with its summary.",
+        "operationId": "get_management_preview",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Management job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementJobView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown job"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/previews/{job_id}/apply": {
+      "post": {
+        "tags": [
+          "crate::library::http::management"
+        ],
+        "summary": "Apply a ready preview: its albums are written one at a time in the\nbackground. Watch the operation for progress.",
+        "operationId": "apply_management_preview",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Management job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManagementApplyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Apply queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not confirmed, or wrong token"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown job"
+          },
+          "409": {
+            "description": "Preview expired, stale, or nothing to write"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/previews/{job_id}/discard": {
+      "post": {
+        "tags": [
+          "crate::library::http::management"
+        ],
+        "summary": "Set a preview aside without changing any file.",
+        "operationId": "discard_management_preview",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Management job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManagementDiscardBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Discarded preview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementJobView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad body"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown job"
+          },
+          "409": {
+            "description": "Stale revision or already applying"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/previews/{job_id}/items": {
+      "get": {
+        "tags": [
+          "crate::library::http::management"
+        ],
+        "summary": "A page of the files a preview planned.",
+        "operationId": "list_management_preview_items",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Management job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after_ordinal",
+            "in": "query",
+            "description": "Return files after this ordinal (-1 for the first page).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Files per page, 1 to 200 (default 100).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "eligibility",
+            "in": "query",
+            "description": "`eligible`, `warning`, `blocked`, or `stale`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "reason_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "root_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "album_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "audio_format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "change_kind",
+            "in": "query",
+            "description": "`tags`, `path`, `sidecars`, or `no_change`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Planned files",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementPlanItemPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad filter"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown job"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/previews/{job_id}/reissue": {
+      "post": {
+        "tags": [
+          "crate::library::http::management"
+        ],
+        "summary": "A new confirmation token for your own ready preview (the old one\nstops working).",
+        "operationId": "reissue_management_preview",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Management job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "New token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementPreviewReissueResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required, or another administrator's preview"
+          },
+          "404": {
+            "description": "Unknown job"
+          },
+          "409": {
+            "description": "Preview no longer ready"
+          }
+        }
+      }
+    },
     "/api/v3/library/mbids": {
       "get": {
         "tags": [
@@ -34595,6 +35217,941 @@
               }
             ],
             "default": "replace"
+          }
+        }
+      },
+      "ManagementApplyBody": {
+        "type": "object",
+        "description": "Apply a ready preview.",
+        "required": [
+          "preview_token",
+          "expected_operation_row_revision",
+          "idempotency_key"
+        ],
+        "properties": {
+          "confirmation": {
+            "type": "boolean",
+            "description": "Must be true: the administrator confirmed the change."
+          },
+          "expected_operation_row_revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "idempotency_key": {
+            "type": "string"
+          },
+          "preview_token": {
+            "type": "string"
+          }
+        }
+      },
+      "ManagementCatalogFilterBody": {
+        "type": "object",
+        "description": "Catalog filter for a `filter` selection.",
+        "properties": {
+          "album_artist_only": {
+            "type": "boolean"
+          },
+          "artist_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "from_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "genre": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "search": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "ManagementDiscardBody": {
+        "type": "object",
+        "description": "Discard a preview.",
+        "required": [
+          "expected_operation_row_revision"
+        ],
+        "properties": {
+          "expected_operation_row_revision": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ManagementHistoryItemView": {
+        "type": "object",
+        "description": "One row of management history.",
+        "required": [
+          "operation",
+          "mode",
+          "origin",
+          "phase",
+          "profile_id",
+          "profile_name",
+          "profile_revision",
+          "activation_preview",
+          "selection",
+          "eligible_count",
+          "warning_count",
+          "blocked_count"
+        ],
+        "properties": {
+          "activation_preview": {
+            "type": "boolean"
+          },
+          "blocked_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "eligible_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expires_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "operation": {
+            "$ref": "#/components/schemas/OperationView"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "phase": {
+            "type": "string"
+          },
+          "profile_id": {
+            "type": "string"
+          },
+          "profile_name": {
+            "type": "string"
+          },
+          "profile_revision": {
+            "type": "string"
+          },
+          "selection": {
+            "type": "object"
+          },
+          "target_root_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "warning_count": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ManagementHistoryPage": {
+        "type": "object",
+        "description": "One page of history, newest first.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagementHistoryItemView"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass back as `cursor` for the next page; null on the last."
+          }
+        }
+      },
+      "ManagementJobView": {
+        "type": "object",
+        "description": "A management job: a preview, an apply in progress, or a finished one.",
+        "required": [
+          "job_id",
+          "state",
+          "phase",
+          "mode",
+          "origin",
+          "profile_id",
+          "profile_name",
+          "profile_revision",
+          "settings_revision",
+          "policy_revision",
+          "catalog_revision",
+          "selection",
+          "summary",
+          "created_at",
+          "updated_at",
+          "expired",
+          "stale",
+          "stale_reasons",
+          "stale_input_count",
+          "stale_sample_relative_paths",
+          "ready_for_confirmation",
+          "operation_row_revision",
+          "operation_event_revision",
+          "worker_stalled",
+          "expected_work_count",
+          "completed_count",
+          "succeeded_count",
+          "failed_count",
+          "skipped_count",
+          "control_request",
+          "undo_available_count",
+          "undo_expired_count",
+          "baseline_available_count",
+          "external_refreshes"
+        ],
+        "properties": {
+          "baseline_available_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "catalog_revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "completed_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "control_request": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "expected_work_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expired": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "external_refreshes": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "failed_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "job_id": {
+            "type": "string"
+          },
+          "linked_job_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For an undo: the operation it puts back."
+          },
+          "mode": {
+            "type": "string",
+            "description": "`preview`, `apply`, or `undo` (v2 history may show others)."
+          },
+          "operation_event_revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "operation_row_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Echo this on apply, discard and undo preview."
+          },
+          "origin": {
+            "type": "string"
+          },
+          "phase": {
+            "type": "string",
+            "description": "`planning`, `ready`, `applying`, `undoing`, or `complete`."
+          },
+          "policy_revision": {
+            "type": "string"
+          },
+          "profile_id": {
+            "type": "string"
+          },
+          "profile_name": {
+            "type": "string"
+          },
+          "profile_revision": {
+            "type": "string"
+          },
+          "proposed_settings_revision": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ready_for_confirmation": {
+            "type": "boolean"
+          },
+          "selection": {
+            "type": "object"
+          },
+          "settings_revision": {
+            "type": "string"
+          },
+          "skipped_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "stale": {
+            "type": "boolean"
+          },
+          "stale_input_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "stale_reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Why the preview can no longer be applied, in words."
+          },
+          "stale_sample_relative_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "state": {
+            "type": "string",
+            "description": "The operation state: `queued`, `running`, `paused`, `ready`,\n`succeeded`, `failed`, `cancelled`, or `stopped`."
+          },
+          "succeeded_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ManagementSummaryView"
+          },
+          "target_root_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "terminal_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "terminal_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ReasonView"
+              }
+            ]
+          },
+          "undo_available_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Files whose change can still be undone."
+          },
+          "undo_expired_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "undo_expires_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "updated_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "worker_heartbeat_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "worker_lease_expires_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "worker_stalled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ManagementPlanItemPage": {
+        "type": "object",
+        "description": "One page of planned files.",
+        "required": [
+          "items",
+          "has_more"
+        ],
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagementPlanItemView"
+            }
+          },
+          "next_after_ordinal": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "ManagementPlanItemView": {
+        "type": "object",
+        "description": "One planned file.",
+        "required": [
+          "ordinal",
+          "bundle_ordinal",
+          "eligibility",
+          "estimated_temporary_bytes",
+          "desired_document",
+          "artwork_choices",
+          "diff",
+          "capability",
+          "collisions"
+        ],
+        "properties": {
+          "artwork_choices": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "bundle_ordinal": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The album this file is planned with; albums apply as a whole."
+          },
+          "capability": {
+            "type": "object",
+            "description": "`audio_format`, `warnings`, `blockers`, and catalog facts."
+          },
+          "collisions": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "desired_document": {
+            "type": "object",
+            "description": "`fields`: the tags the file ends up with, `[{name, value}]`."
+          },
+          "destination_relative_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "destination_root_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "diff": {
+            "type": "object",
+            "description": "`field_mutations` (`{name, operation, before, after}`),\n`tags_changed`, `path_changed`, `sidecars`."
+          },
+          "eligibility": {
+            "type": "string",
+            "description": "`eligible`, `warning`, `blocked`, or `stale`."
+          },
+          "estimated_temporary_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "local_album_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "local_track_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ordinal": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ManagementReasonView",
+                "description": "The reason in words, with what to do about it."
+              }
+            ]
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_relative_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_root_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ManagementPreviewCreateBody": {
+        "type": "object",
+        "description": "Make a preview.",
+        "required": [
+          "selection",
+          "profile_id",
+          "expected_settings_revision",
+          "expected_policy_revision"
+        ],
+        "properties": {
+          "expected_policy_revision": {
+            "type": "string",
+            "description": "The library policy revision the page loaded; refused when it moved."
+          },
+          "expected_settings_revision": {
+            "type": "string",
+            "description": "The settings revision the page loaded; refused when it moved."
+          },
+          "idempotency_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Makes a retried request return the same preview."
+          },
+          "overrides": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LibraryManagementRootOverrides",
+                "description": "Switches for this run only, on top of the profile."
+              }
+            ]
+          },
+          "profile_id": {
+            "type": "string"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/ManagementSelectionBody"
+          },
+          "target_root_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Move the files into this library folder instead of their own."
+          }
+        }
+      },
+      "ManagementPreviewCreatedResponse": {
+        "type": "object",
+        "description": "A new preview and the token that applies it. Keep the token: it is\nshown once (ask for a new one with reissue).",
+        "required": [
+          "job_id",
+          "preview_token",
+          "created_at",
+          "expires_at",
+          "existing"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "existing": {
+            "type": "boolean",
+            "description": "True when the idempotency key named an existing preview."
+          },
+          "expires_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "job_id": {
+            "type": "string"
+          },
+          "preview_token": {
+            "type": "string"
+          }
+        }
+      },
+      "ManagementPreviewReissueResponse": {
+        "type": "object",
+        "description": "A new token for a ready preview.",
+        "required": [
+          "job_id",
+          "preview_token",
+          "created_at",
+          "expires_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "expires_at": {
+            "type": "number",
+            "format": "double"
+          },
+          "job_id": {
+            "type": "string"
+          },
+          "preview_token": {
+            "type": "string"
+          }
+        }
+      },
+      "ManagementReasonView": {
+        "type": "object",
+        "description": "Why a file is left alone or failed: a stable code, a plain sentence,\nand what to do about it. v2 history carries only the code.",
+        "required": [
+          "code",
+          "message",
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "ManagementResultItemView": {
+        "type": "object",
+        "description": "One file after apply.",
+        "required": [
+          "plan",
+          "work_state",
+          "result",
+          "journal_states"
+        ],
+        "properties": {
+          "failure_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failure_reason": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ManagementReasonView",
+                "description": "Why the file failed or was not written, with what to do about it."
+              }
+            ]
+          },
+          "journal_states": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "plan": {
+            "$ref": "#/components/schemas/ManagementPlanItemView"
+          },
+          "result": {
+            "type": "object"
+          },
+          "work_state": {
+            "type": "string",
+            "description": "`pending`, `running`, `succeeded`, `failed`, or `not_scheduled`."
+          }
+        }
+      },
+      "ManagementResultPage": {
+        "type": "object",
+        "description": "One page of results.",
+        "required": [
+          "items",
+          "has_more"
+        ],
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagementResultItemView"
+            }
+          },
+          "next_after_ordinal": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "ManagementSelectionBody": {
+        "type": "object",
+        "description": "A preview's scope: library folders, artists, albums, files, or a\ncatalog filter.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "catalog_filter": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ManagementCatalogFilterBody"
+              }
+            ]
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ManagementSelectionKind"
+          }
+        }
+      },
+      "ManagementSelectionKind": {
+        "type": "string",
+        "description": "What a preview covers.",
+        "enum": [
+          "roots",
+          "artists",
+          "albums",
+          "tracks",
+          "filter"
+        ]
+      },
+      "ManagementSummaryView": {
+        "type": "object",
+        "description": "What a preview counted.",
+        "required": [
+          "item_count",
+          "bundle_count",
+          "eligible_count",
+          "warning_count",
+          "blocked_count",
+          "stale_count",
+          "no_change_count",
+          "tag_change_count",
+          "artwork_change_count",
+          "path_change_count",
+          "sidecar_change_count",
+          "estimated_temporary_bytes",
+          "expanded_track_count",
+          "reasons",
+          "roots",
+          "formats",
+          "deferred_sources",
+          "metadata_snapshot_ids"
+        ],
+        "properties": {
+          "artwork_change_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "blocked_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "bundle_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "deferred_sources": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "eligible_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "estimated_temporary_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expanded_track_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "formats": {
+            "type": "object",
+            "description": "Files per audio format.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "item_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "metadata_snapshot_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "no_change_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "path_change_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reasons": {
+            "type": "object",
+            "description": "Files per reason code.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "roots": {
+            "type": "object",
+            "description": "Files per library folder.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "selected_item_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "sidecar_change_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "stale_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tag_change_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "warning_count": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ManagementUndoPreviewBody": {
+        "type": "object",
+        "description": "Preview undoing an applied job.",
+        "required": [
+          "expected_operation_row_revision",
+          "idempotency_key"
+        ],
+        "properties": {
+          "expected_operation_row_revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "idempotency_key": {
+            "type": "string"
           }
         }
       },

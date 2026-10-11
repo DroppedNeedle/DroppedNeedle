@@ -39,6 +39,7 @@ pub fn library_router(state: LibrarySetup) -> Router {
         .merge(super::scan::routes())
         .merge(super::operations::operations_router())
         .merge(super::corrections::corrections_router())
+        .merge(super::management::management_router())
         .merge(super::reconcile::router())
         .merge(super::mutations::mutations_router())
         .merge(super::edition::edition_router())
