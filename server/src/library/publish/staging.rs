@@ -25,7 +25,7 @@ use super::super::tags::{
     Refusal, TagEdit, TagField, TagsError, format_for_path, read_document, save_tags,
 };
 use super::PublishError;
-use super::tags_seam::{TAG_DOCUMENT_VERSION, TagDocument};
+use super::tags_seam::{FULL_FIELDS_VERSION, TAG_DOCUMENT_VERSION, TagDocument, recorded_since};
 
 /// Map managed updates onto save-wrapper edits. An empty value list
 /// removes the field (undo uses that for fields an edit added). Values
@@ -208,18 +208,22 @@ pub fn document_for_write(
 /// shape, or one the file holds in such a shape now (that would block
 /// the restore). Read-only containers get no tag writes at all, and a
 /// baseline from before documents recorded every field gets no removals:
-/// it cannot say what was absent.
+/// it cannot say what was absent. Fields newer than the baseline's shape
+/// (ISRC in a version 2 baseline) get no removal either.
 pub fn restore_updates(
     baseline: &TagDocument,
     current: &TagDocument,
     rel_path: &str,
 ) -> BTreeMap<String, Vec<String>> {
     let writable_format = format_for_path(Path::new(rel_path)).is_ok_and(writable);
-    if !writable_format || baseline.version < TAG_DOCUMENT_VERSION {
+    if !writable_format || baseline.version < FULL_FIELDS_VERSION {
         return baseline.managed.clone();
     }
     let mut updates = baseline.managed.clone();
     for field in TagField::ALL {
+        if baseline.version < recorded_since(field) {
+            continue;
+        }
         let name = field.name();
         let opaque = |document: &TagDocument| document.opaque.iter().any(|kept| kept == name);
         if !opaque(baseline) && !opaque(current) {

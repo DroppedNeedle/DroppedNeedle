@@ -1768,6 +1768,19 @@ fn values_or_absent(values: Vec<String>) -> FieldRead {
 fn id3_read(tag: &DeepId3, field: TagField) -> FieldRead {
     let v23 = tag.major == 3;
     match field.id3(v23) {
+        // ID3v2.3 has one text value per frame, so several ISRCs are
+        // written joined with '/'; no ISRC holds one, so split it back.
+        Id3Target::Text(id) if v23 && field == TagField::Isrc => values_or_absent(
+            id3_text(tag, id)
+                .cloned()
+                .unwrap_or_default()
+                .iter()
+                .flat_map(|value| value.split('/'))
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+                .collect(),
+        ),
         Id3Target::Text(id) => values_or_absent(id3_text(tag, id).cloned().unwrap_or_default()),
         Id3Target::User(desc) => values_or_absent(
             tag.frames
