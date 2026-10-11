@@ -303,6 +303,21 @@ pub(crate) struct UndoFiles {
     pub blocked: Vec<(String, UndoSkip)>,
 }
 
+/// Why a baseline restore leaves one file alone.
+#[derive(Debug, Clone)]
+pub(crate) enum BaselineSkip {
+    Plan(super::publish::undo::BaselineBlock),
+    /// The file is no longer in the library, unreadable, or unmatched.
+    Gone,
+}
+
+/// What restoring files to their originals would do.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct BaselineFiles {
+    pub eligible: Vec<UndoFile>,
+    pub blocked: Vec<(String, BaselineSkip)>,
+}
+
 /// One file inside a management preview request (handler-mapped).
 pub struct PreviewItemInput {
     /// Source root id.
@@ -1338,9 +1353,6 @@ impl LibrarySetup {
     /// the refresh plus the restoration publish. Blocking: handlers
     /// run this off the async runtime.
     pub fn baseline_restore(&self, track_ids: &[String]) -> Result<AppliedBundle, ServiceError> {
-        use super::publish::publisher::Catalog as _;
-        use super::publish::undo::{BaselineInput, plan_baseline_restore};
-
         if track_ids.is_empty() {
             return Err(ServiceError::InvalidInput {
                 message: "Restore needs at least one track".to_owned(),
@@ -1355,11 +1367,74 @@ impl LibrarySetup {
         cell.refresh(&registry, &self.root_dirs)
             .map_err(publish_error)?;
         let open = cell.open().map_err(publish_error)?;
+        let files = self.baseline_files_in(open, track_ids, &|_| PINNED_OVERRIDE)?;
+        if !files.blocked.is_empty() || files.eligible.is_empty() {
+            return Err(ServiceError::Conflict {
+                message: format!(
+                    "Baseline restore blocked: {}",
+                    baseline_blocks(&files.blocked)
+                ),
+            });
+        }
+        let mut plan_items = Vec::new();
+        let mut docs = BTreeMap::new();
+        for file in files.eligible {
+            docs.insert(
+                file.plan.track_id.clone(),
+                Self::live_doc_for_write(
+                    &open.sandbox,
+                    &file.plan.source_root,
+                    &file.plan.source_rel,
+                    &file.plan.managed_updates,
+                )?,
+            );
+            plan_items.push(file.plan);
+        }
+        self.publish_restoration(&mut cell, plan_items, docs)
+    }
+
+    /// What restoring these tracks to their first-management baselines
+    /// would do, file by file. Blocking.
+    pub(crate) fn baseline_files(
+        &self,
+        track_ids: &[String],
+        override_of: &dyn Fn(&str) -> u64,
+    ) -> Result<BaselineFiles, ServiceError> {
+        let mut cell = self
+            .publish
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let registry = self.live_registry();
+        let _guards = if cell.needs_refresh(&registry) {
+            self.publish_guards(&registry)
+        } else {
+            Vec::new()
+        };
+        cell.refresh(&registry, &self.root_dirs)
+            .map_err(publish_error)?;
+        let open = cell.open().map_err(publish_error)?;
+        self.baseline_files_in(open, track_ids, override_of)
+    }
+
+    /// [`baseline_files`](Self::baseline_files) under a publish cell the
+    /// caller holds. A file that is gone or unreadable is blocked rather
+    /// than failing the others.
+    fn baseline_files_in(
+        &self,
+        open: &OpenPublish,
+        track_ids: &[String],
+        override_of: &dyn Fn(&str) -> u64,
+    ) -> Result<BaselineFiles, ServiceError> {
+        use super::publish::publisher::Catalog as _;
+        use super::publish::undo::{BaselineInput, plan_baseline_restore};
+
         let conn = open.publisher.connection();
         let blobs = BlobStore::new(conn);
         let baselines = BaselineStore::new(conn);
+        let mut files = BaselineFiles::default();
         let mut inputs = Vec::new();
         let mut current_locs: HashMap<String, (String, String)> = HashMap::new();
+        let mut live: HashMap<String, (FileFingerprint, String, ReleaseIdentity)> = HashMap::new();
         for track_id in track_ids {
             let baseline = match baselines.get(track_id).map_err(publish_error)? {
                 Some((blob_sha, _, _)) => {
@@ -1371,17 +1446,25 @@ impl LibrarySetup {
                 }
                 None => None,
             };
-            let (root_id, rel_path, _, _) = SqliteCatalog
+            let located = SqliteCatalog
                 .locate(conn, track_id)
-                .map_err(publish_error)?
-                .ok_or_else(|| ServiceError::Conflict {
-                    message: format!("Track {track_id} is not managed"),
-                })?;
-            let current = Self::live_fingerprint(&open.sandbox, &root_id, &rel_path)?;
-            let format = Self::live_format(&rel_path)?;
-            let album_id = self.track_album(track_id)?;
-            let identity = self.resolve_identity(&album_id, track_id)?;
+                .map_err(publish_error)?;
+            let state = located.and_then(|(root_id, rel_path, _, _)| {
+                let current = Self::live_fingerprint(&open.sandbox, &root_id, &rel_path).ok()?;
+                let format = Self::live_format(&rel_path).ok()?;
+                let album_id = self.track_album(track_id).ok()?;
+                let identity = self.resolve_identity(&album_id, track_id).ok()?;
+                Some((root_id, rel_path, current, format, identity))
+            });
+            let Some((root_id, rel_path, current, format, identity)) = state else {
+                files.blocked.push((track_id.clone(), BaselineSkip::Gone));
+                continue;
+            };
             current_locs.insert(track_id.clone(), (root_id, rel_path));
+            live.insert(
+                track_id.clone(),
+                (current.clone(), format.clone(), identity.clone()),
+            );
             inputs.push(BaselineInput {
                 track_id: track_id.clone(),
                 baseline,
@@ -1395,10 +1478,10 @@ impl LibrarySetup {
         }
         let sandbox = open.sandbox.clone();
         let registry = self.live_registry();
-        // The original counts as occupied only when another file
-        // holds it: a same-path restore whose subject still sits at
-        // the original path is restoring tags in place, mirroring
-        // undo's self-occupancy exemption.
+        // The original counts as occupied only when another file holds
+        // it: a same-path restore whose subject still sits at the
+        // original path is restoring tags in place, mirroring undo's
+        // self-occupancy exemption.
         let plan = plan_baseline_restore(&inputs, &|root_id, rel_path| {
             registry.resolve(root_id)?;
             let occupied = match sandbox.resolve_no_symlink(root_id, rel_path) {
@@ -1415,74 +1498,64 @@ impl LibrarySetup {
                 .any(|(root, rel)| root == root_id && rel == rel_path);
             Some(!self_held)
         });
-        if !plan.writable() {
-            return Err(ServiceError::Conflict {
-                message: format!("Baseline restore blocked: {}", baseline_blocks(&plan)),
-            });
-        }
-        let mut plan_items = Vec::new();
-        let mut docs = BTreeMap::new();
-        for (track_id, before) in &plan.eligible {
-            let live_loc = current_locs
-                .get(track_id)
-                .ok_or_else(|| ServiceError::Conflict {
-                    message: format!("Track {track_id} moved during restore"),
-                })?;
-            let fingerprint = Self::live_fingerprint(&sandbox, &live_loc.0, &live_loc.1)?;
-            let format = Self::live_format(&live_loc.1)?;
-            let album_id = self.track_album(track_id)?;
-            let identity = self.resolve_identity(&album_id, track_id)?;
-            let same_path = live_loc.0 == before.source_root && live_loc.1 == before.source_rel;
-            let item_kind = if same_path {
-                PlanKind::SamePath
-            } else {
-                PlanKind::Move
+        files.blocked.extend(
+            plan.blocked
+                .into_iter()
+                .map(|(track, block)| (track, BaselineSkip::Plan(block))),
+        );
+        for (track_id, before) in plan.eligible {
+            let (Some(live_loc), Some((fingerprint, format, identity))) =
+                (current_locs.get(&track_id), live.get(&track_id))
+            else {
+                files.blocked.push((track_id, BaselineSkip::Gone));
+                continue;
             };
-            let current = Self::live_doc(&sandbox, &live_loc.0, &live_loc.1)?;
+            let Ok(current) = Self::live_doc(&sandbox, &live_loc.0, &live_loc.1) else {
+                files.blocked.push((track_id, BaselineSkip::Gone));
+                continue;
+            };
+            let same_path = live_loc.0 == before.source_root && live_loc.1 == before.source_rel;
             let updates =
                 super::publish::staging::restore_updates(&before.doc, &current, &live_loc.1);
             let mut capabilities = Vec::new();
             if !updates.is_empty() {
                 capabilities.push(Capability::Metadata);
             }
-            if item_kind == PlanKind::Move {
-                if live_loc.0 == before.source_root {
-                    capabilities.push(Capability::SameRootMove);
+            if !same_path {
+                capabilities.push(if live_loc.0 == before.source_root {
+                    Capability::SameRootMove
                 } else {
-                    capabilities.push(Capability::CrossRootMove);
-                }
+                    Capability::CrossRootMove
+                });
             }
-            let size = sandbox
-                .resolve_no_symlink(&live_loc.0, &live_loc.1)
-                .ok()
-                .and_then(|path| std::fs::metadata(&path).ok())
-                .map(|meta| meta.len())
-                .unwrap_or(0);
-            plan_items.push(PlanItem {
-                track_id: track_id.clone(),
-                source_root: live_loc.0.clone(),
-                source_rel: live_loc.1.clone(),
-                dest_root: before.source_root.clone(),
-                dest_rel: before.source_rel.clone(),
-                kind: item_kind,
-                fingerprint,
-                identity,
-                override_revision: PINNED_OVERRIDE,
-                capabilities,
-                format,
-                managed_updates: updates.clone(),
-                sidecars: Vec::new(),
-                staged_bytes_estimate: size + STAGED_HEADROOM_BYTES,
-                adopt: None,
+            files.eligible.push(UndoFile {
+                current: current.managed,
+                sidecars_left: Vec::new(),
+                plan: PlanItem {
+                    track_id: track_id.clone(),
+                    source_root: live_loc.0.clone(),
+                    source_rel: live_loc.1.clone(),
+                    dest_root: before.source_root.clone(),
+                    dest_rel: before.source_rel.clone(),
+                    kind: if same_path {
+                        PlanKind::SamePath
+                    } else {
+                        PlanKind::Move
+                    },
+                    fingerprint: fingerprint.clone(),
+                    identity: identity.clone(),
+                    override_revision: override_of(&track_id),
+                    capabilities,
+                    format: format.clone(),
+                    managed_updates: updates,
+                    sidecars: Vec::new(),
+                    staged_bytes_estimate: fingerprint.size + STAGED_HEADROOM_BYTES,
+                    adopt: None,
+                },
             });
-            docs.insert(
-                track_id.clone(),
-                Self::live_doc_for_write(&sandbox, &live_loc.0, &live_loc.1, &updates)?,
-            );
         }
-        self.publish_restoration(&mut cell, plan_items, docs)
+        Ok(files)
     }
-
     /// Seal and publish an internally planned restoration bundle
     /// (undo or baseline restore). The caller holds the publish
     /// lock plus the write guards; the seal and the commit run
@@ -1574,10 +1647,16 @@ fn undo_block_label(block: &super::publish::undo::UndoBlock) -> &'static str {
 }
 
 /// Per-file baseline blocks as a compact message.
-fn baseline_blocks(plan: &super::publish::undo::BaselineRestorePlan) -> String {
-    plan.blocked
+fn baseline_blocks(blocked: &[(String, BaselineSkip)]) -> String {
+    if blocked.is_empty() {
+        return "no track has a saved original".to_owned();
+    }
+    blocked
         .iter()
-        .map(|(track_id, block)| format!("{track_id} {}", baseline_block_label(block)))
+        .map(|(track_id, skip)| match skip {
+            BaselineSkip::Plan(block) => format!("{track_id} {}", baseline_block_label(block)),
+            BaselineSkip::Gone => format!("{track_id} not_managed"),
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }

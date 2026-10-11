@@ -51,6 +51,17 @@ impl<'a> BlobStore<'a> {
         Ok(hash)
     }
 
+    /// Delete the bytes no snapshot or baseline refers to any more (undo
+    /// periods that ran out, purged baselines). Callers hold the publish
+    /// lock, so no publish is between storing a blob and referring to it.
+    pub fn sweep_unreferenced(&self) -> Result<usize, PublishError> {
+        Ok(self.conn.execute(
+            "DELETE FROM library_publish_blobs WHERE NOT EXISTS \
+             (SELECT 1 FROM library_publish_blob_refs r WHERE r.sha256 = library_publish_blobs.sha256)",
+            [],
+        )?)
+    }
+
     /// Read and hash-verify one blob.
     pub fn get(&self, sha256: &str) -> Result<Vec<u8>, PublishError> {
         let bytes: Vec<u8> = self
