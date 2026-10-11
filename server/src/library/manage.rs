@@ -84,14 +84,52 @@ impl HeldBundles {
     /// even if whoever asked never heard back. Blocking.
     pub fn committed(&self, bundle_id: &str) -> Result<bool, PublishError> {
         use super::publish::JournalState;
+        use super::publish::publisher::Catalog as _;
         let conn = crate::db::open_connection(&self.db_path)
             .map_err(|error| PublishError::Store(error.to_string()))?;
         let journals = JournalStore::new(&conn).bundle(bundle_id)?;
-        Ok(journals.iter().any(|journal| {
+        if journals.iter().any(|journal| {
             matches!(
                 journal.state,
                 JournalState::Committed | JournalState::Cleaned | JournalState::CleanupPending
             )
+        }) {
+            return Ok(true);
+        }
+        // A journal flagged for an administrator after the commit: the
+        // catalog already points at the bytes this bundle published.
+        for journal in journals
+            .iter()
+            .filter(|journal| journal.state == JournalState::NeedsAttention)
+        {
+            let Some(track_id) = journal.track_id.as_deref() else {
+                continue;
+            };
+            if let Some((root, rel, published, _)) = SqliteCatalog.locate(&conn, track_id)?
+                && root == journal.dest_root
+                && rel == journal.dest_rel
+                && published == journal.staged_sha256
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// True while `bundle_id` has journals neither committed nor settled:
+    /// recovery has not decided yet whether it finishes or unwinds.
+    /// Blocking.
+    pub fn unsettled(&self, bundle_id: &str) -> Result<bool, PublishError> {
+        use super::publish::JournalState;
+        let conn = crate::db::open_connection(&self.db_path)
+            .map_err(|error| PublishError::Store(error.to_string()))?;
+        let journals = JournalStore::new(&conn).bundle(bundle_id)?;
+        Ok(journals.iter().any(|journal| {
+            !journal.state.is_terminal()
+                && !matches!(
+                    journal.state,
+                    JournalState::Committed | JournalState::CleanupPending
+                )
         }))
     }
 
@@ -897,6 +935,30 @@ impl LibrarySetup {
                 tracing::warn!(%error, "management settings unreadable; default undo retention");
                 super::publish::DEFAULT_UNDO_RETENTION_DAYS as i64
             })
+    }
+
+    /// Run publish recovery now: reopen (and reconcile) when the roots
+    /// changed, and retry any held bundle, so a bundle a crash left half
+    /// way is finished or unwound before anyone asks how it ended.
+    /// Blocking.
+    pub(crate) fn settle_publishes(&self) -> Result<(), PublishError> {
+        let mut cell = self
+            .publish
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let registry = self.live_registry();
+        let reopen = cell.needs_refresh(&registry);
+        let retry = !reopen && cell.has_held();
+        let _guards = if reopen || retry {
+            self.publish_guards(&registry)
+        } else {
+            Vec::new()
+        };
+        cell.refresh(&registry, &self.root_dirs)?;
+        if retry {
+            cell.retry_held()?;
+        }
+        Ok(())
     }
 
     /// The sandbox over the usable roots, opening the publish cell when

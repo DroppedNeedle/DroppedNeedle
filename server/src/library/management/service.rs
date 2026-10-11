@@ -530,7 +530,7 @@ impl Management {
                 existing: true,
             });
         }
-        let undos = self.read(|conn| Ok(store::live_undos(conn, job_id)?))?;
+        let undos = self.read(|conn| Ok(store::live_undos(conn, job_id, now)?))?;
         if undos
             .iter()
             .any(|(state, phase)| state == "succeeded" && phase == "complete")
@@ -766,6 +766,12 @@ impl Management {
             .clone()
             .ok_or_else(|| ManagementError::Store("undo job has no source operation".to_owned()))?;
         let bundles = self.read(|conn| Ok(store::applied_bundles(conn, &source_id)?))?;
+        // A partly successful earlier undo: only what it left is retried.
+        let undone = self.read(|conn| Ok(store::undone_ordinals(conn, &source_id)?))?;
+        let bundles: Vec<_> = bundles
+            .into_iter()
+            .filter(|(ordinal, _)| !undone.contains(ordinal))
+            .collect();
         let mut summary = Summary::default();
         let mut ordinal = 0;
         for (bundle_ordinal, bundle_id) in bundles {
@@ -946,7 +952,13 @@ impl Management {
                 self.write(|tx| Ok(store::finish_apply(tx, job_id, worker, now_unix())?))?;
                 return Ok(());
             };
-            let (failure, result) = self.apply_album(&snapshot, ordinal, undo, organizes)?;
+            let Some((failure, result)) = self.apply_album(&snapshot, ordinal, undo, organizes)?
+            else {
+                // The album's earlier publish is not settled yet: wait for
+                // recovery rather than publish it a second time.
+                self.write(|tx| Ok(store::release(tx, job_id, worker, now_unix())?))?;
+                return Ok(());
+            };
             self.write(|tx| {
                 Ok(store::finish_work(
                     tx,
@@ -972,28 +984,49 @@ impl Management {
             })
     }
 
-    /// Apply one album: its outcome and the result to record. The bundle id
+    /// Apply one album: its outcome and the result to record, or `None`
+    /// when an earlier attempt's publish is still unsettled. The bundle id
     /// is recorded on the work row before anything is written, so an album
     /// the publisher committed is never lost to a crash or a late error:
-    /// it counts as written and can be undone.
+    /// recovery runs first, and a committed album counts as written and
+    /// can be undone. A saved bundle id is never replaced while its
+    /// journals are unsettled.
     fn apply_album(
         &self,
         snapshot: &Snapshot,
         ordinal: i64,
         undo: bool,
         organizes: bool,
-    ) -> Result<(Option<ItemReason>, serde_json::Value), ManagementError> {
+    ) -> Result<Option<(Option<ItemReason>, serde_json::Value)>, ManagementError> {
         let job_id = snapshot.job.id.as_str();
         let written = |bundle_id: &str, outcome: &str| serde_json::json!({ "bundle_id": bundle_id, "outcome": outcome });
-        if let Some(earlier) = self.read(|conn| Ok(store::work_bundle(conn, job_id, ordinal)?))?
-            && self.committed(&earlier)
-        {
-            return Ok((None, written(&earlier, "committed")));
+        if let Some(earlier) = self.read(|conn| Ok(store::work_bundle(conn, job_id, ordinal)?))? {
+            if let Err(error) = self.setup.settle_publishes() {
+                tracing::warn!(%error, bundle_id = earlier, "publish recovery did not finish");
+            }
+            if self.committed(&earlier) {
+                return Ok(Some((None, written(&earlier, "committed"))));
+            }
+            let unsettled = self
+                .setup
+                .held_bundles
+                .unsettled(&earlier)
+                .unwrap_or_else(|error| {
+                    tracing::warn!(%error, bundle_id = earlier, "publish journal unreadable");
+                    true
+                });
+            if unsettled {
+                tracing::info!(
+                    bundle_id = earlier,
+                    "earlier publish still unsettled; album waits"
+                );
+                return Ok(None);
+            }
         }
         let bundle_id = self.setup.ids.new_id();
         self.read(|conn| Ok(store::set_work_bundle(conn, job_id, ordinal, &bundle_id)?))?;
         let items = self.read(|conn| Ok(store::bundle_items(conn, job_id, ordinal)?))?;
-        Ok(
+        Ok(Some(
             match self.publish_album(snapshot, &items, undo, organizes, &bundle_id) {
                 Ok(applied) => (None, written(&applied.bundle_id, &applied.outcome)),
                 Err(_) if self.committed(&bundle_id) => (None, written(&bundle_id, "committed")),
@@ -1002,7 +1035,7 @@ impl Management {
                     (Some(reason), result)
                 }
             },
-        )
+        ))
     }
 
     /// Why an album may no longer be written as planned: settings, its

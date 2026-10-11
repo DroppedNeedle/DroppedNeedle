@@ -763,16 +763,36 @@ pub fn album_state(
     Ok((revision, tracks))
 }
 
-/// Undo jobs made for `job_id` that did not end in failure or discard:
-/// (state, phase).
-pub fn live_undos(conn: &Connection, job_id: &str) -> rusqlite::Result<Vec<(String, String)>> {
+/// Undo jobs made for `job_id` that still count: not failed, discarded,
+/// stopped, or a preview left to expire. (state, phase).
+pub fn live_undos(
+    conn: &Connection,
+    job_id: &str,
+    now: f64,
+) -> rusqlite::Result<Vec<(String, String)>> {
     let mut statement = conn.prepare(
         "SELECT j.state, s.phase FROM library_management_job_snapshots s \
          JOIN library_operation_jobs j ON j.id = s.job_id \
          WHERE s.linked_operation_job_id = ?1 AND s.mode = 'undo' \
-         AND j.state NOT IN ('failed', 'cancelled', 'stopped')",
+         AND j.state NOT IN ('failed', 'cancelled', 'stopped') \
+         AND NOT (s.phase IN ('planning', 'ready') \
+           AND COALESCE(s.preview_expires_at, 0) <= ?2)",
     )?;
-    let rows = statement.query_map(params![job_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    let rows = statement.query_map(params![job_id, now], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    rows.collect()
+}
+
+/// Albums of `job_id` an earlier undo already put back (bundle ordinals).
+pub fn undone_ordinals(
+    conn: &Connection,
+    job_id: &str,
+) -> rusqlite::Result<std::collections::HashSet<i64>> {
+    let mut statement = conn.prepare(
+        "SELECT w.ordinal FROM library_operation_work w \
+         JOIN library_management_job_snapshots s ON s.job_id = w.job_id \
+         WHERE s.linked_operation_job_id = ?1 AND s.mode = 'undo' AND w.state = 'succeeded'",
+    )?;
+    let rows = statement.query_map(params![job_id], |row| row.get(0))?;
     rows.collect()
 }
 

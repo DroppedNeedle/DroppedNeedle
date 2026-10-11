@@ -173,7 +173,7 @@ pub fn sidecar_collision() -> ItemReason {
 
 pub fn sidecar_unreadable() -> ItemReason {
     ItemReason::new(
-        "SIDECAR_COLLISION",
+        "SIDECAR_UNREADABLE",
         "A file that travels with this album could not be read, is a symbolic link, or there are too many of them to move safely.",
         "Check the album folder, or turn off moving sidecar files in the profile, then make a new preview.",
     )
