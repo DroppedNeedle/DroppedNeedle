@@ -34,6 +34,7 @@ mod compat_wiring;
 mod concerts;
 mod config_secrets;
 mod contract;
+mod discover_batches;
 mod discover_page;
 mod discover_queue;
 mod envelope;
