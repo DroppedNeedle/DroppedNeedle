@@ -379,7 +379,15 @@ impl UserStore for SqliteUserStore {
                 }
                 // Discover keeps per-user rows without a foreign key (the
                 // tables predate it); they go with the account, as in v2.
+                // Discovery batches go too; v2 left them behind.
+                tx.execute(
+                    "DELETE FROM discovery_batch_items WHERE batch_id IN \
+                     (SELECT id FROM discovery_batches WHERE user_id = ?)",
+                    rusqlite::params![id],
+                )
+                .map_err(op_error)?;
                 for table in [
+                    "discovery_batches",
                     "ignored_releases",
                     "discovery_snapshots",
                     "discovery_activity",

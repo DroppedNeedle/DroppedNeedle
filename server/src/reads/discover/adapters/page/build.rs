@@ -200,7 +200,10 @@ fn title_case(text: &str) -> String {
 
 /// A shuffler fixed for one day and one purpose, so a rebuild the same
 /// day reproduces the same shelves instead of reshuffling them.
-fn daily_shuffler(today: &str, parts: &[&str]) -> Shuffler {
+pub(in crate::reads::discover::adapters) fn daily_shuffler(
+    today: &str,
+    parts: &[&str],
+) -> Shuffler {
     let digest = md5::compute(format!("{today}:{}", parts.join(":")));
     let mut seed = [0u8; 8];
     seed.copy_from_slice(&digest.0[..8]);

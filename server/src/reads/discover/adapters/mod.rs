@@ -2,10 +2,11 @@
 //!
 //! Live where the work is ported (ListenBrainz and Last.fm charts,
 //! Deezer/iTunes previews, YouTube search when a key is set, the queue
-//! deck), honest everywhere else: pages with no shelves instead of
-//! invented ones, and a typed "not available" (503) for actions whose
-//! builders are not ported yet.
+//! deck, radio, discovery batches), honest everywhere else: pages with no
+//! shelves instead of invented ones, and a typed "not available" (503)
+//! for actions whose builders are not ported yet.
 
+pub mod batches;
 pub mod charts;
 pub mod content;
 pub mod home;
@@ -13,6 +14,7 @@ pub mod ownership;
 pub mod page;
 pub mod previews;
 pub mod queue;
+pub mod radio;
 pub mod unbuilt;
 pub mod youtube;
 
@@ -30,6 +32,8 @@ use crate::providers::{
     listenbrainz::{DEFAULT_BASE_URL, ListenBrainzClient},
     youtube::{DEFAULT_DAILY_QUOTA_LIMIT, YouTubeClient, YouTubeSettings},
 };
+use crate::reads::catalog::Catalog;
+use crate::reads::catalog::library::LocalCatalog;
 use crate::reads::catalog::upstream::{InstanceLastFmKey, Upstream};
 use crate::reads::discover::{
     ports::{ChartsSource, QueueStore, SystemClock, YouTubeSource},
@@ -66,6 +70,9 @@ pub struct DiscoverInputs {
     pub discover_warmer: bool,
     /// The cover and artist image cache, which genre pages warm.
     pub artwork: Option<crate::reads::platform::artwork::ArtworkService>,
+    /// Where boot puts the requests side of discovery batches, once the
+    /// acquisition setup exists.
+    pub batch_requests: batches::RequestsSlot,
 }
 
 /// Build the production discover deps.
@@ -115,8 +122,24 @@ pub fn production_deps(inputs: DiscoverInputs, ids: Arc<dyn IdGenerator>) -> Rea
             Arc::new(unbuilt::UnavailableYouTube)
         }
     };
-    let sources = Arc::new(live_sources(&inputs));
-    let queues = live_queue(&inputs, sources.clone(), youtube.clone());
+    let upstream = live_upstream(&inputs);
+    let sources = Arc::new(live_sources(&inputs, upstream.clone()));
+    let settings = queue_settings(inputs.config.clone());
+    let queues = live_queue(&inputs, sources.clone(), youtube.clone(), settings.clone());
+    let radio = radio::LiveRadio::new(radio::RadioInputs {
+        sources: sources.clone(),
+        queue_db: queue::store::QueueDb::new(inputs.pool.clone(), inputs.lane.clone()),
+        settings,
+        pool: inputs.pool.clone(),
+        catalog: Catalog::new(upstream, LocalCatalog::new(inputs.pool.clone())),
+        previews: ReqwestGet::new(inputs.http.clone()),
+    });
+    let batches = batches::LiveBatches::new(
+        inputs.pool.clone(),
+        inputs.lane.clone(),
+        inputs.users.users.clone(),
+        inputs.batch_requests.clone(),
+    );
     let page = page::LiveDiscover::new(page::PageInputs {
         sources: sources.clone(),
         queue_db: queue::store::QueueDb::new(inputs.pool.clone(), inputs.lane.clone()),
@@ -139,27 +162,31 @@ pub fn production_deps(inputs: DiscoverInputs, ids: Arc<dyn IdGenerator>) -> Rea
                 .with_home(home, genre_art),
         ),
         queues,
-        batches: Arc::new(unbuilt::UnavailableBatches),
+        batches: Arc::new(batches),
         charts,
         previews: Arc::new(previews::LivePreviews::new(ReqwestGet::new(inputs.http))),
         youtube,
-        radio: Arc::new(unbuilt::UnavailableRadio),
+        radio: Arc::new(radio),
         now_playing: Arc::new(unbuilt::NoPresence),
         ids,
         clock: Arc::new(SystemClock),
     }
 }
 
-/// The live provider reads the queue and the page share.
-fn live_sources(inputs: &DiscoverInputs) -> queue::live_sources::LiveSources {
-    let upstream = Upstream::from_clients(
+/// The catalog upstreams discover reads through.
+fn live_upstream(inputs: &DiscoverInputs) -> Upstream {
+    Upstream::from_clients(
         inputs.http.clone(),
         inputs.no_redirect.clone(),
         inputs.providers.clone(),
         inputs.config.clone(),
         inputs.users.clone(),
     )
-    .with_instance_lastfm_key(inputs.lastfm_key.clone());
+    .with_instance_lastfm_key(inputs.lastfm_key.clone())
+}
+
+/// The live provider reads the queue, the page and radio share.
+fn live_sources(inputs: &DiscoverInputs, upstream: Upstream) -> queue::live_sources::LiveSources {
     let jellyfin = Arc::new(ConnectionResolver::new(
         Arc::new(SqliteConnectionStore::new(
             inputs.pool.clone(),
@@ -183,11 +210,16 @@ fn live_queue(
     inputs: &DiscoverInputs,
     sources: Arc<queue::live_sources::LiveSources>,
     youtube: Arc<dyn YouTubeSource>,
+    settings: queue::SettingsFn,
 ) -> Arc<dyn QueueStore> {
     let db = queue::store::QueueDb::new(inputs.pool.clone(), inputs.lane.clone());
     let cache = inputs.providers.cache.clone();
-    let config = inputs.config.clone();
-    let settings: queue::SettingsFn = Arc::new(move || {
+    Arc::new(queue::LiveQueue::new(sources, db, youtube, cache, settings))
+}
+
+/// The queue settings, read from the advanced settings on every call.
+fn queue_settings(config: Arc<ConfigStore>) -> queue::SettingsFn {
+    Arc::new(move || {
         let advanced = config
             .get_raw::<AdvancedSettings>()
             .unwrap_or_else(|error| {
@@ -195,6 +227,5 @@ fn live_queue(
                 AdvancedSettings::default()
             });
         queue::QueueSettings::from_advanced(&advanced)
-    });
-    Arc::new(queue::LiveQueue::new(sources, db, youtube, cache, settings))
+    })
 }

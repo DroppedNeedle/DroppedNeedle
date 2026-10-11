@@ -20,10 +20,16 @@ use crate::reads::discover::{
         TopPicksSection, TrackPreviewResponse, TrendingArtistsPage, WeeklyExploration,
         YouTubeQuotaResponse,
     },
+    models::{
+        DiscoveryBatchCreate, DiscoveryBatchDetail, DiscoveryBatchItemStatus,
+        DiscoveryBatchRemoveResult, DiscoveryBatchSummary, PlaylistProfile,
+        PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, RadioPlanRequest,
+        RadioPlanResponse, RadioPlanTrack, RadioRequest,
+    },
     ports::{
-        AlbumSamples, BatchItemRow, BatchRow, BatchStore, BoxFuture, ChartsSource, Clock,
-        DiscoverContent, NowPlayingStore, PreviewSource, ProviderFailure, QueueDeck, QueueStore,
-        QueueTrigger, RadioPlanner, YouTubeSource,
+        AlbumSamples, BatchFailure, BatchStore, BoxFuture, ChartsSource, Clock, DiscoverContent,
+        NowPlayingStore, PreviewSource, ProviderFailure, QueueDeck, QueueStore, QueueTrigger,
+        RadioFailure, RadioPlanner, YouTubeSource,
     },
 };
 
@@ -803,12 +809,11 @@ impl YouTubeSource for FakeYouTube {
     }
 }
 
-/// In-memory discovery batches.
+/// In-memory discovery batches: every album reads as requested and
+/// pending, and batches are owner-scoped like the real store.
 pub struct FakeBatches {
     clock: ManualClock,
-    rows: Mutex<HashMap<String, BatchRow>>,
-    order: Mutex<Vec<String>>,
-    seq: Mutex<i64>,
+    rows: Mutex<Vec<(String, DiscoveryBatchDetail)>>,
 }
 
 impl FakeBatches {
@@ -816,98 +821,118 @@ impl FakeBatches {
     pub fn new(clock: ManualClock) -> Self {
         Self {
             clock,
-            rows: Mutex::new(HashMap::new()),
-            order: Mutex::new(Vec::new()),
-            seq: Mutex::new(0),
+            rows: Mutex::new(Vec::new()),
         }
+    }
+
+    fn owned(&self, owner_id: &str, batch_id: &str) -> Option<DiscoveryBatchDetail> {
+        self.rows.lock().ok().and_then(|rows| {
+            rows.iter()
+                .find(|(owner, row)| owner == owner_id && row.id == batch_id)
+                .map(|(_, row)| row.clone())
+        })
     }
 }
 
 impl BatchStore for FakeBatches {
-    fn create(
-        &self,
-        owner_id: &str,
-        name: &str,
-        source_section: &str,
-        items: Vec<BatchItemRow>,
-    ) -> Result<BatchRow, ProviderFailure> {
-        let seq = self
-            .seq
-            .lock()
-            .map(|mut seq| {
-                *seq += 1;
-                *seq
-            })
-            .unwrap_or(1)
-            .max(1);
-        let row = BatchRow {
-            id: format!("batch-{seq}"),
-            owner_id: owner_id.to_owned(),
-            name: name.to_owned(),
-            source_section: source_section.to_owned(),
-            created_at: format!("2026-09-28T00:00:{:02}Z", seq % 60),
-            items,
-        };
-        if let Ok(mut rows) = self.rows.lock() {
-            rows.insert(row.id.clone(), row.clone());
-        }
-        if let Ok(mut order) = self.order.lock() {
-            order.insert(0, row.id.clone());
-        }
-        let _ = self.clock.now_unix();
-        Ok(row)
+    fn create<'a>(
+        &'a self,
+        user_id: &'a str,
+        body: &'a DiscoveryBatchCreate,
+    ) -> BoxFuture<'a, Result<DiscoveryBatchDetail, BatchFailure>> {
+        Box::pin(async move {
+            let mut rows = self
+                .rows
+                .lock()
+                .map_err(|_| ProviderFailure::failed("fake batches poisoned"))?;
+            let items: Vec<DiscoveryBatchItemStatus> = body
+                .items
+                .iter()
+                .map(|item| DiscoveryBatchItemStatus {
+                    release_group_mbid: item.release_group_mbid.clone(),
+                    artist_mbid: item.artist_mbid.clone(),
+                    album_name: item.album_name.clone(),
+                    artist_name: item.artist_name.clone(),
+                    outcome: "requested".to_owned(),
+                    request_status: Some("pending".to_owned()),
+                    in_library: false,
+                })
+                .collect();
+            let detail = DiscoveryBatchDetail {
+                id: format!("batch-{}", rows.len() + 1),
+                name: body.name.clone(),
+                source_section: body.source_section.clone(),
+                created_at: self.clock.now_unix().to_string(),
+                item_count: items.len() as i64,
+                imported_count: 0,
+                pending_count: items.len() as i64,
+                items,
+            };
+            rows.insert(0, (user_id.to_owned(), detail.clone()));
+            Ok(detail)
+        })
     }
 
-    fn list_for_user(&self, owner_id: &str) -> Vec<BatchRow> {
-        let order = self
-            .order
-            .lock()
-            .map(|order| order.clone())
-            .unwrap_or_default();
-        let rows = self
-            .rows
-            .lock()
-            .map(|rows| rows.clone())
-            .unwrap_or_default();
-        order
-            .into_iter()
-            .filter_map(|id| rows.get(&id).cloned())
-            .filter(|row| row.owner_id == owner_id)
-            .collect()
+    fn list<'a>(
+        &'a self,
+        user_id: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<DiscoveryBatchSummary>, BatchFailure>> {
+        Box::pin(async move {
+            let rows = self
+                .rows
+                .lock()
+                .map_err(|_| ProviderFailure::failed("fake batches poisoned"))?;
+            Ok(rows
+                .iter()
+                .filter(|(owner, _)| owner == user_id)
+                .map(|(_, row)| DiscoveryBatchSummary {
+                    id: row.id.clone(),
+                    name: row.name.clone(),
+                    source_section: row.source_section.clone(),
+                    created_at: row.created_at.clone(),
+                    item_count: row.item_count,
+                    imported_count: row.imported_count,
+                    pending_count: row.pending_count,
+                })
+                .collect())
+        })
     }
 
-    fn get_for_user(&self, owner_id: &str, batch_id: &str) -> Option<BatchRow> {
-        self.rows
-            .lock()
-            .ok()
-            .and_then(|rows| rows.get(batch_id).cloned())
-            .filter(|row| row.owner_id == owner_id)
+    fn detail<'a>(
+        &'a self,
+        user_id: &'a str,
+        batch_id: &'a str,
+    ) -> BoxFuture<'a, Result<DiscoveryBatchDetail, BatchFailure>> {
+        Box::pin(async move { self.owned(user_id, batch_id).ok_or(BatchFailure::NotFound) })
     }
 
-    fn remove(
-        &self,
-        owner_id: &str,
-        batch_id: &str,
+    fn remove<'a>(
+        &'a self,
+        user_id: &'a str,
+        batch_id: &'a str,
         remove_albums: bool,
-    ) -> Option<(i64, i64, i64)> {
-        let row = self
-            .rows
-            .lock()
-            .ok()
-            .and_then(|rows| rows.get(batch_id).cloned())
-            .filter(|row| row.owner_id == owner_id)?;
-        if let Ok(mut rows) = self.rows.lock() {
-            rows.remove(batch_id);
-        }
-        if let Ok(mut order) = self.order.lock() {
-            order.retain(|id| id != batch_id);
-        }
-        let albums = row.items.len() as i64;
-        if remove_albums {
-            Some((albums, albums, 0))
-        } else {
-            Some((0, 0, albums))
-        }
+    ) -> BoxFuture<'a, Result<DiscoveryBatchRemoveResult, BatchFailure>> {
+        Box::pin(async move {
+            let row = self
+                .owned(user_id, batch_id)
+                .ok_or(BatchFailure::NotFound)?;
+            if let Ok(mut rows) = self.rows.lock() {
+                rows.retain(|(_, kept)| kept.id != batch_id);
+            }
+            Ok(if remove_albums {
+                DiscoveryBatchRemoveResult {
+                    removed_albums: 0,
+                    cancelled_requests: row.item_count,
+                    kept: 0,
+                }
+            } else {
+                DiscoveryBatchRemoveResult {
+                    removed_albums: 0,
+                    cancelled_requests: 0,
+                    kept: row.item_count,
+                }
+            })
+        })
     }
 }
 
@@ -919,35 +944,35 @@ impl RadioPlanner for FakeRadio {
     fn plan<'a>(
         &'a self,
         _user_id: &'a str,
-        seed_type: &'a str,
-        seed_id: Option<&'a str>,
-        mode: &'a str,
-        count: i64,
-        exclude: &'a [String],
-    ) -> BoxFuture<'a, Result<crate::reads::discover::models::RadioPlanResponse, ProviderFailure>>
-    {
+        request: &'a RadioPlanRequest,
+    ) -> BoxFuture<'a, Result<RadioPlanResponse, RadioFailure>> {
         Box::pin(async move {
-            let tracks = (0..count)
-                .filter(|rank| !exclude.contains(&format!("recording-{rank}")))
-                .map(|rank| crate::reads::discover::models::RadioPlanTrack {
+            let library = request.mode == "library";
+            let tracks = (0..request.count)
+                .filter(|rank| {
+                    !request
+                        .exclude_recording_mbids
+                        .contains(&format!("recording-{rank}"))
+                })
+                .map(|rank| RadioPlanTrack {
                     track_name: format!("Radio track {rank}"),
                     artist_name: format!("Radio artist {rank}"),
                     artist_mbid: format!("artist-mbid-{rank}"),
                     recording_mbid: Some(format!("recording-{rank}")),
                     album_mbid: Some(format!("release-{rank}")),
                     album_name: Some(format!("Radio album {rank}")),
-                    in_library: mode == "library" || rank % 2 == 0,
-                    local_file_id: if mode == "library" || rank % 2 == 0 {
-                        Some(format!("file-{rank}"))
-                    } else {
-                        None
-                    },
+                    in_library: library || rank % 2 == 0,
+                    local_file_id: (library || rank % 2 == 0).then(|| format!("file-{rank}")),
                     file_format: Some("flac".to_owned()),
-                    duration_s: Some(180.0 + f64::from(rank as i32)),
+                    duration_s: Some(180.0 + rank as f64),
                 })
                 .collect();
-            Ok(crate::reads::discover::models::RadioPlanResponse {
-                title: format!("Radio: {} {}", seed_type, seed_id.unwrap_or("mix")),
+            Ok(RadioPlanResponse {
+                title: format!(
+                    "Radio: {} {}",
+                    request.seed_type,
+                    request.seed_id.as_deref().unwrap_or("mix")
+                ),
                 tracks,
             })
         })
@@ -955,58 +980,41 @@ impl RadioPlanner for FakeRadio {
 
     fn shelf<'a>(
         &'a self,
-        seed_type: &'a str,
-        seed_id: &'a str,
-        count: i64,
-        _source: ChartSource,
-    ) -> BoxFuture<'a, Result<crate::reads::discover::models::ChartSection, ProviderFailure>> {
+        _user_id: &'a str,
+        request: &'a RadioRequest,
+    ) -> BoxFuture<'a, Result<ChartSection, RadioFailure>> {
         Box::pin(async move {
-            Ok(ChartSection {
-                title: format!("Radio: {seed_type} {seed_id}"),
-                section_type: "album".to_owned(),
-                items: (0..count)
-                    .map(|rank| {
-                        SectionItem::Album(fake_album(
-                            &format!("Radio album {rank}"),
-                            &format!("Radio artist {rank}"),
-                            rank,
-                        ))
-                    })
-                    .collect(),
-                source: Some("listenbrainz".to_owned()),
-                fallback_message: None,
-                connect_service: None,
-                radio_seed_type: Some(seed_type.to_owned()),
-                radio_seed_id: Some(seed_id.to_owned()),
-            })
+            let mut section = album_section(
+                &format!("Radio: {} {}", request.seed_type, request.seed_id),
+                request.count,
+            );
+            section.radio_seed_type = Some(request.seed_type.clone());
+            section.radio_seed_id = Some(request.seed_id.clone());
+            Ok(section)
         })
     }
 
     fn playlist_suggestions<'a>(
         &'a self,
         _user_id: &'a str,
-        playlist_id: &'a str,
-        count: i64,
-        _source: ChartSource,
-    ) -> BoxFuture<
-        'a,
-        Result<crate::reads::discover::models::PlaylistSuggestionsResponse, ProviderFailure>,
-    > {
+        request: &'a PlaylistSuggestionsRequest,
+    ) -> BoxFuture<'a, Result<PlaylistSuggestionsResponse, RadioFailure>> {
         Box::pin(async move {
-            Ok(
-                crate::reads::discover::models::PlaylistSuggestionsResponse {
-                    suggestions: album_section(&format!("For playlist {playlist_id}"), count),
-                    playlist_id: playlist_id.to_owned(),
-                    profile: crate::reads::discover::models::PlaylistProfile {
-                        artist_mbids: vec!["artist-mbid-0".to_owned()],
-                        genre_distribution: HashMap::from([(
-                            "trip-hop".to_owned(),
-                            vec!["Portishead".to_owned()],
-                        )]),
-                        track_count: 12,
-                    },
+            Ok(PlaylistSuggestionsResponse {
+                suggestions: album_section(
+                    &format!("For playlist {}", request.playlist_id),
+                    request.count,
+                ),
+                playlist_id: request.playlist_id.clone(),
+                profile: PlaylistProfile {
+                    artist_mbids: vec!["artist-mbid-0".to_owned()],
+                    genre_distribution: HashMap::from([(
+                        "artist-mbid-0".to_owned(),
+                        vec!["trip-hop".to_owned()],
+                    )]),
+                    track_count: 12,
                 },
-            )
+            })
         })
     }
 }

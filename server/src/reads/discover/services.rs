@@ -12,18 +12,19 @@ use crate::{
             AlbumPreviewResponse, ChartRange, ChartSection, ChartSource, DiscoverActivityResponse,
             DiscoverQueuePreview, DiscoverQueueResponse, DiscoverQueueStatusResponse,
             DiscoverResponse, DiscoveryBatchCreate, DiscoveryBatchDetail,
-            DiscoveryBatchListResponse, DiscoveryBatchRemoveResult, DiscoveryBatchSummary,
-            GenreDetailResponse, HomeResponse, IgnoredReleasesResponse, IntegrationStatus,
-            NowPlayingSnapshot, PlaylistSuggestionsRequest, PlaylistSuggestionsResponse,
-            PopularAlbumsPage, QueueEnrichment, QueueGenerateRequest, QueueGenerateResponse,
-            QueueIgnoreRequest, QueueValidateRequest, QueueValidateResponse, RadioPlanRequest,
-            RadioPlanResponse, RadioRequest, RefreshResponse, TrackCacheCheckRequest,
-            TrackCacheCheckResponse, TrackCacheCheckResponseItem, TrackPreviewResponse,
-            TrendingArtistsPage, YouTubeQuotaResponse, YouTubeSearchResponse,
+            DiscoveryBatchListResponse, DiscoveryBatchRemoveResult, GenreDetailResponse,
+            HomeResponse, IgnoredReleasesResponse, IntegrationStatus, NowPlayingSnapshot,
+            PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, PopularAlbumsPage,
+            QueueEnrichment, QueueGenerateRequest, QueueGenerateResponse, QueueIgnoreRequest,
+            QueueValidateRequest, QueueValidateResponse, RadioPlanRequest, RadioPlanResponse,
+            RadioRequest, RefreshResponse, TrackCacheCheckRequest, TrackCacheCheckResponse,
+            TrackCacheCheckResponseItem, TrackPreviewResponse, TrendingArtistsPage,
+            YouTubeQuotaResponse, YouTubeSearchResponse,
         },
         ports::{
-            BatchItemRow, BatchStore, ChartsSource, Clock, DiscoverContent, NowPlayingStore,
-            PreviewSource, ProviderFailure, QueueStore, QueueTrigger, RadioPlanner, YouTubeSource,
+            BatchFailure, BatchRefusal, BatchStore, ChartsSource, Clock, DiscoverContent,
+            NowPlayingStore, PreviewSource, ProviderFailure, QueueStore, QueueTrigger,
+            RadioFailure, RadioPlanner, YouTubeSource,
         },
     },
 };
@@ -38,8 +39,12 @@ pub const ALBUM_PREVIEW_MAX: i64 = 8;
 pub const CACHE_CHECK_MAX_ITEMS: usize = 100;
 /// Max artist/track string length accepted anywhere in discover.
 pub const NAME_MAX_LEN: usize = 200;
-/// Max radio plan tracks.
-pub const RADIO_PLAN_MAX: i64 = 100;
+/// Fewest radio plan tracks (v2 plans at least five).
+pub const RADIO_PLAN_MIN: i64 = 5;
+/// Max radio plan tracks (v2 caps plans at fifty).
+pub const RADIO_PLAN_MAX: i64 = 50;
+/// Max albums in one discovery batch (v2 `MAX_BATCH_ITEMS`).
+pub const BATCH_MAX_ITEMS: usize = 30;
 /// Max radio shelf rows.
 pub const RADIO_SHELF_MAX: i64 = 50;
 
@@ -61,6 +66,8 @@ pub enum ServiceError {
     NotBuilt(String),
     /// A usage limit is spent for now; the sentence is shown.
     Exhausted(String),
+    /// The request rules refused a batch (quota, storage).
+    Refused(BatchRefusal),
 }
 
 impl ServiceError {
@@ -74,6 +81,7 @@ impl ServiceError {
             Self::NotConfigured(message) => ReadsError::NotConfigured { message },
             Self::NotBuilt(message) => ReadsError::NotBuilt { message },
             Self::Exhausted(message) => ReadsError::Exhausted { message },
+            Self::Refused(refusal) => ReadsError::Refused(refusal),
         }
     }
 }
@@ -247,6 +255,7 @@ pub async fn record_activity(
 /// One radio shelf.
 pub async fn radio_shelf(
     deps: &ReadsDeps,
+    user_id: &str,
     body: &RadioRequest,
 ) -> Result<ChartSection, ServiceError> {
     if !matches!(body.seed_type.as_str(), "artist" | "album" | "genre") {
@@ -260,12 +269,15 @@ pub async fn radio_shelf(
             "seed_id must not be blank".to_owned(),
         ));
     }
-    let source = parse_source(body.source.as_deref())?;
-    let count = body.count.clamp(1, RADIO_SHELF_MAX);
-    Ok(deps
-        .radio
-        .shelf(&body.seed_type, &body.seed_id, count, source)
-        .await?)
+    parse_source(body.source.as_deref())?;
+    let request = RadioRequest {
+        count: body.count.clamp(1, RADIO_SHELF_MAX),
+        ..body.clone()
+    };
+    deps.radio
+        .shelf(user_id, &request)
+        .await
+        .map_err(radio_failure)
 }
 
 /// One complete radio plan.
@@ -294,18 +306,14 @@ pub async fn radio_plan(
             body.mode
         )));
     }
-    let count = body.count.clamp(1, RADIO_PLAN_MAX);
-    Ok(deps
-        .radio
-        .plan(
-            user_id,
-            &body.seed_type,
-            body.seed_id.as_deref(),
-            &body.mode,
-            count,
-            &body.exclude_recording_mbids,
-        )
-        .await?)
+    let request = RadioPlanRequest {
+        count: body.count.clamp(RADIO_PLAN_MIN, RADIO_PLAN_MAX),
+        ..body.clone()
+    };
+    deps.radio
+        .plan(user_id, &request)
+        .await
+        .map_err(radio_failure)
 }
 
 /// Suggestions extending one playlist.
@@ -319,12 +327,23 @@ pub async fn playlist_suggestions(
             "playlist_id must not be blank".to_owned(),
         ));
     }
-    let source = parse_source(body.source.as_deref())?;
-    let count = body.count.clamp(1, RADIO_SHELF_MAX);
-    Ok(deps
-        .radio
-        .playlist_suggestions(user_id, &body.playlist_id, count, source)
-        .await?)
+    parse_source(body.source.as_deref())?;
+    let request = PlaylistSuggestionsRequest {
+        count: body.count.clamp(1, RADIO_SHELF_MAX),
+        ..body.clone()
+    };
+    deps.radio
+        .playlist_suggestions(user_id, &request)
+        .await
+        .map_err(radio_failure)
+}
+
+fn radio_failure(failure: RadioFailure) -> ServiceError {
+    match failure {
+        RadioFailure::NotFound => ServiceError::NotFound,
+        RadioFailure::Invalid(message) => ServiceError::InvalidInput(message),
+        RadioFailure::Provider(failure) => failure.into(),
+    }
 }
 
 /// The queue deck: the user's last built deck when there is one (stale
@@ -675,117 +694,62 @@ pub async fn your_top_albums(
         .await?)
 }
 
-fn batch_detail(row: &crate::reads::discover::ports::BatchRow) -> DiscoveryBatchDetail {
-    let imported = row
-        .items
-        .iter()
-        .filter(|item| item.request_status.as_deref() == Some("imported"))
-        .count() as i64;
-    DiscoveryBatchDetail {
-        id: row.id.clone(),
-        name: row.name.clone(),
-        source_section: row.source_section.clone(),
-        created_at: row.created_at.clone(),
-        item_count: row.items.len() as i64,
-        imported_count: imported,
-        pending_count: row.items.len() as i64 - imported,
-        items: row
-            .items
-            .iter()
-            .map(
-                |item| crate::reads::discover::models::DiscoveryBatchItemStatus {
-                    release_group_mbid: item.release_group_mbid.clone(),
-                    artist_mbid: item.artist_mbid.clone(),
-                    album_name: item.album_name.clone(),
-                    artist_name: item.artist_name.clone(),
-                    outcome: item.outcome.clone(),
-                    request_status: item.request_status.clone(),
-                    in_library: item.in_library,
-                },
-            )
-            .collect(),
+fn batch_failure(failure: BatchFailure) -> ServiceError {
+    match failure {
+        BatchFailure::NotFound => ServiceError::NotFound,
+        BatchFailure::Invalid(message) => ServiceError::InvalidInput(message),
+        BatchFailure::Refused(refusal) => ServiceError::Refused(refusal),
+        BatchFailure::Provider(failure) => owned_store_failure(failure),
     }
 }
 
-/// Create a batch: here the rows
-/// are stored and echoed with their initial outcomes.
-pub fn create_batch(
+/// Create a batch: every album not owned or already requested is filed
+/// as a real album request, under the caller's quota and approval rules.
+pub async fn create_batch(
     deps: &ReadsDeps,
     user_id: &str,
     body: &DiscoveryBatchCreate,
 ) -> Result<DiscoveryBatchDetail, ServiceError> {
-    if body.name.trim().is_empty() {
-        return Err(ServiceError::InvalidInput(
-            "name must not be blank".to_owned(),
-        ));
-    }
     if body.items.is_empty() {
         return Err(ServiceError::InvalidInput(
-            "items must hold at least one album".to_owned(),
+            "A discovery batch needs at least one album".to_owned(),
         ));
     }
-    let row = deps.batches.create(
-        user_id,
-        &body.name,
-        &body.source_section,
-        body.items
-            .iter()
-            .map(|item| BatchItemRow {
-                release_group_mbid: item.release_group_mbid.clone(),
-                artist_mbid: item.artist_mbid.clone(),
-                album_name: item.album_name.clone(),
-                artist_name: item.artist_name.clone(),
-                outcome: "requested".to_owned(),
-                request_status: Some("pending".to_owned()),
-                in_library: false,
-            })
-            .collect(),
-    )?;
-    Ok(batch_detail(&row))
+    if body.items.len() > BATCH_MAX_ITEMS {
+        return Err(ServiceError::InvalidInput(format!(
+            "A discovery batch is capped at {BATCH_MAX_ITEMS} albums"
+        )));
+    }
+    deps.batches
+        .create(user_id, body)
+        .await
+        .map_err(batch_failure)
 }
 
 /// The user's batches, newest first.
-pub fn list_batches(deps: &ReadsDeps, user_id: &str) -> DiscoveryBatchListResponse {
-    DiscoveryBatchListResponse {
-        batches: deps
-            .batches
-            .list_for_user(user_id)
-            .iter()
-            .map(|row| DiscoveryBatchSummary {
-                id: row.id.clone(),
-                name: row.name.clone(),
-                source_section: row.source_section.clone(),
-                created_at: row.created_at.clone(),
-                item_count: row.items.len() as i64,
-                imported_count: row
-                    .items
-                    .iter()
-                    .filter(|item| item.request_status.as_deref() == Some("imported"))
-                    .count() as i64,
-                pending_count: row
-                    .items
-                    .iter()
-                    .filter(|item| item.request_status.as_deref() != Some("imported"))
-                    .count() as i64,
-            })
-            .collect(),
-    }
+pub async fn list_batches(
+    deps: &ReadsDeps,
+    user_id: &str,
+) -> Result<DiscoveryBatchListResponse, ServiceError> {
+    Ok(DiscoveryBatchListResponse {
+        batches: deps.batches.list(user_id).await.map_err(batch_failure)?,
+    })
 }
 
 /// One batch. Foreign ids read as missing.
-pub fn get_batch(
+pub async fn get_batch(
     deps: &ReadsDeps,
     user_id: &str,
     batch_id: &str,
 ) -> Result<DiscoveryBatchDetail, ServiceError> {
     deps.batches
-        .get_for_user(user_id, batch_id)
-        .map(|row| batch_detail(&row))
-        .ok_or(ServiceError::NotFound)
+        .detail(user_id, batch_id)
+        .await
+        .map_err(batch_failure)
 }
 
 /// Remove one batch. Foreign ids read as missing.
-pub fn remove_batch(
+pub async fn remove_batch(
     deps: &ReadsDeps,
     user_id: &str,
     batch_id: &str,
@@ -793,14 +757,8 @@ pub fn remove_batch(
 ) -> Result<DiscoveryBatchRemoveResult, ServiceError> {
     deps.batches
         .remove(user_id, batch_id, remove_albums)
-        .map(
-            |(removed_albums, cancelled_requests, kept)| DiscoveryBatchRemoveResult {
-                removed_albums,
-                cancelled_requests,
-                kept,
-            },
-        )
-        .ok_or(ServiceError::NotFound)
+        .await
+        .map_err(batch_failure)
 }
 
 /// The live now-playing snapshot across users.

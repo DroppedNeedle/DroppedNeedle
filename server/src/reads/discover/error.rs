@@ -14,6 +14,7 @@ use serde_json::json;
 use crate::{
     error::{ErrorBody, ErrorEnvelope},
     ids::IdGenerator,
+    reads::discover::ports::BatchRefusal,
 };
 
 /// Missing or invalid session.
@@ -77,6 +78,9 @@ pub enum ReadsError {
         /// Full sentence for the user.
         message: String,
     },
+    /// The request rules refused a discovery batch. Answers with the
+    /// same status, code and details as the requests routes.
+    Refused(BatchRefusal),
 }
 
 impl ReadsError {
@@ -103,6 +107,9 @@ impl ReadsError {
             Self::Internal { .. } => StatusCode::INTERNAL_SERVER_ERROR,
             Self::NotConfigured { .. } | Self::NotBuilt { .. } => StatusCode::SERVICE_UNAVAILABLE,
             Self::Exhausted { .. } => StatusCode::TOO_MANY_REQUESTS,
+            Self::Refused(refusal) => {
+                StatusCode::from_u16(refusal.status).unwrap_or(StatusCode::FORBIDDEN)
+            }
         }
     }
 
@@ -128,6 +135,11 @@ impl ReadsError {
             Self::NotConfigured { message } => (NOT_CONFIGURED.to_owned(), message.clone(), None),
             Self::NotBuilt { message } => (NOT_AVAILABLE.to_owned(), message.clone(), None),
             Self::Exhausted { message } => (RATE_LIMITED.to_owned(), message.clone(), None),
+            Self::Refused(refusal) => (
+                refusal.code.clone(),
+                refusal.message.clone(),
+                refusal.details.clone(),
+            ),
         };
         ErrorEnvelope {
             error: ErrorBody {

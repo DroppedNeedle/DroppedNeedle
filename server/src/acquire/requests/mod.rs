@@ -15,6 +15,7 @@
 
 pub mod auth;
 pub mod bridges;
+pub mod discovery;
 pub mod dispatch;
 pub mod error;
 pub mod http;

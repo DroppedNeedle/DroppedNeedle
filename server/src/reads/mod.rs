@@ -58,6 +58,9 @@ pub struct ReadsSetup {
     /// Saved YouTube links. Unwired until [`ReadsSetup::with_collections`]
     /// hands over the database.
     pub youtube: youtube::YouTubeLinks,
+    /// Where boot puts the requests side of discovery batches once the
+    /// acquisition setup is built (after this bundle).
+    pub discover_requests: discover::adapters::batches::RequestsSlot,
 }
 
 impl ReadsSetup {
@@ -75,6 +78,7 @@ impl ReadsSetup {
         enrichment: Option<enrichment::live::ProductionEnrichment>,
     ) -> Self {
         let inputs_config = inputs.config.clone();
+        let discover_requests = discover::adapters::batches::RequestsSlot::default();
         let discover_inputs = discover::adapters::DiscoverInputs {
             pool: pool.clone(),
             lane: inputs.lane.clone(),
@@ -87,6 +91,7 @@ impl ReadsSetup {
             users: users.clone(),
             lastfm_key: inputs.lastfm_key.clone(),
             discover_warmer: inputs.discover_warmer,
+            batch_requests: discover_requests.clone(),
             artwork: None,
         };
         let (platform, artwork) = platform_state(pool, &users, inputs);
@@ -144,6 +149,7 @@ impl ReadsSetup {
             artwork: Some(artwork),
             platform,
             youtube,
+            discover_requests,
         }
     }
 
@@ -177,6 +183,7 @@ impl ReadsSetup {
             catalog: None,
             platform: test_platform_state(),
             artwork: None,
+            discover_requests: Default::default(),
         })
     }
 

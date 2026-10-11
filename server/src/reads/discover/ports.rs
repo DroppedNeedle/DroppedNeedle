@@ -12,11 +12,16 @@ use std::collections::HashMap;
 pub use futures_util::future::BoxFuture;
 
 use crate::reads::discover::models::{
-    ChartRange, ChartSource, DiscoverActivityResponse, DiscoverQueuePreview,
+    ChartRange, ChartSection, ChartSource, DiscoverActivityResponse, DiscoverQueuePreview,
     DiscoverQueueStatusResponse, DiscoverResponse, GenreDetailResponse, HomeResponse,
     IgnoredRelease, IntegrationStatus, NowPlayingEntry, PopularAlbumsPage, PreviewTrackItem,
     QueueEnrichment, QueueGenerateResponse, QueueIgnoreRequest, QueueItem, TrackPreviewResponse,
     TrendingArtistsPage, YouTubeQuotaResponse,
+};
+use crate::reads::discover::models::{
+    DiscoveryBatchCreate, DiscoveryBatchDetail, DiscoveryBatchRemoveResult, DiscoveryBatchSummary,
+    PlaylistSuggestionsRequest, PlaylistSuggestionsResponse, RadioPlanRequest, RadioPlanResponse,
+    RadioRequest,
 };
 
 /// Why a port could not answer.
@@ -269,65 +274,70 @@ pub trait YouTubeSource: Send + Sync {
     fn quota(&self) -> BoxFuture<'_, Option<YouTubeQuotaResponse>>;
 }
 
-/// One discovery batch row.
-#[derive(Debug, Clone)]
-pub struct BatchRow {
-    /// Batch id.
-    pub id: String,
-    /// Owning user id.
-    pub owner_id: String,
-    /// Batch name.
-    pub name: String,
-    /// Discover section the batch came from.
-    pub source_section: String,
-    /// Creation timestamp (RFC 3339).
-    pub created_at: String,
-    /// Album rows: (release_group_mbid, artist_mbid, album_name, artist_name,
-    /// outcome, request_status, in_library).
-    pub items: Vec<BatchItemRow>,
+/// Why a batch action was refused by the request rules (quota spent,
+/// storage full). Carries the requests envelope as is, so the page shows
+/// the same message and details a plain album request would.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BatchRefusal {
+    /// HTTP status the requests routes answer with (429 or 403).
+    pub status: u16,
+    /// Stable code (`QUOTA_EXCEEDED`, `STORAGE_FULL`).
+    pub code: String,
+    /// User-facing sentence.
+    pub message: String,
+    /// The usage numbers behind the refusal, when there are any.
+    pub details: Option<serde_json::Value>,
 }
 
-/// One album row inside a batch.
-#[derive(Debug, Clone)]
-pub struct BatchItemRow {
-    /// MusicBrainz release-group id.
-    pub release_group_mbid: String,
-    /// MusicBrainz artist id.
-    pub artist_mbid: String,
-    /// Album name.
-    pub album_name: String,
-    /// Artist name.
-    pub artist_name: String,
-    /// `requested`, `skipped_in_library`, or `skipped_duplicate`.
-    pub outcome: String,
-    /// Request state, when requested.
-    pub request_status: Option<String>,
-    /// True when already owned.
-    pub in_library: bool,
+/// Why a batch action failed.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BatchFailure {
+    /// Unknown batch, or one the caller may not see.
+    NotFound,
+    /// The batch itself is wrong. The string is user-facing.
+    Invalid(String),
+    /// The request rules refused it.
+    Refused(BatchRefusal),
+    /// A store or the acquisition side failed.
+    Provider(ProviderFailure),
 }
 
-/// Discovery batch store. Reads are owner-scoped: foreign ids read as
-/// missing so callers answer 404 without leaking existence.
+impl From<ProviderFailure> for BatchFailure {
+    fn from(failure: ProviderFailure) -> Self {
+        Self::Provider(failure)
+    }
+}
+
+/// Discovery batches: "download this whole shelf", filed as real album
+/// requests and removable again. Owners see their own batches; admins
+/// may open and remove anyone's. A batch the caller may not see reads as
+/// missing.
 pub trait BatchStore: Send + Sync {
-    /// Create a batch for the user; returns the stored row.
-    fn create(
-        &self,
-        owner_id: &str,
-        name: &str,
-        source_section: &str,
-        items: Vec<BatchItemRow>,
-    ) -> Result<BatchRow, ProviderFailure>;
-    /// The user's batches, newest first.
-    fn list_for_user(&self, owner_id: &str) -> Vec<BatchRow>;
-    /// One batch, when owned by the user.
-    fn get_for_user(&self, owner_id: &str, batch_id: &str) -> Option<BatchRow>;
-    /// Remove one batch. Returns (removed, cancelled, kept) when owned.
-    fn remove(
-        &self,
-        owner_id: &str,
-        batch_id: &str,
+    /// File the batch's albums as requests and record the batch.
+    fn create<'a>(
+        &'a self,
+        user_id: &'a str,
+        body: &'a DiscoveryBatchCreate,
+    ) -> BoxFuture<'a, Result<DiscoveryBatchDetail, BatchFailure>>;
+    /// The caller's batches, newest first.
+    fn list<'a>(
+        &'a self,
+        user_id: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<DiscoveryBatchSummary>, BatchFailure>>;
+    /// One batch with each album's current state.
+    fn detail<'a>(
+        &'a self,
+        user_id: &'a str,
+        batch_id: &'a str,
+    ) -> BoxFuture<'a, Result<DiscoveryBatchDetail, BatchFailure>>;
+    /// Remove one batch, and with `remove_albums` the albums it caused:
+    /// pending requests are cancelled, landed albums go to the recycle bin.
+    fn remove<'a>(
+        &'a self,
+        user_id: &'a str,
+        batch_id: &'a str,
         remove_albums: bool,
-    ) -> Option<(i64, i64, i64)>;
+    ) -> BoxFuture<'a, Result<DiscoveryBatchRemoveResult, BatchFailure>>;
 }
 
 /// Live now-playing presence, already privacy-projected per owner setting.
@@ -336,35 +346,42 @@ pub trait NowPlayingStore: Send + Sync {
     fn snapshot(&self) -> Vec<NowPlayingEntry>;
 }
 
-/// Radio plans and playlist suggestions.
+/// Why a radio station or playlist suggestion could not be built.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RadioFailure {
+    /// The seed album or playlist does not exist (or is private).
+    NotFound,
+    /// The seed cannot make a station. The string is user-facing.
+    Invalid(String),
+    /// A provider or store failed.
+    Provider(ProviderFailure),
+}
+
+impl From<ProviderFailure> for RadioFailure {
+    fn from(failure: ProviderFailure) -> Self {
+        Self::Provider(failure)
+    }
+}
+
+/// Radio plans, radio shelves and playlist suggestions. Requests arrive
+/// validated, with counts already clamped.
 pub trait RadioPlanner: Send + Sync {
-    /// Build a complete radio plan for the user.
+    /// A complete, finite track plan for the user.
     fn plan<'a>(
         &'a self,
         user_id: &'a str,
-        seed_type: &'a str,
-        seed_id: Option<&'a str>,
-        mode: &'a str,
-        count: i64,
-        exclude: &'a [String],
-    ) -> BoxFuture<'a, Result<crate::reads::discover::models::RadioPlanResponse, ProviderFailure>>;
-    /// Build one radio shelf.
+        request: &'a RadioPlanRequest,
+    ) -> BoxFuture<'a, Result<RadioPlanResponse, RadioFailure>>;
+    /// One album shelf seeded by an artist, album or genre.
     fn shelf<'a>(
         &'a self,
-        seed_type: &'a str,
-        seed_id: &'a str,
-        count: i64,
-        source: ChartSource,
-    ) -> BoxFuture<'a, Result<crate::reads::discover::models::ChartSection, ProviderFailure>>;
-    /// Build suggestions for one playlist.
+        user_id: &'a str,
+        request: &'a RadioRequest,
+    ) -> BoxFuture<'a, Result<ChartSection, RadioFailure>>;
+    /// Albums that extend one playlist.
     fn playlist_suggestions<'a>(
         &'a self,
         user_id: &'a str,
-        playlist_id: &'a str,
-        count: i64,
-        source: ChartSource,
-    ) -> BoxFuture<
-        'a,
-        Result<crate::reads::discover::models::PlaylistSuggestionsResponse, ProviderFailure>,
-    >;
+        request: &'a PlaylistSuggestionsRequest,
+    ) -> BoxFuture<'a, Result<PlaylistSuggestionsResponse, RadioFailure>>;
 }

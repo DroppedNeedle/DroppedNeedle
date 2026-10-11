@@ -328,6 +328,19 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
     {
         tracing::warn!("album removal cleanup was already attached");
     }
+    // Discovery batches file their albums through the requests service.
+    if reads
+        .discover_requests
+        .set(Arc::new(
+            crate::acquire::requests::discovery::DiscoveryBatchRequests::new(
+                acquire.requests.clone(),
+                Some(library.clone()),
+            ),
+        ))
+        .is_err()
+    {
+        tracing::warn!("discovery batch requests were already attached");
+    }
     // Startup recovery before serving traffic. Re-running after a clean
     // shutdown is a no-op: nothing destructive repeats.
     let recovery = acquire

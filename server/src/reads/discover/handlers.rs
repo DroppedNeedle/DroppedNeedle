@@ -259,15 +259,16 @@ pub async fn record_activity(
         (status = 200, description = "Radio shelf", body = ChartSection),
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
+        (status = 404, description = "Unknown seed album or playlist"),
+        (status = 502, description = "A music provider failed", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn discover_radio(
     State(deps): State<ReadsDeps>,
-    _user: AuthenticatedUser,
+    user: AuthenticatedUser,
     ValidJson(body): ValidJson<RadioRequest>,
 ) -> Result<Json<ChartSection>, ReadsError> {
-    services::radio_shelf(&deps, &body)
+    services::radio_shelf(&deps, &user.user_id, &body)
         .await
         .map(Json)
         .map_err(|error| map(error, &deps))
@@ -282,7 +283,8 @@ pub async fn discover_radio(
         (status = 200, description = "Radio plan", body = RadioPlanResponse),
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
+        (status = 404, description = "Unknown seed album or playlist"),
+        (status = 502, description = "A music provider failed", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn radio_plan(
@@ -305,7 +307,8 @@ pub async fn radio_plan(
         (status = 200, description = "Playlist suggestions", body = PlaylistSuggestionsResponse),
         (status = 400, description = "Bad request body"),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
+        (status = 404, description = "Unknown seed album or playlist"),
+        (status = 502, description = "A music provider failed", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn playlist_suggestions(
@@ -650,16 +653,20 @@ pub async fn album_preview(
 // Batches
 // ---------------------------------------------------------------------------
 
-/// Create a discovery batch: one request per album.
+/// Create a discovery batch: every album the library lacks and nobody
+/// has requested yet is filed as an album request, under the caller's
+/// quota and approval rules.
 #[utoipa::path(
     post,
     path = "/api/v3/discover/batches",
     request_body = DiscoveryBatchCreate,
     responses(
         (status = 202, description = "Batch created", body = DiscoveryBatchDetail),
-        (status = 400, description = "Bad request body"),
+        (status = 400, description = "Empty or oversized batch, or every album is already owned or requested"),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
+        (status = 403, description = "Storage full (STORAGE_FULL)", body = crate::error::ErrorEnvelope),
+        (status = 429, description = "Request quota spent (QUOTA_EXCEEDED)", body = crate::error::ErrorEnvelope),
+        (status = 503, description = "Acquisition is not running (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn create_batch(
@@ -668,6 +675,7 @@ pub async fn create_batch(
     ValidJson(body): ValidJson<DiscoveryBatchCreate>,
 ) -> Result<(StatusCode, Json<DiscoveryBatchDetail>), ReadsError> {
     services::create_batch(&deps, &user.user_id, &body)
+        .await
         .map(|detail| (StatusCode::ACCEPTED, Json(detail)))
         .map_err(|error| map(error, &deps))
 }
@@ -679,16 +687,21 @@ pub async fn create_batch(
     responses(
         (status = 200, description = "Batch list", body = DiscoveryBatchListResponse),
         (status = 401, description = "Not authenticated"),
+        (status = 500, description = "The batch store failed", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn list_batches(
     State(deps): State<ReadsDeps>,
     user: AuthenticatedUser,
-) -> Json<DiscoveryBatchListResponse> {
-    Json(services::list_batches(&deps, &user.user_id))
+) -> Result<Json<DiscoveryBatchListResponse>, ReadsError> {
+    services::list_batches(&deps, &user.user_id)
+        .await
+        .map(Json)
+        .map_err(|error| map(error, &deps))
 }
 
-/// One batch. Foreign ids read as missing.
+/// One batch with each album's current state. Admins may open any batch;
+/// anyone else's reads as missing.
 #[utoipa::path(
     get,
     path = "/api/v3/discover/batches/{batch_id}",
@@ -705,11 +718,14 @@ pub async fn get_batch(
     Path(batch_id): Path<String>,
 ) -> Result<Json<DiscoveryBatchDetail>, ReadsError> {
     services::get_batch(&deps, &user.user_id, &batch_id)
+        .await
         .map(Json)
         .map_err(|error| map(error, &deps))
 }
 
-/// Remove one batch. Foreign ids read as missing.
+/// Remove one batch. With `remove_albums` (the default) its pending
+/// requests are cancelled and the albums it brought in go to the recycle
+/// bin; albums that were already owned or requested are never touched.
 #[utoipa::path(
     delete,
     path = "/api/v3/discover/batches/{batch_id}",
@@ -736,6 +752,7 @@ pub async fn remove_batch(
         &batch_id,
         query.remove_albums.unwrap_or(true),
     )
+    .await
     .map(Json)
     .map_err(|error| map(error, &deps))
 }
