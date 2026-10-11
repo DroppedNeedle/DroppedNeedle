@@ -7,7 +7,8 @@ import { ArtistQueryKeyFactory } from '$lib/queries/artist/ArtistQueryKeyFactory
 import { DiscoverQueryKeyFactory } from '$lib/queries/discover/DiscoverQueryKeyFactory';
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
-import { LibraryV3Api } from './LibraryV3Api';
+import { LibraryV3Api, reviewFilterQuery } from './LibraryV3Api';
+import type { LibraryReviewParams } from './LibraryQueryKeyFactory';
 
 // Two-layer sweep: the review-local layer (reviews, activity, operations)
 // always runs; the catalog layer (library, artist, home, discover) runs only
@@ -98,12 +99,53 @@ export function retryLibraryReview() {
 /** Start identification again for every album with a pending review. */
 export function retryPendingLibraryReviews() {
 	return createMutation(() => ({
-		mutationFn: (input: { confirmLocalMetadata: boolean }) =>
+		mutationFn: (input: { confirmLocalMetadata: boolean; rootIds?: string[] }) =>
 			api.global.v3.POST(LibraryV3Api.retryPendingReviews(), {
-				confirm_local_metadata: input.confirmLocalMetadata
+				confirm_local_metadata: input.confirmLocalMetadata,
+				root_ids: input.rootIds ?? []
 			}),
 		onSuccess: async () => {
 			await invalidateReviewState();
+		}
+	}));
+}
+
+export type BulkReviewAction = 'keep_tagged' | 'exclude' | 'accept';
+
+/** Which reviews a bulk change takes: picked by hand, or every match of a filter. */
+export interface BulkReviewSelection {
+	action: BulkReviewAction;
+	reviewIds: string[];
+	filter: Omit<LibraryReviewParams, 'limit' | 'offset'>;
+	candidateKey?: string;
+}
+
+function bulkBody(selection: BulkReviewSelection, previewToken?: string) {
+	return {
+		action: selection.action,
+		review_ids: selection.reviewIds,
+		filter: { state: selection.filter.state ?? 'pending', ...reviewFilterQuery(selection.filter) },
+		candidate_key: selection.candidateKey ?? null,
+		preview_token: previewToken ?? null
+	};
+}
+
+export function previewBulkLibraryReviews() {
+	return createMutation(() => ({
+		mutationFn: (selection: BulkReviewSelection) =>
+			api.global.v3.POST(LibraryV3Api.bulkReviewPreview(), bulkBody(selection))
+	}));
+}
+
+export function applyBulkLibraryReviews() {
+	return createMutation(() => ({
+		mutationFn: (input: { selection: BulkReviewSelection; previewToken: string }) =>
+			api.global.v3.POST(
+				LibraryV3Api.bulkReviewApply(),
+				bulkBody(input.selection, input.previewToken)
+			),
+		onSuccess: async (_result, input) => {
+			await invalidateReviewState({ catalog: input.selection.action !== 'keep_tagged' });
 		}
 	}));
 }

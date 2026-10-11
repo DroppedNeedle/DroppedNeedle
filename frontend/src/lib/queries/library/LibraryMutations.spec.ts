@@ -5,7 +5,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 }));
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { post: vi.fn(), put: vi.fn(), delete: vi.fn(), v3: { PUT: vi.fn() } } }
+	api: { global: { post: vi.fn(), put: vi.fn(), v3: { PUT: vi.fn(), DELETE: vi.fn() } } }
 }));
 
 const { mockRemoveMbid } = vi.hoisted(() => ({ mockRemoveMbid: vi.fn() }));
@@ -21,11 +21,13 @@ vi.mock('../QueryClient', () => ({
 
 import { api } from '$lib/api/client';
 import { removeLibraryAlbum, saveLibraryScanSchedule } from './LibraryMutations.svelte';
+import { LibraryV3Api } from './LibraryV3Api';
 import { invalidateQueriesWithPersister, setQueryDataWithPersister } from '../QueryClient';
 
 const mockPost = vi.mocked(api.global.post);
 const mockPut = vi.mocked(api.global.put);
-const mockDelete = vi.mocked(api.global.delete);
+// The typed client's DELETE resolves to the response body; the mock stands in for it.
+const mockDelete = vi.mocked(api.global.v3.DELETE) as unknown as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -56,9 +58,7 @@ describe('album removal mutation', () => {
 		const data = await mutation.mutationFn(input);
 		await mutation.onSuccess(data, input);
 
-		expect(mockDelete).toHaveBeenCalledWith(
-			'/api/v1/library/album/release-1?delete_files=true&stop_wanted=true'
-		);
+		expect(mockDelete).toHaveBeenCalledWith(LibraryV3Api.removeAlbum('release-1', true));
 		expect(mockRemoveMbid).toHaveBeenCalledWith('release-1');
 		expect(mockRemoveMbid).toHaveBeenCalledWith('rg-1');
 		expect(setQueryDataWithPersister).toHaveBeenCalledWith(

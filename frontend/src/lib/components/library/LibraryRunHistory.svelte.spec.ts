@@ -100,7 +100,7 @@ describe('LibraryRunHistory', () => {
 			.element(page.getByText(/excludes credentials, raw provider responses/))
 			.toBeVisible();
 		await page.getByRole('button', { name: 'Export report' }).click();
-		expect(h.get).toHaveBeenCalledWith('/api/v1/library/scan-runs/run-safe-1/diagnostics', {
+		expect(h.get).toHaveBeenCalledWith('/api/v3/library/scan/runs/run-safe-1/diagnostics', {
 			raw: true
 		});
 		expect(h.anchorClick).toHaveBeenCalledOnce();

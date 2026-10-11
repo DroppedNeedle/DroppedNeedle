@@ -41,6 +41,8 @@
 		});
 	});
 	const hasUnavailable = $derived(selectedNodes.some((node) => !node.available));
+	// Retry scope is whole folders: only selected roots count.
+	const selectedRoots = $derived(selected.filter((id) => roots.some((root) => root.id === id)));
 	const selectionLabel = $derived(
 		selected.length === 0 ? 'Whole library' : `${selected.length} scopes`
 	);
@@ -91,7 +93,7 @@
 
 	async function startRetry(): Promise<void> {
 		try {
-			await retryAll.mutateAsync({ confirmLocalMetadata });
+			await retryAll.mutateAsync({ confirmLocalMetadata, rootIds: selectedRoots });
 		} catch {
 			// mutation state keeps the error visible in this dialog
 		}
@@ -117,63 +119,69 @@
 					: 'Reconcile the saved policies for the selected scopes. Work begins only after you confirm.'}
 		</p>
 
-		{#if kind !== 'retry_identification'}<div class="mt-5 space-y-2">
-				<div class="flex items-center justify-between gap-3">
-					<h3 class="font-semibold">Scope</h3>
-					<button type="button" class="btn btn-ghost btn-xs" onclick={selectWholeLibrary}>
-						Whole library
-					</button>
-				</div>
-				{#if treeQuery.isLoading}
-					<div class="skeleton h-28 rounded-box"></div>
-				{:else if treeQuery.isError}
-					<div class="alert alert-error text-sm">Could not load library scopes.</div>
-				{:else}
-					<div
-						class="max-h-64 space-y-1 overflow-y-auto rounded-box border border-base-content/10 p-2"
-					>
-						{#each roots as root (root.id)}
+		<div class="mt-5 space-y-2">
+			<div class="flex items-center justify-between gap-3">
+				<h3 class="font-semibold">Scope</h3>
+				<button type="button" class="btn btn-ghost btn-xs" onclick={selectWholeLibrary}>
+					Whole library
+				</button>
+			</div>
+			{#if treeQuery.isLoading}
+				<div class="skeleton h-28 rounded-box"></div>
+			{:else if treeQuery.isError}
+				<div class="alert alert-error text-sm">Could not load library scopes.</div>
+			{:else}
+				<div
+					class="max-h-64 space-y-1 overflow-y-auto rounded-box border border-base-content/10 p-2"
+				>
+					{#each roots as root (root.id)}
+						<label
+							class="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2 hover:bg-base-200"
+						>
+							<input
+								type="checkbox"
+								class="checkbox checkbox-sm"
+								checked={selected.includes(root.id)}
+								onchange={() => toggle(root.id)}
+							/>
+							<span class="min-w-0 flex-1">
+								<span class="block truncate font-medium">{root.label}</span>
+								<span class="block truncate text-xs text-base-content/55">{root.path}</span>
+							</span>
+							<span class="badge badge-outline badge-sm">{root.policy.replace('_', ' ')}</span>
+							{#if !root.available}<span class="badge badge-warning badge-sm">Unavailable</span
+								>{/if}
+						</label>
+						{#each kind === 'retry_identification' ? [] : root.children as rule (rule.id)}
 							<label
-								class="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2 hover:bg-base-200"
+								class="ml-6 flex cursor-pointer items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-base-200"
 							>
 								<input
 									type="checkbox"
 									class="checkbox checkbox-sm"
-									checked={selected.includes(root.id)}
-									onchange={() => toggle(root.id)}
+									checked={selected.includes(rule.id)}
+									onchange={() => toggle(rule.id)}
 								/>
-								<span class="min-w-0 flex-1">
-									<span class="block truncate font-medium">{root.label}</span>
-									<span class="block truncate text-xs text-base-content/55">{root.path}</span>
-								</span>
-								<span class="badge badge-outline badge-sm">{root.policy.replace('_', ' ')}</span>
-								{#if !root.available}<span class="badge badge-warning badge-sm">Unavailable</span
+								<span class="min-w-0 flex-1 truncate text-sm">{rule.label}</span>
+								<span class="badge badge-ghost badge-sm">{rule.policy.replace('_', ' ')}</span>
+								{#if !rule.available}<span class="badge badge-warning badge-sm">Unavailable</span
 									>{/if}
 							</label>
-							{#each root.children as rule (rule.id)}
-								<label
-									class="ml-6 flex cursor-pointer items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-base-200"
-								>
-									<input
-										type="checkbox"
-										class="checkbox checkbox-sm"
-										checked={selected.includes(rule.id)}
-										onchange={() => toggle(rule.id)}
-									/>
-									<span class="min-w-0 flex-1 truncate text-sm">{rule.label}</span>
-									<span class="badge badge-ghost badge-sm">{rule.policy.replace('_', ' ')}</span>
-									{#if !rule.available}<span class="badge badge-warning badge-sm">Unavailable</span
-										>{/if}
-								</label>
-							{/each}
 						{/each}
-					</div>
-				{/if}
-			</div>{/if}
+					{/each}
+				</div>
+			{/if}
+		</div>
 
 		<div class="mt-4 rounded-box bg-base-200 p-3 text-sm">
 			<div class="flex items-center justify-between gap-3">
-				<span>{kind === 'retry_identification' ? 'Whole library' : selectionLabel}</span>
+				<span
+					>{kind === 'retry_identification'
+						? selectedRoots.length
+							? `${selectedRoots.length} ${selectedRoots.length === 1 ? 'folder' : 'folders'}`
+							: 'Whole library'
+						: selectionLabel}</span
+				>
 				{#if kind === 'retry_identification' && pendingReviews.isLoading}
 					<span class="skeleton h-4 w-28"></span>
 				{:else if kind === 'retry_identification'}
@@ -263,8 +271,9 @@
 						disabled={retryAll.isPending || pendingCount === 0}
 						onclick={() => void startRetry()}
 						>{#if retryAll.isPending}<span class="loading loading-spinner loading-sm"></span>{/if}
-						Retry {pendingCount.toLocaleString()}
-						{pendingCount === 1 ? 'album' : 'albums'}</button
+						{selectedRoots.length
+							? 'Retry albums in these folders'
+							: `Retry ${pendingCount.toLocaleString()} ${pendingCount === 1 ? 'album' : 'albums'}`}</button
 					>{/if}
 			{:else}<button
 					type="button"

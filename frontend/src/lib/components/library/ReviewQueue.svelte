@@ -4,7 +4,11 @@
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
 	import { withBasePath } from '$lib/utils/basePath';
-	import type { LibraryReviewState } from '$lib/queries/library/LibraryQueryKeyFactory';
+	import type {
+		LibraryReviewParams,
+		LibraryReviewState
+	} from '$lib/queries/library/LibraryQueryKeyFactory';
+	import { getLibraryPolicyTreeQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 	import {
 		getLibraryReviewQuery,
 		getLibraryReviewsQuery,
@@ -15,6 +19,10 @@
 		actOnLibraryReview,
 		retryLibraryReview,
 		retryPendingLibraryReviews,
+		previewBulkLibraryReviews,
+		applyBulkLibraryReviews,
+		type BulkReviewAction,
+		type BulkReviewSelection,
 		type ReviewAction
 	} from '$lib/queries/library/LibraryReviewMutations.svelte';
 
@@ -39,14 +47,96 @@
 	let expanded = $state<string | null>(focusReviewId);
 	let confirmLocalMetadata = $state(false);
 	let searchTimer: ReturnType<typeof setTimeout> | undefined;
+	let rootId = $state('');
+	let policy = $state<'' | NonNullable<LibraryReviewParams['policy']>>('');
+	let jobState = $state<'' | NonNullable<LibraryReviewParams['jobState']>>('');
+	let hideActiveJobs = $state(false);
+	let filedFrom = $state('');
+	let filedTo = $state('');
+	let sort = $state<'newest' | 'oldest'>('newest');
+	let selected = $state<string[]>([]);
+	let allMatching = $state(false);
+	let bulkDialog = $state<HTMLDialogElement>();
+	let bulkSelection = $state<BulkReviewSelection | null>(null);
 
-	const query = getLibraryReviewsQuery(() => ({
+	function dayStart(value: string): number | undefined {
+		const time = value ? new Date(`${value}T00:00:00`).getTime() : NaN;
+		return Number.isFinite(time) ? time : undefined;
+	}
+
+	const filter = $derived<Omit<LibraryReviewParams, 'limit' | 'offset'>>({
 		state: reviewState,
-		limit: PAGE,
-		offset,
 		search: search || undefined,
-		reasonCode: reasonCode || undefined
-	}));
+		reasonCode: reasonCode || undefined,
+		rootId: rootId || undefined,
+		policy: policy || undefined,
+		jobState: jobState || undefined,
+		hideActiveJobs,
+		createdFrom: dayStart(filedFrom),
+		createdTo: filedTo ? (dayStart(filedTo) ?? 0) + 86_399_999 : undefined,
+		sort
+	});
+	const query = getLibraryReviewsQuery(() => ({ ...filter, limit: PAGE, offset }));
+	const tree = getLibraryPolicyTreeQuery(() => authStore.isAdmin);
+	const roots = $derived(tree.data?.roots ?? []);
+	const preview = previewBulkLibraryReviews();
+	const applyBulk = applyBulkLibraryReviews();
+	const canSelect = $derived(authStore.isTrusted && reviewState === 'pending');
+	const selectionCount = $derived(allMatching ? (query.data?.total ?? 0) : selected.length);
+
+	// A changed filter starts the page and the selection over.
+	$effect(() => {
+		void JSON.stringify(filter);
+		offset = 0;
+		selected = [];
+		allMatching = false;
+	});
+
+	function toggle(id: string): void {
+		allMatching = false;
+		selected = selected.includes(id) ? selected.filter((value) => value !== id) : [...selected, id];
+	}
+
+	async function startBulk(action: BulkReviewAction): Promise<void> {
+		const selection: BulkReviewSelection = {
+			action,
+			reviewIds: allMatching ? [] : selected,
+			filter
+		};
+		bulkSelection = selection;
+		applyBulk.reset();
+		try {
+			await preview.mutateAsync(selection);
+			bulkDialog?.showModal();
+		} catch (error) {
+			failure(error, 'Could not preview the change.');
+		}
+	}
+
+	async function confirmBulk(): Promise<void> {
+		if (!bulkSelection || !preview.data) return;
+		try {
+			const result = await applyBulk.mutateAsync({
+				selection: bulkSelection,
+				previewToken: preview.data.preview_token
+			});
+			toastStore.show({
+				message: `Changed ${result.applied} ${result.applied === 1 ? 'review' : 'reviews'}.`,
+				type: 'success'
+			});
+			selected = [];
+			allMatching = false;
+			if (!result.skipped.length) bulkDialog?.close();
+		} catch (error) {
+			failure(error, 'Could not apply the change.');
+		}
+	}
+
+	const BULK_LABEL: Record<BulkReviewAction, string> = {
+		keep_tagged: 'Keep as tagged',
+		accept: 'Use the best release',
+		exclude: 'Take out of library'
+	};
 	const focused = getLibraryReviewQuery(() => focusReviewId);
 	const act = actOnLibraryReview();
 	const accept = acceptLibraryReviewCandidate();
@@ -64,7 +154,6 @@
 
 	function setState(next: LibraryReviewState): void {
 		reviewState = next;
-		offset = 0;
 	}
 
 	function onSearch(value: string): void {
@@ -72,7 +161,6 @@
 		clearTimeout(searchTimer);
 		searchTimer = setTimeout(() => {
 			search = value.trim();
-			offset = 0;
 		}, 300);
 	}
 
@@ -115,7 +203,10 @@
 
 	async function retryEverything(): Promise<void> {
 		try {
-			const result = await retryAll.mutateAsync({ confirmLocalMetadata });
+			const result = await retryAll.mutateAsync({
+				confirmLocalMetadata,
+				rootIds: rootId ? [rootId] : []
+			});
 			const held = result.skipped.reduce((sum, group) => sum + group.count, 0);
 			toastStore.show({
 				message: held
@@ -179,11 +270,101 @@
 					disabled={retryAll.isPending}
 					onclick={() => void retryEverything()}
 					>{#if retryAll.isPending}<span class="loading loading-spinner loading-xs"></span>{/if}
-					Retry all {total}</button
+					Retry all{rootId ? ' in this folder' : ''}</button
 				>
 			</div>
 		{/if}
 	</div>
+
+	<div class="flex flex-wrap items-end gap-2 text-sm">
+		{#if authStore.isAdmin && roots.length > 1}
+			<label class="form-control">
+				<span class="label-text text-xs">Folder</span>
+				<select class="select select-bordered select-sm" bind:value={rootId}>
+					<option value="">All folders</option>
+					{#each roots as root (root.id)}<option value={root.id}>{root.label}</option>{/each}
+				</select>
+			</label>
+		{/if}
+		<label class="form-control">
+			<span class="label-text text-xs">Folder policy</span>
+			<select class="select select-bordered select-sm" bind:value={policy}>
+				<option value="">Any</option>
+				<option value="automatic">Automatic</option>
+				<option value="local_metadata">Local metadata</option>
+				<option value="excluded">Excluded</option>
+			</select>
+		</label>
+		<label class="form-control">
+			<span class="label-text text-xs">Identification</span>
+			<select class="select select-bordered select-sm" bind:value={jobState}>
+				<option value="">Any</option>
+				<option value="queued">Queued</option>
+				<option value="running">Running</option>
+				<option value="deferred">Waiting to retry</option>
+				<option value="failed">Failed</option>
+				<option value="attention">Needs attention</option>
+				<option value="succeeded">Finished</option>
+			</select>
+		</label>
+		<label class="form-control">
+			<span class="label-text text-xs">Filed from</span>
+			<input type="date" class="input input-bordered input-sm" bind:value={filedFrom} />
+		</label>
+		<label class="form-control">
+			<span class="label-text text-xs">Filed to</span>
+			<input type="date" class="input input-bordered input-sm" bind:value={filedTo} />
+		</label>
+		<label class="form-control">
+			<span class="label-text text-xs">Order</span>
+			<select class="select select-bordered select-sm" bind:value={sort}>
+				<option value="newest">Newest first</option>
+				<option value="oldest">Oldest first</option>
+			</select>
+		</label>
+		<label class="label cursor-pointer gap-2 pb-1 text-xs">
+			<input type="checkbox" class="checkbox checkbox-xs" bind:checked={hideActiveJobs} />
+			Hide albums still being matched
+		</label>
+	</div>
+
+	{#if canSelect && selectionCount > 0}
+		<div
+			class="sticky top-2 z-10 flex flex-wrap items-center gap-2 rounded-box border border-primary/30 bg-base-100 p-2 text-sm shadow"
+		>
+			<strong class="mr-1">{selectionCount} selected</strong>
+			{#if !allMatching && total > selected.length}
+				<button class="btn btn-ghost btn-xs" onclick={() => (allMatching = true)}
+					>Select all {total} matching</button
+				>
+			{/if}
+			<span class="flex-1"></span>
+			<button
+				class="btn btn-sm"
+				disabled={preview.isPending}
+				onclick={() => void startBulk('keep_tagged')}>{BULK_LABEL.keep_tagged}</button
+			>
+			<button
+				class="btn btn-sm"
+				disabled={preview.isPending}
+				onclick={() => void startBulk('accept')}>{BULK_LABEL.accept}</button
+			>
+			{#if authStore.isAdmin}
+				<button
+					class="btn btn-ghost btn-sm text-error"
+					disabled={preview.isPending}
+					onclick={() => void startBulk('exclude')}>{BULK_LABEL.exclude}</button
+				>
+			{/if}
+			<button
+				class="btn btn-ghost btn-sm"
+				onclick={() => {
+					selected = [];
+					allMatching = false;
+				}}>Clear</button
+			>
+		</div>
+	{/if}
 
 	{#if retryAll.data?.skipped.length}
 		<div class="alert alert-warning text-sm">
@@ -222,6 +403,16 @@
 				{@const open = expanded === review.id}
 				<li class="rounded-box border border-base-content/10 bg-base-100">
 					<div class="flex flex-wrap items-start justify-between gap-3 p-3">
+						{#if canSelect}
+							<input
+								type="checkbox"
+								class="checkbox checkbox-sm mt-0.5"
+								aria-label={`Select ${review.album_title}`}
+								checked={allMatching || selected.includes(review.id)}
+								disabled={allMatching}
+								onchange={() => toggle(review.id)}
+							/>
+						{/if}
 						<button
 							class="flex min-w-0 flex-1 items-start gap-2 text-left"
 							aria-expanded={open}
@@ -352,3 +543,54 @@
 		{/if}
 	{/if}
 </div>
+
+<dialog bind:this={bulkDialog} class="modal" aria-labelledby="bulk-review-title">
+	<div class="modal-box max-w-lg">
+		<h2 id="bulk-review-title" class="text-lg font-bold">
+			{bulkSelection ? BULK_LABEL[bulkSelection.action] : ''}
+		</h2>
+		{#if preview.data}
+			{@const plan = preview.data}
+			<p class="mt-2 text-sm">
+				This changes <strong>{plan.eligible}</strong> of the {plan.matched} selected
+				{plan.matched === 1 ? 'review' : 'reviews'}.
+				{#if bulkSelection?.action === 'accept'}Each album gets its best-scoring release.{/if}
+				{#if bulkSelection?.action === 'exclude'}Their files stay on disk and can be put back from
+					the Taken out list.{/if}
+			</p>
+			{#if plan.skipped.length}
+				<ul class="mt-3 space-y-1 text-sm">
+					{#each plan.skipped as group (group.reason.code)}
+						<li>
+							<strong>{group.count}</strong> left alone: {group.reason.message}
+							<span class="text-base-content/60">{group.reason.action}</span>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+			{#if applyBulk.data}
+				<div class="alert alert-success mt-3 text-sm" role="status">
+					Changed {applyBulk.data.applied}.
+					{#each applyBulk.data.skipped as group (group.reason.code)}
+						{group.count} left alone: {group.reason.message}
+					{/each}
+				</div>
+			{/if}
+		{/if}
+		<div class="modal-action">
+			<button class="btn btn-ghost" onclick={() => bulkDialog?.close()}>Close</button>
+			{#if !applyBulk.data}
+				<button
+					class="btn btn-primary"
+					disabled={applyBulk.isPending || !preview.data?.eligible}
+					onclick={() => void confirmBulk()}
+					>{#if applyBulk.isPending}<span class="loading loading-spinner loading-sm"></span>{/if}
+					Apply to {preview.data?.eligible ?? 0}</button
+				>
+			{/if}
+		</div>
+	</div>
+	<form method="dialog" class="modal-backdrop">
+		<button aria-label="Close dialog">close</button>
+	</form>
+</dialog>

@@ -42,6 +42,14 @@ export interface LibraryReviewParams {
 	state?: LibraryReviewState;
 	search?: string;
 	reasonCode?: string;
+	rootId?: string;
+	policy?: 'automatic' | 'local_metadata' | 'excluded';
+	jobState?: 'queued' | 'running' | 'deferred' | 'succeeded' | 'failed' | 'attention';
+	hideActiveJobs?: boolean;
+	/** Filed on or after / before these times (Unix milliseconds). */
+	createdFrom?: number;
+	createdTo?: number;
+	sort?: 'newest' | 'oldest';
 }
 
 export interface LibraryV3PageParams {

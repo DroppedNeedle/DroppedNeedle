@@ -284,7 +284,7 @@ describe('LibraryScanningPanel', () => {
 		await render(LibraryScanningPanel);
 		await page.getByRole('button', { name: 'Retry identification...' }).click();
 		await expect.element(page.getByRole('heading', { name: 'Retry identification' })).toBeVisible();
-		await page.getByRole('checkbox').click();
+		await page.getByLabelText(/Also look up albums in Local metadata/).click();
 		await page.getByRole('button', { name: 'Retry 12 albums' }).click();
 		expect(h.bulkApply).toHaveBeenCalledWith({ confirmLocalMetadata: true });
 	});

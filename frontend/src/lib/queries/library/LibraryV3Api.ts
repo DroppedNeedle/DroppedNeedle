@@ -7,6 +7,21 @@ import type {
 	LibraryV3TracksParams
 } from './LibraryQueryKeyFactory';
 
+/** A review list filter as the server's query fields (paging aside). */
+export function reviewFilterQuery(params: Omit<LibraryReviewParams, 'limit' | 'offset'>) {
+	return {
+		...(params.search ? { search: params.search } : {}),
+		...(params.reasonCode ? { reason_code: params.reasonCode } : {}),
+		...(params.rootId ? { root_id: params.rootId } : {}),
+		...(params.policy ? { policy: params.policy } : {}),
+		...(params.jobState ? { job_state: params.jobState } : {}),
+		...(params.hideActiveJobs ? { exclude_active_jobs: true } : {}),
+		...(params.createdFrom !== undefined ? { created_from: params.createdFrom } : {}),
+		...(params.createdTo !== undefined ? { created_to: params.createdTo } : {}),
+		...(params.sort ? { sort: params.sort } : {})
+	};
+}
+
 // /api/v3 library URLs, built through the typed registry: every template is
 // a literal the contract-coverage gate verifies against the generated spec.
 // Nothing outside this feature imports them.
@@ -128,8 +143,7 @@ export const LibraryV3Api = {
 				state: params.state ?? 'pending',
 				limit: params.limit,
 				offset: params.offset,
-				...(params.search ? { search: params.search } : {}),
-				...(params.reasonCode ? { reason_code: params.reasonCode } : {})
+				...reviewFilterQuery(params)
 			}
 		}),
 	review: (reviewId: string) => v3('/api/v3/library/reviews/{id}', { path: { id: reviewId } }),
@@ -144,6 +158,8 @@ export const LibraryV3Api = {
 	retryReview: (reviewId: string) =>
 		v3('/api/v3/library/reviews/{id}/retry', { path: { id: reviewId } }),
 	retryPendingReviews: () => v3('/api/v3/library/reviews/retry-pending'),
+	bulkReviewPreview: () => v3('/api/v3/library/reviews/bulk-preview'),
+	bulkReviewApply: () => v3('/api/v3/library/reviews/bulk-apply'),
 	approveReview: (reviewId: string) =>
 		v3('/api/v3/library/reviews/{id}/approve', { path: { id: reviewId } }),
 	rejectReview: (reviewId: string) =>
