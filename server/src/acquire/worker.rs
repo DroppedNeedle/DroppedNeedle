@@ -497,6 +497,8 @@ pub struct DownloadWorker {
     /// Album targets for the look before an automatic grab; without them
     /// every source grabs its own best guess.
     targets: Option<Arc<Targets>>,
+    /// Looks running off the pass, and tasks already looked at.
+    reviews: review::Reviews,
 }
 
 /// Called after a landing settles a task, so its requests and wanted
@@ -526,6 +528,7 @@ impl DownloadWorker {
             events: crate::events::EventSink::default(),
             wake: tokio::sync::Notify::new(),
             targets: None,
+            reviews: review::Reviews::default(),
         }
     }
 
@@ -660,7 +663,7 @@ impl DownloadWorker {
     }
 
     /// Enqueue queued tasks while under the concurrency cap.
-    async fn enqueue_pass(&self, pass: &Pass) {
+    async fn enqueue_pass(self: &Arc<Self>, pass: &Pass) {
         let Some(live) = self
             .step("downloads.live", |store| {
                 store.list_active(&[TaskStatus::Downloading, TaskStatus::Processing])
@@ -702,10 +705,13 @@ impl DownloadWorker {
         if let Ok(mut warned) = self.unsearchable_warned.lock() {
             warned.retain(|task_id| ids.contains(task_id.as_str()));
         }
+        if let Ok(mut looked) = self.reviews.looked.lock() {
+            looked.retain(|task_id| ids.contains(task_id.as_str()));
+        }
     }
 
     /// Enqueue one queued task. Answers whether a fetch started.
-    async fn enqueue_one(&self, pass: &Pass, task: &TaskRow) -> bool {
+    async fn enqueue_one(self: &Arc<Self>, pass: &Pass, task: &TaskRow) -> bool {
         let now = pass.now;
         if self.landing_in_flight(&task.id) || Self::parked(task) {
             // A parked task waits for its owner's pick from its search.
@@ -756,19 +762,11 @@ impl DownloadWorker {
             self.fail_unserved(task, &attempts, now, None).await;
             return false;
         }
-        let linked;
-        let task = if handled == 0 && task.search_job_id.is_none() {
-            match self.review(pass, task).await {
-                review::Reviewed::Take(task) => {
-                    linked = task;
-                    &*linked
-                }
-                review::Reviewed::Wait => return false,
-                review::Reviewed::Search => task,
-            }
-        } else {
-            task
-        };
+        if handled == 0 && task.search_job_id.is_none() && self.start_review(pass, task) {
+            // The look runs off the pass; the next pass picks up its link,
+            // or leaves the task parked.
+            return false;
+        }
         // The key marks the window between the client add and the attempt
         // journal write. A repeat claim means a crash landed in it: the
         // enqueue below re-attaches (usenet probes queue and history by the

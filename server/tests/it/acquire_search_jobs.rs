@@ -290,6 +290,14 @@ async fn automatic_download_waits_for_a_pick_when_unsure() {
         .expect("task seeds");
 
     rig.worker.run_once(1).await;
+    // The look runs off the pass.
+    for _ in 0..200 {
+        if !rig.worker.reviews_running() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(!rig.worker.reviews_running(), "the look finished");
     let searched = mock.search_texts().len();
     assert!(searched > 0, "the worker searched before grabbing");
     rig.worker.run_once(2).await;
@@ -321,6 +329,7 @@ async fn automatic_download_waits_for_a_pick_when_unsure() {
     let payload = view.payload.expect("candidates decode");
     assert_eq!(payload.candidates.len(), 1);
     assert_eq!(payload.candidates[0].view.tier, CandidateTier::Possible);
+    assert_eq!(payload.release_mbid.as_deref(), Some(RELEASE));
 
     let picked = rig
         .jobs
