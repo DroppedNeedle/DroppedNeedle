@@ -580,18 +580,14 @@ fn core(
         preferences,
         ticks,
     ));
-    // "Get missing tracks" also upgrades the edition's tracks below the
-    // cutoff, through the same upgrade service the downloads page uses.
+    // "Get missing tracks" also asks for the edition's tracks below the
+    // upgrade cutoff, under the policy the upgrade sweep reads.
     if requests
-        .upgrades
-        .set(super::downloads::upgrades::Upgrades::new(
-            flows.worklist.clone(),
-            flows.sweep_deps.policy.clone(),
-            dispatch.clone(),
-        ))
+        .upgrade_policy
+        .set(flows.sweep_deps.policy.clone())
         .is_err()
     {
-        tracing::warn!("edition upgrades were already attached");
+        tracing::warn!("the edition upgrade policy was already attached");
     }
     Core {
         requests,
@@ -847,6 +843,16 @@ impl AcquireSetup {
         let route: Arc<dyn super::dispatch::FreeMusicRoute> = free_music.clone();
         if core.dispatch.free_music_slot().set(route).is_err() {
             tracing::warn!("free music was already attached to the request dispatch");
+        }
+        let (ready_worker, ready_music) = (worker.clone(), free_music.clone());
+        let readiness = super::requests::state::AcquireReadiness {
+            sources_ready: Arc::new(move || {
+                !ready_worker.sources_now().is_empty() || ready_music.takes_requests()
+            }),
+            staging_root: staging_root.clone(),
+        };
+        if core.requests.readiness.set(readiness).is_err() {
+            tracing::warn!("acquire readiness was already attached");
         }
 
         Ok(Self {

@@ -45,17 +45,37 @@ pub struct RequestsState {
     /// The library's edition plans, once boot has built the library seam:
     /// "get missing tracks" fetches only what the chosen edition lacks.
     pub edition_plans: EditionPlanSlot,
-    /// Quality upgrades, set when the flows are built: "get missing
-    /// tracks" also upgrades the edition's tracks below the cutoff.
-    pub upgrades: UpgradeSlot,
+    /// The upgrade policy, set when the flows are built: "get missing
+    /// tracks" also asks for the edition's owned tracks below the cutoff.
+    pub upgrade_policy: UpgradePolicySlot,
+    /// Whether a download source is set up and where downloads land, set
+    /// when the download worker is built.
+    pub readiness: ReadinessSlot,
 }
 
 /// The slot the library's edition plans go into.
 pub type EditionPlanSlot =
     Arc<std::sync::OnceLock<Arc<dyn crate::library::operations::port::EditionPlans>>>;
 
-/// The slot the upgrade service goes into.
-pub type UpgradeSlot = Arc<std::sync::OnceLock<crate::acquire::downloads::upgrades::Upgrades>>;
+/// The slot the upgrade policy reader goes into.
+pub type UpgradePolicySlot = Arc<
+    std::sync::OnceLock<
+        Arc<dyn Fn() -> crate::acquire::flows::stores::UpgradePolicy + Send + Sync>,
+    >,
+>;
+
+/// What "get missing tracks" checks before it asks for anything (v2
+/// checked a source was set up and the staging disk had room).
+#[derive(Clone)]
+pub struct AcquireReadiness {
+    /// A download source (Soulseek, Usenet, a plugin, or Free Music) is on.
+    pub sources_ready: Arc<dyn Fn() -> bool + Send + Sync>,
+    /// Where downloads land before import.
+    pub staging_root: std::path::PathBuf,
+}
+
+/// The slot the readiness checks go into.
+pub type ReadinessSlot = Arc<std::sync::OnceLock<AcquireReadiness>>;
 
 /// The slot the personal-mix builder goes into.
 pub type MixSlot = Arc<std::sync::OnceLock<Arc<super::mix::PersonalMixBuilder>>>;
@@ -80,7 +100,8 @@ impl RequestsState {
             plugins: Default::default(),
             mixer: Default::default(),
             edition_plans: Default::default(),
-            upgrades: Default::default(),
+            upgrade_policy: Default::default(),
+            readiness: Default::default(),
         }
     }
 

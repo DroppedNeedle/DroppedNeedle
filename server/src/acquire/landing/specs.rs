@@ -127,6 +127,10 @@ pub struct Target {
     pub expected_sizes: HashMap<PathBuf, u64>,
     /// Files may still appear: a missing file is worth another pass.
     pub wait_for_files: bool,
+    /// For "get missing tracks" of an edition: the (disc, position) tracks
+    /// asked for. An owned track among them is replaced when the new file
+    /// is strictly better, as an upgrade would.
+    pub album_wanted: Vec<(u32, u32)>,
 }
 
 /// The quality policy a landing is judged against.

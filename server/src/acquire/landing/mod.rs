@@ -447,12 +447,21 @@ impl LandingService {
         // worse leaves the library alone and the file is dropped.
         let upgrade = target.origin == "upgrade";
         let mut replaces: HashMap<usize, Vec<String>> = HashMap::new();
-        if upgrade {
+        if upgrade || !target.album_wanted.is_empty() {
             for file in &plan.owned {
                 let Some(track) = found.scored.pair_for(*file).map(|pair| pair.track) else {
                     continue;
                 };
                 let release_track = &found.release.tracks[track];
+                // "Get missing tracks" upgrades only the owned tracks it
+                // asked for (those below the cutoff).
+                if !upgrade
+                    && !target
+                        .album_wanted
+                        .contains(&(release_track.disc.max(1), release_track.position))
+                {
+                    continue;
+                }
                 let copies = library
                     .owned_copies(
                         &found.release.release_group_id,
@@ -1020,6 +1029,15 @@ pub fn target_for(
             }),
         expected_sizes: HashMap::new(),
         wait_for_files: false,
+        album_wanted: manifest
+            .map(|manifest| {
+                manifest
+                    .album_wanted
+                    .iter()
+                    .map(|at| (at.disc.max(1), at.track))
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 

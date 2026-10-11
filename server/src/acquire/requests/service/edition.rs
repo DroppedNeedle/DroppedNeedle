@@ -1,17 +1,18 @@
 //! "Get missing tracks": fetch what the album's chosen edition lacks and
-//! upgrade the edition's tracks below the quality cutoff.
+//! better copies of its tracks below the quality cutoff.
 //!
-//! v2 sent one track request per missing track. Here the library's edition
-//! plan names the missing positions, and one album download on the chosen
-//! release fetches just those files from the best whole-album source, the
-//! way a person would search by hand. Owned tracks below the cutoff queue
-//! one album upgrade, which replaces a file only with a strictly better
-//! one. Existing files are never retagged.
+//! v2 sent one track request per missing track and one upgrade per
+//! below-cutoff track. Here the library's edition plan names the positions,
+//! and one album download on the chosen release asks for exactly those:
+//! the missing tracks, plus the owned tracks below the cutoff, which the
+//! landing replaces only with a strictly better file. The best whole-album
+//! source is searched for, the way a person would by hand. Only one such
+//! download runs per album, and none while another download of the album
+//! is still working. Existing files are never retagged.
 
 use super::RequestsService;
-use crate::acquire::downloads::upgrades::{UpgradeAsk, UpgradeOutcome};
 use crate::acquire::edition::local_names;
-use crate::acquire::flows::seams::DispatchKind;
+use crate::acquire::flows::stores::UpgradeWorklist;
 use crate::acquire::requests::auth::Principal;
 use crate::acquire::requests::dispatch::{
     DispatchError, DispatchOrigin, DispatchOutcome, DispatchRequest, DispatchTaskState,
@@ -20,110 +21,138 @@ use crate::acquire::requests::error::RequestsError;
 use crate::acquire::requests::ledger::{EditionMark, now_epoch, validate_mbid};
 use crate::acquire::requests::models::EditionAcquireResponse;
 use crate::library::operations::models::OperationError;
-use crate::library::operations::plan::EditionPlan;
+use crate::library::operations::plan::{EditionPlan, PlanTrack};
+
+/// Bytes a track takes in staging, at least (v2's acquisition floor).
+const TRACK_FLOOR_BYTES: u64 = 8 * 1024 * 1024;
+/// Bytes per second of audio assumed for the estimate (lossless-ish).
+const BYTES_PER_SECOND: u64 = 32_000;
+/// Room kept free on the staging disk on top of the estimate.
+const DISK_SAFETY_BYTES: u64 = 256 * 1024 * 1024;
 
 /// What the edition still needs, from the library's plan.
+#[derive(Debug, Default)]
 struct Gap {
     release_mbid: String,
+    artist_name: String,
+    title: String,
     total_tracks: u32,
     missing: Vec<(u32, u32)>,
-    kept_track_ids: Vec<String>,
-}
-
-impl From<EditionPlan> for Gap {
-    fn from(plan: EditionPlan) -> Self {
-        Self {
-            total_tracks: u32::try_from(plan.tracks.len()).unwrap_or(u32::MAX),
-            missing: plan
-                .missing()
-                .map(|track| (track.disc, track.position))
-                .collect(),
-            kept_track_ids: plan
-                .kept()
-                .map(|file| file.local_track_id.clone())
-                .collect(),
-            release_mbid: plan.release_mbid,
-        }
-    }
+    upgrades: Vec<(u32, u32)>,
+    estimate_bytes: u64,
 }
 
 fn count(n: usize) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 
+fn track_bytes(track: &PlanTrack) -> u64 {
+    let seconds = track.length_ms.unwrap_or(240_000) / 1000;
+    (seconds * BYTES_PER_SECOND).max(TRACK_FLOOR_BYTES)
+}
+
+/// The positions to ask for: the missing tracks, then the owned tracks
+/// whose files sit below the cutoff (`below` names those files).
+fn gap_of(plan: &EditionPlan, below: &[String]) -> Gap {
+    let missing: Vec<&PlanTrack> = plan.missing().collect();
+    let upgrades: Vec<&PlanTrack> = plan
+        .tracks
+        .iter()
+        .filter(|track| {
+            track
+                .local_track_id
+                .as_ref()
+                .is_some_and(|id| below.contains(id))
+        })
+        .collect();
+    Gap {
+        release_mbid: plan.release_mbid.clone(),
+        artist_name: plan.artist_name.clone(),
+        title: plan.title.clone(),
+        total_tracks: count(plan.tracks.len()),
+        estimate_bytes: missing
+            .iter()
+            .chain(&upgrades)
+            .map(|track| track_bytes(track))
+            .sum(),
+        missing: missing.iter().map(|t| (t.disc, t.position)).collect(),
+        upgrades: upgrades.iter().map(|t| (t.disc, t.position)).collect(),
+    }
+}
+
 impl RequestsService {
     /// Fill the chosen edition's missing tracks and upgrade its owned
-    /// tracks below the cutoff (curator only, as in v2).
+    /// tracks below the cutoff (curator only, as in v2). `album_id` names
+    /// the library copy the edition picker planned, when it did.
     pub async fn acquire_edition(
         &self,
         principal: &Principal,
-        album_id: &str,
+        release_group: &str,
+        album_id: Option<&str>,
     ) -> Result<EditionAcquireResponse, RequestsError> {
         principal.require_curator()?;
-        let mbid = validate_mbid(album_id)?;
+        let mbid = validate_mbid(release_group)?;
         let now = now_epoch();
-        if let Some(mark) = self.editions.get(&mbid).await? {
-            let state = self
-                .dispatch
-                .task_state(&mark.task_id)
-                .await
-                .map_err(super::dispatch_fault)?;
-            if state == DispatchTaskState::Active {
-                return Ok(EditionAcquireResponse {
-                    status: "already_in_progress".to_owned(),
-                    message: "Missing tracks for this edition are already downloading.".to_owned(),
-                    task_id: Some(mark.task_id),
-                    ..EditionAcquireResponse::default()
-                });
-            }
-            self.editions.clear(&mbid).await?;
+        if let Some(busy) = self.album_busy(&mbid).await? {
+            return Ok(EditionAcquireResponse {
+                status: "already_in_progress".to_owned(),
+                message: "This album is already downloading. Wait for that download to finish, \
+                          then try again."
+                    .to_owned(),
+                task_id: Some(busy),
+                ..EditionAcquireResponse::default()
+            });
+        }
+        if let Some(readiness) = self.readiness.get()
+            && !(readiness.sources_ready)()
+        {
+            return Err(RequestsError::InvalidInput {
+                message: "No download source is set up, so nothing can be fetched. Set up \
+                          Soulseek, Usenet or a plugin source, or turn on Free Music under \
+                          Settings > Downloads, then try again."
+                    .to_owned(),
+            });
         }
         self.quota
             .check_storage_admission(&principal.user_id, principal.role, DispatchOrigin::Edition)
             .await?;
-        // The search needs the album's names; the plan says which edition
-        // and which of its tracks.
-        let Some((artist_name, title)) = local_names(self.library.pool(), &mbid)
-            .await
-            .map_err(|error| RequestsError::internal(&error))?
-        else {
-            return Err(RequestsError::InvalidInput {
-                message: "This album is not in your library yet. Request the album instead."
-                    .to_owned(),
-            });
-        };
-        let gap = self.gap(&mbid).await?;
-        let upgrades = match &gap {
-            Some(gap) => self.below_cutoff(&gap.kept_track_ids).await,
-            None => 0,
-        };
-        let upgrade_task_id = if upgrades > 0 {
-            self.queue_upgrade(principal, &mbid, &artist_name, &title)
+        let gap = self.gap(album_id, &mbid).await?;
+        let (artist_name, title) = match &gap {
+            Some(gap) if !gap.artist_name.trim().is_empty() && !gap.title.trim().is_empty() => {
+                (gap.artist_name.clone(), gap.title.clone())
+            }
+            _ => local_names(self.library.pool(), &mbid)
                 .await
-        } else {
-            None
+                .map_err(|error| RequestsError::internal(&error))?
+                .ok_or_else(|| RequestsError::InvalidInput {
+                    message: "This album is not in your library yet. Request the album instead."
+                        .to_owned(),
+                })?,
         };
         let mut response = EditionAcquireResponse {
             release_mbid: gap.as_ref().map(|gap| gap.release_mbid.clone()),
             total_tracks: gap.as_ref().map(|gap| gap.total_tracks),
             requested: gap.as_ref().map(|gap| count(gap.missing.len())),
-            upgrades: gap.as_ref().map(|_| upgrades),
-            upgrade_task_id,
+            upgrades: gap.as_ref().map(|gap| count(gap.upgrades.len())),
             ..EditionAcquireResponse::default()
         };
-        if gap.as_ref().is_some_and(|gap| gap.missing.is_empty()) {
-            response.status = "already_complete".to_owned();
-            response.message = if response.upgrade_task_id.is_some() {
-                format!("Every track of this edition is here; {upgrades} will be upgraded.")
-            } else {
-                "Every track of this edition is already in your library.".to_owned()
-            };
-            return Ok(response);
+        if let Some(gap) = &gap {
+            if gap.missing.is_empty() && gap.upgrades.is_empty() {
+                response.status = "already_complete".to_owned();
+                response.message =
+                    "Every track of this edition is already in your library.".to_owned();
+                return Ok(response);
+            }
+            self.check_disk(gap.estimate_bytes).await?;
         }
         let release_mbid = match &gap {
             Some(gap) => Some(gap.release_mbid.clone()),
             None => self.chosen_release(&mbid).await,
         };
+        let wanted = gap
+            .as_ref()
+            .map(|gap| gap.missing.iter().chain(&gap.upgrades).copied().collect())
+            .unwrap_or_default();
         let request = DispatchRequest {
             user_id: principal.user_id.clone(),
             kind: "edition".to_owned(),
@@ -132,13 +161,10 @@ impl RequestsService {
             title,
             origin: DispatchOrigin::Edition,
             release_mbid,
-            wanted: gap
-                .as_ref()
-                .map(|gap| gap.missing.clone())
-                .unwrap_or_default(),
+            wanted,
             // No stable per-decision key exists (marks clear on terminal,
-            // so a key would pin re-acquires to the old task); the
-            // in-progress mark above owns double-submit dedup.
+            // so a key would pin re-acquires to the old task); the busy
+            // check above owns double-submit dedup.
             idempotency_key: None,
         };
         match self.dispatch.dispatch(&request).await {
@@ -161,10 +187,13 @@ impl RequestsService {
                     })
                     .await?;
                 response.status = "started".to_owned();
-                response.message = match response.requested {
-                    Some(1) => "Downloading the 1 missing track of this edition.".to_owned(),
-                    Some(n) => format!("Downloading the {n} missing tracks of this edition."),
-                    None => "Downloading this edition.".to_owned(),
+                response.message = match (response.requested, response.upgrades) {
+                    (Some(1), _) => "Downloading the 1 missing track of this edition.".to_owned(),
+                    (Some(0), Some(_)) => {
+                        "Looking for better copies of this edition's tracks.".to_owned()
+                    }
+                    (Some(n), _) => format!("Downloading the {n} missing tracks of this edition."),
+                    (None, _) => "Downloading this edition.".to_owned(),
                 };
                 response.task_id = Some(task_id);
                 Ok(response)
@@ -172,68 +201,177 @@ impl RequestsService {
         }
     }
 
+    /// A download already working on this album: this action's own, or
+    /// any other (a request, an upgrade, a retry). Never two at once.
+    async fn album_busy(&self, release_group_mbid: &str) -> Result<Option<String>, RequestsError> {
+        if let Some(mark) = self.editions.get(release_group_mbid).await? {
+            let state = self
+                .dispatch
+                .task_state(&mark.task_id)
+                .await
+                .map_err(super::dispatch_fault)?;
+            if state == DispatchTaskState::Active {
+                return Ok(Some(mark.task_id));
+            }
+            self.editions.clear(release_group_mbid).await?;
+        }
+        sqlx::query_scalar::<_, String>(
+            "SELECT id FROM download_tasks WHERE lower(release_group_mbid) = ?1 \
+             AND status IN ('queued', 'downloading', 'processing') LIMIT 1",
+        )
+        .bind(release_group_mbid.to_ascii_lowercase())
+        .fetch_optional(self.library.pool())
+        .await
+        .map_err(|error| RequestsError::internal(&error))
+    }
+
     /// The library's plan for the album's chosen edition. `None` when it
-    /// cannot be read right now (MusicBrainz down, library not wired): the
-    /// whole album is fetched then, and the landing skips what is owned.
-    async fn gap(&self, release_group_mbid: &str) -> Result<Option<Gap>, RequestsError> {
+    /// cannot be read right now (MusicBrainz down, no copy with an edition,
+    /// library not wired): the whole album is fetched then, and the landing
+    /// skips what is owned.
+    async fn gap(
+        &self,
+        album_id: Option<&str>,
+        release_group_mbid: &str,
+    ) -> Result<Option<Gap>, RequestsError> {
         let Some(plans) = self.edition_plans.get() else {
             return Ok(None);
         };
-        match plans.group_plan(release_group_mbid).await {
-            Ok(Some(plan)) => Ok(Some(plan.into())),
-            Ok(None) => Ok(None),
+        let plan = match plans.group_plan(album_id, release_group_mbid).await {
+            Ok(Some(plan)) => plan,
+            Ok(None) => return Ok(None),
             Err(OperationError::Unavailable(cause)) => {
                 tracing::warn!(release_group_mbid, %cause, "edition plan unavailable; fetching the whole album");
-                Ok(None)
+                return Ok(None);
             }
-            Err(OperationError::Store(cause)) => Err(RequestsError::internal(&cause)),
-            Err(
-                OperationError::NotFound(reason)
-                | OperationError::Invalid(reason)
-                | OperationError::Conflict(reason),
-            ) => Err(RequestsError::InvalidInput {
-                message: format!("{} {}", reason.message, reason.action),
-            }),
+            Err(OperationError::NotFound(reason)) => {
+                tracing::info!(
+                    release_group_mbid,
+                    code = reason.code,
+                    "no edition plan; fetching the whole album"
+                );
+                return Ok(None);
+            }
+            Err(OperationError::Store(cause)) => return Err(RequestsError::internal(&cause)),
+            Err(OperationError::Invalid(reason) | OperationError::Conflict(reason)) => {
+                return Err(RequestsError::InvalidInput {
+                    message: format!("{} {}", reason.message, reason.action),
+                });
+            }
+        };
+        Ok(Some(gap_of(&plan, &self.below_cutoff(&plan).await)))
+    }
+
+    /// The plan's kept files below the upgrade cutoff; none while upgrades
+    /// are off or the qualities cannot be read.
+    async fn below_cutoff(&self, plan: &EditionPlan) -> Vec<String> {
+        let Some(policy) = self.upgrade_policy.get().map(|read| read()) else {
+            return Vec::new();
+        };
+        if !policy.upgrade_allowed {
+            return Vec::new();
+        }
+        let kept: Vec<String> = plan
+            .kept()
+            .map(|file| file.local_track_id.clone())
+            .collect();
+        match UpgradeWorklist::new(self.library.clone())
+            .tracks_below_cutoff(&kept, &policy.cutoff)
+            .await
+        {
+            Ok(below) => below,
+            Err(error) => {
+                tracing::warn!(?error, "track qualities unreadable; no upgrades asked for");
+                Vec::new()
+            }
         }
     }
 
-    /// Owned edition tracks below the cutoff; 0 while upgrades are off or
-    /// the qualities cannot be read.
-    async fn below_cutoff(&self, track_ids: &[String]) -> u32 {
-        let Some(upgrades) = self.upgrades.get() else {
-            return 0;
+    /// Refuse when the disk downloads land on lacks room for them (v2
+    /// checked the same before a conversion).
+    async fn check_disk(&self, estimate: u64) -> Result<(), RequestsError> {
+        let Some(readiness) = self.readiness.get() else {
+            return Ok(());
         };
-        match upgrades.tracks_below_cutoff(track_ids).await {
-            Ok(below) => count(below.unwrap_or(0)),
+        let root = readiness.staging_root.clone();
+        let free = tokio::task::spawn_blocking(move || {
+            std::fs::create_dir_all(&root).ok();
+            crate::library::adapters::free_bytes_for(&root)
+        })
+        .await
+        .map_err(|error| RequestsError::internal(&error))?;
+        let free = match free {
+            Ok(free) => free,
             Err(error) => {
-                tracing::warn!(%error, "track qualities unreadable; no upgrade queued");
-                0
+                tracing::warn!(
+                    ?error,
+                    "free space unreadable where downloads land; not checked"
+                );
+                return Ok(());
             }
+        };
+        let needed = estimate.saturating_add(DISK_SAFETY_BYTES);
+        if free < needed {
+            const MB: u64 = 1024 * 1024;
+            return Err(RequestsError::InvalidInput {
+                message: format!(
+                    "There is not enough free disk space for these downloads: about {} MB is \
+                     needed where downloads land, and {} MB is free. Free some space, then try \
+                     again.",
+                    needed / MB,
+                    free / MB
+                ),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::library::operations::plan::{FileFate, PlanFile};
+
+    fn track(position: u32, file: Option<&str>) -> PlanTrack {
+        PlanTrack {
+            disc: 1,
+            position,
+            title: format!("T{position}"),
+            recording_mbid: format!("rec-{position}"),
+            release_track_mbid: format!("rt-{position}"),
+            length_ms: Some(200_000),
+            local_track_id: file.map(str::to_owned),
         }
     }
 
-    async fn queue_upgrade(
-        &self,
-        principal: &Principal,
-        release_group_mbid: &str,
-        artist: &str,
-        title: &str,
-    ) -> Option<String> {
-        let upgrades = self.upgrades.get()?;
-        let ask = UpgradeAsk {
-            user_id: principal.user_id.clone(),
-            kind: DispatchKind::Album,
-            mbid: release_group_mbid.to_owned(),
-            artist: artist.to_owned(),
-            title: title.to_owned(),
+    // The positions asked for are the missing tracks plus the kept tracks
+    // whose files sit below the cutoff; nothing else.
+    #[test]
+    fn asks_for_missing_and_below_cutoff_positions() {
+        let plan = EditionPlan {
+            local_album_id: "al".into(),
+            release_group_mbid: "rg".into(),
+            release_mbid: "rel".into(),
+            title: "Album".into(),
+            artist_name: "Artist".into(),
+            is_current: true,
+            tracks: vec![track(1, Some("f1")), track(2, None), track(3, Some("f3"))],
+            files: ["f1", "f3"]
+                .iter()
+                .map(|id| PlanFile {
+                    local_track_id: (*id).into(),
+                    title: String::new(),
+                    disc: 1,
+                    track: 0,
+                    fate: FileFate::Keep,
+                    edition_track: None,
+                })
+                .collect(),
         };
-        match upgrades.request(ask).await {
-            Ok(UpgradeOutcome::Queued(task_id)) => Some(task_id),
-            Ok(UpgradeOutcome::Satisfied) => None,
-            Err(error) => {
-                tracing::warn!(release_group_mbid, %error, "edition upgrade not queued");
-                None
-            }
-        }
+        let gap = gap_of(&plan, &["f3".to_owned()]);
+        assert_eq!(gap.missing, vec![(1, 2)]);
+        assert_eq!(gap.upgrades, vec![(1, 3)]);
+        assert_eq!(gap.total_tracks, 3);
+        assert!(gap.estimate_bytes >= 2 * TRACK_FLOOR_BYTES);
     }
 }

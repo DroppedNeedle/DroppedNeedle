@@ -17,8 +17,8 @@ use super::error::RequestsError;
 use super::http::{HttpError, ValidJson, ValidQuery};
 use super::models::{
     ActionResponse, AlbumIntake, BatchCancelBody, BatchCancelResponse, BatchIntake,
-    BatchIntakeResponse, ClearHistoryResponse, EditionAcquireResponse, IntakeResponse, KindQuery,
-    RequestKind, TrackIntake, TrackIntakeResponse,
+    BatchIntakeResponse, ClearHistoryResponse, EditionAcquireQuery, EditionAcquireResponse,
+    IntakeResponse, KindQuery, RequestKind, TrackIntake, TrackIntakeResponse,
 };
 use super::service::RequestsService;
 use super::state::RequestsState;
@@ -182,21 +182,25 @@ pub async fn clear_history_handler(
 }
 
 /// Fill the selected edition's missing tracks and upgrade its below-cutoff
-/// owned tracks. `POST /api/v3/albums/{album_id}/edition/acquire`.
+/// owned tracks, in one download. `POST /api/v3/albums/{album_id}/edition/acquire`.
 /// Curator only. Never retags existing files.
 #[utoipa::path(
     post,
     path = "/api/v3/albums/{album_id}/edition/acquire",
-    params(("album_id" = String, Path, description = "Release-group MBID")),
-    responses((status = 200, body = EditionAcquireResponse))
+    params(("album_id" = String, Path, description = "Release-group MBID"), EditionAcquireQuery),
+    responses(
+        (status = 200, body = EditionAcquireResponse),
+        (status = 400, description = "No download source, not enough disk space, or not in the library"),
+    )
 )]
 pub async fn acquire_edition_handler(
     State(state): State<RequestsState>,
     principal: Principal,
     Path(album_id): Path<String>,
+    ValidQuery(query): ValidQuery<EditionAcquireQuery>,
 ) -> Result<impl IntoResponse, HttpError> {
     let response = RequestsService::new(&state)
-        .acquire_edition(&principal, &album_id)
+        .acquire_edition(&principal, &album_id, query.album_id.as_deref())
         .await?;
     Ok(Json(response))
 }

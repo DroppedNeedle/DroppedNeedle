@@ -4,7 +4,7 @@
 //! shape v2 enforces (its `MBID_PATTERN` validator).
 
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 
 /// What kind of thing a request asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, ToSchema)]
@@ -543,13 +543,18 @@ pub struct EditionAcquireResponse {
     /// Missing tracks asked for.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requested: Option<u32>,
-    /// Owned tracks of the edition below the quality cutoff; an upgrade of
-    /// the album was queued for them when this is above zero.
+    /// Owned tracks of the edition below the quality cutoff, asked for in
+    /// the same download; each is replaced only by a strictly better file.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upgrades: Option<u32>,
-    /// The upgrade download, when one was queued.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub upgrade_task_id: Option<String>,
+}
+
+/// Which library copy "get missing tracks" works on.
+#[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+pub struct EditionAcquireQuery {
+    /// Local album id of the copy the edition picker planned; the chosen
+    /// copy of the release group when absent.
+    pub album_id: Option<String>,
 }
 
 /// Status-sync outcome.

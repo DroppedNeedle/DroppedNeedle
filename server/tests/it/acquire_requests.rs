@@ -774,3 +774,111 @@ async fn recovery_finishes_cancels_and_dispatches() {
         .unwrap();
     assert!(row.task_id.is_some(), "the new task is linked");
 }
+
+/// The library's plan for one album, scripted.
+struct PlannedEdition;
+
+impl droppedneedle::library::operations::port::EditionPlans for PlannedEdition {
+    fn group_plan<'a>(
+        &'a self,
+        _album_id: Option<&'a str>,
+        _release_group_mbid: &'a str,
+    ) -> droppedneedle::library::operations::port::BoxFuture<
+        'a,
+        Result<
+            Option<droppedneedle::library::operations::plan::EditionPlan>,
+            droppedneedle::library::operations::models::OperationError,
+        >,
+    > {
+        use droppedneedle::library::operations::plan::{
+            EditionPlan, FileFate, PlanFile, PlanTrack,
+        };
+        let track = |position: u32, file: Option<&str>| PlanTrack {
+            disc: 1,
+            position,
+            title: format!("T{position}"),
+            recording_mbid: format!("rec-{position}"),
+            release_track_mbid: format!("rt-{position}"),
+            length_ms: Some(200_000),
+            local_track_id: file.map(str::to_owned),
+        };
+        let kept = |id: &str| PlanFile {
+            local_track_id: id.to_owned(),
+            title: String::new(),
+            disc: 1,
+            track: 0,
+            fate: FileFate::Keep,
+            edition_track: None,
+        };
+        Box::pin(async move {
+            Ok(Some(EditionPlan {
+                local_album_id: "al1".into(),
+                release_group_mbid: MBID_A.into(),
+                release_mbid: "rel-1".into(),
+                title: "Album".into(),
+                artist_name: "Artist".into(),
+                is_current: true,
+                tracks: vec![track(1, Some("t1")), track(2, None), track(3, Some("t3"))],
+                files: vec![kept("t1"), kept("t3")],
+            }))
+        })
+    }
+}
+
+// "Get missing tracks" sends one album download on the chosen edition for
+// the missing track plus the owned track below the cutoff, and refuses a
+// second while it runs.
+#[tokio::test]
+async fn edition_acquire_asks_once_for_missing_and_below_cutoff_tracks() {
+    let (state, db, dispatch) = setup().await;
+    db.write("test.seed_library", |tx| {
+        tx.execute_batch(
+            "INSERT INTO local_artists (id, display_name, folded_name, kind, created_at, updated_at)
+               VALUES ('ar1', 'A', 'a', 'person', 0, 0);
+             INSERT INTO local_albums (id, root_id, grouping_key, title, title_folded,
+               album_artist_id, grouping_source, created_at, updated_at)
+               VALUES ('al1', 'r1', 'g', 'T', 't', 'ar1', 'automatic', 0, 0);
+             INSERT INTO local_tracks (id, local_album_id, root_id, file_path, relative_path,
+               path_hash, file_size_bytes, file_mtime_ns, stat_revision, title, title_folded,
+               album_title, album_title_folded, file_format, bit_rate, ingest_source, imported_at,
+               membership_source)
+               VALUES ('t1', 'al1', 'r1', '/m/1.flac', '1.flac', 'h1', 1, 0, 's', 'T', 't', 'T',
+                 't', 'flac', NULL, 'scan', 0, 'automatic'),
+                      ('t3', 'al1', 'r1', '/m/3.mp3', '3.mp3', 'h3', 1, 0, 's', 'T', 't', 'T',
+                 't', 'mp3', 128, 'scan', 0, 'automatic');",
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    assert!(state.edition_plans.set(Arc::new(PlannedEdition)).is_ok());
+    assert!(
+        state
+            .upgrade_policy
+            .set(Arc::new(|| {
+                droppedneedle::acquire::flows::stores::UpgradePolicy {
+                    upgrade_allowed: true,
+                    cutoff: "lossless".into(),
+                    ..Default::default()
+                }
+            }))
+            .is_ok()
+    );
+    let uri = format!("/albums/{MBID_A}/edition/acquire?album_id=al1");
+    let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "started");
+    assert_eq!(
+        (&body["requested"], &body["upgrades"]),
+        (&json!(1), &json!(1))
+    );
+    let calls = dispatch.take_calls();
+    assert_eq!(calls.len(), 1, "one download for the album");
+    assert_eq!(calls[0].release_mbid.as_deref(), Some("rel-1"));
+    assert_eq!(calls[0].wanted, vec![(1, 2), (1, 3)]);
+
+    let (status, body) = call(&state, Method::POST, &uri, Some(ADMIN), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "already_in_progress");
+    assert!(dispatch.take_calls().is_empty(), "never two at once");
+}

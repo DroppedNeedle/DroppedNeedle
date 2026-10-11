@@ -84,11 +84,13 @@ impl EditionChoices for Operations {
 /// lacks. Acquisition is built after the library, so wiring plugs the
 /// library's [`Operations`] in once both exist.
 pub trait EditionPlans: Send + Sync {
-    /// The plan for the library's copy of the release group (a chosen
-    /// copy first, then the oldest), or `None` when the library holds no
-    /// copy with an edition.
+    /// The plan for one library copy of the release group: `album_id`
+    /// when the caller names the copy (the edition picker does, so the
+    /// plan it showed is the plan fetched), else a chosen copy first, then
+    /// the oldest. `None` when the library holds no copy with an edition.
     fn group_plan<'a>(
         &'a self,
+        album_id: Option<&'a str>,
         release_group_mbid: &'a str,
     ) -> BoxFuture<'a, Result<Option<EditionPlan>, OperationError>>;
 }
@@ -96,10 +98,15 @@ pub trait EditionPlans: Send + Sync {
 impl EditionPlans for Operations {
     fn group_plan<'a>(
         &'a self,
+        album_id: Option<&'a str>,
         release_group_mbid: &'a str,
     ) -> BoxFuture<'a, Result<Option<EditionPlan>, OperationError>> {
         Box::pin(async move {
-            let Some(album_id) = self.album_for_group(release_group_mbid).await? else {
+            let album_id = match album_id {
+                Some(album_id) => Some(album_id.to_owned()),
+                None => self.album_for_group(release_group_mbid).await?,
+            };
+            let Some(album_id) = album_id else {
                 return Ok(None);
             };
             self.edition_plan(&album_id, None).await.map(Some)

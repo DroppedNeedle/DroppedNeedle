@@ -248,7 +248,19 @@ impl DownloadSource for SlskdSource {
             .map_err(SourceError::LocalFault)?;
         let mut target = target;
         let refill = target.track.is_none() && !missing.is_empty();
-        let by_name = refill && target.tracklist.is_empty();
+        let missing = if refill {
+            missing
+        } else if target.track.is_none() && target.tracklist.is_empty() {
+            // "Get missing tracks" while MusicBrainz is down: the wanted
+            // positions are matched by file name, as a refill does.
+            std::mem::take(&mut target.wanted)
+                .into_iter()
+                .map(|at| (at.disc, at.track))
+                .collect()
+        } else {
+            missing
+        };
+        let by_name = target.track.is_none() && target.tracklist.is_empty() && !missing.is_empty();
         if refill && !by_name {
             target.wanted = missing
                 .iter()

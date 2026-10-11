@@ -231,13 +231,8 @@ impl Targets {
             artist: task.artist_name.clone(),
             album_title: task.album_title.clone(),
             year: details.year,
-            // Positions mean nothing without the tracklist: fetch the whole
-            // album then, and the landing skips the tracks already owned.
-            wanted: if tracklist.is_empty() {
-                Vec::new()
-            } else {
-                wanted
-            },
+            // Without the tracklist the source matches these by file name.
+            wanted,
             tracklist,
             track: None,
         }

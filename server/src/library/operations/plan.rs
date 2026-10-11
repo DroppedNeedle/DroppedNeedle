@@ -155,9 +155,11 @@ pub fn build(
                 (FileFate::Keep, spot)
             } else {
                 let same_song = recording_of(track_id).and_then(|recording| {
-                    tracks
-                        .iter()
-                        .find(|track| track.recording_mbid.eq_ignore_ascii_case(&recording))
+                    // A second copy only when another file holds that track.
+                    tracks.iter().find(|track| {
+                        track.local_track_id.is_some()
+                            && track.recording_mbid.eq_ignore_ascii_case(&recording)
+                    })
                 });
                 match same_song {
                     Some(track) => (FileFate::Duplicate, Some((track.disc, track.position))),

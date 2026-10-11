@@ -72,8 +72,10 @@ pub struct RequestsService {
     mixer: super::state::MixSlot,
     /// The library's edition plans, when boot wired them.
     edition_plans: super::state::EditionPlanSlot,
-    /// Quality upgrades, when the flows are built.
-    upgrades: super::state::UpgradeSlot,
+    /// The upgrade policy reader, when the flows are built.
+    upgrade_policy: super::state::UpgradePolicySlot,
+    /// Source and disk checks, when the download worker is built.
+    readiness: super::state::ReadinessSlot,
 }
 
 impl RequestsService {
@@ -92,7 +94,8 @@ impl RequestsService {
             plugins: state.plugins.clone(),
             mixer: state.mixer.clone(),
             edition_plans: state.edition_plans.clone(),
-            upgrades: state.upgrades.clone(),
+            upgrade_policy: state.upgrade_policy.clone(),
+            readiness: state.readiness.clone(),
         }
     }
 

@@ -70,8 +70,12 @@ pub struct FolderPick {
     /// Worst recipe rank of the files to fetch (`usize::MAX` when one
     /// is outside the recipe).
     pub quality: usize,
-    /// For a single track: the folder holds little of the album.
+    /// Wanted tracks (single track or a subset of the album) asked of a
+    /// folder that holds little of the album.
     pub lone_track: bool,
+    /// Of the wanted positions, how many this folder holds (all of its
+    /// audio files when nothing in particular is wanted).
+    pub held: usize,
     has_free_slot: bool,
     queue_length: i64,
     upload_speed: i64,
@@ -106,6 +110,7 @@ pub fn rank_folders(
         a.lone_track
             .cmp(&b.lone_track)
             .then(b.coverage.cmp(&a.coverage))
+            .then(b.held.cmp(&a.held))
             .then(a.duration_misses.cmp(&b.duration_misses))
             .then(a.quality.cmp(&b.quality))
             .then(b.has_free_slot.cmp(&a.has_free_slot))
@@ -213,17 +218,16 @@ fn judge(
         })?;
         assigned.get(&track).map(|file| audio[*file].hit.clone())
     });
-    let mut coverage = coverage;
     let to_fetch: Vec<SearchResult> = if request.wanted.is_empty() {
         files.iter().map(|hit| (*hit).clone()).collect()
     } else if request.single_track {
         wanted_files.collect::<Option<_>>()?
     } else {
-        // An album's failover after a short landing: fetch whichever of the
-        // missing tracks this folder holds, and rank on how many it holds.
-        let held: Vec<SearchResult> = wanted_files.flatten().collect();
-        coverage = held.len();
-        held
+        // Some tracks of the album (a refill after a short landing, or
+        // "get missing tracks"): fetch whichever of them this folder holds.
+        // Folders still rank on how much of the whole edition they hold,
+        // so a complete album folder beats a few loose files.
+        wanted_files.flatten().collect()
     };
     if to_fetch.is_empty() {
         return None;
@@ -238,7 +242,12 @@ fn judge(
         })
         .max()
         .unwrap_or(usize::MAX);
-    let lone_track = request.single_track && total > 1 && coverage < (total.div_ceil(2)).max(2);
+    let held = to_fetch
+        .iter()
+        .filter(|hit| is_audio(&hit.extension))
+        .count();
+    let lone_track =
+        !request.wanted.is_empty() && total > 1 && coverage < (total.div_ceil(2)).max(2);
     let first = files.first()?;
     Some(FolderPick {
         username,
@@ -249,6 +258,7 @@ fn judge(
         duration_misses,
         quality,
         lone_track,
+        held,
         has_free_slot: first.has_free_slot,
         queue_length: first.queue_length,
         upload_speed: first.upload_speed,
