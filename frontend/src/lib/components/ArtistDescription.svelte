@@ -28,6 +28,18 @@
 		const timer = setTimeout(() => checkDescriptionHeight(), 50);
 		return () => clearTimeout(timer);
 	});
+
+	// The text is escaped first, so only the line breaks added here are
+	// markup: a biography (Wikipedia or a plugin) can never inject HTML.
+	const descriptionHtml = $derived(
+		(description ?? '')
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+			.replace(/"/g, '&quot;')
+			.replace(/'/g, '&#39;')
+			.replace(/\n/g, '<br>')
+	);
 </script>
 
 <div class="bg-base-200/50 rounded-box p-4 sm:p-6">
@@ -42,7 +54,7 @@
 			{#if descriptionExpanded}
 				<div>
 					<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-					{@html description.replace(/\n\n/g, '<br><br>').replace(/\n/g, '<br>')}
+					{@html descriptionHtml}
 				</div>
 				<button
 					class="btn btn-sm mt-3 gap-2"
@@ -59,7 +71,7 @@
 					style="display: -webkit-box; -webkit-box-orient: vertical;"
 				>
 					<!-- eslint-disable-next-line svelte/no-at-html-tags -->
-					{@html description.replace(/\n\n/g, '<br><br>').replace(/\n/g, '<br>')}
+					{@html descriptionHtml}
 				</div>
 				{#if showViewMore}
 					<button

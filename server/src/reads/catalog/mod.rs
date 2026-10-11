@@ -64,6 +64,9 @@ pub struct Catalog {
     editions: Arc<dyn EditionChoices>,
 }
 
+/// How long plugin details are kept.
+const PLUGIN_DETAILS_TTL: Duration = Duration::from_secs(60 * 60);
+
 struct Inner {
     upstream: Upstream,
     local: LocalCatalog,
@@ -179,6 +182,36 @@ impl Catalog {
             .await
             .map(|value| (*value).clone())
             .map_err(|error| (*error).clone())
+    }
+
+    /// Plugin details for one artist or album, cached for an hour per
+    /// set of answering plugins. No plugin means no call and no cache.
+    async fn plugin_details<F, Fut>(
+        &self,
+        kind: &str,
+        mbid: &str,
+        fetch: F,
+    ) -> Result<models::PluginDetails, CatalogError>
+    where
+        F: FnOnce(Catalog) -> Fut + Send + 'static,
+        Fut: Future<Output = models::PluginDetails> + Send + 'static,
+    {
+        let token = self.details.token();
+        if token.is_empty() {
+            return Ok(models::PluginDetails::default());
+        }
+        let key = crate::providers::digest_key("plugin_details:", &[kind, mbid, &token], "v1");
+        let catalog = self.clone();
+        let value = self
+            .cached(&self.inner.flights.other, key, move || async move {
+                let details = fetch(catalog).await;
+                let value = serde_json::to_value(&details).map_err(|error| {
+                    CatalogError::Internal(format!("plugin details encode: {error}"))
+                })?;
+                Ok((value, Some(PLUGIN_DETAILS_TTL)))
+            })
+            .await?;
+        Ok(serde_json::from_value(value).unwrap_or_default())
     }
 
     /// Drop cached entries by exact key.

@@ -97,6 +97,11 @@ impl PurchaseLinkSource for NoPurchaseLinks {
 /// (the plugins' `metadata_provider` capability). Failures are the
 /// provider's to log; they read as empty details.
 pub trait DetailsSource: Send + Sync {
+    /// Identifies the providers answering right now (their names); it
+    /// keys the details cache, so enabling or disabling one is seen at
+    /// once. Empty means none, and nothing is asked.
+    fn token(&self) -> String;
+
     /// Details about one artist.
     fn artist<'a>(
         &'a self,
@@ -118,6 +123,10 @@ pub trait DetailsSource: Send + Sync {
 pub struct NoDetails;
 
 impl DetailsSource for NoDetails {
+    fn token(&self) -> String {
+        String::new()
+    }
+
     fn artist<'a>(
         &'a self,
         _name: &'a str,

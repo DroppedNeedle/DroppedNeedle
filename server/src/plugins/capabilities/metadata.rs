@@ -132,24 +132,85 @@ impl PluginHost {
     }
 }
 
+/// Plain text from plugin text: tags dropped (`<br>` and paragraph ends
+/// become line breaks), common entities decoded, and any angle bracket
+/// left over removed, so the text is safe wherever a page puts it.
+pub fn plain_text(text: &str) -> String {
+    let mut plain = String::with_capacity(text.len());
+    let mut tag = String::new();
+    let mut in_tag = false;
+    for character in text.chars() {
+        match character {
+            '<' => {
+                in_tag = true;
+                tag.clear();
+            }
+            '>' if in_tag => {
+                in_tag = false;
+                let name = tag
+                    .trim_start_matches('/')
+                    .split(|c: char| c.is_whitespace() || c == '/')
+                    .next()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                if matches!(name.as_str(), "br" | "p" | "div" | "li") {
+                    plain.push('\n');
+                }
+            }
+            _ if in_tag => tag.push(character),
+            _ => plain.push(character),
+        }
+    }
+    let decoded = plain
+        .replace("&nbsp;", " ")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&lt;", "")
+        .replace("&gt;", "")
+        .replace("&amp;", "&");
+    let cleaned: String = decoded
+        .chars()
+        .filter(|c| *c != '<' && *c != '>')
+        .filter(|c| *c == '\n' || !c.is_control())
+        .collect();
+    let lines: Vec<&str> = cleaned.lines().map(str::trim).collect();
+    lines.join("\n").trim().to_owned()
+}
+
 /// Every plugin's answer merged by the gap rule, as the catalog shows it.
+/// Text is reduced to plain text, links to `http(s)` and the image to
+/// `https` only.
 fn merged(answers: &[PluginEnrichment]) -> PluginDetails {
     let mut fields = EnrichmentFields::default();
     for answer in answers {
-        fields.fill_gaps(answer);
+        let mut clean = answer.clone();
+        clean.biography = clean
+            .biography
+            .as_deref()
+            .map(plain_text)
+            .filter(|text| !text.is_empty());
+        clean.tags = clean
+            .tags
+            .iter()
+            .map(String::as_str)
+            .map(plain_text)
+            .filter(|tag| !tag.is_empty() && !tag.contains('\n'))
+            .collect();
+        clean.links.retain(|link| {
+            (link.starts_with("https://") || link.starts_with("http://"))
+                && !link
+                    .chars()
+                    .any(|c| c.is_whitespace() || c == '"' || c == '<')
+        });
+        clean.image_urls.retain(|url| {
+            url.starts_with("https://") && !url.chars().any(|c| c.is_whitespace() || c == '"')
+        });
+        fields.fill_gaps(&clean);
     }
     PluginDetails {
         biography: fields.biography,
-        links: fields
-            .links
-            .into_iter()
-            .filter(|link| link.starts_with("https://") || link.starts_with("http://"))
-            .collect(),
-        tags: fields
-            .tags
-            .into_iter()
-            .map(|tag| tag.trim().to_owned())
-            .collect(),
+        links: fields.links,
+        tags: fields.tags,
         image_url: fields.image_url,
     }
 }
@@ -158,6 +219,15 @@ fn merged(answers: &[PluginEnrichment]) -> PluginDetails {
 pub struct PluginDetailsSource(pub Arc<PluginHost>);
 
 impl DetailsSource for PluginDetailsSource {
+    fn token(&self) -> String {
+        self.0
+            .serving("metadata_provider")
+            .iter()
+            .map(|plugin| plugin.manifest.name.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
     fn artist<'a>(&'a self, name: &'a str, mbid: &'a str) -> BoxFuture<'a, PluginDetails> {
         Box::pin(async move { merged(&self.0.enrich_artist(name, Some(mbid)).await) })
     }
@@ -175,6 +245,14 @@ impl DetailsSource for PluginDetailsSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plugin_text_is_plain() {
+        assert_eq!(
+            plain_text("<img src=x onerror=alert(1)>Hi<br>there &lt;script&gt; &amp; <b>you</b>"),
+            "Hi\nthere script & you"
+        );
+    }
 
     #[test]
     fn plugins_only_fill_gaps() {

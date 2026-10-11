@@ -16,7 +16,7 @@ use super::mapping;
 use super::models::{
     ArtistExtendedInfo, ArtistImages, ArtistInfo, ArtistPurchaseOptionsResponse, ArtistReleases,
     CatalogSource, ExternalLink, LastFmArtistEnrichment, LastFmSimilarArtist, LastFmTag, LifeSpan,
-    PurchaseLink, ReleaseItem,
+    PluginDetails, PurchaseLink, ReleaseItem,
 };
 use super::{Catalog, MISS_TTL, is_mbid, mb_error, mb_retry, record_mb_down, secs};
 
@@ -483,7 +483,7 @@ impl Catalog {
         let (biography, images, plugins) = tokio::join!(
             self.biography(&detail),
             self.fetch_artist_images(&detail.mbid, &detail.name),
-            self.details.artist(&detail.name, &detail.mbid)
+            self.artist_plugin_details(&detail.name, &detail.mbid)
         );
         // Plugin details sit below Wikipedia and Wikidata: they only fill
         // what those left empty.
@@ -497,6 +497,16 @@ impl Catalog {
             image: filled(biography.image, plugins.image_url),
             images: images.unwrap_or_default(),
         })
+    }
+
+    /// Plugin details for the artist; a failure reads as none.
+    async fn artist_plugin_details(&self, name: &str, mbid: &str) -> PluginDetails {
+        let (name, owned_mbid) = (name.to_owned(), mbid.to_owned());
+        self.plugin_details("artist", mbid, move |catalog| async move {
+            catalog.details.artist(&name, &owned_mbid).await
+        })
+        .await
+        .unwrap_or_default()
     }
 
     pub(super) async fn biography(&self, detail: &ArtistDetail) -> Biography {

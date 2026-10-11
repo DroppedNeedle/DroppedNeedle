@@ -1149,17 +1149,22 @@ impl Catalog {
     }
 
     /// `GET /albums/{album_id}/plugin-details`: what metadata plugins add
-    /// about the album. Not cached: plugins answer under their own time
-    /// budget, and none installed answers empty at once.
+    /// about the album, kept for an hour per set of plugins. With no
+    /// plugin installed it answers empty at once.
     pub async fn album_plugin_details(&self, raw_id: &str) -> Result<PluginDetails, CatalogError> {
         let id = self.album_id(raw_id).await?;
         let Some(group) = self.group_detail(&id).await? else {
             return Ok(PluginDetails::default());
         };
-        Ok(self
-            .details
-            .album(&group.credit, &group.title, &group.mbid)
-            .await)
+        let (artist, title, mbid) = (
+            group.credit.clone(),
+            group.title.clone(),
+            group.mbid.clone(),
+        );
+        self.plugin_details("album", &group.mbid, move |catalog| async move {
+            catalog.details.album(&artist, &title, &mbid).await
+        })
+        .await
     }
 
     /// `GET /albums/{album_id}/lastfm`: Last.fm summary and tags with the
