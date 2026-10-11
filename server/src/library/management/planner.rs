@@ -306,6 +306,7 @@ fn destination(
         bit_depth: track.bit_depth,
         medium_format: medium.and_then(|m| m.format.clone()).unwrap_or_default(),
         medium_number: i64::from(disc),
+        album_disambiguation: release.disambiguation.clone().unwrap_or_default(),
     };
     let variables = profile::naming_variables(fields, &facts);
     let rendered = script::render_path(

@@ -476,6 +476,8 @@ pub struct NamingFacts<'a> {
     pub bit_depth: Option<i64>,
     pub medium_format: String,
     pub medium_number: i64,
+    /// The edition's MusicBrainz disambiguation, or empty.
+    pub album_disambiguation: String,
 }
 
 fn first(fields: &BTreeMap<String, Vec<String>>, name: &str) -> String {
@@ -574,8 +576,10 @@ pub fn naming_variables(
             facts.sample_rate.map_or(Value::Null, Value::Int),
         ),
         ("bit_depth", facts.bit_depth.map_or(Value::Null, Value::Int)),
-        // MusicBrainz disambiguation is not kept with releases yet.
-        ("album_disambiguation", Value::Text(String::new())),
+        (
+            "album_disambiguation",
+            Value::Text(facts.album_disambiguation.clone()),
+        ),
         ("medium_format", Value::Text(facts.medium_format.clone())),
         ("medium_number", Value::Int(facts.medium_number)),
     ];

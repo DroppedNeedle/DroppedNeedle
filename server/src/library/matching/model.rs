@@ -170,6 +170,10 @@ pub struct Release {
     /// Retired MBIDs MusicBrainz redirected to this release.
     #[serde(default)]
     pub old_ids: Vec<String>,
+    /// MusicBrainz's note telling this release apart from its siblings
+    /// ("deluxe edition"); naming scripts read it as `album_disambiguation`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disambiguation: Option<String>,
 }
 
 impl Release {

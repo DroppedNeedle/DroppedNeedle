@@ -333,6 +333,7 @@ pub fn release_from_wire(wire: MbRelease, old_ids: Vec<String>) -> Result<Releas
         media: summary,
         tracks,
         old_ids,
+        disambiguation: wire.disambiguation.filter(|note| !note.trim().is_empty()),
     })
 }
 
