@@ -30,6 +30,8 @@ use std::sync::Arc;
 
 use super::leases::DirectGate;
 use super::local_files::{LibraryFiles, LocateError, PathRefusal};
+use super::plugin_url;
+use crate::plugins::capabilities::stream::{open_url, proxy_chunks};
 use futures_util::StreamExt as _;
 
 use super::routes::{
@@ -302,18 +304,30 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
         let extension = path
             .extension()
             .and_then(|ext| ext.to_str())
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .to_owned();
         let content_type =
-            content_type_for_extension(extension).ok_or_else(|| StreamFault::InvalidInput {
+            content_type_for_extension(&extension).ok_or_else(|| StreamFault::InvalidInput {
                 message: "Unsupported audio format".to_owned(),
             })?;
-        // Track facts for decide(): the extension is exact; bitrate and
-        // duration are unknown at this layer, so a client cap alone never
-        // triggers a transcode here; only a codec mismatch does.
+        let plan = self.plan_for(&extension, None, request);
+        Ok(LocalRead {
+            path,
+            content_type,
+            plan,
+        })
+    }
+
+    /// The transcode plan for a source in `format` (a file extension),
+    /// with its length when known.
+    fn plan_for(&self, format: &str, duration: Option<f64>, request: &StreamOpen) -> StreamPlan {
+        // Track facts for decide(): the format is exact; bitrate is unknown
+        // at this layer, so a client cap alone never triggers a transcode
+        // here; only a codec mismatch does.
         let track = TrackInfo {
-            file_format: extension.to_owned(),
+            file_format: format.to_owned(),
             bitrate_kbps: None,
-            duration_seconds: 0.0,
+            duration_seconds: duration.unwrap_or(0.0),
         };
         let force_original = request
             .params
@@ -321,15 +335,6 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             .as_deref()
             .is_some_and(|format| format.eq_ignore_ascii_case("raw"));
         let start_seconds = request.params.start_seconds;
-        let mut plan = decide(
-            &track,
-            request.params.format.as_deref(),
-            request.params.max_bitrate_kbps,
-            force_original,
-            start_seconds,
-            &self.settings,
-            self.ffmpeg_present,
-        );
         // Compat verdict carry: the protocol modules decide with real source
         // bitrate facts, while this re-run sees `bitrate_kbps: None`, so a
         // bitrate-triggered same-codec plan would land direct here. When the
@@ -342,13 +347,17 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             && self.ffmpeg_present
             && !force_original
         {
-            plan = forced_plan(&request.params, &self.settings, start_seconds);
+            return forced_plan(&request.params, &self.settings, start_seconds);
         }
-        Ok(LocalRead {
-            path,
-            content_type,
-            plan,
-        })
+        decide(
+            &track,
+            request.params.format.as_deref(),
+            request.params.max_bitrate_kbps,
+            force_original,
+            start_seconds,
+            &self.settings,
+            self.ffmpeg_present,
+        )
     }
 
     /// Every library root a plugin path may point into.
@@ -365,14 +374,15 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
     }
 
     /// Ask `streaming_source` plugins for one recording. A file answer is
-    /// served like a local file (ranges, transcodes); a URL answer is
-    /// proxied as-is, whole and direct, with every hop re-checked.
+    /// served like a local file (ranges, transcodes). A URL answer is
+    /// proxied with every hop re-checked: by range when its size is known,
+    /// and through a temp file when the plan transcodes (v2 behaviour).
     async fn stream_plugin(
         &self,
         request: &StreamOpen,
         head_only: bool,
     ) -> Result<StreamMedia, StreamFault> {
-        use crate::plugins::capabilities::stream::{PluginStream, open_url};
+        use crate::plugins::capabilities::stream::PluginStream;
 
         let Some((host, client)) = self.plugins.get() else {
             return Err(StreamFault::NotFound);
@@ -391,18 +401,18 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
                 plugin,
                 url,
                 content_type,
-                ..
+                duration_seconds,
             } => {
-                let response = open_url(client, url, None).await.map_err(|reason| {
-                    tracing::warn!(%plugin, %reason, "plugin stream URL refused");
-                    StreamFault::NotFound
-                })?;
-                if !response.status().is_success() {
-                    tracing::warn!(%plugin, status = %response.status(), "plugin stream URL failed");
-                    return Err(StreamFault::Upstream {
-                        source: AudioSource::Plugin,
-                    });
+                let format = plugin_url::url_format(&url, &content_type);
+                let plan = self.plan_for(&format, duration_seconds, request);
+                if plan.is_transcode() {
+                    return self
+                        .transcode_plugin_url(
+                            client, &plugin, url, &format, plan, request, head_only,
+                        )
+                        .await;
                 }
+                let response = plugin_url_response(client, &plugin, url.clone(), None).await?;
                 let upstream_type = response
                     .headers()
                     .get(reqwest::header::CONTENT_TYPE)
@@ -413,24 +423,97 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
                     .or_else(|| (!content_type.is_empty()).then_some(content_type))
                     .unwrap_or_else(|| "application/octet-stream".to_owned());
                 let length = response.content_length();
-                let body = if head_only {
-                    MediaBody::Empty
-                } else {
-                    MediaBody::Chunks(
-                        crate::plugins::capabilities::stream::proxy_chunks(response).boxed(),
-                    )
-                };
-                // Served like a landing: whole, never ranged.
-                Ok(StreamMedia {
-                    content_type,
-                    total_len: 0,
-                    transcoded: true,
-                    estimated_len: length,
-                    body,
-                    lease: None,
-                })
+                match length {
+                    // A sized answer is served like a local file: ranged,
+                    // so players can seek.
+                    Some(total) if plugin_url::within_cap(total) => Ok(StreamMedia {
+                        content_type,
+                        total_len: total,
+                        transcoded: false,
+                        estimated_len: None,
+                        body: if head_only {
+                            MediaBody::Empty
+                        } else {
+                            MediaBody::Spans(plugin_url::spans(client.clone(), url, response))
+                        },
+                        lease: None,
+                    }),
+                    Some(total) => {
+                        tracing::warn!(%plugin, bytes = total, "plugin stream URL is over the size cap");
+                        Err(StreamFault::Upstream {
+                            source: AudioSource::Plugin,
+                        })
+                    }
+                    // No size: served like a landing, whole and unranged.
+                    None => Ok(StreamMedia {
+                        content_type,
+                        total_len: 0,
+                        transcoded: true,
+                        estimated_len: None,
+                        body: if head_only {
+                            MediaBody::Empty
+                        } else {
+                            MediaBody::Chunks(proxy_chunks(response).boxed())
+                        },
+                        lease: None,
+                    }),
+                }
             }
         }
+    }
+
+    /// Transcode a plugin URL: the bytes are spooled to a temp file that
+    /// ffmpeg reads (it never fetches the network itself), and the file is
+    /// removed when the transcode body ends. HEAD answers without fetching.
+    #[allow(clippy::too_many_arguments)]
+    async fn transcode_plugin_url(
+        &self,
+        client: &reqwest::Client,
+        plugin: &str,
+        url: reqwest::Url,
+        format: &str,
+        plan: StreamPlan,
+        request: &StreamOpen,
+        head_only: bool,
+    ) -> Result<StreamMedia, StreamFault> {
+        let out_format = plan.out_format().ok_or_else(|| StreamFault::Internal {
+            cause: "transcode plan carries no codec".to_owned(),
+        })?;
+        let mut media = StreamMedia {
+            content_type: out_media_type(&out_format).to_owned(),
+            total_len: 0,
+            transcoded: true,
+            estimated_len: estimated_len(request, &plan),
+            body: MediaBody::Empty,
+            lease: None,
+        };
+        if head_only {
+            return Ok(media);
+        }
+        let response = plugin_url_response(client, plugin, url, None).await?;
+        let spool = plugin_url::Spool::fill(response, format)
+            .await
+            .map_err(|error| {
+                tracing::warn!(%plugin, %error, "plugin stream URL could not be fetched for transcoding");
+                StreamFault::Upstream {
+                    source: AudioSource::Plugin,
+                }
+            })?;
+        let stream = self
+            .transcoder
+            .stream(spool.path(), &plan, &request.user_id)
+            .await
+            .map_err(transcode_fault)?;
+        // The spool lives inside the body stream and goes with it.
+        media.body = MediaBody::Chunks(
+            transcode_chunks(stream)
+                .map(move |chunk| {
+                    let _keep = &spool;
+                    chunk
+                })
+                .boxed(),
+        );
+        Ok(media)
     }
 
     /// Proxied remote read. Direct-only: the ffmpeg service takes a local
@@ -540,6 +623,27 @@ fn forced_plan(
     }
 }
 
+/// Open a plugin URL (re-checking every redirect hop) and require a
+/// success status. Refusals read as a miss; upstream failures as 502.
+async fn plugin_url_response(
+    client: &reqwest::Client,
+    plugin: &str,
+    url: reqwest::Url,
+    range: Option<&str>,
+) -> Result<reqwest::Response, StreamFault> {
+    let response = open_url(client, url, range).await.map_err(|reason| {
+        tracing::warn!(%plugin, %reason, "plugin stream URL refused");
+        StreamFault::NotFound
+    })?;
+    if !response.status().is_success() {
+        tracing::warn!(%plugin, status = %response.status(), "plugin stream URL failed");
+        return Err(StreamFault::Upstream {
+            source: AudioSource::Plugin,
+        });
+    }
+    Ok(response)
+}
+
 /// The size estimate a client asked for, when the plan yields one.
 fn estimated_len(request: &StreamOpen, plan: &StreamPlan) -> Option<u64> {
     request
@@ -568,7 +672,11 @@ fn transcode_chunks<B: TranscodeBody + 'static>(body: B) -> ChunkStream {
 /// Collect a streamed open into a whole object (the compat whole-object
 /// path).
 async fn whole_media(media: StreamMedia) -> Result<OpenMedia, StreamFault> {
-    let bytes = match media.body {
+    let body = match media.body {
+        MediaBody::Spans(open) => MediaBody::Chunks(open(0, media.total_len)),
+        body => body,
+    };
+    let bytes = match body {
         MediaBody::Bytes(bytes) => bytes,
         MediaBody::File(path) => tokio::task::spawn_blocking(move || std::fs::read(path))
             .await
@@ -591,7 +699,7 @@ async fn whole_media(media: StreamMedia) -> Result<OpenMedia, StreamFault> {
             }
             bytes
         }
-        MediaBody::Empty => Vec::new(),
+        MediaBody::Spans(_) | MediaBody::Empty => Vec::new(),
     };
     Ok(OpenMedia {
         content_type: media.content_type,

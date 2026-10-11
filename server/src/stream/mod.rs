@@ -5,5 +5,6 @@ pub mod download;
 pub mod gateway;
 pub mod leases;
 pub mod local_files;
+pub mod plugin_url;
 pub mod routes;
 pub mod transcode;

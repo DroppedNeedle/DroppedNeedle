@@ -53,8 +53,8 @@ fn facts_for(media: &StreamMedia) -> AudioFacts {
     }
 }
 
-/// `len` bytes from `start` of an opened body. File spans and transcode
-/// chunks stream with the lease inside; in-memory bytes are sliced (the
+/// `len` bytes from `start` of an opened body. File spans, remote spans
+/// and transcode chunks stream with the lease inside; in-memory bytes are sliced (the
 /// lease then ends with the open, as the bytes are already read).
 fn span(body: MediaBody, lease: Option<OwnedDirectLease>, start: u64, len: u64) -> AudioBody {
     match body {
@@ -62,6 +62,7 @@ fn span(body: MediaBody, lease: Option<OwnedDirectLease>, start: u64, len: u64) 
             AudioBody::Live(LiveBody::new(file_range(path, start, len), lease))
         }
         MediaBody::Chunks(chunks) => AudioBody::Live(LiveBody::new(chunks, lease)),
+        MediaBody::Spans(open) => AudioBody::Live(LiveBody::new(open(start, len), lease)),
         MediaBody::Bytes(bytes) => {
             let from = usize::try_from(start)
                 .unwrap_or(usize::MAX)

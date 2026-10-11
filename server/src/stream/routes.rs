@@ -219,6 +219,10 @@ pub struct OpenMedia {
 /// Body chunks of a streamed response.
 pub type ChunkStream = BoxStream<'static, Result<Vec<u8>, std::io::Error>>;
 
+/// Opens `len` bytes from `start` of a remote object. The stream is lazy:
+/// nothing goes upstream until the response body is first polled.
+pub type SpanOpener = Box<dyn FnOnce(u64, u64) -> ChunkStream + Send>;
+
 /// Where the response body comes from.
 pub enum MediaBody {
     /// The whole object in memory (remote reads, whole-object engines).
@@ -227,6 +231,9 @@ pub enum MediaBody {
     File(PathBuf),
     /// Live transcode output, chunk by chunk.
     Chunks(ChunkStream),
+    /// A sized remote object opened by span on demand (plugin URLs), so a
+    /// seek asks the upstream for just that range.
+    Spans(SpanOpener),
     /// Nothing to send: HEAD of a transcode, answered without ffmpeg.
     Empty,
 }
@@ -237,6 +244,7 @@ impl std::fmt::Debug for MediaBody {
             Self::Bytes(bytes) => write!(f, "Bytes({} bytes)", bytes.len()),
             Self::File(path) => write!(f, "File({})", path.display()),
             Self::Chunks(_) => f.write_str("Chunks"),
+            Self::Spans(_) => f.write_str("Spans"),
             Self::Empty => f.write_str("Empty"),
         }
     }
@@ -883,6 +891,7 @@ fn direct_body(
             Ok(Body::from(slice.to_vec()))
         }
         MediaBody::File(path) => Ok(Body::from_stream(hold(file_range(path, start, len)))),
+        MediaBody::Spans(open) => Ok(Body::from_stream(hold(open(start, len)))),
         MediaBody::Chunks(_) | MediaBody::Empty => Err(StreamError::internal(
             &"engine returned no direct body",
             ids,
@@ -994,6 +1003,7 @@ fn transcode_response(
             MediaBody::Bytes(bytes) => Body::from(bytes),
             MediaBody::Chunks(chunks) => Body::from_stream(hold(chunks)),
             MediaBody::File(path) => Body::from_stream(hold(file_range(path, 0, media.total_len))),
+            MediaBody::Spans(open) => Body::from_stream(hold(open(0, media.total_len))),
             MediaBody::Empty => Body::empty(),
         }
     };
