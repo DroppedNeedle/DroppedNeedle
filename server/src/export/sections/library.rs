@@ -472,9 +472,10 @@ pub const REVIEW_DECISIONS: TableSection = TableSection {
     left_behind: "open review questions; nothing to do, v3 asks them again from its identify queue",
 };
 
-/// Albums a curator told v2 to keep as tagged (or excluded from
-/// identification), as v3's own record of that decision: a rejected
-/// review, meaning "keep the album's tags, seal nothing".
+/// Albums a curator told v2 to keep as tagged, as v3's own record of that
+/// decision: a rejected review, meaning "keep the album's tags, seal
+/// nothing". Albums v2 excluded become excluded reviews, so they show
+/// under "Taken out" and can be put back.
 pub const KEPT_TAGGED: TableSection = TableSection {
     name: "identify_decision",
     source: Source::Table {
@@ -489,7 +490,8 @@ pub const KEPT_TAGGED: TableSection = TableSection {
         Column::new("reason_code")
             .from_sql("CASE s.state WHEN 'excluded' THEN 'EXCLUDED' ELSE 'KEEP_TAGGED' END"),
         Column::new("candidates_json").from_sql("'[]'"),
-        Column::new("state").from_sql("'rejected'"),
+        Column::new("state")
+            .from_sql("CASE s.state WHEN 'excluded' THEN 'excluded' ELSE 'rejected' END"),
         Column::new("resolved_by_user_id").from_sql(live_user!("decided_by_user_id")),
         Column::new("created_ms").from_sql("CAST(s.created_at * 1000 AS INTEGER)"),
         Column::new("updated_ms")

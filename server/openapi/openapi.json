@@ -11974,9 +11974,18 @@
             }
           },
           {
+            "name": "with_candidates",
+            "in": "query",
+            "description": "Only reviews that list at least one release.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "sort",
             "in": "query",
-            "description": "`newest` (default) or `oldest` change first.",
+            "description": "`newest` (default) or `oldest` change first, or `tracks` for the\nalbums with the most files first.",
             "required": false,
             "schema": {
               "type": "string"
@@ -12112,13 +12121,13 @@
         "tags": [
           "crate::library::http::reviews"
         ],
-        "summary": "Start identification again for every album with a pending review.\nReviews whose album cannot start stay open and are counted by reason.",
+        "summary": "Start identification again for every pending review a filter selects\n(all of them by default), or with `preview` count what would start.\nReviews whose album cannot start stay open and are counted by reason.",
         "operationId": "retry_pending_reviews",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ReviewRetryBody"
+                "$ref": "#/components/schemas/ReviewRetryAllBody"
               }
             }
           },
@@ -27627,7 +27636,8 @@
           "penalties",
           "reason_code",
           "supported_tracks",
-          "contradictory_tracks"
+          "contradictory_tracks",
+          "track_evidence"
         ],
         "properties": {
           "album_artist_name": {
@@ -27683,6 +27693,13 @@
             "type": "integer",
             "description": "Supported track count.",
             "minimum": 0
+          },
+          "track_evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackEvidenceView"
+            },
+            "description": "How each of the album's files fits this release."
           }
         }
       },
@@ -44425,6 +44442,29 @@
           "remove_apev2"
         ]
       },
+      "ReasonCount": {
+        "type": "object",
+        "description": "How many reviews one reason holds.",
+        "required": [
+          "reason_code",
+          "reason",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "reason": {
+            "$ref": "#/components/schemas/ReasonView"
+          },
+          "reason_code": {
+            "type": "string",
+            "description": "The reason code as filed (filter by this)."
+          }
+        }
+      },
       "ReasonView": {
         "type": "object",
         "description": "Why a job or work item ended where it did: a stable code, a plain\nsentence, and what to do about it.",
@@ -46845,14 +46885,44 @@
           }
         }
       },
+      "ReviewRetryAllBody": {
+        "type": "object",
+        "description": "Retry identification for many reviews.",
+        "properties": {
+          "confirm_local_metadata": {
+            "type": "boolean",
+            "description": "Confirms a one-off MusicBrainz lookup for files under a Local\nmetadata policy."
+          },
+          "filter": {
+            "$ref": "#/components/schemas/ReviewsQuery",
+            "description": "Pending reviews matching this list filter (paging is ignored)."
+          },
+          "preview": {
+            "type": "boolean",
+            "description": "Count what would start and why the rest would not; start nothing."
+          },
+          "root_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Albums in these library folders (overrides the filter's folder)."
+          }
+        }
+      },
       "ReviewRetryAllResponse": {
         "type": "object",
         "description": "What a \"retry all\" started.",
         "required": [
+          "preview",
           "started",
           "skipped"
         ],
         "properties": {
+          "preview": {
+            "type": "boolean",
+            "description": "True when nothing started: the counts are what a real run would do."
+          },
           "skipped": {
             "type": "array",
             "items": {
@@ -46863,7 +46933,7 @@
           "started": {
             "type": "integer",
             "format": "int32",
-            "description": "Albums whose identification started again.",
+            "description": "Albums whose identification started again (or would).",
             "minimum": 0
           }
         }
@@ -46882,13 +46952,6 @@
               "null"
             ],
             "description": "Makes a retried request return the same job (single review only)."
-          },
-          "root_ids": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Retry all only: albums in these library folders (every folder\nwhen empty)."
           }
         }
       },
@@ -46905,7 +46968,8 @@
           "state",
           "candidates",
           "created_ms",
-          "updated_ms"
+          "updated_ms",
+          "manual_identity"
         ],
         "properties": {
           "album_id": {
@@ -46935,6 +46999,10 @@
           "id": {
             "type": "string",
             "description": "Review id."
+          },
+          "manual_identity": {
+            "type": "boolean",
+            "description": "The album's current match was picked by a person."
           },
           "reason": {
             "$ref": "#/components/schemas/ReasonView",
@@ -47060,7 +47128,7 @@
               "string",
               "null"
             ],
-            "description": "`newest` (default) or `oldest` change first."
+            "description": "`newest` (default) or `oldest` change first, or `tracks` for the\nalbums with the most files first."
           },
           "state": {
             "type": [
@@ -47084,6 +47152,13 @@
             ],
             "format": "int64",
             "description": "Changed at or before this time (Unix milliseconds)."
+          },
+          "with_candidates": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Only reviews that list at least one release."
           }
         }
       },
@@ -47093,6 +47168,7 @@
         "required": [
           "reviews",
           "total",
+          "reason_counts",
           "limit",
           "offset"
         ],
@@ -47106,6 +47182,13 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          },
+          "reason_counts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReasonCount"
+            },
+            "description": "Reviews matching the filter apart from its reason, by reason."
           },
           "reviews": {
             "type": "array",
@@ -50653,6 +50736,36 @@
           "track": {
             "type": "string",
             "description": "Track name as sent."
+          }
+        }
+      },
+      "TrackEvidenceView": {
+        "type": "object",
+        "description": "How one file fits a candidate release.",
+        "required": [
+          "local_track_id",
+          "title",
+          "classification",
+          "evidence_kinds"
+        ],
+        "properties": {
+          "classification": {
+            "type": "string",
+            "description": "`supported`, `unknown` or `contradictory`."
+          },
+          "evidence_kinds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What the verdict rests on (`recording_id`, `title`, `length`, ...)."
+          },
+          "local_track_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "description": "The file's title as the library shows it."
           }
         }
       },

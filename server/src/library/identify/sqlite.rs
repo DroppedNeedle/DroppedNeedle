@@ -1568,6 +1568,11 @@ impl ReviewStore for SqliteIdentifyStore {
             if settled != 1 {
                 return Ok(false);
             }
+            // A review approval can be taken back like any edition choice.
+            let point = crate::library::operations::choice::undo_point(
+                &tx,
+                &approval.album.local_album_id,
+            )?;
             seal_album_identity(&tx, &approval.album)?;
             for track in &approval.tracks {
                 seal_track_identity(&tx, track)?;
@@ -1586,6 +1591,16 @@ impl ReviewStore for SqliteIdentifyStore {
                     crate::library::clock::now_unix(),
                 )?;
             }
+            crate::library::operations::choice::keep_undo_point(
+                &tx,
+                &approval.album.local_album_id,
+                &point,
+                &approval.by_user_id,
+                "review_approve",
+                "REVIEW_APPROVED",
+                crate::library::clock::now_unix(),
+            )
+            .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
             bump_identification_stream(&tx)?;
             tx.commit()?;
             Ok(true)

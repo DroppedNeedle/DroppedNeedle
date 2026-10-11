@@ -118,6 +118,44 @@ fn keep_undo(
     Ok(())
 }
 
+/// What a change is about to replace, taken before it writes.
+pub(crate) struct UndoPoint(Snapshot);
+
+/// Take the album's current match as the undo point for a change.
+pub(crate) fn undo_point(conn: &Connection, album_id: &str) -> rusqlite::Result<UndoPoint> {
+    Ok(UndoPoint(snapshot(conn, album_id)?))
+}
+
+/// After a person's change: write its audit row and keep `point` as the
+/// album's one undo, as every edition choice does.
+pub(crate) fn keep_undo_point(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    point: &UndoPoint,
+    actor: &str,
+    kind: &str,
+    reason: &str,
+    now: f64,
+) -> Result<String, OperationError> {
+    let after = album_identity_row(tx, album_id)?;
+    let action = record_action(
+        tx,
+        CatalogAction {
+            actor,
+            kind,
+            album_id,
+            job_id: None,
+            before: serde_json::to_value(&point.0.identity).unwrap_or_default(),
+            after: serde_json::to_value(&after).unwrap_or_default(),
+            reason,
+        },
+        now,
+    )?;
+    keep_undo(tx, album_id, &point.0, &action, now)?;
+    bump_catalog(tx)?;
+    Ok(action)
+}
+
 /// One file placed on a track of the chosen edition.
 pub(super) struct Placement {
     pub(super) local_track_id: String,

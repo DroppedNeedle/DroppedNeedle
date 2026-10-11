@@ -4562,4 +4562,39 @@ async fn library_journey_review_exclude_restore_dismiss() {
     )
     .await;
     assert_eq!(body["state"], json!("rejected"));
+
+    // A bulk accept never replaces an edition someone picked by hand.
+    conn.execute(
+        "INSERT INTO local_album_external_identities (local_album_id, provider, \
+         release_group_mbid, decision_source, selected_at) \
+         VALUES (?1, 'musicbrainz', 'rg-pinned', 'manual', 1.0)",
+        [&album],
+    )
+    .expect("pinned");
+    let candidates = json!([{
+        "candidate_key": "rg-other:", "release_group_mbid": "rg-other", "release_mbid": null,
+        "album_title": "Other", "album_artist_name": "Someone", "track_evidence": [],
+        "score": 0.9, "reason_code": "WEAK_MATCH"
+    }]);
+    conn.execute(
+        "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
+         candidates_json, state, created_ms, updated_ms) \
+         VALUES ('rev-3', ?1, 'WEAK_MATCH', ?2, 'pending', 3, 3)",
+        rusqlite::params![album, candidates.to_string()],
+    )
+    .expect("third review filed");
+    let (status, preview) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/reviews/bulk-preview",
+        &headers,
+        Some(json!({"action": "accept", "filter": {}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["eligible"], json!(0));
+    assert_eq!(
+        preview["skipped"][0]["reason"]["code"],
+        json!("REVIEW_ALBUM_PINNED")
+    );
 }

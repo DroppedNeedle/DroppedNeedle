@@ -19,16 +19,16 @@ use utoipa::{IntoParams, ToSchema};
 use super::auth::{Principal, RequireAdmin, RequireCurator};
 use super::error::{LibraryError, ValidJson, ValidQuery};
 use super::models::{
-    ApproveBody, CandidateView, IdentityView, PenaltyView, ReviewBulkPreviewResponse,
+    ApproveBody, CandidateView, IdentityView, PenaltyView, ReasonCount, ReviewBulkPreviewResponse,
     ReviewBulkResponse, ReviewResolveResponse, ReviewRetryAllResponse, ReviewRetryBody, ReviewView,
-    ReviewsResponse, SkippedReviews, snake,
+    ReviewsResponse, SkippedReviews, TrackEvidenceView, snake,
 };
 use super::operations::{OperationView, OperationsHttpError, blocking, job_view};
 use crate::library::identify::models::{AlbumIdentity, CandidateEvidence};
 use crate::library::operations::models::OperationError;
 use crate::library::operations::reasons::{self, review_reason};
 use crate::library::operations::reviews::{
-    BulkAction, ReviewAction, ReviewFilter, ReviewRow, Tally, parse_state, state_name,
+    BulkAction, ReviewAction, ReviewFilter, ReviewOrder, ReviewRow, Tally, parse_state, state_name,
 };
 use crate::library::operations::service::Operations;
 use crate::library::wiring::LibrarySetup;
@@ -87,7 +87,10 @@ pub struct ReviewsQuery {
     pub updated_from: Option<i64>,
     /// Changed at or before this time (Unix milliseconds).
     pub updated_to: Option<i64>,
-    /// `newest` (default) or `oldest` change first.
+    /// Only reviews that list at least one release.
+    pub with_candidates: Option<bool>,
+    /// `newest` (default) or `oldest` change first, or `tracks` for the
+    /// albums with the most files first.
     pub sort: Option<String>,
     /// Page size, 1 to 200 (default 50).
     pub limit: Option<u32>,
@@ -114,12 +117,38 @@ fn candidate_view(candidate: &CandidateEvidence) -> CandidateView {
         reason_code: candidate.reason_code.clone(),
         supported_tracks: candidate.supported_count(),
         contradictory_tracks: candidate.contradictory_count(),
+        track_evidence: Vec::new(),
     }
+}
+
+fn evidence_view(row: &ReviewRow, candidate: &CandidateEvidence) -> Vec<TrackEvidenceView> {
+    candidate
+        .track_evidence
+        .iter()
+        .map(|evidence| TrackEvidenceView {
+            local_track_id: evidence.local_track_id.clone(),
+            title: row
+                .tracks
+                .iter()
+                .find(|(id, _)| *id == evidence.local_track_id)
+                .map(|(_, title)| title.clone())
+                .unwrap_or_default(),
+            classification: snake(&evidence.classification),
+            evidence_kinds: evidence.evidence_kinds.clone(),
+        })
+        .collect()
 }
 
 fn review_view(row: &ReviewRow) -> ReviewView {
     let review = &row.review;
-    let mut candidates: Vec<CandidateView> = review.candidates.iter().map(candidate_view).collect();
+    let mut candidates: Vec<CandidateView> = review
+        .candidates
+        .iter()
+        .map(|candidate| CandidateView {
+            track_evidence: evidence_view(row, candidate),
+            ..candidate_view(candidate)
+        })
+        .collect();
     candidates.sort_by(|a, b| b.score.total_cmp(&a.score));
     ReviewView {
         id: review.id.clone(),
@@ -134,6 +163,7 @@ fn review_view(row: &ReviewRow) -> ReviewView {
         candidates,
         created_ms: row.created_ms,
         updated_ms: row.updated_ms,
+        manual_identity: row.manual_identity,
     }
 }
 
@@ -171,10 +201,18 @@ pub async fn list_reviews(
     let filter = review_filter(query, Vec::new())?;
     let (limit, offset) = (filter.limit, filter.offset);
     let ops = Operations::new(&state);
-    let (rows, total) = blocking(move || ops.reviews(&filter)).await?;
+    let (rows, total, counts) = blocking(move || ops.reviews(&filter)).await?;
     Ok(Json(ReviewsResponse {
         reviews: rows.iter().map(review_view).collect(),
         total,
+        reason_counts: counts
+            .into_iter()
+            .map(|(code, count)| ReasonCount {
+                reason: review_reason(&code).into(),
+                reason_code: code,
+                count,
+            })
+            .collect(),
         limit,
         offset,
     }))
@@ -199,9 +237,10 @@ fn review_filter(
     } else {
         parse_state(query.state.as_deref())?
     };
-    let oldest_first = match query.sort.as_deref() {
-        None | Some("") | Some("newest") => false,
-        Some("oldest") => true,
+    let order = match query.sort.as_deref() {
+        None | Some("") | Some("newest") => ReviewOrder::Newest,
+        Some("oldest") => ReviewOrder::Oldest,
+        Some("tracks") => ReviewOrder::MostTracks,
         Some(_) => return Err(OperationError::Invalid(reasons::REVIEW_FILTER_INVALID)),
     };
     Ok(ReviewFilter {
@@ -232,7 +271,8 @@ fn review_filter(
         created_to: query.created_to,
         updated_from: query.updated_from,
         updated_to: query.updated_to,
-        oldest_first,
+        with_candidates: query.with_candidates.unwrap_or(false),
+        order,
         limit: query.limit.unwrap_or(50).clamp(1, PAGE_MAX),
         offset: query.offset.unwrap_or(0),
     })
@@ -457,12 +497,13 @@ pub async fn retry_review(
     Ok(Json(job_view(&job)))
 }
 
-/// Start identification again for every album with a pending review.
+/// Start identification again for every pending review a filter selects
+/// (all of them by default), or with `preview` count what would start.
 /// Reviews whose album cannot start stay open and are counted by reason.
 #[utoipa::path(
     post,
     path = "/api/v3/library/reviews/retry-pending",
-    request_body = ReviewRetryBody,
+    request_body = ReviewRetryAllBody,
     responses(
         (status = 200, description = "What started and what did not", body = ReviewRetryAllResponse),
         (status = 401, description = "Not authenticated"),
@@ -472,15 +513,20 @@ pub async fn retry_review(
 pub async fn retry_pending_reviews(
     State(state): State<LibrarySetup>,
     caller: RequireAdmin,
-    ValidJson(body): ValidJson<ReviewRetryBody>,
+    ValidJson(body): ValidJson<ReviewRetryAllBody>,
 ) -> Result<Json<ReviewRetryAllResponse>, OperationsHttpError> {
     let ops = Operations::new(&state);
     let actor = caller.0.user_id;
-    let outcome = blocking(move || {
-        ops.retry_pending_reviews(&actor, body.confirm_local_metadata, body.root_ids)
-    })
-    .await?;
+    let mut filter = review_filter(body.filter, Vec::new())?;
+    if !body.root_ids.is_empty() {
+        filter.root_ids = body.root_ids;
+    }
+    let preview = body.preview;
+    let confirm = body.confirm_local_metadata;
+    let outcome =
+        blocking(move || ops.retry_pending_reviews(&actor, confirm, &filter, preview)).await?;
     Ok(Json(ReviewRetryAllResponse {
+        preview,
         started: outcome.done,
         skipped: outcome
             .skipped
@@ -491,6 +537,24 @@ pub async fn retry_pending_reviews(
             })
             .collect(),
     }))
+}
+
+/// Retry identification for many reviews.
+#[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+pub struct ReviewRetryAllBody {
+    /// Confirms a one-off MusicBrainz lookup for files under a Local
+    /// metadata policy.
+    #[serde(default)]
+    pub confirm_local_metadata: bool,
+    /// Pending reviews matching this list filter (paging is ignored).
+    #[serde(default)]
+    pub filter: ReviewsQuery,
+    /// Albums in these library folders (overrides the filter's folder).
+    #[serde(default)]
+    pub root_ids: Vec<String>,
+    /// Count what would start and why the rest would not; start nothing.
+    #[serde(default)]
+    pub preview: bool,
 }
 
 /// A bulk review change: what to do, and to which reviews.

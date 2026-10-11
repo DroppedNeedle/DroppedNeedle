@@ -162,11 +162,32 @@ impl Operations {
         self.write(|tx| store::create_reidentification(tx, &new, now_unix()))
     }
 
+    /// A plain re-identification of one album: no release, no revision
+    /// guards.
+    fn plain_reidentification(
+        &self,
+        album_id: &str,
+        user_id: &str,
+        idempotency_key: Option<String>,
+        one_off_local_metadata: bool,
+    ) -> NewReidentification {
+        NewReidentification {
+            job_id: self.ids.new_id(),
+            requested_by_user_id: user_id.to_owned(),
+            idempotency_key,
+            local_album_id: album_id.to_owned(),
+            one_off_local_metadata,
+            release_mbid: None,
+            expected_album_revision: None,
+            expected_input_revision: None,
+        }
+    }
+
     /// One page of identification reviews. Blocking.
     pub fn reviews(
         &self,
         filter: &reviews::ReviewFilter,
-    ) -> Result<(Vec<reviews::ReviewRow>, u64), OperationError> {
+    ) -> Result<(Vec<reviews::ReviewRow>, u64, reviews::ReasonCounts), OperationError> {
         self.read_with(|conn| reviews::list(conn, filter))
     }
 
@@ -189,7 +210,8 @@ impl Operations {
     }
 
     /// Start a fresh re-identification of a pending review's album. The
-    /// job carries the decision from here, so the review is dismissed.
+    /// job carries the decision from here, so the review is dismissed in
+    /// the same write; a review someone settled meanwhile is refused.
     /// Blocking.
     pub fn retry_review(
         &self,
@@ -199,50 +221,67 @@ impl Operations {
         one_off_local_metadata: bool,
     ) -> Result<OperationJob, OperationError> {
         let row = self.review(review_id)?;
-        if row.review.state != crate::library::identify::models::ReviewState::Pending {
-            return Err(OperationError::Conflict(reasons::REVIEW_SETTLED));
-        }
-        let job = self.reidentify(
+        let new = self.plain_reidentification(
             &row.review.local_album_id,
             actor,
-            ReidentifyInput {
-                idempotency_key,
-                one_off_local_metadata,
-                ..ReidentifyInput::default()
-            },
-        )?;
+            idempotency_key,
+            one_off_local_metadata,
+        );
         self.write(|tx| {
-            Ok(reviews::mark(
+            if !reviews::mark(
                 tx,
                 review_id,
+                "pending",
                 crate::library::identify::models::ReviewState::Dismissed,
                 actor,
-            )?)
-        })?;
-        Ok(job)
+            )? {
+                return Err(OperationError::Conflict(reasons::REVIEW_SETTLED));
+            }
+            store::create_reidentification(tx, &new, now_unix())
+        })
     }
 
-    /// Start identification again for every pending review's album in
-    /// `root_ids` (every folder when empty), up to [`BULK_MAX`]. Albums
-    /// that cannot start (excluded, no files, Local metadata without the
-    /// confirmation) keep their review and are counted by reason. Blocking.
+    /// Start identification again for every pending review `filter`
+    /// selects, up to [`BULK_MAX`]. Albums that cannot start (excluded, no
+    /// files, Local metadata without the confirmation) keep their review
+    /// and are counted by reason. With `preview`, nothing starts: each
+    /// start is tried and rolled back, so the counts are exactly what a
+    /// real run would do. Blocking.
     pub fn retry_pending_reviews(
         &self,
         actor: &str,
         one_off_local_metadata: bool,
-        root_ids: Vec<String>,
+        filter: &reviews::ReviewFilter,
+        preview: bool,
     ) -> Result<reviews::Tally, OperationError> {
         let filter = reviews::ReviewFilter {
             state: Some(crate::library::identify::models::ReviewState::Pending),
-            root_ids,
             limit: BULK_MAX,
-            ..reviews::ReviewFilter::default()
+            offset: 0,
+            ..filter.clone()
         };
-        let (rows, _) = self.reviews(&filter)?;
+        let (rows, _, _) = self.reviews(&filter)?;
         let mut outcome = reviews::Tally::default();
         for row in rows {
-            match self.retry_review(&row.review.id, actor, None, one_off_local_metadata) {
-                Ok(_) => outcome.done += 1,
+            let started = if preview {
+                let new = self.plain_reidentification(
+                    &row.review.local_album_id,
+                    actor,
+                    None,
+                    one_off_local_metadata,
+                );
+                self.store.with_connection(|conn| {
+                    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                    let tried = store::create_reidentification(&tx, &new, now_unix()).map(|_| ());
+                    tx.rollback()?;
+                    Ok::<_, OperationError>(tried)
+                })?
+            } else {
+                self.retry_review(&row.review.id, actor, None, one_off_local_metadata)
+                    .map(|_| ())
+            };
+            match started {
+                Ok(()) => outcome.done += 1,
                 Err(
                     OperationError::NotFound(reason)
                     | OperationError::Invalid(reason)
@@ -268,7 +307,7 @@ impl Operations {
             offset: 0,
             ..filter.clone()
         };
-        let (rows, matched) = self.reviews(&filter)?;
+        let (rows, matched, _) = self.reviews(&filter)?;
         Ok(reviews::plan_bulk(&rows, matched, action, candidate_key))
     }
 

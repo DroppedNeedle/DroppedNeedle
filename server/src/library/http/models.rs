@@ -216,6 +216,29 @@ pub struct CandidateView {
     pub supported_tracks: usize,
     /// Contradictory track count.
     pub contradictory_tracks: usize,
+    /// How each of the album's files fits this release.
+    pub track_evidence: Vec<TrackEvidenceView>,
+}
+
+/// How one file fits a candidate release.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct TrackEvidenceView {
+    pub local_track_id: String,
+    /// The file's title as the library shows it.
+    pub title: String,
+    /// `supported`, `unknown` or `contradictory`.
+    pub classification: String,
+    /// What the verdict rests on (`recording_id`, `title`, `length`, ...).
+    pub evidence_kinds: Vec<String>,
+}
+
+/// How many reviews one reason holds.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ReasonCount {
+    /// The reason code as filed (filter by this).
+    pub reason_code: String,
+    pub reason: ReasonView,
+    pub count: u64,
 }
 
 /// One penalty's share of a candidate's distance.
@@ -254,6 +277,8 @@ pub struct ReviewView {
     pub created_ms: i64,
     /// When it last changed (Unix milliseconds).
     pub updated_ms: i64,
+    /// The album's current match was picked by a person.
+    pub manual_identity: bool,
 }
 
 /// One page of reviews.
@@ -263,6 +288,8 @@ pub struct ReviewsResponse {
     pub reviews: Vec<ReviewView>,
     /// Reviews matching the filter.
     pub total: u64,
+    /// Reviews matching the filter apart from its reason, by reason.
+    pub reason_counts: Vec<ReasonCount>,
     pub limit: u32,
     pub offset: u32,
 }
@@ -270,7 +297,9 @@ pub struct ReviewsResponse {
 /// What a "retry all" started.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ReviewRetryAllResponse {
-    /// Albums whose identification started again.
+    /// True when nothing started: the counts are what a real run would do.
+    pub preview: bool,
+    /// Albums whose identification started again (or would).
     pub started: u32,
     /// Reviews that stayed open, grouped by why.
     pub skipped: Vec<SkippedReviews>,
@@ -315,10 +344,6 @@ pub struct ReviewRetryBody {
     /// metadata policy.
     #[serde(default)]
     pub confirm_local_metadata: bool,
-    /// Retry all only: albums in these library folders (every folder
-    /// when empty).
-    #[serde(default)]
-    pub root_ids: Vec<String>,
 }
 
 /// Approve a review with the curator's chosen candidate.

@@ -4940,7 +4940,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Start identification again for every album with a pending review.
+         * Start identification again for every pending review a filter selects
+         *     (all of them by default), or with `preview` count what would start.
          *     Reviews whose album cannot start stay open and are counted by reason.
          */
         post: operations["retry_pending_reviews"];
@@ -11715,6 +11716,8 @@ export interface components {
             score: number;
             /** @description Supported track count. */
             supported_tracks: number;
+            /** @description How each of the album's files fits this release. */
+            track_evidence: components["schemas"]["TrackEvidenceView"][];
         };
         /** @description An applied correction. */
         CatalogCorrectionResponse: {
@@ -19217,6 +19220,14 @@ export interface components {
          * @enum {string}
          */
         RawAacTagPolicy: "save_apev2" | "do_not_write" | "remove_apev2";
+        /** @description How many reviews one reason holds. */
+        ReasonCount: {
+            /** Format: int64 */
+            count: number;
+            reason: components["schemas"]["ReasonView"];
+            /** @description The reason code as filed (filter by this). */
+            reason_code: string;
+        };
         /**
          * @description Why a job or work item ended where it did: a stable code, a plain
          *     sentence, and what to do about it.
@@ -20228,13 +20239,29 @@ export interface components {
             /** @description The settled review. */
             review: components["schemas"]["ReviewView"];
         };
+        /** @description Retry identification for many reviews. */
+        ReviewRetryAllBody: {
+            /**
+             * @description Confirms a one-off MusicBrainz lookup for files under a Local
+             *     metadata policy.
+             */
+            confirm_local_metadata?: boolean;
+            /** @description Pending reviews matching this list filter (paging is ignored). */
+            filter?: components["schemas"]["ReviewsQuery"];
+            /** @description Count what would start and why the rest would not; start nothing. */
+            preview?: boolean;
+            /** @description Albums in these library folders (overrides the filter's folder). */
+            root_ids?: string[];
+        };
         /** @description What a "retry all" started. */
         ReviewRetryAllResponse: {
+            /** @description True when nothing started: the counts are what a real run would do. */
+            preview: boolean;
             /** @description Reviews that stayed open, grouped by why. */
             skipped: components["schemas"]["SkippedReviews"][];
             /**
              * Format: int32
-             * @description Albums whose identification started again.
+             * @description Albums whose identification started again (or would).
              */
             started: number;
         };
@@ -20247,11 +20274,6 @@ export interface components {
             confirm_local_metadata?: boolean;
             /** @description Makes a retried request return the same job (single review only). */
             idempotency_key?: string | null;
-            /**
-             * @description Retry all only: albums in these library folders (every folder
-             *     when empty).
-             */
-            root_ids?: string[];
         };
         /** @description One identification review and the album it is about. */
         ReviewView: {
@@ -20270,6 +20292,8 @@ export interface components {
             created_ms: number;
             /** @description Review id. */
             id: string;
+            /** @description The album's current match was picked by a person. */
+            manual_identity: boolean;
             /** @description Why the review exists and what to do, in plain words. */
             reason: components["schemas"]["ReasonView"];
             /** @description Reason code the review was filed with. */
@@ -20325,7 +20349,10 @@ export interface components {
             root_id?: string | null;
             /** @description Album title or artist contains this, ignoring case. */
             search?: string | null;
-            /** @description `newest` (default) or `oldest` change first. */
+            /**
+             * @description `newest` (default) or `oldest` change first, or `tracks` for the
+             *     albums with the most files first.
+             */
             sort?: string | null;
             /**
              * @description `pending` (default), `approved`, `rejected`, `dismissed`,
@@ -20342,6 +20369,8 @@ export interface components {
              * @description Changed at or before this time (Unix milliseconds).
              */
             updated_to?: number | null;
+            /** @description Only reviews that list at least one release. */
+            with_candidates?: boolean | null;
         };
         /** @description One page of reviews. */
         ReviewsResponse: {
@@ -20349,6 +20378,8 @@ export interface components {
             limit: number;
             /** Format: int32 */
             offset: number;
+            /** @description Reviews matching the filter apart from its reason, by reason. */
+            reason_counts: components["schemas"]["ReasonCount"][];
             /** @description Reviews on this page, most recently changed first. */
             reviews: components["schemas"]["ReviewView"][];
             /**
@@ -21967,6 +21998,16 @@ export interface components {
             cached?: boolean;
             /** @description Track name as sent. */
             track: string;
+        };
+        /** @description How one file fits a candidate release. */
+        TrackEvidenceView: {
+            /** @description `supported`, `unknown` or `contradictory`. */
+            classification: string;
+            /** @description What the verdict rests on (`recording_id`, `title`, `length`, ...). */
+            evidence_kinds: string[];
+            local_track_id: string;
+            /** @description The file's title as the library shows it. */
+            title: string;
         };
         /** @description Track identity for membership checks. */
         TrackIdentifier: {
@@ -34347,7 +34388,12 @@ export interface operations {
                 updated_from?: number;
                 /** @description Changed at or before this time (Unix milliseconds). */
                 updated_to?: number;
-                /** @description `newest` (default) or `oldest` change first. */
+                /** @description Only reviews that list at least one release. */
+                with_candidates?: boolean;
+                /**
+                 * @description `newest` (default) or `oldest` change first, or `tracks` for the
+                 *     albums with the most files first.
+                 */
                 sort?: string;
                 /** @description Page size, 1 to 200 (default 50). */
                 limit?: number;
@@ -34490,7 +34536,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ReviewRetryBody"];
+                "application/json": components["schemas"]["ReviewRetryAllBody"];
             };
         };
         responses: {

@@ -49,10 +49,23 @@ pub struct ReviewFilter {
     pub created_to: Option<i64>,
     pub updated_from: Option<i64>,
     pub updated_to: Option<i64>,
-    /// Oldest change first instead of newest.
-    pub oldest_first: bool,
+    /// Only reviews that list at least one release.
+    pub with_candidates: bool,
+    pub order: ReviewOrder,
     pub limit: u32,
     pub offset: u32,
+}
+
+/// How a listing is sorted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ReviewOrder {
+    /// Most recently changed first.
+    #[default]
+    Newest,
+    /// Least recently changed first.
+    Oldest,
+    /// Albums with the most files first.
+    MostTracks,
 }
 
 /// One review with the album it is about.
@@ -63,6 +76,10 @@ pub struct ReviewRow {
     pub artist_name: String,
     pub created_ms: i64,
     pub updated_ms: i64,
+    /// The album's match was chosen by a person.
+    pub manual_identity: bool,
+    /// The album's files as (track id, title), for the evidence list.
+    pub tracks: Vec<(String, String)>,
 }
 
 /// What a person does with a review besides choosing or keeping tags.
@@ -76,7 +93,9 @@ pub enum ReviewAction {
 
 const ROW_COLUMNS: &str = "r.id, r.local_album_id, r.reason_code, r.candidates_json, r.state, \
      r.resolved_by_user_id, r.selected_candidate_key, COALESCE(a.title, ''), \
-     COALESCE(a.album_artist_name, ''), r.created_ms, r.updated_ms";
+     COALESCE(a.album_artist_name, ''), r.created_ms, r.updated_ms, \
+     EXISTS (SELECT 1 FROM local_album_external_identities e \
+             WHERE e.local_album_id = r.local_album_id AND e.decision_source = 'manual')";
 
 fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<ReviewRow>> {
     let Some(review) = map_review(row)? else {
@@ -88,8 +107,29 @@ fn map_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<ReviewRow>> {
         artist_name: row.get(8)?,
         created_ms: row.get(9)?,
         updated_ms: row.get(10)?,
+        manual_identity: row.get(11)?,
+        tracks: Vec::new(),
     }))
 }
+
+/// Fill in each row's file titles.
+fn with_tracks(conn: &Connection, rows: &mut [ReviewRow]) -> rusqlite::Result<()> {
+    let mut statement = conn.prepare_cached(
+        "SELECT id, title FROM local_tracks WHERE local_album_id = ?1 \
+         ORDER BY disc_number, track_number, id",
+    )?;
+    for row in rows {
+        row.tracks = statement
+            .query_map([&row.review.local_album_id], |track| {
+                Ok((track.get(0)?, track.get(1)?))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+    }
+    Ok(())
+}
+
+/// Reviews matching a filter (its reason left out), counted by reason.
+pub type ReasonCounts = Vec<(String, u64)>;
 
 /// State name as stored.
 pub fn state_name(state: ReviewState) -> &'static str {
@@ -115,8 +155,12 @@ pub fn parse_state(raw: Option<&str>) -> Result<Option<ReviewState>, OperationEr
     }
 }
 
-/// One page of reviews, newest change first, and the total that match.
-pub fn list(conn: &Connection, filter: &ReviewFilter) -> rusqlite::Result<(Vec<ReviewRow>, u64)> {
+/// One page of reviews, the total that match, and how many match each
+/// reason (ignoring the reason filter, so every bucket stays visible).
+pub fn list(
+    conn: &Connection,
+    filter: &ReviewFilter,
+) -> rusqlite::Result<(Vec<ReviewRow>, u64, ReasonCounts)> {
     let search = filter
         .search
         .as_deref()
@@ -151,7 +195,8 @@ pub fn list(conn: &Connection, filter: &ReviewFilter) -> rusqlite::Result<(Vec<R
          AND (:created_from IS NULL OR r.created_ms >= :created_from) \
          AND (:created_to IS NULL OR r.created_ms <= :created_to) \
          AND (:updated_from IS NULL OR r.updated_ms >= :updated_from) \
-         AND (:updated_to IS NULL OR r.updated_ms <= :updated_to)";
+         AND (:updated_to IS NULL OR r.updated_ms <= :updated_to) \
+         AND (:with_candidates = 0 OR json_array_length(r.candidates_json) > 0)";
     let params = rusqlite::named_params! {
         ":state": state,
         ":album": filter.album_id,
@@ -166,21 +211,56 @@ pub fn list(conn: &Connection, filter: &ReviewFilter) -> rusqlite::Result<(Vec<R
         ":created_to": filter.created_to,
         ":updated_from": filter.updated_from,
         ":updated_to": filter.updated_to,
+        ":with_candidates": filter.with_candidates,
     };
     let total: i64 = conn.query_row(&format!("SELECT COUNT(*) {clause}"), params, |row| {
         row.get(0)
     })?;
-    let order = if filter.oldest_first { "ASC" } else { "DESC" };
+    let order = match filter.order {
+        ReviewOrder::Newest => "r.updated_ms DESC",
+        ReviewOrder::Oldest => "r.updated_ms ASC",
+        ReviewOrder::MostTracks => {
+            "(SELECT COUNT(*) FROM local_tracks t WHERE t.local_album_id = r.local_album_id) DESC, \
+             r.updated_ms DESC"
+        }
+    };
     let mut statement = conn.prepare(&format!(
-        "SELECT {ROW_COLUMNS} {clause} ORDER BY r.updated_ms {order}, r.id \
-         LIMIT {} OFFSET {}",
+        "SELECT {ROW_COLUMNS} {clause} ORDER BY {order}, r.id LIMIT {} OFFSET {}",
         filter.limit, filter.offset
     ))?;
-    let rows = statement
+    let mut rows = statement
         .query_map(params, map_row)?
         .filter_map(Result::transpose)
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok((rows, u64::try_from(total).unwrap_or(0)))
+    with_tracks(conn, &mut rows)?;
+    // The reason buckets ignore the reason filter; the clause allows a
+    // NULL reason, so binding one gives every reason's count.
+    let bucket_params = rusqlite::named_params! {
+        ":state": state,
+        ":album": filter.album_id,
+        ":reason": Option::<String>::None,
+        ":search": search,
+        ":ids": review_ids,
+        ":roots": root_ids,
+        ":policy": filter.policy,
+        ":job": filter.job_state,
+        ":no_active": filter.exclude_active_jobs,
+        ":created_from": filter.created_from,
+        ":created_to": filter.created_to,
+        ":updated_from": filter.updated_from,
+        ":updated_to": filter.updated_to,
+        ":with_candidates": filter.with_candidates,
+    };
+    let mut buckets = conn.prepare(&format!(
+        "SELECT r.reason_code, COUNT(*) {clause} GROUP BY r.reason_code ORDER BY COUNT(*) DESC"
+    ))?;
+    let counts = buckets
+        .query_map(bucket_params, |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?
+        .map(|row| row.map(|(code, count)| (code, u64::try_from(count).unwrap_or(0))))
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok((rows, u64::try_from(total).unwrap_or(0), counts))
 }
 
 /// How many reviews a batch changed, and why the rest were left alone.
@@ -263,6 +343,19 @@ pub fn plan_bulk(
             tally.skip(reasons::REVIEW_SETTLED);
             continue;
         }
+        // Accepting never overwrites a person's pin, and the editions a
+        // merge dropped are only taken back when one is named.
+        if action == BulkAction::Accept && row.manual_identity {
+            tally.skip(reasons::REVIEW_ALBUM_PINNED);
+            continue;
+        }
+        if action == BulkAction::Accept
+            && candidate_key.is_none()
+            && review.reason_code.starts_with("EDITION_")
+        {
+            tally.skip(reasons::REVIEW_MERGE_NEEDS_CHOICE);
+            continue;
+        }
         let candidate = if action == BulkAction::Accept {
             let chosen = match candidate_key {
                 Some(key) => review
@@ -324,8 +417,15 @@ pub fn get(conn: &Connection, review_id: &str) -> rusqlite::Result<Option<Review
         [review_id],
         map_row,
     )
-    .optional()
-    .map(Option::flatten)
+    .optional()?
+    .flatten()
+    .map(|row| {
+        let mut rows = [row];
+        with_tracks(conn, &mut rows)?;
+        let [row] = rows;
+        Ok(row)
+    })
+    .transpose()
 }
 
 /// Settle a review with `action`. Dismiss, detach and exclude need a
@@ -366,65 +466,125 @@ pub fn settle(
             ReviewState::Rejected
         }
         ReviewAction::Exclude => {
-            set_excluded(tx, &album_id, true, actor, now)?;
+            exclude(tx, review_id, &album_id, actor, now)?;
             ReviewState::Excluded
         }
         ReviewAction::Restore => {
-            set_excluded(tx, &album_id, false, actor, now)?;
+            restore(tx, review_id, &album_id, actor, now)?;
             ReviewState::Dismissed
         }
     };
-    mark(tx, review_id, next, actor)?;
+    if !mark(tx, review_id, needed, next, actor)? {
+        return Err(OperationError::Conflict(reasons::REVIEW_SETTLED));
+    }
     Ok(())
 }
 
-/// Record a new state on one review.
+/// Move one review from `from` to `to`. False when it was no longer in
+/// `from` (someone else settled it first).
 pub fn mark(
     tx: &Transaction<'_>,
     review_id: &str,
-    state: ReviewState,
+    from: &str,
+    to: ReviewState,
     actor: &str,
-) -> rusqlite::Result<()> {
-    tx.execute(
-        "UPDATE library_identify_reviews SET state = ?2, resolved_by_user_id = ?3, \
-         updated_ms = ?4 WHERE id = ?1",
+) -> rusqlite::Result<bool> {
+    let changed = tx.execute(
+        "UPDATE library_identify_reviews SET state = ?3, resolved_by_user_id = ?4, \
+         updated_ms = ?5 WHERE id = ?1 AND state = ?2",
         params![
             review_id,
-            state_name(state),
+            from,
+            state_name(to),
             actor,
             crate::library::clock::now_ms() as i64
         ],
     )?;
-    bump_identification_stream(tx)
+    if changed == 1 {
+        bump_identification_stream(tx)?;
+    }
+    Ok(changed == 1)
 }
 
-/// Take an album's files out of the library (or put them back). Excluded
-/// files stay on disk; scans keep them out until they are restored. A
-/// restore leaves files the library policy excludes as excluded.
-fn set_excluded(
+/// Take an album's files out of the library. Every file of the album is
+/// marked, including ones missing right now, so a file that comes back
+/// stays out; the files this changed are recorded so a restore puts back
+/// exactly those. Excluded files stay on disk.
+fn exclude(
     tx: &Transaction<'_>,
+    review_id: &str,
     album_id: &str,
-    exclude: bool,
     actor: &str,
     now: f64,
 ) -> Result<(), OperationError> {
-    let changed = if exclude {
-        tx.execute(
-            "UPDATE local_tracks SET manual_excluded = 1, availability = 'excluded', \
+    let changed: Vec<String> = tx
+        .prepare(
+            "UPDATE local_tracks SET manual_excluded = 1, \
+             availability = CASE WHEN availability = 'indexed' THEN 'excluded' \
+                            ELSE availability END, \
              excluded_at = ?2, row_revision = row_revision + 1 \
-             WHERE local_album_id = ?1 AND availability = 'indexed'",
-            params![album_id, now],
+             WHERE local_album_id = ?1 AND manual_excluded = 0 RETURNING id",
         )?
-    } else {
+        .query_map(params![album_id, now], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    for track_id in &changed {
         tx.execute(
+            "INSERT OR IGNORE INTO library_review_exclusions (review_id, local_track_id) \
+             VALUES (?1, ?2)",
+            params![review_id, track_id],
+        )?;
+    }
+    audit(tx, album_id, actor, true, changed.len(), now)
+}
+
+/// Put back the files a review's exclude took out. A review imported from
+/// v2 has no record of them, so every file excluded by hand comes back.
+/// Files the folder policy excludes stay excluded.
+fn restore(
+    tx: &Transaction<'_>,
+    review_id: &str,
+    album_id: &str,
+    actor: &str,
+    now: f64,
+) -> Result<(), OperationError> {
+    let recorded: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM library_review_exclusions WHERE review_id = ?1",
+        [review_id],
+        |row| row.get(0),
+    )?;
+    // Both parameters are always bound; the scope uses the one it needs.
+    let scope = if recorded > 0 {
+        "id IN (SELECT local_track_id FROM library_review_exclusions WHERE review_id = ?1) \
+         AND ?2 IS NOT NULL"
+    } else {
+        "local_album_id = ?2 AND ?1 IS NOT NULL"
+    };
+    let changed = tx.execute(
+        &format!(
             "UPDATE local_tracks SET manual_excluded = 0, \
-             availability = CASE WHEN applied_policy = 'excluded' THEN 'excluded' ELSE 'indexed' END, \
+             availability = CASE WHEN availability = 'excluded' AND applied_policy <> 'excluded' \
+                            THEN 'indexed' ELSE availability END, \
              excluded_at = CASE WHEN applied_policy = 'excluded' THEN excluded_at ELSE NULL END, \
              row_revision = row_revision + 1 \
-             WHERE local_album_id = ?1 AND manual_excluded = 1",
-            params![album_id],
-        )?
-    };
+             WHERE manual_excluded = 1 AND {scope}"
+        ),
+        params![review_id, album_id],
+    )?;
+    tx.execute(
+        "DELETE FROM library_review_exclusions WHERE review_id = ?1",
+        [review_id],
+    )?;
+    audit(tx, album_id, actor, false, changed, now)
+}
+
+fn audit(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    actor: &str,
+    exclude: bool,
+    tracks: usize,
+    now: f64,
+) -> Result<(), OperationError> {
     let (kind, reason) = if exclude {
         ("review_exclude", "EXCLUDED_FROM_REVIEW")
     } else {
@@ -438,7 +598,7 @@ fn set_excluded(
             album_id,
             job_id: None,
             before: serde_json::json!({ "excluded": !exclude }),
-            after: serde_json::json!({ "excluded": exclude, "tracks": changed }),
+            after: serde_json::json!({ "excluded": exclude, "tracks": tracks }),
             reason,
         },
         now,

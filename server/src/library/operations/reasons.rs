@@ -250,6 +250,16 @@ pub const REVIEW_ACTION_FAILED: Reason = reason(
     "The change could not be saved for this review.",
     "Try it again from the review; if it keeps failing, check the server log.",
 );
+pub const REVIEW_ALBUM_PINNED: Reason = reason(
+    "REVIEW_ALBUM_PINNED",
+    "Someone picked this album's edition by hand, so a bulk accept leaves it alone.",
+    "Open the review and choose a release yourself if you want to replace that pick.",
+);
+pub const REVIEW_MERGE_NEEDS_CHOICE: Reason = reason(
+    "REVIEW_MERGE_NEEDS_CHOICE",
+    "This review lists editions dropped when albums were combined; none is the obvious one to take back.",
+    "Open the review and pick the edition you want, or keep the album as it is.",
+);
 pub const REVIEW_FILTER_INVALID: Reason = reason(
     "REVIEW_FILTER_INVALID",
     "One of the review filters has a value this version does not know.",
@@ -270,6 +280,16 @@ pub const REVIEW_STATE_INVALID: Reason = reason(
 /// corrections and undo file their own codes; the rest are match codes.
 pub fn review_reason(code: &str) -> Reason {
     match code {
+        "EXCLUDED" => reason(
+            "EXCLUDED",
+            "This album was taken out of the library in an earlier version.",
+            "Put it back if you want it in the library again.",
+        ),
+        "KEEP_TAGGED" => reason(
+            "KEEP_TAGGED",
+            "This album was kept as tagged in an earlier version.",
+            "Nothing to do.",
+        ),
         "AUTOMATIC_EDITION_CLEARED_TO_REVIEW" => reason(
             "AUTOMATIC_EDITION_CLEARED_TO_REVIEW",
             "The automatic edition was undone and there was no earlier match to go back to.",
