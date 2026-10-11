@@ -441,11 +441,11 @@ pub fn confirm(
 }
 
 /// Accept an edition for an album without a person: the release becomes
-/// the album's automatic identity with its files placed on it, marked
-/// unconfirmed with `reason_code` so file management leaves it alone
-/// until someone confirms it (or "Also manage unconfirmed matches" is
-/// on). Both undos are kept: the album page's edition undo and the
-/// automatic-edition undo. A person's choice is never replaced: `None`
+/// the album's automatic identity with its files placed on it. The gate
+/// that leads here is stricter than identification's own sealing, so the
+/// match is applied as confirmed. Both undos are kept: the album page's
+/// edition undo and the automatic-edition undo, and either one puts the
+/// earlier match state back. A person's choice is never replaced: `None`
 /// when the album holds one, or the edition fits no file.
 pub fn accept_automatic(
     tx: &Transaction<'_>,
@@ -511,14 +511,10 @@ pub fn accept_automatic(
         "DELETE FROM library_edition_remap_queue WHERE local_album_id = ?1",
         params![album_id],
     )?;
+    // A confident match: applied fully, so no unconfirmed flag remains.
     tx.execute(
-        "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
-         release_mbid, candidates_json, updated_at) \
-         VALUES (?1, 'unconfirmed', ?2, ?3, '[]', ?4) \
-         ON CONFLICT (local_album_id) DO UPDATE SET state = 'unconfirmed', \
-         reason_code = excluded.reason_code, release_mbid = excluded.release_mbid, \
-         candidates_json = '[]', updated_at = excluded.updated_at",
-        params![album_id, reason_code, release, now],
+        "DELETE FROM library_album_match_state WHERE local_album_id = ?1",
+        params![album_id],
     )?;
     // The automatic-edition undo, as an automatic seal keeps it.
     tx.execute(
@@ -627,6 +623,55 @@ pub fn detach(
     keep_undo(tx, album_id, &before, &action, now)?;
     bump_catalog(tx)?;
     Ok(Some(action))
+}
+
+/// Put back the match state an automatic acceptance replaced, when the
+/// acceptance that left identity revision `post_identity_revision` kept
+/// one, and use up that edition undo (the change it covers is gone).
+pub(crate) fn restore_match_state(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    post_identity_revision: i64,
+) -> Result<(), OperationError> {
+    let kept: Option<(String, Option<String>)> = tx
+        .query_row(
+            "SELECT id, prior_match_state_json FROM library_edition_choice_undo \
+             WHERE local_album_id = ?1 AND expected_identity_revision = ?2",
+            params![album_id, post_identity_revision],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((undo_id, state_json)) = kept else {
+        return Ok(());
+    };
+    let prior: Option<MatchStateRow> = state_json
+        .as_deref()
+        .map(serde_json::from_str)
+        .transpose()
+        .map_err(|error| OperationError::Store(error.to_string()))?;
+    tx.execute(
+        "DELETE FROM library_album_match_state WHERE local_album_id = ?1",
+        params![album_id],
+    )?;
+    if let Some(state) = prior {
+        tx.execute(
+            "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+             release_mbid, candidates_json, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                album_id,
+                state.state,
+                state.reason_code,
+                state.release_mbid,
+                state.candidates_json,
+                state.updated_at,
+            ],
+        )?;
+    }
+    tx.execute(
+        "DELETE FROM library_edition_choice_undo WHERE id = ?1",
+        params![undo_id],
+    )?;
+    Ok(())
 }
 
 /// An undo row: id, prior identity, prior tracks, prior match state, and

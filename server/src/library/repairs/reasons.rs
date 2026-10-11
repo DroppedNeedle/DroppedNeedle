@@ -130,8 +130,8 @@ pub fn finding(code: &str) -> Reason {
         ),
         "EXACT_EDITION_AUTO_ACCEPTED" => reason(
             "EXACT_EDITION_AUTO_ACCEPTED",
-            "Automatic edition acceptance applied the one edition that clearly fits every file. It stays unconfirmed until someone looks at it.",
-            "Confirm it from the album page, or undo it here.",
+            "Automatic edition acceptance applied this edition: it fits every file and clearly beats every other edition that does.",
+            "Nothing to do; undo it here or pick another edition from the album page if it is wrong.",
         ),
         "EXACT_EDITION_NOT_ACCEPTED" => reason(
             "EXACT_EDITION_NOT_ACCEPTED",

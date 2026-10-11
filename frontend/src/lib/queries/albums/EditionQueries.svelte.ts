@@ -212,11 +212,27 @@ export function confirmAlbumEdition() {
 	}));
 }
 
+/**
+ * Refresh every screen that shows the album's edition after a change made
+ * elsewhere (an identity report's undo): the album page, its edition
+ * panel and the unconfirmed list.
+ */
+export function invalidateAlbumEdition(userId: EditionUserId, localId: string): void {
+	invalidateEditionScope({ userId, localId });
+}
+
 export function undoAlbumEdition() {
 	return createMutation(() => ({
 		mutationFn: ({ localId }: EditionTarget) =>
 			api.global.v3.POST(LibraryV3Api.editionUndo(localId)),
-		onSuccess: (_d, variables) => invalidateEditionScope(variables)
+		onSuccess: (_d, variables) => {
+			invalidateEditionScope(variables);
+			// Identity reports list this album's change too.
+			void invalidateQueriesWithPersister({
+				queryKey: LibraryQueryKeyFactory.identityPreparationsPrefix(variables.userId ?? undefined)
+			});
+			void invalidateQueriesWithPersister({ queryKey: LibraryQueryKeyFactory.repairsPrefix() });
+		}
 	}));
 }
 

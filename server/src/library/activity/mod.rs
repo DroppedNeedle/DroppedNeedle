@@ -56,12 +56,17 @@ impl LibrarySetup {
             .next()
             .map(with_counters);
         let now = now_unix();
-        let (identification, revisions) = self
+        let (identification, revisions, operations) = self
             .scan_store
             .with_connection(|conn| {
                 Ok::<_, rusqlite::Error>((
                     store::identification_snapshot(conn, now)?,
                     store::library_revisions(conn)?,
+                    if admin {
+                        store::operation_work(conn)?
+                    } else {
+                        Vec::new()
+                    },
                 ))
             })
             .map_err(store_error)?;
@@ -69,6 +74,7 @@ impl LibrarySetup {
             runs: &runs,
             latest_terminal: latest.as_ref(),
             identification: &identification,
+            operations: &operations,
             revisions,
             admin,
             // v3 keeps no live MusicBrainz health signal the library can

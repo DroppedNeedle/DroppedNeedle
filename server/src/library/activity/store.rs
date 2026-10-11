@@ -326,6 +326,58 @@ pub fn identification_snapshot(
 /// Change revisions for every library activity stream (v2
 /// `get_library_revisions`): `scan`, `identification`, `operation`, and
 /// `catalog`. A client compares them to know what to refetch.
+/// One library operation job still in flight: a re-identification, an
+/// identity repair or preparation, or catalog cleanup.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OperationWork {
+    pub id: String,
+    pub kind: String,
+    /// A repair's purpose (`existing_matches`, `management_readiness`,
+    /// `catalog_identity_hygiene`).
+    pub purpose: Option<String>,
+    /// A repair's phase: `dry_run` (checking) or `apply`.
+    pub phase: Option<String>,
+    pub state: String,
+    pub expected: u64,
+    pub completed: u64,
+    pub succeeded: u64,
+    pub failed: u64,
+    pub skipped: u64,
+    pub started_at: Option<f64>,
+    pub updated_at: f64,
+}
+
+/// Operation jobs queued, running or paused, newest first (at most 20).
+pub fn operation_work(conn: &Connection) -> rusqlite::Result<Vec<OperationWork>> {
+    let mut stmt = conn.prepare(
+        "SELECT j.id, j.kind, COALESCE(json_extract(s.scope_json, '$.purpose'), \
+         CASE WHEN s.job_id IS NULL THEN NULL ELSE 'existing_matches' END), s.phase, \
+         j.state, j.expected_work_count, j.completed_count, j.succeeded_count, \
+         j.failed_count, j.skipped_count, j.started_at, j.updated_at \
+         FROM library_operation_jobs j LEFT JOIN library_repair_snapshots s ON s.job_id = j.id \
+         WHERE j.state IN ('queued','running','paused') \
+         ORDER BY j.updated_at DESC, j.id DESC LIMIT 20",
+    )?;
+    let count = |value: i64| value.max(0) as u64;
+    stmt.query_map([], |row| {
+        Ok(OperationWork {
+            id: row.get(0)?,
+            kind: row.get(1)?,
+            purpose: row.get(2)?,
+            phase: row.get(3)?,
+            state: row.get(4)?,
+            expected: count(row.get(5)?),
+            completed: count(row.get(6)?),
+            succeeded: count(row.get(7)?),
+            failed: count(row.get(8)?),
+            skipped: count(row.get(9)?),
+            started_at: row.get(10)?,
+            updated_at: row.get(11)?,
+        })
+    })?
+    .collect()
+}
+
 pub fn library_revisions(conn: &Connection) -> rusqlite::Result<BTreeMap<String, u64>> {
     let mut revisions = BTreeMap::new();
     for kind in STREAMS {

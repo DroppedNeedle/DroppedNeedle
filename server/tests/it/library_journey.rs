@@ -3630,6 +3630,13 @@ async fn library_journey_identity_repair_and_preparation() {
             [&album],
         )
         .expect("album identity cleared");
+        conn.execute(
+            "INSERT OR REPLACE INTO library_album_match_state (local_album_id, state, \
+             reason_code, candidates_json, updated_at) \
+             VALUES (?1, 'unmatched', 'NO_CANDIDATE', '[]', 1.0)",
+            [&album],
+        )
+        .expect("match state planted");
     }
     let (_, job) = call(
         lib.router(),
@@ -3666,16 +3673,21 @@ async fn library_journey_identity_repair_and_preparation() {
         .album_identity(&album)
         .expect("accepted");
     assert_eq!(accepted.release_mbid.as_deref(), Some(release.id.as_str()));
-    let flag: String = droppedneedle::db::open_connection(&lib.db_path)
-        .expect("db opens")
-        .query_row(
-            "SELECT state || ':' || reason_code FROM library_album_match_state \
-             WHERE local_album_id = ?1",
-            [&album],
-            |row| row.get(0),
-        )
-        .expect("match state");
-    assert_eq!(flag, "unconfirmed:EDITION_AUTO_ACCEPTED");
+    // A confident acceptance is applied as confirmed: no flag remains.
+    let match_state = || -> Option<String> {
+        use rusqlite::OptionalExtension as _;
+        droppedneedle::db::open_connection(&lib.db_path)
+            .expect("db opens")
+            .query_row(
+                "SELECT state || ':' || reason_code FROM library_album_match_state \
+                 WHERE local_album_id = ?1",
+                [&album],
+                |row| row.get(0),
+            )
+            .optional()
+            .expect("match state")
+    };
+    assert_eq!(match_state(), None);
     let undo = &item["automatic_undo"];
     let (status, body) = call(
         lib.router(),
@@ -3690,4 +3702,6 @@ async fn library_journey_identity_repair_and_preparation() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(lib.library.identify_store.album_identity(&album).is_none());
+    // The undo puts back the match state the acceptance replaced.
+    assert_eq!(match_state().as_deref(), Some("unmatched:NO_CANDIDATE"));
 }

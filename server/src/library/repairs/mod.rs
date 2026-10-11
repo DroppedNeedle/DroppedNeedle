@@ -8,14 +8,20 @@
 //! - An identity preparation gets albums ready for Library Management:
 //!   each needs an exact release with every file placed on its track.
 //!   Apply places the files where the release supports it and uses a
-//!   suggested edition where the album has none.
-//! - Catalog cleanup runs once after an upgrade from v2 and tidies album
-//!   rows the old version left behind.
+//!   suggested edition where the album has none. With automatic edition
+//!   acceptance on, a suggestion that passes v2's gate is applied during
+//!   the check itself, as a confirmed automatic match.
+//! - Catalog cleanup tidies album rows: once after an upgrade from v2,
+//!   then after each scan that ends (for the albums it touched) and after
+//!   identification finishes with an album.
 //!
 //! All three are operation jobs (`library_operation_jobs`, kind `repair`)
-//! run by the operations loop, controlled like any other job. Checking
-//! never changes the catalog; only Apply does, and every album it changes
-//! can be undone from the album's edition panel.
+//! run by the operations loop in short turns, never during a scan, and
+//! controlled like any other job. A repair check changes nothing; Apply
+//! and automatic acceptance do, and each edition they change can be
+//! undone from the album's edition panel (an automatic acceptance also
+//! from the readiness report). Detaches, placements and catalog cleanup
+//! write an audit row in `library_catalog_actions`.
 //!
 //! Layout: `models` and `reasons` hold the types and the wording,
 //! `classify` the per-album verdicts, `store` the SQL, `apply` and

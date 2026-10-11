@@ -7,6 +7,7 @@ import { ArtistQueryKeyFactory } from '$lib/queries/artist/ArtistQueryKeyFactory
 import { DiscoverQueryKeyFactory } from '$lib/queries/discover/DiscoverQueryKeyFactory';
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { createUuid } from '$lib/utils/uuid';
+import { invalidateAlbumEdition } from '$lib/queries/albums/EditionQueries.svelte';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
 import { toOperationResponse } from './libraryOperationAdapters';
@@ -96,7 +97,8 @@ export function undoLibraryAutomaticEdition(getUserId: () => string | undefined)
 				expected_album_revision: input.expectedAlbumRevision,
 				expected_identity_revision: input.expectedIdentityRevision
 			}),
-		onSuccess: async () => {
+		onSuccess: async (_data, input) => {
+			invalidateAlbumEdition(getUserId(), input.albumId);
 			await invalidateIdentityPreparation(getUserId(), true);
 			toastStore.show({ message: 'Automatic edition acceptance undone', type: 'success' });
 		},

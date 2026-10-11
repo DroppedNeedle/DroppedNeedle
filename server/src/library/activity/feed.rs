@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use super::store::{DeferredJob, IdentificationSnapshot};
+use super::store::{DeferredJob, IdentificationSnapshot, OperationWork};
 use crate::library::scan::models::{Counters, ScanPhase, ScanRun, ScanState, counter_names};
 
 /// A failed scan stays on the strip this long after it ended.
@@ -285,6 +285,8 @@ pub struct FeedInputs<'a> {
     /// The latest finished run, with its counters.
     pub latest_terminal: Option<&'a (ScanRun, Counters)>,
     pub identification: &'a IdentificationSnapshot,
+    /// Operation jobs in flight; shown to administrators only.
+    pub operations: &'a [OperationWork],
     pub revisions: BTreeMap<String, u64>,
     pub admin: bool,
     pub provider_unavailable: bool,
@@ -362,6 +364,39 @@ fn identification_state(snapshot: &IdentificationSnapshot, failed_counts: bool) 
     } else {
         "idle"
     }
+}
+
+/// One operation job on the work stack (v2's administrative work items):
+/// re-identifications, identity repairs and preparations, and cleanup.
+fn operation_item(job: &OperationWork) -> WorkItem {
+    let kind = match (job.kind.as_str(), job.purpose.as_deref()) {
+        ("explicit_reidentification", _) => WorkKind::Reidentification,
+        ("repair", Some("management_readiness")) => WorkKind::IdentityPreparation,
+        ("library_management", _) => WorkKind::LibraryManagement,
+        ("bulk_review_apply", _) => WorkKind::IdentityReview,
+        _ => WorkKind::Maintenance,
+    };
+    let mut work = WorkItem::new(&job.id, kind, &job.state, WorkUnit::Albums);
+    work.phase = job.phase.as_deref().map(|phase| {
+        if phase == "apply" {
+            "applying".to_owned()
+        } else {
+            "checking".to_owned()
+        }
+    });
+    work.mode = job.purpose.clone();
+    work.processed = job.completed;
+    work.total = (job.expected > 0).then_some(job.expected);
+    work.indeterminate = job.expected == 0;
+    work.remaining_count = Some(job.expected.saturating_sub(job.completed));
+    work.subject_count = Some(job.expected);
+    work.started_at = job.started_at;
+    work.updated_at = job.updated_at;
+    work.succeeded_count = job.succeeded;
+    work.failed_count = job.failed;
+    work.skipped_count = job.skipped;
+    work.priority = if job.state == "running" { 60 } else { 80 };
+    work
 }
 
 /// Assemble the feed (v2 `library_activity`).
@@ -543,6 +578,9 @@ pub fn build(inputs: FeedInputs<'_>) -> LibraryActivity {
         drain.catalog_settled = Some(false);
         drain.pending_identification = Some(waiting);
         work_items.push(drain);
+    }
+    if inputs.admin {
+        work_items.extend(inputs.operations.iter().map(operation_item));
     }
     work_items.sort_by(|left, right| {
         left.priority

@@ -195,11 +195,18 @@ pub const MIN_AUTO_ACCEPT_SCORE: f64 = 0.95;
 /// Lead over the next edition an automatic acceptance needs (v2's).
 pub const AUTO_ACCEPT_MARGIN: f64 = 0.05;
 
+/// Per-candidate reasons that count as fully supported: the matcher's
+/// lead (`SUPPORTED`) and any edition within its acceptance thresholds
+/// whose names agree (`CLOSE_MATCH`). v2 accepted `SUPPORTED` and
+/// `SUPPORTED_EMBEDDED_IDS`.
+const QUALIFYING_REASONS: [&str; 2] = ["SUPPORTED", "CLOSE_MATCH"];
+
 /// v2's automatic acceptance gate over the suggestible editions, best
-/// first: the best scores at least 0.95, the matcher would accept it on
-/// its own, and it is alone, or beats the next by 0.05 without tying any
-/// other on score, status, date and country. Returns `AUTO_ACCEPT` or the
-/// reason the suggestion waits for a person.
+/// first: the best scores at least 0.95 and is alone, or beats the next
+/// by 0.05 without tying any other on score, status, date and country.
+/// As in v2, every suggestible edition must also carry a fully supported
+/// reason, and the best must be one the matcher would accept on its own.
+/// Returns `AUTO_ACCEPT` or the reason the suggestion waits for a person.
 pub fn auto_gate(ranked: &[(&ReidentificationCandidate, EditionSummary)]) -> &'static str {
     let Some((top, top_summary)) = ranked.first() else {
         return "EMPTY";
@@ -207,9 +214,6 @@ pub fn auto_gate(ranked: &[(&ReidentificationCandidate, EditionSummary)]) -> &'s
     let score = top.evidence.score;
     if score < MIN_AUTO_ACCEPT_SCORE {
         return "BELOW_MIN_SCORE";
-    }
-    if !top.automatic_safe {
-        return "NON_QUALIFYING_REASON";
     }
     let key = |candidate: &ReidentificationCandidate, summary: &EditionSummary| {
         (
@@ -230,6 +234,12 @@ pub fn auto_gate(ranked: &[(&ReidentificationCandidate, EditionSummary)]) -> &'s
         && score - next.evidence.score < AUTO_ACCEPT_MARGIN
     {
         return "MARGIN_TOO_NARROW";
+    }
+    let qualifies = ranked.iter().all(|(candidate, _)| {
+        QUALIFYING_REASONS.contains(&candidate.evidence.reason_code.as_str())
+    });
+    if !qualifies || !top.automatic_safe {
+        return "NON_QUALIFYING_REASON";
     }
     "AUTO_ACCEPT"
 }
@@ -412,16 +422,26 @@ mod tests {
         // a close runner-up, a tie, or an album someone chose never does.
         let mut best = good.clone();
         best.evidence.score = 0.97;
+        best.evidence.reason_code = "SUPPORTED".to_owned();
         let blank = EditionSummary::default;
         assert_eq!(auto_gate(&[(&best, blank())]), "AUTO_ACCEPT");
         let mut close = best.clone();
         close.automatic_safe = false;
         close.evidence.score = 0.95;
+        close.evidence.reason_code = "CLOSE_MATCH".to_owned();
         assert_eq!(
             auto_gate(&[(&best, blank()), (&close, blank())]),
             "MARGIN_TOO_NARROW"
         );
         assert_eq!(auto_gate(&[(&best, blank()), (&best, blank())]), "TIE");
+        // Every suggestible edition must be fully supported, not only the lead.
+        let mut weak = close.clone();
+        weak.evidence.score = 0.5;
+        weak.evidence.reason_code = "WEAK_MATCH".to_owned();
+        assert_eq!(
+            auto_gate(&[(&best, blank()), (&weak, blank())]),
+            "NON_QUALIFYING_REASON"
+        );
         let chosen = IdentityState {
             manual: true,
             ..IdentityState::default()

@@ -136,13 +136,20 @@ fn scope_sql(
                 format!("AND a.id IN ({})", vec!["?"; album_ids.len()].join(","))
             };
             let run = match scan_run_id {
+                // Albums the run touched: new or changed files, files that
+                // moved in, and albums files moved out of (the shells the
+                // run emptied).
                 Some(run) => {
-                    values.push(Value::Text(run.to_owned()));
-                    "AND (NOT EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id) \
-                     OR EXISTS (SELECT 1 FROM library_scan_inventory inv \
+                    values.extend((0..3).map(|_| Value::Text(run.to_owned())));
+                    "AND (EXISTS (SELECT 1 FROM library_scan_inventory inv \
                      JOIN local_tracks t ON t.id = inv.local_track_id WHERE inv.run_id = ? \
                      AND inv.comparison_result IN ('new','changed') \
-                     AND t.local_album_id = a.id))"
+                     AND t.local_album_id = a.id) \
+                     OR EXISTS (SELECT 1 FROM library_scan_album_moves m \
+                     JOIN local_tracks t ON t.id = m.local_track_id \
+                     WHERE m.run_id = ? AND t.local_album_id = a.id) \
+                     OR EXISTS (SELECT 1 FROM library_scan_album_moves m \
+                     WHERE m.run_id = ? AND m.previous_album_id = a.id))"
                 }
                 None => "",
             };
@@ -296,10 +303,40 @@ pub fn hygiene_candidates_exist(conn: &Connection) -> rusqlite::Result<bool> {
     )
 }
 
-/// The latest finished scan run, for the per-scan cleanup.
-pub fn latest_completed_scan(conn: &Connection) -> rusqlite::Result<Option<String>> {
+/// Albums identification finished with after `after_ms` that the cleanup
+/// could apply to (at most 200), and the newest finish time seen.
+pub fn identified_since(
+    conn: &Connection,
+    after_ms: i64,
+) -> rusqlite::Result<(Vec<String>, Option<i64>)> {
+    let newest: Option<i64> = conn.query_row(
+        "SELECT MAX(updated_ms) FROM library_identify_jobs \
+         WHERE state IN ('succeeded','failed','attention') AND updated_ms > ?1",
+        params![after_ms],
+        |row| row.get(0),
+    )?;
+    let Some(newest) = newest else {
+        return Ok((Vec::new(), None));
+    };
+    let mut stmt = conn.prepare(&format!(
+        "SELECT DISTINCT a.id FROM library_identify_jobs j JOIN local_albums a \
+         ON a.id = j.local_album_id WHERE j.state IN ('succeeded','failed','attention') \
+         AND j.updated_ms > ?1 AND j.updated_ms <= ?2 AND a.retired_into_album_id IS NULL \
+         AND {HYGIENE_CANDIDATE} ORDER BY a.id LIMIT 200"
+    ))?;
+    let albums = stmt
+        .query_map(params![after_ms, newest], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<String>>>()?;
+    Ok((albums, Some(newest)))
+}
+
+/// The latest scan run that ended, however it ended (finished, stopped,
+/// failed or superseded): what it changed before it ended still needs the
+/// per-scan cleanup.
+pub fn latest_ended_scan(conn: &Connection) -> rusqlite::Result<Option<String>> {
     conn.query_row(
-        "SELECT id FROM library_scan_runs WHERE state = 'completed' \
+        "SELECT id FROM library_scan_runs WHERE terminal_at IS NOT NULL AND state IN \
+         ('completed','cancelled','failed','superseded_policy_changed') \
          ORDER BY terminal_at DESC, id DESC LIMIT 1",
         [],
         |row| row.get(0),

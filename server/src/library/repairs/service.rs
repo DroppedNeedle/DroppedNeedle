@@ -73,6 +73,10 @@ pub struct Repairs {
     hygiene_checked: Arc<AtomicBool>,
     /// The scan run whose cleanup this worker already queued or skipped.
     hygiene_scan: Arc<Mutex<Option<String>>>,
+    /// Identification results up to this time (ms) have had their cleanup
+    /// queued. Starts at the worker's start: earlier ones are covered by
+    /// the one-time cleanup.
+    hygiene_identified: Arc<Mutex<i64>>,
     config: Arc<ConfigStore>,
 }
 
@@ -86,8 +90,42 @@ impl Repairs {
             coordinator: setup.coordinator.clone(),
             hygiene_checked: Arc::new(AtomicBool::new(false)),
             hygiene_scan: Arc::new(Mutex::new(None)),
+            hygiene_identified: Arc::new(Mutex::new(crate::library::clock::now_ms() as i64)),
             config: setup.config.clone(),
         }
+    }
+
+    /// Queue a cleanup of albums identification just finished with (v2's
+    /// per-album hygiene after identification), at most 200 per job.
+    fn queue_hygiene_after_identification(&self) -> Result<(), OperationError> {
+        let mut seen = self
+            .hygiene_identified
+            .lock()
+            .map_err(|_| OperationError::Store("hygiene marker poisoned".to_owned()))?;
+        let after = *seen;
+        let (albums, newest) = self.read(|conn| Ok(store::identified_since(conn, after)?))?;
+        let Some(newest) = newest else {
+            return Ok(());
+        };
+        *seen = newest;
+        drop(seen);
+        if albums.is_empty() {
+            return Ok(());
+        }
+        self.write(|tx| {
+            let new = NewRepair {
+                job_id: self.ids.new_id(),
+                purpose: Purpose::CatalogIdentityHygiene,
+                requested_by_user_id: None,
+                idempotency_key: format!("catalog-identity-hygiene:v1:identified:{after}:{newest}"),
+                root_ids: Vec::new(),
+                album_ids: albums,
+                scan_run_id: None,
+                source_matcher_version: None,
+                target_matcher_version: HYGIENE_VERSION.to_owned(),
+            };
+            store::create(tx, &new, now_unix()).map(|_| ())
+        })
     }
 
     fn read<T>(
@@ -282,7 +320,7 @@ impl Repairs {
     /// changed and of empty album shells (v2's per-album hygiene). Checked
     /// once per run; nothing is queued when no album qualifies.
     fn queue_hygiene_after_scan(&self) -> Result<(), OperationError> {
-        let Some(run) = self.read(|conn| Ok(store::latest_completed_scan(conn)?))? else {
+        let Some(run) = self.read(|conn| Ok(store::latest_ended_scan(conn)?))? else {
             return Ok(());
         };
         {
@@ -348,6 +386,7 @@ impl Repairs {
     pub async fn run_next(&self, worker: &str) -> Result<Option<OperationJob>, OperationError> {
         self.queue_hygiene_once()?;
         self.queue_hygiene_after_scan()?;
+        self.queue_hygiene_after_identification()?;
         let now = now_unix();
         let claimed = self.write(|tx| {
             jobs::recover_expired(tx, now)?;

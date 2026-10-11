@@ -376,11 +376,6 @@ pub fn match_reason(code: &str) -> Reason {
             "MusicBrainz has no release that looks like this album, so it keeps its own tags.",
             "Search MusicBrainz for the release, or fix the album title and artist tags and rescan.",
         ),
-        "EDITION_AUTO_ACCEPTED" => reason(
-            "EDITION_AUTO_ACCEPTED",
-            "An identity check picked this edition on its own: it was the only one that clearly fit every file.",
-            "Check the tracklist; confirm it, pick another edition, or undo.",
-        ),
         "IDENTITY_FAILED_RECHECK" => reason(
             "IDENTITY_FAILED_RECHECK",
             "An identity recheck found these files do not fit the release they were linked to, so the link was removed.",
