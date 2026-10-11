@@ -132,6 +132,7 @@ fn release(id: &str, group: &str, titles: &[&str], lengths: &[Option<u64>]) -> R
             .zip(lengths)
             .enumerate()
             .map(|(index, (title, length))| ReleaseTrack {
+                isrcs: Vec::new(),
                 id: format!("{}{:x}", &id[..id.len() - 1], 8 + index),
                 recording_id: format!("{}{:x}", &group[..group.len() - 1], 8 + index),
                 title: (*title).to_owned(),

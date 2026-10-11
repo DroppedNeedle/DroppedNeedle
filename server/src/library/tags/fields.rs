@@ -31,6 +31,7 @@ pub enum TagField {
     CatalogNumber,
     Barcode,
     Asin,
+    Isrc,
     MusicBrainzRecordingId,
     MusicBrainzReleaseTrackId,
     MusicBrainzReleaseId,
@@ -93,7 +94,7 @@ pub const MP4_MEAN: &str = "com.apple.iTunes";
 pub const MUSICBRAINZ_UFID_OWNER: &str = "http://musicbrainz.org";
 
 impl TagField {
-    pub const ALL: [TagField; 32] = [
+    pub const ALL: [TagField; 33] = [
         TagField::Title,
         TagField::TitleSort,
         TagField::Artist,
@@ -120,6 +121,7 @@ impl TagField {
         TagField::CatalogNumber,
         TagField::Barcode,
         TagField::Asin,
+        TagField::Isrc,
         TagField::MusicBrainzRecordingId,
         TagField::MusicBrainzReleaseTrackId,
         TagField::MusicBrainzReleaseId,
@@ -157,6 +159,7 @@ impl TagField {
             TagField::CatalogNumber => "catalog_number",
             TagField::Barcode => "barcode",
             TagField::Asin => "asin",
+            TagField::Isrc => "isrc",
             TagField::MusicBrainzRecordingId => "musicbrainz_recording_id",
             TagField::MusicBrainzReleaseTrackId => "musicbrainz_release_track_id",
             TagField::MusicBrainzReleaseId => "musicbrainz_release_id",
@@ -247,6 +250,7 @@ impl TagField {
             TagField::CatalogNumber => &["CATALOGNUMBER"],
             TagField::Barcode => &["BARCODE"],
             TagField::Asin => &["ASIN"],
+            TagField::Isrc => &["ISRC"],
             TagField::MusicBrainzRecordingId => &["MUSICBRAINZ_TRACKID"],
             TagField::MusicBrainzReleaseTrackId => &["MUSICBRAINZ_RELEASETRACKID"],
             TagField::MusicBrainzReleaseId => &["MUSICBRAINZ_ALBUMID"],
@@ -295,6 +299,7 @@ impl TagField {
             TagField::CatalogNumber => Id3Target::User("CATALOGNUMBER"),
             TagField::Barcode => Id3Target::User("BARCODE"),
             TagField::Asin => Id3Target::User("ASIN"),
+            TagField::Isrc => Id3Target::Text("TSRC"),
             TagField::MusicBrainzRecordingId => Id3Target::Ufid(MUSICBRAINZ_UFID_OWNER),
             TagField::MusicBrainzReleaseTrackId => Id3Target::User("MusicBrainz Release Track Id"),
             TagField::MusicBrainzReleaseId => Id3Target::User("MusicBrainz Album Id"),
@@ -332,6 +337,7 @@ impl TagField {
             TagField::CatalogNumber => Mp4Target::Freeform("CATALOGNUMBER"),
             TagField::Barcode => Mp4Target::Freeform("BARCODE"),
             TagField::Asin => Mp4Target::Freeform("ASIN"),
+            TagField::Isrc => Mp4Target::Freeform("ISRC"),
             TagField::MusicBrainzRecordingId => Mp4Target::Freeform("MusicBrainz Track Id"),
             TagField::MusicBrainzReleaseTrackId => {
                 Mp4Target::Freeform("MusicBrainz Release Track Id")

@@ -130,6 +130,7 @@ fn release(group: &str, id: &str, recordings: &[&str]) -> Release {
             .iter()
             .enumerate()
             .map(|(index, recording)| ReleaseTrack {
+                isrcs: Vec::new(),
                 id: format!("{id}-{index}"),
                 recording_id: (*recording).to_owned(),
                 title: format!("track t{}", index + 1),

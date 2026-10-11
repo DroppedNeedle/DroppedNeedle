@@ -162,7 +162,13 @@ pub struct AlbumQuery<'a> {
 /// Search hits per query.
 const SEARCH_LIMIT: u32 = 25;
 /// Includes for a release fetched for matching and tagging.
-const RELEASE_INCLUDES: [&str; 4] = ["artist-credits", "labels", "recordings", "release-groups"];
+const RELEASE_INCLUDES: [&str; 5] = [
+    "artist-credits",
+    "isrcs",
+    "labels",
+    "recordings",
+    "release-groups",
+];
 
 impl<T: MbTransport, S: DegradationSink> ReleaseSource for MusicBrainzClient<T, S> {
     fn search<'a>(
@@ -347,6 +353,12 @@ pub fn release_from_wire(wire: MbRelease, old_ids: Vec<String>) -> Result<Releas
                 position: track.position.unwrap_or(track_index as u32 + 1),
                 absolute_position: absolute,
                 length_ms: track.length_ms(),
+                isrcs: recording
+                    .isrcs
+                    .iter()
+                    .map(|isrc| isrc.trim().to_ascii_uppercase())
+                    .filter(|isrc| !isrc.is_empty())
+                    .collect(),
             });
         }
     }

@@ -387,6 +387,7 @@ fn matching_release(verified: &MusicBrainzVerifiedRelease) -> Release {
                     .duration_seconds
                     .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
                     .map(|seconds| (seconds * 1000.0).round() as u64),
+                isrcs: Vec::new(),
             })
             .collect(),
         ..Release::default()

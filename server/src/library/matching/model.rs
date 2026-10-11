@@ -145,6 +145,9 @@ pub struct ReleaseTrack {
     /// Position counted across the whole release.
     pub absolute_position: u32,
     pub length_ms: Option<u64>,
+    /// The recording's ISRCs.
+    #[serde(default)]
+    pub isrcs: Vec<String>,
 }
 
 /// A release with everything matching and tagging need.

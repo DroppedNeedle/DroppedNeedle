@@ -419,6 +419,7 @@ fn ambiguous_recall(library: &LibrarySetup, album_id: &str) -> RecallResult {
             .iter()
             .enumerate()
             .map(|(index, track)| ReleaseTrack {
+                isrcs: Vec::new(),
                 id: track
                     .release_track_mbid
                     .clone()
@@ -2141,6 +2142,7 @@ fn tagged_release(library: &LibrarySetup, album_id: &str) -> Release {
             .iter()
             .enumerate()
             .map(|(index, track)| ReleaseTrack {
+                isrcs: Vec::new(),
                 id: format!("release-track-{index}"),
                 recording_id: track.recording_mbid.clone().expect("tagged recording"),
                 title: track.title.clone(),

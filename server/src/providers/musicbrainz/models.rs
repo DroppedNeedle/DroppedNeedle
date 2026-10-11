@@ -128,6 +128,9 @@ pub struct RecordingRef {
     /// recording of the same Goldberg track).
     #[serde(rename = "artist-credit", default)]
     pub artist_credit: Vec<ArtistCreditName>,
+    /// ISRCs, under `inc=isrcs`.
+    #[serde(default)]
+    pub isrcs: Vec<String>,
 }
 
 /// One release track. The release-track `id` is not the recording MBID:

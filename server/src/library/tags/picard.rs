@@ -78,6 +78,7 @@ pub fn release_tags(release: &Release, track: &ReleaseTrack) -> BTreeMap<String,
     put(TagField::CatalogNumber, release.catalog_numbers.clone());
     put(TagField::Barcode, one(release.barcode.as_deref()));
     put(TagField::Asin, one(release.asin.as_deref()));
+    put(TagField::Isrc, track.isrcs.clone());
     put(
         TagField::MusicBrainzRecordingId,
         vec![track.recording_id.clone()],
