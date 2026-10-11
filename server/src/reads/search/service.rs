@@ -794,14 +794,19 @@ fn remote_item(hit: RemoteHit) -> SearchResultItem {
 fn attach_local(remote: &mut [SearchResultItem], local: &[SearchResultItem]) -> Vec<bool> {
     let mut claimed = vec![false; local.len()];
     for hit in remote.iter_mut() {
-        let Some(mbid) = hit.musicbrainz_id.as_deref() else {
+        let Some(mbid) = hit
+            .musicbrainz_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|mbid| !mbid.is_empty())
+        else {
             continue;
         };
         for (index, row) in local.iter().enumerate() {
             let same = row
                 .musicbrainz_id
                 .as_deref()
-                .is_some_and(|id| id.eq_ignore_ascii_case(mbid));
+                .is_some_and(|id| id.trim().eq_ignore_ascii_case(mbid));
             if !same {
                 continue;
             }
@@ -817,13 +822,13 @@ fn attach_local(remote: &mut [SearchResultItem], local: &[SearchResultItem]) -> 
 
 /// Keep the first library row per MusicBrainz id. Two copies of one
 /// release group (two editions on disk) read as one search hit; rows
-/// without a MusicBrainz id are all kept.
+/// without a MusicBrainz id (or a blank one) are all kept.
 fn one_per_mbid(rows: impl IntoIterator<Item = SearchResultItem>) -> Vec<SearchResultItem> {
     let mut seen = std::collections::HashSet::new();
     rows.into_iter()
-        .filter(|row| match row.musicbrainz_id.as_deref() {
-            Some(mbid) => seen.insert(mbid.to_ascii_lowercase()),
-            None => true,
+        .filter(|row| match row.musicbrainz_id.as_deref().map(str::trim) {
+            Some(mbid) if !mbid.is_empty() => seen.insert(mbid.to_ascii_lowercase()),
+            _ => true,
         })
         .collect()
 }
