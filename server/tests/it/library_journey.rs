@@ -3773,8 +3773,30 @@ async fn management_apply(
             },
         )
         .expect("apply queued");
-    if job.state.as_str() == "queued" {
-        assert!(management_step(library).await, "apply runs");
+    // Other queued work may go first; run the worker until this job ends.
+    let mut state = job.state.as_str().to_owned();
+    for _ in 0..5 {
+        if !matches!(state.as_str(), "queued" | "running") {
+            break;
+        }
+        if !management_step(library).await {
+            let results = management.results(&handle.job_id, -1, 50).expect("results");
+            panic!(
+                "apply stuck at {state}: {:?}",
+                results
+                    .items
+                    .iter()
+                    .map(|item| (item.work_state.clone(), item.failure.clone()))
+                    .collect::<Vec<_>>()
+            );
+        }
+        state = management
+            .detail(&handle.job_id)
+            .expect("detail")
+            .job
+            .state
+            .as_str()
+            .to_owned();
     }
     management.detail(&handle.job_id).expect("detail")
 }
@@ -3906,8 +3928,21 @@ async fn library_management_tools_journey() {
     let undone = management_apply(&library, &undo).await;
     assert_eq!(undone.job.state.as_str(), "succeeded");
     assert_eq!(title(&file), original[&TagField::Title]);
+    assert_eq!(overrides(&library), 0, "the undo drops the kept value too");
 
-    // A reset that changes no tag only drops the kept value.
+    // Keeping the value the file already has writes nothing but keeps it;
+    // a reset that changes no tag only drops it again.
+    let current = original[&TagField::Title].join("; ");
+    let keep = management
+        .create_tag_edit(
+            edit(TagEditMode::SaveOverride, &current, "edit-keep"),
+            "admin",
+        )
+        .expect("keep preview");
+    assert!(management_step(&library).await, "keep planning runs");
+    let kept = management_apply(&library, &keep).await;
+    assert_eq!(kept.job.terminal_code.as_deref(), Some("TAG_EDIT_SAVED"));
+    assert_eq!(overrides(&library), 1, "the value is kept");
     let reset = management
         .create_tag_edit(edit(TagEditMode::ResetCanonical, "", "edit-reset"), "admin")
         .expect("reset preview");
@@ -4009,17 +4044,36 @@ async fn library_management_tools_journey() {
             .expect("dry run detail")
             .ready_for_confirmation
     );
-    management
-        .confirm_activation(ActivationConfirm {
-            settings: proposed,
-            proofs: vec![ActivationProof {
-                root_id: "music".to_owned(),
-                job_id: dry_run.job_id.clone(),
-                preview_token: dry_run.preview_token.clone(),
-            }],
-            expected_settings_revision: revision(),
+    // A dry run proves settings; it is never applied.
+    assert!(management.reissue(&dry_run.job_id, "admin").is_err());
+    let refused = management.apply(
+        &dry_run.job_id,
+        droppedneedle::library::management::service::ApplyRequest {
+            preview_token: dry_run.preview_token.clone(),
+            expected_row_revision: management
+                .detail(&dry_run.job_id)
+                .expect("detail")
+                .job
+                .row_revision,
+            idempotency_key: "apply-dry-run".to_owned(),
             confirmation: true,
-        })
+        },
+    );
+    assert!(refused.is_err(), "an activation preview cannot be applied");
+    management
+        .confirm_activation(
+            ActivationConfirm {
+                settings: proposed,
+                proofs: vec![ActivationProof {
+                    root_id: "music".to_owned(),
+                    job_id: dry_run.job_id.clone(),
+                    preview_token: dry_run.preview_token.clone(),
+                }],
+                expected_settings_revision: revision(),
+                confirmation: true,
+            },
+            "admin",
+        )
         .expect("activation confirmed");
 
     // The album is then managed without asking: moved by the profile.
@@ -4041,4 +4095,147 @@ async fn library_management_tools_journey() {
     assert!(management.automatic_next().expect("automatic step"));
     let (again, _) = management.history(Default::default()).expect("history");
     assert_eq!(again.len(), history.len());
+
+    // A new match revision (a new edition) is managed again.
+    let db =
+        || droppedneedle::db::open_connection(&scratch.to_path_buf().join("app.db")).expect("db");
+    db().execute(
+        "UPDATE local_album_external_identities SET row_revision = row_revision + 1 \
+         WHERE local_album_id = ?1",
+        [&album],
+    )
+    .expect("identity bumped");
+    library.queue_automatic_management(&album);
+    assert!(management.automatic_next().expect("automatic step"));
+    let (renewed, _) = management.history(Default::default()).expect("history");
+    assert_eq!(
+        renewed.len(),
+        history.len() + 1,
+        "a new edition is managed again"
+    );
+    assert!(management_step(&library).await, "re-planning runs");
+    management_step(&library).await;
+
+    // A second copy lands where the managed file sits: the clash is
+    // settled by recycling the file in the way, in the worker, and the
+    // new copy takes its place.
+    let managed_rel: String = db()
+        .query_row(
+            "SELECT relative_path FROM local_tracks WHERE id = ?1",
+            [&track],
+            |row| row.get(0),
+        )
+        .expect("managed track path");
+    let second = plant(&music, "second/tool track.flac", "management_full.flac");
+    rescan(&library).await;
+    let second_track = library
+        .scan_store
+        .track_at("music", "second/tool track.flac")
+        .expect("second copy indexed");
+    let second_album = library
+        .scan_store
+        .album_for_track(&second_track)
+        .expect("second album");
+    library
+        .test_providers
+        .as_ref()
+        .expect("scripted providers")
+        .set_recall(ambiguous_recall(&library, &second_album));
+    library.identify_tick().await;
+    droppedneedle::library::operations::service::Operations::new(&library)
+        .confirm_match(&second_album, "admin")
+        .expect("second match confirmed");
+    let settings_now = revision();
+    let clash = management
+        .create_preview(
+            droppedneedle::library::management::service::PreviewRequest {
+                selection: Selection {
+                    kind: SelectionKind::Albums,
+                    ids: vec![second_album.clone()],
+                    catalog_filter: None,
+                },
+                profile_id: lm::PICARD_ORGANIZER_PROFILE_ID.to_owned(),
+                expected_settings_revision: settings_now.clone(),
+                expected_policy_revision: policy.clone(),
+                idempotency_key: Some("clash".to_owned()),
+                target_root_id: None,
+                overrides: None,
+            },
+            "admin",
+        )
+        .expect("clash preview");
+    assert!(management_step(&library).await, "clash planning runs");
+    let blocked = management
+        .items(&clash.job_id, -1, 10, &Default::default())
+        .expect("clash items")
+        .items
+        .into_iter()
+        .find(|item| {
+            item.eligibility == droppedneedle::library::management::models::Eligibility::Blocked
+        })
+        .expect("the copy is blocked by the clash");
+    let source = management.detail(&clash.job_id).expect("clash detail");
+    let resolve = management
+        .create_duplicate_preview(
+            droppedneedle::library::management::duplicates::DuplicateRequest {
+                intent: droppedneedle::library::management::models::DuplicateIntent {
+                    source_job_id: clash.job_id.clone(),
+                    source_plan_item_ordinal: blocked.ordinal,
+                    collision_kind: "same_path_different_content".to_owned(),
+                    existing_root_id: "music".to_owned(),
+                    existing_relative_path: managed_rel.clone(),
+                    existing_local_track_id: None,
+                    action: droppedneedle::library::management::models::DuplicateAction::RecycleExistingKeepIncoming,
+                    alternate_relative_path: None,
+                },
+                expected_source_row_revision: source.job.row_revision,
+                expected_settings_revision: settings_now,
+                expected_policy_revision: policy.clone(),
+                idempotency_key: "resolve-clash".to_owned(),
+            },
+            "admin",
+        )
+        .expect("duplicate preview");
+    assert!(management_step(&library).await, "duplicate planning runs");
+    let before_apply = std::fs::read(music.join(&managed_rel)).expect("existing bytes");
+    let settled = management_apply(&library, &resolve).await;
+    assert_eq!(
+        settled.job.state.as_str(),
+        "succeeded",
+        "{:?}",
+        settled.job.terminal_code
+    );
+    assert!(!second.exists(), "the new copy moved into place");
+    let now_there = std::fs::read(music.join(&managed_rel)).expect("new bytes");
+    assert_ne!(
+        now_there, before_apply,
+        "the file in the way was replaced, not overwritten"
+    );
+    let recycled = walk_files(&music.join(".recycle"));
+    assert!(
+        recycled
+            .iter()
+            .any(|path| std::fs::read(path).ok().as_deref() == Some(before_apply.as_slice())),
+        "the file in the way is in the recycle bin"
+    );
+}
+
+/// Every file below `dir`.
+fn walk_files(dir: &std::path::Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(next) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&next) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                found.push(path);
+            }
+        }
+    }
+    found
 }

@@ -351,6 +351,19 @@ impl Management {
                 values,
                 override_id: existing.map(|(id, _, _)| id.clone()),
                 expected_override_row_revision: existing.map(|(_, _, revision)| *revision),
+                previous: match existing {
+                    Some((id, mode, _)) => self.read(|conn| {
+                        Ok(conn
+                            .query_row(
+                                "SELECT value_json FROM library_management_overrides WHERE id = ?1",
+                                params![id],
+                                |row| row.get::<_, String>(0),
+                            )
+                            .optional()?
+                            .map(|value| (value, mode.clone())))
+                    })?,
+                    None => None,
+                },
             });
         }
         let stored = self.settings()?;

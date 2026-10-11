@@ -366,6 +366,16 @@ impl<'a> Mutations<'a> {
         })?;
         Ok(self.put_back(&moves, actor))
 
+    /// The recycle bin a file of this library folder goes to.
+    pub fn bin_for(&self, root_id: &str) -> Option<PathBuf> {
+        self.configured_bin().or_else(|| {
+            self.setup
+                .live_registry()
+                .resolve(root_id)
+                .map(|root| root.path.join(super::scan::fs::RECYCLE_BIN_DIRECTORY_NAME))
+        })
+    }
+
     /// Move one file the catalog does not list into the recycle bin (a
     /// file standing where a managed file should go). Returns where it
     /// went, so it can be moved back by hand.

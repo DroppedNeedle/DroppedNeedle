@@ -992,6 +992,9 @@ pub struct LibraryManagementRootAssignment {
     pub activation_preview_hash: Option<String>,
     /// Activation pins (set by the activation flow).
     pub activation_confirmed_at: Option<f64>,
+    /// Who confirmed the dry run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activation_confirmed_by: Option<String>,
 }
 
 /// External-server refresh after publishing.

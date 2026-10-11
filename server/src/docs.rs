@@ -575,6 +575,7 @@ use crate::{
         crate::library::http::management_tools::create_management_duplicate_preview,
         crate::library::http::management_tools::get_management_recovery_diagnostics,
         crate::library::http::management_tools::resolve_management_bundle,
+        crate::library::http::management_tools::list_management_automatic_skipped,
         crate::library::http::management_tools::create_management_activation_preview,
         crate::library::http::management_tools::get_management_activation_preview,
         crate::library::http::management_tools::confirm_management_activation,

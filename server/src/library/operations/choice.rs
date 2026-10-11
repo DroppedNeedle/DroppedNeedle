@@ -240,6 +240,9 @@ pub fn apply_choice(
     if let Some(action_id) = undo_for {
         keep_undo(tx, album_id, &before, action_id, now)?;
     }
+    // A new edition means new tags and paths: automatic management looks
+    // at the album again with the edition just chosen.
+    crate::library::management::automatic::queue(tx, album_id, now)?;
     Ok(EditionChoice {
         local_album_id: album_id.to_owned(),
         release_group_mbid: group,
@@ -821,6 +824,7 @@ pub fn undo(
         "DELETE FROM library_edition_choice_undo WHERE id = ?1",
         params![undo_id],
     )?;
+    crate::library::management::automatic::queue(tx, album_id, now)?;
     audit(
         tx,
         Some(actor),

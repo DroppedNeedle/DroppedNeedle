@@ -54,6 +54,7 @@ pub struct ActivationProofPins {
     pub preview_token: String,
     pub preview_hash: String,
     pub confirmed_at: f64,
+    pub confirmed_by: Option<String>,
 }
 
 const STALE_SETTINGS: &str =
@@ -272,6 +273,7 @@ impl LibraryManagementService {
             assignment.activation_preview_token = Some(proof.preview_token.clone());
             assignment.activation_preview_hash = Some(proof.preview_hash.clone());
             assignment.activation_confirmed_at = Some(proof.confirmed_at);
+            assignment.activation_confirmed_by = proof.confirmed_by.clone();
         }
         self.save_candidate(&current, &current_revision, candidate)
     }

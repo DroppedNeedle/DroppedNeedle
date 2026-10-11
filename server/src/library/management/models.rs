@@ -144,6 +144,10 @@ pub struct TagEditField {
     pub values: Vec<String>,
     pub override_id: Option<String>,
     pub expected_override_row_revision: Option<i64>,
+    /// The kept value this edit replaces, as (value JSON, mode), so its
+    /// undo can put it back.
+    #[serde(default)]
+    pub previous: Option<(String, String)>,
 }
 
 /// A manual tag edit a preview carries to apply.
@@ -356,6 +360,20 @@ pub struct DesiredDocument {
     /// What apply publishes; `None` when the file is blocked or has
     /// nothing to change.
     pub plan: Option<PlanItem>,
+    /// A file to move to the recycle bin just before this one is
+    /// published (a duplicate resolution that keeps the new file).
+    pub recycle_first: Option<RecycleFirst>,
+}
+
+/// The file in the way of a duplicate resolution, as the preview saw it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RecycleFirst {
+    pub root_id: String,
+    pub relative_path: String,
+    pub sha256: String,
+    /// The library track it is, when the catalog lists it.
+    pub local_track_id: Option<String>,
 }
 
 /// One planned file.

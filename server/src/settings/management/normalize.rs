@@ -91,6 +91,7 @@ pub fn migration_carry(
                     assignment.activation_preview_token = previous.activation_preview_token.clone();
                     assignment.activation_preview_hash = previous.activation_preview_hash.clone();
                     assignment.activation_confirmed_at = previous.activation_confirmed_at;
+                    assignment.activation_confirmed_by = previous.activation_confirmed_by.clone();
                     // A pin whose profile or naming policy drifted under
                     // the new settings clears and invalidates.
                     let pinned_profile = assignment.profile_id.as_deref().unwrap_or_default();
@@ -135,6 +136,7 @@ fn clear_activation(assignment: &mut LibraryManagementRootAssignment) {
     assignment.activation_preview_token = None;
     assignment.activation_preview_hash = None;
     assignment.activation_confirmed_at = None;
+    assignment.activation_confirmed_by = None;
 }
 
 /// Normalize, validate, and populate deterministic derived revisions.

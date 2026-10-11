@@ -597,6 +597,47 @@ pub fn finish_apply(
     Ok(changed == 1)
 }
 
+/// The request key a job was applied with, if any.
+pub fn apply_key(conn: &Connection, job_id: &str) -> rusqlite::Result<Option<String>> {
+    conn.query_row(
+        "SELECT apply_idempotency_key FROM library_management_job_snapshots WHERE job_id = ?1",
+        params![job_id],
+        |row| row.get(0),
+    )
+    .optional()
+    .map(Option::flatten)
+}
+
+/// Remember the request key a job was applied with.
+pub fn record_apply_key(tx: &Transaction<'_>, job_id: &str, key: &str) -> rusqlite::Result<()> {
+    tx.execute(
+        "UPDATE library_management_job_snapshots SET apply_idempotency_key = ?2 \
+         WHERE job_id = ?1 AND apply_idempotency_key IS NULL",
+        params![job_id, key],
+    )?;
+    Ok(())
+}
+
+/// Change a job's mode.
+pub fn set_mode(tx: &Transaction<'_>, job_id: &str, mode: &str) -> rusqlite::Result<()> {
+    tx.execute(
+        "UPDATE library_management_job_snapshots SET mode = ?2, row_revision = row_revision + 1 \
+         WHERE job_id = ?1",
+        params![job_id, mode],
+    )?;
+    Ok(())
+}
+
+/// The album bundles a job planned.
+pub fn bundle_ordinals(conn: &Connection, job_id: &str) -> rusqlite::Result<Vec<i64>> {
+    let mut statement = conn.prepare(
+        "SELECT DISTINCT bundle_ordinal FROM library_management_plan_items WHERE job_id = ?1 \
+         ORDER BY bundle_ordinal",
+    )?;
+    let rows = statement.query_map(params![job_id], |row| row.get(0))?;
+    rows.collect()
+}
+
 /// End a ready job that has nothing to write, as done.
 pub fn complete_without_work(
     tx: &Transaction<'_>,
@@ -772,16 +813,65 @@ pub fn set_work_bundle(
     ordinal: i64,
     bundle_id: &str,
 ) -> rusqlite::Result<()> {
+    // Other keys (a recycled file to put back) survive a new bundle id.
     conn.execute(
-        "UPDATE library_operation_work SET result_json = ?3, row_revision = row_revision + 1 \
+        "UPDATE library_operation_work SET result_json = json_set(CASE \
+         WHEN json_valid(result_json) AND json_type(result_json) = 'object' THEN result_json \
+         ELSE '{}' END, '$.bundle_id', ?3), row_revision = row_revision + 1 \
          WHERE job_id = ?1 AND ordinal = ?2",
-        params![
-            job_id,
-            ordinal,
-            serde_json::json!({ "bundle_id": bundle_id }).to_string()
-        ],
+        params![job_id, ordinal, bundle_id],
     )?;
     Ok(())
+}
+
+/// Files an album step moved to the recycle bin before publishing:
+/// (original, where it went). Recorded before publishing, so a retry
+/// after a crash neither recycles twice nor forgets to put them back.
+pub fn work_recycled(
+    conn: &Connection,
+    job_id: &str,
+    ordinal: i64,
+) -> rusqlite::Result<Vec<(String, String)>> {
+    let raw: Option<String> = conn
+        .query_row(
+            "SELECT json_extract(result_json, '$.recycled') FROM library_operation_work \
+             WHERE job_id = ?1 AND ordinal = ?2 AND json_valid(result_json)",
+            params![job_id, ordinal],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
+    Ok(raw
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default())
+}
+
+/// Record (or, with an empty list, forget) the recycled files of an album step.
+pub fn set_work_recycled(
+    conn: &Connection,
+    job_id: &str,
+    ordinal: i64,
+    moves: &[(String, String)],
+) -> rusqlite::Result<()> {
+    let value = serde_json::to_string(moves).unwrap_or_else(|_| "[]".to_owned());
+    conn.execute(
+        "UPDATE library_operation_work SET result_json = json_set(CASE \
+         WHEN json_valid(result_json) AND json_type(result_json) = 'object' THEN result_json \
+         ELSE '{}' END, '$.recycled', json(?3)), row_revision = row_revision + 1 \
+         WHERE job_id = ?1 AND ordinal = ?2",
+        params![job_id, ordinal, value],
+    )?;
+    Ok(())
+}
+
+/// Album steps of a job that recycled files and were not written.
+pub fn unfinished_recycles(conn: &Connection, job_id: &str) -> rusqlite::Result<Vec<i64>> {
+    let mut statement = conn.prepare(
+        "SELECT ordinal FROM library_operation_work WHERE job_id = ?1 AND state <> 'succeeded' \
+         AND json_valid(result_json) AND json_array_length(result_json, '$.recycled') > 0",
+    )?;
+    let rows = statement.query_map(params![job_id], |row| row.get(0))?;
+    rows.collect()
 }
 
 /// An album's revision and its indexed files now.
@@ -1003,6 +1093,11 @@ pub struct ManagedMark<'a> {
     pub naming_revision: &'a str,
     pub override_revision: u64,
     pub job_id: &'a str,
+    /// The album's and the file's match revisions the run wrote from.
+    pub album_identity_revision: Option<u64>,
+    pub track_identity_revision: Option<u64>,
+    /// The file's place and stat signature after the run.
+    pub path_revision: Option<String>,
 }
 
 /// Record that a profile run wrote (or left as it wanted) one file.
@@ -1011,11 +1106,13 @@ pub fn mark_managed(
     mark: &ManagedMark<'_>,
     now: f64,
 ) -> rusqlite::Result<()> {
+    let revision = |value: Option<u64>| value.and_then(|value| i64::try_from(value).ok());
     tx.execute(
         "INSERT INTO library_track_management_state (local_track_id, applied_profile_id, \
          applied_profile_revision, applied_naming_script_revision, applied_override_revision, \
-         last_operation_job_id, managed_root_id, last_managed_at, last_outcome) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'succeeded') \
+         last_operation_job_id, managed_root_id, last_managed_at, last_outcome, \
+         applied_album_identity_revision, applied_track_identity_revision, managed_path_revision) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'succeeded', ?9, ?10, ?11) \
          ON CONFLICT (local_track_id) DO UPDATE SET \
          applied_profile_id = excluded.applied_profile_id, \
          applied_profile_revision = excluded.applied_profile_revision, \
@@ -1024,6 +1121,9 @@ pub fn mark_managed(
          last_operation_job_id = excluded.last_operation_job_id, \
          managed_root_id = excluded.managed_root_id, \
          last_managed_at = excluded.last_managed_at, last_outcome = 'succeeded', \
+         applied_album_identity_revision = excluded.applied_album_identity_revision, \
+         applied_track_identity_revision = excluded.applied_track_identity_revision, \
+         managed_path_revision = excluded.managed_path_revision, \
          last_reason_code = NULL, \
          row_revision = library_track_management_state.row_revision + 1",
         params![
@@ -1034,7 +1134,10 @@ pub fn mark_managed(
             mark.override_revision.to_string(),
             mark.job_id,
             mark.root_id,
-            now
+            now,
+            revision(mark.album_identity_revision),
+            revision(mark.track_identity_revision),
+            mark.path_revision,
         ],
     )?;
     Ok(())
@@ -1053,7 +1156,9 @@ pub fn mark_restored(
          last_managed_at, last_outcome) VALUES (?1, ?2, ?3, 'restored') \
          ON CONFLICT (local_track_id) DO UPDATE SET applied_profile_id = NULL, \
          applied_profile_revision = NULL, applied_naming_script_revision = NULL, \
-         applied_override_revision = NULL, last_operation_job_id = excluded.last_operation_job_id, \
+         applied_override_revision = NULL, applied_album_identity_revision = NULL, \
+         applied_track_identity_revision = NULL, managed_path_revision = NULL, \
+         last_operation_job_id = excluded.last_operation_job_id, \
          last_managed_at = excluded.last_managed_at, last_outcome = 'restored', \
          row_revision = library_track_management_state.row_revision + 1",
         params![track_id, job_id, now],
@@ -1071,12 +1176,16 @@ pub struct TrackState {
     pub root_id: Option<String>,
     pub outcome: Option<String>,
     pub managed_at: Option<f64>,
+    pub album_identity_revision: Option<i64>,
+    pub track_identity_revision: Option<i64>,
+    pub path_revision: Option<String>,
 }
 
 pub fn track_state(conn: &Connection, track_id: &str) -> rusqlite::Result<Option<TrackState>> {
     conn.query_row(
         "SELECT applied_profile_id, applied_profile_revision, applied_naming_script_revision, \
-         applied_override_revision, managed_root_id, last_outcome, last_managed_at \
+         applied_override_revision, managed_root_id, last_outcome, last_managed_at, \
+         applied_album_identity_revision, applied_track_identity_revision, managed_path_revision \
          FROM library_track_management_state WHERE local_track_id = ?1",
         params![track_id],
         |row| {
@@ -1088,6 +1197,9 @@ pub fn track_state(conn: &Connection, track_id: &str) -> rusqlite::Result<Option
                 root_id: row.get(4)?,
                 outcome: row.get(5)?,
                 managed_at: row.get(6)?,
+                album_identity_revision: row.get(7)?,
+                track_identity_revision: row.get(8)?,
+                path_revision: row.get(9)?,
             })
         },
     )
@@ -1201,6 +1313,82 @@ pub fn edit_override_revisions(
         .unwrap_or_default())
 }
 
+/// Put the kept values back the way they were before a tag edit, once its
+/// undo is written: an override the edit made goes, one it changed or
+/// dropped comes back.
+pub fn revert_tag_edit(
+    tx: &Transaction<'_>,
+    edit: &super::models::TagEditIntent,
+    job_id: &str,
+    now: f64,
+) -> rusqlite::Result<()> {
+    use super::models::TagEditMode;
+    if edit.mode == TagEditMode::WriteOnce {
+        return Ok(());
+    }
+    for field in &edit.fields {
+        let album = field.subject_kind == "album";
+        let (subject_id, column, table) = if album {
+            (&edit.local_album_id, "local_album_id", "local_albums")
+        } else {
+            (&edit.local_track_id, "local_track_id", "local_tracks")
+        };
+        match &field.previous {
+            None => {
+                tx.execute(
+                    &format!(
+                        "DELETE FROM library_management_overrides WHERE subject_kind = ?1 \
+                         AND {column} = ?2 AND field_name = ?3"
+                    ),
+                    params![field.subject_kind, subject_id, field.field_name],
+                )?;
+            }
+            Some((value, mode)) => {
+                let updated = tx.execute(
+                    &format!(
+                        "UPDATE library_management_overrides SET value_json = ?4, mode = ?5, \
+                         updated_at = ?6, row_revision = row_revision + 1 \
+                         WHERE subject_kind = ?1 AND {column} = ?2 AND field_name = ?3"
+                    ),
+                    params![
+                        field.subject_kind,
+                        subject_id,
+                        field.field_name,
+                        value,
+                        mode,
+                        now
+                    ],
+                )?;
+                if updated == 0 {
+                    let id = field.override_id.clone().unwrap_or_else(|| {
+                        sha256_hex(format!("{job_id}\u{0}undo\u{0}{}", field.field_name).as_bytes())
+                            [..32]
+                            .to_owned()
+                    });
+                    tx.execute(
+                        &format!(
+                            "INSERT OR IGNORE INTO library_management_overrides (id, subject_kind, \
+                             {column}, field_name, value_json, mode, reason, subject_revision, \
+                             created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'tag_editor', \
+                             COALESCE((SELECT row_revision FROM {table} WHERE id = ?3), 1), ?7, ?7)"
+                        ),
+                        params![
+                            id,
+                            field.subject_kind,
+                            subject_id,
+                            field.field_name,
+                            value,
+                            mode,
+                            now
+                        ],
+                    )?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Media-server refreshes to send for a finished apply, one per server.
 pub fn queue_refreshes(
     tx: &Transaction<'_>,
@@ -1214,7 +1402,7 @@ pub fn queue_refreshes(
         tx.execute(
             "INSERT OR IGNORE INTO library_management_external_refresh_deliveries (id, \
              operation_job_id, target, state, max_attempts, retry_delay_seconds, not_before, \
-             created_at, updated_at) VALUES (?1, ?2, ?3, 'pending', ?4, ?5, ?6, ?6, ?6)",
+             created_at, updated_at) VALUES (?1, ?2, ?3, 'pending', ?4, ?5, ?6 + 15.0, ?6, ?6)",
             params![
                 &sha256_hex(format!("{job_id}\u{0}{target}").as_bytes())[..32],
                 job_id,
@@ -1303,5 +1491,16 @@ pub fn finish_refresh(
          WHERE id = ?1",
         params![due.id, state, code, not_before, done, now],
     )?;
+    // One rescan covers every run that ended before it: the others for
+    // the same server are done too.
+    if state == "succeeded" {
+        tx.execute(
+            "UPDATE library_management_external_refresh_deliveries SET state = 'succeeded', \
+             failure_code = 'COALESCED', completed_at = ?3, updated_at = ?3, \
+             row_revision = row_revision + 1 \
+             WHERE target = ?2 AND id <> ?1 AND state IN ('pending', 'retry_wait')",
+            params![due.id, due.target, now],
+        )?;
+    }
     Ok(())
 }

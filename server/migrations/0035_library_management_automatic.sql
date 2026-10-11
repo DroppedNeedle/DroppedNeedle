@@ -17,8 +17,18 @@
 --                                       this only records that someone
 --                                       looked and the files were in place.
 --
--- Safe to apply twice: every table is created only when missing. No down
--- migration: rollback is restoring a pre-upgrade backup.
+-- New columns on library_track_management_state:
+--   applied_album_identity_revision, applied_track_identity_revision
+--     the album's and the file's match revisions a profile run wrote
+--     from, so a new edition (or a changed match) is managed again.
+--
+-- No down migration: rollback is restoring a pre-upgrade backup.
+
+ALTER TABLE library_track_management_state
+    ADD COLUMN applied_album_identity_revision INTEGER;
+
+ALTER TABLE library_track_management_state
+    ADD COLUMN applied_track_identity_revision INTEGER;
 
 CREATE TABLE IF NOT EXISTS library_management_automatic_queue (
     local_album_id TEXT PRIMARY KEY REFERENCES local_albums(id) ON DELETE CASCADE,

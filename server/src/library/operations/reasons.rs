@@ -289,6 +289,11 @@ pub fn terminal(code: &str) -> Reason {
             "This run stopped on an unexpected problem.",
             "Make a new preview. If it happens again, the server log has the details.",
         ),
+        "MANAGEMENT_UNCHANGED" => reason(
+            "MANAGEMENT_UNCHANGED",
+            "Every file already looked the way the profile wants; nothing was written.",
+            "Nothing to do.",
+        ),
         "TAG_EDIT_SAVED" => reason(
             "TAG_EDIT_SAVED",
             "The files already held these values, so only the kept value changed.",

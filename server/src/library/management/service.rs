@@ -441,6 +441,7 @@ impl Management {
                 "This preview belongs to another administrator.",
             ));
         }
+        refuse_activation(&snapshot)?;
         let detail = self.detail(job_id)?;
         if !detail.ready_for_confirmation {
             return Err(stale(
@@ -492,6 +493,19 @@ impl Management {
                     .to_owned(),
             ));
         }
+        refuse_activation(&snapshot)?;
+        // The same apply sent again answers with the job as it is now.
+        if self
+            .read(|conn| Ok(store::apply_key(conn, job_id)?))?
+            .as_deref()
+            == Some(request.idempotency_key.as_str())
+        {
+            return self.read(|conn| {
+                ops::job(conn, job_id)?.ok_or(ManagementError::NotFound(
+                    "This management job does not exist.",
+                ))
+            });
+        }
         let detail = self.detail(job_id)?;
         if detail.expired {
             return Err(stale("This preview expired. Make a new preview."));
@@ -521,6 +535,7 @@ impl Management {
                 // to write.
                 return self.write(|tx| {
                     store::complete_without_work(tx, job_id, "DUPLICATE_RECYCLED", now_unix())?;
+                    store::record_apply_key(tx, job_id, &request.idempotency_key)?;
                     ops::job(tx, job_id)?.ok_or(ManagementError::NotFound(
                         "This management job does not exist.",
                     ))
@@ -558,10 +573,14 @@ impl Management {
                     "This preview changed since the page loaded. Reload the page and try again.",
                 ));
             }
+            if let Some(snapshot) = store::snapshot(tx, job_id)? {
+                refuse_activation(&snapshot)?;
+            }
             let bundles = store::writable_bundles(tx, job_id)?;
             if bundles.is_empty() && mode == JobMode::DuplicateResolution {
                 // Keeping both files: the decision is the whole job.
                 store::complete_without_work(tx, job_id, "DUPLICATE_KEPT", now)?;
+                store::record_apply_key(tx, job_id, idempotency_key)?;
                 return ops::job(tx, job_id)?.ok_or(ManagementError::NotFound(
                     "This management job does not exist.",
                 ));
@@ -580,6 +599,7 @@ impl Management {
                     now,
                 )?;
                 store::complete_without_work(tx, job_id, "TAG_EDIT_SAVED", now)?;
+                store::record_apply_key(tx, job_id, idempotency_key)?;
                 return ops::job(tx, job_id)?.ok_or(ManagementError::NotFound(
                     "This management job does not exist.",
                 ));
@@ -847,9 +867,28 @@ impl Management {
             // profile wants them.
             Err(ManagementError::Conflict(reason)) => {
                 tracing::info!(job_id, reason, "automatic management had nothing to apply");
+                if let Err(error) = self.finish_unchanged(job_id) {
+                    tracing::warn!(%error, job_id, "unchanged automatic run not recorded");
+                }
             }
             Err(error) => tracing::warn!(%error, job_id, "automatic management apply refused"),
         }
+    }
+
+    /// An automatic run whose files already look the way the profile
+    /// wants: it ends as done, and its files count as managed, so the
+    /// album is not looked at again for nothing.
+    fn finish_unchanged(&self, job_id: &str) -> Result<(), ManagementError> {
+        let ordinals = self.write(|tx| {
+            store::set_mode(tx, job_id, JobMode::AutomaticApply.as_str())?;
+            store::complete_without_work(tx, job_id, "MANAGEMENT_UNCHANGED", now_unix())?;
+            Ok(store::bundle_ordinals(tx, job_id)?)
+        })?;
+        let snapshot = self.snapshot(job_id)?;
+        for ordinal in ordinals {
+            self.after_album(&snapshot, ordinal);
+        }
+        Ok(())
     }
 
     /// Store one album's items. False when the job was paused, stopped
@@ -1160,6 +1199,9 @@ impl Management {
                 }));
         loop {
             if self.checkpoint(job_id, worker)? {
+                if snapshot.job_mode() == Some(JobMode::DuplicateResolution) {
+                    self.put_back_unfinished(&snapshot);
+                }
                 return Ok(());
             }
             if !self.setup.coordinator.current().is_empty() {
@@ -1258,7 +1300,7 @@ impl Management {
         self.read(|conn| Ok(store::set_work_bundle(conn, job_id, ordinal, &bundle_id)?))?;
         let items = self.read(|conn| Ok(store::bundle_items(conn, job_id, ordinal)?))?;
         Ok(Some(
-            match self.publish_album(snapshot, &items, undo, organizes, &bundle_id) {
+            match self.publish_album(snapshot, ordinal, &items, undo, organizes, &bundle_id) {
                 Ok(applied) => (None, written(&applied.bundle_id, &applied.outcome)),
                 Err(_) if self.committed(&bundle_id) => (None, written(&bundle_id, "committed")),
                 Err(reason) => {
@@ -1322,6 +1364,7 @@ impl Management {
     fn publish_album(
         &self,
         snapshot: &Snapshot,
+        ordinal: i64,
         items: &[PlannedItem],
         undo: bool,
         organizes: bool,
@@ -1334,6 +1377,11 @@ impl Management {
         if plans.is_empty() {
             return Err(reasons::not_scheduled());
         }
+        let recycled = if undo {
+            Vec::new()
+        } else {
+            self.recycle_before_publish(snapshot, ordinal, items)?
+        };
         let album_id = items
             .first()
             .map(|item| item.album_id.clone())
@@ -1353,15 +1401,41 @@ impl Management {
         self.setup
             .publish_plans(bundle_id, plans, pins, &override_of)
             .map_err(|error| {
-                let reason = reasons::from_publish(&error);
+                let mut reason = reasons::from_publish(&error);
                 if reason.code == "WRITE_FAILED" || reason.code == "BASELINE_UNAVAILABLE" {
                     tracing::error!(%error, job_id = snapshot.job.id, "management publish failed");
                 } else {
                     tracing::info!(%error, job_id = snapshot.job.id, "management publish refused");
                 }
+                // A file recycled to make room goes back, unless the new
+                // file did land after all.
+                if !recycled.is_empty() && !self.committed(bundle_id) {
+                    let bins: Vec<&str> = recycled.iter().map(|(_, to)| to.as_str()).collect();
+                    if self.put_back_recycled(snapshot, ordinal, &recycled) {
+                        reason
+                            .message
+                            .push_str(" The file in the way was put back.");
+                    } else {
+                        reason.message.push_str(&format!(
+                            " The file in the way is still in the recycle bin at {}.",
+                            bins.join(", ")
+                        ));
+                    }
+                }
                 reason
             })
     }
+}
+
+/// A dry run for turning on automatic management only proves settings;
+/// it is never applied (v2's rule and sentence).
+fn refuse_activation(snapshot: &Snapshot) -> Result<(), ManagementError> {
+    if snapshot.proposed_settings_revision.is_some() {
+        return Err(ManagementError::Invalid(
+            "An activation preview cannot be applied.".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 /// Compare two secrets without leaking where they differ.

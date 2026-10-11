@@ -7,6 +7,7 @@ use super::models::{JobMode, ManagementError};
 use super::service::Management;
 use super::store::{self, ManagedMark, Snapshot};
 use crate::library::clock::now_unix;
+use crate::library::identify::stores::IdentityStore as _;
 use crate::runtime_config::secret_sections::JellyfinConnection;
 
 impl Management {
@@ -70,6 +71,15 @@ impl Management {
                 .collect();
             extra = Some(serde_json::json!({ "override_revisions": revisions }));
         }
+        // Undoing a tag edit also puts its kept values back.
+        if mode == Some(JobMode::Undo)
+            && let Some(source) = snapshot.linked_job_id.as_deref()
+            && let Some(edit) = self
+                .read(|conn| Ok(store::snapshot(conn, source)?))?
+                .and_then(|source| source.intent().tag_edit)
+        {
+            self.write(|tx| Ok(store::revert_tag_edit(tx, &edit, job_id, now)?))?;
+        }
         let written = items.iter().filter(|item| item.eligibility.writes());
         match mode {
             Some(JobMode::BaselineRestore) => self.write(|tx| {
@@ -85,26 +95,52 @@ impl Management {
             // puts the old state back.
             Some(JobMode::Apply | JobMode::AutomaticApply) if intent.tag_edit.is_none() => {
                 let (profile_id, _) = snapshot.profile_label();
-                let marks: Vec<(String, String, u64)> = written
+                let sandbox = self.setup.publish_sandbox().ok();
+                let identities = &self.setup.identify_store;
+                struct Mark {
+                    track_id: String,
+                    root: String,
+                    override_revision: u64,
+                    album_identity: Option<u64>,
+                    track_identity: Option<u64>,
+                    path: Option<String>,
+                }
+                let marks: Vec<Mark> = written
                     .filter_map(|item| {
                         let track_id = item.track_id.clone()?;
                         let root = item.dest_root.clone().unwrap_or(item.source_root.clone());
-                        let revision = self.override_revision(&item.album_id, &track_id);
-                        Some((track_id, root, revision))
+                        let rel = item.dest_rel.clone().unwrap_or(item.source_rel.clone());
+                        Some(Mark {
+                            override_revision: self.override_revision(&item.album_id, &track_id),
+                            album_identity: identities
+                                .album_identity(&item.album_id)
+                                .map(|identity| identity.row_revision),
+                            track_identity: identities
+                                .track_identity(&track_id)
+                                .map(|identity| identity.row_revision),
+                            path: sandbox.as_ref().and_then(|sandbox| {
+                                super::automatic::path_revision(sandbox, &root, &rel)
+                            }),
+                            track_id,
+                            root,
+                        })
                     })
                     .collect();
                 self.write(|tx| {
-                    for (track_id, root_id, override_revision) in &marks {
+                    for mark in &marks {
                         store::mark_managed(
                             tx,
                             &ManagedMark {
-                                track_id,
-                                root_id,
+                                track_id: &mark.track_id,
+                                root_id: &mark.root,
                                 profile_id: &profile_id,
                                 profile_revision: &snapshot.profile_revision,
                                 naming_revision: &snapshot.naming_revision,
-                                override_revision: *override_revision,
+                                override_revision: mark.override_revision,
                                 job_id,
+                                album_identity_revision: mark.album_identity,
+                                track_identity_revision: mark.track_identity,
+                                path_revision: mark.path.clone(),
                             },
                             now,
                         )?;
@@ -200,7 +236,8 @@ impl Management {
         if !connection.enabled || key.is_empty() || connection.jellyfin_url.is_empty() {
             return Err("NOT_CONFIGURED");
         }
-        let url = format!("{}/Library/Refresh", connection.jellyfin_url);
+        let base = connection.jellyfin_url.trim().trim_end_matches('/');
+        let url = format!("{base}/Library/Refresh");
         let handle = tokio::runtime::Handle::try_current().map_err(|_| "UNAVAILABLE")?;
         let response = handle.block_on(async move {
             http.post(url)

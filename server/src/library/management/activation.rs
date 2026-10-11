@@ -147,6 +147,7 @@ impl Management {
     pub fn confirm_activation(
         &self,
         request: ActivationConfirm,
+        actor: &str,
     ) -> Result<LibraryManagementSettingsResponse, ManagementError> {
         if !request.confirmation {
             return Err(ManagementError::Invalid(
@@ -187,11 +188,18 @@ impl Management {
             // The dry run is current (its folders did not move), so the
             // pins name the folders' revision as the settings know it.
             pin.policy_revision = policy.clone();
+            pin.confirmed_by = Some(actor.to_owned());
             pins.push(pin);
         }
-        service
+        let saved = service
             .confirm_activation(request.settings, &request.expected_settings_revision, &pins)
-            .map_err(settings_error)
+            .map_err(settings_error)?;
+        // Albums skipped while the folder was off or out of date get
+        // another look.
+        if let Err(error) = self.read(|conn| Ok(super::automatic::wake(conn, None, now_unix())?)) {
+            tracing::warn!(%error, "skipped albums not woken after activation");
+        }
+        Ok(saved)
     }
 
     /// The pins one proof gives, when it is a ready dry run of exactly
@@ -248,6 +256,7 @@ impl Management {
             preview_token: proof.preview_token.clone(),
             preview_hash: presented,
             confirmed_at: now_unix(),
+            confirmed_by: None,
         })
     }
 }

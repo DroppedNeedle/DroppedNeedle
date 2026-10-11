@@ -42,10 +42,18 @@ pub struct Resolved {
     pub state: String,
     pub verified_files: i64,
     pub total_files: i64,
+    /// What closing did, in words.
+    pub note: String,
 }
 
 /// Most writes needing attention listed at once.
 const ATTENTION_LIST_MAX: i64 = 100;
+
+/// What closing a write does, said plainly: it records that the files
+/// were checked, and changes nothing else.
+const RESOLVED_NOTE: &str = "Marked as handled: every file was checked in place. Nothing on disk \
+     or in the library catalog was changed. If the library does not list these files, rescan \
+     their folder; leftover temporary copies stay where they are until you remove them.";
 
 impl Management {
     /// What the publish journal holds. Blocking.
@@ -153,6 +161,7 @@ impl Management {
                 state: "resolved".to_owned(),
                 verified_files: verified,
                 total_files: verified,
+                note: RESOLVED_NOTE.to_owned(),
             });
         }
         let pending: Vec<_> = journals
@@ -215,6 +224,7 @@ impl Management {
             state: "resolved".to_owned(),
             verified_files: verified,
             total_files: verified,
+            note: RESOLVED_NOTE.to_owned(),
         })
     }
 }

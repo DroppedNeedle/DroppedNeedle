@@ -72,6 +72,10 @@ pub fn router() -> Router<LibrarySetup> {
             post(resolve_management_bundle),
         )
         .route(
+            "/library/management/automatic/skipped",
+            get(list_management_automatic_skipped),
+        )
+        .route(
             "/settings/library-management/activation-previews",
             post(create_management_activation_preview),
         )
@@ -557,6 +561,8 @@ pub struct ManagementResolveView {
     pub state: String,
     pub verified_files: i64,
     pub total_files: i64,
+    /// What closing did, and did not do, in words.
+    pub note: String,
 }
 
 impl From<Resolved> for ManagementResolveView {
@@ -566,6 +572,7 @@ impl From<Resolved> for ManagementResolveView {
             state: resolved.state,
             verified_files: resolved.verified_files,
             total_files: resolved.total_files,
+            note: resolved.note,
         }
     }
 }
@@ -611,6 +618,59 @@ pub async fn resolve_management_bundle(
     let management = Management::new(&state);
     let resolved = blocking(move || management.resolve_bundle(&bundle_id, &caller.user_id)).await?;
     Ok(Json(resolved.into()))
+}
+
+// ---------------------------------------------------------------------------
+// Automatic management.
+// ---------------------------------------------------------------------------
+
+/// An album automatic management skipped.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ManagementSkippedAlbumView {
+    pub album_id: String,
+    pub album_title: String,
+    pub artist_name: Option<String>,
+    /// Why, in words, with what to do about it.
+    pub reason: super::management::ManagementReasonView,
+    pub attempts: i64,
+    pub updated_at: f64,
+}
+
+/// Albums automatic management skipped.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ManagementSkippedPage {
+    pub items: Vec<ManagementSkippedAlbumView>,
+}
+
+/// Albums automatic management skipped, newest first, each with why.
+#[utoipa::path(
+    get,
+    path = "/api/v3/library/management/automatic/skipped",
+    responses(
+        (status = 200, description = "Skipped albums", body = ManagementSkippedPage),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Admin role required"),
+    )
+)]
+pub async fn list_management_automatic_skipped(
+    State(state): State<LibrarySetup>,
+    _caller: RequireAdmin,
+) -> Result<Json<ManagementSkippedPage>, LibraryError> {
+    let management = Management::new(&state);
+    let skipped = blocking(move || management.automatic_skipped(100)).await?;
+    Ok(Json(ManagementSkippedPage {
+        items: skipped
+            .into_iter()
+            .map(|album| ManagementSkippedAlbumView {
+                album_id: album.album_id,
+                album_title: album.album_title,
+                artist_name: album.artist_name,
+                reason: album.reason.into(),
+                attempts: album.attempts,
+                updated_at: album.updated_at,
+            })
+            .collect(),
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -715,7 +775,7 @@ pub async fn get_management_activation_preview(
 )]
 pub async fn confirm_management_activation(
     State(state): State<LibrarySetup>,
-    _caller: RequireAdmin,
+    RequireAdmin(caller): RequireAdmin,
     ValidJson(body): ValidJson<ManagementActivationConfirmBody>,
 ) -> Result<Json<LibraryManagementSettingsResponse>, LibraryError> {
     let management = Management::new(&state);
@@ -733,6 +793,6 @@ pub async fn confirm_management_activation(
         expected_settings_revision: body.expected_settings_revision,
         confirmation: body.confirmation,
     };
-    let saved = blocking(move || management.confirm_activation(request)).await?;
+    let saved = blocking(move || management.confirm_activation(request, &caller.user_id)).await?;
     Ok(Json(saved))
 }
