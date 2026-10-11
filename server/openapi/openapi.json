@@ -6911,6 +6911,65 @@
         }
       }
     },
+    "/api/v3/library/albums/{album_id}/edition/plan": {
+      "get": {
+        "tags": [
+          "crate::library::http::edition"
+        ],
+        "summary": "What taking an edition would do: which files keep their place, which\nare second copies or extras, and which edition tracks are missing.\nAsks MusicBrainz for the release; changes nothing.",
+        "operationId": "plan_edition",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "release_mbid",
+            "in": "path",
+            "description": "Any MusicBrainz release; the album's current edition when absent.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The plan",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditionPlanView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad release id, or the album has no edition to plan"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Unknown album, or MusicBrainz does not know the release"
+          },
+          "503": {
+            "description": "MusicBrainz is not answering"
+          }
+        }
+      }
+    },
     "/api/v3/library/albums/{album_id}/edition/undo": {
       "post": {
         "tags": [
@@ -30354,6 +30413,22 @@
             "type": "string",
             "description": "Human outcome."
           },
+          "release_mbid": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The edition fetched."
+          },
+          "requested": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Missing tracks asked for.",
+            "minimum": 0
+          },
           "status": {
             "type": "string",
             "description": "`started`, `already_in_progress`, or `already_complete`."
@@ -30364,6 +30439,31 @@
               "null"
             ],
             "description": "Linked download task, when dispatched."
+          },
+          "total_tracks": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Tracks on the edition (absent when the library's plan could not be\nread and the whole album was asked for).",
+            "minimum": 0
+          },
+          "upgrade_task_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The upgrade download, when one was queued."
+          },
+          "upgrades": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Owned tracks of the edition below the quality cutoff; an upgrade of\nthe album was queued for them when this is above zero.",
+            "minimum": 0
           }
         }
       },
@@ -30557,6 +30657,170 @@
               "null"
             ],
             "description": "The album's edition."
+          }
+        }
+      },
+      "EditionPlanFileView": {
+        "type": "object",
+        "description": "One of the album's files and what the edition makes of it.",
+        "required": [
+          "local_track_id",
+          "title",
+          "disc_number",
+          "track_number",
+          "fate"
+        ],
+        "properties": {
+          "disc_number": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "edition_disc_number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The edition track the file keeps or duplicates.",
+            "minimum": 0
+          },
+          "edition_position": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "fate": {
+            "type": "string",
+            "description": "`keep` (sits on its own edition track), `duplicate` (another copy\nof a song the edition already has a file for) or `extra` (the\nedition has no track for it). Choosing never deletes a file."
+          },
+          "local_track_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "track_number": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "EditionPlanTrackView": {
+        "type": "object",
+        "description": "One track of the planned edition.",
+        "required": [
+          "disc_number",
+          "position",
+          "title",
+          "recording_mbid",
+          "release_track_mbid"
+        ],
+        "properties": {
+          "disc_number": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "length_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "local_track_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The file that holds this track; absent when the track is missing."
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "recording_mbid": {
+            "type": "string"
+          },
+          "release_track_mbid": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "EditionPlanView": {
+        "type": "object",
+        "description": "What taking an edition would do to the album, before anything changes.",
+        "required": [
+          "album_id",
+          "release_group_mbid",
+          "release_mbid",
+          "title",
+          "artist_name",
+          "is_current",
+          "kept_count",
+          "missing_count",
+          "duplicate_count",
+          "extra_count",
+          "tracks",
+          "files"
+        ],
+        "properties": {
+          "album_id": {
+            "type": "string"
+          },
+          "artist_name": {
+            "type": "string"
+          },
+          "duplicate_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "extra_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EditionPlanFileView"
+            }
+          },
+          "is_current": {
+            "type": "boolean",
+            "description": "The edition is already the album's edition."
+          },
+          "kept_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "missing_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "release_group_mbid": {
+            "type": "string"
+          },
+          "release_mbid": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EditionPlanTrackView"
+            }
           }
         }
       },

@@ -3241,6 +3241,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/albums/{album_id}/edition/plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What taking an edition would do: which files keep their place, which
+         *     are second copies or extras, and which edition tracks are missing.
+         *     Asks MusicBrainz for the release; changes nothing.
+         */
+        get: operations["plan_edition"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/albums/{album_id}/edition/undo": {
         parameters: {
             query?: never;
@@ -12886,10 +12907,31 @@ export interface components {
         EditionAcquireResponse: {
             /** @description Human outcome. */
             message: string;
+            /** @description The edition fetched. */
+            release_mbid?: string | null;
+            /**
+             * Format: int32
+             * @description Missing tracks asked for.
+             */
+            requested?: number | null;
             /** @description `started`, `already_in_progress`, or `already_complete`. */
             status: string;
             /** @description Linked download task, when dispatched. */
             task_id?: string | null;
+            /**
+             * Format: int32
+             * @description Tracks on the edition (absent when the library's plan could not be
+             *     read and the whole album was asked for).
+             */
+            total_tracks?: number | null;
+            /** @description The upgrade download, when one was queued. */
+            upgrade_task_id?: string | null;
+            /**
+             * Format: int32
+             * @description Owned tracks of the edition below the quality cutoff; an upgrade of
+             *     the album was queued for them when this is above zero.
+             */
+            upgrades?: number | null;
         };
         /** @description One candidate the matcher scored, as the edition picker shows it. */
         EditionCandidateView: {
@@ -12966,6 +13008,58 @@ export interface components {
             pinned_release_mbid?: string | null;
             /** @description The album's edition. */
             selected_release_mbid?: string | null;
+        };
+        /** @description One of the album's files and what the edition makes of it. */
+        EditionPlanFileView: {
+            /** Format: int32 */
+            disc_number: number;
+            /**
+             * Format: int32
+             * @description The edition track the file keeps or duplicates.
+             */
+            edition_disc_number?: number | null;
+            /** Format: int32 */
+            edition_position?: number | null;
+            /**
+             * @description `keep` (sits on its own edition track), `duplicate` (another copy
+             *     of a song the edition already has a file for) or `extra` (the
+             *     edition has no track for it). Choosing never deletes a file.
+             */
+            fate: string;
+            local_track_id: string;
+            title: string;
+            /** Format: int32 */
+            track_number: number;
+        };
+        /** @description One track of the planned edition. */
+        EditionPlanTrackView: {
+            /** Format: int32 */
+            disc_number: number;
+            /** Format: int64 */
+            length_ms?: number | null;
+            /** @description The file that holds this track; absent when the track is missing. */
+            local_track_id?: string | null;
+            /** Format: int32 */
+            position: number;
+            recording_mbid: string;
+            release_track_mbid: string;
+            title: string;
+        };
+        /** @description What taking an edition would do to the album, before anything changes. */
+        EditionPlanView: {
+            album_id: string;
+            artist_name: string;
+            duplicate_count: number;
+            extra_count: number;
+            files: components["schemas"]["EditionPlanFileView"][];
+            /** @description The edition is already the album's edition. */
+            is_current: boolean;
+            kept_count: number;
+            missing_count: number;
+            release_group_mbid: string;
+            release_mbid: string;
+            title: string;
+            tracks: components["schemas"]["EditionPlanTrackView"][];
         };
         /**
          * @description How DroppedNeedle picks between editions of one album when the files
@@ -28410,6 +28504,66 @@ export interface operations {
             };
             /** @description Nothing waits for confirmation */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    plan_edition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+                /** @description Any MusicBrainz release; the album's current edition when absent. */
+                release_mbid: string | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The plan */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EditionPlanView"];
+                };
+            };
+            /** @description Bad release id, or the album has no edition to plan */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album, or MusicBrainz does not know the release */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description MusicBrainz is not answering */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
