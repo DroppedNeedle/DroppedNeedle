@@ -258,6 +258,8 @@ pub struct OperationView {
     /// Candidates a re-identification waits on, best first.
     pub reidentification_candidates: Vec<ReidentificationCandidateView>,
     pub selected_reidentification_candidate_key: Option<String>,
+    /// An identity repair or preparation's report, once its check is done.
+    pub repair_summary: Option<super::repairs::RepairSummaryView>,
 }
 
 /// Pause, resume, or stop a job.
@@ -483,10 +485,11 @@ pub(super) fn job_view(job: &OperationJob) -> OperationView {
         results_truncated: false,
         reidentification_candidates: Vec::new(),
         selected_reidentification_candidate_key: None,
+        repair_summary: None,
     }
 }
 
-fn detail_view(detail: &OperationDetail) -> OperationView {
+pub(super) fn detail_view(detail: &OperationDetail) -> OperationView {
     let candidates = &detail.candidates;
     OperationView {
         results: detail
@@ -539,8 +542,18 @@ pub async fn get_operation(
     Path(job_id): Path<String>,
 ) -> Result<Json<OperationView>, OperationsHttpError> {
     let ops = Operations::new(&state);
-    let detail = blocking(move || ops.get(&job_id)).await?;
-    Ok(Json(detail_view(&detail)))
+    let (detail, summary) = blocking(move || {
+        let detail = ops.get(&job_id)?;
+        let summary = (detail.job.kind == "repair")
+            .then(|| crate::library::repairs::service::repair_summary(&state, &job_id))
+            .flatten();
+        Ok((detail, summary))
+    })
+    .await?;
+    Ok(Json(OperationView {
+        repair_summary: summary.map(Into::into),
+        ..detail_view(&detail)
+    }))
 }
 
 async fn control(

@@ -35,6 +35,7 @@ pub mod mutations;
 pub mod operations;
 pub mod publish;
 pub mod reconcile;
+pub mod repairs;
 pub mod scan;
 pub mod scans;
 pub mod service;

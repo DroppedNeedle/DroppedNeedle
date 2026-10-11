@@ -440,6 +440,65 @@ pub fn confirm(
     Ok(())
 }
 
+/// Take an automatic match off an album that failed its recheck: the
+/// album identity and its files' placements go, the album shows as
+/// unmatched with `reason_code`, and the change can be undone like an
+/// edition choice. A person's choice is never detached: `None` when the
+/// album has no identity or a chosen one. Returns the audit row id.
+pub fn detach(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    reason_code: &str,
+    actor: Option<&str>,
+    job_id: Option<&str>,
+    now: f64,
+) -> Result<Option<String>, OperationError> {
+    let before = snapshot(tx, album_id)?;
+    let Some(identity) = before.identity.clone() else {
+        return Ok(None);
+    };
+    if identity.decision_source.as_deref() == Some("manual") {
+        return Ok(None);
+    }
+    tx.execute(
+        "DELETE FROM local_track_external_identities WHERE provider = ?2 AND local_track_id IN \
+         (SELECT id FROM local_tracks WHERE local_album_id = ?1 AND availability = 'indexed')",
+        params![album_id, PROVIDER],
+    )?;
+    tx.execute(
+        "DELETE FROM local_album_external_identities WHERE local_album_id = ?1 AND provider = ?2",
+        params![album_id, PROVIDER],
+    )?;
+    tx.execute(
+        "DELETE FROM library_edition_remap_queue WHERE local_album_id = ?1",
+        params![album_id],
+    )?;
+    tx.execute(
+        "INSERT INTO library_album_match_state (local_album_id, state, reason_code, \
+         release_mbid, candidates_json, updated_at) VALUES (?1, 'unmatched', ?2, NULL, '[]', ?3) \
+         ON CONFLICT (local_album_id) DO UPDATE SET state = 'unmatched', \
+         reason_code = excluded.reason_code, release_mbid = NULL, candidates_json = '[]', \
+         updated_at = excluded.updated_at",
+        params![album_id, reason_code, now],
+    )?;
+    let action = record_action(
+        tx,
+        CatalogAction {
+            actor: actor.unwrap_or("system"),
+            kind: "repair_detach",
+            album_id,
+            job_id,
+            before: serde_json::to_value(&identity).unwrap_or_default(),
+            after: serde_json::json!({ "match_state": "unmatched" }),
+            reason: reason_code,
+        },
+        now,
+    )?;
+    keep_undo(tx, album_id, &before, &action, now)?;
+    bump_catalog(tx)?;
+    Ok(Some(action))
+}
+
 /// An undo row: id, prior identity, prior tracks, prior match state, and
 /// the identity revision the change left.
 type UndoRow = (String, Option<String>, String, Option<String>, i64);
@@ -448,9 +507,10 @@ type UndoRow = (String, Option<String>, String, Option<String>, i64);
 pub fn undo_available(conn: &Connection, album_id: &str) -> rusqlite::Result<bool> {
     conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM library_edition_choice_undo u \
-         JOIN local_album_external_identities i \
+         LEFT JOIN local_album_external_identities i \
          ON i.local_album_id = u.local_album_id AND i.provider = ?2 \
-         WHERE u.local_album_id = ?1 AND i.row_revision = u.expected_identity_revision)",
+         WHERE u.local_album_id = ?1 \
+         AND COALESCE(i.row_revision, 0) = u.expected_identity_revision)",
         params![album_id, PROVIDER],
         |row| row.get(0),
     )

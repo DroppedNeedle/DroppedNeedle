@@ -55,10 +55,9 @@ pub fn plan(job: &OperationJob, control: Control) -> ControlPlan {
             OperationState::Queued | OperationState::Paused if control == Control::Stop => {
                 ControlPlan::StopNow
             }
-            // A re-identification waiting on a choice holds no worker.
-            OperationState::Ready if control == Control::Stop && job.is_reidentification() => {
-                ControlPlan::StopNow
-            }
+            // A job waiting on an administrator (a re-identification's
+            // choice, a repair report's Apply) holds no worker.
+            OperationState::Ready if control == Control::Stop => ControlPlan::StopNow,
             _ => ControlPlan::Request(if control == Control::Stop {
                 ControlRequest::Stop
             } else {
@@ -139,13 +138,7 @@ mod tests {
             (reid, Queued, None, Control::Stop, ControlPlan::StopNow),
             (reid, Paused, None, Control::Stop, ControlPlan::StopNow),
             (reid, Ready, None, Control::Stop, ControlPlan::StopNow),
-            (
-                repair,
-                Ready,
-                None,
-                Control::Stop,
-                ControlPlan::Request(ControlRequest::Stop),
-            ),
+            (repair, Ready, None, Control::Stop, ControlPlan::StopNow),
             (
                 reid,
                 Running,

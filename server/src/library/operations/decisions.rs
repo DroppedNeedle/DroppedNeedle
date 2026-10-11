@@ -210,7 +210,7 @@ pub(super) fn seal_album(
     Ok(())
 }
 
-pub(super) fn indexed_track_ids(
+pub(crate) fn indexed_track_ids(
     conn: &Connection,
     album_id: &str,
 ) -> rusqlite::Result<Vec<String>> {
@@ -223,7 +223,7 @@ pub(super) fn indexed_track_ids(
 }
 
 /// One track identity row to write.
-pub(super) struct TrackRow<'a> {
+pub(crate) struct TrackRow<'a> {
     pub local_track_id: &'a str,
     pub recording_mbid: &'a str,
     pub release_mbid: Option<&'a str>,
@@ -234,7 +234,7 @@ pub(super) struct TrackRow<'a> {
 }
 
 /// Write one track identity; an existing row takes the next revision.
-pub(super) fn upsert_track_identity(
+pub(crate) fn upsert_track_identity(
     tx: &Transaction<'_>,
     row: &TrackRow<'_>,
     now: f64,
@@ -687,7 +687,7 @@ fn now_ms() -> i64 {
 }
 
 /// One audit row for a catalog decision.
-pub(super) struct CatalogAction<'a> {
+pub(crate) struct CatalogAction<'a> {
     pub actor: &'a str,
     pub kind: &'a str,
     pub album_id: &'a str,
@@ -697,7 +697,7 @@ pub(super) struct CatalogAction<'a> {
     pub reason: &'a str,
 }
 
-pub(super) fn record_action(
+pub(crate) fn record_action(
     tx: &Transaction<'_>,
     action: CatalogAction<'_>,
     now: f64,
@@ -723,7 +723,7 @@ pub(super) fn record_action(
 }
 
 /// Move the catalog revision so cached reads of the album refresh.
-pub(super) fn bump_catalog(tx: &Transaction<'_>) -> rusqlite::Result<()> {
+pub(crate) fn bump_catalog(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     tx.execute(
         "INSERT INTO library_catalog_revision (singleton, value) VALUES (1, 0) \
          ON CONFLICT (singleton) DO NOTHING",

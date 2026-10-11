@@ -289,6 +289,36 @@ pub fn terminal(code: &str) -> Reason {
             "This operation is paused.",
             "Resume it to continue.",
         ),
+        "DRY_RUN_READY" => reason(
+            "DRY_RUN_READY",
+            "The check is done and its report is ready. Nothing has changed yet.",
+            "Read the findings, then apply the safe changes or leave them.",
+        ),
+        "APPLY_COMPLETED" => reason(
+            "APPLY_COMPLETED",
+            "The safe changes from this report are applied.",
+            "Nothing to do; each album's change can be undone from its page.",
+        ),
+        "IDENTITY_PREPARATION_DISCARDED" => reason(
+            "IDENTITY_PREPARATION_DISCARDED",
+            "This identity report was dismissed without changing anything.",
+            "Run a fresh identity check when you want a new report.",
+        ),
+        "CATALOG_IDENTITY_HYGIENE_COMPLETED" => reason(
+            "CATALOG_IDENTITY_HYGIENE_COMPLETED",
+            "The catalog cleanup finished.",
+            "Nothing to do.",
+        ),
+        "PROVIDER_DEFERRED" => reason(
+            "PROVIDER_DEFERRED",
+            "MusicBrainz did not answer, so this album waits for another try.",
+            "Nothing to do; it is retried in a couple of minutes.",
+        ),
+        "STALE_SUBJECT" => reason(
+            "STALE_SUBJECT",
+            "The album changed after it was checked, so the change was skipped.",
+            "Run a fresh check to see the album as it is now.",
+        ),
         _ => reason(
             "UNDESCRIBED_ENDING",
             "This operation ended in a way this version does not describe.",
@@ -345,6 +375,11 @@ pub fn match_reason(code: &str) -> Reason {
             "NO_CANDIDATE",
             "MusicBrainz has no release that looks like this album, so it keeps its own tags.",
             "Search MusicBrainz for the release, or fix the album title and artist tags and rescan.",
+        ),
+        "IDENTITY_FAILED_RECHECK" => reason(
+            "IDENTITY_FAILED_RECHECK",
+            "An identity recheck found these files do not fit the release they were linked to, so the link was removed.",
+            "Pick the right edition yourself, or undo the change from this album.",
         ),
         "UNIDENTIFIED" => reason(
             "UNIDENTIFIED",

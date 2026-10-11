@@ -2212,6 +2212,76 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/library/management/operations/{job_id}/undo-preview",
         Posture::Admin,
     ),
+    // Identity repairs, preparations and scan diagnostics: admin-only, as in v2.
+    ("POST", "/api/v3/library/identity-repairs", Posture::Admin),
+    ("GET", "/api/v3/library/identity-repairs", Posture::Admin),
+    ("GET", "/api/v3/library/identity-repairs/estimate", Posture::Admin),
+    ("GET", "/api/v3/library/identity-repairs/{job_id}", Posture::Admin),
+    (
+        "GET",
+        "/api/v3/library/identity-repairs/{job_id}/findings",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/identity-repairs/{job_id}/apply",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/identity-repairs/{job_id}/pause",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/identity-repairs/{job_id}/resume",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/identity-repairs/{job_id}/stop",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/management/identity-preparations",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/library/management/identity-preparations",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/library/management/identity-preparations/estimate",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/library/management/identity-preparations/{job_id}",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/library/management/identity-preparations/{job_id}/findings",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/management/identity-preparations/{job_id}/apply",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/management/identity-preparations/{job_id}/discard",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/library/scan/runs/{id}/diagnostics",
+        Posture::Admin,
+    ),
     // Library operations: admin-only, as in v2.
     ("GET", "/api/v3/library/operations/{job_id}", Posture::Admin),
     (

@@ -3325,3 +3325,279 @@ async fn library_management_preview_apply_undo() {
         .expect("history reads");
     assert_eq!(history.len(), 4);
 }
+
+/// Run repair turns until the job leaves `queued` and `running`.
+async fn settle_repair(lib: &Lib, headers: &[(&str, &str)], path: &str) -> Value {
+    use droppedneedle::library::repairs::{service::Repairs, tick};
+    let repairs = Repairs::new(&lib.library);
+    for _ in 0..50 {
+        tick(&lib.library, &repairs, "repair-worker").await;
+        let (status, body) = call(lib.router(), "GET", path, headers, None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        if !matches!(body["state"].as_str(), Some("queued" | "running")) {
+            return body;
+        }
+    }
+    panic!("repair job never settled");
+}
+
+#[tokio::test]
+async fn library_journey_identity_repair_and_preparation() {
+    use droppedneedle::library::identify::stores::IdentityStore as _;
+
+    let lib = Lib::open("repairs").await;
+    let admin = setup_admin(lib.router(), "owner", "owner-password-1").await;
+    let auth = bearer(&admin);
+    let headers = [("authorization", auth.as_str())];
+    let music = lib.dir.join("music");
+    plant(&music, "album-r/01.flac", "flac_full_01.flac");
+    plant(&music, "album-r/02.flac", "flac_full_02.flac");
+    let root = json!({"id": "music", "path": music.to_string_lossy()});
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/roots",
+        &headers,
+        Some(root),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/scan",
+        &headers,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let run_id = body["run_id"].as_str().expect("run id").to_owned();
+    drain_scans(&lib.library).await;
+    let run_path = format!("/api/v3/library/scan/runs/{run_id}");
+    let (_, body) = call(lib.router(), "GET", &run_path, &headers, None).await;
+    let track_id = body["files"][0]["track_id"]
+        .as_str()
+        .expect("track")
+        .to_owned();
+    let track_path = format!("/api/v3/library/tracks/{track_id}");
+    let (_, body) = call(lib.router(), "GET", &track_path, &headers, None).await;
+    let album = body["album_id"].as_str().expect("album id").to_owned();
+    let release = tagged_release(&lib.library, &album);
+    let scripted = lib.library.test_providers.as_ref().expect("scripted");
+    scripted.set_recall(RecallResult {
+        releases: vec![release.clone()],
+        ..RecallResult::default()
+    });
+    assert_eq!(lib.library.identify_tick().await, 1);
+
+    // Scan diagnostics: a redacted download, never a full path.
+    let (status, body) = call(
+        lib.router(),
+        "GET",
+        &format!("{run_path}/diagnostics"),
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["format"], json!("droppedneedle-library-diagnostic-v1"));
+    assert!(!body.to_string().contains(&*music.to_string_lossy()));
+    let (status, _) = call(
+        lib.router(),
+        "GET",
+        "/api/v3/library/scan/runs/nope/diagnostics",
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // A recheck while the match holds: one album, valid, nothing to apply.
+    let (_, body) = call(
+        lib.router(),
+        "GET",
+        "/api/v3/library/identity-repairs/estimate",
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(body["identity_count"], json!(1), "{body}");
+    let create = json!({"idempotency_key": "repair-1"});
+    let (status, job) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/identity-repairs",
+        &headers,
+        Some(create.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{job}");
+    let (_, again) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/identity-repairs",
+        &headers,
+        Some(create),
+    )
+    .await;
+    assert_eq!(again["id"], job["id"], "same key, same job");
+    let job_path = format!(
+        "/api/v3/library/identity-repairs/{}",
+        job["id"].as_str().expect("id")
+    );
+    let ready = settle_repair(&lib, &headers, &job_path).await;
+    assert_eq!(ready["state"], json!("ready"), "{ready}");
+    assert_eq!(
+        ready["repair_summary"]["counts_by_finding"]["valid"],
+        json!(1)
+    );
+    let findings_path = format!("{job_path}/findings");
+    let (_, findings) = call(lib.router(), "GET", &findings_path, &headers, None).await;
+    let item = &findings["items"][0];
+    assert_eq!(item["reason_code"], json!("CURRENT_IDENTITY_PASSES"));
+    assert!(item["reason"]["action"].is_string(), "{findings}");
+
+    // MusicBrainz now lists other recordings on the release: no file fits
+    // it any more, so the recheck offers to detach the match.
+    let mut moved = release.clone();
+    for (index, track) in moved.tracks.iter_mut().enumerate() {
+        track.recording_id = format!("00000000-0000-4000-8000-00000000000{index}");
+        track.title = format!("Something else {index}");
+        track.length_ms = Some(999_000);
+    }
+    scripted.set_recall(RecallResult {
+        releases: vec![moved],
+        ..RecallResult::default()
+    });
+    let (_, job) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/identity-repairs",
+        &headers,
+        Some(json!({"idempotency_key": "repair-2"})),
+    )
+    .await;
+    let job_path = format!(
+        "/api/v3/library/identity-repairs/{}",
+        job["id"].as_str().expect("id")
+    );
+    let ready = settle_repair(&lib, &headers, &job_path).await;
+    assert_eq!(
+        ready["repair_summary"]["estimated_apply_changes"],
+        json!(1),
+        "{ready}"
+    );
+    let apply = format!("{job_path}/apply");
+    let revision = ready["row_revision"].clone();
+    let unconfirmed = json!({"expected_row_revision": revision, "confirmation": false});
+    let (status, _) = call(lib.router(), "POST", &apply, &headers, Some(unconfirmed)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let stale = json!({"expected_row_revision": 0, "confirmation": true});
+    let (status, _) = call(lib.router(), "POST", &apply, &headers, Some(stale)).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let confirmed = json!({"expected_row_revision": revision, "confirmation": true});
+    let (status, body) = call(lib.router(), "POST", &apply, &headers, Some(confirmed)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let done = settle_repair(&lib, &headers, &job_path).await;
+    assert_eq!(done["state"], json!("succeeded"), "{done}");
+    assert_eq!(done["succeeded_count"], json!(1));
+    assert!(lib.library.identify_store.album_identity(&album).is_none());
+    let (_, findings) = call(
+        lib.router(),
+        "GET",
+        &format!("{job_path}/findings"),
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(findings["items"][0]["apply_result"], json!("DETACHED"));
+
+    // The detach is undone from the album, like an edition change.
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        &format!("/api/v3/library/albums/{album}/edition/undo"),
+        &headers,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let restored = lib
+        .library
+        .identify_store
+        .album_identity(&album)
+        .expect("restored");
+    assert_eq!(restored.release_mbid.as_deref(), Some(release.id.as_str()));
+
+    // Preparation: the album has its exact release, so the report is
+    // ready or offers to place the files. Dismissing it changes nothing.
+    scripted.set_recall(RecallResult {
+        releases: vec![release.clone()],
+        ..RecallResult::default()
+    });
+    let (_, estimate) = call(
+        lib.router(),
+        "GET",
+        "/api/v3/library/management/identity-preparations/estimate?root_id=music",
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(estimate["album_count"], json!(1), "{estimate}");
+    assert_eq!(estimate["selected_root_count"], json!(1));
+    let (_, job) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/management/identity-preparations",
+        &headers,
+        Some(json!({"idempotency_key": "prep-1"})),
+    )
+    .await;
+    let prep_path = format!(
+        "/api/v3/library/management/identity-preparations/{}",
+        job["id"].as_str().expect("id")
+    );
+    let as_preparation = job_path.replace("identity-repairs", "management/identity-preparations");
+    let (status, _) = call(lib.router(), "GET", &as_preparation, &headers, None).await;
+    assert_eq!(
+        status,
+        StatusCode::NOT_FOUND,
+        "a repair is not a preparation"
+    );
+    let ready = settle_repair(&lib, &headers, &prep_path).await;
+    assert_eq!(ready["state"], json!("ready"), "{ready}");
+    let (_, findings) = call(
+        lib.router(),
+        "GET",
+        &format!("{prep_path}/findings"),
+        &headers,
+        None,
+    )
+    .await;
+    let code = findings["items"][0]["finding_code"]
+        .as_str()
+        .expect("finding");
+    assert!(matches!(code, "ready" | "mapping_ready"), "{findings}");
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        &format!("{prep_path}/discard"),
+        &headers,
+        Some(json!({"expected_row_revision": ready["row_revision"]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["terminal_code"],
+        json!("IDENTITY_PREPARATION_DISCARDED")
+    );
+    let (_, list) = call(
+        lib.router(),
+        "GET",
+        "/api/v3/library/management/identity-preparations?limit=5",
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(list["items"].as_array().map(Vec::len), Some(1), "{list}");
+}

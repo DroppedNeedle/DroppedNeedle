@@ -11,5 +11,6 @@ pub mod models;
 pub mod mutations;
 pub mod operations;
 pub mod reconcile;
+pub mod repairs;
 pub mod routes;
 pub mod scan;

@@ -34,8 +34,9 @@ use service::Operations;
 /// How often the worker looks for due jobs.
 const POLL: Duration = Duration::from_secs(2);
 
-/// Spawn the operations worker loop: one job at a time, never while a
-/// scan runs (the scan may be changing the very files a job reads).
+/// Spawn the operations worker loop (re-identifications, then repairs,
+/// then edition remaps): one job at a time, never while a scan runs (the
+/// scan may be changing the very files a job reads).
 pub fn spawn_loop(
     setup: &LibrarySetup,
     shutdown: watch::Receiver<bool>,
@@ -49,12 +50,14 @@ pub fn spawn_loop(
 
 async fn run_loop(setup: LibrarySetup, mut shutdown: watch::Receiver<bool>) {
     let ops = Operations::new(&setup);
+    let repairs = crate::library::repairs::service::Repairs::new(&setup);
     let worker = uuid::Uuid::new_v4().to_string();
     loop {
         if *shutdown.borrow() {
             break;
         }
         if tick(&setup, &ops, &worker).await
+            || crate::library::repairs::tick(&setup, &repairs, &worker).await
             || remap_tick(&setup, &ops).await
             || crate::library::management::tick(&setup, &worker, &shutdown).await
         {

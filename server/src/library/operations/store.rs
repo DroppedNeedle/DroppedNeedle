@@ -76,7 +76,7 @@ fn job_by_key(conn: &Connection, key: &str) -> rusqlite::Result<Option<Operation
 }
 
 /// The job after a write that must have found it.
-pub(super) fn job_after(conn: &Connection, job_id: &str) -> Result<OperationJob, OperationError> {
+pub(crate) fn job_after(conn: &Connection, job_id: &str) -> Result<OperationJob, OperationError> {
     job(conn, job_id)?.ok_or(OperationError::NotFound(reasons::OPERATION_NOT_FOUND))
 }
 
@@ -493,12 +493,22 @@ pub fn claim_reidentification(
     worker: &str,
     now: f64,
 ) -> rusqlite::Result<Option<OperationJob>> {
+    claim_kind(tx, OperationKind::ExplicitReidentification, worker, now)
+}
+
+/// Claim the next due job of `kind` for `worker`.
+pub fn claim_kind(
+    tx: &Transaction<'_>,
+    kind: OperationKind,
+    worker: &str,
+    now: f64,
+) -> rusqlite::Result<Option<OperationJob>> {
     let candidate: Option<String> = tx
         .query_row(
             "SELECT id FROM library_operation_jobs WHERE state = 'queued' AND kind = ?1 \
              AND (next_attempt_at IS NULL OR next_attempt_at <= ?2) \
              ORDER BY updated_at, created_at, id LIMIT 1",
-            params![OperationKind::ExplicitReidentification.as_str(), now],
+            params![kind.as_str(), now],
             |row| row.get(0),
         )
         .optional()?;
@@ -576,8 +586,23 @@ pub fn checkpoint(
     job(tx, job_id)
 }
 
+/// Keep holding a running job: push its lease forward. False when the
+/// worker lost it (stopped, or recovered by another worker).
+pub fn extend_lease(
+    tx: &Transaction<'_>,
+    job_id: &str,
+    worker: &str,
+    now: f64,
+) -> rusqlite::Result<bool> {
+    Ok(tx.execute(
+        "UPDATE library_operation_jobs SET lease_expires_at = ?3, heartbeat_at = ?4 \
+         WHERE id = ?1 AND state = 'running' AND lease_owner = ?2",
+        params![job_id, worker, now + LEASE_SECS, now],
+    )? == 1)
+}
+
 /// True while `worker` holds the running job's lease.
-fn holds(tx: &Transaction<'_>, job_id: &str, worker: &str) -> rusqlite::Result<bool> {
+pub fn holds(tx: &Transaction<'_>, job_id: &str, worker: &str) -> rusqlite::Result<bool> {
     tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM library_operation_jobs WHERE id = ?1 \
          AND state = 'running' AND lease_owner = ?2)",

@@ -302,7 +302,7 @@ pub(super) fn identity_state(
 /// Retire an emptied album into `successor`, with an alias so links to the
 /// old id land on the new album. Its pending reviews close and its queued
 /// identification goes.
-pub(super) fn retire(
+pub(crate) fn retire(
     tx: &Transaction<'_>,
     album_id: &str,
     successor: &str,

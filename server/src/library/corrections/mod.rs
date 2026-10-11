@@ -20,7 +20,7 @@
 
 mod artists;
 mod edition;
-mod membership;
+pub(crate) mod membership;
 pub mod models;
 pub mod reasons;
 mod reset;
