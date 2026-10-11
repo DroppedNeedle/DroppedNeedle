@@ -58,6 +58,12 @@ export const LibraryV3Api = {
 		v3('/api/v3/library/albums/{album_id}/edition/confirm', { path: { album_id: albumId } }),
 	editionUndo: (albumId: string) =>
 		v3('/api/v3/library/albums/{album_id}/edition/undo', { path: { album_id: albumId } }),
+	// What taking an edition would do to the files; the current one without a release.
+	editionPlan: (albumId: string, releaseMbid?: string) =>
+		v3('/api/v3/library/albums/{album_id}/edition/plan', {
+			path: { album_id: albumId },
+			query: releaseMbid ? { release_mbid: releaseMbid } : {}
+		}),
 	unconfirmed: (state: 'unconfirmed' | 'unmatched', limit: number, offset: number) =>
 		v3('/api/v3/library/unconfirmed', { query: { state, limit, offset } }),
 	managePreview: () => v3('/api/v3/library/manage/preview'),

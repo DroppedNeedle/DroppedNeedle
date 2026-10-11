@@ -138,6 +138,26 @@ export const getAlbumEditionStatusQuery = (
 		queryFn: ({ signal }) => api.global.v3.GET(LibraryV3Api.edition(getLocalId()), { signal })
 	}));
 
+// What taking one edition would do to a library album's files: kept,
+// duplicate or extra files, and the edition's missing tracks. Curators only.
+export type EditionPlan = components['schemas']['EditionPlanView'];
+
+export const getEditionPlanQuery = (
+	getUserId: Getter<EditionUserId>,
+	getLocalId: Getter<string>,
+	getRelease: Getter<string | null>
+) =>
+	createQuery(() => ({
+		queryKey: [...editionKey(getUserId(), getLocalId()), 'plan', getRelease()] as const,
+		enabled: !!getUserId() && !!getLocalId() && !!getRelease(),
+		staleTime: CACHE_TTL.ALBUM_DETAIL_EDITIONS,
+		retry: false,
+		queryFn: ({ signal }) =>
+			api.global.v3.GET(LibraryV3Api.editionPlan(getLocalId(), getRelease() ?? undefined), {
+				signal
+			})
+	}));
+
 export const getEditionTracksQuery = (
 	getGroup: Getter<string>,
 	getRelease: Getter<string | null>

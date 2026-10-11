@@ -9,11 +9,13 @@
 		chooseAlbumEdition,
 		getAlbumEditionStatusQuery,
 		getAlbumEditionsQuery,
+		getEditionPlanQuery,
 		getEditionTracksQuery,
 		handBackAlbumEdition,
 		retagAfterChoice,
 		undoAlbumEdition,
-		type EditionChoice
+		type EditionChoice,
+		type EditionPlan
 	} from '$lib/queries/albums/EditionQueries.svelte';
 	import type { AlbumEditionItem } from '$lib/types';
 
@@ -53,6 +55,13 @@
 		() => groupMbid || copyId,
 		() => selected
 	);
+	// The server lines the files up against the edition the way choosing
+	// would; the title comparison below is only the fallback.
+	const planQuery = getEditionPlanQuery(
+		userId,
+		() => copyId,
+		() => selected
+	);
 	const choose = chooseAlbumEdition();
 	const handBack = handBackAlbumEdition();
 	const undo = undoAlbumEdition();
@@ -63,6 +72,46 @@
 	const editions = $derived(editionsQuery.data?.items ?? []);
 	const files = $derived(filesQuery.data?.items ?? []);
 	const editionTracks = $derived(tracksQuery.data?.tracks ?? []);
+	const plan = $derived<EditionPlan | null>(planQuery.data ?? null);
+
+	type PlanRow = {
+		key: string;
+		at: string;
+		file: string | null;
+		edition: string | null;
+		note: string | null;
+		tone: '' | 'missing' | 'spare';
+	};
+	// Edition tracks in order with the file that keeps each place, then the
+	// files the edition has no place for.
+	const planRows = $derived.by((): PlanRow[] => {
+		if (!plan) return [];
+		const titleOf = (id: string | null | undefined) =>
+			plan.files.find((file) => file.local_track_id === id)?.title ?? null;
+		const rows: PlanRow[] = plan.tracks.map((track) => ({
+			key: track.release_track_mbid,
+			at: `${track.disc_number}.${track.position}`,
+			file: titleOf(track.local_track_id),
+			edition: track.title,
+			note: track.local_track_id ? null : 'missing',
+			tone: track.local_track_id ? '' : 'missing'
+		}));
+		for (const file of plan.files) {
+			if (file.fate === 'keep') continue;
+			rows.push({
+				key: file.local_track_id,
+				at: '',
+				file: file.title,
+				edition: null,
+				note:
+					file.fate === 'duplicate'
+						? `second copy of ${file.edition_disc_number}.${file.edition_position}`
+						: 'not on this edition',
+				tone: 'spare'
+			});
+		}
+		return rows;
+	});
 	const visible = $derived(
 		editions.filter((edition) => {
 			const needle = filter.trim().toLowerCase();
@@ -206,12 +255,16 @@
 		}
 	}
 
-	async function getMissing(): Promise<void> {
-		if (!result) return;
+	async function getMissing(groupMbid: string): Promise<void> {
 		try {
-			const answer = await acquire.mutateAsync({ mbid: result.release_group_mbid });
+			const answer = await acquire.mutateAsync({ mbid: groupMbid });
 			acquired = true;
-			toastStore.show({ message: answer.message, type: 'success' });
+			const upgrades = answer.upgrades ?? 0;
+			const extra =
+				upgrades > 0
+					? ` ${upgrades} ${upgrades === 1 ? 'track' : 'tracks'} below your quality cutoff will be upgraded.`
+					: '';
+			toastStore.show({ message: answer.message + extra, type: 'success' });
 		} catch (error) {
 			toastStore.show({
 				message: failure(error, 'Could not request the missing tracks.'),
@@ -280,7 +333,7 @@
 						<button
 							class="btn btn-outline btn-sm gap-2"
 							disabled={acquire.isPending || acquired}
-							onclick={() => void getMissing()}
+							onclick={() => result && void getMissing(result.release_group_mbid)}
 							><Download class="h-4 w-4" />
 							{acquired ? 'Requested' : 'Get the missing tracks'}</button
 						>
@@ -365,7 +418,13 @@
 				<section class="flex min-h-0 flex-col gap-2" aria-label="Tracklists side by side">
 					<div class="flex items-center justify-between text-sm">
 						<span class="font-medium">Your files and this edition</span>
-						{#if selected && editionTracks.length}
+						{#if selected && plan}
+							<span class="text-xs text-base-content/60"
+								>{plan.kept_count} keep their place · {plan.missing_count} missing{#if plan.duplicate_count}
+									· {plan.duplicate_count} second copies{/if}{#if plan.extra_count}
+									· {plan.extra_count} not on it{/if}</span
+							>
+						{:else if selected && editionTracks.length}
 							<span class="text-xs text-base-content/60"
 								>{fits} of {files.length} files line up · {editionTracks.length} tracks on the edition</span
 							>
@@ -375,7 +434,46 @@
 						<p class="text-sm text-base-content/55">
 							Pick an edition to compare its tracklist with your files.
 						</p>
-					{:else if tracksQuery.isLoading}
+					{:else if plan}
+						<div class="min-h-0 flex-1 overflow-y-auto rounded-box border border-base-content/10">
+							<table class="table table-xs">
+								<thead><tr><th>#</th><th>Your file</th><th>On this edition</th></tr></thead>
+								<tbody>
+									{#each planRows as row (row.key)}
+										<tr
+											class={row.tone === 'missing'
+												? 'bg-warning/5'
+												: row.tone === 'spare'
+													? 'bg-base-200/60'
+													: ''}
+										>
+											<td class="text-base-content/45">{row.at}</td>
+											<td class={row.file ? '' : 'text-base-content/35'}>{row.file ?? 'missing'}</td
+											>
+											<td class={row.edition ? '' : 'text-base-content/45 italic'}>
+												{row.edition ?? row.note}
+											</td>
+										</tr>
+									{/each}
+								</tbody>
+							</table>
+						</div>
+						<p class="text-xs text-base-content/50">
+							Choosing never deletes a file: second copies and files not on the edition stay in the
+							album with their own tags.
+						</p>
+						{#if plan.is_current && plan.missing_count > 0}
+							<button
+								class="btn btn-outline btn-sm gap-2 self-start"
+								disabled={acquire.isPending || acquired}
+								onclick={() => plan && void getMissing(plan.release_group_mbid)}
+								><Download class="h-4 w-4" />
+								{acquired
+									? 'Requested'
+									: `Get the ${plan.missing_count} missing ${plan.missing_count === 1 ? 'track' : 'tracks'}`}</button
+							>
+						{/if}
+					{:else if planQuery.isLoading || tracksQuery.isLoading}
 						<div class="skeleton h-40"></div>
 					{:else if tracksQuery.isError}
 						<p class="text-sm text-base-content/55">This edition's tracklist couldn't be loaded.</p>
