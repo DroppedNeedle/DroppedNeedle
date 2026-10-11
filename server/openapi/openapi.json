@@ -27904,6 +27904,13 @@
           "name"
         ],
         "properties": {
+          "idempotency_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A UUID naming this create. Sending the same key again returns the\nbatch it made instead of filing the albums twice."
+          },
           "items": {
             "type": "array",
             "items": {
@@ -28023,7 +28030,7 @@
           },
           "outcome": {
             "type": "string",
-            "description": "`requested`, `skipped_in_library`, or `skipped_duplicate`."
+            "description": "`requested`, `skipped_in_library`, `skipped_duplicate`, or\n`not_requested` (the requests service did not file it)."
           },
           "release_group_mbid": {
             "type": "string",

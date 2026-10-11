@@ -11835,6 +11835,11 @@ export interface components {
         };
         /** @description Body creating a discovery batch (one request per album). */
         DiscoveryBatchCreate: {
+            /**
+             * @description A UUID naming this create. Sending the same key again returns the
+             *     batch it made instead of filing the albums twice.
+             */
+            idempotency_key?: string | null;
             /** @description Albums to request. */
             items?: components["schemas"]["DiscoveryBatchItemIn"][];
             /** @description Batch name. */
@@ -11891,7 +11896,10 @@ export interface components {
             artist_name?: string;
             /** @description True when already owned. */
             in_library?: boolean;
-            /** @description `requested`, `skipped_in_library`, or `skipped_duplicate`. */
+            /**
+             * @description `requested`, `skipped_in_library`, `skipped_duplicate`, or
+             *     `not_requested` (the requests service did not file it).
+             */
             outcome: string;
             /** @description MusicBrainz release-group id. */
             release_group_mbid: string;

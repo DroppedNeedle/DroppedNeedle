@@ -1,7 +1,7 @@
 //! The requests side of discovery batches: discover's "download this
 //! whole shelf" files its albums here, through the same intake, quota,
 //! approval and edition rules as any album request, and a batch removal
-//! cancels them or recycles what landed.
+//! withdraws the owner's asks or (admins only) recycles what landed.
 
 use futures_util::future::BoxFuture;
 
@@ -103,32 +103,43 @@ impl BatchRequests for DiscoveryBatchRequests {
         })
     }
 
-    fn cancel_album<'a>(
+    fn withdraw_album<'a>(
         &'a self,
-        caller: &'a BatchCaller,
+        owner_id: &'a str,
         release_group_mbid: &'a str,
     ) -> BoxFuture<'a, Result<bool, String>> {
         Box::pin(async move {
+            // Act as the owner with plain rights, whoever removes the
+            // batch: the owner detaches from a shared request and only a
+            // request that is theirs alone is cancelled.
+            let owner = Principal {
+                user_id: owner_id.to_owned(),
+                username: None,
+                role: Role::User,
+            };
             let ids = [release_group_mbid.to_owned()];
             RequestsService::new(&self.requests)
-                .cancel_batch(&principal(caller), &ids, RequestKind::Album)
+                .cancel_batch(&owner, &ids, RequestKind::Album)
                 .await
                 .map(|outcome| outcome.cancelled > 0)
-                .map_err(|error| format!("batch cancel: {error:?}"))
+                .map_err(|error| format!("batch withdraw: {error:?}"))
         })
     }
 
     fn remove_album<'a>(
         &'a self,
+        caller: &'a BatchCaller,
         release_group_mbid: &'a str,
-        actor: &'a str,
     ) -> BoxFuture<'a, Result<bool, String>> {
         Box::pin(async move {
+            if caller.role != UserRole::Admin {
+                return Err("only admins recycle batch albums".to_owned());
+            }
             let Some(library) = self.library.clone() else {
                 return Ok(false);
             };
             let hook = library.removal_hook.get().cloned();
-            let (album, actor_id) = (release_group_mbid.to_owned(), actor.to_owned());
+            let (album, actor_id) = (release_group_mbid.to_owned(), caller.user_id.clone());
             let removed = tokio::task::spawn_blocking(move || {
                 Mutations::new(&library).remove_album(&album, true, &actor_id)
             })

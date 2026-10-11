@@ -1247,6 +1247,10 @@ pub struct DiscoveryBatchCreate {
     /// Albums to request.
     #[serde(default)]
     pub items: Vec<DiscoveryBatchItemIn>,
+    /// A UUID naming this create. Sending the same key again returns the
+    /// batch it made instead of filing the albums twice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
 }
 
 /// Per-album outcome inside a batch.
@@ -1263,7 +1267,8 @@ pub struct DiscoveryBatchItemStatus {
     /// Artist name.
     #[serde(default)]
     pub artist_name: String,
-    /// `requested`, `skipped_in_library`, or `skipped_duplicate`.
+    /// `requested`, `skipped_in_library`, `skipped_duplicate`, or
+    /// `not_requested` (the requests service did not file it).
     pub outcome: String,
     /// Request state, when requested.
     #[serde(default, skip_serializing_if = "Option::is_none")]

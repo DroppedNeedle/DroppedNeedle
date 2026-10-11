@@ -16,7 +16,7 @@
 //! on every view, never copied into the batch.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use sqlx::SqlitePool;
 
@@ -36,6 +36,9 @@ pub const OUTCOME_REQUESTED: &str = "requested";
 pub const OUTCOME_IN_LIBRARY: &str = "skipped_in_library";
 /// Outcome of an album someone had already requested.
 pub const OUTCOME_DUPLICATE: &str = "skipped_duplicate";
+/// Outcome of an album the requests service did not file (no usable
+/// names, or someone else's request won a race).
+pub const OUTCOME_NOT_REQUESTED: &str = "not_requested";
 
 /// Request states that mean "still cancellable, nothing on disk yet".
 const PENDING_STATUSES: [&str; 4] = ["awaiting_approval", "pending", "queued", "downloading"];
@@ -75,19 +78,22 @@ pub trait BatchRequests: Send + Sync {
         caller: &'a BatchCaller,
         albums: Vec<BatchAlbum>,
     ) -> BoxFuture<'a, Result<(), BatchFailure>>;
-    /// Cancel the caller's pending request for one album (an admin
-    /// cancels it outright). True when something was cancelled.
-    fn cancel_album<'a>(
+    /// Withdraw the batch owner's ask for one album: the owner detaches
+    /// when others share the request, and it is cancelled when it was
+    /// only theirs. Never cancels a request someone else still wants.
+    /// True when the owner's ask is gone.
+    fn withdraw_album<'a>(
         &'a self,
-        caller: &'a BatchCaller,
+        owner_id: &'a str,
         release_group_mbid: &'a str,
     ) -> BoxFuture<'a, Result<bool, String>>;
     /// Move one album's files to the recycle bin and clear its download
-    /// state. True when the library held it.
+    /// state. Admins only: anyone else is refused. True when the library
+    /// held it.
     fn remove_album<'a>(
         &'a self,
+        caller: &'a BatchCaller,
         release_group_mbid: &'a str,
-        actor: &'a str,
     ) -> BoxFuture<'a, Result<bool, String>>;
 }
 
@@ -118,6 +124,23 @@ pub struct LiveBatches {
     lane: WriteLane,
     users: Arc<dyn UserStore>,
     requests: RequestsSlot,
+    /// Idempotency keys of creates in progress, so a retried "Download
+    /// all" never files the same batch twice at once.
+    creating: Mutex<HashSet<String>>,
+}
+
+/// Clears an in-progress idempotency key however the create ends.
+struct CreatingGuard<'a> {
+    keys: &'a Mutex<HashSet<String>>,
+    key: String,
+}
+
+impl Drop for CreatingGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut keys) = self.keys.lock() {
+            keys.remove(&self.key);
+        }
+    }
 }
 
 fn failed(cause: String) -> BatchFailure {
@@ -148,6 +171,7 @@ impl LiveBatches {
             lane,
             users,
             requests,
+            creating: Mutex::new(HashSet::new()),
         }
     }
 
@@ -257,17 +281,71 @@ impl LiveBatches {
         Ok(states)
     }
 
-    /// The albums the library holds, lowercased. A failed read is logged
-    /// and treated as "nothing owned", as v2 did.
-    async fn owned(&self, mbids: &[String]) -> HashSet<String> {
+    /// The albums the library holds, lowercased.
+    async fn owned(&self, mbids: &[String]) -> Result<HashSet<String>, String> {
         let lowered: Vec<String> = mbids.iter().map(|id| id.to_ascii_lowercase()).collect();
         LocalCatalog::new(self.pool.clone())
             .owned_albums(&lowered)
             .await
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "batch library check failed; treating albums as new");
-                HashSet::new()
-            })
+            .map_err(|error| format!("batch library check: {error}"))
+    }
+
+    /// The albums whose live request belongs to `owner` or that `owner`
+    /// joined: what filing actually did for them.
+    async fn filed_for(&self, owner: &str, mbids: &[String]) -> Result<HashSet<String>, String> {
+        let mut filed = HashSet::new();
+        for chunk in mbids.chunks(400) {
+            let sql = format!(
+                "SELECT h.musicbrainz_id_lower FROM request_history h \
+                 WHERE h.request_kind = 'album' \
+                 AND h.status IN ('pending','downloading','queued','awaiting_approval') \
+                 AND h.musicbrainz_id_lower IN ({}) \
+                 AND (h.user_id = ? OR EXISTS (SELECT 1 FROM request_history_requesters r \
+                 WHERE r.musicbrainz_id_lower = h.musicbrainz_id_lower AND r.user_id = ?))",
+                placeholders(chunk.len())
+            );
+            let mut query = sqlx::query_scalar::<_, String>(&sql);
+            for mbid in chunk {
+                query = query.bind(mbid.to_ascii_lowercase());
+            }
+            let rows = query
+                .bind(owner)
+                .bind(owner)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|error| format!("batch filing read: {error}"))?;
+            filed.extend(rows);
+        }
+        Ok(filed)
+    }
+
+    /// Whether anyone but `owner` requested, favourited or played this
+    /// album. Such an album is never recycled with a batch.
+    async fn held_by_others(&self, mbid: &str, owner: &str) -> Result<bool, String> {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM request_history WHERE request_kind = 'album' \
+                 AND musicbrainz_id_lower = ?1 AND user_id IS NOT NULL AND user_id != ?2) \
+             OR EXISTS (SELECT 1 FROM request_history_requesters \
+                 WHERE musicbrainz_id_lower = ?1 AND user_id != ?2) \
+             OR EXISTS (SELECT 1 FROM user_favorites WHERE user_id != ?2 \
+                 AND item_kind = 'album' AND lower(item_id) = ?1) \
+             OR EXISTS (SELECT 1 FROM library_user_favorites f WHERE f.user_id != ?2 AND ( \
+                 (f.item_kind = 'album' AND f.item_id IN (SELECT e.local_album_id \
+                     FROM local_album_external_identities e \
+                     WHERE lower(e.release_group_mbid) = ?1)) \
+                 OR (f.item_kind = 'track' AND f.item_id IN (SELECT t.id FROM local_tracks t \
+                     JOIN local_album_external_identities e ON e.local_album_id = t.local_album_id \
+                     WHERE lower(e.release_group_mbid) = ?1)))) \
+             OR EXISTS (SELECT 1 FROM library_play_history p WHERE p.user_id != ?2 AND ( \
+                 lower(p.release_group_mbid) = ?1 OR p.local_album_id IN (SELECT e.local_album_id \
+                     FROM local_album_external_identities e \
+                     WHERE lower(e.release_group_mbid) = ?1)))",
+        )
+        .bind(mbid.to_ascii_lowercase())
+        .bind(owner)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|error| format!("batch sharing check: {error}"))
     }
 
     async fn statuses(&self, items: &[BatchItem]) -> Result<Vec<DiscoveryBatchItemStatus>, String> {
@@ -275,7 +353,7 @@ impl LiveBatches {
             .iter()
             .map(|item| item.release_group_mbid.clone())
             .collect();
-        let owned = self.owned(&ids).await;
+        let owned = self.owned(&ids).await?;
         let states = self.request_states(&ids).await?;
         Ok(items
             .iter()
@@ -375,6 +453,30 @@ impl LiveBatches {
             .map_err(|error| format!("batch write: {error}"))
     }
 
+    /// The caller's batch already made under this idempotency key.
+    async fn existing(
+        &self,
+        caller: &BatchCaller,
+        key: &str,
+    ) -> Result<Option<DiscoveryBatchDetail>, BatchFailure> {
+        let owner: Option<String> =
+            sqlx::query_scalar("SELECT user_id FROM discovery_batches WHERE id = ?1")
+                .bind(key)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|error| failed(format!("batch key read: {error}")))?;
+        match owner {
+            None => Ok(None),
+            Some(owner) if owner == caller.user_id => {
+                let head = self.visible(caller, key).await?;
+                self.detail_of(head).await.map(Some)
+            }
+            Some(_) => Err(BatchFailure::Invalid(
+                "This idempotency key is already in use.".to_owned(),
+            )),
+        }
+    }
+
     async fn create_batch(
         &self,
         user_id: &str,
@@ -382,6 +484,41 @@ impl LiveBatches {
     ) -> Result<DiscoveryBatchDetail, BatchFailure> {
         let requests = self.requests()?;
         let caller = self.caller(user_id).await?;
+        // A retried create with the same key answers with the batch it
+        // already made instead of filing again.
+        let key = match body.idempotency_key.as_deref().map(str::trim) {
+            Some(key) if !key.is_empty() => {
+                let key = key.to_ascii_lowercase();
+                if uuid::Uuid::parse_str(&key).is_err() {
+                    return Err(BatchFailure::Invalid(
+                        "idempotency_key must be a UUID".to_owned(),
+                    ));
+                }
+                Some(key)
+            }
+            _ => None,
+        };
+        let _guard = match &key {
+            Some(key) => {
+                if let Some(existing) = self.existing(&caller, key).await? {
+                    return Ok(existing);
+                }
+                let mut creating = self
+                    .creating
+                    .lock()
+                    .map_err(|_| failed("batch create guard poisoned".to_owned()))?;
+                if !creating.insert(key.clone()) {
+                    return Err(BatchFailure::Invalid(
+                        "This batch is already being created; try again in a moment.".to_owned(),
+                    ));
+                }
+                Some(CreatingGuard {
+                    keys: &self.creating,
+                    key: key.clone(),
+                })
+            }
+            None => None,
+        };
         let mut seen = HashSet::new();
         let mut wanted = Vec::new();
         for item in &body.items {
@@ -397,13 +534,15 @@ impl LiveBatches {
             }
         }
         let ids: Vec<String> = wanted.iter().map(|(id, _)| id.clone()).collect();
-        let owned = self.owned(&ids).await;
+        // Fail closed: a batch must never request (and later recycle) an
+        // album the library already holds because the check failed.
+        let owned = self.owned(&ids).await.map_err(failed)?;
         let active: HashSet<String> = LocalCatalog::new(self.pool.clone())
             .requested_albums(&ids)
             .await
             .map_err(|error| failed(format!("batch request check: {error}")))?;
 
-        let mut rows = Vec::new();
+        let mut rows: Vec<BatchItem> = Vec::new();
         let mut to_request = Vec::new();
         for (id, item) in wanted {
             let outcome = if owned.contains(&id) {
@@ -436,11 +575,31 @@ impl LiveBatches {
         }
         // Quota and role rules live in the requests service; a refusal
         // propagates and no batch row is written.
+        let asked: Vec<String> = to_request
+            .iter()
+            .map(|album| album.release_group_mbid.clone())
+            .collect();
         requests.request_albums(&caller, to_request).await?;
+        // Record what filing actually did for each album, not what the
+        // check above expected.
+        let filed = self
+            .filed_for(&caller.user_id, &asked)
+            .await
+            .map_err(failed)?;
+        for row in &mut rows {
+            if row.outcome == OUTCOME_REQUESTED && !filed.contains(&row.release_group_mbid) {
+                row.outcome = OUTCOME_NOT_REQUESTED.to_owned();
+            }
+        }
+        if !rows.iter().any(|row| row.outcome == OUTCOME_REQUESTED) {
+            return Err(BatchFailure::Invalid(
+                "None of these albums could be requested.".to_owned(),
+            ));
+        }
 
         let name = body.name.trim();
         let head = BatchHead {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: key.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             user_id: caller.user_id.clone(),
             name: if name.is_empty() {
                 "Discovery batch".to_owned()
@@ -497,28 +656,49 @@ impl LiveBatches {
     ) -> Result<DiscoveryBatchRemoveResult, BatchFailure> {
         let caller = self.caller(user_id).await?;
         let head = self.visible(&caller, batch_id).await?;
+        let owner = head.user_id.clone();
         let detail = self.detail_of(head).await?;
         let mut result = DiscoveryBatchRemoveResult {
             removed_albums: 0,
             cancelled_requests: 0,
             kept: 0,
         };
+        // Items whose step failed stay in the batch so the user can retry.
+        let mut failed_items: Vec<String> = Vec::new();
         if remove_albums {
             let requests = self.requests()?;
             for status in &detail.items {
+                let mbid = status.release_group_mbid.as_str();
                 // Only albums this batch caused; skipped ones are never touched.
                 if status.outcome != OUTCOME_REQUESTED {
                     result.kept += 1;
-                    continue;
-                }
-                let mbid = status.release_group_mbid.as_str();
-                if status.in_library {
-                    match requests.remove_album(mbid, &caller.user_id).await {
+                } else if status.in_library {
+                    // Recycling is for admins, and never takes an album
+                    // someone else asked for, favourited or played.
+                    if caller.role != Role::Admin {
+                        result.kept += 1;
+                        continue;
+                    }
+                    match self.held_by_others(mbid, &owner).await {
+                        Ok(false) => {}
+                        Ok(true) => {
+                            result.kept += 1;
+                            continue;
+                        }
+                        Err(cause) => {
+                            tracing::warn!(album = mbid, %cause, "batch removal kept an album");
+                            result.kept += 1;
+                            failed_items.push(mbid.to_owned());
+                            continue;
+                        }
+                    }
+                    match requests.remove_album(&caller, mbid).await {
                         Ok(true) => result.removed_albums += 1,
                         Ok(false) => result.kept += 1,
                         Err(cause) => {
                             tracing::warn!(album = mbid, %cause, "batch removal kept an album");
                             result.kept += 1;
+                            failed_items.push(mbid.to_owned());
                         }
                     }
                 } else if status
@@ -526,12 +706,15 @@ impl LiveBatches {
                     .as_deref()
                     .is_some_and(|state| PENDING_STATUSES.contains(&state))
                 {
-                    match requests.cancel_album(&caller, mbid).await {
+                    // Withdraw the owner's ask only, even when an admin
+                    // removes the batch: others may share the request.
+                    match requests.withdraw_album(&owner, mbid).await {
                         Ok(true) => result.cancelled_requests += 1,
                         Ok(false) => result.kept += 1,
                         Err(cause) => {
                             tracing::warn!(album = mbid, %cause, "batch removal kept a request");
                             result.kept += 1;
+                            failed_items.push(mbid.to_owned());
                         }
                     }
                 } else {
@@ -544,12 +727,25 @@ impl LiveBatches {
         let id = detail.id.clone();
         self.lane
             .write(Lane::Foreground, "discover.batches.delete", move |tx| {
+                let mut keep = String::new();
+                for (index, _) in failed_items.iter().enumerate() {
+                    keep.push_str(if index == 0 { "?" } else { ", ?" });
+                }
+                let sql = if failed_items.is_empty() {
+                    "DELETE FROM discovery_batch_items WHERE batch_id = ?".to_owned()
+                } else {
+                    format!(
+                        "DELETE FROM discovery_batch_items WHERE batch_id = ? \
+                         AND release_group_mbid NOT IN ({keep})"
+                    )
+                };
+                let binds: Vec<&dyn rusqlite::ToSql> = std::iter::once(&id as &dyn rusqlite::ToSql)
+                    .chain(failed_items.iter().map(|mbid| mbid as &dyn rusqlite::ToSql))
+                    .collect();
+                tx.execute(&sql, binds.as_slice())?;
                 tx.execute(
-                    "DELETE FROM discovery_batch_items WHERE batch_id = ?1",
-                    rusqlite::params![id],
-                )?;
-                tx.execute(
-                    "DELETE FROM discovery_batches WHERE id = ?1",
+                    "DELETE FROM discovery_batches WHERE id = ?1 AND NOT EXISTS \
+                     (SELECT 1 FROM discovery_batch_items WHERE batch_id = ?1)",
                     rusqlite::params![id],
                 )?;
                 Ok(())
