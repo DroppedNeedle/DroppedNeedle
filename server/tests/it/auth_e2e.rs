@@ -2217,6 +2217,61 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/library/management/operations/{job_id}/undo-preview",
         Posture::Admin,
     ),
+    (
+        "GET",
+        "/api/v3/library/management/tracks/{track_id}/tag-editor",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/management/tag-edit-previews",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/management/baselines/restore-previews",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/management/baselines/purge-impact",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/management/baselines/purge",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/management/duplicate-resolution-previews",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/library/management/recovery/diagnostics",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/management/recovery/import-bundles/{bundle_id}/resolve",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/settings/library-management/activation-previews",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/settings/library-management/activation-previews/{job_id}",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/settings/library-management/activation-confirmations",
+        Posture::Admin,
+    ),
     // Identity repairs, preparations and scan diagnostics: admin-only, as in v2.
     ("POST", "/api/v3/library/identity-repairs", Posture::Admin),
     ("GET", "/api/v3/library/identity-repairs", Posture::Admin),

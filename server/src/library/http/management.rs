@@ -340,7 +340,7 @@ impl From<JobDetail> for ManagementJobView {
             settings_revision: detail.settings_revision,
             policy_revision: detail.policy_revision,
             catalog_revision: detail.catalog_revision,
-            proposed_settings_revision: None,
+            proposed_settings_revision: detail.proposed_settings_revision,
             target_root_id: detail.target_root_id,
             linked_job_id: detail.linked_job_id,
             selection: detail.selection,
@@ -371,10 +371,10 @@ impl From<JobDetail> for ManagementJobView {
             skipped_count: job.skipped_count,
             control_request: job.control_request.as_str().to_owned(),
             undo_available_count: detail.undo_available_count,
-            undo_expired_count: 0,
-            undo_expires_at: None,
-            baseline_available_count: 0,
-            external_refreshes: Vec::new(),
+            undo_expired_count: detail.undo_expired_count,
+            undo_expires_at: detail.undo_expires_at,
+            baseline_available_count: detail.baseline_available_count,
+            external_refreshes: detail.external_refreshes,
         }
     }
 }
