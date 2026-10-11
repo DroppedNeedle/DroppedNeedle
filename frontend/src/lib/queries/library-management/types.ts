@@ -1,8 +1,9 @@
 import type { components } from '$lib/api/v3/openapi';
 
 // Settings, profile and sharing shapes are the generated v3 schemas. The
-// preview, operation, recovery and tag-editor shapes have no v3 route yet
-// and stay hand-written until they do.
+// preview and operation shapes are views the adapters build from the v3
+// schemas (libraryManagementAdapters.ts); recovery and the tag editor have
+// no v3 route yet and stay hand-written until they do.
 export type ManagementFieldMode = components['schemas']['FieldMode'];
 export type ManagementGenreMode = components['schemas']['GenreMode'];
 export type ManagementSelectionKind = 'roots' | 'artists' | 'albums' | 'tracks' | 'filter';
@@ -137,6 +138,13 @@ export interface LibraryManagementTagEditPreviewRequest {
 	idempotency_key?: string | null;
 }
 
+/** Why a file is left alone or failed: a code, a sentence, and what to do. */
+export interface LibraryManagementReason {
+	code: string;
+	message: string;
+	action: string;
+}
+
 export interface LibraryManagementPreviewSummary {
 	selected_item_count: number | null;
 	item_count: number;
@@ -173,6 +181,8 @@ export interface LibraryManagementPreviewDetailResponse {
 	catalog_revision: number;
 	proposed_settings_revision: string | null;
 	target_root_id: string | null;
+	/** For an undo: the operation it puts back. */
+	linked_job_id?: string | null;
 	selection: Record<string, unknown>;
 	summary: LibraryManagementPreviewSummary;
 	created_at: number;
@@ -187,6 +197,7 @@ export interface LibraryManagementPreviewDetailResponse {
 	operation_row_revision: number;
 	operation_event_revision: number;
 	terminal_code: string | null;
+	terminal_reason?: LibraryManagementReason | null;
 	worker_heartbeat_at: number | null;
 	worker_lease_expires_at: number | null;
 	worker_stalled: boolean;
@@ -224,6 +235,7 @@ export interface LibraryManagementPlanItem {
 	destination_relative_path: string | null;
 	eligibility: ManagementEligibility;
 	reason_code: string | null;
+	reason?: LibraryManagementReason | null;
 	estimated_temporary_bytes: number;
 	desired_document: Record<string, unknown>;
 	artwork_choices: Array<Record<string, unknown>>;
@@ -387,6 +399,7 @@ export interface LibraryManagementResultItem {
 	plan: LibraryManagementPlanItem;
 	work_state: string;
 	failure_code: string | null;
+	failure_reason?: LibraryManagementReason | null;
 	result: Record<string, unknown>;
 	journal_states: string[];
 }

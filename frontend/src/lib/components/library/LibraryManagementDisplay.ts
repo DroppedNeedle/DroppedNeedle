@@ -448,6 +448,13 @@ export function titleManagementValue(value: string): string {
  */
 export const MANAGEMENT_REASON_LABELS: Record<string, string> = {
 	MANAGEMENT_DISABLED: 'File organization is turned off',
+	UNCONFIRMED_MATCH: 'Edition is a best guess nobody confirmed',
+	UNMATCHED_ALBUM: 'Album is not matched to MusicBrainz',
+	CHOSEN_EDITION_FITS_NO_FILE: 'Chosen edition does not fit these files',
+	CATALOG_CHANGED: 'Library changed while saving',
+	WRITE_FAILED: 'Files could not be written',
+	INTERRUPTED: 'Server stopped before this album finished',
+	NOT_SCHEDULED: 'Not part of the apply',
 	IDENTITY_NOT_ACCEPTED: 'Identity needs review before organizing',
 	RELEASE_NOT_SELECTED: 'Exact MusicBrainz edition not chosen',
 	TRACK_NOT_MAPPED: 'Exact edition selected; track map missing',

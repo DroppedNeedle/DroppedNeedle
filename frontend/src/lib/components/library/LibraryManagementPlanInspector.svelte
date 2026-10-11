@@ -158,16 +158,27 @@
 	</div>
 
 	{#if item.reason_code}
-		<p
-			class="rounded-lg border p-2 text-sm font-semibold {item.eligibility === 'warning'
-				? 'border-warning/25 bg-warning/5 text-warning'
-				: 'border-error/20 bg-error/5 text-error'}"
+		<div
+			class="rounded-lg border p-2 text-sm {item.eligibility === 'warning'
+				? 'border-warning/25 bg-warning/5'
+				: 'border-error/20 bg-error/5'}"
 		>
-			{reasonLabel(item.reason_code)}{item.reason_code === 'OPTIONAL_ENRICHMENT_DEFERRED' &&
-			deferredSource
-				? ` (${deferredSource})`
-				: ''}
-		</p>
+			<p class="font-semibold {item.eligibility === 'warning' ? 'text-warning' : 'text-error'}">
+				{reasonLabel(item.reason_code)}{item.reason_code === 'OPTIONAL_ENRICHMENT_DEFERRED' &&
+				deferredSource
+					? ` (${deferredSource})`
+					: ''}
+			</p>
+			{#if item.reason?.message}
+				<p class="mt-1 text-base-content/75">{item.reason.message}</p>
+			{/if}
+			{#if item.reason?.action}
+				<p class="mt-1 text-base-content/60">
+					<span class="font-semibold">What to do:</span>
+					{item.reason.action}
+				</p>
+			{/if}
+		</div>
 	{/if}
 
 	<LibraryManagementLyricsEvidence {item} />

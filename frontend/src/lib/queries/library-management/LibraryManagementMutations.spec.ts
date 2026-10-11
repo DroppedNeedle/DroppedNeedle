@@ -194,8 +194,8 @@ describe('Library Management mutations', () => {
 
 		await mutation.mutationFn(input);
 
-		expect(api.global.post).toHaveBeenCalledWith(
-			'/api/v1/library/management/previews/preview%2F1/discard',
+		expect(api.global.v3.POST).toHaveBeenCalledWith(
+			'/api/v3/library/management/previews/preview%2F1/discard',
 			input.request
 		);
 	});
@@ -206,8 +206,8 @@ describe('Library Management mutations', () => {
 
 		await mutation.mutationFn({ jobId: 'preview/1' });
 
-		expect(api.global.post).toHaveBeenCalledWith(
-			'/api/v1/library/management/previews/preview%2F1/reissue'
+		expect(api.global.v3.POST).toHaveBeenCalledWith(
+			'/api/v3/library/management/previews/preview%2F1/reissue'
 		);
 	});
 

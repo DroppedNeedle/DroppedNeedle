@@ -24,8 +24,10 @@
 	const album = $derived(managementPlanAlbum(item.plan));
 	const status = $derived(item.failure_code ?? item.work_state);
 	const failureReason = $derived(
-		typeof item.result.reason === 'string' ? item.result.reason : null
+		item.failure_reason?.message ||
+			(typeof item.result.reason === 'string' ? item.result.reason : null)
 	);
+	const failureAction = $derived(item.failure_reason?.action || null);
 	const pathChanged = $derived(
 		Boolean(item.plan.destination_relative_path) &&
 			(item.plan.destination_relative_path !== item.plan.source_relative_path ||
@@ -76,9 +78,9 @@
 
 	<LibraryManagementLyricsEvidence item={item.plan} workState={item.work_state} {operationState} />
 
-	<section>
-		<h4 class="management-inspector-section-title">Durable journal</h4>
-		{#if item.journal_states.length}
+	{#if item.journal_states.length}
+		<section>
+			<h4 class="management-inspector-section-title">Durable journal</h4>
 			<ol class="management-journal-chain">
 				{#each item.journal_states as state, index (state)}
 					<li>
@@ -90,12 +92,8 @@
 					</li>
 				{/each}
 			</ol>
-		{:else}
-			<p class="text-sm text-base-content/50">
-				No filesystem journal checkpoint has been recorded yet.
-			</p>
-		{/if}
-	</section>
+		</section>
+	{/if}
 
 	<section>
 		<h4 class="management-inspector-section-title">Recorded outcome</h4>
@@ -104,13 +102,18 @@
 				<ShieldAlert class="mt-0.5 h-4 w-4 shrink-0 text-error" />
 				<div>
 					<strong>{managementReasonLabel(item.failure_code)}</strong>
-					<p class="mt-1 text-base-content/55">
-						{failureReason ??
-							'Check the journal and recovery details above to diagnose the failure.'}
+					<p class="mt-1 text-base-content/70">
+						{failureReason ?? 'This file was not written.'}
 					</p>
+					{#if failureAction}
+						<p class="mt-1 text-base-content/55">
+							<span class="font-semibold">What to do:</span>
+							{failureAction}
+						</p>
+					{/if}
 				</div>
 			</div>
-		{:else if Object.keys(item.result).length}
+		{:else if item.result && Object.keys(item.result).length}
 			<div class="rounded-xl border border-base-content/10 bg-base-100/70 p-3">
 				<div class="flex items-center gap-2">
 					<FileClock class="h-4 w-4 text-library-manage" /><strong class="text-sm"

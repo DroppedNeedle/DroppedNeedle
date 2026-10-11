@@ -4,6 +4,12 @@ import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
 import { LIBRARY_MANAGEMENT_ENDPOINTS } from './endpoints';
+import {
+	toHistory,
+	toPlanItemPage,
+	toPreviewDetail,
+	toResultPage
+} from './libraryManagementAdapters';
 
 import { LibraryManagementQueryKeyFactory } from './LibraryManagementQueryKeyFactory';
 import type {
@@ -149,10 +155,9 @@ export const getLibraryManagementPreviewQuery = (
 			enabled: Boolean(jobId),
 			refetchInterval: (query: PreviewQuery) => activePreviewRefetchInterval(jobId, query),
 			queryKey: LibraryManagementQueryKeyFactory.preview(getUserId(), jobId ?? ''),
-			queryFn: ({ signal }) =>
-				api.global.get<LibraryManagementPreviewDetailResponse>(
-					API.libraryManagement.preview(jobId ?? ''),
-					{ signal }
+			queryFn: async ({ signal }) =>
+				toPreviewDetail(
+					await api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.preview(jobId ?? ''), { signal })
 				)
 		};
 	});
@@ -170,14 +175,16 @@ export const getLibraryManagementPlanItemsQuery = (
 			enabled: Boolean(jobId),
 			queryKey: LibraryManagementQueryKeyFactory.previewItems(getUserId(), jobId ?? '', params),
 			initialPageParam: -1,
-			queryFn: ({ pageParam, signal }) =>
-				api.global.get<LibraryManagementPlanItemPageResponse>(
-					API.libraryManagement.previewItems(jobId ?? '', {
-						...params,
-						afterOrdinal: pageParam,
-						limit
-					}),
-					{ signal }
+			queryFn: async ({ pageParam, signal }) =>
+				toPlanItemPage(
+					await api.global.v3.GET(
+						LIBRARY_MANAGEMENT_ENDPOINTS.previewItems(jobId ?? '', {
+							...params,
+							afterOrdinal: pageParam,
+							limit
+						}),
+						{ signal }
+					)
 				),
 			getNextPageParam: (lastPage: LibraryManagementPlanItemPageResponse) =>
 				lastPage.has_more ? (lastPage.next_after_ordinal ?? undefined) : undefined
@@ -193,10 +200,12 @@ export const getLibraryManagementOperationsQuery = (
 		return {
 			queryKey: LibraryManagementQueryKeyFactory.operations(getUserId(), params),
 			initialPageParam: undefined as string | undefined,
-			queryFn: ({ pageParam, signal }) =>
-				api.global.get<LibraryManagementOperationHistoryResponse>(
-					API.libraryManagement.operations({ ...params, cursor: pageParam }),
-					{ signal }
+			queryFn: async ({ pageParam, signal }) =>
+				toHistory(
+					await api.global.v3.GET(
+						LIBRARY_MANAGEMENT_ENDPOINTS.operations({ ...params, cursor: pageParam }),
+						{ signal }
+					)
 				),
 			getNextPageParam: (lastPage: LibraryManagementOperationHistoryResponse) =>
 				lastPage.next_cursor ?? undefined
@@ -213,10 +222,11 @@ export const getLibraryManagementOperationQuery = (
 			enabled: Boolean(jobId),
 			refetchInterval: (query: PreviewQuery) => activePreviewRefetchInterval(jobId, query),
 			queryKey: LibraryManagementQueryKeyFactory.operation(getUserId(), jobId ?? ''),
-			queryFn: ({ signal }) =>
-				api.global.get<LibraryManagementPreviewDetailResponse>(
-					API.libraryManagement.operation(jobId ?? ''),
-					{ signal }
+			queryFn: async ({ signal }) =>
+				toPreviewDetail(
+					await api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.operation(jobId ?? ''), {
+						signal
+					})
 				)
 		};
 	});
@@ -236,10 +246,12 @@ export const getLibraryManagementOperationResultsQuery = (
 				activeResultsRefetchInterval(jobId, getOperationState(), query),
 			queryKey: LibraryManagementQueryKeyFactory.operationResults(getUserId(), jobId ?? '', limit),
 			initialPageParam: -1,
-			queryFn: ({ pageParam, signal }) =>
-				api.global.get<LibraryManagementResultPageResponse>(
-					API.libraryManagement.operationResults(jobId ?? '', pageParam, limit),
-					{ signal }
+			queryFn: async ({ pageParam, signal }) =>
+				toResultPage(
+					await api.global.v3.GET(
+						LIBRARY_MANAGEMENT_ENDPOINTS.operationResults(jobId ?? '', pageParam, limit),
+						{ signal }
+					)
 				),
 			getNextPageParam: (lastPage: LibraryManagementResultPageResponse) =>
 				lastPage.has_more ? (lastPage.next_after_ordinal ?? undefined) : undefined

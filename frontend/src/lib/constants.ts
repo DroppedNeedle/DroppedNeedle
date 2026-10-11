@@ -241,7 +241,6 @@ export const API = {
 		activationPreview: (jobId: string) =>
 			`/api/v1/settings/library-management/activation-previews/${encodeURIComponent(jobId)}`,
 		activationConfirmations: () => '/api/v1/settings/library-management/activation-confirmations',
-		previews: () => '/api/v1/library/management/previews',
 		tagEditor: (trackId: string) =>
 			`/api/v1/library/management/tracks/${encodeURIComponent(trackId)}/tag-editor`,
 		tagEditPreviews: () => '/api/v1/library/management/tag-edit-previews',
@@ -252,84 +251,6 @@ export const API = {
 		recoveryDiagnostics: () => '/api/v1/library/management/recovery/diagnostics',
 		resolveImportBundle: (bundleId: string) =>
 			`/api/v1/library/management/recovery/import-bundles/${encodeURIComponent(bundleId)}/resolve`,
-		preview: (jobId: string) => `/api/v1/library/management/previews/${encodeURIComponent(jobId)}`,
-		applyPreview: (jobId: string) =>
-			`/api/v1/library/management/previews/${encodeURIComponent(jobId)}/apply`,
-		reissuePreview: (jobId: string) =>
-			`/api/v1/library/management/previews/${encodeURIComponent(jobId)}/reissue`,
-		discardPreview: (jobId: string) =>
-			`/api/v1/library/management/previews/${encodeURIComponent(jobId)}/discard`,
-		operations: (
-			params: {
-				limit?: number;
-				cursor?: string;
-				origin?: string;
-				profileId?: string;
-				rootId?: string;
-				state?: string;
-				mode?: string;
-				createdFrom?: number;
-				createdTo?: number;
-			} = {}
-		) => {
-			const query = new URLSearchParams();
-			if (params.limit !== undefined) query.set('limit', String(params.limit));
-			if (params.cursor) query.set('cursor', params.cursor);
-			if (params.origin) query.set('origin', params.origin);
-			if (params.profileId) query.set('profile_id', params.profileId);
-			if (params.rootId) query.set('root_id', params.rootId);
-			if (params.state) query.set('state', params.state);
-			if (params.mode) query.set('mode', params.mode);
-			if (params.createdFrom !== undefined) query.set('created_from', String(params.createdFrom));
-			if (params.createdTo !== undefined) query.set('created_to', String(params.createdTo));
-			const path = '/api/v1/library/management/operations';
-			return `${path}${query.size ? `?${query.toString()}` : ''}`;
-		},
-		operation: (jobId: string) =>
-			`/api/v1/library/management/operations/${encodeURIComponent(jobId)}`,
-		undoPreview: (jobId: string) =>
-			`/api/v1/library/management/operations/${encodeURIComponent(jobId)}/undo-preview`,
-		operationResults: (jobId: string, afterOrdinal?: number, limit?: number) => {
-			const query = new URLSearchParams();
-			if (afterOrdinal !== undefined) query.set('after_ordinal', String(afterOrdinal));
-			if (limit !== undefined) query.set('limit', String(limit));
-			const path = `/api/v1/library/management/operations/${encodeURIComponent(jobId)}/results`;
-			return `${path}${query.size ? `?${query.toString()}` : ''}`;
-		},
-		previewItems: (
-			jobId: string,
-			params: {
-				afterOrdinal?: number;
-				limit?: number;
-				eligibility?: string;
-				reasonCode?: string;
-				rootId?: string;
-				artistId?: string;
-				albumId?: string;
-				audioFormat?: string;
-				collisionClass?: string;
-				hasPreservedValue?: boolean;
-				hasRepresentationLoss?: boolean;
-				changeKind?: string;
-			} = {}
-		) => {
-			const query = new URLSearchParams();
-			if (params.afterOrdinal !== undefined)
-				query.set('after_ordinal', String(params.afterOrdinal));
-			if (params.limit !== undefined) query.set('limit', String(params.limit));
-			if (params.eligibility) query.set('eligibility', params.eligibility);
-			if (params.reasonCode) query.set('reason_code', params.reasonCode);
-			if (params.rootId) query.set('root_id', params.rootId);
-			if (params.artistId) query.set('artist_id', params.artistId);
-			if (params.albumId) query.set('album_id', params.albumId);
-			if (params.audioFormat) query.set('audio_format', params.audioFormat);
-			if (params.collisionClass) query.set('collision_class', params.collisionClass);
-			if (params.hasPreservedValue) query.set('has_preserved_value', 'true');
-			if (params.hasRepresentationLoss) query.set('has_representation_loss', 'true');
-			if (params.changeKind) query.set('change_kind', params.changeKind);
-			const path = `/api/v1/library/management/previews/${encodeURIComponent(jobId)}/items`;
-			return `${path}${query.size ? `?${query.toString()}` : ''}`;
-		},
 		previewArtwork: (jobId: string, ordinal: number, sha256: string) =>
 			`/api/v1/library/management/previews/${encodeURIComponent(jobId)}/items/${ordinal}/artwork/${encodeURIComponent(sha256)}`
 	},

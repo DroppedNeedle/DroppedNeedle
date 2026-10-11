@@ -3,6 +3,7 @@ import { createMutation } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
 import { API } from '$lib/constants';
 import { LIBRARY_MANAGEMENT_ENDPOINTS } from './endpoints';
+import { toPreviewDetail } from './libraryManagementAdapters';
 import type { OperationResponse } from '$lib/queries/library/LibraryOperationsTypes';
 import { operationControlUrl } from '$lib/queries/library/LibraryOperationMutations.svelte';
 import { toOperationResponse } from '$lib/queries/library/libraryOperationAdapters';
@@ -149,11 +150,10 @@ export const confirmLibraryManagementActivationMutation = () =>
 
 export const createLibraryManagementPreviewMutation = () =>
 	createMutation(() => ({
-		mutationFn: (request: LibraryManagementPreviewCreateRequest) =>
-			api.global.post<LibraryManagementPreviewCreatedResponse>(
-				API.libraryManagement.previews(),
-				request
-			),
+		mutationFn: (
+			request: LibraryManagementPreviewCreateRequest
+		): Promise<LibraryManagementPreviewCreatedResponse> =>
+			api.global.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.previews(), request),
 		onSuccess: showQueued('Organization preview queued'),
 		onError: showActionError('Could not queue the management preview')
 	}));
@@ -171,10 +171,15 @@ export const createLibraryManagementTagEditPreviewMutation = () =>
 
 export const applyLibraryManagementPreviewMutation = () =>
 	createMutation(() => ({
-		mutationFn: (input: { jobId: string; request: LibraryManagementApplyRequest }) =>
-			api.global.post<OperationResponse>(
-				API.libraryManagement.applyPreview(input.jobId),
-				input.request
+		mutationFn: async (input: {
+			jobId: string;
+			request: LibraryManagementApplyRequest;
+		}): Promise<OperationResponse> =>
+			toOperationResponse(
+				await api.global.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.applyPreview(input.jobId), {
+					...input.request,
+					confirmation: input.request.confirmation ?? false
+				})
 			),
 		onSuccess: showQueued('Organization work queued'),
 		onError: showActionError('Could not apply this management preview')
@@ -182,10 +187,11 @@ export const applyLibraryManagementPreviewMutation = () =>
 
 export const reissueLibraryManagementPreviewMutation = () =>
 	createMutation(() => ({
-		mutationFn: (input: { jobId: string; silent?: boolean }) =>
-			api.global.post<LibraryManagementPreviewReissueResponse>(
-				API.libraryManagement.reissuePreview(input.jobId)
-			),
+		mutationFn: (input: {
+			jobId: string;
+			silent?: boolean;
+		}): Promise<LibraryManagementPreviewReissueResponse> =>
+			api.global.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.reissuePreview(input.jobId)),
 		onError: (error: Error, input: { jobId: string; silent?: boolean }) => {
 			if (!input.silent) showActionError('Could not resume this management preview')(error);
 		}
@@ -193,14 +199,16 @@ export const reissueLibraryManagementPreviewMutation = () =>
 
 export const discardLibraryManagementPreviewMutation = () =>
 	createMutation(() => ({
-		mutationFn: (input: {
+		mutationFn: async (input: {
 			jobId: string;
 			request: LibraryManagementDiscardRequest;
 			silent?: boolean;
-		}) =>
-			api.global.post<LibraryManagementPreviewDetailResponse>(
-				API.libraryManagement.discardPreview(input.jobId),
-				input.request
+		}): Promise<LibraryManagementPreviewDetailResponse> =>
+			toPreviewDetail(
+				await api.global.v3.POST(
+					LIBRARY_MANAGEMENT_ENDPOINTS.discardPreview(input.jobId),
+					input.request
+				)
 			),
 		onSuccess: async (
 			_response: LibraryManagementPreviewDetailResponse,
@@ -218,11 +226,11 @@ export const discardLibraryManagementPreviewMutation = () =>
 
 export const createLibraryManagementUndoPreviewMutation = () =>
 	createMutation(() => ({
-		mutationFn: (input: { jobId: string; request: LibraryManagementUndoPreviewRequest }) =>
-			api.global.post<LibraryManagementPreviewCreatedResponse>(
-				API.libraryManagement.undoPreview(input.jobId),
-				input.request
-			),
+		mutationFn: (input: {
+			jobId: string;
+			request: LibraryManagementUndoPreviewRequest;
+		}): Promise<LibraryManagementPreviewCreatedResponse> =>
+			api.global.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.undoPreview(input.jobId), input.request),
 		onSuccess: showQueued('Undo preview queued'),
 		onError: showActionError('Could not queue the undo preview')
 	}));
