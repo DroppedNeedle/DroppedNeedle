@@ -3024,6 +3024,7 @@ async fn library_journey_catalog_corrections() {
         .expect("merged artist");
     assert_eq!(retired.as_deref(), Some("artist-keep"));
     assert_eq!(favorite, "artist-keep");
+}
 
 /// Run one Library Management worker step off the async runtime.
 async fn management_step(library: &LibrarySetup) -> bool {
