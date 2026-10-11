@@ -376,38 +376,21 @@ impl<'a> Mutations<'a> {
         })
     }
 
-    /// Move one file the catalog does not list into the recycle bin (a
-    /// file standing where a managed file should go). Returns where it
-    /// went, so it can be moved back by hand.
-    pub fn recycle_untracked(
-        &self,
-        root_id: &str,
-        relative_path: &str,
-    ) -> Result<PathBuf, MutationError> {
-        let registry = self.setup.live_registry();
-        let root = registry
-            .resolve(root_id)
-            .ok_or(MutationError::Conflict(FILE_OUTSIDE_ROOT))?;
-        let path = join_inside(&root.path, relative_path)
-            .ok_or(MutationError::Conflict(FILE_OUTSIDE_ROOT))?;
-        let bin = self
-            .configured_bin()
-            .unwrap_or_else(|| root.path.join(super::scan::fs::RECYCLE_BIN_DIRECTORY_NAME));
-        let _guard = self
-            .setup
-            .fs
-            .try_write(root_id)
-            .ok_or(MutationError::Conflict(LIBRARY_BUSY))?;
-        if path
-            .symlink_metadata()
-            .map_or(true, |meta| !meta.file_type().is_file())
-        {
-            return Err(MutationError::Conflict(FILE_OUTSIDE_ROOT));
+    /// A fresh recycle-bin entry for a file named `name` from this
+    /// library folder: `<bin>/<stamp>-<id>/<name>`, not created yet.
+    pub fn recycle_entry(&self, root_id: &str, name: &str) -> Option<PathBuf> {
+        if name.is_empty() || name.contains(['/', '\\']) {
+            return None;
         }
-        recycle_file(&path, &bin).map_err(|error| {
-            tracing::warn!(%error, "recycle move failed");
-            MutationError::Files(restore(&[]))
-        })
+        let bin = self.bin_for(root_id)?;
+        Some(
+            bin.join(format!(
+                "{}-{}",
+                utc_stamp(SystemTime::now()),
+                &uuid::Uuid::new_v4().simple().to_string()[..8]
+            ))
+            .join(name),
+        )
     }
 
     /// Undo recycle moves (an upgrade whose new file could not be placed):

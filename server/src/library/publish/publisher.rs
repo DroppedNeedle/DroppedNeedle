@@ -16,7 +16,7 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension};
 
-use super::journal::{FileJournal, JournalKind, JournalState, JournalStore};
+use super::journal::{FileJournal, JournalKind, JournalReplacement, JournalState, JournalStore};
 use super::paths::Sandbox;
 use super::planner::{
     CapabilityGate, CollisionGate, DiskPreflight, PlanBundle, PlanKind, SealError, SealRecheck,
@@ -43,6 +43,9 @@ pub struct TrackCommit {
     /// The track is new to the catalog: index the published file instead
     /// of moving an existing row (see [`ADOPTED_STATE`]).
     pub adopt: Option<super::planner::Adoption>,
+    /// The track whose file this one replaced at its destination, retired
+    /// in the same commit, and where in the recycle bin that file goes.
+    pub replaces: Option<(String, String)>,
 }
 
 /// Management-state prefix journals carry for files a commit adds to the
@@ -165,6 +168,9 @@ impl Catalog for SqliteCatalog {
         }
         let now = now_secs();
         for track in &commit.tracks {
+            if let Some((replaced, recycle_to)) = &track.replaces {
+                retire_replaced(conn, track, replaced, recycle_to, now)?;
+            }
             if let Some(adoption) = &track.adopt {
                 adopt_track(conn, track, adoption)?;
             } else {
@@ -203,6 +209,41 @@ impl Catalog for SqliteCatalog {
         )?;
         Ok(())
     }
+}
+
+/// Retire the track whose file a commit replaced: it stays in the
+/// catalog (history and playlists keep pointing at it) as a missing
+/// track whose file is in the recycle bin. Its path moves to a hidden
+/// name under the bundle, so the new file can hold the real one.
+fn retire_replaced(
+    conn: &Connection,
+    track: &TrackCommit,
+    replaced: &str,
+    recycle_to: &str,
+    now: f64,
+) -> Result<(), PublishError> {
+    let retired = format!(
+        "{}replaced/{}/{}",
+        super::HIDDEN_PREFIX,
+        track.track_id,
+        track.rel_path
+    );
+    conn.execute(
+        "UPDATE local_tracks SET availability = 'missing', missing_since = ?5, \
+         relative_path = ?4, file_path = ?6, path_hash = ?7, \
+         row_revision = row_revision + 1 \
+         WHERE id = ?1 AND root_id = ?2 AND relative_path = ?3",
+        rusqlite::params![
+            replaced,
+            track.root_id,
+            track.rel_path,
+            retired,
+            now,
+            recycle_to,
+            sha256_hex(retired.as_bytes())
+        ],
+    )?;
+    Ok(())
 }
 
 /// Move an existing track row to its published location. An organize
@@ -502,6 +543,16 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             if let Some(parent) = dest.parent() {
                 std::fs::create_dir_all(parent).map_err(PublishError::from)?;
             }
+            if let Some(replaced) = &item.replaces {
+                let holds = paths::read_regular_file(&dest)
+                    .is_ok_and(|bytes| sha256_hex(&bytes) == replaced.sha256);
+                if !holds {
+                    return Err(PublishError::Validation(format!(
+                        "the file this one replaces at {} changed after planning",
+                        item.dest_rel
+                    )));
+                }
+            }
             let temp = self.sandbox.temp_path_for(&dest, &journal_id)?;
             self.sandbox.ensure_under_roots(&temp)?;
             // Real tag staging through the tags save wrapper.
@@ -533,6 +584,12 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 )),
                 state: JournalState::Prepared,
                 seq: 0,
+                replaces: item.replaces.as_ref().map(|replaced| JournalReplacement {
+                    rel: item.dest_rel.clone(),
+                    sha256: replaced.sha256.clone(),
+                    track_id: replaced.track_id.clone(),
+                    recycle_to: replaced.recycle_to.clone(),
+                }),
             };
             // Journal first, then the temp: a crash between the two leaves
             // a row recovery knows about, never an orphan temp.
@@ -661,6 +718,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 mgmt_state: None,
                 state: JournalState::Prepared,
                 seq: 0,
+                replaces: None,
             })?;
         }
         write_staged_temp(&temp, &bytes)?;
@@ -760,7 +818,11 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                         journal.dest_root, journal.dest_rel
                     )));
                 }
-                if !same_path_self {
+                let replaced_here = current.replaces.as_ref().is_some_and(|replaced| {
+                    paths::read_regular_file(&dest)
+                        .is_ok_and(|bytes| sha256_hex(&bytes) == replaced.sha256)
+                });
+                if !same_path_self && !replaced_here {
                     return Err(PublishError::Collision(format!(
                         "late occupier at {}:{}",
                         journal.dest_root, journal.dest_rel
@@ -819,6 +881,12 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                 fingerprint: file.staged_sha256.clone(),
                 mgmt_state: mgmt_state_for(item.adopt.is_some(), bundle.profile_revision),
                 adopt: item.adopt.clone(),
+                replaces: item.replaces.as_ref().and_then(|replaced| {
+                    replaced
+                        .track_id
+                        .clone()
+                        .map(|track| (track, replaced.recycle_to.clone()))
+                }),
             });
         }
         let commit = BundleCommit {
@@ -914,7 +982,18 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
         journal: &FileJournal,
         staged: &[PreparedFile],
     ) -> Result<(), PublishError> {
-        if let Some(backup_text) = journal.backup.as_deref() {
+        if let (Some(replaced), Some(backup_text)) =
+            (journal.replaces.as_ref(), journal.backup.as_deref())
+        {
+            let backup = Path::new(backup_text);
+            self.sandbox.ensure_under_roots(backup)?;
+            if paths::recycle_backup(backup, Path::new(&replaced.recycle_to), &replaced.sha256)? {
+                JournalStore::new(&self.conn).set_recycled(&journal.id, now_secs())?;
+            }
+            if let Some(parent) = backup.parent() {
+                sync_dir_logged(parent);
+            }
+        } else if let Some(backup_text) = journal.backup.as_deref() {
             let backup = Path::new(backup_text);
             self.sandbox.ensure_under_roots(backup)?;
             let bytes = paths::read_regular_file(backup)?;
@@ -995,7 +1074,7 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             if std::fs::symlink_metadata(&dest).is_err()
                 && let Ok(bytes) = paths::read_regular_file(backup)
             {
-                let expected = journal.source_sha256.as_deref().unwrap_or_default();
+                let expected = journal.backup_sha256().unwrap_or_default();
                 if expected.is_empty() || sha256_hex(&bytes) == expected {
                     let home = paths::backup_home(
                         &self.sandbox,

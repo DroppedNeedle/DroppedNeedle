@@ -87,12 +87,14 @@ pub mod undo;
 pub mod v2_baseline;
 
 pub use archive::{ArchiveBlock, ArchiveEntry, ArchivePolicy, ArchiveReport, validate_archive};
-pub use journal::{FileJournal, JournalKind, JournalState, JournalStore, fsync_dir};
+pub use journal::{
+    FileJournal, JournalKind, JournalReplacement, JournalState, JournalStore, fsync_dir,
+};
 pub use paths::{CollisionKey, Sandbox, collision_key};
 pub use planner::{
     AutomaticEligibility, AutomaticHold, Capability, CapabilityGate, DiskPreflight,
-    FileFingerprint, PlanBundle, PlanItem, PlanKind, ReleaseIdentity, SealError, SealedPreview,
-    SpaceProbe, TrackMapping,
+    FileFingerprint, PlanBundle, PlanItem, PlanKind, ReleaseIdentity, Replacement, SealError,
+    SealedPreview, SpaceProbe, TrackMapping,
 };
 pub use publisher::{Catalog, CrashPoint, PublishOutcome, Publisher, SqliteCatalog};
 pub use recovery::{BundleRecovery, RecoveryAction, reconcile, startup_gate};

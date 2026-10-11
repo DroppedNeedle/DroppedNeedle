@@ -756,6 +756,7 @@ impl LibrarySetup {
                 sidecars: Vec::new(),
                 staged_bytes_estimate: size + STAGED_HEADROOM_BYTES,
                 adopt: None,
+                replaces: None,
             });
             docs.insert(
                 track_id.clone(),
@@ -956,6 +957,22 @@ impl LibrarySetup {
     /// changed, and retry any held bundle, so a bundle a crash left half
     /// way is finished or unwound before anyone asks how it ended.
     /// Blocking.
+    /// Arm (or clear) a crash point on the open publisher, so a test can
+    /// stop a publish part way as a killed process would. Tests only.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn arm_publish_crash(&self, point: Option<super::publish::CrashPoint>) {
+        let registry = self.live_registry();
+        let mut cell = self
+            .publish
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if cell.refresh(&registry, &self.root_dirs).is_ok()
+            && let Ok(open) = cell.open()
+        {
+            open.publisher.set_crash_point(point);
+        }
+    }
+
     pub(crate) fn settle_publishes(&self) -> Result<(), PublishError> {
         let mut cell = self
             .publish
@@ -1341,6 +1358,7 @@ impl LibrarySetup {
                     sidecars,
                     staged_bytes_estimate: fingerprint.size + STAGED_HEADROOM_BYTES,
                     adopt: None,
+                    replaces: None,
                 },
             });
         }
@@ -1551,6 +1569,7 @@ impl LibrarySetup {
                     sidecars: Vec::new(),
                     staged_bytes_estimate: fingerprint.size + STAGED_HEADROOM_BYTES,
                     adopt: None,
+                    replaces: None,
                 },
             });
         }

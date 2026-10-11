@@ -4117,8 +4117,8 @@ async fn library_management_tools_journey() {
     management_step(&library).await;
 
     // A second copy lands where the managed file sits: the clash is
-    // settled by recycling the file in the way, in the worker, and the
-    // new copy takes its place.
+    // settled by replacing the file in the way through the publisher: it
+    // is set aside under the journal and recycled after the commit.
     let managed_rel: String = db()
         .query_row(
             "SELECT relative_path FROM local_tracks WHERE id = ?1",
@@ -4175,48 +4175,174 @@ async fn library_management_tools_journey() {
         })
         .expect("the copy is blocked by the clash");
     let source = management.detail(&clash.job_id).expect("clash detail");
+    let replace_request = |key: &str| {
+        droppedneedle::library::management::duplicates::DuplicateRequest {
+        intent: droppedneedle::library::management::models::DuplicateIntent {
+            source_job_id: clash.job_id.clone(),
+            source_plan_item_ordinal: blocked.ordinal,
+            collision_kind: "same_path_different_content".to_owned(),
+            existing_root_id: "music".to_owned(),
+            existing_relative_path: managed_rel.clone(),
+            existing_local_track_id: None,
+            action: droppedneedle::library::management::models::DuplicateAction::RecycleExistingKeepIncoming,
+            alternate_relative_path: None,
+        },
+        expected_source_row_revision: source.job.row_revision,
+        expected_settings_revision: settings_now.clone(),
+        expected_policy_revision: policy.clone(),
+        idempotency_key: key.to_owned(),
+    }
+    };
+    let apply_request = |handle: &droppedneedle::library::management::models::PreviewHandle| {
+        droppedneedle::library::management::service::ApplyRequest {
+            preview_token: handle.preview_token.clone(),
+            expected_row_revision: management
+                .detail(&handle.job_id)
+                .expect("detail")
+                .job
+                .row_revision,
+            idempotency_key: format!("apply-{}", handle.job_id),
+            confirmation: true,
+        }
+    };
+    let stop = |job_id: &str| {
+        droppedneedle::library::operations::service::Operations::new(&library)
+            .control(
+                job_id,
+                droppedneedle::library::operations::models::Control::Stop,
+                management.detail(job_id).expect("detail").job.row_revision,
+                None,
+            )
+            .expect("stopped while queued")
+    };
     let resolve = management
-        .create_duplicate_preview(
-            droppedneedle::library::management::duplicates::DuplicateRequest {
-                intent: droppedneedle::library::management::models::DuplicateIntent {
-                    source_job_id: clash.job_id.clone(),
-                    source_plan_item_ordinal: blocked.ordinal,
-                    collision_kind: "same_path_different_content".to_owned(),
-                    existing_root_id: "music".to_owned(),
-                    existing_relative_path: managed_rel.clone(),
-                    existing_local_track_id: None,
-                    action: droppedneedle::library::management::models::DuplicateAction::RecycleExistingKeepIncoming,
-                    alternate_relative_path: None,
-                },
-                expected_source_row_revision: source.job.row_revision,
-                expected_settings_revision: settings_now,
-                expected_policy_revision: policy.clone(),
-                idempotency_key: "resolve-clash".to_owned(),
-            },
-            "admin",
-        )
+        .create_duplicate_preview(replace_request("resolve-clash"), "admin")
         .expect("duplicate preview");
     assert!(management_step(&library).await, "duplicate planning runs");
     let before_apply = std::fs::read(music.join(&managed_rel)).expect("existing bytes");
-    let settled = management_apply(&library, &resolve).await;
+    let planned = management
+        .items(&resolve.job_id, -1, 10, &Default::default())
+        .expect("resolve items")
+        .items;
+    assert!(
+        planned.iter().any(|item| item
+            .facts
+            .warnings
+            .iter()
+            .any(|warning| warning.contains(".recycle"))),
+        "the preview names the recycle bin"
+    );
+
+    // A stop before the worker starts touches nothing.
+    management
+        .apply(&resolve.job_id, apply_request(&resolve))
+        .expect("resolution queued");
+    assert_eq!(stop(&resolve.job_id).state.as_str(), "stopped");
+    management_step(&library).await;
+    library.publish_tick().expect("maintenance runs");
     assert_eq!(
-        settled.job.state.as_str(),
-        "succeeded",
-        "{:?}",
-        settled.job.terminal_code
+        std::fs::read(music.join(&managed_rel)).expect("bytes in place"),
+        before_apply,
+        "a stopped resolution leaves the file in the way where it was"
+    );
+    assert!(second.exists(), "the new copy stays where it was");
+    assert!(walk_files(&music.join(".recycle")).is_empty());
+
+    // The process dies right after the file in the way was set aside and
+    // the new copy renamed into place, before the catalog commit. The
+    // publish journal holds both files; the album waits for recovery.
+    let resolve = management
+        .create_duplicate_preview(replace_request("resolve-clash-again"), "admin")
+        .expect("second duplicate preview");
+    assert!(
+        management_step(&library).await,
+        "duplicate planning runs again"
+    );
+    library.arm_publish_crash(Some(
+        droppedneedle::library::publish::CrashPoint::AfterFirstRename,
+    ));
+    management
+        .apply(&resolve.job_id, apply_request(&resolve))
+        .expect("resolution queued");
+    management_step(&library).await;
+    library.arm_publish_crash(None);
+    assert_eq!(
+        management
+            .detail(&resolve.job_id)
+            .expect("detail")
+            .job
+            .state
+            .as_str(),
+        "queued",
+        "the album waits for recovery instead of failing"
+    );
+    assert!(
+        walk_files(&music.join(".recycle")).is_empty(),
+        "nothing reaches the recycle bin before the commit"
+    );
+    assert_eq!(
+        walk_files(&music)
+            .iter()
+            .filter(|path| std::fs::read(path).ok().as_deref() == Some(before_apply.as_slice()))
+            .count(),
+        1,
+        "the file in the way is kept, set aside"
+    );
+    // A stop while it waits does not strand it: the journal owns the
+    // files, and recovery settles the publish either way.
+    assert_eq!(stop(&resolve.job_id).state.as_str(), "stopped");
+    library.publish_tick().expect("recovery runs");
+    let holder: (String, String) = db()
+        .query_row(
+            "SELECT id, availability FROM local_tracks WHERE root_id = 'music' \
+             AND relative_path = ?1",
+            [&managed_rel],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("the path is listed");
+    assert_eq!(
+        holder,
+        (second_track.clone(), "indexed".to_owned()),
+        "recovery finished the publish: the new copy holds the path"
     );
     assert!(!second.exists(), "the new copy moved into place");
-    let now_there = std::fs::read(music.join(&managed_rel)).expect("new bytes");
-    assert_ne!(
-        now_there, before_apply,
-        "the file in the way was replaced, not overwritten"
-    );
     let recycled = walk_files(&music.join(".recycle"));
+    let in_bin: Vec<&PathBuf> = recycled
+        .iter()
+        .filter(|path| std::fs::read(path).ok().as_deref() == Some(before_apply.as_slice()))
+        .collect();
+    assert_eq!(
+        in_bin.len(),
+        1,
+        "the file in the way is in the recycle bin, once"
+    );
+    let named: String = db()
+        .query_row(
+            "SELECT recycle_to FROM library_publish_replacements WHERE recycled_at IS NOT NULL",
+            [],
+            |row| row.get(0),
+        )
+        .expect("the bin path is recorded");
+    assert_eq!(
+        PathBuf::from(&named),
+        *in_bin[0],
+        "the journal names the bin path"
+    );
+    let retired: (String, String) = db()
+        .query_row(
+            "SELECT availability, file_path FROM local_tracks WHERE id = ?1",
+            [&track],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("replaced track kept");
+    assert_eq!(retired, ("missing".to_owned(), named.clone()));
     assert!(
-        recycled
-            .iter()
-            .any(|path| std::fs::read(path).ok().as_deref() == Some(before_apply.as_slice())),
-        "the file in the way is in the recycle bin"
+        management
+            .detail(&resolve.job_id)
+            .expect("detail")
+            .undo_available_count
+            > 0,
+        "an album recovery finished after the stop can still be undone"
     );
 }
 

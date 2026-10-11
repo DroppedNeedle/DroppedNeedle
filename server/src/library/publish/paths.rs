@@ -257,6 +257,86 @@ pub fn backup_home(
     }
 }
 
+/// Move a replaced file's backup into the recycle bin after commit. The
+/// backup must still hold `sha256`; a bin path that already holds those
+/// bytes (an earlier attempt copied it there) only drops the backup, and
+/// a bin path holding anything else is refused, never overwritten. On
+/// another filesystem the bytes are copied under a temporary name,
+/// synced, renamed into place, and only then is the backup removed.
+/// True when the file is in the bin now; false when there was nothing
+/// left to move.
+pub fn recycle_backup(
+    backup: &Path,
+    recycle_to: &Path,
+    sha256: &str,
+) -> Result<bool, PublishError> {
+    use super::snapshots::sha256_hex;
+    let in_bin = || {
+        read_regular_file(recycle_to)
+            .ok()
+            .map(|bytes| sha256_hex(&bytes))
+    };
+    let bytes = match read_regular_file(backup) {
+        Ok(bytes) => bytes,
+        Err(_) if in_bin().as_deref() == Some(sha256) => return Ok(true),
+        Err(_) if std::fs::symlink_metadata(backup).is_err() => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    if sha256_hex(&bytes) != sha256 {
+        return Err(PublishError::Validation(format!(
+            "set-aside file {} changed; it stays where it is",
+            message_name(backup)
+        )));
+    }
+    match in_bin() {
+        Some(found) if found == sha256 => {
+            std::fs::remove_file(backup).map_err(PublishError::from)?;
+            return Ok(true);
+        }
+        Some(_) => {
+            return Err(PublishError::Collision(format!(
+                "recycle bin entry {} is taken",
+                message_name(recycle_to)
+            )));
+        }
+        None if std::fs::symlink_metadata(recycle_to).is_ok() => {
+            return Err(PublishError::Collision(format!(
+                "recycle bin entry {} is taken",
+                message_name(recycle_to)
+            )));
+        }
+        None => {}
+    }
+    let parent = recycle_to
+        .parent()
+        .ok_or_else(|| PublishError::UnsafePath("recycle bin path has no folder".into()))?;
+    std::fs::create_dir_all(parent).map_err(PublishError::from)?;
+    match std::fs::rename(backup, recycle_to) {
+        Ok(()) => {}
+        Err(error) if error.raw_os_error() == Some(18) => {
+            let temp = parent.join(format!(
+                "{HIDDEN_PREFIX}incoming-{}",
+                recycle_to
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            ));
+            std::fs::write(&temp, &bytes).map_err(PublishError::from)?;
+            let file = std::fs::File::open(&temp).map_err(PublishError::from)?;
+            super::journal::fsync_file(&file)?;
+            drop(file);
+            std::fs::rename(&temp, recycle_to).map_err(PublishError::from)?;
+            super::journal::fsync_dir(parent)?;
+            std::fs::remove_file(backup).map_err(PublishError::from)?;
+        }
+        Err(error) => return Err(PublishError::from(error)),
+    }
+    if let Err(error) = super::journal::fsync_dir(parent) {
+        tracing::warn!(%error, "recycle bin folder sync failed");
+    }
+    Ok(true)
+}
+
 /// Unicode/case-fold collision key: NFC normalization plus full
 /// casefold, so names that differ only by case or by canonically
 /// equivalent sequences can never publish side by side.

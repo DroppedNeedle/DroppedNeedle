@@ -195,6 +195,7 @@ fn plan_item(
         sidecars: Vec::new(),
         staged_bytes_estimate: 1024,
         adopt: None,
+        replaces: None,
     }
 }
 
@@ -655,6 +656,84 @@ fn occupied_destination_is_never_overwritten() {
     let err = publisher.publish(&sealed, &live, &docs).unwrap_err();
     assert!(matches!(err, PublishError::Collision(_)), "got {err:?}");
     assert_eq!(std::fs::read(&occupier).unwrap(), b"existing-library-file");
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+}
+
+/// A planned replacement sets the file in the way aside under the
+/// journal. A crash before the commit resumes; the replaced file reaches
+/// the recycle bin only after the commit, and its track is retired as
+/// missing in the same transaction.
+#[test]
+fn replacement_recycles_only_after_commit() {
+    let fix = fixture("replace");
+    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    let occupier = fix.sandbox.resolve("music", "organized/a.flac").unwrap();
+    std::fs::create_dir_all(occupier.parent().unwrap()).unwrap();
+    std::fs::write(&occupier, b"replaced-library-file").unwrap();
+    open_db(&fix)
+        .execute(
+            "UPDATE local_tracks SET relative_path = 'organized/a.flac' WHERE id = 'track-s'",
+            [],
+        )
+        .unwrap();
+    let bin = fix.dir.join("bin/entry/a.flac");
+    bundle.items[0].replaces = Some(publish::Replacement {
+        sha256: sha256_hex(b"replaced-library-file"),
+        track_id: Some("track-s".to_string()),
+        recycle_to: bin.display().to_string(),
+    });
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    publisher.set_crash_point(Some(CrashPoint::AfterFirstRename));
+    assert!(matches!(
+        publisher.publish(&sealed, &live, &docs),
+        Err(PublishError::InjectedCrash(_))
+    ));
+    drop(publisher);
+    assert!(!bin.exists(), "nothing is recycled before the commit");
+    assert!(
+        hidden_leftovers(&fix.dir)
+            .iter()
+            .any(|path| std::fs::read(path).ok().as_deref()
+                == Some(b"replaced-library-file".as_slice())),
+        "set aside, not gone"
+    );
+
+    let mut conn = open_db(&fix);
+    let results = reconcile(&mut conn, &fix.sandbox, &SqliteCatalog).unwrap();
+    assert_eq!(results[0].action, publish::RecoveryAction::ResumedCommitted);
+    assert_staged(&occupier, "track-a");
+    assert_eq!(std::fs::read(&bin).unwrap(), b"replaced-library-file");
+    assert!(hidden_leftovers(&fix.dir).is_empty());
+    let retired: (String, String) = conn
+        .query_row(
+            "SELECT availability, file_path FROM local_tracks WHERE id = 'track-s'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(retired, ("missing".to_string(), bin.display().to_string()));
+}
+
+/// An occupant that changed since planning is never set aside.
+#[test]
+fn replacement_of_a_changed_file_is_refused() {
+    let fix = fixture("replace-changed");
+    let (mut bundle, docs) = two_track_bundle(&fix, PlanKind::Move);
+    let occupier = fix.sandbox.resolve("music", "organized/a.flac").unwrap();
+    std::fs::create_dir_all(occupier.parent().unwrap()).unwrap();
+    std::fs::write(&occupier, b"edited-since-planning").unwrap();
+    let bin = fix.dir.join("bin/entry/a.flac");
+    bundle.items[0].replaces = Some(publish::Replacement {
+        sha256: sha256_hex(b"replaced-library-file"),
+        track_id: None,
+        recycle_to: bin.display().to_string(),
+    });
+    let (sealed, live) = seal(&bundle);
+    let mut publisher = open_publisher(&fix);
+    assert!(publisher.publish(&sealed, &live, &docs).is_err());
+    assert_eq!(std::fs::read(&occupier).unwrap(), b"edited-since-planning");
+    assert!(!bin.exists());
     assert!(hidden_leftovers(&fix.dir).is_empty());
 }
 

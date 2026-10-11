@@ -1,7 +1,8 @@
 //! A file a preview could not place because another file already sits
 //! at its destination. The administrator picks what to do: keep the
 //! existing file (nothing moves), or put the incoming file at another
-//! path next to it. Either way it is a small preview of its own, applied
+//! path next to it, or let one replace the other (the replaced file goes
+//! to the recycle bin). Each is a small preview of its own, applied
 //! (and undone) like any other. Files are never overwritten.
 
 use std::path::Path;
@@ -37,12 +38,14 @@ fn duplicate_changed() -> ItemReason {
     }
 }
 
-/// Where a recycled track's catalog path is parked while its job runs.
-fn recycled_prefix(job_id: &str) -> String {
-    format!(
-        "{}recycled-{job_id}/",
-        crate::library::publish::HIDDEN_PREFIX
-    )
+fn case_only_clash() -> ItemReason {
+    ItemReason {
+        code: "CASE_ONLY_CLASH".to_owned(),
+        message: "The file in the way has the same name in different letter case, so it cannot be replaced in place."
+            .to_owned(),
+        action: "Keep both files, or rename one of them yourself, then make a new preview of the album."
+            .to_owned(),
+    }
 }
 
 fn album_moves_too() -> ItemReason {
@@ -223,190 +226,46 @@ impl Management {
         }
     }
 
-    /// In the worker, just before an album is published: move the file a
-    /// duplicate resolution sends to the recycle bin, after checking it
-    /// still holds the bytes the preview saw. The move is recorded on the
-    /// album's work row first thing after it happens, so a retry after a
-    /// crash goes straight on to publishing. Returns the moves, to put
-    /// back if publishing fails.
-    pub(super) fn recycle_before_publish(
+    /// Give the publisher the file a duplicate resolution replaces: it
+    /// is set aside under the publish journal, recycled to a fresh bin
+    /// entry after commit, and put back if the publish unwinds.
+    pub(super) fn plan_replacements(
         &self,
-        snapshot: &Snapshot,
-        ordinal: i64,
         items: &[super::models::PlannedItem],
-    ) -> Result<Vec<(String, String)>, ItemReason> {
-        let Some(first) = items
-            .iter()
-            .find_map(|item| item.desired.recycle_first.clone())
-        else {
-            return Ok(Vec::new());
-        };
-        let job_id = snapshot.job.id.as_str();
-        let failed = |message: String| ItemReason {
-            code: "RECYCLE_FAILED".to_owned(),
-            message,
-            action: "Move the file in the way yourself, then make a new preview of the album."
-                .to_owned(),
-        };
-        let earlier = self
-            .read(|conn| Ok(store::work_recycled(conn, job_id, ordinal)?))
-            .map_err(|_| failed("The album's progress could not be read.".to_owned()))?;
-        let sandbox = self
-            .setup
-            .publish_sandbox()
-            .map_err(|_| failed("The library folders are not available right now.".to_owned()))?;
-        let current = sandbox
-            .resolve_no_symlink(&first.root_id, &first.relative_path)
-            .ok()
-            .and_then(|path| crate::library::publish::paths::read_regular_file(&path).ok())
-            .map(|bytes| crate::library::publish::snapshots::sha256_hex(&bytes));
-        if !earlier.is_empty() && current.is_none() {
-            // Recycled by an earlier attempt that did not finish.
-            return Ok(earlier);
-        }
-        if current.as_deref() != Some(first.sha256.as_str()) {
-            return Err(duplicate_changed());
-        }
+        plans: &mut [crate::library::publish::PlanItem],
+    ) -> Result<(), ItemReason> {
         let mutations = crate::library::mutations::Mutations::new(&self.setup);
-        let bin = mutations
-            .bin_for(&first.root_id)
-            .map(|bin| bin.display().to_string())
-            .unwrap_or_else(|| "the recycle bin".to_owned());
-        let actor = snapshot
-            .job
-            .requested_by_user_id
-            .clone()
-            .unwrap_or_default();
-        let moved: Vec<(std::path::PathBuf, std::path::PathBuf)> = match &first.local_track_id {
-            Some(track_id) => mutations
-                .remove_track(track_id, true, &actor)
-                .map(|removed| removed.recycled),
-            None => mutations
-                .recycle_untracked(&first.root_id, &first.relative_path)
-                .and_then(|destination| {
-                    sandbox
-                        .resolve_no_symlink(&first.root_id, &first.relative_path)
-                        .map(|original| vec![(original, destination)])
-                        .map_err(|_| {
-                            crate::library::mutations::MutationError::Store(
-                                "recycled file's old path did not resolve".to_owned(),
-                            )
-                        })
-                }),
-        }
-        .map_err(|error| {
-            let refused = recycle_refused(error);
-            failed(format!(
-                "The file in the way, {}, could not be moved to the recycle bin at {bin}. {refused}",
-                first.relative_path
-            ))
-        })?;
-        let moves: Vec<(String, String)> = moved
-            .iter()
-            .map(|(from, to)| (from.display().to_string(), to.display().to_string()))
-            .collect();
-        // The recycled track keeps its catalog row (marked missing), so
-        // its path is parked under a hidden name: the new file can then
-        // take the path, and a put-back gives it back.
-        if first.local_track_id.is_some() {
-            let parked = self.read(|conn| {
-                Ok(conn.execute(
-                    "UPDATE local_tracks SET relative_path = ?3 || relative_path \
-                     WHERE root_id = ?1 AND relative_path = ?2 AND availability <> 'indexed'",
-                    rusqlite::params![first.root_id, first.relative_path, recycled_prefix(job_id)],
-                )?)
-            });
-            if let Err(error) = parked {
-                tracing::error!(%error, job_id, "recycled track's path not parked");
-            }
-        }
-        if let Err(error) =
-            self.read(|conn| Ok(store::set_work_recycled(conn, job_id, ordinal, &moves)?))
-        {
-            tracing::error!(%error, job_id, "recycled file not recorded; putting it back");
-            self.put_back_recycled(snapshot, ordinal, &moves);
-            return Err(failed(
-                "The album's progress could not be saved.".to_owned(),
-            ));
-        }
-        Ok(moves)
-    }
-
-    /// Put files a duplicate resolution recycled back where they were,
-    /// and forget them. True when every file went back.
-    pub(super) fn put_back_recycled(
-        &self,
-        snapshot: &Snapshot,
-        ordinal: i64,
-        moves: &[(String, String)],
-    ) -> bool {
-        if moves.is_empty() {
-            return true;
-        }
-        let actor = snapshot
-            .job
-            .requested_by_user_id
-            .clone()
-            .unwrap_or_default();
-        // Never over another file: a file now at the old path keeps it,
-        // and the recycled one stays in the bin.
-        let (paths, taken): (Vec<_>, Vec<_>) = moves
-            .iter()
-            .map(|(from, to)| (std::path::PathBuf::from(from), std::path::PathBuf::from(to)))
-            .partition(|(from, _)| from.symlink_metadata().is_err());
-        for (from, to) in &taken {
-            tracing::error!(
-                original = %from.display(),
-                recycled = %to.display(),
-                "recycled file not put back: its old path is taken"
-            );
-        }
-        // Give a parked catalog path back before the rescan finds the file.
-        let prefix = recycled_prefix(&snapshot.job.id);
-        if let Err(error) = self.read(|conn| {
-            Ok(conn.execute(
-                "UPDATE local_tracks SET relative_path = substr(relative_path, length(?1) + 1) \
-                 WHERE substr(relative_path, 1, length(?1)) = ?1",
-                rusqlite::params![prefix],
-            )?)
-        }) {
-            tracing::warn!(%error, "parked catalog path not given back");
-        }
-        let returned = paths.is_empty()
-            || crate::library::mutations::Mutations::new(&self.setup).put_back(&paths, &actor);
-        let back = returned && taken.is_empty();
-        if back
-            && let Err(error) = self.read(|conn| {
-                Ok(store::set_work_recycled(
-                    conn,
-                    &snapshot.job.id,
-                    ordinal,
-                    &[],
-                )?)
-            })
-        {
-            tracing::warn!(%error, "recycle record not cleared after putting the file back");
-        }
-        back
-    }
-
-    /// A duplicate resolution paused or stopped between its recycle and
-    /// its publish: put the recycled files back.
-    pub(super) fn put_back_unfinished(&self, snapshot: &Snapshot) {
-        let ordinals = self
-            .read(|conn| Ok(store::unfinished_recycles(conn, &snapshot.job.id)?))
-            .unwrap_or_default();
-        for ordinal in ordinals {
-            let moves = self
-                .read(|conn| Ok(store::work_recycled(conn, &snapshot.job.id, ordinal)?))
+        for item in items {
+            let Some(first) = &item.desired.recycle_first else {
+                continue;
+            };
+            let Some(track_id) = item.track_id.as_deref() else {
+                continue;
+            };
+            let name = Path::new(&first.relative_path)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            if !self.put_back_recycled(snapshot, ordinal, &moves) {
-                tracing::error!(
-                    job_id = snapshot.job.id,
-                    "a recycled file could not be put back; it stays in the recycle bin"
-                );
+            let recycle_to = mutations
+                .recycle_entry(&first.root_id, &name)
+                .ok_or_else(|| ItemReason {
+                    code: "RECYCLE_FAILED".to_owned(),
+                    message: format!(
+                        "No recycle bin is available for {}, so it cannot be replaced.",
+                        first.relative_path
+                    ),
+                    action: "Set a recycle bin in the download settings, or keep both files."
+                        .to_owned(),
+                })?;
+            for plan in plans.iter_mut().filter(|plan| plan.track_id == track_id) {
+                plan.replaces = Some(crate::library::publish::Replacement {
+                    sha256: first.sha256.clone(),
+                    track_id: first.local_track_id.clone(),
+                    recycle_to: recycle_to.display().to_string(),
+                });
             }
         }
+        Ok(())
     }
 
     fn source_item(
@@ -596,7 +455,17 @@ impl Management {
                         .existing_local_track_id
                         .as_ref()
                         .is_some_and(|expected| tracked.as_ref() != Some(expected));
+                    // The new file takes the exact path of the one it
+                    // replaces; a name that differs only in letter case
+                    // is two files, settled by hand.
+                    let same_name =
+                        item.dest_rel.as_deref() == Some(intent.existing_relative_path.as_str());
+                    let bin = crate::library::mutations::Mutations::new(&self.setup)
+                        .bin_for(&intent.existing_root_id)
+                        .map(|bin| bin.display().to_string())
+                        .unwrap_or_else(|| "the recycle bin".to_owned());
                     match (item.desired.plan.is_some(), existing) {
+                        (true, Some(_)) if !same_name => item.block(case_only_clash()),
                         (true, Some(sha256)) if !named_other => {
                             item.desired.recycle_first = Some(RecycleFirst {
                                 root_id: intent.existing_root_id.clone(),
@@ -605,7 +474,7 @@ impl Management {
                                 local_track_id: tracked,
                             });
                             item.facts.warnings.push(format!(
-                                "{} moves to the recycle bin first, then this file takes its place.",
+                                "This file takes the place of {}, which moves to the recycle bin at {bin} once this file is in place.",
                                 intent.existing_relative_path
                             ));
                             item.eligibility = Eligibility::Warning;

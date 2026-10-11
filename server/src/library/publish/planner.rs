@@ -145,6 +145,23 @@ pub struct PlanItem {
     /// one, and nothing is snapshotted for undo or baseline.
     #[serde(default)]
     pub adopt: Option<Adoption>,
+    /// The file standing at the destination that this one replaces (a
+    /// duplicate resolution that keeps the new copy). It is set aside
+    /// under the journal like a same-path original, and moves to the
+    /// recycle bin only after the bundle commits.
+    #[serde(default)]
+    pub replaces: Option<Replacement>,
+}
+
+/// A file a plan item replaces at its destination.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Replacement {
+    /// The bytes the replaced file must still hold.
+    pub sha256: String,
+    /// Its library track, retired (marked missing) in the commit.
+    pub track_id: Option<String>,
+    /// Absolute path in the recycle bin it moves to after commit.
+    pub recycle_to: String,
 }
 
 /// How a file brought into the library is indexed: the root policy that
@@ -380,6 +397,7 @@ impl CollisionGate {
                 }
                 if same_path_self.is_self_destination(dest_root, dest_rel)
                     || same_path_self.is_own_source(sandbox, dest_root, dest_rel, &dest)
+                    || same_path_self.is_replaced(&dest)
                 {
                     return Ok(());
                 }
@@ -469,6 +487,8 @@ struct SamePathSelf {
     /// A move's own source: a destination that is this file (a case-only
     /// rename) is not occupied by anyone else.
     move_source: Option<(String, String)>,
+    /// The bytes of a file this item replaces at its destination.
+    replaces_sha256: Option<String>,
 }
 
 impl SamePathSelf {
@@ -479,10 +499,15 @@ impl SamePathSelf {
                 rel: Some(item.source_rel.clone()),
                 sha256: Some(item.fingerprint.sha256.clone()),
                 move_source: None,
+                replaces_sha256: None,
             }
         } else {
             Self {
                 move_source: Some((item.source_root.clone(), item.source_rel.clone())),
+                replaces_sha256: item
+                    .replaces
+                    .as_ref()
+                    .map(|replaced| replaced.sha256.clone()),
                 ..Self::absent()
             }
         }
@@ -494,7 +519,18 @@ impl SamePathSelf {
             rel: None,
             sha256: None,
             move_source: None,
+            replaces_sha256: None,
         }
+    }
+
+    /// True when the occupant is the file this item replaces, still
+    /// holding the bytes the plan saw.
+    fn is_replaced(&self, dest: &std::path::Path) -> bool {
+        let Some(wanted) = self.replaces_sha256.as_deref() else {
+            return false;
+        };
+        super::paths::read_regular_file(dest)
+            .is_ok_and(|bytes| super::snapshots::sha256_hex(&bytes) == wanted)
     }
 
     /// True when `path`, found at or folding onto `dest_root:dest_rel`, is

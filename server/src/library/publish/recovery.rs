@@ -217,13 +217,19 @@ fn inspect_bundle(
             (Some(bytes), Some(source_sha)) => sha256_hex(bytes) == source_sha,
             _ => false,
         };
+        // A replacement not yet set aside: the destination still holds
+        // the file it replaces.
+        let dest_holds_replaced = match (&dest_bytes, journal.replaces.as_ref()) {
+            (Some(bytes), Some(replaced)) => sha256_hex(bytes) == replaced.sha256,
+            _ => false,
+        };
         if staged_bytes.is_some() && !staged_match {
             return Ok(BundleEvidence::Ambiguous(format!(
                 "journal {} staged bytes changed",
                 journal.id
             )));
         }
-        if dest_bytes.is_some() && !dest_match && !dest_holds_source {
+        if dest_bytes.is_some() && !dest_match && !dest_holds_source && !dest_holds_replaced {
             return Ok(BundleEvidence::Ambiguous(format!(
                 "journal {} destination holds foreign bytes",
                 journal.id
@@ -247,7 +253,7 @@ fn inspect_bundle(
                 )));
             }
             if let Ok(bytes) = paths::read_regular_file(backup) {
-                let expected = journal.source_sha256.as_deref().unwrap_or_default();
+                let expected = journal.backup_sha256().unwrap_or_default();
                 if !expected.is_empty() && sha256_hex(&bytes) != expected {
                     return Ok(BundleEvidence::Ambiguous(format!(
                         "journal {} backup bytes changed",
@@ -345,6 +351,12 @@ fn resume_precommit<C: Catalog>(
                         provenance.ingest_source,
                     )
                 }),
+                replaces: journal.replaces.as_ref().and_then(|replaced| {
+                    replaced
+                        .track_id
+                        .clone()
+                        .map(|track| (track, replaced.recycle_to.clone()))
+                }),
             });
         }
     }
@@ -424,7 +436,11 @@ fn resume_rename(
             .as_deref()
             .map(|sha| sha256_hex(&bytes) == sha)
             .unwrap_or(false);
-        if !source_match {
+        let replaced_here = journal
+            .replaces
+            .as_ref()
+            .is_some_and(|replaced| sha256_hex(&bytes) == replaced.sha256);
+        if !source_match && !replaced_here {
             return Err(PublishError::Collision(format!(
                 "late occupier at {}:{}",
                 journal.dest_root, journal.dest_rel
@@ -448,7 +464,7 @@ fn resume_rename(
                     )
             })
             .unwrap_or(false);
-        if !same_path {
+        if !same_path && !replaced_here {
             return Err(PublishError::Collision(format!(
                 "late occupier at {}:{}",
                 journal.dest_root, journal.dest_rel
@@ -578,7 +594,30 @@ fn finish_cleanup(
             continue;
         }
         let mut failed = false;
-        if let Some(backup_text) = journal.backup.as_deref()
+        if let (Some(replaced), Some(backup_text)) =
+            (journal.replaces.as_ref(), journal.backup.as_deref())
+        {
+            // The replaced file goes to the recycle bin, never away.
+            let moved = sandbox
+                .ensure_under_roots(Path::new(backup_text))
+                .and_then(|()| {
+                    paths::recycle_backup(
+                        Path::new(backup_text),
+                        Path::new(&replaced.recycle_to),
+                        &replaced.sha256,
+                    )
+                });
+            match moved {
+                Ok(true) => {
+                    JournalStore::new(conn).set_recycled(&journal.id, now_secs())?;
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::warn!(journal_id = %journal.id, %error, "replaced file not recycled yet");
+                    failed = true;
+                }
+            }
+        } else if let Some(backup_text) = journal.backup.as_deref()
             && sandbox.ensure_under_roots(Path::new(backup_text)).is_ok()
             && let Ok(bytes) = paths::read_regular_file(Path::new(backup_text))
         {
@@ -642,7 +681,7 @@ fn compensate_bundle(
             && std::fs::symlink_metadata(&dest).is_err()
             && let Ok(bytes) = paths::read_regular_file(Path::new(backup_text))
         {
-            let expected = journal.source_sha256.as_deref().unwrap_or_default();
+            let expected = journal.backup_sha256().unwrap_or_default();
             if expected.is_empty() || sha256_hex(&bytes) == expected {
                 let home = paths::backup_home(
                     sandbox,
@@ -668,4 +707,11 @@ fn compensate_bundle(
         }
     }
     Ok(())
+}
+
+fn now_secs() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|span| span.as_secs_f64())
+        .unwrap_or(0.0)
 }

@@ -1199,9 +1199,6 @@ impl Management {
                 }));
         loop {
             if self.checkpoint(job_id, worker)? {
-                if snapshot.job_mode() == Some(JobMode::DuplicateResolution) {
-                    self.put_back_unfinished(&snapshot);
-                }
                 return Ok(());
             }
             if !self.setup.coordinator.current().is_empty() {
@@ -1225,6 +1222,14 @@ impl Management {
                 return Ok(());
             };
             let mut result = result;
+            if failure.is_none()
+                && let Some(bundle_id) = result.get("bundle_id").and_then(|id| id.as_str())
+                && let Ok(recycled) = self.read(|conn| Ok(store::replaced_files(conn, bundle_id)?))
+                && !recycled.is_empty()
+                && let Some(result) = result.as_object_mut()
+            {
+                result.insert("recycled_to".to_owned(), serde_json::json!(recycled));
+            }
             if failure.is_none()
                 && let Some(extra) = self.after_album(&snapshot, ordinal)
                 && let (Some(result), serde_json::Value::Object(extra)) =
@@ -1300,9 +1305,25 @@ impl Management {
         self.read(|conn| Ok(store::set_work_bundle(conn, job_id, ordinal, &bundle_id)?))?;
         let items = self.read(|conn| Ok(store::bundle_items(conn, job_id, ordinal)?))?;
         Ok(Some(
-            match self.publish_album(snapshot, ordinal, &items, undo, organizes, &bundle_id) {
+            match self.publish_album(snapshot, &items, undo, organizes, &bundle_id) {
                 Ok(applied) => (None, written(&applied.bundle_id, &applied.outcome)),
                 Err(_) if self.committed(&bundle_id) => (None, written(&bundle_id, "committed")),
+                // A publish that stopped part way (the journal still holds
+                // it) is settled by recovery, which finishes or unwinds it;
+                // the album waits for that instead of failing now.
+                Err(_)
+                    if self
+                        .setup
+                        .held_bundles
+                        .unsettled(&bundle_id)
+                        .unwrap_or(true) =>
+                {
+                    tracing::warn!(
+                        bundle_id,
+                        "publish stopped part way; album waits for recovery"
+                    );
+                    return Ok(None);
+                }
                 Err(reason) => {
                     let result = serde_json::json!({ "bundle_id": bundle_id, "reason": reason });
                     (Some(reason), result)
@@ -1364,7 +1385,6 @@ impl Management {
     fn publish_album(
         &self,
         snapshot: &Snapshot,
-        ordinal: i64,
         items: &[PlannedItem],
         undo: bool,
         organizes: bool,
@@ -1373,15 +1393,13 @@ impl Management {
         if !undo {
             self.album_gate(snapshot, items, organizes)?;
         }
-        let plans = planner::bundle_plans(items);
+        let mut plans = planner::bundle_plans(items);
         if plans.is_empty() {
             return Err(reasons::not_scheduled());
         }
-        let recycled = if undo {
-            Vec::new()
-        } else {
-            self.recycle_before_publish(snapshot, ordinal, items)?
-        };
+        if !undo {
+            self.plan_replacements(items, &mut plans)?;
+        }
         let album_id = items
             .first()
             .map(|item| item.album_id.clone())
@@ -1401,26 +1419,11 @@ impl Management {
         self.setup
             .publish_plans(bundle_id, plans, pins, &override_of)
             .map_err(|error| {
-                let mut reason = reasons::from_publish(&error);
+                let reason = reasons::from_publish(&error);
                 if reason.code == "WRITE_FAILED" || reason.code == "BASELINE_UNAVAILABLE" {
                     tracing::error!(%error, job_id = snapshot.job.id, "management publish failed");
                 } else {
                     tracing::info!(%error, job_id = snapshot.job.id, "management publish refused");
-                }
-                // A file recycled to make room goes back, unless the new
-                // file did land after all.
-                if !recycled.is_empty() && !self.committed(bundle_id) {
-                    let bins: Vec<&str> = recycled.iter().map(|(_, to)| to.as_str()).collect();
-                    if self.put_back_recycled(snapshot, ordinal, &recycled) {
-                        reason
-                            .message
-                            .push_str(" The file in the way was put back.");
-                    } else {
-                        reason.message.push_str(&format!(
-                            " The file in the way is still in the recycle bin at {}.",
-                            bins.join(", ")
-                        ));
-                    }
                 }
                 reason
             })

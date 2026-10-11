@@ -17,18 +17,40 @@
 --                                       this only records that someone
 --                                       looked and the files were in place.
 --
--- New columns on library_track_management_state:
---   applied_album_identity_revision, applied_track_identity_revision
---     the album's and the file's match revisions a profile run wrote
---     from, so a new edition (or a changed match) is managed again.
+--   library_track_management_identity  per file, the album's and the
+--                                       file's match revisions the last
+--                                       profile run wrote from, so a new
+--                                       edition (or a changed match) is
+--                                       managed again. A table of its own
+--                                       rather than new columns, so this
+--                                       file is safe to run twice.
+--   library_publish_replacements        publish journals that replace the
+--                                       file standing at their destination
+--                                       (a duplicate resolution that keeps
+--                                       the new copy): the replaced file's
+--                                       bytes, its track, and where in the
+--                                       recycle bin it goes once the
+--                                       bundle commits. Until then it waits
+--                                       under the journal's backup.
+--
+-- Every statement is IF NOT EXISTS: running the file twice is harmless.
 --
 -- No down migration: rollback is restoring a pre-upgrade backup.
 
-ALTER TABLE library_track_management_state
-    ADD COLUMN applied_album_identity_revision INTEGER;
+CREATE TABLE IF NOT EXISTS library_track_management_identity (
+    local_track_id TEXT PRIMARY KEY REFERENCES local_tracks(id) ON DELETE CASCADE,
+    applied_album_identity_revision INTEGER,
+    applied_track_identity_revision INTEGER
+);
 
-ALTER TABLE library_track_management_state
-    ADD COLUMN applied_track_identity_revision INTEGER;
+CREATE TABLE IF NOT EXISTS library_publish_replacements (
+    journal_id TEXT PRIMARY KEY REFERENCES library_publish_journal(id) ON DELETE CASCADE,
+    replaced_rel TEXT NOT NULL,
+    replaced_sha256 TEXT NOT NULL,
+    replaced_track_id TEXT,
+    recycle_to TEXT NOT NULL,
+    recycled_at REAL
+);
 
 CREATE TABLE IF NOT EXISTS library_management_automatic_queue (
     local_album_id TEXT PRIMARY KEY REFERENCES local_albums(id) ON DELETE CASCADE,

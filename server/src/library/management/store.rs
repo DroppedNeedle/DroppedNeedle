@@ -824,53 +824,15 @@ pub fn set_work_bundle(
     Ok(())
 }
 
-/// Files an album step moved to the recycle bin before publishing:
-/// (original, where it went). Recorded before publishing, so a retry
-/// after a crash neither recycles twice nor forgets to put them back.
-pub fn work_recycled(
-    conn: &Connection,
-    job_id: &str,
-    ordinal: i64,
-) -> rusqlite::Result<Vec<(String, String)>> {
-    let raw: Option<String> = conn
-        .query_row(
-            "SELECT json_extract(result_json, '$.recycled') FROM library_operation_work \
-             WHERE job_id = ?1 AND ordinal = ?2 AND json_valid(result_json)",
-            params![job_id, ordinal],
-            |row| row.get(0),
-        )
-        .optional()?
-        .flatten();
-    Ok(raw
-        .and_then(|raw| serde_json::from_str(&raw).ok())
-        .unwrap_or_default())
-}
-
-/// Record (or, with an empty list, forget) the recycled files of an album step.
-pub fn set_work_recycled(
-    conn: &Connection,
-    job_id: &str,
-    ordinal: i64,
-    moves: &[(String, String)],
-) -> rusqlite::Result<()> {
-    let value = serde_json::to_string(moves).unwrap_or_else(|_| "[]".to_owned());
-    conn.execute(
-        "UPDATE library_operation_work SET result_json = json_set(CASE \
-         WHEN json_valid(result_json) AND json_type(result_json) = 'object' THEN result_json \
-         ELSE '{}' END, '$.recycled', json(?3)), row_revision = row_revision + 1 \
-         WHERE job_id = ?1 AND ordinal = ?2",
-        params![job_id, ordinal, value],
-    )?;
-    Ok(())
-}
-
-/// Album steps of a job that recycled files and were not written.
-pub fn unfinished_recycles(conn: &Connection, job_id: &str) -> rusqlite::Result<Vec<i64>> {
+/// Where in the recycle bin the files a bundle replaced went (or go,
+/// while its cleanup is pending).
+pub fn replaced_files(conn: &Connection, bundle_id: &str) -> rusqlite::Result<Vec<String>> {
     let mut statement = conn.prepare(
-        "SELECT ordinal FROM library_operation_work WHERE job_id = ?1 AND state <> 'succeeded' \
-         AND json_valid(result_json) AND json_array_length(result_json, '$.recycled') > 0",
+        "SELECT r.recycle_to FROM library_publish_replacements r \
+         JOIN library_publish_journal j ON j.id = r.journal_id \
+         WHERE j.bundle_id = ?1 ORDER BY r.journal_id",
     )?;
-    let rows = statement.query_map(params![job_id], |row| row.get(0))?;
+    let rows = statement.query_map(params![bundle_id], |row| row.get(0))?;
     rows.collect()
 }
 
@@ -929,11 +891,16 @@ pub fn undone_ordinals(
 }
 
 /// Published bundles of an applied job: (bundle ordinal, bundle id).
+/// An album whose publish recovery finished after the job stopped (a
+/// crash, then a stop) counts too: its bundle committed.
 pub fn applied_bundles(conn: &Connection, job_id: &str) -> rusqlite::Result<Vec<(i64, String)>> {
     let mut statement = conn.prepare(
         "SELECT ordinal, json_extract(result_json, '$.bundle_id') FROM library_operation_work \
-         WHERE job_id = ?1 AND state = 'succeeded' \
-         AND json_extract(result_json, '$.bundle_id') IS NOT NULL ORDER BY ordinal",
+         WHERE job_id = ?1 AND json_extract(result_json, '$.bundle_id') IS NOT NULL \
+         AND (state = 'succeeded' OR json_extract(result_json, '$.bundle_id') IN \
+           (SELECT bundle_id FROM library_publish_journal \
+            WHERE state IN ('committed', 'cleanup_pending', 'cleaned'))) \
+         ORDER BY ordinal",
     )?;
     let rows = statement.query_map(params![job_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
     rows.collect()
@@ -954,8 +921,11 @@ pub struct UndoCounts {
 pub fn undo_counts(conn: &Connection, job_id: &str, today: i64) -> rusqlite::Result<UndoCounts> {
     conn.query_row(
         "WITH bundles AS (SELECT json_extract(result_json, '$.bundle_id') AS bundle_id \
-           FROM library_operation_work WHERE job_id = ?1 AND state = 'succeeded' \
-           AND json_extract(result_json, '$.bundle_id') IS NOT NULL), \
+           FROM library_operation_work WHERE job_id = ?1 \
+           AND json_extract(result_json, '$.bundle_id') IS NOT NULL \
+           AND (state = 'succeeded' OR json_extract(result_json, '$.bundle_id') IN \
+             (SELECT bundle_id FROM library_publish_journal \
+              WHERE state IN ('committed', 'cleanup_pending', 'cleaned')))), \
          written AS (SELECT DISTINCT j.bundle_id, j.track_id FROM library_publish_journal j \
            JOIN bundles b ON b.bundle_id = j.bundle_id \
            WHERE j.kind = 'audio' AND j.track_id IS NOT NULL \
@@ -1111,8 +1081,8 @@ pub fn mark_managed(
         "INSERT INTO library_track_management_state (local_track_id, applied_profile_id, \
          applied_profile_revision, applied_naming_script_revision, applied_override_revision, \
          last_operation_job_id, managed_root_id, last_managed_at, last_outcome, \
-         applied_album_identity_revision, applied_track_identity_revision, managed_path_revision) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'succeeded', ?9, ?10, ?11) \
+         managed_path_revision) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'succeeded', ?9) \
          ON CONFLICT (local_track_id) DO UPDATE SET \
          applied_profile_id = excluded.applied_profile_id, \
          applied_profile_revision = excluded.applied_profile_revision, \
@@ -1121,8 +1091,6 @@ pub fn mark_managed(
          last_operation_job_id = excluded.last_operation_job_id, \
          managed_root_id = excluded.managed_root_id, \
          last_managed_at = excluded.last_managed_at, last_outcome = 'succeeded', \
-         applied_album_identity_revision = excluded.applied_album_identity_revision, \
-         applied_track_identity_revision = excluded.applied_track_identity_revision, \
          managed_path_revision = excluded.managed_path_revision, \
          last_reason_code = NULL, \
          row_revision = library_track_management_state.row_revision + 1",
@@ -1135,9 +1103,19 @@ pub fn mark_managed(
             mark.job_id,
             mark.root_id,
             now,
+            mark.path_revision,
+        ],
+    )?;
+    tx.execute(
+        "INSERT INTO library_track_management_identity (local_track_id, \
+         applied_album_identity_revision, applied_track_identity_revision) VALUES (?1, ?2, ?3) \
+         ON CONFLICT (local_track_id) DO UPDATE SET \
+         applied_album_identity_revision = excluded.applied_album_identity_revision, \
+         applied_track_identity_revision = excluded.applied_track_identity_revision",
+        params![
+            mark.track_id,
             revision(mark.album_identity_revision),
             revision(mark.track_identity_revision),
-            mark.path_revision,
         ],
     )?;
     Ok(())
@@ -1156,12 +1134,15 @@ pub fn mark_restored(
          last_managed_at, last_outcome) VALUES (?1, ?2, ?3, 'restored') \
          ON CONFLICT (local_track_id) DO UPDATE SET applied_profile_id = NULL, \
          applied_profile_revision = NULL, applied_naming_script_revision = NULL, \
-         applied_override_revision = NULL, applied_album_identity_revision = NULL, \
-         applied_track_identity_revision = NULL, managed_path_revision = NULL, \
+         applied_override_revision = NULL, managed_path_revision = NULL, \
          last_operation_job_id = excluded.last_operation_job_id, \
          last_managed_at = excluded.last_managed_at, last_outcome = 'restored', \
          row_revision = library_track_management_state.row_revision + 1",
         params![track_id, job_id, now],
+    )?;
+    tx.execute(
+        "DELETE FROM library_track_management_identity WHERE local_track_id = ?1",
+        params![track_id],
     )?;
     Ok(())
 }
@@ -1183,10 +1164,13 @@ pub struct TrackState {
 
 pub fn track_state(conn: &Connection, track_id: &str) -> rusqlite::Result<Option<TrackState>> {
     conn.query_row(
-        "SELECT applied_profile_id, applied_profile_revision, applied_naming_script_revision, \
-         applied_override_revision, managed_root_id, last_outcome, last_managed_at, \
-         applied_album_identity_revision, applied_track_identity_revision, managed_path_revision \
-         FROM library_track_management_state WHERE local_track_id = ?1",
+        "SELECT s.applied_profile_id, s.applied_profile_revision, \
+         s.applied_naming_script_revision, s.applied_override_revision, s.managed_root_id, \
+         s.last_outcome, s.last_managed_at, i.applied_album_identity_revision, \
+         i.applied_track_identity_revision, s.managed_path_revision \
+         FROM library_track_management_state s \
+         LEFT JOIN library_track_management_identity i ON i.local_track_id = s.local_track_id \
+         WHERE s.local_track_id = ?1",
         params![track_id],
         |row| {
             Ok(TrackState {

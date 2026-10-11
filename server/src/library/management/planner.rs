@@ -478,6 +478,7 @@ fn plan_file(
         sidecars: Vec::new(),
         staged_bytes_estimate: item.estimated_bytes,
         adopt: None,
+        replaces: None,
     });
     Ok(())
 }

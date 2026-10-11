@@ -341,6 +341,7 @@ impl LibrarySetup {
                         source_path: Some(placement.source.to_string_lossy().into_owned()),
                         ..dest_policy(&placement.dest_rel)
                     }),
+                    replaces: None,
                 });
             }
             write_provenance(&staged_dir, import, &placements)

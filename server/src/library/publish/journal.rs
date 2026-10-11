@@ -178,7 +178,42 @@ pub struct FileJournal {
     pub state: JournalState,
     /// Monotonic per-file sequence, bumped on every transition.
     pub seq: i64,
+    /// The file at the destination this journal replaces, when it does.
+    pub replaces: Option<JournalReplacement>,
 }
+
+/// A file a journal replaces at its destination: set aside under the
+/// journal's backup before the rename, recycled after commit, and put
+/// back on any pre-commit unwind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JournalReplacement {
+    /// Where it stood, relative to the destination root.
+    pub rel: String,
+    /// The bytes it held when the bundle was planned.
+    pub sha256: String,
+    /// Its library track, retired in the catalog commit.
+    pub track_id: Option<String>,
+    /// Absolute recycle-bin path it moves to after commit.
+    pub recycle_to: String,
+}
+
+impl FileJournal {
+    /// The bytes this journal's backup must hold: the replaced file's,
+    /// or the source's for a same-path write.
+    pub fn backup_sha256(&self) -> Option<&str> {
+        match &self.replaces {
+            Some(replaced) => Some(replaced.sha256.as_str()),
+            None => self.source_sha256.as_deref(),
+        }
+    }
+}
+
+const JOURNAL_COLUMNS: &str = "j.id, j.bundle_id, j.kind, j.source_root, j.source_rel, \
+     j.dest_root, j.dest_rel, j.staged, j.backup, j.source_sha256, j.staged_sha256, \
+     j.track_id, j.catalog_revision, j.mgmt_state, j.state, j.seq, \
+     r.replaced_rel, r.replaced_sha256, r.replaced_track_id, r.recycle_to \
+     FROM library_publish_journal j \
+     LEFT JOIN library_publish_replacements r ON r.journal_id = j.id";
 
 /// The publish journal in the application database, next to the catalog
 /// a bundle commits against in the same transaction.
@@ -192,8 +227,21 @@ impl<'a> JournalStore<'a> {
         Self { conn }
     }
 
-    /// Insert a fresh intent in `Prepared` state.
+    /// Insert a fresh intent in `Prepared` state, with the file it
+    /// replaces in the same savepoint.
     pub fn insert(&self, journal: &FileJournal) -> Result<(), PublishError> {
+        self.conn.execute_batch("SAVEPOINT journal_insert")?;
+        let inserted = self.insert_rows(journal);
+        match inserted {
+            Ok(()) => self.conn.execute_batch("RELEASE journal_insert")?,
+            Err(_) => self
+                .conn
+                .execute_batch("ROLLBACK TO journal_insert; RELEASE journal_insert")?,
+        }
+        inserted
+    }
+
+    fn insert_rows(&self, journal: &FileJournal) -> Result<(), PublishError> {
         self.conn.execute(
             "INSERT INTO library_publish_journal
              (id, bundle_id, kind, source_root, source_rel, dest_root, dest_rel,
@@ -218,6 +266,29 @@ impl<'a> JournalStore<'a> {
                 journal.mgmt_state.as_deref(),
                 journal.state.as_str(),
             ],
+        )?;
+        if let Some(replaced) = &journal.replaces {
+            self.conn.execute(
+                "INSERT INTO library_publish_replacements
+                 (journal_id, replaced_rel, replaced_sha256, replaced_track_id, recycle_to)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    journal.id,
+                    replaced.rel,
+                    replaced.sha256,
+                    replaced.track_id.as_deref(),
+                    replaced.recycle_to,
+                ],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Record that a replaced file reached the recycle bin.
+    pub fn set_recycled(&self, id: &str, at: f64) -> Result<(), PublishError> {
+        self.conn.execute(
+            "UPDATE library_publish_replacements SET recycled_at = ?2 WHERE journal_id = ?1",
+            rusqlite::params![id, at],
         )?;
         Ok(())
     }
@@ -259,10 +330,7 @@ impl<'a> JournalStore<'a> {
     pub fn get(&self, id: &str) -> Result<Option<FileJournal>, PublishError> {
         self.conn
             .query_row(
-                "SELECT id, bundle_id, kind, source_root, source_rel, dest_root,
-                        dest_rel, staged, backup, source_sha256, staged_sha256,
-                        track_id, catalog_revision, mgmt_state, state, seq
-                 FROM library_publish_journal WHERE id = ?1",
+                &format!("SELECT {JOURNAL_COLUMNS} WHERE j.id = ?1"),
                 rusqlite::params![id],
                 read_journal,
             )
@@ -272,12 +340,9 @@ impl<'a> JournalStore<'a> {
 
     /// Load every journal in a bundle, ordered by id for determinism.
     pub fn bundle(&self, bundle_id: &str) -> Result<Vec<FileJournal>, PublishError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, bundle_id, kind, source_root, source_rel, dest_root,
-                    dest_rel, staged, backup, source_sha256, staged_sha256,
-                    track_id, catalog_revision, mgmt_state, state, seq
-             FROM library_publish_journal WHERE bundle_id = ?1 ORDER BY id",
-        )?;
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {JOURNAL_COLUMNS} WHERE j.bundle_id = ?1 ORDER BY j.id"
+        ))?;
         let rows = stmt.query_map(rusqlite::params![bundle_id], read_journal)?;
         let mut out = Vec::new();
         for row in rows {
@@ -335,6 +400,18 @@ fn read_journal(row: &rusqlite::Row<'_>) -> Result<FileJournal, rusqlite::Error>
     })?;
     let source_root: Option<String> = row.get(3)?;
     let source_rel: Option<String> = row.get(4)?;
+    let replaced_rel: Option<String> = row.get(16)?;
+    let replaced_sha: Option<String> = row.get(17)?;
+    let recycle_to: Option<String> = row.get(19)?;
+    let replaces = match (replaced_rel, replaced_sha, recycle_to) {
+        (Some(rel), Some(sha256), Some(recycle_to)) => Some(JournalReplacement {
+            rel,
+            sha256,
+            track_id: row.get(18)?,
+            recycle_to,
+        }),
+        _ => None,
+    };
     Ok(FileJournal {
         id: row.get(0)?,
         bundle_id: row.get(1)?,
@@ -351,6 +428,7 @@ fn read_journal(row: &rusqlite::Row<'_>) -> Result<FileJournal, rusqlite::Error>
         mgmt_state: row.get(13)?,
         state,
         seq: row.get(15)?,
+        replaces,
     })
 }
 
