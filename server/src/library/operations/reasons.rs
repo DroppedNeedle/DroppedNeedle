@@ -151,6 +151,16 @@ pub const NO_EDITION_TO_PLAN: Reason = reason(
     "This album has no edition yet, so there is nothing to compare its files with.",
     "Pick an edition from the list first.",
 );
+pub const FILE_KEEPS_ITS_PLACE: Reason = reason(
+    "FILE_KEEPS_ITS_PLACE",
+    "One of the picked files sits on a track of the album's edition, so it is not an extra.",
+    "Reload the plan and pick only files marked as a second copy or not on the edition.",
+);
+pub const NOTHING_PICKED: Reason = reason(
+    "NOTHING_PICKED",
+    "No files were picked to remove.",
+    "Tick the extra files you want moved to the recycle bin, then try again.",
+);
 pub const NO_EDITION_CHOICE: Reason = reason(
     "NO_EDITION_CHOICE",
     "There is no edition choice on this album to take back.",

@@ -96,6 +96,17 @@ pub const LIBRARY_DISABLED: Reason = reason(
     "Turn the library on under Settings > Library, then try again.",
 );
 
+pub const NOTHING_TO_RESTORE: Reason = reason(
+    "NOTHING_TO_RESTORE",
+    "There is no removal of this album's extra files to take back, or it was already taken back.",
+    "Refresh the album page to see its files.",
+);
+
+/// The `before_json` a restore records, naming the removal it undid.
+fn restored_marker(action_id: &str) -> String {
+    serde_json::json!({ "undoes": action_id }).to_string()
+}
+
 /// Why a mutation did not happen.
 #[derive(Debug)]
 pub enum MutationError {
@@ -240,6 +251,120 @@ impl<'a> Mutations<'a> {
             release_group_mbid: None,
             recycled,
         })
+    }
+
+    /// Move some of one album's files into the recycle bin: the files its
+    /// edition has no place for, which a person picked from the edition
+    /// plan. The moves are kept in one catalog action so
+    /// [`Self::restore_recycled`] can put them back. Answers that action's
+    /// id and the track ids that left the catalog.
+    pub fn recycle_album_files(
+        &self,
+        album_id: &str,
+        track_ids: &[String],
+        actor: &str,
+    ) -> Result<(String, Vec<String>), MutationError> {
+        let mut tracks = Vec::with_capacity(track_ids.len());
+        for track_id in track_ids {
+            let track = self
+                .read(|conn| {
+                    conn.query_row(
+                        "SELECT id, local_album_id, root_id, relative_path FROM local_tracks \
+                         WHERE id = ?1 AND local_album_id = ?2 AND availability = 'indexed'",
+                        params![track_id, album_id],
+                        track_row,
+                    )
+                    .optional()
+                })?
+                .ok_or(MutationError::NotFound(TRACK_NOT_FOUND))?;
+            tracks.push(track);
+        }
+        let (removed, moved) =
+            self.remove_tracks(&tracks, true, "EDITION_EXTRA_RECYCLED", actor)?;
+        let moves: Vec<[String; 2]> = moved
+            .iter()
+            .map(|(from, to)| {
+                [
+                    from.to_string_lossy().into_owned(),
+                    to.to_string_lossy().into_owned(),
+                ]
+            })
+            .collect();
+        let action_id = uuid::Uuid::new_v4().to_string();
+        let written = self.write(|tx| {
+            tx.execute(
+                "INSERT INTO library_catalog_actions (id, actor_user_id, action_kind, \
+                 local_album_id, before_json, after_json, reason_code, created_at) VALUES \
+                 (?1, (SELECT id FROM auth_users WHERE id = ?2), 'edition_extras_recycled', ?3, \
+                 '{}', ?4, 'EDITION_EXTRA_RECYCLED', ?5)",
+                params![
+                    action_id,
+                    actor,
+                    album_id,
+                    serde_json::json!({ "moves": moves, "track_ids": removed }).to_string(),
+                    now_secs(),
+                ],
+            )?;
+            Ok(())
+        });
+        if let Err(error) = written {
+            // The files are in the bin and off the catalog; only the undo
+            // record is lost, so the removal stands and says so.
+            tracing::warn!(
+                ?error,
+                "recycled the edition's extras but could not keep the undo"
+            );
+        }
+        Ok((action_id, removed))
+    }
+
+    /// Put back the files one [`Self::recycle_album_files`] moved, then
+    /// rescan their folders. Answers false when a file could not be put
+    /// back (it stays in the recycle bin).
+    pub fn restore_recycled(
+        &self,
+        album_id: &str,
+        action_id: &str,
+        actor: &str,
+    ) -> Result<bool, MutationError> {
+        let after: String = self
+            .read(|conn| {
+                conn.query_row(
+                    "SELECT after_json FROM library_catalog_actions WHERE id = ?1 \
+                     AND local_album_id = ?2 AND action_kind = 'edition_extras_recycled' \
+                     AND NOT EXISTS (SELECT 1 FROM library_catalog_actions r \
+                       WHERE r.action_kind = 'edition_extras_restored' AND r.before_json = ?3)",
+                    params![action_id, album_id, restored_marker(action_id)],
+                    |row| row.get(0),
+                )
+                .optional()
+            })?
+            .ok_or(MutationError::NotFound(NOTHING_TO_RESTORE))?;
+        let moves: Vec<(PathBuf, PathBuf)> = serde_json::from_str::<serde_json::Value>(&after)
+            .ok()
+            .and_then(|value| value.get("moves").cloned())
+            .and_then(|moves| serde_json::from_value::<Vec<[String; 2]>>(moves).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|[from, to]| (PathBuf::from(from), PathBuf::from(to)))
+            .collect();
+        self.write(|tx| {
+            tx.execute(
+                "INSERT INTO library_catalog_actions (id, actor_user_id, action_kind, \
+                 local_album_id, before_json, after_json, reason_code, created_at) VALUES \
+                 (?1, (SELECT id FROM auth_users WHERE id = ?2), 'edition_extras_restored', ?3, \
+                 ?4, '{}', 'EDITION_EXTRA_RESTORED', ?5)",
+                params![
+                    uuid::Uuid::new_v4().to_string(),
+                    actor,
+                    album_id,
+                    restored_marker(action_id),
+                    now_secs(),
+                ],
+            )?;
+            Ok(())
+        })?;
+        Ok(self.put_back(&moves, actor))
     }
 
     /// Undo recycle moves (an upgrade whose new file could not be placed):

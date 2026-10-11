@@ -615,6 +615,8 @@ use crate::{
         crate::library::http::edition::confirm_edition,
         crate::library::http::edition::undo_edition,
         crate::library::http::edition::plan_edition,
+        crate::library::http::edition::remove_extras,
+        crate::library::http::edition::restore_extras,
         crate::library::http::edition::list_unconfirmed,
         crate::admin::handlers::list_backups,
         crate::admin::handlers::run_backup,

@@ -7,6 +7,8 @@
 //! - `POST /library/albums/{id}/edition/undo`: take back the last change.
 //! - `GET /library/albums/{id}/edition/plan`: what taking an edition would
 //!   do to the files (kept, duplicate, extra) and which tracks are missing.
+//! - `POST /library/albums/{id}/edition/extras/remove` and `.../restore`:
+//!   move picked extras to the recycle bin, and put them back.
 //! - `GET /library/unconfirmed`: albums whose match waits for a look.
 //!
 //! Changing an edition is for curators (admins and trusted users), as
@@ -15,6 +17,7 @@
 use axum::{
     Json, Router,
     extract::{Path, State},
+    response::{IntoResponse as _, Response},
     routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
@@ -23,8 +26,10 @@ use utoipa::{IntoParams, ToSchema};
 use super::auth::{Principal, RequireCurator};
 use super::error::{LibraryError, ValidJson, ValidQuery};
 use super::models::PenaltyView;
+use super::mutations::MutationHttpError;
 use super::operations::{OperationsHttpError, ReasonView, blocking};
 use crate::library::identify::models::CandidateEvidence;
+use crate::library::mutations::Mutations;
 use crate::library::operations::models::{EditionChoice, OperationError};
 use crate::library::operations::plan::{EditionPlan, FileFate};
 use crate::library::operations::reasons;
@@ -488,6 +493,119 @@ pub async fn plan_edition(
         .edition_plan(&album_id, query.release_mbid.as_deref())
         .await?;
     Ok(Json(plan.into()))
+}
+
+/// Extra files to move to the recycle bin.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct RemoveExtrasBody {
+    /// Local track ids the album's edition plan marks `duplicate` or `extra`.
+    pub track_ids: Vec<String>,
+}
+
+/// What removing extras did.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct RemoveExtrasView {
+    /// Pass to the undo route to put the files back.
+    pub action_id: String,
+    pub removed_track_ids: Vec<String>,
+}
+
+/// Take back a removal of extras.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct RestoreExtrasBody {
+    pub action_id: String,
+}
+
+/// Whether the files went back.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct RestoreExtrasView {
+    /// False when a file could not be put back; it stays in the recycle bin.
+    pub restored: bool,
+}
+
+/// Move files the album's edition has no place for (second copies and
+/// files not on it) to the recycle bin. Only files the current plan marks
+/// that way are accepted; nothing runs on its own. Undo with
+/// `.../edition/extras/restore`.
+#[utoipa::path(
+    post,
+    path = "/api/v3/library/albums/{album_id}/edition/extras/remove",
+    params(("album_id" = String, Path, description = "Local album id")),
+    request_body = RemoveExtrasBody,
+    responses(
+        (status = 200, description = "Files recycled", body = RemoveExtrasView),
+        (status = 400, description = "A picked file keeps its place on the edition, or nothing was picked"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Curator role required"),
+        (status = 404, description = "Unknown album or track"),
+        (status = 409, description = "Library busy or a file is outside the library folders"),
+        (status = 422, description = "A file could not be recycled; nothing changed"),
+        (status = 503, description = "MusicBrainz is not answering"),
+    )
+)]
+pub async fn remove_extras(
+    State(state): State<LibrarySetup>,
+    caller: RequireCurator,
+    Path(album_id): Path<String>,
+    ValidJson(body): ValidJson<RemoveExtrasBody>,
+) -> Result<Json<RemoveExtrasView>, Response> {
+    let refuse =
+        |reason| OperationsHttpError::from(OperationError::Invalid(reason)).into_response();
+    if body.track_ids.is_empty() {
+        return Err(refuse(reasons::NOTHING_PICKED));
+    }
+    let plan = Operations::new(&state)
+        .edition_plan(&album_id, None)
+        .await
+        .map_err(|error| OperationsHttpError::from(error).into_response())?;
+    let spare = |id: &String| {
+        plan.files
+            .iter()
+            .any(|file| file.local_track_id == *id && file.fate != FileFate::Keep)
+    };
+    if !body.track_ids.iter().all(spare) {
+        return Err(refuse(reasons::FILE_KEEPS_ITS_PLACE));
+    }
+    let actor = caller.0.user_id;
+    let (action_id, removed_track_ids) = tokio::task::spawn_blocking(move || {
+        Mutations::new(&state).recycle_album_files(&album_id, &body.track_ids, &actor)
+    })
+    .await
+    .map_err(|cause| LibraryError::internal(&cause).into_response())?
+    .map_err(|error| MutationHttpError::from(error).into_response())?;
+    Ok(Json(RemoveExtrasView {
+        action_id,
+        removed_track_ids,
+    }))
+}
+
+/// Put back the files one removal of extras moved to the recycle bin.
+#[utoipa::path(
+    post,
+    path = "/api/v3/library/albums/{album_id}/edition/extras/restore",
+    params(("album_id" = String, Path, description = "Local album id")),
+    request_body = RestoreExtrasBody,
+    responses(
+        (status = 200, description = "Files put back and rescanned", body = RestoreExtrasView),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Curator role required"),
+        (status = 404, description = "Nothing to take back"),
+    )
+)]
+pub async fn restore_extras(
+    State(state): State<LibrarySetup>,
+    caller: RequireCurator,
+    Path(album_id): Path<String>,
+    ValidJson(body): ValidJson<RestoreExtrasBody>,
+) -> Result<Json<RestoreExtrasView>, Response> {
+    let actor = caller.0.user_id;
+    let restored = tokio::task::spawn_blocking(move || {
+        Mutations::new(&state).restore_recycled(&album_id, &body.action_id, &actor)
+    })
+    .await
+    .map_err(|cause| LibraryError::internal(&cause).into_response())?
+    .map_err(|error| MutationHttpError::from(error).into_response())?;
+    Ok(Json(RestoreExtrasView { restored }))
 }
 
 /// Albums whose match is a best guess waiting for a look (or, with
