@@ -322,7 +322,8 @@
 			activation_settings_revision: null,
 			activation_preview_token: null,
 			activation_preview_hash: null,
-			activation_confirmed_at: null
+			activation_confirmed_at: null,
+			activation_confirmed_by: null
 		};
 	}
 

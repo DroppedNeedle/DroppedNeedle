@@ -274,6 +274,17 @@ export const getLibraryManagementRecoveryQuery = (
 			)
 	}));
 
+export const getLibraryManagementAutomaticSkippedQuery = (
+	getUserId: Getter<string | null | undefined>,
+	enabled: Getter<boolean> = () => true
+) =>
+	createQuery(() => ({
+		enabled: enabled(),
+		queryKey: LibraryManagementQueryKeyFactory.automaticSkipped(getUserId()),
+		queryFn: ({ signal }) =>
+			api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.automaticSkipped(), { signal })
+	}));
+
 export const getLibraryManagementActivationHealthQuery = (
 	getUserId: Getter<string | null | undefined>,
 	enabled: Getter<boolean> = () => true

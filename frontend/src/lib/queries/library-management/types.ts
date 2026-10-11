@@ -454,6 +454,7 @@ export interface LibraryManagementImportBundleResolveResponse {
 	state: string;
 	verified_files: number;
 	total_files: number;
+	note: string;
 }
 
 export interface LibraryManagementHistoryParams {

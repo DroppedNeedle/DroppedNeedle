@@ -22,6 +22,7 @@ export const LIBRARY_MANAGEMENT_ENDPOINTS = {
 	purgeBaselines: () => v3('/api/v3/library/management/baselines/purge'),
 	duplicateResolutionPreviews: () => v3('/api/v3/library/management/duplicate-resolution-previews'),
 	recoveryDiagnostics: () => v3('/api/v3/library/management/recovery/diagnostics'),
+	automaticSkipped: () => v3('/api/v3/library/management/automatic/skipped'),
 	resolveImportBundle: (bundleId: string) =>
 		v3('/api/v3/library/management/recovery/import-bundles/{bundle_id}/resolve', {
 			path: { bundle_id: bundleId }

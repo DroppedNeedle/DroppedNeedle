@@ -41,6 +41,7 @@
 	} from '$lib/queries/library-management/LibraryManagementPreviewTokens';
 	import {
 		getLibraryManagementOperationsQuery,
+		getLibraryManagementAutomaticSkippedQuery,
 		getLibraryManagementRecoveryQuery,
 		getLibraryManagementSettingsQuery
 	} from '$lib/queries/library-management/LibraryManagementQueries.svelte';
@@ -113,6 +114,11 @@
 	);
 	const recoveryUnavailable = $derived(recoveryQuery.isError);
 	const needsAttentionBundles = $derived(recoveryQuery.data?.needs_attention_bundles ?? []);
+	const skippedQuery = getLibraryManagementAutomaticSkippedQuery(
+		() => authStore.user?.id,
+		() => authStore.isAdmin
+	);
+	const skippedAlbums = $derived(skippedQuery.data?.items ?? []);
 
 	onMount(() => {
 		const events = createLibraryManagementEvents();
@@ -204,7 +210,7 @@
 			const result = await resolveImportBundle.mutateAsync({ bundleId });
 			await invalidateLibraryManagementSurfaces().catch(() => undefined);
 			toastStore.show({
-				message: `Write marked as handled (${result.verified_files} of ${result.total_files} files checked in place).`,
+				message: result.note,
 				type: 'success'
 			});
 		} catch (error) {
@@ -611,6 +617,23 @@
 						diagnostics load successfully. Refresh this page or check the server logs.</span
 					>
 				</div>{/if}
+			{#if skippedAlbums.length > 0}<details class="rounded-lg border border-base-content/10 p-3">
+					<summary class="cursor-pointer text-sm font-semibold"
+						>Automatic management skipped {skippedAlbums.length}
+						{skippedAlbums.length === 1 ? 'album' : 'albums'}</summary
+					>
+					<ul class="mt-2 flex flex-col gap-2 text-sm">
+						{#each skippedAlbums as album (album.album_id)}<li>
+								<a class="link font-medium" href={`/album/${encodeURIComponent(album.album_id)}`}
+									>{album.album_title}</a
+								>{#if album.artist_name}<span class="text-base-content/60">
+										· {album.artist_name}</span
+									>{/if}
+								<p class="text-base-content/80">{album.reason.message}</p>
+								<p class="text-base-content/60">{album.reason.action}</p>
+							</li>{/each}
+					</ul>
+				</details>{/if}
 		</div>
 	{/if}
 </section>

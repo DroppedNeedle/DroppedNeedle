@@ -69,5 +69,7 @@ export const LibraryManagementQueryKeyFactory = {
 	operationResults: (userId: string | null | undefined, jobId: string, limit: number) =>
 		[...LibraryManagementQueryKeyFactory.operation(userId, jobId), 'results', { limit }] as const,
 	recovery: (userId: string | null | undefined) =>
-		[...LibraryManagementQueryKeyFactory.user(userId), 'recovery'] as const
+		[...LibraryManagementQueryKeyFactory.user(userId), 'recovery'] as const,
+	automaticSkipped: (userId: string | null | undefined) =>
+		[...LibraryManagementQueryKeyFactory.user(userId), 'automatic-skipped'] as const
 };

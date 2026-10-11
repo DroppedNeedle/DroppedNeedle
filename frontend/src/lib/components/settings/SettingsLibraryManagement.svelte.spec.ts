@@ -301,7 +301,8 @@ function activeAssignmentSettings(): LibraryManagementSettingsResponse {
 			activation_settings_revision: 'settings-0',
 			activation_preview_token: 'old-token',
 			activation_preview_hash: 'old-hash',
-			activation_confirmed_at: 1
+			activation_confirmed_at: 1,
+			activation_confirmed_by: null
 		}
 	];
 	return settings;
@@ -565,7 +566,8 @@ describe('SettingsLibraryManagement', () => {
 				activation_settings_revision: null,
 				activation_preview_token: null,
 				activation_preview_hash: null,
-				activation_confirmed_at: null
+				activation_confirmed_at: null,
+				activation_confirmed_by: null
 			}
 		];
 		h.readSession.mockImplementation((userId: string) =>
@@ -778,7 +780,8 @@ describe('SettingsLibraryManagement', () => {
 						activation_settings_revision: null,
 						activation_preview_token: null,
 						activation_preview_hash: null,
-						activation_confirmed_at: null
+						activation_confirmed_at: null,
+						activation_confirmed_by: null
 					}
 				];
 			}
