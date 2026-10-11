@@ -1,6 +1,6 @@
 <script lang="ts">
 	import BaseImage from './BaseImage.svelte';
-	import { API } from '$lib/constants';
+	import { albumArtworkPath } from '$lib/api/covers';
 
 	interface Props {
 		mbid?: string;
@@ -45,9 +45,7 @@
 	}: Props = $props();
 
 	let cachedLocalUrl = $derived(
-		albumId && coverVersion !== undefined
-			? API.library.cachedAlbumArtwork(albumId, coverVersion)
-			: null
+		albumId && coverVersion !== undefined ? albumArtworkPath(albumId, coverVersion) : null
 	);
 </script>
 

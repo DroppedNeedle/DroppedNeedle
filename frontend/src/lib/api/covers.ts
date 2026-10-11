@@ -45,6 +45,17 @@ export function coverPath(kind: CoverKind, id: string, size: CoverSize = 500): s
 	return coverEndpoint(kind, id, size);
 }
 
+/**
+ * Root-relative path to a library album's own art (folder image or embedded
+ * picture). `coverVersion` makes a matching version cache for good.
+ */
+export function albumArtworkPath(albumId: string, coverVersion: number): string {
+	return v3('/api/v3/library/albums/{id}/artwork', {
+		path: { id: albumId },
+		query: { v: coverVersion }
+	});
+}
+
 /** Absolute cover URL (base path and PUBLIC_API_URL applied) for an `<img>` src. */
 export function coverSrc(kind: CoverKind, id: string, size: CoverSize = 500): string {
 	return getApiUrl(coverEndpoint(kind, id, size));

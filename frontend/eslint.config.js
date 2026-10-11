@@ -82,12 +82,6 @@ const transportRules = [
 	}
 ];
 
-// The one exception list for the transport rules: the calls the v3 server has
-// no route for yet. Their URL builders all live in lib/constants.ts (the API
-// registry), grouped by feature: identification reviews and bulk review. When a route lands, its call moves onto a v3()
-// template and its builder leaves that file.
-const WAITING_ON_BACKEND = ['src/lib/constants.ts'];
-
 // The transport itself: the api client and the page-scoped fetch it wraps.
 const TRANSPORT = ['src/lib/api/**', 'src/lib/utils/navigationAbort.ts'];
 
@@ -134,13 +128,7 @@ export default defineConfig(
 	},
 	{
 		files: ['src/**/*.ts', 'src/**/*.js', 'src/**/*.svelte'],
-		ignores: [
-			...TRANSPORT,
-			...WAITING_ON_BACKEND,
-			'src/**/*.spec.ts',
-			'src/**/*.test.ts',
-			'src/**/*.d.ts'
-		],
+		ignores: [...TRANSPORT, 'src/**/*.spec.ts', 'src/**/*.test.ts', 'src/**/*.d.ts'],
 		rules: {
 			'no-restricted-syntax': ['error', ...queryClientRules, ...transportRules]
 		}
