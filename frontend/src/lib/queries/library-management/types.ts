@@ -444,6 +444,9 @@ export interface LibraryManagementRecoveryDiagnosticsResponse {
 
 export interface LibraryManagementNeedsAttentionBundle {
 	bundle_id: string;
+	file_count?: number;
+	// A few of the paths the write was putting files at.
+	sample_paths?: string[];
 }
 
 export interface LibraryManagementImportBundleResolveResponse {

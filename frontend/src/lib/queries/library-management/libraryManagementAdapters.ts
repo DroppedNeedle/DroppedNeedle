@@ -1,16 +1,23 @@
 import type { components } from '$lib/api/v3/openapi';
 import { toOperationResponse } from '$lib/queries/library/libraryOperationAdapters';
 import type {
+	LibraryManagementExternalRefreshDelivery,
 	LibraryManagementOperationHistoryResponse,
 	LibraryManagementPlanItem,
 	LibraryManagementPlanItemPageResponse,
 	LibraryManagementPreviewDetailResponse,
 	LibraryManagementReason,
+	LibraryManagementRecoveryDiagnosticsResponse,
 	LibraryManagementResultPageResponse,
+	LibraryManagementTagEditorContext,
+	LibraryManagementTagEditorField,
+	LibraryManagementTagEditValue,
 	ManagementEligibility
 } from './types';
 
 type JobView = components['schemas']['ManagementJobView'];
+type TagEditorView = components['schemas']['ManagementTagEditorView'];
+type RecoveryView = components['schemas']['ManagementRecoveryView'];
 type PlanItemView = components['schemas']['ManagementPlanItemView'];
 type PlanItemPage = components['schemas']['ManagementPlanItemPage'];
 type ResultPage = components['schemas']['ManagementResultPage'];
@@ -95,8 +102,83 @@ export function toPreviewDetail(view: JobView): LibraryManagementPreviewDetailRe
 		worker_heartbeat_at: view.worker_heartbeat_at ?? null,
 		worker_lease_expires_at: view.worker_lease_expires_at ?? null,
 		undo_expires_at: view.undo_expires_at ?? null,
-		// The server does not refresh media servers after a run yet.
-		external_refreshes: []
+		external_refreshes: records(view.external_refreshes).map(toExternalRefresh)
+	};
+}
+
+const REFRESH_TARGETS: LibraryManagementExternalRefreshDelivery['target'][] = [
+	'plex',
+	'jellyfin',
+	'navidrome'
+];
+const REFRESH_STATES: LibraryManagementExternalRefreshDelivery['state'][] = [
+	'pending',
+	'delivering',
+	'retry_wait',
+	'succeeded',
+	'failed',
+	'unavailable'
+];
+
+function toExternalRefresh(row: Record<string, unknown>): LibraryManagementExternalRefreshDelivery {
+	const number = (value: unknown) => (typeof value === 'number' ? value : 0);
+	return {
+		target: REFRESH_TARGETS.find((value) => value === row.target) ?? 'jellyfin',
+		state: REFRESH_STATES.find((value) => value === row.state) ?? 'failed',
+		attempts: number(row.attempts),
+		max_attempts: number(row.max_attempts),
+		failure_code: typeof row.failure_code === 'string' ? row.failure_code : null,
+		updated_at: number(row.updated_at),
+		completed_at: typeof row.completed_at === 'number' ? row.completed_at : null
+	};
+}
+
+export function toTagEditor(view: TagEditorView): LibraryManagementTagEditorContext {
+	return {
+		...view,
+		identity_reason: view.identity_reason ?? null,
+		fields: view.fields.map((field) => ({
+			field_name: field.field_name,
+			scope: field.scope === 'album' ? 'album' : 'track',
+			cardinality: CARDINALITIES.find((value) => value === field.cardinality) ?? 'string',
+			current_value: toTagValue(field.current_value),
+			override_id: field.override_id ?? null,
+			override_mode: OVERRIDE_MODES.find((value) => value === field.override_mode) ?? null,
+			override_row_revision: field.override_row_revision ?? null
+		}))
+	};
+}
+
+const CARDINALITIES: LibraryManagementTagEditorField['cardinality'][] = [
+	'string',
+	'integer',
+	'boolean',
+	'ordered_strings'
+];
+const OVERRIDE_MODES: NonNullable<LibraryManagementTagEditorField['override_mode']>[] = [
+	'replace',
+	'preserve',
+	'clear'
+];
+
+function toTagValue(value: unknown): LibraryManagementTagEditValue {
+	if (
+		typeof value === 'string' ||
+		typeof value === 'number' ||
+		typeof value === 'boolean' ||
+		value === null
+	) {
+		return value;
+	}
+	return Array.isArray(value) ? value.map(String) : null;
+}
+
+export function toRecovery(view: RecoveryView): LibraryManagementRecoveryDiagnosticsResponse {
+	return {
+		...view,
+		oldest_updated_at: view.oldest_updated_at ?? null,
+		state_counts: view.state_counts ?? {},
+		needs_attention_bundles: view.needs_attention_bundles ?? []
 	};
 }
 

@@ -174,23 +174,5 @@ export const API = {
 		reviewRetry: (reviewId: string) => `/api/v1/library/reviews/${reviewId}/retry`,
 		bulkReviewPreview: () => '/api/v1/library/reviews/bulk-preview',
 		bulkReviewApply: () => '/api/v1/library/reviews/bulk-apply'
-	},
-	libraryManagement: {
-		activationPreviews: () => '/api/v1/settings/library-management/activation-previews',
-		activationPreview: (jobId: string) =>
-			`/api/v1/settings/library-management/activation-previews/${encodeURIComponent(jobId)}`,
-		activationConfirmations: () => '/api/v1/settings/library-management/activation-confirmations',
-		tagEditor: (trackId: string) =>
-			`/api/v1/library/management/tracks/${encodeURIComponent(trackId)}/tag-editor`,
-		tagEditPreviews: () => '/api/v1/library/management/tag-edit-previews',
-		baselineRestorePreviews: () => '/api/v1/library/management/baselines/restore-previews',
-		duplicateResolutionPreviews: () => '/api/v1/library/management/duplicate-resolution-previews',
-		baselinePurgeImpact: () => '/api/v1/library/management/baselines/purge-impact',
-		purgeBaselines: () => '/api/v1/library/management/baselines/purge',
-		recoveryDiagnostics: () => '/api/v1/library/management/recovery/diagnostics',
-		resolveImportBundle: (bundleId: string) =>
-			`/api/v1/library/management/recovery/import-bundles/${encodeURIComponent(bundleId)}/resolve`,
-		previewArtwork: (jobId: string, ordinal: number, sha256: string) =>
-			`/api/v1/library/management/previews/${encodeURIComponent(jobId)}/items/${ordinal}/artwork/${encodeURIComponent(sha256)}`
 	}
 } as const;

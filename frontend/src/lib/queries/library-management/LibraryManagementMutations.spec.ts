@@ -152,8 +152,8 @@ describe('Library Management mutations', () => {
 
 		await mutation.mutationFn(request);
 
-		expect(api.global.post).toHaveBeenCalledWith(
-			'/api/v1/library/management/duplicate-resolution-previews',
+		expect(api.global.v3.POST).toHaveBeenCalledWith(
+			'/api/v3/library/management/duplicate-resolution-previews',
 			request
 		);
 		expect(request).not.toHaveProperty('recycle');
@@ -175,8 +175,8 @@ describe('Library Management mutations', () => {
 
 		await mutation.mutationFn(request);
 
-		expect(api.global.post).toHaveBeenCalledWith(
-			'/api/v1/library/management/tag-edit-previews',
+		expect(api.global.v3.POST).toHaveBeenCalledWith(
+			'/api/v3/library/management/tag-edit-previews',
 			request
 		);
 	});
@@ -217,8 +217,8 @@ describe('Library Management mutations', () => {
 
 		await mutation.mutationFn({ bundleId: 'bundle/1' });
 
-		expect(api.global.post).toHaveBeenCalledWith(
-			'/api/v1/library/management/recovery/import-bundles/bundle%2F1/resolve'
+		expect(api.global.v3.POST).toHaveBeenCalledWith(
+			'/api/v3/library/management/recovery/import-bundles/bundle%2F1/resolve'
 		);
 	});
 
@@ -233,17 +233,17 @@ describe('Library Management mutations', () => {
 				total_files: number;
 			}
 		>();
-		vi.mocked(api.global.post).mockResolvedValue({
+		vi.mocked(api.global.v3.POST).mockResolvedValue({
 			bundle_id: 'bundle-1',
 			state: 'resolved',
 			verified_files: 4,
 			total_files: 4
-		});
+		} as never);
 
 		const result = await mutation.mutationFn({ bundleId: 'bundle-1' });
 
-		expect(api.global.post).toHaveBeenCalledWith(
-			'/api/v1/library/management/recovery/import-bundles/bundle-1/resolve'
+		expect(api.global.v3.POST).toHaveBeenCalledWith(
+			'/api/v3/library/management/recovery/import-bundles/bundle-1/resolve'
 		);
 		expect(result.verified_files).toBe(4);
 		expect(result.total_files).toBe(4);

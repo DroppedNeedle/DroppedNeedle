@@ -17,7 +17,6 @@
 
 	import BackButton from '$lib/components/BackButton.svelte';
 	import LibraryManagementDiscardPreview from './LibraryManagementDiscardPreview.svelte';
-	import { API } from '$lib/constants';
 	import { getTargetLibrarySettingsQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
 	import { getLibrarySearchQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -50,7 +49,6 @@
 		firstDeferredSource,
 		managementAudioFormat,
 		managementAlbumArtworkVersion,
-		managementArtworkPreviewHash,
 		managementDesiredField,
 		managementPlanAlbum,
 		managementPlanAlbumArtist,
@@ -381,12 +379,6 @@
 	}
 
 	function planAuditEntry(item: LibraryManagementPlanItem): ManagementAuditEntry {
-		const artworkUrl = item.artwork_choices
-			.map((choice) => {
-				const sha256 = managementArtworkPreviewHash(choice);
-				return sha256 ? API.libraryManagement.previewArtwork(jobId, item.ordinal, sha256) : null;
-			})
-			.find((value): value is string => Boolean(value));
 		return {
 			ordinal: item.ordinal,
 			bundleOrdinal: item.bundle_ordinal,
@@ -411,7 +403,7 @@
 			sourcePath: item.source_relative_path,
 			destinationRoot: rootLabel(item.destination_root_id),
 			destinationPath: item.destination_relative_path,
-			artworkUrl: artworkUrl ?? null
+			artworkUrl: null
 		};
 	}
 
@@ -579,7 +571,6 @@
 	{#if item}
 		<LibraryManagementPlanInspector
 			{item}
-			{jobId}
 			{roots}
 			reasonLabel={inspectorReasonLabel}
 			onresolve={openCollision}

@@ -16,7 +16,6 @@
 	} from 'lucide-svelte';
 
 	import BackButton from '$lib/components/BackButton.svelte';
-	import { API } from '$lib/constants';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { createLibraryManagementEvents } from '$lib/queries/library-management/LibraryManagementEvents';
 	import {
@@ -33,7 +32,6 @@
 	import {
 		managementAudioFormat,
 		managementAlbumArtworkVersion,
-		managementArtworkPreviewHash,
 		managementDesiredField,
 		managementPlanAlbum,
 		managementPlanAlbumArtist,
@@ -267,9 +265,6 @@
 	}
 
 	function resultAuditEntry(item: LibraryManagementResultItem): ManagementAuditEntry {
-		const artworkHash = (Array.isArray(item.plan.artwork_choices) ? item.plan.artwork_choices : [])
-			.map(managementArtworkPreviewHash)
-			.find((value): value is string => Boolean(value));
 		return {
 			ordinal: item.plan.ordinal,
 			bundleOrdinal: item.plan.bundle_ordinal,
@@ -296,9 +291,7 @@
 			sourcePath: item.plan.source_relative_path,
 			destinationRoot: 'Destination',
 			destinationPath: item.plan.destination_relative_path,
-			artworkUrl: artworkHash
-				? API.libraryManagement.previewArtwork(jobId, item.plan.ordinal, artworkHash)
-				: null
+			artworkUrl: null
 		};
 	}
 </script>

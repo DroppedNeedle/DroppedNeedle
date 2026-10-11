@@ -279,12 +279,6 @@ describe('LibraryManagementPreviewPage', () => {
 		await expect.element(page.getByText('Track', { exact: true }).first()).toBeVisible();
 		await expect.element(page.getByText('External Art · Front')).toBeVisible();
 		await expect
-			.element(page.getByRole('img', { name: 'Front preview' }))
-			.toHaveAttribute(
-				'src',
-				`/api/v1/library/management/previews/preview-1/items/0/artwork/${'a'.repeat(64)}`
-			);
-		await expect
 			.element(page.getByText(/Cover Art Archive Release · 1,200 × 1,200 px/))
 			.toBeVisible();
 		await expect.element(page.getByText('Artist/Album/cover.jpg')).toBeVisible();

@@ -204,7 +204,7 @@
 			const result = await resolveImportBundle.mutateAsync({ bundleId });
 			await invalidateLibraryManagementSurfaces().catch(() => undefined);
 			toastStore.show({
-				message: `Import bundle marked as handled (${result.verified_files}/${result.total_files} files verified).`,
+				message: `Write marked as handled (${result.verified_files} of ${result.total_files} files checked in place).`,
 				type: 'success'
 			});
 		} catch (error) {
@@ -212,7 +212,7 @@
 				message:
 					error instanceof Error && error.message
 						? error.message
-						: 'Could not mark this import bundle as handled',
+						: 'Could not mark this write as handled',
 				type: 'error'
 			});
 		} finally {
@@ -580,21 +580,31 @@
 					class="alert alert-warning items-start"
 				>
 					<TriangleAlert class="mt-0.5 h-5 w-5" /><span
-						><strong>Recovery needs attention</strong><br />{recoveryQuery.data
-							.needs_attention_count} bundles need review; {recoveryQuery.data
-							.cleanup_pending_count} have safe cleanup pending. No uncertain file is deleted automatically.</span
+						><strong>Some file writes need you</strong><br />{recoveryQuery.data
+							.needs_attention_count} files in {needsAttentionBundles.length} writes could not be finished
+						or undone safely; {recoveryQuery.data.cleanup_pending_count} have cleanup still to retry.
+						Nothing uncertain is ever deleted. Check that each file below is where it should be, then
+						mark the write as handled.</span
 					>
-					{#if authStore.isAdmin && needsAttentionBundles.length > 0}<div
-							class="flex w-full flex-wrap gap-2"
+					{#if authStore.isAdmin && needsAttentionBundles.length > 0}<ul
+							class="flex w-full flex-col gap-2"
 						>
-							{#each needsAttentionBundles as bundle (bundle.bundle_id)}<button
-									type="button"
-									class="btn btn-warning btn-sm"
-									disabled={resolvingBundleId !== null}
-									onclick={() => void resolveNeedsAttentionBundle(bundle.bundle_id)}
-									>Mark {bundle.bundle_id} as handled</button
-								>{/each}
-						</div>{/if}
+							{#each needsAttentionBundles as bundle (bundle.bundle_id)}<li
+									class="flex flex-wrap items-center justify-between gap-2 rounded-md bg-base-100/60 p-2"
+								>
+									<span class="min-w-0 text-sm"
+										>{bundle.file_count ?? 0} files{#if bundle.sample_paths?.length}: <span
+												class="font-mono text-xs break-all">{bundle.sample_paths.join(', ')}</span
+											>{/if}</span
+									><button
+										type="button"
+										class="btn btn-warning btn-sm"
+										disabled={resolvingBundleId !== null}
+										onclick={() => void resolveNeedsAttentionBundle(bundle.bundle_id)}
+										>Mark as handled</button
+									>
+								</li>{/each}
+						</ul>{/if}
 				</div>{:else if recoveryUnavailable}<div class="alert alert-error items-start" role="alert">
 					<TriangleAlert class="mt-0.5 h-5 w-5" /><span
 						><strong>Recovery status is unavailable</strong><br />Do not start new file writes until

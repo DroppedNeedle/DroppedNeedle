@@ -2,13 +2,14 @@ import { createInfiniteQuery, createQuery, queryOptions } from '@tanstack/svelte
 import type { Getter } from 'runed';
 
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { LIBRARY_MANAGEMENT_ENDPOINTS } from './endpoints';
 import {
 	toHistory,
 	toPlanItemPage,
 	toPreviewDetail,
-	toResultPage
+	toRecovery,
+	toResultPage,
+	toTagEditor
 } from './libraryManagementAdapters';
 
 import { LibraryManagementQueryKeyFactory } from './LibraryManagementQueryKeyFactory';
@@ -91,10 +92,11 @@ export const getLibraryManagementTagEditorQuery = (
 		return {
 			enabled: enabled() && Boolean(trackId),
 			queryKey: LibraryManagementQueryKeyFactory.tagEditor(getUserId(), trackId ?? ''),
-			queryFn: ({ signal }) =>
-				api.global.get<LibraryManagementTagEditorContext>(
-					API.libraryManagement.tagEditor(trackId ?? ''),
-					{ signal }
+			queryFn: async ({ signal }): Promise<LibraryManagementTagEditorContext> =>
+				toTagEditor(
+					await api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.tagEditor(trackId ?? ''), {
+						signal
+					})
 				)
 		};
 	});
@@ -137,10 +139,11 @@ export const getLibraryManagementActivationPreviewQuery = (
 			enabled: Boolean(jobId),
 			refetchInterval: (query: PreviewQuery) => activePreviewRefetchInterval(jobId, query),
 			queryKey: LibraryManagementQueryKeyFactory.activationPreview(getUserId(), jobId ?? ''),
-			queryFn: ({ signal }) =>
-				api.global.get<LibraryManagementPreviewDetailResponse>(
-					API.libraryManagement.activationPreview(jobId ?? ''),
-					{ signal }
+			queryFn: async ({ signal }): Promise<LibraryManagementPreviewDetailResponse> =>
+				toPreviewDetail(
+					await api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.activationPreview(jobId ?? ''), {
+						signal
+					})
 				)
 		};
 	});
@@ -265,10 +268,9 @@ export const getLibraryManagementRecoveryQuery = (
 	createQuery(() => ({
 		enabled: enabled(),
 		queryKey: LibraryManagementQueryKeyFactory.recovery(getUserId()),
-		queryFn: ({ signal }) =>
-			api.global.get<LibraryManagementRecoveryDiagnosticsResponse>(
-				API.libraryManagement.recoveryDiagnostics(),
-				{ signal }
+		queryFn: async ({ signal }): Promise<LibraryManagementRecoveryDiagnosticsResponse> =>
+			toRecovery(
+				await api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.recoveryDiagnostics(), { signal })
 			)
 	}));
 

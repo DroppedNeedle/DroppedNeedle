@@ -3,12 +3,29 @@ import type { LibraryManagementHistoryParams, LibraryManagementPlanItemParams } 
 
 const job = (jobId: string) => ({ path: { job_id: jobId } });
 
-// v3 Library Management URLs: settings and profiles, then previews and
-// operations. Recovery, the tag editor, baselines, duplicate resolution,
-// activation dry runs and preview artwork have no v3 route yet and stay in
-// the waiting-on-backend list (eslint.config.js).
+// v3 Library Management URLs: settings, profiles and activation dry runs,
+// then previews, operations, the tag editor, originals, duplicates and
+// recovery.
 export const LIBRARY_MANAGEMENT_ENDPOINTS = {
 	settings: () => v3('/api/v3/settings/library-management'),
+	activationPreviews: () => v3('/api/v3/settings/library-management/activation-previews'),
+	activationPreview: (jobId: string) =>
+		v3('/api/v3/settings/library-management/activation-previews/{job_id}', job(jobId)),
+	activationConfirmations: () => v3('/api/v3/settings/library-management/activation-confirmations'),
+	tagEditor: (trackId: string) =>
+		v3('/api/v3/library/management/tracks/{track_id}/tag-editor', {
+			path: { track_id: trackId }
+		}),
+	tagEditPreviews: () => v3('/api/v3/library/management/tag-edit-previews'),
+	baselineRestorePreviews: () => v3('/api/v3/library/management/baselines/restore-previews'),
+	baselinePurgeImpact: () => v3('/api/v3/library/management/baselines/purge-impact'),
+	purgeBaselines: () => v3('/api/v3/library/management/baselines/purge'),
+	duplicateResolutionPreviews: () => v3('/api/v3/library/management/duplicate-resolution-previews'),
+	recoveryDiagnostics: () => v3('/api/v3/library/management/recovery/diagnostics'),
+	resolveImportBundle: (bundleId: string) =>
+		v3('/api/v3/library/management/recovery/import-bundles/{bundle_id}/resolve', {
+			path: { bundle_id: bundleId }
+		}),
 	impact: () => v3('/api/v3/settings/library-management/impact'),
 	validate: () => v3('/api/v3/settings/library-management/validate'),
 	activationHealth: () => v3('/api/v3/settings/library-management/activation-health'),
