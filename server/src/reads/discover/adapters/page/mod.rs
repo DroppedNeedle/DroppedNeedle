@@ -25,7 +25,7 @@ pub mod sources;
 pub mod store;
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use crate::reads::discover::adapters::queue::QueueSettings;
@@ -33,7 +33,7 @@ use crate::reads::discover::adapters::queue::store::QueueDb;
 use crate::reads::discover::models::{
     DiscoverActivityResponse, DiscoverResponse, IntegrationStatus,
 };
-use crate::reads::discover::ports::{ProviderFailure, QueueStore, QueueTrigger};
+use crate::reads::discover::ports::{BoxFuture, ProviderFailure, QueueStore, QueueTrigger};
 use crate::runtime_config::{ConfigStore, secret_sections::AdvancedSettings};
 use build::{Builder, PageSettings};
 use library::LibraryReads;
@@ -129,6 +129,13 @@ struct Cached {
     meaningful: bool,
 }
 
+/// Another page the warm cycle keeps fresh (home), attached after both
+/// pages exist.
+pub trait FeatureWarmer: Send + Sync {
+    /// Build the user's page now; true when a new one was published.
+    fn warm<'a>(&'a self, user_id: &'a str) -> BoxFuture<'a, bool>;
+}
+
 /// What the page keeps between requests.
 #[derive(Default)]
 struct State {
@@ -154,6 +161,7 @@ struct Inner {
     config: Arc<ConfigStore>,
     queues: Arc<dyn QueueStore>,
     warmer_enabled: bool,
+    home: OnceLock<Arc<dyn FeatureWarmer>>,
     state: Mutex<State>,
 }
 
@@ -225,8 +233,27 @@ impl LiveDiscover {
                 config: inputs.config,
                 queues: inputs.queues,
                 warmer_enabled: inputs.warmer_enabled,
+                home: OnceLock::new(),
                 state: Mutex::new(State::default()),
             }),
+        }
+    }
+
+    /// Let the warm cycle rebuild the home page too.
+    pub fn attach_home(&self, home: Arc<dyn FeatureWarmer>) {
+        if self.inner.home.set(home).is_err() {
+            tracing::warn!("home warmer attached twice; keeping the first");
+        }
+    }
+
+    /// The user's last built page, from memory or the saved snapshot,
+    /// without starting a build (home's discover teaser).
+    pub async fn cached_page(&self, user_id: &str) -> Option<DiscoverResponse> {
+        let key = self.key_for(user_id).await;
+        let now = now_secs();
+        match self.memory(&key, now) {
+            Some(page) => Some(page),
+            None => self.load_saved(&key, now).await,
         }
     }
 
@@ -623,8 +650,12 @@ impl LiveDiscover {
                 }
                 tokio::time::timeout(FEATURE_TIMEOUT, self.warm_queue(user_id)).await
             }
-            // Home shelves and artist pages have no background warmer in
-            // this version; check back in six hours.
+            "home" => match self.inner.home.get() {
+                Some(home) => tokio::time::timeout(FEATURE_TIMEOUT, home.warm(user_id)).await,
+                None => return (false, WARM_AGAIN_SECS),
+            },
+            // Artist pages have no background warmer in this version;
+            // check back in six hours.
             other => {
                 tracing::debug!(feature = other, "no warmer for this discover feature yet");
                 return (false, WARM_AGAIN_SECS);

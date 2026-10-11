@@ -1311,106 +1311,9 @@ impl Builder<'_> {
         )
     }
 
-    /// The user's ListenBrainz weekly exploration playlist, with covers
-    /// from each track's release group where it can be found in time.
+    /// The user's ListenBrainz weekly exploration playlist.
     async fn weekly_exploration(&self, user_id: &str, username: &str) -> Option<WeeklyExploration> {
-        let playlist = match self
-            .sources
-            .listenbrainz_weekly_playlist(user_id, username)
-            .await
-        {
-            Ok(Some(playlist)) => playlist,
-            Ok(None) => return None,
-            Err(cause) => {
-                tracing::warn!(%cause, "weekly exploration unavailable");
-                return None;
-            }
-        };
-        let recordings: Vec<String> = playlist
-            .tracks
-            .iter()
-            .filter_map(|track| track.recording_mbid.clone())
-            .collect();
-        let by_recording = self
-            .sources
-            .listenbrainz_recording_groups(user_id, &recordings)
-            .await
-            .unwrap_or_default();
-        let group_of = |recording: &Option<String>| {
-            recording
-                .as_deref()
-                .and_then(|r| by_recording.get(&r.to_ascii_lowercase()).cloned())
-        };
-        let mut releases: Vec<String> = playlist
-            .tracks
-            .iter()
-            .filter(|track| group_of(&track.recording_mbid).is_none())
-            .filter_map(|track| track.caa_release_mbid.clone())
-            .collect();
-        releases.sort();
-        releases.dedup();
-        let release_groups: HashMap<String, String> = match tokio::time::timeout(
-            RESOLVE_BUDGET,
-            join_all(releases.iter().map(|release| async move {
-                let group = self
-                    .sources
-                    .musicbrainz_release_group_of(release)
-                    .await
-                    .ok()
-                    .flatten();
-                (release.clone(), group)
-            })),
-        )
-        .await
-        {
-            Ok(found) => found
-                .into_iter()
-                .filter_map(|(release, group)| Some((release, group?)))
-                .collect(),
-            Err(_) => {
-                tracing::warn!(
-                    "weekly exploration cover lookups ran out of time; using release covers"
-                );
-                HashMap::new()
-            }
-        };
-        let tracks = playlist
-            .tracks
-            .into_iter()
-            .map(|track| {
-                let group = group_of(&track.recording_mbid).or_else(|| {
-                    track
-                        .caa_release_mbid
-                        .as_ref()
-                        .and_then(|release| release_groups.get(release).cloned())
-                });
-                let cover_url = match (&group, &track.caa_release_mbid) {
-                    (Some(group), _) => {
-                        Some(format!("/api/v3/covers/release-group/{group}?size=250"))
-                    }
-                    (None, Some(release)) => {
-                        Some(format!("/api/v3/covers/release/{release}?size=250"))
-                    }
-                    (None, None) => None,
-                };
-                WeeklyTrack {
-                    title: track.title,
-                    artist_name: track.creator,
-                    album_name: track.album,
-                    recording_mbid: track.recording_mbid,
-                    artist_mbid: track.artist_mbid,
-                    release_group_mbid: group,
-                    cover_url,
-                    duration_ms: track.duration_ms,
-                }
-            })
-            .collect();
-        Some(WeeklyExploration {
-            title: playlist.title,
-            playlist_date: playlist.date,
-            tracks,
-            source_url: playlist.source_url,
-        })
+        weekly_exploration(self.sources, user_id, username).await
     }
 
     /// Library albums turning 10, 20, 25, ... years old this year,
@@ -1825,8 +1728,108 @@ fn rediscover(plays: &[super::sources::PlayedArtist], now: f64) -> Option<ChartS
     shelf("Rediscover", "artists", items, Some("jellyfin"))
 }
 
+/// The user's ListenBrainz weekly exploration playlist, with covers from
+/// each track's release group where it can be found in time. Home shows
+/// the same playlist.
+pub async fn weekly_exploration(
+    sources: &dyn PageSources,
+    user_id: &str,
+    username: &str,
+) -> Option<WeeklyExploration> {
+    let playlist = match sources
+        .listenbrainz_weekly_playlist(user_id, username)
+        .await
+    {
+        Ok(Some(playlist)) => playlist,
+        Ok(None) => return None,
+        Err(cause) => {
+            tracing::warn!(%cause, "weekly exploration unavailable");
+            return None;
+        }
+    };
+    let recordings: Vec<String> = playlist
+        .tracks
+        .iter()
+        .filter_map(|track| track.recording_mbid.clone())
+        .collect();
+    let by_recording = sources
+        .listenbrainz_recording_groups(user_id, &recordings)
+        .await
+        .unwrap_or_default();
+    let group_of = |recording: &Option<String>| {
+        recording
+            .as_deref()
+            .and_then(|r| by_recording.get(&r.to_ascii_lowercase()).cloned())
+    };
+    let mut releases: Vec<String> = playlist
+        .tracks
+        .iter()
+        .filter(|track| group_of(&track.recording_mbid).is_none())
+        .filter_map(|track| track.caa_release_mbid.clone())
+        .collect();
+    releases.sort();
+    releases.dedup();
+    let release_groups: HashMap<String, String> = match tokio::time::timeout(
+        RESOLVE_BUDGET,
+        join_all(releases.iter().map(|release| async move {
+            let group = sources
+                .musicbrainz_release_group_of(release)
+                .await
+                .ok()
+                .flatten();
+            (release.clone(), group)
+        })),
+    )
+    .await
+    {
+        Ok(found) => found
+            .into_iter()
+            .filter_map(|(release, group)| Some((release, group?)))
+            .collect(),
+        Err(_) => {
+            tracing::warn!(
+                "weekly exploration cover lookups ran out of time; using release covers"
+            );
+            HashMap::new()
+        }
+    };
+    let tracks = playlist
+        .tracks
+        .into_iter()
+        .map(|track| {
+            let group = group_of(&track.recording_mbid).or_else(|| {
+                track
+                    .caa_release_mbid
+                    .as_ref()
+                    .and_then(|release| release_groups.get(release).cloned())
+            });
+            let cover_url = match (&group, &track.caa_release_mbid) {
+                (Some(group), _) => Some(format!("/api/v3/covers/release-group/{group}?size=250")),
+                (None, Some(release)) => Some(format!("/api/v3/covers/release/{release}?size=250")),
+                (None, None) => None,
+            };
+            WeeklyTrack {
+                title: track.title,
+                artist_name: track.creator,
+                album_name: track.album,
+                recording_mbid: track.recording_mbid,
+                artist_mbid: track.artist_mbid,
+                release_group_mbid: group,
+                cover_url,
+                duration_ms: track.duration_ms,
+            }
+        })
+        .collect();
+    Some(WeeklyExploration {
+        title: playlist.title,
+        playlist_date: playlist.date,
+        tracks,
+        source_url: playlist.source_url,
+    })
+}
+
 /// Browse by Genre: the user's ListenBrainz genres, else a default list.
-fn genre_list(genres: Option<&[(String, i64)]>) -> Option<ChartSection> {
+pub fn genre_list(genres: Option<&[(String, i64)]>) -> Option<ChartSection> {
     match genres.filter(|g| !g.is_empty()) {
         Some(genres) => shelf(
             "Browse by Genre",

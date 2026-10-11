@@ -751,7 +751,6 @@ pub async fn remove_batch(
     responses(
         (status = 200, description = "Home shelves", body = HomeResponse),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn get_home(
@@ -798,7 +797,6 @@ pub async fn integration_status(
         (status = 200, description = "Genre detail", body = GenreDetailResponse),
         (status = 400, description = "Bad query string"),
         (status = 401, description = "Not authenticated"),
-        (status = 503, description = "Not configured (NOT_CONFIGURED) or not built in this version yet (NOT_AVAILABLE)", body = crate::error::ErrorEnvelope),
     )
 )]
 pub async fn genre_detail(

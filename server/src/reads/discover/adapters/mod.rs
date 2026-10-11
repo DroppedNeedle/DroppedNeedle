@@ -8,6 +8,7 @@
 
 pub mod charts;
 pub mod content;
+pub mod home;
 pub mod ownership;
 pub mod page;
 pub mod previews;
@@ -63,6 +64,8 @@ pub struct DiscoverInputs {
     pub lastfm_key: InstanceLastFmKey,
     /// Whether the discover warm cycle runs (the deployment kill switch).
     pub discover_warmer: bool,
+    /// The cover and artist image cache, which genre pages warm.
+    pub artwork: Option<crate::reads::platform::artwork::ArtworkService>,
 }
 
 /// Build the production discover deps.
@@ -115,19 +118,26 @@ pub fn production_deps(inputs: DiscoverInputs, ids: Arc<dyn IdGenerator>) -> Rea
     let sources = Arc::new(live_sources(&inputs));
     let queues = live_queue(&inputs, sources.clone(), youtube.clone());
     let page = page::LiveDiscover::new(page::PageInputs {
-        sources,
+        sources: sources.clone(),
         queue_db: queue::store::QueueDb::new(inputs.pool.clone(), inputs.lane.clone()),
         db: page::store::PageDb::new(inputs.pool.clone(), inputs.lane.clone()),
         config: inputs.config.clone(),
         queues: queues.clone(),
         warmer_enabled: inputs.discover_warmer,
     });
+    let (home, genre_art, charts) = home::wire(home::HomeWiring {
+        pool: inputs.pool.clone(),
+        config: inputs.config.clone(),
+        sources: sources.clone(),
+        discover: page.clone(),
+        charts,
+        artwork: inputs.artwork.clone(),
+    });
     ReadsDeps {
-        content: Arc::new(content::LiveContent::new(
-            inputs.config,
-            inputs.pool.clone(),
-            page,
-        )),
+        content: Arc::new(
+            content::LiveContent::new(inputs.config, inputs.pool.clone(), page)
+                .with_home(home, genre_art),
+        ),
         queues,
         batches: Arc::new(unbuilt::UnavailableBatches),
         charts,

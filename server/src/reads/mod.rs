@@ -75,23 +75,28 @@ impl ReadsSetup {
         enrichment: Option<enrichment::live::ProductionEnrichment>,
     ) -> Self {
         let inputs_config = inputs.config.clone();
+        let discover_inputs = discover::adapters::DiscoverInputs {
+            pool: pool.clone(),
+            lane: inputs.lane.clone(),
+            config: inputs.config.clone(),
+            http: inputs.http.clone(),
+            no_redirect: inputs.no_redirect.clone(),
+            providers: inputs.providers.clone(),
+            listenbrainz_links: inputs.listenbrainz_links.clone(),
+            youtube_quota_path: inputs.youtube_quota_path.clone(),
+            users: users.clone(),
+            lastfm_key: inputs.lastfm_key.clone(),
+            discover_warmer: inputs.discover_warmer,
+            artwork: None,
+        };
+        let (platform, artwork) = platform_state(pool, &users, inputs);
         let discover = discover::adapters::production_deps(
             discover::adapters::DiscoverInputs {
-                pool: pool.clone(),
-                lane: inputs.lane.clone(),
-                config: inputs.config.clone(),
-                http: inputs.http.clone(),
-                no_redirect: inputs.no_redirect.clone(),
-                providers: inputs.providers.clone(),
-                listenbrainz_links: inputs.listenbrainz_links.clone(),
-                youtube_quota_path: inputs.youtube_quota_path.clone(),
-                users: users.clone(),
-                lastfm_key: inputs.lastfm_key.clone(),
-                discover_warmer: inputs.discover_warmer,
+                artwork: Some(artwork.clone()),
+                ..discover_inputs
             },
             ids.clone(),
         );
-        let (platform, artwork) = platform_state(pool, &users, inputs);
         let youtube = unwired_youtube(&discover, ids.clone());
         let library_db = library::sqlite::LibraryDb::new(pool);
         let catalog: Arc<dyn library::stores::LibraryCatalog> =

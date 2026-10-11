@@ -2,15 +2,17 @@
 //!
 //! Discover is served by the live page ([`LiveDiscover`]): built in the
 //! background, kept as a snapshot, refreshed on demand and by the warm
-//! cycle. Home shelves are not ported yet, so home answers with no shelves
-//! rather than invented rows. Both carry the integration status read from
-//! the settings the way v2 read it.
+//! cycle. Home is served by [`LiveHome`] the same way, kept in memory.
+//! Both carry the integration status read from the settings the way v2
+//! read it, and genre tiles on both get artwork from the collection.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
 
+use crate::reads::discover::adapters::home::artwork::GenreArt;
+use crate::reads::discover::adapters::home::{LiveHome, genre_names};
 use crate::reads::discover::adapters::page::{GENRE_ARTWORK_SCHEMA, LiveDiscover};
 use crate::reads::discover::{
     models::{DiscoverActivityResponse, DiscoverResponse, HomeResponse, IntegrationStatus},
@@ -40,19 +42,66 @@ pub fn download_client_ready(config: &ConfigStore) -> bool {
         || (sabnzbd.enabled && !sabnzbd.url.is_empty() && !sabnzbd.api_key.is_empty())
 }
 
-/// The live discover page plus home without shelves, with the real
-/// integration status.
+/// The v2 integration flags, read from the current settings. A section
+/// that cannot be read counts as off, with a log line.
+pub fn integration_status(config: &ConfigStore) -> IntegrationStatus {
+    let lb = read("listenbrainz", config.get_raw::<ListenBrainzConnection>());
+    let lastfm = read("lastfm", config.get::<LastFmSettings>());
+    let youtube = read("youtube", config.get_raw::<YouTubeConnection>());
+    let jellyfin = read("jellyfin", config.get_raw::<JellyfinConnection>());
+    let navidrome = read("navidrome", config.get_raw::<NavidromeConnection>());
+    let plex = read("plex", config.get_raw::<PlexConnection>());
+    IntegrationStatus {
+        listenbrainz: lb.enabled && !lb.username.is_empty(),
+        jellyfin: jellyfin.enabled
+            && !jellyfin.jellyfin_url.is_empty()
+            && !jellyfin.api_key.is_empty(),
+        download_client: download_client_ready(config),
+        youtube: youtube.enabled,
+        lastfm: lastfm.enabled,
+        navidrome: navidrome.enabled
+            && !navidrome.navidrome_url.is_empty()
+            && !navidrome.username.is_empty()
+            && !navidrome.password.is_empty(),
+        youtube_api: youtube.enabled
+            && youtube.api_enabled
+            && !youtube.api_key.expose().trim().is_empty(),
+        plex: plex.enabled
+            && !plex.plex_url.is_empty()
+            && !plex.plex_token.is_empty()
+            && !plex.music_library_ids.is_empty(),
+        // The native library and its scanner are always present (v2).
+        library: true,
+        localfiles: true,
+    }
+}
+
+/// The live discover page and, once attached, the live home page, with
+/// the real integration status.
 pub struct LiveContent {
     config: Arc<ConfigStore>,
     pool: SqlitePool,
     page: LiveDiscover,
+    home: Option<(LiveHome, Arc<GenreArt>)>,
 }
 
 impl LiveContent {
     /// Read settings from `config` and the catalog from `pool`; discover
-    /// comes from `page`.
+    /// comes from `page`. Home has no shelves until [`Self::with_home`].
     pub fn new(config: Arc<ConfigStore>, pool: SqlitePool, page: LiveDiscover) -> Self {
-        Self { config, pool, page }
+        Self {
+            config,
+            pool,
+            page,
+            home: None,
+        }
+    }
+
+    /// Serve home from `home`, and give genre tiles artwork from `art`.
+    #[must_use]
+    pub fn with_home(mut self, home: LiveHome, art: Arc<GenreArt>) -> Self {
+        self.home = Some((home, art));
+        self
     }
 
     /// True when the user switched the Discover Queue section off on the
@@ -72,41 +121,8 @@ impl LiveContent {
         })
     }
 
-    /// The v2 integration flags, read from the current settings. A section
-    /// that cannot be read counts as off, with a log line.
     fn status(&self) -> IntegrationStatus {
-        let lb = read(
-            "listenbrainz",
-            self.config.get_raw::<ListenBrainzConnection>(),
-        );
-        let lastfm = read("lastfm", self.config.get::<LastFmSettings>());
-        let youtube = read("youtube", self.config.get_raw::<YouTubeConnection>());
-        let jellyfin = read("jellyfin", self.config.get_raw::<JellyfinConnection>());
-        let navidrome = read("navidrome", self.config.get_raw::<NavidromeConnection>());
-        let plex = read("plex", self.config.get_raw::<PlexConnection>());
-        IntegrationStatus {
-            listenbrainz: lb.enabled && !lb.username.is_empty(),
-            jellyfin: jellyfin.enabled
-                && !jellyfin.jellyfin_url.is_empty()
-                && !jellyfin.api_key.is_empty(),
-            download_client: download_client_ready(&self.config),
-            youtube: youtube.enabled,
-            lastfm: lastfm.enabled,
-            navidrome: navidrome.enabled
-                && !navidrome.navidrome_url.is_empty()
-                && !navidrome.username.is_empty()
-                && !navidrome.password.is_empty(),
-            youtube_api: youtube.enabled
-                && youtube.api_enabled
-                && !youtube.api_key.expose().trim().is_empty(),
-            plex: plex.enabled
-                && !plex.plex_url.is_empty()
-                && !plex.plex_token.is_empty()
-                && !plex.music_library_ids.is_empty(),
-            // The native library and its scanner are always present (v2).
-            library: true,
-            localfiles: true,
-        }
+        integration_status(&self.config)
     }
 }
 
@@ -122,16 +138,25 @@ impl DiscoverContent for LiveContent {
             // The queue deck is built; the page shows its entry point
             // unless the user turned the section off.
             page.discover_queue_enabled = !queue_hidden;
+            if let Some((_, art)) = &self.home {
+                let names = genre_names(page.genre_list.as_ref());
+                if !names.is_empty() {
+                    page.genre_artwork = art.batch(&names).await;
+                }
+            }
             Ok(page)
         })
     }
 
     fn home<'a>(
         &'a self,
-        _user_id: &'a str,
+        user_id: &'a str,
     ) -> BoxFuture<'a, Result<HomeResponse, ProviderFailure>> {
         let status = self.status();
         Box::pin(async move {
+            if let Some((home, _)) = &self.home {
+                return Ok(home.page(user_id).await);
+            }
             Ok(HomeResponse {
                 recently_added: None,
                 library_artists: None,
