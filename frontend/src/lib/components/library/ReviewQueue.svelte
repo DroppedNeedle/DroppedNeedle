@@ -53,7 +53,9 @@
 	let hideActiveJobs = $state(false);
 	let filedFrom = $state('');
 	let filedTo = $state('');
-	let sort = $state<'newest' | 'oldest'>('newest');
+	let sort = $state<'newest' | 'oldest' | 'tracks'>('newest');
+	let withCandidates = $state(false);
+	let retryDialog = $state<HTMLDialogElement>();
 	let selected = $state<string[]>([]);
 	let allMatching = $state(false);
 	let bulkDialog = $state<HTMLDialogElement>();
@@ -72,6 +74,7 @@
 		policy: policy || undefined,
 		jobState: jobState || undefined,
 		hideActiveJobs,
+		withCandidates,
 		createdFrom: dayStart(filedFrom),
 		createdTo: filedTo ? (dayStart(filedTo) ?? 0) + 86_399_999 : undefined,
 		sort
@@ -169,15 +172,21 @@
 		toastStore.show({ message, type: 'error' });
 	}
 
-	async function run(review: LibraryReview, action: ReviewAction): Promise<void> {
-		if (
-			action === 'exclude' &&
-			!confirm(
-				`Take "${review.album_title}" out of the library? The files stay on disk, and you can put them back from this list.`
-			)
-		) {
-			return;
+	function confirmation(review: LibraryReview, action: ReviewAction): string | null {
+		if (action === 'exclude') {
+			return `Take "${review.album_title}" out of the library? The files stay on disk, and you can put them back from this list.`;
 		}
+		if (action === 'detach') {
+			return review.manual_identity
+				? `"${review.album_title}" has an edition someone picked by hand. Remove that pick and its MusicBrainz match? The album keeps its own tags, and you can undo this from the album page.`
+				: `Remove the MusicBrainz match from "${review.album_title}"? The album keeps its own tags, and you can undo this from the album page.`;
+		}
+		return null;
+	}
+
+	async function run(review: LibraryReview, action: ReviewAction): Promise<void> {
+		const question = confirmation(review, action);
+		if (question && !confirm(question)) return;
 		try {
 			await act.mutateAsync({ reviewId: review.id, action });
 		} catch (error) {
@@ -201,12 +210,19 @@
 		}
 	}
 
-	async function retryEverything(): Promise<void> {
+	async function previewRetry(): Promise<void> {
 		try {
-			const result = await retryAll.mutateAsync({
-				confirmLocalMetadata,
-				rootIds: rootId ? [rootId] : []
-			});
+			await retryAll.mutateAsync({ confirmLocalMetadata, filter, preview: true });
+			retryDialog?.showModal();
+		} catch (error) {
+			failure(error, 'Could not count what would start.');
+		}
+	}
+
+	async function retryEverything(): Promise<void> {
+		retryDialog?.close();
+		try {
+			const result = await retryAll.mutateAsync({ confirmLocalMetadata, filter });
 			const held = result.skipped.reduce((sum, group) => sum + group.count, 0);
 			toastStore.show({
 				message: held
@@ -254,23 +270,16 @@
 				oninput={(event) => onSearch(event.currentTarget.value)}
 			/>
 		</label>
-		{#if reasonCode}
-			<button class="btn btn-ghost btn-sm" onclick={() => (reasonCode = '')}
-				>Showing one reason · show all</button
-			>
-		{/if}
+
 		{#if authStore.isAdmin && reviewState === 'pending' && total > 0}
 			<div class="ml-auto flex items-center gap-3">
 				<label class="label cursor-pointer gap-2 text-xs">
 					<input type="checkbox" class="checkbox checkbox-xs" bind:checked={confirmLocalMetadata} />
 					Include Local metadata folders
 				</label>
-				<button
-					class="btn btn-sm"
-					disabled={retryAll.isPending}
-					onclick={() => void retryEverything()}
+				<button class="btn btn-sm" disabled={retryAll.isPending} onclick={() => void previewRetry()}
 					>{#if retryAll.isPending}<span class="loading loading-spinner loading-xs"></span>{/if}
-					Retry all{rootId ? ' in this folder' : ''}</button
+					Retry all {total} shown…</button
 				>
 			</div>
 		{/if}
@@ -320,13 +329,36 @@
 			<select class="select select-bordered select-sm" bind:value={sort}>
 				<option value="newest">Newest first</option>
 				<option value="oldest">Oldest first</option>
+				<option value="tracks">Most tracks first</option>
 			</select>
+		</label>
+		<label class="label cursor-pointer gap-2 pb-1 text-xs">
+			<input type="checkbox" class="checkbox checkbox-xs" bind:checked={withCandidates} />
+			Only with candidates
 		</label>
 		<label class="label cursor-pointer gap-2 pb-1 text-xs">
 			<input type="checkbox" class="checkbox checkbox-xs" bind:checked={hideActiveJobs} />
 			Hide albums still being matched
 		</label>
 	</div>
+
+	{#if (query.data?.reason_counts.length ?? 0) > 1 || reasonCode}
+		<div class="flex flex-wrap gap-2" role="group" aria-label="Reasons">
+			<button
+				class="btn btn-xs {reasonCode ? 'btn-ghost' : 'btn-primary'}"
+				onclick={() => (reasonCode = '')}>All reasons</button
+			>
+			{#each query.data?.reason_counts ?? [] as bucket (bucket.reason_code)}
+				<button
+					class="btn btn-xs {reasonCode === bucket.reason_code ? 'btn-primary' : 'btn-ghost'}"
+					title={bucket.reason.action}
+					onclick={() => (reasonCode = bucket.reason_code)}
+					>{bucket.reason.message}
+					<span class="badge badge-sm">{bucket.count}</span></button
+				>
+			{/each}
+		</div>
+	{/if}
 
 	{#if canSelect && selectionCount > 0}
 		<div
@@ -366,7 +398,7 @@
 		</div>
 	{/if}
 
-	{#if retryAll.data?.skipped.length}
+	{#if retryAll.data && !retryAll.data.preview && retryAll.data.skipped.length}
 		<div class="alert alert-warning text-sm">
 			<CircleAlert class="h-4 w-4" />
 			<ul class="space-y-1">
@@ -458,6 +490,33 @@
 													{#if candidate.supported_tracks}· {candidate.supported_tracks} tracks agree{/if}
 													{#if candidate.contradictory_tracks}· {candidate.contradictory_tracks} disagree{/if}
 												</p>
+												{#if candidate.track_evidence.length}
+													<details class="mt-1 text-xs">
+														<summary class="cursor-pointer text-base-content/60"
+															>How each file fits</summary
+														>
+														<ul class="mt-1 space-y-0.5">
+															{#each candidate.track_evidence as evidence (evidence.local_track_id)}
+																<li class="flex items-center gap-2">
+																	<span
+																		class="badge badge-xs {evidence.classification === 'supported'
+																			? 'badge-success'
+																			: evidence.classification === 'contradictory'
+																				? 'badge-error'
+																				: 'badge-ghost'}">{evidence.classification}</span
+																	>
+																	<span class="truncate"
+																		>{evidence.title || evidence.local_track_id}</span
+																	>
+																	{#if evidence.evidence_kinds.length}<span
+																			class="text-base-content/50"
+																			>({evidence.evidence_kinds.join(', ')})</span
+																		>{/if}
+																</li>
+															{/each}
+														</ul>
+													</details>
+												{/if}
 											</div>
 											{#if authStore.isTrusted && review.state === 'pending'}
 												<button
@@ -554,7 +613,9 @@
 			<p class="mt-2 text-sm">
 				This changes <strong>{plan.eligible}</strong> of the {plan.matched} selected
 				{plan.matched === 1 ? 'review' : 'reviews'}.
-				{#if bulkSelection?.action === 'accept'}Each album gets its best-scoring release.{/if}
+				{#if bulkSelection?.action === 'accept'}Each album gets its best-scoring release, and that
+					edition is pinned: automatic matching leaves these albums alone afterwards. You can undo
+					each one from its album page.{/if}
 				{#if bulkSelection?.action === 'exclude'}Their files stay on disk and can be put back from
 					the Taken out list.{/if}
 			</p>
@@ -588,6 +649,41 @@
 					Apply to {preview.data?.eligible ?? 0}</button
 				>
 			{/if}
+		</div>
+	</div>
+	<form method="dialog" class="modal-backdrop">
+		<button aria-label="Close dialog">close</button>
+	</form>
+</dialog>
+
+<dialog bind:this={retryDialog} class="modal" aria-labelledby="retry-review-title">
+	<div class="modal-box max-w-lg">
+		<h2 id="retry-review-title" class="text-lg font-bold">Retry identification</h2>
+		{#if retryAll.data?.preview}
+			{@const plan = retryAll.data}
+			<p class="mt-2 text-sm">
+				<strong>{plan.started}</strong>
+				{plan.started === 1 ? 'album' : 'albums'} would be looked up on MusicBrainz again. Each gets its
+				own identification job, and its review closes.
+			</p>
+			{#if plan.skipped.length}
+				<ul class="mt-3 space-y-1 text-sm">
+					{#each plan.skipped as group (group.reason.code)}
+						<li>
+							<strong>{group.count}</strong> would not start: {group.reason.message}
+							<span class="text-base-content/60">{group.reason.action}</span>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		{/if}
+		<div class="modal-action">
+			<button class="btn btn-ghost" onclick={() => retryDialog?.close()}>Cancel</button>
+			<button
+				class="btn btn-primary"
+				disabled={!retryAll.data?.preview || !retryAll.data.started}
+				onclick={() => void retryEverything()}>Retry {retryAll.data?.started ?? 0}</button
+			>
 		</div>
 	</div>
 	<form method="dialog" class="modal-backdrop">

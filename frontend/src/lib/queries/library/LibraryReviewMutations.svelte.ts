@@ -35,7 +35,7 @@ export type ReviewAction = 'keep_tagged' | 'dismiss' | 'detach' | 'exclude' | 'r
 const ACTION_TOAST: Record<ReviewAction, string> = {
 	keep_tagged: 'Kept as tagged',
 	dismiss: 'Review closed',
-	detach: 'Match removed; the album keeps its tags',
+	detach: 'Match removed; the album keeps its tags. Undo it from the album page.',
 	exclude: 'Album taken out of the library',
 	restore: 'Album is back in the library'
 };
@@ -99,13 +99,20 @@ export function retryLibraryReview() {
 /** Start identification again for every album with a pending review. */
 export function retryPendingLibraryReviews() {
 	return createMutation(() => ({
-		mutationFn: (input: { confirmLocalMetadata: boolean; rootIds?: string[] }) =>
+		mutationFn: (input: {
+			confirmLocalMetadata: boolean;
+			filter?: Omit<LibraryReviewParams, 'limit' | 'offset'>;
+			rootIds?: string[];
+			preview?: boolean;
+		}) =>
 			api.global.v3.POST(LibraryV3Api.retryPendingReviews(), {
 				confirm_local_metadata: input.confirmLocalMetadata,
-				root_ids: input.rootIds ?? []
+				filter: { state: 'pending', ...reviewFilterQuery(input.filter ?? {}) },
+				root_ids: input.rootIds ?? [],
+				preview: input.preview ?? false
 			}),
-		onSuccess: async () => {
-			await invalidateReviewState();
+		onSuccess: async (result) => {
+			if (!result.preview) await invalidateReviewState();
 		}
 	}));
 }

@@ -18,6 +18,7 @@ export function reviewFilterQuery(params: Omit<LibraryReviewParams, 'limit' | 'o
 		...(params.hideActiveJobs ? { exclude_active_jobs: true } : {}),
 		...(params.createdFrom !== undefined ? { created_from: params.createdFrom } : {}),
 		...(params.createdTo !== undefined ? { created_to: params.createdTo } : {}),
+		...(params.withCandidates ? { with_candidates: true } : {}),
 		...(params.sort ? { sort: params.sort } : {})
 	};
 }

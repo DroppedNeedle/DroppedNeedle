@@ -49,7 +49,8 @@ export interface LibraryReviewParams {
 	/** Filed on or after / before these times (Unix milliseconds). */
 	createdFrom?: number;
 	createdTo?: number;
-	sort?: 'newest' | 'oldest';
+	withCandidates?: boolean;
+	sort?: 'newest' | 'oldest' | 'tracks';
 }
 
 export interface LibraryV3PageParams {

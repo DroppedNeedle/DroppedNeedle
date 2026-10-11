@@ -279,13 +279,17 @@ describe('LibraryScanningPanel', () => {
 		expect(h.stopRun).toHaveBeenCalledWith({ runId: 'run-1', expectedRevision: 11 });
 	});
 
-	it('retries every album that waits for a decision', async () => {
+	it('previews the retry before starting it', async () => {
 		h.reviews = { data: 12 };
 		await render(LibraryScanningPanel);
 		await page.getByRole('button', { name: 'Retry identification...' }).click();
 		await expect.element(page.getByRole('heading', { name: 'Retry identification' })).toBeVisible();
 		await page.getByLabelText(/Also look up albums in Local metadata/).click();
-		await page.getByRole('button', { name: 'Retry 12 albums' }).click();
-		expect(h.bulkApply).toHaveBeenCalledWith({ confirmLocalMetadata: true });
+		await page.getByRole('button', { name: 'Preview retry' }).click();
+		expect(h.bulkApply).toHaveBeenCalledWith({
+			confirmLocalMetadata: true,
+			rootIds: [],
+			preview: true
+		});
 	});
 });

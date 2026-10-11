@@ -28,8 +28,8 @@
 		() => open && kind !== 'retry_identification' && treeQuery.isSuccess
 	);
 	const retryAll = retryPendingLibraryReviews();
+	const retryPreview = retryPendingLibraryReviews();
 	const pendingReviews = getPendingReviewCountQuery();
-	const pendingCount = $derived(pendingReviews.data ?? 0);
 	const retryIsTransport = $derived(retryAll.error instanceof TransportError);
 
 	const roots = $derived(treeQuery.data?.roots ?? []);
@@ -43,6 +43,11 @@
 	const hasUnavailable = $derived(selectedNodes.some((node) => !node.available));
 	// Retry scope is whole folders: only selected roots count.
 	const selectedRoots = $derived(selected.filter((id) => roots.some((root) => root.id === id)));
+	// The preview counts exactly the chosen folders; before it, the whole
+	// library's pending count is the best known.
+	const pendingCount = $derived(
+		retryPreview.data?.started ?? (selectedRoots.length ? null : (pendingReviews.data ?? 0))
+	);
 	const selectionLabel = $derived(
 		selected.length === 0 ? 'Whole library' : `${selected.length} scopes`
 	);
@@ -84,11 +89,31 @@
 		selected = [];
 	}
 
+	// A changed scope or confirmation needs a fresh preview.
+	$effect(() => {
+		void selectedRoots.join();
+		void confirmLocalMetadata;
+		retryPreview.reset();
+	});
+
 	function close(): void {
 		selected = [];
 		retryAll.reset();
+		retryPreview.reset();
 		onclose();
 		opener?.focus();
+	}
+
+	async function previewRetry(): Promise<void> {
+		try {
+			await retryPreview.mutateAsync({
+				confirmLocalMetadata,
+				rootIds: selectedRoots,
+				preview: true
+			});
+		} catch {
+			// mutation state keeps the error visible in this dialog
+		}
 	}
 
 	async function startRetry(): Promise<void> {
@@ -182,12 +207,20 @@
 							: 'Whole library'
 						: selectionLabel}</span
 				>
-				{#if kind === 'retry_identification' && pendingReviews.isLoading}
+				{#if kind === 'retry_identification' && (pendingReviews.isLoading || retryPreview.isPending)}
 					<span class="skeleton h-4 w-28"></span>
+				{:else if kind === 'retry_identification' && pendingCount === null}
+					<span class="text-base-content/55">Preview to count albums</span>
 				{:else if kind === 'retry_identification'}
 					<strong
-						>{pendingCount.toLocaleString()}
-						{pendingCount === 1 ? 'album waits' : 'albums wait'} for a decision</strong
+						>{(pendingCount ?? 0).toLocaleString()}
+						{retryPreview.data
+							? pendingCount === 1
+								? 'album would start'
+								: 'albums would start'
+							: pendingCount === 1
+								? 'album waits for a decision'
+								: 'albums wait for a decision'}</strong
 					>
 				{:else if estimateQuery.isFetching}
 					<span class="skeleton h-4 w-28"></span>
@@ -217,7 +250,21 @@
 					policy does not change.</span
 				>
 			</label>
-			{#if retryAll.isError}
+			{#if retryPreview.data?.skipped.length && !retryAll.data}
+				<ul class="mt-3 space-y-1 text-sm">
+					{#each retryPreview.data.skipped as group (group.reason.code)}
+						<li class="flex gap-2">
+							<TriangleAlert class="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+							<span
+								><strong>{group.count.toLocaleString()}</strong> would not start: {group.reason
+									.message}
+								<span class="text-base-content/60">{group.reason.action}</span></span
+							>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+			{#if retryAll.isError || retryPreview.isError}
 				<div class="alert alert-error mt-4 text-sm">
 					{#if retryIsTransport}
 						<span
@@ -265,15 +312,21 @@
 		<div class="modal-action">
 			<button type="button" class="btn btn-ghost" onclick={() => dialog.close()}>Cancel</button>
 			{#if kind === 'retry_identification'}
-				{#if !retryAll.data}<button
+				{#if !retryAll.data && !retryPreview.data}<button
 						type="button"
 						class="btn btn-primary"
-						disabled={retryAll.isPending || pendingCount === 0}
+						disabled={retryPreview.isPending || pendingCount === 0}
+						onclick={() => void previewRetry()}
+						>{#if retryPreview.isPending}<span class="loading loading-spinner loading-sm"
+							></span>{/if} Preview retry</button
+					>{:else if !retryAll.data}<button
+						type="button"
+						class="btn btn-primary"
+						disabled={retryAll.isPending || !retryPreview.data?.started}
 						onclick={() => void startRetry()}
 						>{#if retryAll.isPending}<span class="loading loading-spinner loading-sm"></span>{/if}
-						{selectedRoots.length
-							? 'Retry albums in these folders'
-							: `Retry ${pendingCount.toLocaleString()} ${pendingCount === 1 ? 'album' : 'albums'}`}</button
+						Retry {(retryPreview.data?.started ?? 0).toLocaleString()}
+						{retryPreview.data?.started === 1 ? 'album' : 'albums'}</button
 					>{/if}
 			{:else}<button
 					type="button"
