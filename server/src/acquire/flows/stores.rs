@@ -430,6 +430,37 @@ impl UpgradeWorklist {
             .max();
         Ok(meets(best, cutoff))
     }
+
+    /// How many of these library tracks sit below `cutoff` (v2 counted the
+    /// edition's owned tracks it would upgrade).
+    pub async fn tracks_below_cutoff(
+        &self,
+        track_ids: &[String],
+        cutoff: &str,
+    ) -> Result<usize, StoreFailure> {
+        let mut below = 0;
+        for chunk in track_ids.chunks(400) {
+            let marks = vec!["?"; chunk.len()].join(",");
+            let sql = format!(
+                "SELECT file_format, bit_rate, bit_depth FROM local_tracks WHERE id IN ({marks})"
+            );
+            let mut query = sqlx::query_as::<_, (String, Option<i64>, Option<i64>)>(&sql);
+            for id in chunk {
+                query = query.bind(id);
+            }
+            let rows = query
+                .fetch_all(self.db.pool())
+                .await
+                .map_err(|error| read_failure("upgrades.track_tiers", error))?;
+            below += rows
+                .iter()
+                .filter(|(format, bitrate, depth)| {
+                    !meets(tier_rank(tier_of(format, *bitrate, *depth)), cutoff)
+                })
+                .count();
+        }
+        Ok(below)
+    }
 }
 
 fn meets(rank: Option<usize>, cutoff: &str) -> bool {

@@ -182,6 +182,12 @@ pub struct DownloadManifest {
     /// written before track resolution existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub track_album: Option<TrackAlbumContext>,
+    /// For an album download on `release_mbid`: the only tracks to fetch
+    /// ("get missing tracks" of an edition the library partly holds). The
+    /// best whole-album source is still searched for; only these files
+    /// are taken from it. Empty fetches the whole album.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub album_wanted: Vec<TrackPosition>,
 }
 
 fn default_origin() -> String {

@@ -1013,6 +1013,7 @@ impl DownloadWorker {
                 requested_by_user_id: None,
                 attempt_id: None,
                 track_album: None,
+                album_wanted: Vec::new(),
             });
         manifest.handle = Some(super::downloads::manifest::TaskHandle {
             source: handle.source.clone(),

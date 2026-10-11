@@ -188,10 +188,15 @@ impl Targets {
             .or_else(|| manifest.as_ref().and_then(|m| m.release_mbid.clone()))
             .map(|mbid| mbid.trim().to_ascii_lowercase())
             .filter(|mbid| !mbid.is_empty());
-        let mut tracklist = manifest
+        let same_release = manifest
             .as_ref()
-            .filter(|m| m.release_mbid.as_deref().map(str::to_ascii_lowercase) == release)
+            .filter(|m| m.release_mbid.as_deref().map(str::to_ascii_lowercase) == release);
+        let mut tracklist = same_release
             .map(|m| m.expected_tracks.clone())
+            .unwrap_or_default();
+        // "Get missing tracks" asks for some positions of the edition only.
+        let wanted = same_release
+            .map(|m| m.album_wanted.clone())
             .unwrap_or_default();
         if tracklist.is_empty()
             && let Some(release_mbid) = release.as_deref()
@@ -226,8 +231,14 @@ impl Targets {
             artist: task.artist_name.clone(),
             album_title: task.album_title.clone(),
             year: details.year,
+            // Positions mean nothing without the tracklist: fetch the whole
+            // album then, and the landing skips the tracks already owned.
+            wanted: if tracklist.is_empty() {
+                Vec::new()
+            } else {
+                wanted
+            },
             tracklist,
-            wanted: Vec::new(),
             track: None,
         }
     }
@@ -464,6 +475,7 @@ impl Targets {
                 requested_by_user_id: None,
                 attempt_id: None,
                 track_album: None,
+                album_wanted: Vec::new(),
             },
         }
     }

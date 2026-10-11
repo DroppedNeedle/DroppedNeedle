@@ -580,6 +580,19 @@ fn core(
         preferences,
         ticks,
     ));
+    // "Get missing tracks" also upgrades the edition's tracks below the
+    // cutoff, through the same upgrade service the downloads page uses.
+    if requests
+        .upgrades
+        .set(super::downloads::upgrades::Upgrades::new(
+            flows.worklist.clone(),
+            flows.sweep_deps.policy.clone(),
+            dispatch.clone(),
+        ))
+        .is_err()
+    {
+        tracing::warn!("edition upgrades were already attached");
+    }
     Core {
         requests,
         dispatch,

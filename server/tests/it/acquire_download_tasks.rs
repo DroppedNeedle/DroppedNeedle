@@ -212,6 +212,7 @@ async fn failed_dispatch_keeps_no_key() {
         title: "album".to_owned(),
         origin: DispatchOrigin::User,
         release_mbid: None,
+        wanted: Vec::new(),
         idempotency_key: Some("ask-1".to_owned()),
     };
     // No such user yet: the task insert fails on its foreign key.

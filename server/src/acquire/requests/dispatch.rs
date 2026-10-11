@@ -61,6 +61,10 @@ pub struct DispatchRequest {
     pub origin: DispatchOrigin,
     /// Edition release id, when pinned.
     pub release_mbid: Option<String>,
+    /// For an album on `release_mbid`: only these (disc, position) tracks
+    /// are fetched, from the best whole-album source. Empty fetches the
+    /// whole album.
+    pub wanted: Vec<(u32, u32)>,
     /// Caller-supplied idempotency key. A repeat dispatch with the same
     /// key answers the original task instead of minting a duplicate;
     /// `None` always mints fresh.

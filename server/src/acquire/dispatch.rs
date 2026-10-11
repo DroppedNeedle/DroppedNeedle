@@ -19,7 +19,7 @@ use futures_util::future::BoxFuture;
 use sqlx::Row;
 
 use super::db::AcquireDb;
-use super::downloads::manifest::{DownloadManifest, ManifestCodec};
+use super::downloads::manifest::{DownloadManifest, ManifestCodec, TrackPosition};
 use super::downloads::state::TaskStatus;
 use super::downloads::store::{
     CLEANUP_DEBT_SQL, DownloadStore, NewTask, QUARANTINE_SET_SQL, REIMPORTABLE_SQL, RETRYABLE_SQL,
@@ -293,8 +293,19 @@ impl UnifiedDispatch {
         key: &str,
         origin: &str,
         release_mbid: Option<&str>,
+        wanted: &[(u32, u32)],
         idempotency_key: Option<&str>,
     ) -> Result<String, String> {
+        // Wanted positions are positions on the caller's release; they
+        // mean nothing on an edition picked here.
+        let wanted: Vec<TrackPosition> = if release_mbid.is_some() && !is_track {
+            wanted
+                .iter()
+                .map(|&(disc, track)| TrackPosition { disc, track })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let task_id = self.mint_task_id();
         let now = now_unix_f64();
         // An album ask without a release fetches the edition the library
@@ -361,6 +372,7 @@ impl UnifiedDispatch {
                     is_track,
                     origin,
                     release_mbid,
+                    wanted,
                 )
                 .await;
                 Ok(task_id)
@@ -383,6 +395,7 @@ impl UnifiedDispatch {
         is_track: bool,
         origin: &str,
         release_mbid: Option<&str>,
+        album_wanted: Vec<TrackPosition>,
     ) {
         let manifest = DownloadManifest {
             task_id: task_id.to_owned(),
@@ -403,6 +416,7 @@ impl UnifiedDispatch {
             requested_by_user_id: None,
             attempt_id: None,
             track_album: None,
+            album_wanted,
         };
         let staging_root = self.staging_root.clone();
         let task_id = task_id.to_owned();
@@ -525,6 +539,7 @@ impl requests::DownloadDispatch for UnifiedDispatch {
                 &request.key,
                 origin,
                 request.release_mbid.as_deref(),
+                &request.wanted,
                 request.idempotency_key.as_deref(),
             )
             .await
@@ -714,6 +729,7 @@ impl flows::DownloadDispatch for UnifiedDispatch {
                 &request.mbid,
                 origin,
                 None,
+                &[],
                 request.idempotency_key.as_deref(),
             )
             .await
@@ -797,6 +813,7 @@ impl flows::DownloadDispatch for UnifiedDispatch {
                 &request.mbid,
                 "upgrade",
                 None,
+                &[],
                 request.idempotency_key.as_deref(),
             )
             .await

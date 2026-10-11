@@ -7,6 +7,8 @@
 //! instead of spawning rivals; every mutation names the generation it won.
 //! Quirk citations name the v2 behavior each branch preserves.
 
+mod edition;
+
 use std::sync::Arc;
 
 use super::auth::Principal;
@@ -16,19 +18,18 @@ use super::dispatch::{
 };
 use super::error::RequestsError;
 use super::ledger::{
-    BeginOutcome, CANCELLABLE_STATUSES, CLEARABLE_STATUSES, EditionMark, RETRYABLE_STATUSES,
-    RequestRecord, STATUS_AWAITING_APPROVAL, STATUS_CANCELLED, STATUS_CANCELLING,
-    STATUS_DOWNLOADING, STATUS_FAILED, STATUS_IMPORTED, STATUS_INCOMPLETE, STATUS_PENDING,
-    STATUS_QUEUED, is_active, meaningful_name, now_epoch, validate_mbid,
+    BeginOutcome, CANCELLABLE_STATUSES, CLEARABLE_STATUSES, RETRYABLE_STATUSES, RequestRecord,
+    STATUS_AWAITING_APPROVAL, STATUS_CANCELLED, STATUS_CANCELLING, STATUS_DOWNLOADING,
+    STATUS_FAILED, STATUS_IMPORTED, STATUS_INCOMPLETE, STATUS_PENDING, STATUS_QUEUED, is_active,
+    meaningful_name, now_epoch, validate_mbid,
 };
 use super::models::{
     ActionResponse, ActiveCountResponse, ActiveRequestsResponse, AlbumIntake, ApprovalBatchItem,
     ApprovalBatchListResponse, AutoDownloadApprovalItem, AutoDownloadApprovalsResponse,
-    BatchCancelResponse, BatchIntake, BatchIntakeResponse, ClearHistoryResponse,
-    EditionAcquireResponse, HistoryQuery, HistoryResponse, IntakeResponse, PersonalMixApprovalItem,
-    PersonalMixApprovalsResponse, RefreshResponse, RequestItem, RequestKind, SyncResponse,
-    TrackIntake, TrackIntakeResponse, WantedActionResponse, WantedItem, WantedResponse,
-    WantedRetryingItem,
+    BatchCancelResponse, BatchIntake, BatchIntakeResponse, ClearHistoryResponse, HistoryQuery,
+    HistoryResponse, IntakeResponse, PersonalMixApprovalItem, PersonalMixApprovalsResponse,
+    RefreshResponse, RequestItem, RequestKind, SyncResponse, TrackIntake, TrackIntakeResponse,
+    WantedActionResponse, WantedItem, WantedResponse, WantedRetryingItem,
 };
 use super::quota::QuotaLedger;
 use super::sqlite::{
@@ -36,7 +37,7 @@ use super::sqlite::{
 };
 use super::{RequestsState, dispatch::DownloadDispatch};
 use crate::acquire::db::AcquireDb;
-use crate::acquire::edition::{chosen_edition, local_names};
+use crate::acquire::edition::chosen_edition;
 
 /// Batch row cap (v2 `BatchAlbumRequest` schema `max_length=500`).
 const BATCH_MAX_ITEMS: usize = 500;
@@ -69,6 +70,10 @@ pub struct RequestsService {
     plugins: crate::acquire::wiring::PluginSlot,
     /// The personal-mix builder, when boot wired one.
     mixer: super::state::MixSlot,
+    /// The library's edition plans, when boot wired them.
+    edition_plans: super::state::EditionPlanSlot,
+    /// Quality upgrades, when the flows are built.
+    upgrades: super::state::UpgradeSlot,
 }
 
 impl RequestsService {
@@ -86,6 +91,8 @@ impl RequestsService {
             follow_sink: state.follow_sink.clone(),
             plugins: state.plugins.clone(),
             mixer: state.mixer.clone(),
+            edition_plans: state.edition_plans.clone(),
+            upgrades: state.upgrades.clone(),
         }
     }
 
@@ -1603,86 +1610,6 @@ impl RequestsService {
         })
     }
 
-    /// Fill the selected edition's missing tracks and upgrade its
-    /// below-cutoff owned tracks (curator only, as in v2). Never retags
-    /// existing files: the seam only fetches.
-    pub async fn acquire_edition(
-        &self,
-        principal: &Principal,
-        album_id: &str,
-    ) -> Result<EditionAcquireResponse, RequestsError> {
-        principal.require_curator()?;
-        let mbid = validate_mbid(album_id)?;
-        let now = now_epoch();
-        if let Some(mark) = self.editions.get(&mbid).await? {
-            let state = self
-                .dispatch
-                .task_state(&mark.task_id)
-                .await
-                .map_err(dispatch_fault)?;
-            if state == DispatchTaskState::Active {
-                return Ok(EditionAcquireResponse {
-                    status: "already_in_progress".to_owned(),
-                    message: "Edition acquire already in progress".to_owned(),
-                    task_id: Some(mark.task_id),
-                });
-            }
-            self.editions.clear(&mbid).await?;
-        }
-        self.quota
-            .check_storage_admission(&principal.user_id, principal.role, DispatchOrigin::Edition)
-            .await?;
-        // The search needs the album's names, and the fetch its chosen
-        // edition: both come from the library's copy of the album.
-        let Some((artist_name, title)) = local_names(self.library.pool(), &mbid)
-            .await
-            .map_err(|error| RequestsError::internal(&error))?
-        else {
-            return Err(RequestsError::InvalidInput {
-                message: "This album is not in your library yet. Request the album instead."
-                    .to_owned(),
-            });
-        };
-        let request = DispatchRequest {
-            user_id: principal.user_id.clone(),
-            kind: "edition".to_owned(),
-            key: mbid.clone(),
-            artist_name,
-            title,
-            origin: DispatchOrigin::Edition,
-            release_mbid: self.chosen_release(&mbid).await,
-            // No stable per-decision key exists (marks clear on terminal,
-            // so a key would pin re-acquires to the old task); the
-            // in-progress mark above owns double-submit dedup.
-            idempotency_key: None,
-        };
-        match self.dispatch.dispatch(&request).await {
-            Err(DispatchError::Validation(message)) => Err(RequestsError::InvalidInput { message }),
-            Err(DispatchError::Failed(cause)) => Err(RequestsError::internal(&format_args!(
-                "edition dispatch failed: {cause}"
-            ))),
-            Ok(DispatchOutcome::AlreadyInLibrary) => Ok(EditionAcquireResponse {
-                status: "already_complete".to_owned(),
-                message: "Edition is already complete".to_owned(),
-                task_id: None,
-            }),
-            Ok(DispatchOutcome::Dispatched { task_id }) => {
-                self.editions
-                    .set(EditionMark {
-                        key: mbid,
-                        task_id: task_id.clone(),
-                        started_at: now,
-                    })
-                    .await?;
-                Ok(EditionAcquireResponse {
-                    status: "started".to_owned(),
-                    message: "Edition acquire started".to_owned(),
-                    task_id: Some(task_id),
-                })
-            }
-        }
-    }
-
     /// Startup recovery for the ledger. A row left `cancelling` finishes
     /// its cancel (the owner asked to stop; cancelling a task twice is
     /// harmless). An authorized `pending` row with no task had its dispatch
@@ -2392,6 +2319,7 @@ fn stored_dispatch(
         title,
         origin,
         release_mbid: record.release_mbid.clone(),
+        wanted: Vec::new(),
         // Owner + key + origin + generation: repeating the same decision
         // (double approval, crash before the task link lands) answers the
         // original task; any intervening write bumps the generation and

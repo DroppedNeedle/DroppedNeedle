@@ -524,7 +524,7 @@ pub struct RefreshResponse {
 }
 
 /// Edition-acquire outcome.
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Default, Serialize, ToSchema)]
 pub struct EditionAcquireResponse {
     /// `started`, `already_in_progress`, or `already_complete`.
     pub status: String,
@@ -533,6 +533,23 @@ pub struct EditionAcquireResponse {
     /// Linked download task, when dispatched.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
+    /// The edition fetched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_mbid: Option<String>,
+    /// Tracks on the edition (absent when the library's plan could not be
+    /// read and the whole album was asked for).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_tracks: Option<u32>,
+    /// Missing tracks asked for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested: Option<u32>,
+    /// Owned tracks of the edition below the quality cutoff; an upgrade of
+    /// the album was queued for them when this is above zero.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upgrades: Option<u32>,
+    /// The upgrade download, when one was queued.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upgrade_task_id: Option<String>,
 }
 
 /// Status-sync outcome.

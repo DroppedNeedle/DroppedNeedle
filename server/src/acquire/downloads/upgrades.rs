@@ -93,6 +93,23 @@ impl Upgrades {
         })
     }
 
+    /// How many of these library tracks sit below the quality cutoff, or
+    /// `None` while upgrades are switched off.
+    pub async fn tracks_below_cutoff(
+        &self,
+        track_ids: &[String],
+    ) -> Result<Option<usize>, UpgradeError> {
+        let policy = (self.policy)();
+        if !policy.upgrade_allowed {
+            return Ok(None);
+        }
+        self.worklist
+            .tracks_below_cutoff(track_ids, &policy.cutoff)
+            .await
+            .map(Some)
+            .map_err(|error| UpgradeError::Unavailable(error.to_string()))
+    }
+
     /// Queue a better copy of an album or a track.
     pub async fn request(&self, ask: UpgradeAsk) -> Result<UpgradeOutcome, UpgradeError> {
         let policy = (self.policy)();

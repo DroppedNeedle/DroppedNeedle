@@ -325,6 +325,18 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         )),
         None => acquire,
     };
+    // "Get missing tracks" asks the library which tracks the chosen
+    // edition lacks.
+    if acquire
+        .requests
+        .edition_plans
+        .set(Arc::new(
+            crate::library::operations::service::Operations::new(&library),
+        ))
+        .is_err()
+    {
+        tracing::warn!("edition plans were already attached");
+    }
     // Removing an album also clears its download and wanted state.
     if library
         .removal_hook

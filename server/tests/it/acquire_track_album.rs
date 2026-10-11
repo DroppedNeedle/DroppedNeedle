@@ -134,6 +134,7 @@ async fn track_request_fetches_one_file_from_the_album_folder() {
             title: "One Love".to_owned(),
             origin: DispatchOrigin::User,
             release_mbid: None,
+            wanted: Vec::new(),
             idempotency_key: None,
         },
     )

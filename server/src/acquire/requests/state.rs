@@ -42,7 +42,20 @@ pub struct RequestsState {
     /// The personal-mix builder, once boot has built it. It needs this
     /// state for album intake, so it is set after construction.
     pub mixer: MixSlot,
+    /// The library's edition plans, once boot has built the library seam:
+    /// "get missing tracks" fetches only what the chosen edition lacks.
+    pub edition_plans: EditionPlanSlot,
+    /// Quality upgrades, set when the flows are built: "get missing
+    /// tracks" also upgrades the edition's tracks below the cutoff.
+    pub upgrades: UpgradeSlot,
 }
+
+/// The slot the library's edition plans go into.
+pub type EditionPlanSlot =
+    Arc<std::sync::OnceLock<Arc<dyn crate::library::operations::port::EditionPlans>>>;
+
+/// The slot the upgrade service goes into.
+pub type UpgradeSlot = Arc<std::sync::OnceLock<crate::acquire::downloads::upgrades::Upgrades>>;
 
 /// The slot the personal-mix builder goes into.
 pub type MixSlot = Arc<std::sync::OnceLock<Arc<super::mix::PersonalMixBuilder>>>;
@@ -66,6 +79,8 @@ impl RequestsState {
             follow_sink: None,
             plugins: Default::default(),
             mixer: Default::default(),
+            edition_plans: Default::default(),
+            upgrades: Default::default(),
         }
     }
 
