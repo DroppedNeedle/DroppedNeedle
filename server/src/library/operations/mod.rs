@@ -54,7 +54,10 @@ async fn run_loop(setup: LibrarySetup, mut shutdown: watch::Receiver<bool>) {
         if *shutdown.borrow() {
             break;
         }
-        if tick(&setup, &ops, &worker).await || remap_tick(&setup, &ops).await {
+        if tick(&setup, &ops, &worker).await
+            || remap_tick(&setup, &ops).await
+            || crate::library::management::tick(&setup, &worker, &shutdown).await
+        {
             continue;
         }
         tokio::select! {

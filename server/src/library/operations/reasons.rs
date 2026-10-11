@@ -259,6 +259,26 @@ pub fn terminal(code: &str) -> Reason {
             "MusicBrainz did not answer after several tries.",
             "Resume the operation once MusicBrainz is back.",
         ),
+        "MANAGEMENT_APPLIED" => reason(
+            "MANAGEMENT_APPLIED",
+            "Every album in this run was written.",
+            "Nothing to do; preview an undo if you want the old state back.",
+        ),
+        "MANAGEMENT_PARTIAL" => reason(
+            "MANAGEMENT_PARTIAL",
+            "Some albums in this run could not be written; the others were.",
+            "Open the results to see each file's reason, fix it, then make a new preview.",
+        ),
+        "MANAGEMENT_FAILED" => reason(
+            "MANAGEMENT_FAILED",
+            "This run stopped on an unexpected problem.",
+            "Make a new preview. If it happens again, the server log has the details.",
+        ),
+        "DISCARDED" => reason(
+            "DISCARDED",
+            "This preview was discarded; no file was changed.",
+            "Make a new preview when you want to run it.",
+        ),
         "STOPPED" => reason(
             "STOPPED",
             "This operation was stopped.",

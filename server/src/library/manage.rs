@@ -206,6 +206,48 @@ impl PublishCell {
     }
 }
 
+/// Revisions a publish is sealed with: the job's pins, which the live
+/// side must repeat for the seal to hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SealPins {
+    pub profile: u64,
+    pub naming: u64,
+    pub settings: u64,
+}
+
+impl SealPins {
+    /// The per-file preview flow, which has no stored settings to pin.
+    fn constant() -> Self {
+        Self {
+            profile: PINNED_REVISION,
+            naming: PINNED_REVISION,
+            settings: PINNED_REVISION,
+        }
+    }
+}
+
+/// Why undo leaves one file of a bundle alone.
+#[derive(Debug, Clone)]
+pub(crate) enum UndoSkip {
+    Plan(super::publish::undo::UndoBlock),
+    /// The file is no longer in the library, unreadable, or unmatched.
+    Gone,
+}
+
+/// One file undo would restore, with its tags as they are now.
+#[derive(Debug, Clone)]
+pub(crate) struct UndoFile {
+    pub plan: PlanItem,
+    pub current: BTreeMap<String, Vec<String>>,
+}
+
+/// What undoing one bundle would do.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct UndoFiles {
+    pub eligible: Vec<UndoFile>,
+    pub blocked: Vec<(String, UndoSkip)>,
+}
+
 /// One file inside a management preview request (handler-mapped).
 pub struct PreviewItemInput {
     /// Source root id.
@@ -332,58 +374,19 @@ impl LibrarySetup {
     /// (or matches nothing) until someone confirms it, unless the edition
     /// preferences let it manage unconfirmed matches.
     fn unconfirmed_gate(&self, album_id: &str) -> Result<(), ServiceError> {
-        let allowed = self
-            .config
-            .get::<crate::runtime_config::sections::EditionPreferences>()
-            .map(|prefs| prefs.manage_unconfirmed)
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "edition preferences unreadable; unconfirmed albums wait");
-                false
-            });
-        if allowed {
-            return Ok(());
-        }
-        // Only "no row" means confirmed; a read failure refuses management
-        // rather than letting an unsure album's files be changed.
-        let state = self
+        let allowed = super::management::planner::manage_unconfirmed(self);
+        let reason = self
             .identify_store
-            .with_connection(|conn| {
-                use rusqlite::OptionalExtension as _;
-                conn.query_row(
-                    "SELECT state, reason_code FROM library_album_match_state \
-                     WHERE local_album_id = ?1",
-                    rusqlite::params![album_id],
-                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-                )
-                .optional()
-            })
+            .with_connection(|conn| super::management::planner::match_gate(conn, album_id, allowed))
             .map_err(|error| {
                 tracing::error!(%error, album = album_id, "match state unreadable; management refused");
                 ServiceError::internal(&error)
             })?;
-        if let Some((_, code)) = state
-            .as_ref()
-            .filter(|(_, code)| code.starts_with("CHOSEN_"))
-        {
-            let reason = super::operations::reasons::match_reason(code);
-            return Err(ServiceError::Conflict {
+        match reason {
+            Some(reason) => Err(ServiceError::Conflict {
                 message: format!("{}: {} {}", reason.code, reason.message, reason.action),
-            });
-        }
-        match state.as_ref().map(|(state, _)| state.as_str()) {
-            Some("unconfirmed") => Err(ServiceError::Conflict {
-                message: "UNCONFIRMED_MATCH: This album's edition is a best guess nobody has \
-                          confirmed yet, so its files are left alone. Confirm the match on the \
-                          album page, or turn on \"Also manage unconfirmed matches\" in \
-                          Settings > Edition preferences."
-                    .to_owned(),
             }),
-            Some("unmatched") => Err(ServiceError::Conflict {
-                message: "UNMATCHED_ALBUM: Nothing on MusicBrainz fits this album, so it keeps \
-                          its own tags. Pick its edition on the album page first."
-                    .to_owned(),
-            }),
-            _ => Ok(()),
+            None => Ok(()),
         }
     }
 
@@ -804,39 +807,155 @@ impl LibrarySetup {
         bundle: &PlanBundle,
         token_hash: &str,
     ) -> Result<SealRecheck, ServiceError> {
+        self.live_seal(sandbox, bundle, token_hash, SealPins::constant(), &|_| {
+            PINNED_OVERRIDE
+        })
+        .map_err(|error| match error {
+            PublishError::Validation(message) => ServiceError::Conflict { message },
+            other => publish_error(other),
+        })
+    }
+
+    /// The live state a seal is checked against: fresh fingerprints and
+    /// identities, the caller's current revisions and per-file override
+    /// revisions.
+    fn live_seal(
+        &self,
+        sandbox: &Sandbox,
+        bundle: &PlanBundle,
+        token_hash: &str,
+        pins: SealPins,
+        override_of: &dyn Fn(&str) -> u64,
+    ) -> Result<SealRecheck, PublishError> {
         let mut fingerprints = BTreeMap::new();
         let mut identities = BTreeMap::new();
         let mut overrides = BTreeMap::new();
         for item in &bundle.items {
+            let changed = || {
+                PublishError::Validation(format!(
+                    "Track {} changed under the preview",
+                    item.track_id
+                ))
+            };
             fingerprints.insert(
                 item.track_id.clone(),
-                Self::live_fingerprint(sandbox, &item.source_root, &item.source_rel).map_err(
-                    |_| ServiceError::Conflict {
-                        message: format!("Track {} changed under the preview", item.track_id),
-                    },
-                )?,
+                Self::live_fingerprint(sandbox, &item.source_root, &item.source_rel)
+                    .map_err(|_| changed())?,
             );
-            let album_id = self.track_album(&item.track_id)?;
+            let album_id = self.track_album(&item.track_id).map_err(|_| changed())?;
             identities.insert(
                 item.track_id.clone(),
                 self.resolve_identity(&album_id, &item.track_id)
-                    .map_err(|_| ServiceError::Conflict {
-                        message: format!("Identity for track {} changed", item.track_id),
+                    .map_err(|_| {
+                        PublishError::Validation(format!(
+                            "Identity for track {} changed",
+                            item.track_id
+                        ))
                     })?,
             );
-            overrides.insert(item.track_id.clone(), PINNED_OVERRIDE);
+            overrides.insert(item.track_id.clone(), override_of(&item.track_id));
         }
         Ok(SealRecheck {
             fingerprints,
             identities,
             overrides,
-            profile_revision: PINNED_REVISION,
-            naming_revision: PINNED_REVISION,
+            profile_revision: pins.profile,
+            naming_revision: pins.naming,
             policy_revision: policy_revision_u64(&self.live_registry()),
             catalog_revision: bundle.catalog_revision,
-            settings_revision: PINNED_REVISION,
+            settings_revision: pins.settings,
             today_day: today_day(),
             token_hash: token_hash.to_owned(),
+        })
+    }
+
+    /// The sandbox over the usable roots, opening the publish cell when
+    /// the root set changed. Blocking.
+    pub(crate) fn publish_sandbox(&self) -> Result<Sandbox, PublishError> {
+        let registry = self.live_registry();
+        let mut cell = self
+            .publish
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guards = if cell.needs_refresh(&registry) {
+            self.publish_guards(&registry)
+        } else {
+            Vec::new()
+        };
+        cell.refresh(&registry, &self.root_dirs)?;
+        Ok(cell.open()?.sandbox.clone())
+    }
+
+    /// Publish one album a management job planned. The tags to write and
+    /// the destinations were fixed at planning; the before-state is read
+    /// now, and the seal refuses any file, identity, override or revision
+    /// that moved since. Blocking: the job worker runs it.
+    pub(crate) fn publish_plans(
+        &self,
+        plan_items: Vec<PlanItem>,
+        pins: SealPins,
+        override_of: &dyn Fn(&str) -> u64,
+    ) -> Result<AppliedBundle, PublishError> {
+        use super::publish::publisher::Catalog as _;
+
+        let mut cell = self
+            .publish
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let registry = self.live_registry();
+        let _guards = self.publish_guards(&registry);
+        cell.refresh(&registry, &self.root_dirs)?;
+        let open = cell.open()?;
+        let mut docs = BTreeMap::new();
+        for item in &plan_items {
+            let path = open
+                .sandbox
+                .resolve_no_symlink(&item.source_root, &item.source_rel)?;
+            docs.insert(
+                item.track_id.clone(),
+                super::publish::staging::document_for_write(&path, &item.managed_updates)?,
+            );
+        }
+        let catalog_revision = SqliteCatalog.revision(open.publisher.connection())?;
+        let bundle = PlanBundle {
+            id: self.ids.new_id(),
+            items: plan_items,
+            profile_revision: pins.profile,
+            naming_revision: pins.naming,
+            policy_revision: policy_revision_u64(&registry),
+            catalog_revision,
+        };
+        let token_hash = sha256_hex(self.ids.new_id().as_bytes());
+        let sealed = SealedPreview::seal(
+            bundle,
+            token_hash.clone(),
+            pins.settings,
+            today_day() + PREVIEW_TTL_DAYS,
+        );
+        let live = self.live_seal(
+            &open.sandbox,
+            &sealed.bundle,
+            &token_hash,
+            pins,
+            override_of,
+        )?;
+        let outcome = open.publisher.publish(&sealed, &live, &docs)?;
+        Ok(AppliedBundle {
+            bundle_id: sealed.bundle.id.clone(),
+            outcome: match outcome {
+                PublishOutcome::Committed => "committed".to_owned(),
+                PublishOutcome::CleanupPending => "cleanup_pending".to_owned(),
+            },
+            files: sealed
+                .bundle
+                .items
+                .iter()
+                .map(|item| AppliedFile {
+                    track_id: item.track_id.clone(),
+                    root_id: item.dest_root.clone(),
+                    rel_path: item.dest_rel.clone(),
+                })
+                .collect(),
         })
     }
 
@@ -848,9 +967,6 @@ impl LibrarySetup {
     /// restoration publish. Blocking: handlers run this off the
     /// async runtime.
     pub fn undo_bundle(&self, bundle_id: &str) -> Result<AppliedBundle, ServiceError> {
-        use super::publish::publisher::Catalog as _;
-        use super::publish::undo::{UndoInput, UndoLive, plan_undo};
-
         let mut cell = self
             .publish
             .lock()
@@ -860,6 +976,61 @@ impl LibrarySetup {
         cell.refresh(&registry, &self.root_dirs)
             .map_err(publish_error)?;
         let open = cell.open().map_err(publish_error)?;
+        let files = self.undo_files_in(open, bundle_id, &|_| PINNED_OVERRIDE)?;
+        if !files.blocked.is_empty() || files.eligible.is_empty() {
+            return Err(ServiceError::Conflict {
+                message: format!("Undo blocked: {}", undo_blocks(&files.blocked)),
+            });
+        }
+        let mut plan_items = Vec::new();
+        let mut docs = BTreeMap::new();
+        for file in files.eligible {
+            let path = open
+                .sandbox
+                .resolve_no_symlink(&file.plan.source_root, &file.plan.source_rel)
+                .map_err(publish_error)?;
+            docs.insert(
+                file.plan.track_id.clone(),
+                super::publish::staging::document_for_write(&path, &file.plan.managed_updates)
+                    .map_err(publish_error)?,
+            );
+            plan_items.push(file.plan);
+        }
+        self.publish_restoration(&mut cell, plan_items, docs)
+    }
+
+    /// What undoing one published bundle would do, file by file. Blocking.
+    pub(crate) fn undo_files(
+        &self,
+        bundle_id: &str,
+        override_of: &dyn Fn(&str) -> u64,
+    ) -> Result<UndoFiles, ServiceError> {
+        let mut cell = self
+            .publish
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let registry = self.live_registry();
+        let _guards = if cell.needs_refresh(&registry) {
+            self.publish_guards(&registry)
+        } else {
+            Vec::new()
+        };
+        cell.refresh(&registry, &self.root_dirs)
+            .map_err(publish_error)?;
+        let open = cell.open().map_err(publish_error)?;
+        self.undo_files_in(open, bundle_id, override_of)
+    }
+
+    /// [`undo_files`](Self::undo_files) under a publish cell the caller holds.
+    fn undo_files_in(
+        &self,
+        open: &OpenPublish,
+        bundle_id: &str,
+        override_of: &dyn Fn(&str) -> u64,
+    ) -> Result<UndoFiles, ServiceError> {
+        use super::publish::publisher::Catalog as _;
+        use super::publish::undo::{UndoInput, UndoLive, plan_undo};
+
         let conn = open.publisher.connection();
         let source = super::publish::operations::load_operation(conn, bundle_id)
             .map_err(publish_error)?
@@ -867,11 +1038,6 @@ impl LibrarySetup {
         let snapshots = SnapshotStore::new(conn)
             .bundle(bundle_id)
             .map_err(publish_error)?;
-        if snapshots.is_empty() {
-            return Err(ServiceError::Conflict {
-                message: format!("Bundle {bundle_id} holds no undoable snapshots"),
-            });
-        }
         let journals = JournalStore::new(conn)
             .bundle(bundle_id)
             .map_err(publish_error)?;
@@ -917,35 +1083,33 @@ impl LibrarySetup {
                 expires_day: *expires_day,
             });
         }
-        if inputs.is_empty() {
-            return Err(ServiceError::Conflict {
-                message: format!("Bundle {bundle_id} holds no undoable snapshots"),
-            });
-        }
+        let mut files = UndoFiles::default();
         let mut fingerprints = BTreeMap::new();
         let mut locations = BTreeMap::new();
         let mut identities = BTreeMap::new();
         let mut overrides = BTreeMap::new();
-        for input in &inputs {
-            let (root_id, rel_path, _, _) = SqliteCatalog
+        let mut live_inputs = Vec::new();
+        for input in inputs {
+            let located = SqliteCatalog
                 .locate(conn, &input.track_id)
-                .map_err(publish_error)?
-                .ok_or_else(|| ServiceError::Conflict {
-                    message: format!("Track {} is no longer managed", input.track_id),
-                })?;
-            fingerprints.insert(
-                input.track_id.clone(),
-                Self::live_fingerprint(&open.sandbox, &root_id, &rel_path)?,
-            );
+                .map_err(publish_error)?;
+            let live = located.and_then(|(root_id, rel_path, _, _)| {
+                let fingerprint =
+                    Self::live_fingerprint(&open.sandbox, &root_id, &rel_path).ok()?;
+                let album_id = self.track_album(&input.track_id).ok()?;
+                let identity = self.resolve_identity(&album_id, &input.track_id).ok()?;
+                Some((root_id, rel_path, fingerprint, identity))
+            });
+            let Some((root_id, rel_path, fingerprint, identity)) = live else {
+                files.blocked.push((input.track_id.clone(), UndoSkip::Gone));
+                continue;
+            };
+            fingerprints.insert(input.track_id.clone(), fingerprint);
             locations.insert(input.track_id.clone(), (root_id, rel_path));
-            let album_id = self.track_album(&input.track_id)?;
-            identities.insert(
-                input.track_id.clone(),
-                self.resolve_identity(&album_id, &input.track_id)?,
-            );
-            overrides.insert(input.track_id.clone(), PINNED_OVERRIDE);
+            identities.insert(input.track_id.clone(), identity);
+            overrides.insert(input.track_id.clone(), override_of(&input.track_id));
+            live_inputs.push(input);
         }
-        let sandbox = open.sandbox.clone();
         let live = UndoLive {
             fingerprints,
             locations,
@@ -953,7 +1117,8 @@ impl LibrarySetup {
             overrides,
             today_day: today_day(),
         };
-        let plan = plan_undo(bundle_id, &inputs, &live, &|root_id, rel_path| {
+        let sandbox = open.sandbox.clone();
+        let plan = plan_undo(bundle_id, &live_inputs, &live, &|root_id, rel_path| {
             match sandbox.resolve_no_symlink(root_id, rel_path) {
                 Ok(path) => path.symlink_metadata().is_ok(),
                 // An unresolvable restore target fails closed as
@@ -961,75 +1126,62 @@ impl LibrarySetup {
                 Err(_) => true,
             }
         });
-        if !plan.writable() {
-            return Err(ServiceError::Conflict {
-                message: format!("Undo blocked: {}", undo_blocks(&plan)),
-            });
-        }
-        // Restore bundle: each eligible file republishes its exact
-        // before document onto its prior path.
-        let mut plan_items = Vec::new();
-        let mut docs = BTreeMap::new();
-        for item in &plan.eligible {
-            let live_loc =
-                live.locations
-                    .get(&item.track_id)
-                    .ok_or_else(|| ServiceError::Conflict {
-                        message: format!("Track {} moved during undo", item.track_id),
-                    })?;
-            let fingerprint = Self::live_fingerprint(&sandbox, &live_loc.0, &live_loc.1)?;
-            let format = Self::live_format(&live_loc.1)?;
-            let album_id = self.track_album(&item.track_id)?;
-            let identity = self.resolve_identity(&album_id, &item.track_id)?;
-            let same_path = live_loc.0 == item.restore_root && live_loc.1 == item.restore_rel;
-            let item_kind = if same_path {
-                PlanKind::SamePath
-            } else {
-                PlanKind::Move
+        files.blocked.extend(
+            plan.blocked
+                .into_iter()
+                .map(|(track, block)| (track, UndoSkip::Plan(block))),
+        );
+        for item in plan.eligible {
+            let (Some(live_loc), Some(fingerprint), Some(identity)) = (
+                live.locations.get(&item.track_id),
+                live.fingerprints.get(&item.track_id),
+                live.identities.get(&item.track_id),
+            ) else {
+                files.blocked.push((item.track_id.clone(), UndoSkip::Gone));
+                continue;
             };
+            let format = Self::live_format(&live_loc.1)?;
+            let same_path = live_loc.0 == item.restore_root && live_loc.1 == item.restore_rel;
             let mut capabilities = Vec::new();
             if !item.doc.managed.is_empty() {
                 capabilities.push(Capability::Metadata);
             }
-            if item_kind == PlanKind::Move {
-                if live_loc.0 == item.restore_root {
-                    capabilities.push(Capability::SameRootMove);
+            if !same_path {
+                capabilities.push(if live_loc.0 == item.restore_root {
+                    Capability::SameRootMove
                 } else {
-                    capabilities.push(Capability::CrossRootMove);
-                }
+                    Capability::CrossRootMove
+                });
             }
-            plan_items.push(PlanItem {
-                track_id: item.track_id.clone(),
-                source_root: live_loc.0.clone(),
-                source_rel: live_loc.1.clone(),
-                dest_root: item.restore_root.clone(),
-                dest_rel: item.restore_rel.clone(),
-                kind: item_kind,
-                fingerprint,
-                identity,
-                override_revision: PINNED_OVERRIDE,
-                capabilities,
-                format,
-                managed_updates: item.doc.managed.clone(),
-                sidecars: Vec::new(),
-                staged_bytes_estimate: 0,
-                adopt: None,
+            let current = Self::live_doc(&open.sandbox, &live_loc.0, &live_loc.1)
+                .map(|doc| doc.managed)
+                .unwrap_or_default();
+            files.eligible.push(UndoFile {
+                current,
+                plan: PlanItem {
+                    track_id: item.track_id.clone(),
+                    source_root: live_loc.0.clone(),
+                    source_rel: live_loc.1.clone(),
+                    dest_root: item.restore_root.clone(),
+                    dest_rel: item.restore_rel.clone(),
+                    kind: if same_path {
+                        PlanKind::SamePath
+                    } else {
+                        PlanKind::Move
+                    },
+                    fingerprint: fingerprint.clone(),
+                    identity: identity.clone(),
+                    override_revision: override_of(&item.track_id),
+                    capabilities,
+                    format,
+                    managed_updates: item.doc.managed.clone(),
+                    sidecars: Vec::new(),
+                    staged_bytes_estimate: fingerprint.size + STAGED_HEADROOM_BYTES,
+                    adopt: None,
+                },
             });
-            let size = sandbox
-                .resolve_no_symlink(&live_loc.0, &live_loc.1)
-                .ok()
-                .and_then(|path| std::fs::metadata(&path).ok())
-                .map(|meta| meta.len())
-                .unwrap_or(0);
-            if let Some(last) = plan_items.last_mut() {
-                last.staged_bytes_estimate = size + STAGED_HEADROOM_BYTES;
-            }
-            docs.insert(
-                item.track_id.clone(),
-                Self::live_doc_for_write(&sandbox, &live_loc.0, &live_loc.1, &item.doc.managed)?,
-            );
         }
-        self.publish_restoration(&mut cell, plan_items, docs)
+        Ok(files)
     }
 
     /// Restore tracks to their immutable first-management baselines.
@@ -1246,10 +1398,16 @@ impl LibrarySetup {
 }
 
 /// Per-file undo blocks as a compact message.
-fn undo_blocks(plan: &super::publish::undo::UndoPlan) -> String {
-    plan.blocked
+fn undo_blocks(blocked: &[(String, UndoSkip)]) -> String {
+    if blocked.is_empty() {
+        return "the bundle holds no undoable snapshots".to_owned();
+    }
+    blocked
         .iter()
-        .map(|(track_id, block)| format!("{track_id} {}", undo_block_label(block)))
+        .map(|(track_id, skip)| match skip {
+            UndoSkip::Plan(block) => format!("{track_id} {}", undo_block_label(block)),
+            UndoSkip::Gone => format!("{track_id} not_managed"),
+        })
         .collect::<Vec<_>>()
         .join(", ")
 }

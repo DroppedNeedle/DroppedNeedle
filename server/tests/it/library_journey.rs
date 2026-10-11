@@ -3024,4 +3024,163 @@ async fn library_journey_catalog_corrections() {
         .expect("merged artist");
     assert_eq!(retired.as_deref(), Some("artist-keep"));
     assert_eq!(favorite, "artist-keep");
+
+/// Run one Library Management worker step off the async runtime.
+async fn management_step(library: &LibrarySetup) -> bool {
+    let management = droppedneedle::library::management::service::Management::new(library);
+    tokio::task::spawn_blocking(move || management.run_next("test-worker"))
+        .await
+        .expect("worker joins")
+        .expect("worker step runs")
+}
+
+/// A Library Management job end to end: an album whose edition is a best
+/// guess is left alone with its reason; once confirmed, preview it from
+/// the Picard-style profile, page its planned file, apply it (tags
+/// written, file renamed by the naming script), read the result, then
+/// preview the undo and apply that, which puts the file back exactly as
+/// it was.
+#[tokio::test]
+async fn library_management_preview_apply_undo() {
+    use droppedneedle::library::management::models::{ItemFilter, Selection, SelectionKind};
+    use droppedneedle::library::management::service::{ApplyRequest, Management, PreviewRequest};
+    use droppedneedle::library::scan::CatalogStore as _;
+    use droppedneedle::settings::management as lm;
+
+    let (_scratch, library, music) = bare_library("lib-management-jobs");
+    let file = plant(&music, "incoming/01.flac", "management_full.flac");
+    let original = droppedneedle::library::tags::read_fields(&file).expect("fields read");
+    add_music_root(&library, &music).await;
+    let track = library
+        .scan_store
+        .track_at("music", "incoming/01.flac")
+        .expect("track indexed");
+    let album = library.scan_store.album_for_track(&track).expect("album");
+    library
+        .test_providers
+        .as_ref()
+        .expect("scripted providers")
+        .set_recall(ambiguous_recall(&library, &album));
+    assert_eq!(library.identify_tick().await, 1);
+    library
+        .scan_store
+        .execute_batch_for_tests(
+            "INSERT INTO auth_users (id, display_name, role, created_at) \
+             VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
+        )
+        .expect("admin row");
+    let settings = library
+        .config
+        .save(lm::initial_settings(""))
+        .expect("management settings saved");
+
+    let management = Management::new(&library);
+    let request = |key: &str| PreviewRequest {
+        selection: Selection {
+            kind: SelectionKind::Albums,
+            ids: vec![album.clone()],
+            catalog_filter: None,
+        },
+        profile_id: lm::PICARD_ORGANIZER_PROFILE_ID.to_owned(),
+        expected_settings_revision: lm::settings_revision(&settings),
+        expected_policy_revision: library.live_registry().policy_revision().to_owned(),
+        idempotency_key: Some(key.to_owned()),
+        target_root_id: None,
+        overrides: None,
+    };
+
+    // The tie was decided as a best guess: its files wait, and say why.
+    let guessed = management
+        .create_preview(request("preview-guess"), "admin")
+        .expect("preview queued");
+    assert!(management_step(&library).await, "planning runs");
+    let page = management
+        .items(&guessed.job_id, -1, 100, &ItemFilter::default())
+        .expect("items page");
+    let reason = page.items[0].facts.reason.clone().expect("a reason");
+    assert_eq!(reason.code, "UNCONFIRMED_MATCH");
+    assert!(!reason.action.is_empty());
+
+    droppedneedle::library::operations::service::Operations::new(&library)
+        .confirm_match(&album, "admin")
+        .expect("match confirmed");
+    let handle = management
+        .create_preview(request("preview-1"), "admin")
+        .expect("preview queued");
+    assert!(management_step(&library).await, "planning runs");
+    let detail = management.detail(&handle.job_id).expect("detail");
+    assert!(detail.ready_for_confirmation, "{:?}", detail.stale_reasons);
+    assert_eq!(detail.summary.item_count, 1);
+    let page = management
+        .items(&handle.job_id, -1, 100, &ItemFilter::default())
+        .expect("items page");
+    let item = &page.items[0];
+    assert!(item.eligibility.writes(), "{:?}", item.facts.reason);
+    let dest = item.dest_rel.clone().expect("destination planned");
+    assert_ne!(dest, "incoming/01.flac", "the naming script moves the file");
+    assert!(item.diff.tags_changed, "edition tags are written");
+
+    // A wrong token is refused; the real one queues the album.
+    let wrong = management.apply(
+        &handle.job_id,
+        ApplyRequest {
+            preview_token: "not-the-token".to_owned(),
+            expected_row_revision: detail.job.row_revision,
+            idempotency_key: "apply-1".to_owned(),
+            confirmation: true,
+        },
+    );
+    assert!(wrong.is_err());
+    management
+        .apply(
+            &handle.job_id,
+            ApplyRequest {
+                preview_token: handle.preview_token.clone(),
+                expected_row_revision: detail.job.row_revision,
+                idempotency_key: "apply-1".to_owned(),
+                confirmation: true,
+            },
+        )
+        .expect("apply queued");
+    assert!(management_step(&library).await, "apply runs");
+    let applied = management.detail(&handle.job_id).expect("detail");
+    assert_eq!(applied.job.state.as_str(), "succeeded");
+    assert_eq!(applied.phase, "complete");
+    assert!(!file.exists(), "the source moved");
+    assert!(music.join(&dest).exists(), "the file sits at its new path");
+    let results = management
+        .results(&handle.job_id, -1, 100)
+        .expect("results");
+    assert_eq!(results.items[0].work_state, "succeeded");
+    assert!(applied.undo_available_count >= 1);
+
+    let undo = management
+        .undo_preview(&handle.job_id, applied.job.row_revision, "undo-1", "admin")
+        .expect("undo preview queued");
+    assert!(management_step(&library).await, "undo planning runs");
+    let undo_detail = management.detail(&undo.job_id).expect("undo detail");
+    assert!(undo_detail.ready_for_confirmation);
+    management
+        .apply(
+            &undo.job_id,
+            ApplyRequest {
+                preview_token: undo.preview_token.clone(),
+                expected_row_revision: undo_detail.job.row_revision,
+                idempotency_key: "undo-apply-1".to_owned(),
+                confirmation: true,
+            },
+        )
+        .expect("undo queued");
+    assert!(management_step(&library).await, "undo runs");
+    let undone = management.detail(&undo.job_id).expect("detail");
+    assert_eq!(undone.job.state.as_str(), "succeeded");
+    assert_eq!(
+        droppedneedle::library::tags::read_fields(&file).expect("restored file reads"),
+        original,
+        "undo puts every tag back"
+    );
+    let (history, _) = management
+        .history(Default::default())
+        .expect("history reads");
+    assert_eq!(history.len(), 3);
 }
