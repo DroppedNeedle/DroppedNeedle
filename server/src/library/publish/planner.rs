@@ -364,7 +364,7 @@ impl CollisionGate {
                     )));
                 }
                 if same_path_self.is_self_destination(dest_root, dest_rel)
-                    || same_path_self.is_own_source(sandbox, &dest)
+                    || same_path_self.is_own_source(sandbox, dest_root, dest_rel, &dest)
                 {
                     return Ok(());
                 }
@@ -426,7 +426,9 @@ impl CollisionGate {
             };
             // A case-only rename folds onto its own source, which is
             // leaving: that is the file itself, not a collision.
-            if text == wanted || same_path_self.is_own_source(sandbox, &parent.join(text)) {
+            if text == wanted
+                || same_path_self.is_own_source(sandbox, dest_root, dest_rel, &parent.join(text))
+            {
                 continue;
             }
             if collision_key(dest_root, text) == wanted_key {
@@ -480,14 +482,23 @@ impl SamePathSelf {
         }
     }
 
-    /// True when `path` is the moving file itself.
-    fn is_own_source(&self, sandbox: &Sandbox, path: &std::path::Path) -> bool {
+    /// True when `path`, found at or folding onto `dest_root:dest_rel`, is
+    /// the moving file itself: the names fold together (a case-only
+    /// rename) and it is the same file. A hard link elsewhere is not.
+    fn is_own_source(
+        &self,
+        sandbox: &Sandbox,
+        dest_root: &str,
+        dest_rel: &str,
+        path: &std::path::Path,
+    ) -> bool {
         let Some((root, rel)) = &self.move_source else {
             return false;
         };
-        sandbox
-            .resolve_no_symlink(root, rel)
-            .is_ok_and(|source| source == path || super::paths::same_file(&source, path))
+        collision_key(root, rel) == collision_key(dest_root, dest_rel)
+            && sandbox
+                .resolve_no_symlink(root, rel)
+                .is_ok_and(|source| source == path || super::paths::same_file(&source, path))
     }
 
     fn is_self_destination(&self, root: &str, rel: &str) -> bool {

@@ -223,6 +223,40 @@ pub fn same_file(left: &Path, right: &Path) -> bool {
     }
 }
 
+/// True when a move's destination is its own source under another letter
+/// case: the names fold together and, where the destination exists, it is
+/// the same file. A hard link of the source under an unrelated name is not
+/// an alias: the names must fold together too.
+pub fn case_alias(sandbox: &Sandbox, source: (&str, &str), dest: (&str, &str)) -> bool {
+    if collision_key(source.0, source.1) != collision_key(dest.0, dest.1) {
+        return false;
+    }
+    match (
+        sandbox.resolve_no_symlink(source.0, source.1),
+        sandbox.resolve_no_symlink(dest.0, dest.1),
+    ) {
+        (Ok(source), Ok(dest)) => source == dest || same_file(&source, &dest),
+        _ => false,
+    }
+}
+
+/// Where a set-aside original goes back to on an unwind: the source name
+/// for a case-only rename, so the original letter case returns; the
+/// destination otherwise (a same-path write).
+pub fn backup_home(
+    sandbox: &Sandbox,
+    source: Option<&(String, String)>,
+    dest_root: &str,
+    dest_rel: &str,
+) -> Result<PathBuf, PublishError> {
+    match source {
+        Some((root, rel)) if collision_key(root, rel) == collision_key(dest_root, dest_rel) => {
+            sandbox.resolve_no_symlink(root, rel)
+        }
+        _ => sandbox.resolve_no_symlink(dest_root, dest_rel),
+    }
+}
+
 /// Unicode/case-fold collision key: NFC normalization plus full
 /// casefold, so names that differ only by case or by canonically
 /// equivalent sequences can never publish side by side.

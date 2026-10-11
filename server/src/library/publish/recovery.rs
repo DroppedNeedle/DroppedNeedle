@@ -426,6 +426,9 @@ fn resume_rename(
                 journal.dest_root, journal.dest_rel
             )));
         }
+        // The original at the destination: a same-path write, or a
+        // case-only rename on a filesystem that folds case. Either way it
+        // is set aside under a journaled backup, as the publisher does.
         let same_path = journal
             .source
             .as_ref()
@@ -434,6 +437,11 @@ fn resume_rename(
                     .resolve_no_symlink(root, rel)
                     .map(|source| source == dest)
                     .unwrap_or(false)
+                    || paths::case_alias(
+                        sandbox,
+                        (root, rel),
+                        (&journal.dest_root, &journal.dest_rel),
+                    )
             })
             .unwrap_or(false);
         if !same_path {
@@ -581,6 +589,7 @@ fn finish_cleanup(
             && let Ok(source) = sandbox.resolve_no_symlink(root, rel)
             && let Ok(dest) = sandbox.resolve_no_symlink(&journal.dest_root, &journal.dest_rel)
             && source != dest
+            && !paths::same_file(&source, &dest)
             && let Ok(bytes) = paths::read_regular_file(&source)
         {
             let expected = journal.source_sha256.as_deref().unwrap_or_default();
@@ -631,7 +640,13 @@ fn compensate_bundle(
         {
             let expected = journal.source_sha256.as_deref().unwrap_or_default();
             if expected.is_empty() || sha256_hex(&bytes) == expected {
-                std::fs::rename(Path::new(backup_text), &dest).map_err(PublishError::from)?;
+                let home = paths::backup_home(
+                    sandbox,
+                    journal.source.as_ref(),
+                    &journal.dest_root,
+                    &journal.dest_rel,
+                )?;
+                std::fs::rename(Path::new(backup_text), &home).map_err(PublishError::from)?;
             }
         }
         let staged = Path::new(&journal.staged);

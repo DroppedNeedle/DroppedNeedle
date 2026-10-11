@@ -48,6 +48,25 @@ const CATALOG_TRACKS: [(&str, &str); 4] = [
 ];
 
 /// A migrated scratch database with the test tracks in the catalog.
+/// The catalog revision a fresh fixture database starts at (migrations
+/// may move it), so bundles plan against the real value.
+fn db_catalog_revision(fix: &Fixture) -> u64 {
+    let conn = droppedneedle::db::open_connection(&fix.db_path).unwrap();
+    let value: i64 = conn
+        .query_row(
+            "SELECT value FROM library_catalog_revision WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    value as u64
+}
+
+/// The catalog revision every fresh fixture starts from.
+fn start_revision() -> u64 {
+    db_catalog_revision(&fixture("start-revision"))
+}
+
 fn scratch_db(dir: &std::path::Path) -> PathBuf {
     let db_path = dir.join("app.db");
     let conn = droppedneedle::db::open_connection(&db_path).unwrap();
@@ -208,7 +227,7 @@ fn two_track_bundle(fix: &Fixture, kind: PlanKind) -> (PlanBundle, BTreeMap<Stri
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
-        catalog_revision: 0,
+        catalog_revision: db_catalog_revision(fix),
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-a".to_string(), TagDocument::empty());
@@ -485,7 +504,10 @@ fn move_bundle_commits_atomically() {
     // The catalog the reads API serves follows the move in the same
     // transaction, and its revision bump invalidates read caches.
     let catalog = SqliteCatalog;
-    assert_eq!(catalog.revision(publisher.connection()).unwrap(), 1);
+    assert_eq!(
+        catalog.revision(publisher.connection()).unwrap(),
+        start_revision() + 1
+    );
     let located = catalog
         .locate(publisher.connection(), "track-a")
         .unwrap()
@@ -549,7 +571,7 @@ fn crash_at_every_phase_resumes_without_half_state() {
         );
         assert_eq!(
             SqliteCatalog.revision(&conn).unwrap(),
-            1,
+            start_revision() + 1,
             "{point:?}: catalog committed once"
         );
     }
@@ -618,7 +640,7 @@ fn foreign_bytes_at_dest_flag_attention_without_deleting() {
         std::fs::read(fix.sandbox.resolve("music", "staging/a.flac").unwrap()).unwrap(),
         std::fs::read(fixtures_dir().join("management_full.flac")).unwrap()
     );
-    assert_eq!(SqliteCatalog.revision(&conn).unwrap(), 0);
+    assert_eq!(SqliteCatalog.revision(&conn).unwrap(), start_revision());
 }
 
 #[test]
@@ -694,7 +716,7 @@ fn unknown_empty_and_multivalued_tags_survive_apply() {
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
-        catalog_revision: 0,
+        catalog_revision: db_catalog_revision(&fix),
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-s".to_string(), before);
@@ -1211,7 +1233,7 @@ fn symlink_at_dest_flags_attention_without_touching_target() {
         results[0].action
     );
     assert_eq!(std::fs::read(&canary).unwrap(), b"canary");
-    assert_eq!(SqliteCatalog.revision(&conn).unwrap(), 0);
+    assert_eq!(SqliteCatalog.revision(&conn).unwrap(), start_revision());
 }
 
 #[cfg(unix)]
@@ -1292,7 +1314,7 @@ fn crash_after_backup_journaled_resumes() {
             .iter()
             .all(|journal| journal.state == JournalState::Cleaned)
     );
-    assert_eq!(SqliteCatalog.revision(&conn).unwrap(), 1);
+    assert_eq!(SqliteCatalog.revision(&conn).unwrap(), start_revision() + 1);
 }
 
 #[test]
@@ -1336,7 +1358,7 @@ fn same_path_after_stage_resume_retains_backup() {
             journal.id
         );
     }
-    assert_eq!(SqliteCatalog.revision(&conn).unwrap(), 1);
+    assert_eq!(SqliteCatalog.revision(&conn).unwrap(), start_revision() + 1);
 }
 
 /// Splice raw ID3v2.4 frames ahead of the existing tag, fixing the
@@ -1405,7 +1427,7 @@ fn mp3_unknown_frames_survive_publish_staging() {
         profile_revision: 7,
         naming_revision: 3,
         policy_revision: 5,
-        catalog_revision: 0,
+        catalog_revision: db_catalog_revision(&fix),
     };
     let mut docs = BTreeMap::new();
     docs.insert("track-s".to_string(), TagDocument::empty());

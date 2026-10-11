@@ -737,7 +737,11 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
                     .resolve_no_symlink(&file.source_root, &file.source_rel)?;
                 match file.kind {
                     PlanKind::SamePath => source == dest,
-                    PlanKind::Move => paths::same_file(&source, &dest),
+                    PlanKind::Move => paths::case_alias(
+                        &self.sandbox,
+                        (&file.source_root, &file.source_rel),
+                        (&journal.dest_root, &journal.dest_rel),
+                    ),
                 }
             }
             None => false,
@@ -987,7 +991,13 @@ impl<C: Catalog, P: SpaceProbe> Publisher<C, P> {
             {
                 let expected = journal.source_sha256.as_deref().unwrap_or_default();
                 if expected.is_empty() || sha256_hex(&bytes) == expected {
-                    std::fs::rename(backup, &dest).map_err(PublishError::from)?;
+                    let home = paths::backup_home(
+                        &self.sandbox,
+                        journal.source.as_ref(),
+                        &journal.dest_root,
+                        &journal.dest_rel,
+                    )?;
+                    std::fs::rename(backup, &home).map_err(PublishError::from)?;
                 }
             }
         }
