@@ -591,6 +591,25 @@ impl<P: Pacer, S: DegradationSink> LastFmClient<P, S> {
         .await
     }
 
+    /// `user.getLovedTracks`: the tracks one Last.fm user loved, newest
+    /// first (v2 `get_user_loved_tracks`). Each row's `name` is the track.
+    pub async fn user_loved_tracks(
+        &self,
+        creds: &LastFmCredentials,
+        username: &str,
+        limit: u32,
+    ) -> Outcome<Vec<TopItem>> {
+        let limit_text = limit.to_string();
+        self.list_items(
+            "user.getLovedTracks",
+            "lovedtracks",
+            "track",
+            creds,
+            &[("user", username), ("limit", &limit_text)],
+        )
+        .await
+    }
+
     /// `user.getRecentTracks`: the user's latest scrobbles, newest first
     /// (v2 `get_user_recent_tracks`).
     pub async fn user_recent_tracks(

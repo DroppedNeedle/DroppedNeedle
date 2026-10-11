@@ -333,12 +333,25 @@ impl<T: MbTransport, S: DegradationSink> MusicBrainzClient<T, S> {
         limit: u32,
         criticality: Criticality,
     ) -> Result<SearchPage<ArtistSearchHit>, MbError> {
+        self.search_artists_by_tag_from(tag, limit, 0, criticality)
+            .await
+    }
+
+    /// One page of artists carrying one tag, starting at `offset` (the
+    /// genre page's "more artists").
+    pub async fn search_artists_by_tag_from(
+        &self,
+        tag: &str,
+        limit: u32,
+        offset: u32,
+        criticality: Criticality,
+    ) -> Result<SearchPage<ArtistSearchHit>, MbError> {
         let query = super::build_tag_query(tag);
         self.search_page(
             "/artist",
             &query,
             limit,
-            0,
+            offset,
             "artists",
             "search_artists_by_tag",
             criticality,

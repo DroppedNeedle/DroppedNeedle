@@ -86,6 +86,24 @@ pub struct FreshRelease {
     pub artist_mbids: Vec<String>,
 }
 
+/// One loved recording with the names to show it (v2
+/// `ListenBrainzFeedbackRecording`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LovedRecording {
+    /// Track title.
+    pub track_name: String,
+    /// Credited artist name.
+    pub artist_name: String,
+    /// Release title, when sent.
+    pub release_name: Option<String>,
+    /// Recording MBID, when sent.
+    pub recording_mbid: Option<String>,
+    /// Release MBID, when mapped.
+    pub release_mbid: Option<String>,
+    /// First credited artist MBID, when mapped.
+    pub artist_mbid: Option<String>,
+}
+
 /// Listens per genre, summed across the activity buckets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GenreActivity {
@@ -307,31 +325,54 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
         username: &str,
         count: u32,
     ) -> Outcome<Vec<String>> {
+        match self.loved_feedback(username, count).await {
+            Ok(rows) => Outcome::Found(rows.iter().filter_map(loved_artist_mbid).collect()),
+            Err(outcome) => outcome,
+        }
+    }
+
+    /// The user's loved recordings with their names, newest first (v2
+    /// `get_user_loved_recordings`, the home "Your Favorites" shelf).
+    /// Rows without a track title are skipped.
+    pub async fn user_loved_recordings(
+        &self,
+        username: &str,
+        count: u32,
+    ) -> Outcome<Vec<LovedRecording>> {
+        match self.loved_feedback(username, count).await {
+            Ok(rows) => Outcome::Found(rows.iter().filter_map(loved_recording).collect()),
+            Err(outcome) => outcome,
+        }
+    }
+
+    /// One page of the user's loved-recording feedback rows, with metadata.
+    async fn loved_feedback<T>(
+        &self,
+        username: &str,
+        count: u32,
+    ) -> Result<Vec<serde_json::Value>, Outcome<T>> {
         if username.is_empty() {
-            return Outcome::Found(Vec::new());
+            return Ok(Vec::new());
         }
         let endpoint = format!("/1/feedback/user/{}/get-feedback", path_segment(username));
         let count_text = count.min(MAX_STATS_COUNT).to_string();
-        let payload = match self
+        let Some(payload) = self
             .public_get(
                 &endpoint,
                 &[("score", "1"), ("count", &count_text), ("metadata", "true")],
             )
-            .await
-        {
-            Ok(Some(payload)) => payload,
-            Ok(None) => return Outcome::Found(Vec::new()),
-            Err(outcome) => return outcome,
+            .await?
+        else {
+            return Ok(Vec::new());
         };
         let body = payload.get("payload").unwrap_or(&payload);
-        let rows = body
+        Ok(body
             .get("feedback")
             .or_else(|| body.get("recordings"))
             .and_then(serde_json::Value::as_array)
             .or_else(|| body.as_array())
             .cloned()
-            .unwrap_or_default();
-        Outcome::Found(rows.iter().filter_map(loved_artist_mbid).collect())
+            .unwrap_or_default())
     }
 
     /// One stats list: `payload.{key}` decoded row by row, skipping rows
@@ -401,12 +442,65 @@ impl<P: Pacer, S: DegradationSink> ListenBrainzClient<P, S> {
     }
 }
 
+/// The metadata object of one feedback row, under any of its spellings.
+fn feedback_metadata(row: &serde_json::Value) -> Option<&serde_json::Value> {
+    ["recording_metadata", "track_metadata", "metadata"]
+        .iter()
+        .find_map(|key| row.get(*key).filter(|value| value.is_object()))
+}
+
+/// One loved recording with its names. The row's own fields stand in for
+/// missing metadata, like v2.
+fn loved_recording(row: &serde_json::Value) -> Option<LovedRecording> {
+    let empty = serde_json::Value::Null;
+    let metadata = feedback_metadata(row).unwrap_or(&empty);
+    let mapping = metadata.get("mbid_mapping").unwrap_or(&empty);
+    let text = |sources: &[(&serde_json::Value, &str)]| {
+        sources.iter().find_map(|(value, key)| {
+            value
+                .get(*key)
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(str::to_owned)
+        })
+    };
+    let track_name = text(&[
+        (metadata, "track_name"),
+        (metadata, "recording_name"),
+        (row, "track_name"),
+    ])?;
+    Some(LovedRecording {
+        track_name,
+        artist_name: text(&[
+            (metadata, "artist_name"),
+            (metadata, "artist"),
+            (row, "artist_name"),
+        ])
+        .unwrap_or_else(|| "Unknown".to_owned()),
+        release_name: text(&[
+            (metadata, "release_name"),
+            (metadata, "album_name"),
+            (row, "release_name"),
+        ]),
+        recording_mbid: text(&[
+            (row, "recording_mbid"),
+            (mapping, "recording_mbid"),
+            (metadata, "recording_mbid"),
+        ]),
+        release_mbid: text(&[
+            (mapping, "release_mbid"),
+            (row, "release_mbid"),
+            (metadata, "release_mbid"),
+        ]),
+        artist_mbid: loved_artist_mbid(row),
+    })
+}
+
 /// The first artist MBID behind one feedback row: the MBID mapping first,
 /// then the metadata's own list, then a lone `artist_mbid`.
 fn loved_artist_mbid(row: &serde_json::Value) -> Option<String> {
-    let metadata = ["recording_metadata", "track_metadata", "metadata"]
-        .iter()
-        .find_map(|key| row.get(*key).filter(|value| value.is_object()))?;
+    let metadata = feedback_metadata(row)?;
     let first = |value: Option<&serde_json::Value>| {
         value
             .and_then(serde_json::Value::as_array)
