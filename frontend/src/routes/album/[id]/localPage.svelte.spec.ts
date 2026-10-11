@@ -204,19 +204,6 @@ vi.mock('$lib/queries/library/LibraryOperationMutations.svelte', () => ({
 	controlLibraryOperation: () => ({ mutateAsync: vi.fn() })
 }));
 
-vi.mock('$lib/queries/library/EditionConversionQueries.svelte', () => {
-	const mutation = () => ({ mutateAsync: vi.fn(), isPending: false, reset: vi.fn() });
-	return {
-		getEditionConversionQuery: () => ({ data: undefined, refetch: vi.fn() }),
-		createEditionConversionPreflight: mutation,
-		createEditionConversionPreview: mutation,
-		startEditionConversion: mutation,
-		retryEditionConversion: mutation,
-		recheckEditionConversion: mutation,
-		cancelEditionConversion: mutation
-	};
-});
-
 vi.mock('$lib/queries/libraryContributions/LibraryContributionMutations.svelte', () => ({
 	createLibraryContributionMutation: () => ({ isPending: false, mutate: vi.fn() })
 }));

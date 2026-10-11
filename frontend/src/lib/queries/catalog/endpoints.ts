@@ -73,6 +73,10 @@ export const CATALOG_ENDPOINTS = {
 	// 409 when several copies match the group).
 	editionPin: (albumId: string) =>
 		v3('/api/v3/albums/{album_id}/edition', { path: { album_id: albumId } }),
-	acquireEdition: (albumId: string) =>
-		v3('/api/v3/albums/{album_id}/edition/acquire', { path: { album_id: albumId } })
+	// `copyId` names the library copy the edition picker planned.
+	acquireEdition: (albumId: string, copyId?: string) =>
+		v3('/api/v3/albums/{album_id}/edition/acquire', {
+			path: { album_id: albumId },
+			query: copyId ? { album_id: copyId } : {}
+		})
 } as const;

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Check, Disc3, Download, Search, Tags, Undo2, X } from 'lucide-svelte';
+	import { Check, Disc3, Download, Search, Tags, Trash2, Undo2, X } from 'lucide-svelte';
 	import { ApiError } from '$lib/api/client';
 	import { authStore } from '$lib/stores/authStore.svelte';
 	import { toastStore } from '$lib/stores/toast';
@@ -12,6 +12,8 @@
 		getEditionPlanQuery,
 		getEditionTracksQuery,
 		handBackAlbumEdition,
+		removeEditionExtras,
+		restoreEditionExtras,
 		retagAfterChoice,
 		undoAlbumEdition,
 		type EditionChoice,
@@ -67,12 +69,19 @@
 	const undo = undoAlbumEdition();
 	const retag = retagAfterChoice();
 	const acquire = acquireEdition();
+	const removeSpares = removeEditionExtras();
+	const restoreSpares = restoreEditionExtras();
+	// Files the current edition has no place for, picked to remove only
+	// after the person confirms the list.
+	let confirmSpares = $state(false);
+	let lastRemoval = $state<{ localId: string; actionId: string; count: number } | null>(null);
 
 	const status = $derived(statusQuery.data ?? null);
 	const editions = $derived(editionsQuery.data?.items ?? []);
 	const files = $derived(filesQuery.data?.items ?? []);
 	const editionTracks = $derived(tracksQuery.data?.tracks ?? []);
 	const plan = $derived<EditionPlan | null>(planQuery.data ?? null);
+	const spares = $derived(plan?.files.filter((file) => file.fate !== 'keep') ?? []);
 
 	type PlanRow = {
 		key: string;
@@ -255,14 +264,57 @@
 		}
 	}
 
+	async function recycleSpares(): Promise<void> {
+		const localId = copyId;
+		try {
+			const answer = await removeSpares.mutateAsync({
+				localId,
+				trackIds: spares.map((file) => file.local_track_id)
+			});
+			confirmSpares = false;
+			lastRemoval = {
+				localId,
+				actionId: answer.action_id,
+				count: answer.removed_track_ids.length
+			};
+			onchanged?.();
+		} catch (error) {
+			toastStore.show({
+				message: failure(error, 'Could not move the extra files.'),
+				type: 'error'
+			});
+		}
+	}
+
+	async function undoRemoval(): Promise<void> {
+		if (!lastRemoval) return;
+		try {
+			const answer = await restoreSpares.mutateAsync({
+				localId: lastRemoval.localId,
+				actionId: lastRemoval.actionId
+			});
+			toastStore.show({
+				message: answer.restored
+					? 'The files are back in the album.'
+					: 'Some files could not be put back; they are still in the recycle bin.',
+				type: answer.restored ? 'success' : 'error'
+			});
+			lastRemoval = null;
+			onchanged?.();
+		} catch (error) {
+			toastStore.show({ message: failure(error, 'Could not put the files back.'), type: 'error' });
+		}
+	}
+
 	async function getMissing(groupMbid: string): Promise<void> {
 		try {
-			const answer = await acquire.mutateAsync({ mbid: groupMbid });
+			const answer = await acquire.mutateAsync({ mbid: groupMbid, copyId: copyId || undefined });
 			acquired = true;
 			const upgrades = answer.upgrades ?? 0;
+			// Upgrades ride in the same download, so only a started one has any.
 			const extra =
-				upgrades > 0
-					? ` ${upgrades} ${upgrades === 1 ? 'track' : 'tracks'} below your quality cutoff will be upgraded.`
+				answer.task_id && upgrades > 0
+					? ` ${upgrades} ${upgrades === 1 ? 'track' : 'tracks'} below your quality cutoff will be replaced if a better copy turns up.`
 					: '';
 			toastStore.show({ message: answer.message + extra, type: 'success' });
 		} catch (error) {
@@ -462,16 +514,66 @@
 							Choosing never deletes a file: second copies and files not on the edition stay in the
 							album with their own tags.
 						</p>
-						{#if plan.is_current && plan.missing_count > 0}
-							<button
-								class="btn btn-outline btn-sm gap-2 self-start"
-								disabled={acquire.isPending || acquired}
-								onclick={() => plan && void getMissing(plan.release_group_mbid)}
-								><Download class="h-4 w-4" />
-								{acquired
-									? 'Requested'
-									: `Get the ${plan.missing_count} missing ${plan.missing_count === 1 ? 'track' : 'tracks'}`}</button
+						<div class="flex flex-wrap gap-2">
+							{#if plan.is_current && plan.missing_count > 0}
+								<button
+									class="btn btn-outline btn-sm gap-2"
+									disabled={acquire.isPending || acquired}
+									onclick={() => plan && void getMissing(plan.release_group_mbid)}
+									><Download class="h-4 w-4" />
+									{acquired
+										? 'Requested'
+										: `Get the ${plan.missing_count} missing ${plan.missing_count === 1 ? 'track' : 'tracks'}`}</button
+								>
+							{/if}
+							{#if plan.is_current && spares.length > 0 && !confirmSpares}
+								<button class="btn btn-ghost btn-sm gap-2" onclick={() => (confirmSpares = true)}
+									><Trash2 class="h-4 w-4" /> Remove extra files…</button
+								>
+							{/if}
+							{#if lastRemoval && lastRemoval.localId === copyId}
+								<button
+									class="btn btn-ghost btn-sm gap-2"
+									disabled={restoreSpares.isPending}
+									onclick={() => void undoRemoval()}
+									><Undo2 class="h-4 w-4" /> Put back {lastRemoval.count} removed
+									{lastRemoval.count === 1 ? 'file' : 'files'}</button
+								>
+							{/if}
+						</div>
+						{#if plan.is_current && confirmSpares && spares.length > 0}
+							<section
+								class="rounded-box border border-warning/40 bg-warning/5 p-3 text-sm"
+								aria-label="Remove extra files"
 							>
+								<p class="font-medium">
+									Move {spares.length}
+									{spares.length === 1 ? 'file' : 'files'} to the recycle bin?
+								</p>
+								<ul class="mt-1 list-disc pl-5 text-base-content/70">
+									{#each spares as file (file.local_track_id)}
+										<li>
+											{file.title || 'Untitled'}
+											<span class="text-base-content/45"
+												>({file.fate === 'duplicate' ? 'second copy' : 'not on this edition'})</span
+											>
+										</li>
+									{/each}
+								</ul>
+								<p class="mt-1 text-xs text-base-content/55">
+									Nothing is deleted: the files go to the recycle bin, and you can put them back.
+								</p>
+								<div class="mt-2 flex gap-2">
+									<button
+										class="btn btn-warning btn-sm"
+										disabled={removeSpares.isPending}
+										onclick={() => void recycleSpares()}>Move to recycle bin</button
+									>
+									<button class="btn btn-ghost btn-sm" onclick={() => (confirmSpares = false)}
+										>Keep them</button
+									>
+								</div>
+							</section>
 						{/if}
 					{:else if planQuery.isLoading || tracksQuery.isLoading}
 						<div class="skeleton h-40"></div>

@@ -106,8 +106,8 @@ export function clearEditionPin() {
 
 export function acquireEdition() {
 	return createMutation(() => ({
-		mutationFn: ({ mbid }: { mbid: string }) =>
-			api.global.v3.POST(CATALOG_ENDPOINTS.acquireEdition(mbid)),
+		mutationFn: ({ mbid, copyId }: { mbid: string; copyId?: string }) =>
+			api.global.v3.POST(CATALOG_ENDPOINTS.acquireEdition(mbid, copyId)),
 		// the acquire fans out into download tasks - surface them in the queue now,
 		// not on the next poll
 		onSuccess: () =>
@@ -157,6 +157,26 @@ export const getEditionPlanQuery = (
 				signal
 			})
 	}));
+
+// Move the edition's extra files (second copies, files not on it) to the
+// recycle bin, and put them back. Never runs on its own.
+export function removeEditionExtras() {
+	return createMutation(() => ({
+		mutationFn: ({ localId, trackIds }: { localId: string; trackIds: string[] }) =>
+			api.global.v3.POST(LibraryV3Api.editionExtrasRemove(localId), { track_ids: trackIds }),
+		onSuccess: (_data, { localId }) =>
+			invalidateQueriesWithPersister({ queryKey: editionKey(authStore.user?.id, localId) })
+	}));
+}
+
+export function restoreEditionExtras() {
+	return createMutation(() => ({
+		mutationFn: ({ localId, actionId }: { localId: string; actionId: string }) =>
+			api.global.v3.POST(LibraryV3Api.editionExtrasRestore(localId), { action_id: actionId }),
+		onSuccess: (_data, { localId }) =>
+			invalidateQueriesWithPersister({ queryKey: editionKey(authStore.user?.id, localId) })
+	}));
+}
 
 export const getEditionTracksQuery = (
 	getGroup: Getter<string>,
