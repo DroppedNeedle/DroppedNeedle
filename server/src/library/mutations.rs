@@ -365,6 +365,7 @@ impl<'a> Mutations<'a> {
             Ok(())
         })?;
         Ok(self.put_back(&moves, actor))
+    }
 
     /// The recycle bin a file of this library folder goes to.
     pub fn bin_for(&self, root_id: &str) -> Option<PathBuf> {

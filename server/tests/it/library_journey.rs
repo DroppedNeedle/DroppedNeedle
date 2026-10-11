@@ -3752,6 +3752,7 @@ async fn library_journey_identity_repair_and_preparation() {
     assert!(lib.library.identify_store.album_identity(&album).is_none());
     // The undo puts back the match state the acceptance replaced.
     assert_eq!(match_state().as_deref(), Some("unmatched:NO_CANDIDATE"));
+}
 
 /// Apply a ready preview from its handle and run the worker once.
 async fn management_apply(
