@@ -9,6 +9,7 @@
 		SlidersHorizontal
 	} from 'lucide-svelte';
 	import HomeSection from '$lib/components/HomeSection.svelte';
+	import ServiceErrorState from '$lib/components/ServiceErrorState.svelte';
 	import WeeklyExploration from '$lib/components/WeeklyExploration.svelte';
 	import ServicePromptCard from '$lib/components/ServicePromptCard.svelte';
 	import { authStore } from '$lib/stores/authStore.svelte';
@@ -184,11 +185,7 @@
 	</div>
 
 	{#if homeQuery.error && !homeData}
-		<div class="mt-16 flex flex-col items-center justify-center px-4">
-			<CircleAlert class="mb-4 h-10 w-10 text-base-content/50" />
-			<p class="text-base-content/70">{homeQuery.error.message ?? 'Failed to load Home data'}</p>
-			<button class="btn btn-primary mt-4" onclick={() => homeQuery.refetch()}>Try Again</button>
-		</div>
+		<ServiceErrorState error={homeQuery.error} what="Home" onretry={() => homeQuery.refetch()} />
 	{:else}
 		<!-- a render error in any section degrades to the failed card below instead
 		     of crashing the whole SPA (the #147 freeze) -->

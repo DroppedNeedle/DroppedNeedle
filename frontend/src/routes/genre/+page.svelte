@@ -10,6 +10,7 @@
 		localArtistHref
 	} from '$lib/utils/entityRoutes';
 	import { getGenreGradient } from '$lib/utils/genreGradient';
+	import ServiceErrorState from '$lib/components/ServiceErrorState.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
 	import {
 		getGenreAlbumPagesQuery,
@@ -37,9 +38,7 @@
 		...(albumPagesQuery.data?.pages.flatMap((item) => item.popular?.albums ?? []) ?? [])
 	]);
 	let loading = $derived(Boolean(genreName) && genreQuery.isPending);
-	let error = $derived(
-		!genreName ? 'No genre specified' : genreQuery.isError ? "Couldn't load this genre" : ''
-	);
+	let error = $derived(!genreName ? 'No genre specified' : '');
 	let loadingMoreArtists = $derived(genreQuery.isFetchingNextPage);
 	let loadingMoreAlbums = $derived(albumPagesQuery.isFetching);
 	let hasMoreAlbums = $derived(
@@ -225,11 +224,16 @@
 					{/each}
 				</div>
 			</section>
+		{:else if genreQuery.isError}
+			<ServiceErrorState
+				error={genreQuery.error}
+				what="This genre"
+				onretry={() => genreQuery.refetch()}
+			/>
 		{:else if error}
 			<div class="flex flex-col items-center justify-center py-24">
 				<CircleAlert class="h-12 w-12 text-base-content/40 mb-4" strokeWidth={1.5} />
 				<p class="text-base-content/70 text-lg">{error}</p>
-				<button class="btn btn-primary mt-6" onclick={() => genreQuery.refetch()}>Try Again</button>
 			</div>
 		{:else if genreData}
 			{#if hasLibraryContent}

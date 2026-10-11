@@ -1,5 +1,6 @@
 <script lang="ts">
 	import HomeSection from '$lib/components/HomeSection.svelte';
+	import ServiceErrorState from '$lib/components/ServiceErrorState.svelte';
 	import DailyMixCard from '$lib/components/DailyMixCard.svelte';
 	import RadioCard from '$lib/components/RadioCard.svelte';
 	import TopPicksDeck from '$lib/components/discover/TopPicksDeck.svelte';
@@ -68,7 +69,6 @@
 	const lastUpdated = $derived(
 		discoverData?.generated_at ? new Date(discoverData.generated_at * 1000) : null
 	);
-	const error = $derived(discoverQuery.error?.message ?? '');
 
 	async function handleRefresh() {
 		await refreshDiscoverMutation.mutateAsync();
@@ -213,13 +213,12 @@
 		{/snippet}
 	</PageHeader>
 
-	{#if error && !discoverData}
-		<div class="mt-16 flex flex-col items-center justify-center px-4">
-			<CircleAlert class="mb-4 h-10 w-10 text-base-content/50" />
-			<p class="text-base-content/70">{error}</p>
-			<button class="btn btn-primary mt-4" onclick={() => discoverQuery.refetch()}>Try Again</button
-			>
-		</div>
+	{#if discoverQuery.error && !discoverData}
+		<ServiceErrorState
+			error={discoverQuery.error}
+			what="Discover"
+			onretry={() => discoverQuery.refetch()}
+		/>
 	{:else}
 		<div class="px-4 sm:px-6 lg:px-8">
 			{#if servicePrompts.length > 0}
