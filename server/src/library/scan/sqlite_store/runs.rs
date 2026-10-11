@@ -506,6 +506,7 @@ impl RunStore for SqliteScanStore {
                      ORDER BY terminal_at DESC, id DESC LIMIT -1 OFFSET ?1)",
                     params![HISTORY_KEPT as i64],
                 )?;
+                prune_compat_orphans(&guard.conn)?;
                 return Ok(false);
             };
             let page = limit.max(1) as i64;
@@ -549,6 +550,83 @@ impl RunStore for SqliteScanStore {
             false
         })
     }
+}
+
+/// Drop saved compat play queue entries and bookmarks whose track row is
+/// gone, so clients never resume onto an id that can't play. A track that
+/// is only missing keeps its rows: an unmounted share may come back. A
+/// queue keeps its order, and its current entry moves to the next track
+/// still there.
+fn prune_compat_orphans(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    let gone = |table: &str| {
+        format!("NOT EXISTS (SELECT 1 FROM local_tracks t WHERE t.id = {table}.file_id)")
+    };
+    let bookmarks = conn.execute(
+        &format!(
+            "DELETE FROM compat_bookmarks WHERE {}",
+            gone("compat_bookmarks")
+        ),
+        [],
+    )?;
+    let queue_gone = gone("compat_play_queue_items");
+    let users: Vec<String> = conn
+        .prepare(&format!(
+            "SELECT DISTINCT user_id FROM compat_play_queue_items WHERE {queue_gone}"
+        ))?
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    for user in &users {
+        let tx = conn.unchecked_transaction()?;
+        let current: Option<i64> = tx
+            .query_row(
+                "SELECT current_index FROM compat_play_queues WHERE user_id = ?1",
+                params![user],
+                |row| row.get(0),
+            )
+            .optional()?
+            .flatten();
+        let items: Vec<(i64, String, bool)> = tx
+            .prepare(&format!(
+                "SELECT item_index, file_id, {queue_gone} FROM compat_play_queue_items \
+                 WHERE user_id = ?1 ORDER BY item_index"
+            ))?
+            .query_map(params![user], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        let kept: Vec<(i64, String)> = items
+            .into_iter()
+            .filter(|(_, _, gone)| !gone)
+            .map(|(index, file_id, _)| (index, file_id))
+            .collect();
+        let new_current = current
+            .and_then(|old| kept.iter().position(|(index, _)| *index >= old))
+            .and_then(|position| i64::try_from(position).ok());
+        tx.execute(
+            "DELETE FROM compat_play_queue_items WHERE user_id = ?1",
+            params![user],
+        )?;
+        for (position, (_, file_id)) in (0_i64..).zip(&kept) {
+            tx.execute(
+                "INSERT INTO compat_play_queue_items (user_id, item_index, file_id) \
+                 VALUES (?1, ?2, ?3)",
+                params![user, position, file_id],
+            )?;
+        }
+        tx.execute(
+            "UPDATE compat_play_queues SET current_index = ?2 WHERE user_id = ?1",
+            params![user, new_current],
+        )?;
+        tx.commit()?;
+    }
+    if bookmarks > 0 || !users.is_empty() {
+        tracing::info!(
+            bookmarks,
+            queues = users.len(),
+            "removed saved compat entries for tracks no longer in the library"
+        );
+    }
+    Ok(())
 }
 
 fn transition_inner(
@@ -1003,4 +1081,56 @@ fn claim_next_inner(conn: &Connection, now: f64) -> rusqlite::Result<Option<Scan
     )?;
     bump_scan_stream(conn)?;
     load_run(conn, &candidate)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn column<T: rusqlite::types::FromSql>(conn: &rusqlite::Connection, sql: &str) -> Vec<T> {
+        conn.prepare(sql)
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn compat_orphans_go_and_the_queue_keeps_its_place() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE local_tracks (id TEXT PRIMARY KEY);
+             CREATE TABLE compat_bookmarks (user_id TEXT, file_id TEXT, position_ms INTEGER);
+             CREATE TABLE compat_play_queues (user_id TEXT PRIMARY KEY, current_index INTEGER);
+             CREATE TABLE compat_play_queue_items (user_id TEXT, item_index INTEGER, file_id TEXT,
+                 PRIMARY KEY (user_id, item_index));
+             INSERT INTO local_tracks VALUES ('a'), ('c'), ('d');
+             INSERT INTO compat_bookmarks VALUES ('u', 'a', 1), ('u', 'gone', 2);
+             INSERT INTO compat_play_queues VALUES ('u', 1), ('v', 0);
+             INSERT INTO compat_play_queue_items VALUES
+                 ('u', 0, 'a'), ('u', 1, 'gone'), ('u', 2, 'c'), ('u', 3, 'd'),
+                 ('v', 0, 'a');",
+        )
+        .unwrap();
+        prune_compat_orphans(&conn).unwrap();
+        let bookmarks: Vec<String> = column(&conn, "SELECT file_id FROM compat_bookmarks");
+        assert_eq!(bookmarks, ["a"]);
+        let queue: Vec<String> = column(
+            &conn,
+            "SELECT file_id FROM compat_play_queue_items WHERE user_id = 'u' ORDER BY item_index",
+        );
+        assert_eq!(queue, ["a", "c", "d"]);
+        let indexes: Vec<i64> = column(
+            &conn,
+            "SELECT item_index FROM compat_play_queue_items WHERE user_id = 'u' ORDER BY item_index",
+        );
+        assert_eq!(indexes, [0, 1, 2]);
+        let current: Vec<Option<i64>> = column(
+            &conn,
+            "SELECT current_index FROM compat_play_queues ORDER BY user_id",
+        );
+        // The next surviving track becomes current; other queues are untouched.
+        assert_eq!(current, [Some(1), Some(0)]);
+    }
 }
