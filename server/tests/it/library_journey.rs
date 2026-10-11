@@ -170,8 +170,6 @@ impl Lib {
             self.runtime.pool().clone(),
             self.runtime.lane().clone(),
         ));
-        let connect_apps: droppedneedle::runtime_config::sections::ConnectApps =
-            self.store.get().unwrap_or_default();
         let mut app_config = AppConfig::new(DEFAULT_PORT);
         app_config.root_app_dir = self
             .db_path
@@ -185,7 +183,6 @@ impl Lib {
             Arc::clone(&self.crypto),
             self.http.shared().clone(),
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
-            connect_apps.clone(),
             Some(self.library.root_source()),
             self.runtime.pool().clone(),
             self.runtime.lane().clone(),

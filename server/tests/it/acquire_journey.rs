@@ -133,8 +133,6 @@ impl E2e {
             .parent()
             .map(|parent| parent.to_path_buf())
             .unwrap_or_else(std::env::temp_dir);
-        let connect_apps: droppedneedle::runtime_config::sections::ConnectApps =
-            self.store.get().unwrap_or_default();
         let library = droppedneedle::library::wiring::LibrarySetup::for_tests(
             auth.users.clone(),
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
@@ -147,7 +145,6 @@ impl E2e {
             Arc::clone(&self.crypto),
             self.http.shared().clone(),
             Arc::clone(&self.ids) as Arc<dyn IdGenerator>,
-            connect_apps.clone(),
             Some(library.root_source()),
             self.runtime.pool().clone(),
             self.runtime.lane().clone(),

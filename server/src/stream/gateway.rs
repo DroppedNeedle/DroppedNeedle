@@ -86,6 +86,10 @@ pub trait RemoteReader: Send + Sync {
     }
 }
 
+/// Where the transcode policy comes from: read again on every open, so a
+/// settings change applies to the next stream without a restart.
+pub type SettingsSource = Arc<dyn Fn() -> TranscodeSettings + Send + Sync>;
+
 /// One source-keyed gateway: sandboxed local reads, injected remote reads,
 /// and injected ffmpeg execution behind the routes' engine seam.
 pub struct Gateway<R, T> {
@@ -94,7 +98,7 @@ pub struct Gateway<R, T> {
     plugins: std::sync::OnceLock<(Arc<crate::plugins::host::PluginHost>, reqwest::Client)>,
     remote: R,
     transcoder: T,
-    settings: TranscodeSettings,
+    settings: SettingsSource,
     ffmpeg_present: bool,
     direct: Arc<DirectGate>,
 }
@@ -116,10 +120,17 @@ impl<R, T> Gateway<R, T> {
             plugins: std::sync::OnceLock::new(),
             remote,
             transcoder,
-            settings,
+            settings: Arc::new(move || settings.clone()),
             ffmpeg_present,
             direct: Arc::new(DirectGate::new()),
         }
+    }
+
+    /// Read the transcode policy from `source` on every open instead of
+    /// the fixed settings the gateway was built with.
+    pub fn with_settings_source(mut self, source: SettingsSource) -> Self {
+        self.settings = source;
+        self
     }
 
     /// Resolve local keys as catalog track ids against the live library
@@ -358,7 +369,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             .as_deref()
             .is_some_and(|format| format.eq_ignore_ascii_case("raw"));
         let start_seconds = request.params.start_seconds;
-        let settings = &self.settings;
+        let settings = (self.settings)();
         // Compat verdict carry: the protocol modules decide with real source
         // bitrate facts, while this re-run sees `bitrate_kbps: None`, so a
         // bitrate-triggered same-codec plan would land direct here. When the
@@ -371,7 +382,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             && self.ffmpeg_present
             && !force_original
         {
-            return forced_plan(&request.params, settings, start_seconds);
+            return forced_plan(&request.params, &settings, start_seconds);
         }
         decide(
             &track,
@@ -379,7 +390,7 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
             request.params.max_bitrate_kbps,
             force_original,
             start_seconds,
-            settings,
+            &settings,
             self.ffmpeg_present,
         )
     }

@@ -45,11 +45,8 @@ use crate::{
     },
     remotes::adapter::PlaylistImportSink,
     runtime_config::{
-        ConfigStore, Crypto,
-        crypto::CryptoError,
-        quota::QUOTA_FILE_NAME,
-        secret_sections::ListenBrainzConnection,
-        sections::{ConnectApps, LyricsSettings},
+        ConfigStore, Crypto, crypto::CryptoError, quota::QUOTA_FILE_NAME,
+        secret_sections::ListenBrainzConnection, sections::LyricsSettings,
     },
     settings::{
         effects::{LiveSaveEffects, SaveEffects},
@@ -219,13 +216,6 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
             crate::plugins::capabilities::metadata::PluginDetailsSource(plugin_host.clone()),
         )),
     );
-    let connect_apps = match config_store.get::<ConnectApps>() {
-        Ok(settings) => settings,
-        Err(error) => {
-            tracing::warn!(%error, "cannot read connect_apps settings; transcode defaults apply");
-            ConnectApps::default()
-        }
-    };
     let mb_settings = config_store.clone();
     let library = LibrarySetup::build(
         auth.users.clone(),
@@ -259,7 +249,6 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
         crypto.clone(),
         http.shared().clone(),
         ids.clone(),
-        connect_apps.clone(),
         Some(library.root_source()),
         runtime.pool().clone(),
         runtime.lane().clone(),

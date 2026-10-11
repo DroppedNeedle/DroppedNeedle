@@ -91,8 +91,8 @@ impl MediaWorkers {
 impl MediaSetup {
     /// Build the production bundle. `db_path` backs the playback stores;
     /// `pool` and `lane` back the connection and folder rows; `config`
-    /// holds the admin's server settings; `connect_apps` carries the
-    /// transcode policy; `crypto` seals linked credentials;
+    /// holds the admin's server settings and the transcode policy (read
+    /// per stream); `crypto` seals linked credentials;
     /// `library_roots` plus the catalog in `pool` turn local stream keys
     /// and download ids (track ids) into files under the live library
     /// roots (`None` keeps the constructor fallback for unwired builds and
@@ -106,7 +106,6 @@ impl MediaSetup {
         crypto: Arc<Crypto>,
         http: reqwest::Client,
         ids: Arc<dyn IdGenerator>,
-        connect_apps: ConnectApps,
         library_roots: Option<crate::library::wiring::RootSource>,
         pool: sqlx::SqlitePool,
         lane: WriteLane,
@@ -124,7 +123,7 @@ impl MediaSetup {
             ConnectionResolver::new(
                 Arc::new(SqliteConnectionStore::new(pool.clone(), lane.clone())),
                 Arc::new(CredentialCoder::new(crypto.clone())),
-                Arc::new(ConfigServers::new(config)),
+                Arc::new(ConfigServers::new(config.clone())),
             )
             .with_plex_tokens(Arc::new(PlexTokenProbe::new(http.clone()))),
         );
@@ -157,9 +156,10 @@ impl MediaSetup {
             local_root(app_config),
             reader,
             transcoder,
-            transcode_settings(&connect_apps),
+            TranscodeSettings::default(),
             ffmpeg_available(),
-        );
+        )
+        .with_settings_source(settings_source(config.clone()));
         let engine = match library {
             Some(library) => gateway.with_library(library),
             None => gateway,
@@ -297,6 +297,18 @@ impl MediaSetup {
             .merge(download_routes(self.download.clone()))
             .merge(crate::playback::playback_router(self.playback.clone()))
     }
+}
+
+/// The transcode policy, read from the `connect_apps` section on every
+/// stream open. An unreadable section falls back to the defaults.
+fn settings_source(config: Arc<ConfigStore>) -> crate::stream::gateway::SettingsSource {
+    Arc::new(move || match config.get::<ConnectApps>() {
+        Ok(section) => transcode_settings(&section),
+        Err(error) => {
+            tracing::warn!(%error, "cannot read connect_apps settings; transcode defaults apply");
+            TranscodeSettings::default()
+        }
+    })
 }
 
 /// Map the `connect_apps` section onto the transcode policy. `Flac` cannot
