@@ -174,6 +174,56 @@ export const LibraryV3Api = {
 			path: { id: runId },
 			query: { limit, ...(cursor !== undefined ? { cursor } : {}) }
 		}),
+	scanDiagnostics: (runId: string) =>
+		v3('/api/v3/library/scan/runs/{id}/diagnostics', { path: { id: runId } }),
+	// Identity repairs: recheck existing matches, then apply safe detaches.
+	identityRepairs: (limit?: number, cursor?: string) =>
+		v3('/api/v3/library/identity-repairs', {
+			query: { ...(limit !== undefined ? { limit } : {}), ...(cursor ? { cursor } : {}) }
+		}),
+	identityRepairEstimate: (rootIds: string[]) =>
+		v3('/api/v3/library/identity-repairs/estimate', {
+			query: rootIds.length ? { root_id: rootIds } : {}
+		}),
+	identityRepair: (jobId: string) =>
+		v3('/api/v3/library/identity-repairs/{job_id}', { path: { job_id: jobId } }),
+	identityRepairFindings: (jobId: string, limit: number, cursor?: string, category?: string) =>
+		v3('/api/v3/library/identity-repairs/{job_id}/findings', {
+			path: { job_id: jobId },
+			query: {
+				limit,
+				...(cursor ? { cursor } : {}),
+				...(category ? { finding_category: category } : {})
+			}
+		}),
+	applyIdentityRepair: (jobId: string) =>
+		v3('/api/v3/library/identity-repairs/{job_id}/apply', { path: { job_id: jobId } }),
+	// Identity preparations: get albums ready for Library Management.
+	identityPreparations: (limit?: number, cursor?: string) =>
+		v3('/api/v3/library/management/identity-preparations', {
+			query: { ...(limit !== undefined ? { limit } : {}), ...(cursor ? { cursor } : {}) }
+		}),
+	identityPreparationEstimate: (rootIds: string[]) =>
+		v3('/api/v3/library/management/identity-preparations/estimate', {
+			query: rootIds.length ? { root_id: rootIds } : {}
+		}),
+	identityPreparationFindings: (jobId: string, limit: number, cursor?: string, category?: string) =>
+		v3('/api/v3/library/management/identity-preparations/{job_id}/findings', {
+			path: { job_id: jobId },
+			query: {
+				limit,
+				...(cursor ? { cursor } : {}),
+				...(category ? { finding_category: category } : {})
+			}
+		}),
+	applyIdentityPreparation: (jobId: string) =>
+		v3('/api/v3/library/management/identity-preparations/{job_id}/apply', {
+			path: { job_id: jobId }
+		}),
+	discardIdentityPreparation: (jobId: string) =>
+		v3('/api/v3/library/management/identity-preparations/{job_id}/discard', {
+			path: { job_id: jobId }
+		}),
 	pauseScanRun: (runId: string) =>
 		v3('/api/v3/library/scan/runs/{id}/pause', { path: { id: runId } }),
 	resumeScanRun: (runId: string) =>

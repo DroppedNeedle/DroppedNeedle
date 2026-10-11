@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Download, FileClock, LoaderCircle } from 'lucide-svelte';
 	import { api } from '$lib/api/client';
-	import { API } from '$lib/constants';
+	import { LibraryV3Api } from '$lib/queries/library/LibraryV3Api';
 	import { toastStore } from '$lib/stores/toast';
 	import {
 		getLibraryRunFailuresQuery,
@@ -93,7 +93,7 @@
 		if (!exportRun) return;
 		exporting = true;
 		try {
-			const response = await api.global.get<Response>(API.library.scanDiagnostics(exportRun.id), {
+			const response = await api.global.get<Response>(LibraryV3Api.scanDiagnostics(exportRun.id), {
 				raw: true
 			});
 			if (!response.ok) throw new Error('Diagnostic export failed');

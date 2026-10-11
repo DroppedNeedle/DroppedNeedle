@@ -132,7 +132,7 @@ export interface ScanRun {
 	event_revision: number;
 	counters: Record<string, number>;
 	phase_timings: Record<string, number>;
-	/** False while the diagnostics export has no v3 route. */
+	/** False hides the diagnostics export for this run. */
 	diagnostics_available?: boolean;
 }
 
@@ -502,6 +502,8 @@ export interface RepairFindingResponse {
 	review_id: string | null;
 	finding_code: string;
 	reason_code: string;
+	/** What the finding means and what to do about it. */
+	reason?: { code: string; message: string; action: string };
 	confidence: string;
 	apply_eligible: boolean;
 	state: string;

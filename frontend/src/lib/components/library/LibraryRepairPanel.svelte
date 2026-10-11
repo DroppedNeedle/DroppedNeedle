@@ -301,15 +301,27 @@
 					{#each findings as finding (finding.id)}<article
 							class="grid gap-2 p-3 sm:grid-cols-[1fr_auto] sm:items-center"
 						>
-							<div>
-								<strong
-									>{finding.reason_code === 'RELEASE_TYPE_REQUIRES_CONFIRMATION' ||
-									finding.reason_code === 'UNSAFE_RELEASE_TYPE'
-										? 'Compilation or live edition needs confirmation'
-										: finding.reason_code.replaceAll('_', ' ').toLowerCase()}</strong
+							<div class="min-w-0">
+								<strong class="block truncate"
+									>{finding.album_title}{finding.album_artist_name
+										? ` · ${finding.album_artist_name}`
+										: ''}</strong
 								>
-								<p class="mt-1 text-xs text-base-content/55">
-									{finding.confidence} evidence · {finding.state}
+								<p class="mt-1 text-sm">
+									{finding.reason?.message ??
+										finding.reason_code.replaceAll('_', ' ').toLowerCase()}
+								</p>
+								{#if finding.reason?.action}
+									<p class="mt-0.5 text-xs text-base-content/60">{finding.reason.action}</p>
+								{/if}
+								<p class="mt-1 text-xs text-base-content/45">
+									{finding.state === 'applied'
+										? 'Applied'
+										: finding.state === 'stale'
+											? 'Changed after this report'
+											: finding.apply_eligible
+												? 'Safe to apply'
+												: 'Report only'}
 								</p>
 							</div>
 							<a

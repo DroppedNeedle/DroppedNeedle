@@ -1,6 +1,5 @@
 import { createMutation } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
 import { searchStore } from '$lib/stores/search';
@@ -10,7 +9,7 @@ import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { createUuid } from '$lib/utils/uuid';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
-import type { OperationResponse } from './LibraryOperationsTypes';
+import { toOperationResponse } from './libraryOperationAdapters';
 
 async function invalidateIdentityPreparation(
 	userId: string | undefined,
@@ -35,11 +34,13 @@ async function invalidateIdentityPreparation(
 
 export function createLibraryIdentityPreparation(getUserId: () => string | undefined) {
 	return createMutation(() => ({
-		mutationFn: (rootIds: string[]) =>
-			api.global.post<OperationResponse>(API.library.identityPreparations(), {
-				idempotency_key: createUuid(),
-				root_ids: rootIds
-			}),
+		mutationFn: async (rootIds: string[]) =>
+			toOperationResponse(
+				await api.global.v3.POST(LibraryV3Api.identityPreparations(), {
+					idempotency_key: createUuid(),
+					root_ids: rootIds
+				})
+			),
 		onSuccess: async () => {
 			await invalidateIdentityPreparation(getUserId());
 			toastStore.show({ message: 'Identity preparation started', type: 'success' });
@@ -51,11 +52,13 @@ export function createLibraryIdentityPreparation(getUserId: () => string | undef
 
 export function applyLibraryIdentityPreparation(getUserId: () => string | undefined) {
 	return createMutation(() => ({
-		mutationFn: (input: { jobId: string; expectedRevision: number }) =>
-			api.global.post<OperationResponse>(API.library.applyIdentityPreparation(input.jobId), {
-				expected_row_revision: input.expectedRevision,
-				confirmation: true
-			}),
+		mutationFn: async (input: { jobId: string; expectedRevision: number }) =>
+			toOperationResponse(
+				await api.global.v3.POST(LibraryV3Api.applyIdentityPreparation(input.jobId), {
+					expected_row_revision: input.expectedRevision,
+					confirmation: true
+				})
+			),
 		onSuccess: async () => {
 			await invalidateIdentityPreparation(getUserId(), true);
 			toastStore.show({ message: 'Exact-release mappings accepted', type: 'success' });
@@ -67,10 +70,12 @@ export function applyLibraryIdentityPreparation(getUserId: () => string | undefi
 
 export function discardLibraryIdentityPreparation(getUserId: () => string | undefined) {
 	return createMutation(() => ({
-		mutationFn: (input: { jobId: string; expectedRevision: number }) =>
-			api.global.post<OperationResponse>(API.library.discardIdentityPreparation(input.jobId), {
-				expected_row_revision: input.expectedRevision
-			}),
+		mutationFn: async (input: { jobId: string; expectedRevision: number }) =>
+			toOperationResponse(
+				await api.global.v3.POST(LibraryV3Api.discardIdentityPreparation(input.jobId), {
+					expected_row_revision: input.expectedRevision
+				})
+			),
 		onSuccess: async () => {
 			await invalidateIdentityPreparation(getUserId());
 			toastStore.show({ message: 'Identity report dismissed', type: 'success' });

@@ -1,11 +1,11 @@
 import { createInfiniteQuery, createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
+import { LibraryV3Api } from './LibraryV3Api';
+import { toOperationList } from './libraryOperationAdapters';
 import type {
 	IdentityPreparationEstimateResponse,
-	OperationListResponse,
 	RepairFindingListResponse
 } from './LibraryOperationsTypes';
 
@@ -19,10 +19,10 @@ export const getLibraryIdentityPreparationsQuery = (
 			enabled: enabled() && Boolean(userId),
 			queryKey: LibraryQueryKeyFactory.identityPreparations(userId, undefined),
 			initialPageParam: undefined as string | undefined,
-			queryFn: ({ pageParam, signal }) =>
-				api.global.get<OperationListResponse>(API.library.identityPreparations(5, pageParam), {
-					signal
-				}),
+			queryFn: async ({ pageParam, signal }) =>
+				toOperationList(
+					await api.global.v3.GET(LibraryV3Api.identityPreparations(5, pageParam), { signal })
+				),
 			getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
 			refetchInterval: (query) =>
 				query.state.data?.pages.some((page) =>
@@ -44,11 +44,8 @@ export const getLibraryIdentityPreparationEstimateQuery = (
 		return {
 			enabled: enabled() && Boolean(userId),
 			queryKey: LibraryQueryKeyFactory.identityPreparationEstimate(userId, rootIds),
-			queryFn: ({ signal }) =>
-				api.global.get<IdentityPreparationEstimateResponse>(
-					API.library.identityPreparationEstimate(rootIds),
-					{ signal }
-				),
+			queryFn: async ({ signal }): Promise<IdentityPreparationEstimateResponse> =>
+				api.global.v3.GET(LibraryV3Api.identityPreparationEstimate(rootIds), { signal }),
 			staleTime: 10_000
 		};
 	});
@@ -71,11 +68,11 @@ export const getLibraryIdentityPreparationFindingsQuery = (
 				undefined
 			),
 			initialPageParam: undefined as string | undefined,
-			queryFn: ({ pageParam, signal }) =>
-				api.global.get<RepairFindingListResponse>(
-					API.library.identityPreparationFindings(jobId ?? '', 100, pageParam, findingCategory),
+			queryFn: async ({ pageParam, signal }) =>
+				(await api.global.v3.GET(
+					LibraryV3Api.identityPreparationFindings(jobId ?? '', 100, pageParam, findingCategory),
 					{ signal }
-				),
+				)) as RepairFindingListResponse,
 			getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined
 		};
 	});

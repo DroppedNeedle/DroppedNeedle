@@ -457,11 +457,15 @@
 											.toLowerCase()})
 									</p>
 								{/if}
-								<p class="mt-1 truncate text-xs text-base-content/45">
-									{findingTitle(finding.reason_code)}
-									<span aria-hidden="true"> · </span>
-									{finding.state === 'stale' ? 'Changed after this report' : finding.confidence}
+								<p class="mt-1 text-xs text-base-content/70">
+									{finding.reason?.message ?? findingTitle(finding.reason_code)}
 								</p>
+								{#if finding.reason?.action}
+									<p class="mt-0.5 text-xs text-base-content/50">{finding.reason.action}</p>
+								{/if}
+								{#if finding.state === 'stale'}
+									<p class="mt-0.5 text-xs text-warning">Changed after this report</p>
+								{/if}
 							</div>
 							{#if !refreshRequired && activeTab === 'exact_release_auto_accepted'}
 								<div class="flex shrink-0 items-center gap-2">

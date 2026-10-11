@@ -1,6 +1,5 @@
 import { createMutation } from '@tanstack/svelte-query';
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { invalidateQueriesWithPersister } from '$lib/queries/QueryClient';
 import { toastStore } from '$lib/stores/toast';
 import { searchStore } from '$lib/stores/search';
@@ -8,7 +7,8 @@ import { ArtistQueryKeyFactory } from '$lib/queries/artist/ArtistQueryKeyFactory
 import { DiscoverQueryKeyFactory } from '$lib/queries/discover/DiscoverQueryKeyFactory';
 import { HomeQueryKeyFactory } from '$lib/queries/HomeQueryKeyFactory';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
-import type { OperationResponse } from './LibraryOperationsTypes';
+import { LibraryV3Api } from './LibraryV3Api';
+import { toOperationResponse } from './libraryOperationAdapters';
 import { createUuid } from '$lib/utils/uuid';
 
 async function invalidateRepairs(catalogChanged = false): Promise<void> {
@@ -30,12 +30,14 @@ async function invalidateRepairs(catalogChanged = false): Promise<void> {
 
 export function createLibraryRepair() {
 	return createMutation(() => ({
-		mutationFn: (rootIds: string[]) =>
-			api.global.post<OperationResponse>(API.library.identityRepairs(), {
-				idempotency_key: createUuid(),
-				root_ids: rootIds,
-				target_matcher_version: 'quiet-reconfirm-v1'
-			}),
+		mutationFn: async (rootIds: string[]) =>
+			toOperationResponse(
+				await api.global.v3.POST(LibraryV3Api.identityRepairs(), {
+					idempotency_key: createUuid(),
+					root_ids: rootIds,
+					target_matcher_version: 'quiet-reconfirm-v1'
+				})
+			),
 		onSuccess: async () => {
 			await invalidateRepairs();
 			toastStore.show({ message: 'Identity recheck started', type: 'success' });
@@ -47,11 +49,13 @@ export function createLibraryRepair() {
 
 export function applyLibraryRepair() {
 	return createMutation(() => ({
-		mutationFn: (input: { jobId: string; expectedRevision: number }) =>
-			api.global.post<OperationResponse>(API.library.applyIdentityRepair(input.jobId), {
-				expected_row_revision: input.expectedRevision,
-				confirmation: true
-			}),
+		mutationFn: async (input: { jobId: string; expectedRevision: number }) =>
+			toOperationResponse(
+				await api.global.v3.POST(LibraryV3Api.applyIdentityRepair(input.jobId), {
+					expected_row_revision: input.expectedRevision,
+					confirmation: true
+				})
+			),
 		onSuccess: () => invalidateRepairs(true),
 		onError: () => toastStore.show({ message: 'Could not apply the repair', type: 'error' })
 	}));

@@ -1,22 +1,20 @@
 import { createInfiniteQuery, createQuery } from '@tanstack/svelte-query';
 import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
-import { API } from '$lib/constants';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
-import type {
-	OperationListResponse,
-	OperationResponse,
-	RepairEstimateResponse,
-	RepairFindingListResponse
-} from './LibraryOperationsTypes';
+import { LibraryV3Api } from './LibraryV3Api';
+import { toOperationList, toOperationResponse } from './libraryOperationAdapters';
+import type { RepairEstimateResponse, RepairFindingListResponse } from './LibraryOperationsTypes';
 
 export const getLibraryRepairsQuery = (enabled: Getter<boolean> = () => true) =>
 	createInfiniteQuery(() => ({
 		enabled: enabled(),
 		queryKey: LibraryQueryKeyFactory.repairs(undefined),
 		initialPageParam: undefined as string | undefined,
-		queryFn: ({ pageParam, signal }) =>
-			api.global.get<OperationListResponse>(API.library.identityRepairs(50, pageParam), { signal }),
+		queryFn: async ({ pageParam, signal }) =>
+			toOperationList(
+				await api.global.v3.GET(LibraryV3Api.identityRepairs(50, pageParam), { signal })
+			),
 		getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined
 	}));
 
@@ -26,8 +24,10 @@ export const getLibraryRepairQuery = (getJobId: Getter<string | null>) =>
 		return {
 			enabled: Boolean(jobId),
 			queryKey: LibraryQueryKeyFactory.repair(jobId ?? ''),
-			queryFn: ({ signal }) =>
-				api.global.get<OperationResponse>(API.library.identityRepair(jobId ?? ''), { signal })
+			queryFn: async ({ signal }) =>
+				toOperationResponse(
+					await api.global.v3.GET(LibraryV3Api.identityRepair(jobId ?? ''), { signal })
+				)
 		};
 	});
 
@@ -40,10 +40,8 @@ export const getLibraryRepairEstimateQuery = (
 		return {
 			enabled: enabled(),
 			queryKey: LibraryQueryKeyFactory.repairEstimate(rootIds),
-			queryFn: ({ signal }) =>
-				api.global.get<RepairEstimateResponse>(API.library.identityRepairEstimate(rootIds), {
-					signal
-				})
+			queryFn: async ({ signal }): Promise<RepairEstimateResponse> =>
+				api.global.v3.GET(LibraryV3Api.identityRepairEstimate(rootIds), { signal })
 		};
 	});
 
@@ -58,11 +56,11 @@ export const getLibraryRepairFindingsQuery = (
 			enabled: Boolean(jobId),
 			queryKey: LibraryQueryKeyFactory.repairFindings(jobId ?? '', findingCategory, undefined),
 			initialPageParam: undefined as string | undefined,
-			queryFn: ({ pageParam, signal }) =>
-				api.global.get<RepairFindingListResponse>(
-					API.library.identityRepairFindings(jobId ?? '', 100, pageParam, findingCategory),
+			queryFn: async ({ pageParam, signal }) =>
+				(await api.global.v3.GET(
+					LibraryV3Api.identityRepairFindings(jobId ?? '', 100, pageParam, findingCategory),
 					{ signal }
-				),
+				)) as RepairFindingListResponse,
 			getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined
 		};
 	});

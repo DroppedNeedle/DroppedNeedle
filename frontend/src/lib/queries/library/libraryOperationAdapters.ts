@@ -1,6 +1,7 @@
 import type { components } from '$lib/api/v3/openapi';
 import type {
 	CandidateEvidence,
+	OperationListResponse,
 	OperationResponse,
 	OperationState,
 	TrackEvidence
@@ -51,7 +52,7 @@ function toCandidateEvidence(view: CandidateEvidenceView): CandidateEvidence {
 }
 
 // The v3 operation job in the shape the operation panels read. Identity
-// repair summaries are not served by this route, so they read as absent.
+// repairs and preparations carry their report summary once checked.
 export function toOperationResponse(view: OperationView): OperationResponse {
 	return {
 		id: view.id,
@@ -78,7 +79,7 @@ export function toOperationResponse(view: OperationView): OperationResponse {
 			result: result.result as Record<string, unknown>
 		})),
 		results_truncated: view.results_truncated,
-		repair_summary: null,
+		repair_summary: view.repair_summary ?? null,
 		reidentification_candidates: view.reidentification_candidates.map((candidate) => ({
 			candidate_key: candidate.candidate_key,
 			evidence_revision: candidate.evidence_revision,
@@ -87,4 +88,11 @@ export function toOperationResponse(view: OperationView): OperationResponse {
 		})),
 		selected_reidentification_candidate_key: view.selected_reidentification_candidate_key ?? null
 	};
+}
+
+export function toOperationList(view: {
+	items: OperationView[];
+	next_cursor?: string | null;
+}): OperationListResponse {
+	return { items: view.items.map(toOperationResponse), next_cursor: view.next_cursor ?? null };
 }

@@ -84,12 +84,10 @@ const transportRules = [
 
 // The one exception list for the transport rules: the calls the v3 server has
 // no route for yet. Their URL builders all live in lib/constants.ts (the API
-// registry), grouped by feature: edition conversions, scan diagnostics,
-// reviews, bulk review and management operations, repairs and identity
-// preparations, Library Management recovery, tag editing, baselines,
-// activation dry runs and preview artwork. When a
-// route lands, its call moves onto a v3() template and its builder leaves
-// that file.
+// registry), grouped by feature: edition conversions, reviews, bulk review
+// and management operations, Library Management recovery, tag editing,
+// baselines, activation dry runs and preview artwork. When a route lands,
+// its call moves onto a v3() template and its builder leaves that file.
 const WAITING_ON_BACKEND = ['src/lib/constants.ts'];
 
 // The transport itself: the api client and the page-scoped fetch it wraps.

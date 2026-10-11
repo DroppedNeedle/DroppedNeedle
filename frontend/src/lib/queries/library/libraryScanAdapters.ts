@@ -39,7 +39,7 @@ export function toScanRun(view: ScanRunView): ScanRun {
 		event_revision: view.event_revision,
 		counters: view.counters,
 		phase_timings: view.phase_timings,
-		diagnostics_available: false
+		diagnostics_available: true
 	};
 }
 
