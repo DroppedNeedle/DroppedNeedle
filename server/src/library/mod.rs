@@ -29,6 +29,7 @@ pub mod identify;
 pub mod import;
 mod loops;
 pub mod manage;
+pub mod management;
 pub mod matching;
 pub mod mutations;
 pub mod operations;
