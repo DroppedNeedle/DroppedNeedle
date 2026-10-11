@@ -243,6 +243,35 @@ pub fn build_release_search_query(title: &str, artist: &str) -> String {
     query
 }
 
+/// Release query for identifying an album: [`build_release_search_query`]
+/// plus optional boosts for the local track count and an artist id (the
+/// Various Artists id for compilations). The boosts only reorder hits:
+/// each sits in an OR with the required title clause, so a release with
+/// bonus tracks or another credit still comes back.
+pub fn build_release_match_query(
+    title: &str,
+    artist: &str,
+    track_count: Option<usize>,
+    artist_id: Option<&str>,
+) -> String {
+    let query = build_release_search_query(title, artist);
+    let mut boosts = Vec::new();
+    if let Some(count) = track_count.filter(|count| *count > 0) {
+        boosts.push(format!("tracks:{count}^2"));
+    }
+    if let Some(id) = artist_id.map(str::trim).filter(|id| !id.is_empty()) {
+        boosts.push(format!(r#"arid:"{}"^2"#, escape_lucene_phrase(id)));
+    }
+    if boosts.is_empty() {
+        return query;
+    }
+    format!(
+        r#"{query} AND ({} OR release:"{}")"#,
+        boosts.join(" OR "),
+        escape_lucene_phrase(title)
+    )
+}
+
 /// Release-group query, live-verified against MusicBrainz WS/2 on 2026-08-13
 /// (v2 `build_release_group_search_query`).
 pub fn build_release_group_search_query(title: &str, artist: &str) -> String {
@@ -419,4 +448,21 @@ pub fn best_release_group_for_recording(
             Some((group, rank))
         })
         .min_by(|left, right| left.1.cmp(&right.1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn match_query_boosts_without_filtering() {
+        assert_eq!(
+            build_release_match_query("Hits", "", None, None),
+            r#"release:"Hits""#
+        );
+        assert_eq!(
+            build_release_match_query("Hits", "", Some(12), Some("va-id")),
+            r#"release:"Hits" AND (tracks:12^2 OR arid:"va\-id"^2 OR release:"Hits")"#
+        );
+    }
 }

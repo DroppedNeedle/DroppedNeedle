@@ -344,7 +344,10 @@ mod tests {
         assert_eq!(strip_edition_words("Live at Leeds"), "live at leeds");
         assert_eq!(strip_edition_words("Live"), "live");
         assert_eq!(strip_edition_words("Live (Deluxe Edition)"), "live");
-        assert_eq!(strip_edition_words("(Remastered) [Live]"), "remastered live");
+        assert_eq!(
+            strip_edition_words("(Remastered) [Live]"),
+            "remastered live"
+        );
         assert_eq!(
             strip_edition_words("Songs (From the Basement)"),
             "songs from the basement"

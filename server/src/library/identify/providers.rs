@@ -28,7 +28,8 @@ use std::sync::Arc;
 use super::evidence::local_album;
 use super::models::{LocalAlbumFacts, RecallResult};
 use super::sources::{
-    EditionPage, EditionQuery, FingerprintSource, ReleaseHit, ReleaseSource, SourceError,
+    AlbumQuery, EditionPage, EditionQuery, FingerprintSource, ReleaseHit, ReleaseSource,
+    SourceError,
 };
 use super::stores::{ReleaseStore, fresh_release, keep_releases};
 use crate::library::matching::decide::STRONG;
@@ -125,18 +126,25 @@ impl<R: ReleaseSource, F: FingerprintSource> LiveProviders<R, F> {
             }
         }
 
-        let artist = if facts.is_compilation || is_various(&facts.album_artist_name) {
+        let various = is_various(&facts.album_artist_name);
+        let artist = if facts.is_compilation || various {
             ""
         } else {
             facts.album_artist_name.as_str()
         };
+        let query = |title| AlbumQuery {
+            title,
+            artist,
+            track_count: local.tracks.len(),
+            various,
+        };
         let mut hits = Vec::new();
         if !facts.title.trim().is_empty() {
-            hits = self.releases.search(&facts.title, artist).await?;
+            hits = self.releases.search_album(query(&facts.title)).await?;
             if hits.is_empty()
                 && let Some(stripped) = strip_edition_suffix(&facts.title)
             {
-                hits = self.releases.search(stripped, artist).await?;
+                hits = self.releases.search_album(query(stripped)).await?;
             }
         }
         for id in pick_hits(&hits, local.tracks.len(), &releases) {

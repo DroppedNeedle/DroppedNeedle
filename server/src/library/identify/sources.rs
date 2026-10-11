@@ -17,7 +17,7 @@ use futures_util::future::BoxFuture;
 
 use super::models::LocalTrackFacts;
 use super::stores::FingerprintStore;
-use crate::library::matching::model::credit_text;
+use crate::library::matching::model::{VARIOUS_ARTISTS_MBID, credit_text};
 use crate::library::matching::{CreditedArtist, Release, ReleaseMedium, ReleaseTrack};
 use crate::library::scan::pool::BlockingPool;
 use crate::library::scan::roots::RootRegistry;
@@ -26,7 +26,7 @@ use crate::providers::degradation::DegradationSink;
 use crate::providers::limiter::Pacer;
 use crate::providers::musicbrainz::{
     ArtistCreditName, Criticality, MbRelease, MbTransport, MusicBrainzClient, ReleaseSearchHit,
-    hit_score,
+    build_release_match_query, hit_score,
 };
 use crate::runtime_config::ConfigStore;
 use crate::runtime_config::secret_sections::TypedLibrary;
@@ -94,6 +94,16 @@ pub trait ReleaseSource: Send + Sync {
         artist: &'a str,
     ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>>;
 
+    /// Releases for identifying a local album. Sources with a search index
+    /// rank releases with the local track count first, and Various Artists
+    /// releases first for a compilation; the default is [`Self::search`].
+    fn search_album<'a>(
+        &'a self,
+        query: AlbumQuery<'a>,
+    ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
+        self.search(query.title, query.artist)
+    }
+
     /// One release with its tracklist; `None` when MusicBrainz has no
     /// such release. A redirected (merged) id comes back as the release
     /// it now names, with the requested id in [`Release::old_ids`].
@@ -115,6 +125,40 @@ pub trait ReleaseSource: Send + Sync {
     }
 }
 
+/// Search hits that name their release group, with their track totals.
+fn release_hits(items: Vec<ReleaseSearchHit>) -> Vec<ReleaseHit> {
+    items
+        .into_iter()
+        .filter_map(|hit| {
+            let group = hit.release_group.as_ref()?.id.clone();
+            let counts: Option<Vec<u32>> =
+                hit.media.iter().map(|medium| medium.track_count).collect();
+            Some(ReleaseHit {
+                score: hit_score(hit.score, hit.ext_score),
+                track_count: counts
+                    .filter(|counts| !counts.is_empty())
+                    .map(|counts| counts.iter().sum()),
+                id: hit.id.to_ascii_lowercase(),
+                release_group_id: group.to_ascii_lowercase(),
+            })
+        })
+        .collect()
+}
+
+/// What identification searches for: the album title, the artist to
+/// require (blank for compilations), and ranking hints.
+#[derive(Debug, Clone, Copy)]
+pub struct AlbumQuery<'a> {
+    /// Album title.
+    pub title: &'a str,
+    /// Album artist to require; blank searches any artist.
+    pub artist: &'a str,
+    /// Number of local tracks.
+    pub track_count: usize,
+    /// The album is credited to Various Artists.
+    pub various: bool,
+}
+
 /// Search hits per query.
 const SEARCH_LIMIT: u32 = 25;
 /// Includes for a release fetched for matching and tagging.
@@ -131,23 +175,26 @@ impl<T: MbTransport, S: DegradationSink> ReleaseSource for MusicBrainzClient<T, 
                 .search_releases(title, artist, SEARCH_LIMIT, Criticality::IdentityCritical)
                 .await
                 .map_err(|error| SourceError(error.to_string()))?;
-            Ok(page
-                .items
-                .into_iter()
-                .filter_map(|hit| {
-                    let group = hit.release_group.as_ref()?.id.clone();
-                    let counts: Option<Vec<u32>> =
-                        hit.media.iter().map(|medium| medium.track_count).collect();
-                    Some(ReleaseHit {
-                        score: hit_score(hit.score, hit.ext_score),
-                        track_count: counts
-                            .filter(|counts| !counts.is_empty())
-                            .map(|counts| counts.iter().sum()),
-                        id: hit.id.to_ascii_lowercase(),
-                        release_group_id: group.to_ascii_lowercase(),
-                    })
-                })
-                .collect())
+            Ok(release_hits(page.items))
+        })
+    }
+
+    fn search_album<'a>(
+        &'a self,
+        query: AlbumQuery<'a>,
+    ) -> BoxFuture<'a, Result<Vec<ReleaseHit>, SourceError>> {
+        Box::pin(async move {
+            let lucene = build_release_match_query(
+                query.title,
+                query.artist,
+                Some(query.track_count),
+                query.various.then_some(VARIOUS_ARTISTS_MBID),
+            );
+            let page = self
+                .search_releases_query(&lucene, SEARCH_LIMIT, Criticality::IdentityCritical)
+                .await
+                .map_err(|error| SourceError(error.to_string()))?;
+            Ok(release_hits(page.items))
         })
     }
 
