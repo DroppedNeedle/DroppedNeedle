@@ -586,11 +586,36 @@ pub fn detach(
     job_id: Option<&str>,
     now: f64,
 ) -> Result<Option<String>, OperationError> {
+    detach_identity(tx, album_id, reason_code, actor, job_id, now, false)
+}
+
+/// A person takes the match off an album from its review, whoever made
+/// it: the same change as [`detach`], undoable the same way. `None` when
+/// the album has no identity.
+pub fn detach_by_person(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    reason_code: &str,
+    actor: &str,
+    now: f64,
+) -> Result<Option<String>, OperationError> {
+    detach_identity(tx, album_id, reason_code, Some(actor), None, now, true)
+}
+
+fn detach_identity(
+    tx: &Transaction<'_>,
+    album_id: &str,
+    reason_code: &str,
+    actor: Option<&str>,
+    job_id: Option<&str>,
+    now: f64,
+    include_manual: bool,
+) -> Result<Option<String>, OperationError> {
     let before = snapshot(tx, album_id)?;
     let Some(identity) = before.identity.clone() else {
         return Ok(None);
     };
-    if identity.decision_source.as_deref() == Some("manual") {
+    if !include_manual && identity.decision_source.as_deref() == Some("manual") {
         return Ok(None);
     }
     tx.execute(
@@ -618,7 +643,11 @@ pub fn detach(
         tx,
         CatalogAction {
             actor: actor.unwrap_or("system"),
-            kind: "repair_detach",
+            kind: if include_manual {
+                "review_detach"
+            } else {
+                "repair_detach"
+            },
             album_id,
             job_id,
             before: serde_json::to_value(&identity).unwrap_or_default(),

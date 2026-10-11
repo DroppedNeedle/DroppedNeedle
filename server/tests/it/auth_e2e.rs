@@ -2089,6 +2089,33 @@ const MATRIX: &[(&str, &str, Posture)] = &[
         "/api/v3/library/reviews/{id}/reject",
         Posture::Curator,
     ),
+    ("GET", "/api/v3/library/reviews/{id}", Posture::User),
+    (
+        "POST",
+        "/api/v3/library/reviews/retry-pending",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/reviews/{id}/dismiss",
+        Posture::Curator,
+    ),
+    (
+        "POST",
+        "/api/v3/library/reviews/{id}/detach",
+        Posture::Curator,
+    ),
+    (
+        "POST",
+        "/api/v3/library/reviews/{id}/exclude",
+        Posture::Admin,
+    ),
+    (
+        "POST",
+        "/api/v3/library/reviews/{id}/restore",
+        Posture::Admin,
+    ),
+    ("POST", "/api/v3/library/reviews/{id}/retry", Posture::Admin),
     ("POST", "/api/v3/library/manage/preview", Posture::Curator),
     ("POST", "/api/v3/library/manage/apply", Posture::Curator),
     ("POST", "/api/v3/library/manage/undo", Posture::Curator),

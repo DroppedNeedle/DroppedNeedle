@@ -19,7 +19,7 @@ use super::plan::{self, EditionPlan};
 use super::reasons;
 use super::reidentify::{MAX_ATTEMPTS, RETRY_SECS, evaluation, unavailable};
 use super::store::{self, NewReidentification};
-use super::{choice, decisions};
+use super::{choice, decisions, reviews};
 use crate::ids::IdGenerator;
 use crate::library::clock::now_unix;
 use crate::library::identify::models::IdentifyKind;
@@ -31,6 +31,30 @@ use crate::library::identify::sqlite::album_identity_row;
 use crate::library::identify::stores::{FactsSource as _, IdentityStore as _};
 use crate::library::matching::model::Release;
 use crate::library::wiring::{LibrarySetup, ScanCoordinator};
+
+/// Most reviews one "retry all" starts.
+pub const RETRY_ALL_MAX: u32 = 5_000;
+
+/// What a "retry all" started, and why the rest did not start.
+#[derive(Debug, Clone, Default)]
+pub struct RetryAll {
+    pub started: u32,
+    /// Each reason once, with how many reviews it held back.
+    pub skipped: Vec<(reasons::Reason, u32)>,
+}
+
+impl RetryAll {
+    fn skip(&mut self, reason: reasons::Reason) {
+        match self
+            .skipped
+            .iter_mut()
+            .find(|(seen, _)| seen.code == reason.code)
+        {
+            Some((_, count)) => *count += 1,
+            None => self.skipped.push((reason, 1)),
+        }
+    }
+}
 
 /// Largest edition-finder page, as in v2.
 pub const RELEASE_PAGE_MAX: u32 = 12;
@@ -157,6 +181,96 @@ impl Operations {
             expected_input_revision: input.expected_input_revision,
         };
         self.write(|tx| store::create_reidentification(tx, &new, now_unix()))
+    }
+
+    /// One page of identification reviews. Blocking.
+    pub fn reviews(
+        &self,
+        filter: &reviews::ReviewFilter,
+    ) -> Result<(Vec<reviews::ReviewRow>, u64), OperationError> {
+        self.read_with(|conn| reviews::list(conn, filter))
+    }
+
+    /// One identification review. Blocking.
+    pub fn review(&self, review_id: &str) -> Result<reviews::ReviewRow, OperationError> {
+        self.read_with(|conn| reviews::get(conn, review_id))?
+            .ok_or(OperationError::NotFound(reasons::REVIEW_NOT_FOUND))
+    }
+
+    /// Dismiss, detach, exclude or restore from a review, then return the
+    /// settled review. Blocking.
+    pub fn settle_review(
+        &self,
+        review_id: &str,
+        action: reviews::ReviewAction,
+        actor: &str,
+    ) -> Result<reviews::ReviewRow, OperationError> {
+        self.write(|tx| reviews::settle(tx, review_id, action, actor, now_unix()))?;
+        self.review(review_id)
+    }
+
+    /// Start a fresh re-identification of a pending review's album. The
+    /// job carries the decision from here, so the review is dismissed.
+    /// Blocking.
+    pub fn retry_review(
+        &self,
+        review_id: &str,
+        actor: &str,
+        idempotency_key: Option<String>,
+        one_off_local_metadata: bool,
+    ) -> Result<OperationJob, OperationError> {
+        let row = self.review(review_id)?;
+        if row.review.state != crate::library::identify::models::ReviewState::Pending {
+            return Err(OperationError::Conflict(reasons::REVIEW_SETTLED));
+        }
+        let job = self.reidentify(
+            &row.review.local_album_id,
+            actor,
+            ReidentifyInput {
+                idempotency_key,
+                one_off_local_metadata,
+                ..ReidentifyInput::default()
+            },
+        )?;
+        self.write(|tx| {
+            Ok(reviews::mark(
+                tx,
+                review_id,
+                crate::library::identify::models::ReviewState::Dismissed,
+                actor,
+            )?)
+        })?;
+        Ok(job)
+    }
+
+    /// Start identification again for every pending review's album, up
+    /// to [`RETRY_ALL_MAX`]. Albums that cannot start (excluded, no files,
+    /// Local metadata without the confirmation) keep their review and are
+    /// counted by reason. Blocking.
+    pub fn retry_pending_reviews(
+        &self,
+        actor: &str,
+        one_off_local_metadata: bool,
+    ) -> Result<RetryAll, OperationError> {
+        let filter = reviews::ReviewFilter {
+            state: Some(crate::library::identify::models::ReviewState::Pending),
+            limit: RETRY_ALL_MAX,
+            ..reviews::ReviewFilter::default()
+        };
+        let (rows, _) = self.reviews(&filter)?;
+        let mut outcome = RetryAll::default();
+        for row in rows {
+            match self.retry_review(&row.review.id, actor, None, one_off_local_metadata) {
+                Ok(_) => outcome.started += 1,
+                Err(
+                    OperationError::NotFound(reason)
+                    | OperationError::Invalid(reason)
+                    | OperationError::Conflict(reason),
+                ) => outcome.skip(reason),
+                Err(other) => return Err(other),
+            }
+        }
+        Ok(outcome)
     }
 
     /// Settle a re-identification with the administrator's choice. Blocking.

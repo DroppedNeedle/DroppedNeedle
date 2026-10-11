@@ -4367,3 +4367,147 @@ fn walk_files(dir: &std::path::Path) -> Vec<PathBuf> {
     }
     found
 }
+
+/// The review list settles a review every way a person can: list and read
+/// it, take the album's files out and put them back, and a settled review
+/// refuses another decision.
+#[tokio::test]
+async fn library_journey_review_exclude_restore_dismiss() {
+    use droppedneedle::library::scan::CatalogStore as _;
+
+    let lib = Lib::open("reviews").await;
+    let admin = setup_admin(lib.router(), "owner", "owner-password-1").await;
+    let auth = bearer(&admin);
+    let headers = [("authorization", auth.as_str())];
+    let music = lib.dir.join("music");
+    plant(&music, "album-v/01.flac", "flac_full_01.flac");
+    plant(&music, "album-v/02.flac", "flac_full_02.flac");
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/roots",
+        &headers,
+        Some(json!({"id": "music", "path": music.to_string_lossy()})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/scan",
+        &headers,
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    drain_scans(&lib.library).await;
+    let track = lib
+        .library
+        .scan_store
+        .track_at("music", "album-v/01.flac")
+        .expect("track indexed");
+    let album = lib
+        .library
+        .scan_store
+        .album_for_track(&track)
+        .expect("album");
+    let conn = droppedneedle::db::open_connection(&lib.db_path).expect("db opens");
+    conn.execute(
+        "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
+         candidates_json, state, created_ms, updated_ms) \
+         VALUES ('rev-1', ?1, 'AUTOMATIC_EDITION_CLEARED_TO_REVIEW', '[]', 'pending', 1, 1)",
+        [&album],
+    )
+    .expect("review filed");
+    let availability = |conn: &rusqlite::Connection| -> Vec<String> {
+        let mut statement = conn
+            .prepare("SELECT availability FROM local_tracks WHERE local_album_id = ?1")
+            .expect("prepare");
+        statement
+            .query_map([&album], |row| row.get(0))
+            .expect("query")
+            .collect::<Result<_, _>>()
+            .expect("rows")
+    };
+
+    // The list needs no album id and explains the review in plain words.
+    let (status, body) = call(
+        lib.router(),
+        "GET",
+        "/api/v3/library/reviews",
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["total"], json!(1));
+    assert_eq!(body["reviews"][0]["id"], json!("rev-1"));
+    assert!(body["reviews"][0]["reason"]["action"].as_str().is_some());
+    let (status, body) = call(
+        lib.router(),
+        "GET",
+        "/api/v3/library/reviews/rev-1",
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["album_id"], json!(album));
+
+    // Exclude takes the files out; nothing is deleted.
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/reviews/rev-1/exclude",
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["state"], json!("excluded"));
+    assert!(availability(&conn).iter().all(|value| value == "excluded"));
+    assert!(music.join("album-v/01.flac").exists());
+
+    // A settled review takes no other decision.
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/reviews/rev-1/dismiss",
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], json!("REVIEW_SETTLED"));
+
+    // Restore puts the files back and closes the review.
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/reviews/rev-1/restore",
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["state"], json!("dismissed"));
+    assert!(availability(&conn).iter().all(|value| value == "indexed"));
+    let (_, body) = call(
+        lib.router(),
+        "GET",
+        "/api/v3/library/reviews",
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(body["total"], json!(0), "nothing pending");
+    let (_, body) = call(
+        lib.router(),
+        "GET",
+        "/api/v3/library/reviews?state=all",
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(body["total"], json!(1));
+}

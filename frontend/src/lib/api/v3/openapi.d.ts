@@ -4880,8 +4880,45 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Pending reviews for one album. */
+        /** Identification reviews, most recently changed first. */
         get: operations["list_reviews"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/reviews/retry-pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start identification again for every album with a pending review.
+         *     Reviews whose album cannot start stay open and are counted by reason.
+         */
+        post: operations["retry_pending_reviews"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/reviews/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One review with its candidates. */
+        get: operations["get_review"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4907,6 +4944,64 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/reviews/{id}/detach": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Take the album's MusicBrainz match off and keep its own tags. The
+         *     album shows as unmatched, and the change can be undone from the album
+         *     like an edition choice.
+         */
+        post: operations["detach_review"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/reviews/{id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Close a review without a decision. The album stays as it is. */
+        post: operations["dismiss_review"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/reviews/{id}/exclude": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Take the album's files out of the library. Nothing is deleted; scans
+         *     keep the files out until the review is restored.
+         */
+        post: operations["exclude_review"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/reviews/{id}/reject": {
         parameters: {
             query?: never;
@@ -4918,6 +5013,43 @@ export interface paths {
         put?: never;
         /** Reject a review: the album keeps its tags, nothing seals. */
         post: operations["reject_review"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/reviews/{id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Put an excluded album's files back into the library. */
+        post: operations["restore_review"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/reviews/{id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start identification again for the review's album. The new job
+         *     carries the decision, so the review is dismissed.
+         */
+        post: operations["retry_review"];
         delete?: never;
         options?: never;
         head?: never;
@@ -20013,27 +20145,72 @@ export interface components {
             /** @description The settled review. */
             review: components["schemas"]["ReviewView"];
         };
-        /** @description One curator review. */
+        /** @description What a "retry all" started. */
+        ReviewRetryAllResponse: {
+            /** @description Reviews that stayed open, grouped by why. */
+            skipped: components["schemas"]["SkippedReviews"][];
+            /**
+             * Format: int32
+             * @description Albums whose identification started again.
+             */
+            started: number;
+        };
+        /** @description Start identification again from a review. */
+        ReviewRetryBody: {
+            /**
+             * @description Confirms a one-off MusicBrainz lookup for files under a Local
+             *     metadata policy.
+             */
+            confirm_local_metadata?: boolean;
+            /** @description Makes a retried request return the same job (single review only). */
+            idempotency_key?: string | null;
+        };
+        /** @description One identification review and the album it is about. */
         ReviewView: {
             /** @description Local album id. */
             album_id: string;
-            /** @description Scored candidates. */
+            /** @description Album title, as the library shows it. */
+            album_title: string;
+            /** @description Album artist, as the library shows it. */
+            artist_name: string;
+            /** @description Scored candidates, best first. */
             candidates: components["schemas"]["CandidateView"][];
+            /**
+             * Format: int64
+             * @description When the review was filed (Unix milliseconds).
+             */
+            created_ms: number;
             /** @description Review id. */
             id: string;
-            /** @description Reason code. */
+            /** @description Why the review exists and what to do, in plain words. */
+            reason: components["schemas"]["ReasonView"];
+            /** @description Reason code the review was filed with. */
             reason_code: string;
             /** @description Resolving user, once settled. */
             resolved_by?: string | null;
             /** @description Selected candidate key, once approved. */
             selected_candidate_key?: string | null;
-            /** @description Review state. */
+            /** @description `pending`, `approved`, `rejected`, `dismissed` or `excluded`. */
             state: string;
+            /**
+             * Format: int64
+             * @description When it last changed (Unix milliseconds).
+             */
+            updated_ms: number;
         };
-        /** @description Pending reviews for one album. */
+        /** @description One page of reviews. */
         ReviewsResponse: {
-            /** @description Pending reviews. */
+            /** Format: int32 */
+            limit: number;
+            /** Format: int32 */
+            offset: number;
+            /** @description Reviews on this page, most recently changed first. */
             reviews: components["schemas"]["ReviewView"][];
+            /**
+             * Format: int64
+             * @description Reviews matching the filter.
+             */
+            total: number;
         };
         /**
          * @description Account role. Meanings are unchanged from v2: `user` requests await
@@ -20985,6 +21162,12 @@ export interface components {
             similar_artists: components["schemas"]["SimilarArtist"][];
             /** @description Provider that answered. */
             source: components["schemas"]["DiscoverySource"];
+        };
+        /** @description Reviews one reason held back. */
+        SkippedReviews: {
+            /** Format: int32 */
+            count: number;
+            reason: components["schemas"]["ReasonView"];
         };
         /** @description Slot-lane posture. */
         SlotView: {
@@ -33985,9 +34168,21 @@ export interface operations {
     };
     list_reviews: {
         parameters: {
-            query: {
-                /** @description Local album id */
-                album_id: string;
+            query?: {
+                /**
+                 * @description `pending` (default), `approved`, `rejected`, `dismissed`,
+                 *     `excluded` or `all`.
+                 */
+                state?: string;
+                /** @description Only this album's reviews. */
+                album_id?: string;
+                /** @description Only reviews filed with this reason code. */
+                reason_code?: string;
+                /** @description Album title or artist contains this, ignoring case. */
+                search?: string;
+                /** @description Page size, 1 to 200 (default 50). */
+                limit?: number;
+                offset?: number;
             };
             header?: never;
             path?: never;
@@ -33995,7 +34190,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Pending reviews */
+            /** @description One page of reviews */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -34004,7 +34199,7 @@ export interface operations {
                     "application/json": components["schemas"]["ReviewsResponse"];
                 };
             };
-            /** @description Missing album id */
+            /** @description Unknown state */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -34013,6 +34208,81 @@ export interface operations {
             };
             /** @description Not authenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    retry_pending_reviews: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewRetryBody"];
+            };
+        };
+        responses: {
+            /** @description What started and what did not */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewRetryAllResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_review: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Review id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The review */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown review id */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -34082,6 +34352,159 @@ export interface operations {
             };
         };
     };
+    detach_review: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Review id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Settled review */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown review id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Review already settled */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    dismiss_review: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Review id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Settled review */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown review id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Review already settled */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    exclude_review: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Review id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Settled review */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown review id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Review already settled */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     reject_review: {
         parameters: {
             query?: never;
@@ -34125,6 +34548,112 @@ export interface operations {
                 content?: never;
             };
             /** @description Review already settled */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    restore_review: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Review id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Settled review */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown review id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The review's album was not excluded */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    retry_review: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Review id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewRetryBody"];
+            };
+        };
+        responses: {
+            /** @description Re-identification job */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown review id, or the album has no files */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Review already settled, album excluded, or needs the Local metadata confirmation */
             409: {
                 headers: {
                     [name: string]: unknown;

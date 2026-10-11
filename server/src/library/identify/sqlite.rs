@@ -94,6 +94,8 @@ fn review_state_str(state: ReviewState) -> &'static str {
         ReviewState::Pending => "pending",
         ReviewState::Approved => "approved",
         ReviewState::Rejected => "rejected",
+        ReviewState::Dismissed => "dismissed",
+        ReviewState::Excluded => "excluded",
     }
 }
 
@@ -101,6 +103,8 @@ fn review_state_from(raw: &str) -> ReviewState {
     match raw {
         "approved" => ReviewState::Approved,
         "rejected" => ReviewState::Rejected,
+        "dismissed" => ReviewState::Dismissed,
+        "excluded" => ReviewState::Excluded,
         _ => ReviewState::Pending,
     }
 }
@@ -217,7 +221,7 @@ pub fn offer_album(conn: &Connection, local_album_id: &str, now_ms: i64) -> rusq
 /// Move the `identification` activity revision. Every change to the queue
 /// or the review list calls this inside its own transaction, so the
 /// revision poller sends `activity.changed` and open tabs refetch.
-fn bump_identification_stream(conn: &Connection) -> rusqlite::Result<()> {
+pub(crate) fn bump_identification_stream(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT INTO library_event_stream_revisions (stream_kind, value) \
          VALUES ('identification', 1) \
@@ -1657,7 +1661,7 @@ const REVIEW_COLUMNS: &str = "id, local_album_id, reason_code, candidates_json, 
 
 /// One review row. Candidates that no longer decode drop the review with
 /// a log line instead of failing the whole listing.
-fn map_review(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<ReviewItem>> {
+pub(crate) fn map_review(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<ReviewItem>> {
     let id: String = row.get(0)?;
     let json: String = row.get(3)?;
     let candidates: Vec<CandidateEvidence> = match serde_json::from_str(&json) {

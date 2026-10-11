@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+pub use super::operations::ReasonView;
+
 /// Snake-case label for a serializable engine enum. Falls back to
 /// `"unknown"` instead of failing the whole response.
 pub fn snake<T: serde::Serialize>(value: &T) -> String {
@@ -225,30 +227,72 @@ pub struct PenaltyView {
     pub share: f64,
 }
 
-/// One curator review.
+/// One identification review and the album it is about.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ReviewView {
     /// Review id.
     pub id: String,
     /// Local album id.
     pub album_id: String,
-    /// Reason code.
+    /// Album title, as the library shows it.
+    pub album_title: String,
+    /// Album artist, as the library shows it.
+    pub artist_name: String,
+    /// Reason code the review was filed with.
     pub reason_code: String,
-    /// Review state.
+    /// Why the review exists and what to do, in plain words.
+    pub reason: ReasonView,
+    /// `pending`, `approved`, `rejected`, `dismissed` or `excluded`.
     pub state: String,
     /// Resolving user, once settled.
     pub resolved_by: Option<String>,
     /// Selected candidate key, once approved.
     pub selected_candidate_key: Option<String>,
-    /// Scored candidates.
+    /// Scored candidates, best first.
     pub candidates: Vec<CandidateView>,
+    /// When the review was filed (Unix milliseconds).
+    pub created_ms: i64,
+    /// When it last changed (Unix milliseconds).
+    pub updated_ms: i64,
 }
 
-/// Pending reviews for one album.
+/// One page of reviews.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ReviewsResponse {
-    /// Pending reviews.
+    /// Reviews on this page, most recently changed first.
     pub reviews: Vec<ReviewView>,
+    /// Reviews matching the filter.
+    pub total: u64,
+    pub limit: u32,
+    pub offset: u32,
+}
+
+/// What a "retry all" started.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ReviewRetryAllResponse {
+    /// Albums whose identification started again.
+    pub started: u32,
+    /// Reviews that stayed open, grouped by why.
+    pub skipped: Vec<SkippedReviews>,
+}
+
+/// Reviews one reason held back.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct SkippedReviews {
+    pub reason: ReasonView,
+    pub count: u32,
+}
+
+/// Start identification again from a review.
+#[derive(Debug, Clone, Default, Deserialize, ToSchema)]
+pub struct ReviewRetryBody {
+    /// Makes a retried request return the same job (single review only).
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+    /// Confirms a one-off MusicBrainz lookup for files under a Local
+    /// metadata policy.
+    #[serde(default)]
+    pub confirm_local_metadata: bool,
 }
 
 /// Approve a review with the curator's chosen candidate.

@@ -11856,24 +11856,72 @@
     "/api/v3/library/reviews": {
       "get": {
         "tags": [
-          "crate::library::http::handlers"
+          "crate::library::http::reviews"
         ],
-        "summary": "Pending reviews for one album.",
+        "summary": "Identification reviews, most recently changed first.",
         "operationId": "list_reviews",
         "parameters": [
           {
-            "name": "album_id",
+            "name": "state",
             "in": "query",
-            "description": "Local album id",
-            "required": true,
+            "description": "`pending` (default), `approved`, `rejected`, `dismissed`,\n`excluded` or `all`.",
+            "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "album_id",
+            "in": "query",
+            "description": "Only this album's reviews.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "reason_code",
+            "in": "query",
+            "description": "Only reviews filed with this reason code.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Album title or artist contains this, ignoring case.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1 to 200 (default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "Pending reviews",
+            "description": "One page of reviews",
             "content": {
               "application/json": {
                 "schema": {
@@ -11883,7 +11931,7 @@
             }
           },
           "400": {
-            "description": "Missing album id"
+            "description": "Unknown state"
           },
           "401": {
             "description": "Not authenticated"
@@ -11891,10 +11939,85 @@
         }
       }
     },
+    "/api/v3/library/reviews/retry-pending": {
+      "post": {
+        "tags": [
+          "crate::library::http::reviews"
+        ],
+        "summary": "Start identification again for every album with a pending review.\nReviews whose album cannot start stay open and are counted by reason.",
+        "operationId": "retry_pending_reviews",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewRetryBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What started and what did not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewRetryAllResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        }
+      }
+    },
+    "/api/v3/library/reviews/{id}": {
+      "get": {
+        "tags": [
+          "crate::library::http::reviews"
+        ],
+        "summary": "One review with its candidates.",
+        "operationId": "get_review",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Review id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The review",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "404": {
+            "description": "Unknown review id"
+          }
+        }
+      }
+    },
     "/api/v3/library/reviews/{id}/approve": {
       "post": {
         "tags": [
-          "crate::library::http::handlers"
+          "crate::library::http::reviews"
         ],
         "summary": "Approve a review with the curator's chosen candidate.",
         "operationId": "approve_review",
@@ -11948,10 +12071,142 @@
         }
       }
     },
+    "/api/v3/library/reviews/{id}/detach": {
+      "post": {
+        "tags": [
+          "crate::library::http::reviews"
+        ],
+        "summary": "Take the album's MusicBrainz match off and keep its own tags. The\nalbum shows as unmatched, and the change can be undone from the album\nlike an edition choice.",
+        "operationId": "detach_review",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Review id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Settled review",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Unknown review id"
+          },
+          "409": {
+            "description": "Review already settled"
+          }
+        }
+      }
+    },
+    "/api/v3/library/reviews/{id}/dismiss": {
+      "post": {
+        "tags": [
+          "crate::library::http::reviews"
+        ],
+        "summary": "Close a review without a decision. The album stays as it is.",
+        "operationId": "dismiss_review",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Review id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Settled review",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Unknown review id"
+          },
+          "409": {
+            "description": "Review already settled"
+          }
+        }
+      }
+    },
+    "/api/v3/library/reviews/{id}/exclude": {
+      "post": {
+        "tags": [
+          "crate::library::http::reviews"
+        ],
+        "summary": "Take the album's files out of the library. Nothing is deleted; scans\nkeep the files out until the review is restored.",
+        "operationId": "exclude_review",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Review id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Settled review",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown review id"
+          },
+          "409": {
+            "description": "Review already settled"
+          }
+        }
+      }
+    },
     "/api/v3/library/reviews/{id}/reject": {
       "post": {
         "tags": [
-          "crate::library::http::handlers"
+          "crate::library::http::reviews"
         ],
         "summary": "Reject a review: the album keeps its tags, nothing seals.",
         "operationId": "reject_review",
@@ -11988,6 +12243,104 @@
           },
           "409": {
             "description": "Review already settled"
+          }
+        }
+      }
+    },
+    "/api/v3/library/reviews/{id}/restore": {
+      "post": {
+        "tags": [
+          "crate::library::http::reviews"
+        ],
+        "summary": "Put an excluded album's files back into the library.",
+        "operationId": "restore_review",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Review id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Settled review",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown review id"
+          },
+          "409": {
+            "description": "The review's album was not excluded"
+          }
+        }
+      }
+    },
+    "/api/v3/library/reviews/{id}/retry": {
+      "post": {
+        "tags": [
+          "crate::library::http::reviews"
+        ],
+        "summary": "Start identification again for the review's album. The new job\ncarries the decision, so the review is dismissed.",
+        "operationId": "retry_review",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Review id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewRetryBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Re-identification job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown review id, or the album has no files"
+          },
+          "409": {
+            "description": "Review already settled, album excluded, or needs the Local metadata confirmation"
           }
         }
       }
@@ -46228,35 +46581,97 @@
           }
         }
       },
+      "ReviewRetryAllResponse": {
+        "type": "object",
+        "description": "What a \"retry all\" started.",
+        "required": [
+          "started",
+          "skipped"
+        ],
+        "properties": {
+          "skipped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkippedReviews"
+            },
+            "description": "Reviews that stayed open, grouped by why."
+          },
+          "started": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Albums whose identification started again.",
+            "minimum": 0
+          }
+        }
+      },
+      "ReviewRetryBody": {
+        "type": "object",
+        "description": "Start identification again from a review.",
+        "properties": {
+          "confirm_local_metadata": {
+            "type": "boolean",
+            "description": "Confirms a one-off MusicBrainz lookup for files under a Local\nmetadata policy."
+          },
+          "idempotency_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Makes a retried request return the same job (single review only)."
+          }
+        }
+      },
       "ReviewView": {
         "type": "object",
-        "description": "One curator review.",
+        "description": "One identification review and the album it is about.",
         "required": [
           "id",
           "album_id",
+          "album_title",
+          "artist_name",
           "reason_code",
+          "reason",
           "state",
-          "candidates"
+          "candidates",
+          "created_ms",
+          "updated_ms"
         ],
         "properties": {
           "album_id": {
             "type": "string",
             "description": "Local album id."
           },
+          "album_title": {
+            "type": "string",
+            "description": "Album title, as the library shows it."
+          },
+          "artist_name": {
+            "type": "string",
+            "description": "Album artist, as the library shows it."
+          },
           "candidates": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/CandidateView"
             },
-            "description": "Scored candidates."
+            "description": "Scored candidates, best first."
+          },
+          "created_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the review was filed (Unix milliseconds)."
           },
           "id": {
             "type": "string",
             "description": "Review id."
           },
+          "reason": {
+            "$ref": "#/components/schemas/ReasonView",
+            "description": "Why the review exists and what to do, in plain words."
+          },
           "reason_code": {
             "type": "string",
-            "description": "Reason code."
+            "description": "Reason code the review was filed with."
           },
           "resolved_by": {
             "type": [
@@ -46274,23 +46689,47 @@
           },
           "state": {
             "type": "string",
-            "description": "Review state."
+            "description": "`pending`, `approved`, `rejected`, `dismissed` or `excluded`."
+          },
+          "updated_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it last changed (Unix milliseconds)."
           }
         }
       },
       "ReviewsResponse": {
         "type": "object",
-        "description": "Pending reviews for one album.",
+        "description": "One page of reviews.",
         "required": [
-          "reviews"
+          "reviews",
+          "total",
+          "limit",
+          "offset"
         ],
         "properties": {
+          "limit": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
           "reviews": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ReviewView"
             },
-            "description": "Pending reviews."
+            "description": "Reviews on this page, most recently changed first."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Reviews matching the filter.",
+            "minimum": 0
           }
         }
       },
@@ -48481,6 +48920,24 @@
           "source": {
             "$ref": "#/components/schemas/DiscoverySource",
             "description": "Provider that answered."
+          }
+        }
+      },
+      "SkippedReviews": {
+        "type": "object",
+        "description": "Reviews one reason held back.",
+        "required": [
+          "reason",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "reason": {
+            "$ref": "#/components/schemas/ReasonView"
           }
         }
       },

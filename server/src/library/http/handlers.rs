@@ -11,16 +11,15 @@ use axum::{
 };
 
 use super::auth::{Principal, RequireAdmin, RequireCurator};
-use super::error::{LibraryError, ValidJson, ValidQuery};
+use super::error::{LibraryError, ValidJson};
 use super::models::{
-    AddRootBody, ApproveBody, BaselineRestoreBody, BaselineRestoreResponse, CandidateView,
-    IdentifyBody, IdentifyResponse, IdentityView, ManageAppliedFile, ManageApplyBody,
-    ManageApplyResponse, ManageFileView, ManageItemBody, ManagePreviewBody, ManagePreviewResponse,
-    ManageUndoBody, ManageUndoResponse, PenaltyView, ReviewResolveResponse, ReviewView,
-    ReviewsResponse, RootView, RootsResponse, RunDetailResponse, ScanBody, ScanFileView,
-    ScanResponse, ScanRunView, ScanRunsResponse, ScanScopeView, snake,
+    AddRootBody, BaselineRestoreBody, BaselineRestoreResponse, IdentifyBody, IdentifyResponse,
+    ManageAppliedFile, ManageApplyBody, ManageApplyResponse, ManageFileView, ManageItemBody,
+    ManagePreviewBody, ManagePreviewResponse, ManageUndoBody, ManageUndoResponse, RootView,
+    RootsResponse, RunDetailResponse, ScanBody, ScanFileView, ScanResponse, ScanRunView,
+    ScanRunsResponse, ScanScopeView, snake,
 };
-use crate::library::identify::models::{CandidateEvidence, IdentifyKind, JobState, ReviewItem};
+use crate::library::identify::models::{IdentifyKind, JobState};
 use crate::library::manage::PreviewItemInput;
 use crate::library::publish::planner::PlanKind;
 use crate::library::scan::models::{EffectivePolicy, ScanRun, ScanScope};
@@ -103,49 +102,6 @@ fn scope_view(scope: &ScanScope) -> ScanScopeView {
         root_id: scope.root_id.clone(),
         relative_path: scope.relative_path.clone(),
         effective_policy: policy_label(scope.effective_policy),
-    }
-}
-
-fn candidate_view(candidate: &CandidateEvidence) -> CandidateView {
-    CandidateView {
-        candidate_key: candidate.candidate_key.clone(),
-        release_group_mbid: candidate.release_group_mbid.clone(),
-        release_mbid: candidate.release_mbid.clone(),
-        album_title: candidate.album_title.clone(),
-        album_artist_name: candidate.album_artist_name.clone(),
-        score: candidate.score,
-        distance: candidate.distance,
-        penalties: candidate
-            .penalties
-            .iter()
-            .map(|penalty| PenaltyView {
-                name: penalty.name.clone(),
-                share: penalty.share,
-            })
-            .collect(),
-        reason_code: candidate.reason_code.clone(),
-        supported_tracks: candidate.supported_count(),
-        contradictory_tracks: candidate.contradictory_count(),
-    }
-}
-
-fn review_view(review: &ReviewItem) -> ReviewView {
-    ReviewView {
-        id: review.id.clone(),
-        album_id: review.local_album_id.clone(),
-        reason_code: review.reason_code.clone(),
-        state: snake(&review.state),
-        resolved_by: review.resolved_by_user_id.clone(),
-        selected_candidate_key: review.selected_candidate_key.clone(),
-        candidates: review.candidates.iter().map(candidate_view).collect(),
-    }
-}
-
-fn identity_view(identity: &crate::library::identify::models::AlbumIdentity) -> IdentityView {
-    IdentityView {
-        release_mbid: identity.release_mbid.clone(),
-        release_group_mbid: identity.release_group_mbid.clone(),
-        decision_source: snake(&identity.decision_source),
     }
 }
 
@@ -337,7 +293,7 @@ pub async fn get_run(
 }
 
 // ---------------------------------------------------------------------------
-// Identify and reviews.
+// Identify.
 // ---------------------------------------------------------------------------
 
 /// Enqueue one album for identification.
@@ -374,94 +330,6 @@ pub async fn enqueue_identify(
         job_id: job.id,
         album_id: job.local_album_id,
         state: state_label,
-    }))
-}
-
-/// Pending reviews for one album.
-#[utoipa::path(
-    get,
-    path = "/api/v3/library/reviews",
-    params(("album_id" = String, Query, description = "Local album id")),
-    responses(
-        (status = 200, description = "Pending reviews", body = ReviewsResponse),
-        (status = 400, description = "Missing album id"),
-        (status = 401, description = "Not authenticated"),
-    )
-)]
-pub async fn list_reviews(
-    State(state): State<LibrarySetup>,
-    _caller: Principal,
-    ValidQuery(query): ValidQuery<std::collections::HashMap<String, String>>,
-) -> Result<Json<ReviewsResponse>, LibraryError> {
-    let Some(album_id) = query.get("album_id").cloned() else {
-        return Err(LibraryError::InvalidInput {
-            message: "Query needs album_id".to_owned(),
-        });
-    };
-    let reviews = blocking(move || state.pending_reviews(&album_id)).await?;
-    Ok(Json(ReviewsResponse {
-        reviews: reviews.iter().map(review_view).collect(),
-    }))
-}
-
-/// Approve a review with the curator's chosen candidate.
-#[utoipa::path(
-    post,
-    path = "/api/v3/library/reviews/{id}/approve",
-    params(("id" = String, Path, description = "Review id")),
-    request_body = ApproveBody,
-    responses(
-        (status = 200, description = "Settled review", body = ReviewResolveResponse),
-        (status = 400, description = "Missing candidate key"),
-        (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Curator role required"),
-        (status = 404, description = "Unknown review or candidate"),
-        (status = 409, description = "Review already settled"),
-    )
-)]
-pub async fn approve_review(
-    State(state): State<LibrarySetup>,
-    caller: RequireCurator,
-    Path(id): Path<String>,
-    ValidJson(body): ValidJson<ApproveBody>,
-) -> Result<Json<ReviewResolveResponse>, LibraryError> {
-    if body.candidate_key.is_empty() {
-        return Err(LibraryError::InvalidInput {
-            message: "Candidate key must not be empty".to_owned(),
-        });
-    }
-    let user_id = caller.0.user_id;
-    let (review, identity) =
-        blocking(move || state.approve_review(&id, &user_id, &body.candidate_key)).await??;
-    Ok(Json(ReviewResolveResponse {
-        review: review_view(&review),
-        identity: identity.as_ref().map(identity_view),
-    }))
-}
-
-/// Reject a review: the album keeps its tags, nothing seals.
-#[utoipa::path(
-    post,
-    path = "/api/v3/library/reviews/{id}/reject",
-    params(("id" = String, Path, description = "Review id")),
-    responses(
-        (status = 200, description = "Settled review", body = ReviewResolveResponse),
-        (status = 401, description = "Not authenticated"),
-        (status = 403, description = "Curator role required"),
-        (status = 404, description = "Unknown review id"),
-        (status = 409, description = "Review already settled"),
-    )
-)]
-pub async fn reject_review(
-    State(state): State<LibrarySetup>,
-    caller: RequireCurator,
-    Path(id): Path<String>,
-) -> Result<Json<ReviewResolveResponse>, LibraryError> {
-    let user_id = caller.0.user_id;
-    let review = blocking(move || state.reject_review(&id, &user_id)).await??;
-    Ok(Json(ReviewResolveResponse {
-        review: review_view(&review),
-        identity: None,
     }))
 }
 

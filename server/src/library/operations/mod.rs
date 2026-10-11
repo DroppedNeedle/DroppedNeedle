@@ -21,6 +21,7 @@ pub mod plan;
 pub mod port;
 pub mod reasons;
 pub mod reidentify;
+pub mod reviews;
 pub mod service;
 pub mod status;
 pub mod store;

@@ -283,6 +283,10 @@ pub enum ReviewState {
     Pending,
     Approved,
     Rejected,
+    /// Closed without a decision; the album stays as it is.
+    Dismissed,
+    /// The album's files were taken out of the library.
+    Excluded,
 }
 
 /// Identity summary: the whole case for one album on one card.

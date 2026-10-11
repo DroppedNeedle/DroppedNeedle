@@ -215,6 +215,50 @@ pub const CUSTOM_EDITION_POSITIONS: Reason = reason(
 );
 
 // Provider.
+pub const REVIEW_NOT_FOUND: Reason = reason(
+    "REVIEW_NOT_FOUND",
+    "This review is not in the list any more.",
+    "Reload the list; the album may have been removed or merged.",
+);
+pub const REVIEW_SETTLED: Reason = reason(
+    "REVIEW_SETTLED",
+    "Someone already settled this review.",
+    "Reload the list to see what was decided.",
+);
+pub const REVIEW_NOT_EXCLUDED: Reason = reason(
+    "REVIEW_NOT_EXCLUDED",
+    "This album's files were not taken out from its review, so there is nothing to put back.",
+    "Reload the list to see the review's current state.",
+);
+pub const REVIEW_STATE_INVALID: Reason = reason(
+    "REVIEW_STATE_INVALID",
+    "That is not a review state.",
+    "Use pending, approved, rejected, dismissed, excluded or all.",
+);
+
+/// Why a review was opened, by the code it was filed with. Edition
+/// corrections and undo file their own codes; the rest are match codes.
+pub fn review_reason(code: &str) -> Reason {
+    match code {
+        "AUTOMATIC_EDITION_CLEARED_TO_REVIEW" => reason(
+            "AUTOMATIC_EDITION_CLEARED_TO_REVIEW",
+            "The automatic edition was undone and there was no earlier match to go back to.",
+            "Pick one of the candidates, keep the album as tagged, or retry identification.",
+        ),
+        "EDITION_CLEARED_CONFLICT" | "EDITION_CLEARED_AMBIGUOUS" => reason(
+            "EDITION_CLEARED",
+            "Albums with different editions were combined, so the edition was cleared.",
+            "Pick the edition you want from the candidates, or keep the album as tagged.",
+        ),
+        "EDITION_KEPT_OVER_CONFLICT" | "EDITION_CHOSEN_WINS" => reason(
+            "EDITION_DROPPED_BY_MERGE",
+            "Albums were combined and their other editions were dropped; they are listed here.",
+            "Nothing to do, or pick one of them to use it instead.",
+        ),
+        other => match_reason(other),
+    }
+}
+
 pub const MUSICBRAINZ_UNAVAILABLE: Reason = reason(
     "MUSICBRAINZ_UNAVAILABLE",
     "MusicBrainz is not answering right now.",
@@ -415,6 +459,11 @@ pub fn match_reason(code: &str) -> Reason {
             "IDENTITY_FAILED_RECHECK",
             "An identity recheck found these files do not fit the release they were linked to, so the link was removed.",
             "Pick the right edition yourself, or undo the change from this album.",
+        ),
+        "DETACHED_BY_PERSON" => reason(
+            "DETACHED_BY_PERSON",
+            "Someone took this album's MusicBrainz match off from its review, so it keeps its own tags.",
+            "Pick an edition yourself when you're ready, or leave it as it is.",
         ),
         "UNIDENTIFIED" => reason(
             "UNIDENTIFIED",
