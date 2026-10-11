@@ -209,6 +209,9 @@ const EDITION_WORDS: [&str; 22] = [
 /// an edition ("Night Shift (Deluxe Edition)", "[Remastered]") and
 /// edition words at the end ("Night Shift - Deluxe Edition"). Edition
 /// words inside the title proper stay ("Live at Leeds", "Single Life").
+/// A title made only of edition words ("Live", "(Remastered)") is kept
+/// whole, so it still compares against other titles instead of turning
+/// into an empty string that matches every other empty one.
 pub fn strip_edition_words(title: &str) -> String {
     let lowered = title.to_lowercase();
     let mut kept = String::with_capacity(lowered.len());
@@ -245,6 +248,19 @@ pub fn strip_edition_words(title: &str) -> String {
         } else {
             break;
         }
+    }
+    if words.is_empty() {
+        // Only edition words: keep the title proper ("Live (Deluxe)" is
+        // "live"), or the whole title when even that is an edition.
+        let proper = kept.split_whitespace().collect::<Vec<_>>().join(" ");
+        if !proper.is_empty() {
+            return proper;
+        }
+        return lowered
+            .split(|c: char| c.is_whitespace() || "()[]{}".contains(c))
+            .filter(|word| !word.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
     }
     words.join(" ")
 }
@@ -326,6 +342,9 @@ mod tests {
             "night shift"
         );
         assert_eq!(strip_edition_words("Live at Leeds"), "live at leeds");
+        assert_eq!(strip_edition_words("Live"), "live");
+        assert_eq!(strip_edition_words("Live (Deluxe Edition)"), "live");
+        assert_eq!(strip_edition_words("(Remastered) [Live]"), "remastered live");
         assert_eq!(
             strip_edition_words("Songs (From the Basement)"),
             "songs from the basement"
