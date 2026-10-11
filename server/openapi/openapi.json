@@ -1222,7 +1222,7 @@
         "tags": [
           "crate::acquire::requests::intake"
         ],
-        "summary": "Fill the selected edition's missing tracks and upgrade its below-cutoff\nowned tracks. `POST /api/v3/albums/{album_id}/edition/acquire`.\nCurator only. Never retags existing files.",
+        "summary": "Fill the selected edition's missing tracks and upgrade its below-cutoff\nowned tracks, in one download. `POST /api/v3/albums/{album_id}/edition/acquire`.\nCurator only. Never retags existing files.",
         "operationId": "acquire_edition_handler",
         "parameters": [
           {
@@ -1232,6 +1232,18 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id of the copy the edition picker planned; the chosen\ncopy of the release group when absent.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         ],
@@ -1245,6 +1257,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "No download source, not enough disk space, or not in the library"
           }
         }
       }
@@ -6907,6 +6922,120 @@
           },
           "409": {
             "description": "Nothing waits for confirmation"
+          }
+        }
+      }
+    },
+    "/api/v3/library/albums/{album_id}/edition/extras/remove": {
+      "post": {
+        "tags": [
+          "crate::library::http::edition"
+        ],
+        "summary": "Move files the album's edition has no place for (second copies and\nfiles not on it) to the recycle bin. Only files the current plan marks\nthat way are accepted; nothing runs on its own. Undo with\n`.../edition/extras/restore`.",
+        "operationId": "remove_extras",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoveExtrasBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Files recycled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoveExtrasView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A picked file keeps its place on the edition, or nothing was picked"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Unknown album or track"
+          },
+          "409": {
+            "description": "Library busy or a file is outside the library folders"
+          },
+          "422": {
+            "description": "A file could not be recycled; nothing changed"
+          },
+          "503": {
+            "description": "MusicBrainz is not answering"
+          }
+        }
+      }
+    },
+    "/api/v3/library/albums/{album_id}/edition/extras/restore": {
+      "post": {
+        "tags": [
+          "crate::library::http::edition"
+        ],
+        "summary": "Put back the files one removal of extras moved to the recycle bin.",
+        "operationId": "restore_extras",
+        "parameters": [
+          {
+            "name": "album_id",
+            "in": "path",
+            "description": "Local album id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreExtrasBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Files put back and rescanned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RestoreExtrasView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required"
+          },
+          "404": {
+            "description": "Nothing to take back"
           }
         }
       }
@@ -30449,20 +30578,13 @@
             "description": "Tracks on the edition (absent when the library's plan could not be\nread and the whole album was asked for).",
             "minimum": 0
           },
-          "upgrade_task_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The upgrade download, when one was queued."
-          },
           "upgrades": {
             "type": [
               "integer",
               "null"
             ],
             "format": "int32",
-            "description": "Owned tracks of the edition below the quality cutoff; an upgrade of\nthe album was queued for them when this is above zero.",
+            "description": "Owned tracks of the edition below the quality cutoff, asked for in\nthe same download; each is replaced only by a strictly better file.",
             "minimum": 0
           }
         }
@@ -43937,6 +44059,42 @@
           }
         }
       },
+      "RemoveExtrasBody": {
+        "type": "object",
+        "description": "Extra files to move to the recycle bin.",
+        "required": [
+          "track_ids"
+        ],
+        "properties": {
+          "track_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Local track ids the album's edition plan marks `duplicate` or `extra`."
+          }
+        }
+      },
+      "RemoveExtrasView": {
+        "type": "object",
+        "description": "What removing extras did.",
+        "required": [
+          "action_id",
+          "removed_track_ids"
+        ],
+        "properties": {
+          "action_id": {
+            "type": "string",
+            "description": "Pass to the undo route to put the files back."
+          },
+          "removed_track_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "RemoveTracksBody": {
         "type": "object",
         "description": "Bulk-remove body.",
@@ -44843,6 +45001,31 @@
           "passed": {
             "type": "boolean",
             "description": "Whether the check passed."
+          }
+        }
+      },
+      "RestoreExtrasBody": {
+        "type": "object",
+        "description": "Take back a removal of extras.",
+        "required": [
+          "action_id"
+        ],
+        "properties": {
+          "action_id": {
+            "type": "string"
+          }
+        }
+      },
+      "RestoreExtrasView": {
+        "type": "object",
+        "description": "Whether the files went back.",
+        "required": [
+          "restored"
+        ],
+        "properties": {
+          "restored": {
+            "type": "boolean",
+            "description": "False when a file could not be put back; it stays in the recycle bin."
           }
         }
       },

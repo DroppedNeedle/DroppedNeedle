@@ -656,7 +656,7 @@ export interface paths {
         put?: never;
         /**
          * Fill the selected edition's missing tracks and upgrade its below-cutoff
-         *     owned tracks. `POST /api/v3/albums/{album_id}/edition/acquire`.
+         *     owned tracks, in one download. `POST /api/v3/albums/{album_id}/edition/acquire`.
          *     Curator only. Never retags existing files.
          */
         post: operations["acquire_edition_handler"];
@@ -3235,6 +3235,45 @@ export interface paths {
         put?: never;
         /** "Looks right": confirm the album's unconfirmed best guess. */
         post: operations["confirm_edition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{album_id}/edition/extras/remove": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move files the album's edition has no place for (second copies and
+         *     files not on it) to the recycle bin. Only files the current plan marks
+         *     that way are accepted; nothing runs on its own. Undo with
+         *     `.../edition/extras/restore`.
+         */
+        post: operations["remove_extras"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/albums/{album_id}/edition/extras/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Put back the files one removal of extras moved to the recycle bin. */
+        post: operations["restore_extras"];
         delete?: never;
         options?: never;
         head?: never;
@@ -12924,12 +12963,10 @@ export interface components {
              *     read and the whole album was asked for).
              */
             total_tracks?: number | null;
-            /** @description The upgrade download, when one was queued. */
-            upgrade_task_id?: string | null;
             /**
              * Format: int32
-             * @description Owned tracks of the edition below the quality cutoff; an upgrade of
-             *     the album was queued for them when this is above zero.
+             * @description Owned tracks of the edition below the quality cutoff, asked for in
+             *     the same download; each is replaced only by a strictly better file.
              */
             upgrades?: number | null;
         };
@@ -19107,6 +19144,17 @@ export interface components {
             /** @description Always true on a 200. */
             success: boolean;
         };
+        /** @description Extra files to move to the recycle bin. */
+        RemoveExtrasBody: {
+            /** @description Local track ids the album's edition plan marks `duplicate` or `extra`. */
+            track_ids: string[];
+        };
+        /** @description What removing extras did. */
+        RemoveExtrasView: {
+            /** @description Pass to the undo route to put the files back. */
+            action_id: string;
+            removed_track_ids: string[];
+        };
         /** @description Bulk-remove body. */
         RemoveTracksBody: {
             /** @description Track row ids to remove. */
@@ -19498,6 +19546,15 @@ export interface components {
             name: string;
             /** @description Whether the check passed. */
             passed: boolean;
+        };
+        /** @description Take back a removal of extras. */
+        RestoreExtrasBody: {
+            action_id: string;
+        };
+        /** @description Whether the files went back. */
+        RestoreExtrasView: {
+            /** @description False when a file could not be put back; it stays in the recycle bin. */
+            restored: boolean;
         };
         /**
          * @description Pre-restore verification report. Read-only: nothing here writes or moves
@@ -23388,8 +23445,11 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Release-group MBID */
-                album_id: string;
+                /**
+                 * @description Local album id of the copy the edition picker planned; the chosen
+                 *     copy of the release group when absent.
+                 */
+                album_id: string | null;
             };
             cookie?: never;
         };
@@ -23402,6 +23462,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["EditionAcquireResponse"];
                 };
+            };
+            /** @description No download source, not enough disk space, or not in the library */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -28504,6 +28571,130 @@ export interface operations {
             };
             /** @description Nothing waits for confirmation */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    remove_extras: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RemoveExtrasBody"];
+            };
+        };
+        responses: {
+            /** @description Files recycled */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemoveExtrasView"];
+                };
+            };
+            /** @description A picked file keeps its place on the edition, or nothing was picked */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown album or track */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Library busy or a file is outside the library folders */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A file could not be recycled; nothing changed */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description MusicBrainz is not answering */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    restore_extras: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Local album id */
+                album_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RestoreExtrasBody"];
+            };
+        };
+        responses: {
+            /** @description Files put back and rescanned */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RestoreExtrasView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Nothing to take back */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
