@@ -45,6 +45,14 @@ pub const RADIO_PLAN_MIN: i64 = 5;
 pub const RADIO_PLAN_MAX: i64 = 50;
 /// Max albums in one discovery batch (v2 `MAX_BATCH_ITEMS`).
 pub const BATCH_MAX_ITEMS: usize = 30;
+/// Max characters in a batch name.
+pub const BATCH_NAME_MAX: usize = 200;
+/// Max characters in a batch's source section.
+pub const BATCH_SECTION_MAX: usize = 100;
+/// Max seed rows in one radio plan.
+pub const RADIO_ITEMS_MAX: usize = 50;
+/// Max recordings one radio plan may leave out.
+pub const RADIO_EXCLUDE_MAX: usize = 500;
 /// Max radio shelf rows.
 pub const RADIO_SHELF_MAX: i64 = 50;
 
@@ -299,6 +307,16 @@ pub async fn radio_plan(
         return Err(ServiceError::InvalidInput(
             "seed_id must not be blank for artist, album, and genre plans".to_owned(),
         ));
+    }
+    if body.items.len() > RADIO_ITEMS_MAX {
+        return Err(ServiceError::InvalidInput(format!(
+            "A radio plan takes at most {RADIO_ITEMS_MAX} seed items"
+        )));
+    }
+    if body.exclude_recording_mbids.len() > RADIO_EXCLUDE_MAX {
+        return Err(ServiceError::InvalidInput(format!(
+            "A radio plan can leave out at most {RADIO_EXCLUDE_MAX} recordings"
+        )));
     }
     if !matches!(body.mode.as_str(), "library" | "hybrid") {
         return Err(ServiceError::InvalidInput(format!(
@@ -718,6 +736,16 @@ pub async fn create_batch(
     if body.items.len() > BATCH_MAX_ITEMS {
         return Err(ServiceError::InvalidInput(format!(
             "A discovery batch is capped at {BATCH_MAX_ITEMS} albums"
+        )));
+    }
+    if body.name.chars().count() > BATCH_NAME_MAX {
+        return Err(ServiceError::InvalidInput(format!(
+            "A batch name is at most {BATCH_NAME_MAX} characters"
+        )));
+    }
+    if body.source_section.chars().count() > BATCH_SECTION_MAX {
+        return Err(ServiceError::InvalidInput(format!(
+            "source_section is at most {BATCH_SECTION_MAX} characters"
         )));
     }
     deps.batches

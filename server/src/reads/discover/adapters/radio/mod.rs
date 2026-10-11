@@ -25,7 +25,12 @@ pub mod plan;
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
 use futures_util::future::join_all;
+use futures_util::stream::{self, StreamExt};
 
 use super::page::build::daily_shuffler;
 use super::page::library::{LibraryReads, fold};
@@ -49,7 +54,7 @@ use crate::reads::catalog::models::DiscoverySource;
 use crate::reads::discover::models::{
     ChartSection, ChartSource, PlaylistProfile, PlaylistSuggestionsRequest,
     PlaylistSuggestionsResponse, QueueItemLight, RadioPlanRequest, RadioPlanResponse,
-    RadioPlanTrack, RadioRequest, SectionItem,
+    RadioPlanTrack, RadioRequest, RadioSeedItem, SectionItem,
 };
 use crate::reads::discover::ports::{BoxFuture, ProviderFailure, RadioFailure, RadioPlanner};
 use library::RadioLibrary;
@@ -57,6 +62,13 @@ use plan::{LIBRARY_POOL, MAX_SEED_ARTISTS, TRACKS_PER_ARTIST, clean_pool, mix, s
 
 /// Title of a plan built from a shelf of items.
 const SHELF_TITLE: &str = "Radio: This Shelf";
+/// Provider lookups one plan runs at once.
+const LOOKUP_CONCURRENCY: usize = 6;
+/// How long an artist's top tracks or an album's samples are reused.
+const LOOKUP_TTL: Duration = Duration::from_secs(3600);
+/// Entries the lookup cache holds before it starts over.
+const LOOKUP_CACHE_MAX: usize = 2000;
+
 /// Title of the playlist suggestions shelf.
 const SUGGESTIONS_TITLE: &str = "Suggestions for your playlist";
 
@@ -86,6 +98,33 @@ pub struct LiveRadio {
     tracks: RadioLibrary,
     catalog: Catalog,
     previews: ReqwestGet,
+    lookups: LookupCache,
+}
+
+/// Recent provider answers for plans (top tracks, album samples), so a
+/// station started again soon does not repeat every lookup.
+#[derive(Default)]
+struct LookupCache {
+    entries: Mutex<HashMap<String, (Instant, Vec<RadioPlanTrack>)>>,
+}
+
+impl LookupCache {
+    fn get(&self, key: &str) -> Option<Vec<RadioPlanTrack>> {
+        let entries = self.entries.lock().ok()?;
+        entries
+            .get(key)
+            .filter(|(at, _)| at.elapsed() < LOOKUP_TTL)
+            .map(|(_, tracks)| tracks.clone())
+    }
+
+    fn put(&self, key: String, tracks: &[RadioPlanTrack]) {
+        if let Ok(mut entries) = self.entries.lock() {
+            if entries.len() >= LOOKUP_CACHE_MAX {
+                entries.clear();
+            }
+            entries.insert(key, (Instant::now(), tracks.to_vec()));
+        }
+    }
 }
 
 fn source_label(source: MusicSource) -> &'static str {
@@ -184,6 +223,7 @@ impl LiveRadio {
             pool: inputs.pool,
             catalog: inputs.catalog,
             previews: inputs.previews,
+            lookups: LookupCache::default(),
         }
     }
 
@@ -511,6 +551,21 @@ impl LiveRadio {
     /// One artist's popular tracks: ListenBrainz, then Last.fm (both
     /// through the catalog), then Deezer by name.
     async fn top_tracks(&self, user_id: &str, mbid: &str, name: &str) -> Vec<RadioPlanTrack> {
+        let key = format!("top:{mbid}|{}", name.to_lowercase());
+        if let Some(found) = self.lookups.get(&key) {
+            return found;
+        }
+        let found = timed("radio top tracks", async {
+            Ok(self.fetch_top_tracks(user_id, mbid, name).await)
+        })
+        .await;
+        if !found.is_empty() {
+            self.lookups.put(key, &found);
+        }
+        found
+    }
+
+    async fn fetch_top_tracks(&self, user_id: &str, mbid: &str, name: &str) -> Vec<RadioPlanTrack> {
         let track = |title: String, artist: String, recording: Option<String>| RadioPlanTrack {
             track_name: title,
             artist_name: if artist.is_empty() {
@@ -595,15 +650,17 @@ impl LiveRadio {
                 Vec::new()
             });
         let external = if hybrid {
-            join_all(
-                seeds
-                    .iter()
-                    .map(|(mbid, name)| self.top_tracks(user_id, mbid, name)),
-            )
-            .await
-            .into_iter()
-            .flatten()
-            .collect()
+            let lookups: Vec<_> = seeds
+                .iter()
+                .map(|(mbid, name)| self.top_tracks(user_id, mbid, name))
+                .collect();
+            stream::iter(lookups)
+                .buffered(LOOKUP_CONCURRENCY)
+                .collect::<Vec<_>>()
+                .await
+                .into_iter()
+                .flatten()
+                .collect()
         } else {
             Vec::new()
         };
@@ -661,35 +718,16 @@ impl LiveRadio {
                     && !item.album_name.is_empty()
             })
             .collect();
-        let client = PreviewClient::new(&self.previews);
-        let samples = join_all(missing.iter().map(|(_, item)| {
-            client.get_album_preview_tracks(&item.artist_name, &item.album_name, per_album)
-        }))
-        .await;
-        for ((album, item), (found, _)) in missing.into_iter().zip(samples) {
-            let artist_mbid = normalize(Some(&item.artist_mbid)).unwrap_or_default();
-            by_album.insert(
-                album.clone(),
-                found
-                    .into_iter()
-                    .map(|sample| RadioPlanTrack {
-                        track_name: sample.title,
-                        artist_name: if sample.artist_name.is_empty() {
-                            item.artist_name.clone()
-                        } else {
-                            sample.artist_name
-                        },
-                        artist_mbid: artist_mbid.clone(),
-                        recording_mbid: None,
-                        album_mbid: Some(album.clone()),
-                        album_name: Some(item.album_name.clone()),
-                        in_library: false,
-                        local_file_id: None,
-                        file_format: None,
-                        duration_s: None,
-                    })
-                    .collect(),
-            );
+        let lookups: Vec<_> = missing
+            .iter()
+            .map(|(album, item)| self.album_samples(album, item, per_album))
+            .collect();
+        let samples: Vec<Vec<RadioPlanTrack>> = stream::iter(lookups)
+            .buffered(LOOKUP_CONCURRENCY)
+            .collect()
+            .await;
+        for ((album, _), found) in missing.into_iter().zip(samples) {
+            by_album.insert(album.clone(), found);
         }
         let mut seen = HashSet::new();
         let mut tracks = Vec::new();
@@ -707,6 +745,52 @@ impl LiveRadio {
             title: SHELF_TITLE.to_owned(),
             tracks,
         })
+    }
+
+    /// The first few songs of an album the library lacks, from the
+    /// keyless preview services, cached and under the read timeout.
+    async fn album_samples(
+        &self,
+        album: &str,
+        item: &RadioSeedItem,
+        per_album: usize,
+    ) -> Vec<RadioPlanTrack> {
+        let key = format!("samples:{album}|{per_album}");
+        if let Some(found) = self.lookups.get(&key) {
+            return found;
+        }
+        let client = PreviewClient::new(&self.previews);
+        let found = timed("radio album samples", async {
+            Ok(client
+                .get_album_preview_tracks(&item.artist_name, &item.album_name, per_album)
+                .await
+                .0)
+        })
+        .await;
+        let artist_mbid = normalize(Some(&item.artist_mbid)).unwrap_or_default();
+        let tracks: Vec<RadioPlanTrack> = found
+            .into_iter()
+            .map(|sample| RadioPlanTrack {
+                track_name: sample.title,
+                artist_name: if sample.artist_name.is_empty() {
+                    item.artist_name.clone()
+                } else {
+                    sample.artist_name
+                },
+                artist_mbid: artist_mbid.clone(),
+                recording_mbid: None,
+                album_mbid: Some(album.to_owned()),
+                album_name: Some(item.album_name.clone()),
+                in_library: false,
+                local_file_id: None,
+                file_format: None,
+                duration_s: None,
+            })
+            .collect();
+        if !tracks.is_empty() {
+            self.lookups.put(key, &tracks);
+        }
+        tracks
     }
 
     async fn suggestions(
