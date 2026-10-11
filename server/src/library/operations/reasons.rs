@@ -146,6 +146,11 @@ pub const EDITION_FITS_NO_FILE: Reason = reason(
     "None of this album's files match a track on that edition, so it is probably another album.",
     "Pick an edition that holds these songs, or search MusicBrainz for the right album.",
 );
+pub const NO_EDITION_TO_PLAN: Reason = reason(
+    "NO_EDITION_TO_PLAN",
+    "This album has no edition yet, so there is nothing to compare its files with.",
+    "Pick an edition from the list first.",
+);
 pub const NO_EDITION_CHOICE: Reason = reason(
     "NO_EDITION_CHOICE",
     "There is no edition choice on this album to take back.",

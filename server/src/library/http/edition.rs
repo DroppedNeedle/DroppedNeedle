@@ -5,6 +5,8 @@
 //! - `DELETE /library/albums/{id}/edition`: "Let DroppedNeedle choose".
 //! - `POST /library/albums/{id}/edition/confirm`: "Looks right".
 //! - `POST /library/albums/{id}/edition/undo`: take back the last change.
+//! - `GET /library/albums/{id}/edition/plan`: what taking an edition would
+//!   do to the files (kept, duplicate, extra) and which tracks are missing.
 //! - `GET /library/unconfirmed`: albums whose match waits for a look.
 //!
 //! Changing an edition is for curators (admins and trusted users), as
@@ -24,6 +26,7 @@ use super::models::PenaltyView;
 use super::operations::{OperationsHttpError, ReasonView, blocking};
 use crate::library::identify::models::CandidateEvidence;
 use crate::library::operations::models::{EditionChoice, OperationError};
+use crate::library::operations::plan::{EditionPlan, FileFate};
 use crate::library::operations::reasons;
 use crate::library::operations::service::Operations;
 use crate::library::operations::status::{self, EditionStatus, WaitingAlbum};
@@ -49,6 +52,7 @@ pub fn edition_router() -> Router<LibrarySetup> {
             "/library/albums/{album_id}/edition/undo",
             post(undo_edition),
         )
+        .route("/library/albums/{album_id}/edition/plan", get(plan_edition))
         .route("/library/unconfirmed", get(list_unconfirmed))
 }
 
@@ -158,6 +162,104 @@ pub struct EditionChoiceView {
     pub missing_titles: Vec<String>,
     /// The album's edition as it now stands.
     pub status: EditionStatusView,
+}
+
+/// Which edition to plan.
+#[derive(Debug, Clone, Deserialize, IntoParams)]
+pub struct EditionPlanQuery {
+    /// Any MusicBrainz release; the album's current edition when absent.
+    pub release_mbid: Option<String>,
+}
+
+/// One track of the planned edition.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct EditionPlanTrackView {
+    pub disc_number: u32,
+    pub position: u32,
+    pub title: String,
+    pub recording_mbid: String,
+    pub release_track_mbid: String,
+    pub length_ms: Option<u64>,
+    /// The file that holds this track; absent when the track is missing.
+    pub local_track_id: Option<String>,
+}
+
+/// One of the album's files and what the edition makes of it.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct EditionPlanFileView {
+    pub local_track_id: String,
+    pub title: String,
+    pub disc_number: u32,
+    pub track_number: u32,
+    /// `keep` (sits on its own edition track), `duplicate` (another copy
+    /// of a song the edition already has a file for) or `extra` (the
+    /// edition has no track for it). Choosing never deletes a file.
+    pub fate: String,
+    /// The edition track the file keeps or duplicates.
+    pub edition_disc_number: Option<u32>,
+    pub edition_position: Option<u32>,
+}
+
+/// What taking an edition would do to the album, before anything changes.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct EditionPlanView {
+    pub album_id: String,
+    pub release_group_mbid: String,
+    pub release_mbid: String,
+    pub title: String,
+    pub artist_name: String,
+    /// The edition is already the album's edition.
+    pub is_current: bool,
+    pub kept_count: usize,
+    pub missing_count: usize,
+    pub duplicate_count: usize,
+    pub extra_count: usize,
+    pub tracks: Vec<EditionPlanTrackView>,
+    pub files: Vec<EditionPlanFileView>,
+}
+
+impl From<EditionPlan> for EditionPlanView {
+    fn from(plan: EditionPlan) -> Self {
+        let count = |fate: FileFate| plan.files.iter().filter(|file| file.fate == fate).count();
+        Self {
+            kept_count: count(FileFate::Keep),
+            missing_count: plan.missing().count(),
+            duplicate_count: count(FileFate::Duplicate),
+            extra_count: count(FileFate::Extra),
+            album_id: plan.local_album_id,
+            release_group_mbid: plan.release_group_mbid,
+            release_mbid: plan.release_mbid,
+            title: plan.title,
+            artist_name: plan.artist_name,
+            is_current: plan.is_current,
+            tracks: plan
+                .tracks
+                .into_iter()
+                .map(|track| EditionPlanTrackView {
+                    disc_number: track.disc,
+                    position: track.position,
+                    title: track.title,
+                    recording_mbid: track.recording_mbid,
+                    release_track_mbid: track.release_track_mbid,
+                    length_ms: track.length_ms,
+                    local_track_id: track.local_track_id,
+                })
+                .collect(),
+            files: plan
+                .files
+                .into_iter()
+                .map(|file| EditionPlanFileView {
+                    local_track_id: file.local_track_id,
+                    title: file.title,
+                    disc_number: file.disc,
+                    track_number: file.track,
+                    fate: file.fate.as_str().to_owned(),
+                    edition_disc_number: file.edition_track.map(|(disc, _)| disc),
+                    edition_position: file.edition_track.map(|(_, position)| position),
+                })
+                .collect(),
+        }
+    }
 }
 
 /// Paging for the unconfirmed list.
@@ -358,6 +460,34 @@ pub async fn undo_edition(
     let (album, user) = (album_id.clone(), caller.0.user_id);
     blocking(move || ops.undo_edition_choice(&album, &user)).await?;
     Ok(Json(status_of(&state, &album_id).await?))
+}
+
+/// What taking an edition would do: which files keep their place, which
+/// are second copies or extras, and which edition tracks are missing.
+/// Asks MusicBrainz for the release; changes nothing.
+#[utoipa::path(
+    get,
+    path = "/api/v3/library/albums/{album_id}/edition/plan",
+    params(("album_id" = String, Path, description = "Local album id"), EditionPlanQuery),
+    responses(
+        (status = 200, description = "The plan", body = EditionPlanView),
+        (status = 400, description = "Bad release id, or the album has no edition to plan"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Curator role required"),
+        (status = 404, description = "Unknown album, or MusicBrainz does not know the release"),
+        (status = 503, description = "MusicBrainz is not answering"),
+    )
+)]
+pub async fn plan_edition(
+    State(state): State<LibrarySetup>,
+    _caller: RequireCurator,
+    Path(album_id): Path<String>,
+    ValidQuery(query): ValidQuery<EditionPlanQuery>,
+) -> Result<Json<EditionPlanView>, OperationsHttpError> {
+    let plan = Operations::new(&state)
+        .edition_plan(&album_id, query.release_mbid.as_deref())
+        .await?;
+    Ok(Json(plan.into()))
 }
 
 /// Albums whose match is a best guess waiting for a look (or, with

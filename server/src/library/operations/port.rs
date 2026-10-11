@@ -8,6 +8,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 use super::models::{EditionChoice, OperationError};
+use super::plan::EditionPlan;
 use super::service::Operations;
 
 /// Boxed future for dyn-compatible methods.
@@ -74,6 +75,34 @@ impl EditionChoices for Operations {
             tokio::task::spawn_blocking(move || ops.hand_back_edition(&album, &user))
                 .await
                 .map_err(|error| OperationError::Store(error.to_string()))?
+        })
+    }
+}
+
+/// The plan for an album's chosen edition, looked up by release group:
+/// the seam "get missing tracks" uses to fetch only what the edition
+/// lacks. Acquisition is built after the library, so wiring plugs the
+/// library's [`Operations`] in once both exist.
+pub trait EditionPlans: Send + Sync {
+    /// The plan for the library's copy of the release group (a chosen
+    /// copy first, then the oldest), or `None` when the library holds no
+    /// copy with an edition.
+    fn group_plan<'a>(
+        &'a self,
+        release_group_mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<EditionPlan>, OperationError>>;
+}
+
+impl EditionPlans for Operations {
+    fn group_plan<'a>(
+        &'a self,
+        release_group_mbid: &'a str,
+    ) -> BoxFuture<'a, Result<Option<EditionPlan>, OperationError>> {
+        Box::pin(async move {
+            let Some(album_id) = self.album_for_group(release_group_mbid).await? else {
+                return Ok(None);
+            };
+            self.edition_plan(&album_id, None).await.map(Some)
         })
     }
 }

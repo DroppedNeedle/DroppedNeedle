@@ -8,12 +8,14 @@
 
 use std::sync::Arc;
 
-use rusqlite::{Connection, Transaction, TransactionBehavior};
+use rusqlite::{Connection, OptionalExtension as _, Transaction, TransactionBehavior};
 
+use super::decisions::indexed_track_ids;
 use super::models::{
     CandidateChoice, Control, EditionChoice, OperationDetail, OperationError, OperationJob,
     ReidentificationCandidate, ReidentifyInput, ReleaseSearch, UndoOutcome,
 };
+use super::plan::{self, EditionPlan};
 use super::reasons;
 use super::reidentify::{MAX_ATTEMPTS, RETRY_SECS, evaluation, unavailable};
 use super::store::{self, NewReidentification};
@@ -21,10 +23,13 @@ use super::{choice, decisions};
 use crate::ids::IdGenerator;
 use crate::library::clock::now_unix;
 use crate::library::identify::models::IdentifyKind;
+use crate::library::identify::models::LocalAlbumFacts;
 use crate::library::identify::service::IdentifyService;
 use crate::library::identify::sources::EditionQuery;
 use crate::library::identify::sqlite::SqliteIdentifyStore;
+use crate::library::identify::sqlite::album_identity_row;
 use crate::library::identify::stores::{FactsSource as _, IdentityStore as _};
+use crate::library::matching::model::Release;
 use crate::library::wiring::{LibrarySetup, ScanCoordinator};
 
 /// Largest edition-finder page, as in v2.
@@ -190,6 +195,16 @@ impl Operations {
         album_id: &str,
         release_mbid: &str,
     ) -> Result<ReidentificationCandidate, OperationError> {
+        Ok(self.scored(album_id, release_mbid).await?.2)
+    }
+
+    /// The album's files, the release as MusicBrainz lists it, and the
+    /// release scored against the files as a candidate.
+    async fn scored(
+        &self,
+        album_id: &str,
+        release_mbid: &str,
+    ) -> Result<(LocalAlbumFacts, Release, ReidentificationCandidate), OperationError> {
         let facts = {
             let store = self.store.clone();
             let album = album_id.to_owned();
@@ -211,11 +226,90 @@ impl Operations {
             return Err(OperationError::NotFound(reasons::EDITION_NOT_FOUND));
         }
         let ranking = self.identify.rank(&facts, &recall);
-        evaluation(&facts, &recall, &ranking, true)
+        let candidate = evaluation(&facts, &recall, &ranking, true)
             .candidates
             .into_iter()
             .next()
-            .ok_or(OperationError::NotFound(reasons::EDITION_NOT_FOUND))
+            .ok_or(OperationError::NotFound(reasons::EDITION_NOT_FOUND))?;
+        let scored = candidate
+            .evidence
+            .release_mbid
+            .clone()
+            .unwrap_or_else(|| release_mbid.to_owned());
+        let release = recall
+            .releases
+            .into_iter()
+            .find(|release| release.answers_to(&scored))
+            .ok_or(OperationError::NotFound(reasons::EDITION_NOT_FOUND))?;
+        Ok((facts, release, candidate))
+    }
+
+    /// The library's copy of a release group that has an edition: a copy a
+    /// person chose first, then the oldest, as acquisition picks it.
+    pub async fn album_for_group(
+        &self,
+        release_group_mbid: &str,
+    ) -> Result<Option<String>, OperationError> {
+        let (ops, group) = (self.clone(), release_group_mbid.trim().to_ascii_lowercase());
+        tokio::task::spawn_blocking(move || {
+            ops.read_with(|conn| {
+                conn.query_row(
+                    "SELECT e.local_album_id FROM local_album_external_identities e \
+                     JOIN local_albums b ON b.id = e.local_album_id \
+                     WHERE b.retired_into_album_id IS NULL AND e.provider = ?2 \
+                       AND lower(e.release_group_mbid) = ?1 AND e.release_mbid IS NOT NULL \
+                     ORDER BY e.decision_source <> 'manual', b.created_at LIMIT 1",
+                    rusqlite::params![group, store::PROVIDER],
+                    |row| row.get(0),
+                )
+                .optional()
+            })
+        })
+        .await
+        .map_err(|error| OperationError::Store(error.to_string()))?
+    }
+
+    /// What converting the album to `release_mbid` would do: which files
+    /// keep their place, which edition tracks are missing, and which files
+    /// the edition has no room for. With no release, the album's current
+    /// edition is planned. Nothing changes.
+    pub async fn edition_plan(
+        &self,
+        album_id: &str,
+        raw_release: Option<&str>,
+    ) -> Result<EditionPlan, OperationError> {
+        let (current, indexed) = {
+            let ops = self.clone();
+            let album = album_id.to_owned();
+            tokio::task::spawn_blocking(move || {
+                ops.read(|conn| {
+                    let identity = album_identity_row(conn, &album)?;
+                    Ok((
+                        identity.and_then(|row| row.release_mbid),
+                        indexed_track_ids(conn, &album)?,
+                    ))
+                })
+            })
+            .await
+            .map_err(|error| OperationError::Store(error.to_string()))??
+        };
+        if indexed.is_empty() {
+            return Err(OperationError::NotFound(reasons::ALBUM_NOT_FOUND));
+        }
+        let release = match raw_release {
+            Some(raw) => parse_release(raw)?,
+            None => current
+                .clone()
+                .ok_or(OperationError::Invalid(reasons::NO_EDITION_TO_PLAN))?,
+        };
+        let (facts, release, candidate) = self.scored(album_id, &release).await?;
+        Ok(plan::build(
+            &facts,
+            &release,
+            &candidate,
+            &indexed,
+            current.as_deref(),
+        ))
     }
 
     /// "Let DroppedNeedle choose": hand the album's edition back to

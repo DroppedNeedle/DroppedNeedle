@@ -119,18 +119,19 @@ fn keep_undo(
 }
 
 /// One file placed on a track of the chosen edition.
-struct Placement {
-    local_track_id: String,
-    recording_mbid: String,
-    release_track_mbid: String,
-    disc: u32,
-    position: u32,
+pub(super) struct Placement {
+    pub(super) local_track_id: String,
+    pub(super) recording_mbid: String,
+    pub(super) release_track_mbid: String,
+    pub(super) disc: u32,
+    pub(super) position: u32,
 }
 
 /// Place each indexed file on its own track of the candidate's release
 /// where the evidence supports it. Returns the placements and the files
-/// left over. Two files never share one release track.
-fn place(
+/// left over. Two files never share one release track. The edition plan
+/// uses the same placement, so its preview is what a choice would write.
+pub(super) fn place(
     indexed: &[String],
     candidate: &ReidentificationCandidate,
 ) -> (Vec<Placement>, Vec<String>) {

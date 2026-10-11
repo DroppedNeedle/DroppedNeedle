@@ -2675,6 +2675,54 @@ async fn library_journey_choose_edition() {
     assert_eq!(body["state"], json!("confirmed"), "{body}");
     assert_eq!(body["release_mbid"], json!(fit.id));
 
+    // The plan for the current edition: both files keep their place.
+    let (status, body) = call(
+        lib.router(),
+        "GET",
+        &format!("{edition}/plan"),
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["is_current"], json!(true));
+    assert_eq!(
+        (
+            &body["kept_count"],
+            &body["missing_count"],
+            &body["extra_count"]
+        ),
+        (&json!(2), &json!(0), &json!(0)),
+        "{body}"
+    );
+    // The plan for the smaller edition, before choosing it: one file
+    // keeps its place, the other becomes an extra, nothing changes yet.
+    let (status, body) = call(
+        lib.router(),
+        "GET",
+        &format!("{edition}/plan?release_mbid={OTHER}"),
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["is_current"], json!(false));
+    assert_eq!(
+        (
+            &body["kept_count"],
+            &body["missing_count"],
+            &body["extra_count"]
+        ),
+        (&json!(1), &json!(0), &json!(1)),
+        "{body}"
+    );
+    let unchanged = lib
+        .library
+        .identify_store
+        .album_identity(&album)
+        .expect("row");
+    assert_eq!(unchanged.release_mbid.as_deref(), Some(fit.id.as_str()));
+
     // Choose the smaller edition: one file placed, one kept as an extra.
     let (status, body) = call(
         lib.router(),

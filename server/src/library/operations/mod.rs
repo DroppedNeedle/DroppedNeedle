@@ -17,6 +17,7 @@ pub mod choice;
 pub mod control;
 pub mod decisions;
 pub mod models;
+pub mod plan;
 pub mod port;
 pub mod reasons;
 pub mod reidentify;
