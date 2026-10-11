@@ -40,10 +40,11 @@ export function toV1Album(row: SearchResultItemV3): Album {
 }
 
 /**
- * One row per MusicBrainz id. Album grids and the typeahead are keyed on
- * `musicbrainz_id`, and the search join can return the same release group
- * twice (a MusicBrainz row and the library copy). The first position wins;
- * the row with a library id is kept, so it can link to the copy.
+ * One row per MusicBrainz id across pages. The server sends one row per
+ * release group within a response, but MusicBrainz paging can shift between
+ * requests, so a grid built from several pages can see a release group
+ * twice. The first position wins; the row with a library id is kept, so it
+ * can link to the copy.
  */
 export function dedupeByMbid<T extends { musicbrainz_id: string; local_id?: string | null }>(
 	rows: T[]
@@ -69,7 +70,7 @@ export function dedupeByMbid<T extends { musicbrainz_id: string; local_id?: stri
  * out rather than offered under a local id.
  */
 export function toMusicBrainzAlbums(rows: SearchResultItemV3[]): Album[] {
-	return dedupeByMbid(rows.filter((row) => !!row.musicbrainz_id).map(toV1Album));
+	return rows.filter((row) => !!row.musicbrainz_id).map(toV1Album);
 }
 
 // The v3 contract mirrors the v1 status values exactly, so statuses pass
@@ -99,6 +100,5 @@ export function toSuggestResultsV1(rows: SuggestResultV3[]): SuggestResult[] {
 			local_id: row.id ?? null
 		});
 	}
-	// the dropdown is keyed on musicbrainz_id
-	return dedupeByMbid(out);
+	return out;
 }

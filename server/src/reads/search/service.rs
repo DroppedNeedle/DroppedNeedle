@@ -253,8 +253,12 @@ impl SearchService {
             .is_some_and(|bucket| matches!(bucket.state, RemoteState::Ok | RemoteState::Stale));
         if !answered {
             let local = match bucket {
-                Bucket::Artists => self.search_artists_page(folded, limit, offset).await?,
-                Bucket::Albums => self.search_albums_page(folded, limit, offset).await?,
+                Bucket::Artists => {
+                    one_per_mbid(self.search_artists_page(folded, limit, offset).await?)
+                }
+                Bucket::Albums => {
+                    one_per_mbid(self.search_albums_page(folded, limit, offset).await?)
+                }
                 Bucket::Tracks => self.search_tracks(folded, limit, offset).await?,
             };
             return Ok((local, status));
@@ -784,42 +788,63 @@ fn remote_item(hit: RemoteHit) -> SearchResultItem {
 }
 
 /// Give each MusicBrainz hit the id of its library copy, when one exists.
-/// Returns which library rows were claimed.
+/// Returns which library rows were claimed: every copy of a release group
+/// that has a MusicBrainz hit is claimed, not just the first, so a library
+/// holding two editions of one album never adds a second row for it.
 fn attach_local(remote: &mut [SearchResultItem], local: &[SearchResultItem]) -> Vec<bool> {
     let mut claimed = vec![false; local.len()];
     for hit in remote.iter_mut() {
         let Some(mbid) = hit.musicbrainz_id.as_deref() else {
             continue;
         };
-        if let Some(index) = local.iter().position(|row| {
-            row.musicbrainz_id
+        for (index, row) in local.iter().enumerate() {
+            let same = row
+                .musicbrainz_id
                 .as_deref()
-                .is_some_and(|id| id.eq_ignore_ascii_case(mbid))
-        }) {
-            hit.id = local[index].id.clone();
-            hit.in_library = true;
+                .is_some_and(|id| id.eq_ignore_ascii_case(mbid));
+            if !same {
+                continue;
+            }
+            if !hit.in_library {
+                hit.id = row.id.clone();
+                hit.in_library = true;
+            }
             claimed[index] = true;
         }
     }
     claimed
 }
 
+/// Keep the first library row per MusicBrainz id. Two copies of one
+/// release group (two editions on disk) read as one search hit; rows
+/// without a MusicBrainz id are all kept.
+fn one_per_mbid(rows: impl IntoIterator<Item = SearchResultItem>) -> Vec<SearchResultItem> {
+    let mut seen = std::collections::HashSet::new();
+    rows.into_iter()
+        .filter(|row| match row.musicbrainz_id.as_deref() {
+            Some(mbid) => seen.insert(mbid.to_ascii_lowercase()),
+            None => true,
+        })
+        .collect()
+}
+
 /// Join MusicBrainz hits with library hits: library copies attach to their
-/// MusicBrainz hit, the rest of the library hits join the list, and the
-/// whole bucket ranks by score (MusicBrainz first on ties) up to `limit`.
+/// MusicBrainz hit, the rest of the library hits join the list (one per
+/// release group), and the whole bucket ranks by score (MusicBrainz first
+/// on ties) up to `limit`.
 fn merge(
     local: Vec<SearchResultItem>,
     mut remote: Vec<SearchResultItem>,
     limit: u32,
 ) -> Vec<SearchResultItem> {
     let claimed = attach_local(&mut remote, &local);
-    remote.extend(
+    remote.extend(one_per_mbid(
         local
             .into_iter()
             .zip(claimed)
             .filter(|(_, claimed)| !claimed)
             .map(|(row, _)| row),
-    );
+    ));
     remote.sort_by(|left, right| right.score.cmp(&left.score));
     remote.truncate(limit as usize);
     remote
@@ -849,5 +874,51 @@ fn worst_status(left: SearchRemoteStatus, right: SearchRemoteStatus) -> SearchRe
         right
     } else {
         left
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn album(id: Option<&str>, mbid: Option<&str>, score: i32) -> SearchResultItem {
+        SearchResultItem {
+            kind: SearchKind::Album,
+            id: id.map(str::to_owned),
+            title: "Visions".to_owned(),
+            artist: None,
+            year: None,
+            musicbrainz_id: mbid.map(str::to_owned),
+            in_library: id.is_some(),
+            requested: false,
+            score,
+            disambiguation: None,
+            type_info: None,
+        }
+    }
+
+    #[test]
+    fn merge_emits_one_row_per_release_group() {
+        let local = vec![
+            album(Some("copy-1"), Some("rg-1"), 100),
+            album(Some("copy-2"), Some("RG-1"), 100),
+            album(Some("other-1"), Some("rg-2"), 90),
+            album(Some("other-2"), Some("rg-2"), 90),
+            album(Some("loose"), None, 70),
+        ];
+        let remote = vec![album(None, Some("RG-1"), 95)];
+        let merged = merge(local, remote, 10);
+        let ids: Vec<_> = merged
+            .iter()
+            .map(|row| (row.id.as_deref(), row.musicbrainz_id.as_deref()))
+            .collect();
+        assert_eq!(
+            ids,
+            vec![
+                (Some("copy-1"), Some("RG-1")),
+                (Some("other-1"), Some("rg-2")),
+                (Some("loose"), None),
+            ]
+        );
     }
 }

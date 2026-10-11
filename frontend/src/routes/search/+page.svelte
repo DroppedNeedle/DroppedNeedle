@@ -20,7 +20,6 @@
 	} from '$lib/queries/search/SearchV3Queries.svelte';
 	import { SearchEnrichCollector } from '$lib/queries/search/SearchV3Enrichment.svelte';
 	import {
-		dedupeByMbid,
 		toSearchRemoteStatus,
 		toV1Album,
 		toV1Artist
@@ -58,7 +57,7 @@
 		})()
 	);
 	let baseArtists = $derived(remoteArtists.map(toV1Artist));
-	let baseAlbums = $derived(dedupeByMbid((searchQuery.data?.albums ?? []).map(toV1Album)));
+	let baseAlbums = $derived((searchQuery.data?.albums ?? []).map(toV1Album));
 	let artists = $derived(enrichment ? applyArtistEnrichment(baseArtists, enrichment) : baseArtists);
 	let albums = $derived(enrichment ? applyAlbumEnrichment(baseAlbums, enrichment) : baseAlbums);
 	let topArtist = $derived.by(() => {
