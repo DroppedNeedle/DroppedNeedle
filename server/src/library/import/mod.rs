@@ -405,6 +405,9 @@ impl LibrarySetup {
             .iter()
             .map(|item| root.path.join(&item.dest_rel))
             .collect();
+        // Automatic management runs the folder's profile on it once the
+        // catalog settles, when the folder asks for that.
+        self.queue_automatic_management(&album_id);
         Ok(ImportedAlbum {
             bundle_id: bundle.id.clone(),
             album_id,

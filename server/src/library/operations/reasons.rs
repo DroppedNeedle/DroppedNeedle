@@ -289,6 +289,11 @@ pub fn terminal(code: &str) -> Reason {
             "This run stopped on an unexpected problem.",
             "Make a new preview. If it happens again, the server log has the details.",
         ),
+        "DUPLICATE_KEPT" => reason(
+            "DUPLICATE_KEPT",
+            "Both files were kept where they are; nothing was written.",
+            "Nothing to do; the clash stays settled until you make a new preview.",
+        ),
         "DISCARDED" => reason(
             "DISCARDED",
             "This preview was discarded; no file was changed.",

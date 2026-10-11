@@ -13,7 +13,7 @@ use rusqlite::{Connection, OptionalExtension as _, params};
 
 use super::models::{
     DesiredDocument, DesiredField, Eligibility, ItemDiff, ItemFacts, ManagementError,
-    PinnedProfile, PlannedItem, SidecarMove,
+    PinnedProfile, PlannedItem, SidecarMove, TagEditField, TagEditIntent, TagEditMode,
 };
 use super::profile::{self, CompiledScripts, NamingFacts};
 use super::reasons::{self, ItemReason};
@@ -142,6 +142,48 @@ pub struct PlanContext<'a> {
     pub registry: &'a RootRegistry,
     pub target_root: Option<&'a str>,
     pub manage_unconfirmed: bool,
+    /// A manual tag edit the preview carries.
+    pub tag_edit: Option<&'a TagEditIntent>,
+}
+
+/// A file's overrides with a pending tag edit on top: a reset drops the
+/// saved override so the edition's value comes back, and a written value
+/// counts as an override for this run. The revision stays the saved one,
+/// so apply still refuses when someone changed the overrides meanwhile.
+pub fn with_tag_edit(saved: Overrides, edit: &TagEditIntent, track_id: &str) -> Overrides {
+    let active: Vec<&TagEditField> = edit
+        .fields
+        .iter()
+        .filter(|field| field.subject_kind == "album" || edit.local_track_id == track_id)
+        .collect();
+    if active.is_empty() {
+        return saved;
+    }
+    let names: HashSet<&str> = active
+        .iter()
+        .map(|field| field.field_name.as_str())
+        .collect();
+    let mut fields: Vec<(TagField, String, Vec<String>)> = saved
+        .fields
+        .into_iter()
+        .filter(|(field, _, _)| !names.contains(field.name()))
+        .collect();
+    if edit.mode != TagEditMode::ResetCanonical {
+        for field in active {
+            if let Some(tag) = profile::tag_field(&field.field_name) {
+                let mode = if field.values.is_empty() {
+                    "clear"
+                } else {
+                    "replace"
+                };
+                fields.push((tag, mode.to_owned(), field.values.clone()));
+            }
+        }
+    }
+    Overrides {
+        fields,
+        revision: saved.revision,
+    }
 }
 
 /// What an album's own state says before any file is read.
@@ -764,10 +806,13 @@ pub fn plan_album(
             ),
         };
     for (item, track) in items.iter_mut().zip(tracks) {
-        let overrides = ctx
+        let mut overrides = ctx
             .setup
             .identify_store
             .with_connection(|conn| overrides(conn, &scope.album_id, &track.id))?;
+        if let Some(edit) = ctx.tag_edit {
+            overrides = with_tag_edit(overrides, edit, &track.id);
+        }
         if let Err(reason) = plan_file(
             ctx,
             item,
@@ -815,6 +860,51 @@ pub fn plan_album(
         }
     }
     Ok(items)
+}
+
+/// Plan one file of an album on its own, without the album-wide checks
+/// (sidecars, collisions, disk space): what it would get if nothing else
+/// stood in its way. Duplicate resolution starts from this.
+pub fn plan_one(
+    ctx: &PlanContext<'_>,
+    scope: &AlbumScope,
+    track: &CatalogTrack,
+    ordinal: i64,
+) -> Result<PlannedItem, ManagementError> {
+    let mut item = base_item(track, scope, ordinal, 0);
+    match album_state(ctx, &scope.album_id)? {
+        AlbumState::Blocked(reason) => item.block(reason),
+        AlbumState::Ready {
+            release,
+            release_mbid,
+            release_group_mbid,
+            album_identity_revision,
+        } => {
+            let overrides = ctx
+                .setup
+                .identify_store
+                .with_connection(|conn| overrides(conn, &scope.album_id, &track.id))?;
+            if let Err(reason) = plan_file(
+                ctx,
+                &mut item,
+                track,
+                &release,
+                &release_mbid,
+                &release_group_mbid,
+                album_identity_revision,
+                &overrides,
+            ) {
+                item.block(reason);
+            }
+        }
+    }
+    Ok(item)
+}
+
+/// Block a planned file whose destination is taken, as album planning
+/// does. Used when a single file gets a new destination.
+pub fn check_destination(ctx: &PlanContext<'_>, item: &mut PlannedItem) {
+    check_collisions(ctx, std::slice::from_mut(item));
 }
 
 /// Group a bundle's writable plans back into what apply publishes.

@@ -38,6 +38,67 @@ pub fn pin(
         overrides: overrides.clone(),
         ..LibraryManagementRootAssignment::default()
     };
+    let mut pinned = pin_assignment(stored, &assignment)?;
+    pinned.overrides = overrides;
+    Ok(pinned)
+}
+
+/// The assignment a library folder has, or the default profile when it
+/// has none.
+pub fn root_assignment(
+    stored: &LibraryManagement,
+    root_id: &str,
+) -> LibraryManagementRootAssignment {
+    stored
+        .root_assignments
+        .iter()
+        .find(|assignment| assignment.root_id == root_id)
+        .cloned()
+        .unwrap_or_else(|| LibraryManagementRootAssignment {
+            root_id: root_id.to_owned(),
+            profile_id: Some(stored.default_profile_id.clone()),
+            ..LibraryManagementRootAssignment::default()
+        })
+}
+
+/// A tag-only profile for the tag editor (as in v2): the folder's own
+/// profile with only the edited fields managed, no scripts, and no
+/// renames, moves or artwork.
+pub fn tag_edit_profile(
+    stored: &LibraryManagement,
+    root_id: &str,
+    field_names: &[String],
+) -> Result<PinnedProfile, ManagementError> {
+    let mut pinned = pin_assignment(stored, &root_assignment(stored, root_id))?;
+    let profile = &mut pinned.profile;
+    profile.metadata.enabled = true;
+    profile.metadata.fields = field_names
+        .iter()
+        .map(|name| crate::runtime_config::sections::ManagedField {
+            field: name.clone(),
+            mode: FieldMode::Replace,
+            ..Default::default()
+        })
+        .collect();
+    profile.metadata.tagging_script_ids.clear();
+    profile.metadata.preserve_fields.clear();
+    profile.metadata.scrub_unmanaged_tags = false;
+    profile.artwork.embedded_enabled = false;
+    profile.artwork.external_enabled = false;
+    profile.organization.rename_enabled = false;
+    profile.organization.move_enabled = false;
+    profile.organization.move_sidecars = false;
+    profile.revision = settings::profile_revision(profile);
+    pinned.tagging_scripts.clear();
+    Ok(pinned)
+}
+
+/// Freeze the profile a library folder's assignment gives: its profile
+/// with the folder's overrides, and the scripts it names.
+pub fn pin_assignment(
+    stored: &LibraryManagement,
+    assignment: &LibraryManagementRootAssignment,
+) -> Result<PinnedProfile, ManagementError> {
     let invalid = |error: crate::settings::error::SettingsError| match error {
         crate::settings::error::SettingsError::InvalidInput { message } => {
             ManagementError::Invalid(format!(
@@ -46,7 +107,7 @@ pub fn pin(
         }
         other => ManagementError::Store(format!("{other:?}")),
     };
-    let mut profile = settings::pin_profile(stored, &assignment).map_err(invalid)?;
+    let mut profile = settings::pin_profile(stored, assignment).map_err(invalid)?;
     profile.revision = settings::profile_revision(&profile);
     let (naming_script, multi_disc_naming_script) =
         settings::pin_naming_scripts(stored, &profile).map_err(invalid)?;
@@ -69,7 +130,7 @@ pub fn pin(
         naming_script,
         multi_disc_naming_script,
         tagging_scripts,
-        overrides,
+        overrides: None,
     })
 }
 

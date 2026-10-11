@@ -177,6 +177,24 @@ impl LibrarySetup {
                 report = attempt => match report {
                     Some(report) => {
                         attempted += 1;
+                        // A settled match is what automatic management
+                        // waits for after a scan finds an album.
+                        if matches!(
+                            report.outcome,
+                            super::identify::models::IdentificationOutcome::Identified
+                                | super::identify::models::IdentificationOutcome::EditionUncertain
+                                | super::identify::models::IdentificationOutcome::KeptTagged
+                        ) {
+                            let setup = self.clone();
+                            let album = report.job.local_album_id.clone();
+                            let queued = tokio::task::spawn_blocking(move || {
+                                setup.queue_automatic_management(&album);
+                            })
+                            .await;
+                            if let Err(error) = queued {
+                                tracing::warn!(%error, "automatic management queueing did not run");
+                            }
+                        }
                         tracing::info!(
                             job_id = report.job.id,
                             outcome = ?report.outcome,
@@ -216,7 +234,13 @@ impl LibrarySetup {
         }
         let purged = match cell.cell.as_mut() {
             Some(open) => {
-                SnapshotStore::new(open.publisher.connection()).purge_expired(today_day())?
+                let conn = open.publisher.connection();
+                let purged = SnapshotStore::new(conn).purge_expired(today_day())?;
+                let freed = super::publish::snapshots::BlobStore::new(conn).sweep_unreferenced()?;
+                if freed > 0 {
+                    tracing::info!(freed, "freed before-states no undo needs any more");
+                }
+                purged
             }
             None => 0,
         };

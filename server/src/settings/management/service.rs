@@ -44,6 +44,18 @@ use crate::settings::models::{
     LibraryManagementSettingsResponse,
 };
 
+/// What a confirmed dry run pins on its library folder.
+#[derive(Debug, Clone)]
+pub struct ActivationProofPins {
+    pub root_id: String,
+    pub profile_revision: String,
+    pub naming_revision: String,
+    pub policy_revision: String,
+    pub preview_token: String,
+    pub preview_hash: String,
+    pub confirmed_at: f64,
+}
+
 const STALE_SETTINGS: &str =
     "Library Management settings changed. Refresh this page and try again.";
 
@@ -203,8 +215,79 @@ impl LibraryManagementService {
         let current = self.load()?;
         let current_revision = self.require_current(&current, expected_settings_revision)?;
         let candidate = self.normalized_candidate(&current, proposed)?;
+        self.save_candidate(&current, &current_revision, candidate)
+    }
+
+    /// Normalize proposed settings for an activation dry run of one
+    /// library folder, without saving them: the folder must be enabled
+    /// with at least one automatic trigger.
+    pub fn prepare_activation(
+        &self,
+        proposed: LibraryManagement,
+        root_id: &str,
+        expected_settings_revision: &str,
+    ) -> Result<LibraryManagement, SettingsError> {
+        let _guard = self.lock()?;
+        let current = self.load()?;
+        self.require_current(&current, expected_settings_revision)?;
+        let candidate = self.normalized_candidate(&current, proposed)?;
+        validate_root_assignments(&candidate, &self.library()?)?;
+        let assignment = candidate
+            .root_assignments
+            .iter()
+            .find(|assignment| assignment.root_id == root_id);
+        if !active_automatic(assignment) {
+            return Err(invalid(
+                "A dry run needs the library folder turned on with at least one automatic trigger.",
+            ));
+        }
+        Ok(candidate)
+    }
+
+    /// Save proposed settings with the dry runs that confirm them: each
+    /// proof's pins land on its folder, so the save's activation check
+    /// passes for exactly those folders.
+    pub fn confirm_activation(
+        &self,
+        proposed: LibraryManagement,
+        expected_settings_revision: &str,
+        proofs: &[ActivationProofPins],
+    ) -> Result<LibraryManagementSettingsResponse, SettingsError> {
+        let _guard = self.lock()?;
+        let current = self.load()?;
+        let current_revision = self.require_current(&current, expected_settings_revision)?;
+        let mut candidate = self.normalized_candidate(&current, proposed)?;
+        for proof in proofs {
+            let assignment = candidate
+                .root_assignments
+                .iter_mut()
+                .find(|assignment| assignment.root_id == proof.root_id)
+                .ok_or_else(|| {
+                    invalid("A dry run names a library folder these settings do not have.")
+                })?;
+            assignment.activation_profile_revision = Some(proof.profile_revision.clone());
+            assignment.activation_naming_policy_revision = Some(proof.naming_revision.clone());
+            assignment.activation_policy_revision = Some(proof.policy_revision.clone());
+            assignment.activation_settings_revision = Some(current_revision.clone());
+            assignment.activation_preview_token = Some(proof.preview_token.clone());
+            assignment.activation_preview_hash = Some(proof.preview_hash.clone());
+            assignment.activation_confirmed_at = Some(proof.confirmed_at);
+        }
+        self.save_candidate(&current, &current_revision, candidate)
+    }
+
+    /// Validate a normalized candidate, refuse new automatic write scope
+    /// without a current confirmed dry run, and save it.
+    fn save_candidate(
+        &self,
+        current: &LibraryManagement,
+        current_revision: &str,
+        candidate: LibraryManagement,
+    ) -> Result<LibraryManagementSettingsResponse, SettingsError> {
+        let expected_settings_revision = current_revision;
+        let current_revision = current_revision.to_owned();
         let policy_revision = validate_root_assignments(&candidate, &self.library()?)?;
-        let impact = classify(&current, &candidate, Some(expected_settings_revision));
+        let impact = classify(current, &candidate, Some(expected_settings_revision));
         if impact.preview_required {
             for root_id in &impact.affected_root_ids {
                 let Some(assignment) = candidate

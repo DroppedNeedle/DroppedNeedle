@@ -425,6 +425,9 @@ pub fn confirm(
         "DELETE FROM library_album_match_state WHERE local_album_id = ?1",
         params![album_id],
     )?;
+    // A chosen or confirmed edition is what automatic management waits
+    // for: the album's files follow that exact edition.
+    crate::library::management::automatic::queue(tx, album_id, now)?;
     settle_reviews(tx, album_id, "approved", None, actor)?;
     let action = audit(
         tx,

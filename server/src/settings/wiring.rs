@@ -223,6 +223,11 @@ impl SettingsSetup {
         &self.management
     }
 
+    /// The same service, shared with the library's activation dry runs.
+    pub fn library_management_shared(&self) -> Arc<LibraryManagementService> {
+        self.management.clone()
+    }
+
     /// Run one Library Management operation on the blocking pool: every
     /// operation reads and may write the config file, and validation
     /// checks the library roots on disk.

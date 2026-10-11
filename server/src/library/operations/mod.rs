@@ -60,7 +60,6 @@ async fn run_loop(setup: LibrarySetup, mut shutdown: watch::Receiver<bool>) {
         if tick(&setup, &ops, &worker).await
             || crate::library::repairs::tick(&setup, &repairs, &worker).await
             || remap_tick(&setup, &ops).await
-            || crate::library::management::tick(&setup, &worker, &shutdown).await
         {
             continue;
         }

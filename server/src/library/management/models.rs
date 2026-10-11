@@ -55,8 +55,15 @@ pub enum JobMode {
     /// Plan from a profile; applying turns it into `apply`.
     Preview,
     Apply,
+    /// A preview made by automatic management, applied without asking.
+    AutomaticApply,
     /// Put an earlier apply back.
     Undo,
+    /// Put files back the way they were before they were first managed.
+    BaselineRestore,
+    /// Settle a file a preview could not place because another file
+    /// already sits at its destination.
+    DuplicateResolution,
 }
 
 impl JobMode {
@@ -64,7 +71,10 @@ impl JobMode {
         match self {
             Self::Preview => "preview",
             Self::Apply => "apply",
+            Self::AutomaticApply => "automatic_apply",
             Self::Undo => "undo",
+            Self::BaselineRestore => "baseline_restore",
+            Self::DuplicateResolution => "duplicate_resolution",
         }
     }
 
@@ -72,10 +82,118 @@ impl JobMode {
         match raw {
             "preview" => Some(Self::Preview),
             "apply" => Some(Self::Apply),
+            "automatic_apply" => Some(Self::AutomaticApply),
             "undo" => Some(Self::Undo),
+            "baseline_restore" => Some(Self::BaselineRestore),
+            "duplicate_resolution" => Some(Self::DuplicateResolution),
             _ => None,
         }
     }
+
+    /// Jobs that put files back rather than plan them from a profile.
+    /// Their apply skips the profile and match checks: the publish seal
+    /// already pins every file.
+    pub fn restores(self) -> bool {
+        matches!(self, Self::Undo | Self::BaselineRestore)
+    }
+}
+
+/// Who asked for a job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Origin {
+    Manual,
+    /// Automatic management after a download was imported.
+    Acquisition,
+    /// Automatic management after a dropped folder was imported.
+    DropImport,
+    /// Automatic management after a scan found and identified an album.
+    ScanDiscovered,
+}
+
+impl Origin {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Acquisition => "acquisition",
+            Self::DropImport => "drop_import",
+            Self::ScanDiscovered => "scan_discovered",
+        }
+    }
+}
+
+/// How a tag edit is kept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TagEditMode {
+    /// Write the value and keep it as an override, so later runs keep it.
+    SaveOverride,
+    /// Write the value once; a later run may change it again.
+    WriteOnce,
+    /// Drop the saved override and write the value the edition gives.
+    ResetCanonical,
+}
+
+/// One edited field, with the override it replaces.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TagEditField {
+    pub field_name: String,
+    /// `album` or `track`: album fields apply to every file of the album.
+    pub subject_kind: String,
+    /// The new values; empty clears the field.
+    pub values: Vec<String>,
+    pub override_id: Option<String>,
+    pub expected_override_row_revision: Option<i64>,
+}
+
+/// A manual tag edit a preview carries to apply.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TagEditIntent {
+    pub local_track_id: String,
+    pub local_album_id: String,
+    pub mode: TagEditMode,
+    pub fields: Vec<TagEditField>,
+}
+
+/// What to do with a file whose destination is taken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DuplicateAction {
+    /// Leave both files where they are.
+    KeepExisting,
+    /// Put the incoming file at another path next to the existing one.
+    KeepIncomingAlternate,
+    /// Move the existing file to the recycle bin and put the incoming one
+    /// in its place.
+    RecycleExistingKeepIncoming,
+    /// Move the incoming file to the recycle bin and keep the existing one.
+    RecycleIncomingKeepExisting,
+}
+
+/// A duplicate resolution: the blocked file and what to do with it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DuplicateIntent {
+    pub source_job_id: String,
+    pub source_plan_item_ordinal: i64,
+    pub collision_kind: String,
+    pub existing_root_id: String,
+    pub existing_relative_path: String,
+    pub existing_local_track_id: Option<String>,
+    pub action: DuplicateAction,
+    pub alternate_relative_path: Option<String>,
+}
+
+/// What a job carries besides its selection and profile, stored as the
+/// snapshot's `intent_json`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct JobIntent {
+    /// Hash of the manual overrides the preview was asked with.
+    pub overrides_revision: String,
+    pub tag_edit: Option<TagEditIntent>,
+    /// For an activation dry run: the library folder it proves.
+    pub activation_root_id: Option<String>,
+    pub duplicate: Option<DuplicateIntent>,
 }
 
 /// Where a job is in its life.
@@ -359,6 +477,16 @@ pub struct JobDetail {
     pub heartbeat_at: Option<f64>,
     pub worker_stalled: bool,
     pub undo_available_count: i64,
+    /// Files whose undo period has passed.
+    pub undo_expired_count: i64,
+    /// When the first remaining undo runs out.
+    pub undo_expires_at: Option<f64>,
+    /// Files of this job with a saved original to restore.
+    pub baseline_available_count: i64,
+    /// For an activation dry run: the settings revision it proves.
+    pub proposed_settings_revision: Option<String>,
+    /// Media servers told to rescan after the apply.
+    pub external_refreshes: Vec<serde_json::Value>,
 }
 
 /// One page of planned files.

@@ -8,8 +8,9 @@
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use super::models::{
-    HistoryFilter, HistoryItem, ItemFilter, ItemPage, JobDetail, JobMode, ManagementError,
-    PinnedProfile, PlannedItem, PreviewHandle, ResultPage, Selection, Summary,
+    HistoryFilter, HistoryItem, ItemFilter, ItemPage, JobDetail, JobIntent, JobMode,
+    ManagementError, Origin, PinnedProfile, PlannedItem, PreviewHandle, ResultPage, Revisions,
+    Selection, Summary,
 };
 use super::planner::{self, PlanContext};
 use super::profile::{self, CompiledScripts};
@@ -41,6 +42,22 @@ pub struct PreviewRequest {
     pub overrides: Option<LibraryManagementRootOverrides>,
 }
 
+/// Everything a new job pins.
+pub(super) struct JobSpec<'a> {
+    pub mode: JobMode,
+    pub origin: Origin,
+    pub actor: Option<&'a str>,
+    pub idempotency_key: Option<&'a str>,
+    pub revisions: Revisions,
+    pub selection_json: String,
+    pub pinned: &'a PinnedProfile,
+    pub target_root_id: Option<&'a str>,
+    pub linked_job_id: Option<&'a str>,
+    pub intent: JobIntent,
+    pub proposed_settings_revision: Option<&'a str>,
+    pub retention_hours: i64,
+}
+
 /// A request to apply a ready preview.
 pub struct ApplyRequest {
     pub preview_token: String,
@@ -52,13 +69,13 @@ pub struct ApplyRequest {
 /// Management jobs over the library setup.
 #[derive(Clone)]
 pub struct Management {
-    setup: LibrarySetup,
+    pub(super) setup: LibrarySetup,
     /// Turns true when the server shuts down; the worker then hands its
     /// job back to the queue between albums.
     shutdown: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
-fn stale(message: &str) -> ManagementError {
+pub(super) fn stale(message: &str) -> ManagementError {
     ManagementError::Conflict(message.to_owned())
 }
 
@@ -76,14 +93,14 @@ impl Management {
         self
     }
 
-    fn read<T>(
+    pub(super) fn read<T>(
         &self,
         op: impl FnOnce(&Connection) -> Result<T, ManagementError>,
     ) -> Result<T, ManagementError> {
         self.setup.identify_store.with_connection(|conn| op(conn))
     }
 
-    fn write<T>(
+    pub(super) fn write<T>(
         &self,
         op: impl FnOnce(&Transaction<'_>) -> Result<T, ManagementError>,
     ) -> Result<T, ManagementError> {
@@ -95,14 +112,14 @@ impl Management {
         })
     }
 
-    fn settings(&self) -> Result<LibraryManagement, ManagementError> {
+    pub(super) fn settings(&self) -> Result<LibraryManagement, ManagementError> {
         self.setup
             .config
             .get::<LibraryManagement>()
             .map_err(|error| ManagementError::Store(error.to_string()))
     }
 
-    fn snapshot(&self, job_id: &str) -> Result<Snapshot, ManagementError> {
+    pub(super) fn snapshot(&self, job_id: &str) -> Result<Snapshot, ManagementError> {
         self.read(|conn| {
             store::snapshot(conn, job_id)?.ok_or(ManagementError::NotFound(
                 "This management job does not exist.",
@@ -111,7 +128,7 @@ impl Management {
     }
 
     /// A random preview token and its hash.
-    fn token(&self) -> (String, String) {
+    pub(super) fn token(&self) -> (String, String) {
         let token =
             format!("{}{}", self.setup.ids.new_id(), self.setup.ids.new_id()).replace('-', "");
         let hash = sha256_hex(token.as_bytes());
@@ -122,6 +139,27 @@ impl Management {
     // Previews.
     // -----------------------------------------------------------------
 
+    /// Refuse when the settings or the library folders moved since the
+    /// page that asks loaded them.
+    pub(super) fn check_revisions(
+        &self,
+        stored: &LibraryManagement,
+        expected_settings: &str,
+        expected_policy: &str,
+    ) -> Result<(), ManagementError> {
+        if crate::settings::management::settings_revision(stored) != expected_settings {
+            return Err(stale(
+                "Library Management settings changed since this page loaded. Reload the page and make the preview again.",
+            ));
+        }
+        if self.setup.live_registry().policy_revision() != expected_policy {
+            return Err(stale(
+                "The library folders or their rules changed since this page loaded. Reload the page and make the preview again.",
+            ));
+        }
+        Ok(())
+    }
+
     /// Start a preview: pin the profile and revisions, and queue the
     /// planning. A retried request with the same idempotency key returns
     /// the same job with a fresh token. Blocking.
@@ -131,18 +169,12 @@ impl Management {
         actor: &str,
     ) -> Result<PreviewHandle, ManagementError> {
         let stored = self.settings()?;
-        let settings_revision = crate::settings::management::settings_revision(&stored);
-        if settings_revision != request.expected_settings_revision {
-            return Err(stale(
-                "Library Management settings changed since this page loaded. Reload the page and make the preview again.",
-            ));
-        }
+        self.check_revisions(
+            &stored,
+            &request.expected_settings_revision,
+            &request.expected_policy_revision,
+        )?;
         let registry = self.setup.live_registry();
-        if registry.policy_revision() != request.expected_policy_revision {
-            return Err(stale(
-                "The library folders or their rules changed since this page loaded. Reload the page and make the preview again.",
-            ));
-        }
         let selection = selection::normalize(request.selection)?;
         let pinned = profile::pin(&stored, &request.profile_id, request.overrides)?;
         if let Some(target) = request.target_root_id.as_deref() {
@@ -167,20 +199,42 @@ impl Management {
                 ));
             }
         }
-        let revisions = profile::revisions(&stored, &pinned, registry.policy_revision());
-        let selection_json = serde_json::to_string(&selection)?;
-        let profile_json = serde_json::to_string(&pinned)?;
+        self.start_job(JobSpec {
+            mode: JobMode::Preview,
+            origin: Origin::Manual,
+            actor: Some(actor),
+            idempotency_key: request.idempotency_key.as_deref(),
+            revisions: profile::revisions(&stored, &pinned, registry.policy_revision()),
+            selection_json: serde_json::to_string(&selection)?,
+            pinned: &pinned,
+            target_root_id: request.target_root_id.as_deref(),
+            linked_job_id: None,
+            intent: JobIntent::default(),
+            proposed_settings_revision: None,
+            retention_hours: stored.preview_retention_hours,
+        })
+    }
+
+    /// Queue a new job, or hand back the one an earlier request with the
+    /// same idempotency key made (with a fresh token) when it asked for
+    /// the same thing. Blocking.
+    pub(super) fn start_job(&self, spec: JobSpec<'_>) -> Result<PreviewHandle, ManagementError> {
+        let profile_json = serde_json::to_string(spec.pinned)?;
         let now = now_unix();
         let (token, token_hash) = self.token();
-        if let Some(key) = request.idempotency_key.as_deref()
+        if let Some(key) = spec.idempotency_key
             && let Some(existing) = self.read(|conn| Ok(store::job_for_key(conn, key)?))?
         {
             let snapshot = self.snapshot(&existing)?;
-            let same = snapshot.selection_json == selection_json
-                && snapshot.profile_revision == revisions.profile
-                && snapshot.settings_revision == revisions.settings
-                && snapshot.target_root_id == request.target_root_id
-                && snapshot.job.requested_by_user_id.as_deref() == Some(actor);
+            let same = snapshot.mode == spec.mode.as_str()
+                && snapshot.selection_json == spec.selection_json
+                && snapshot.profile_revision == spec.revisions.profile
+                && snapshot.settings_revision == spec.revisions.settings
+                && snapshot.target_root_id.as_deref() == spec.target_root_id
+                && snapshot.linked_job_id.as_deref() == spec.linked_job_id
+                && snapshot.intent().tag_edit == spec.intent.tag_edit
+                && snapshot.intent().duplicate == spec.intent.duplicate
+                && snapshot.job.requested_by_user_id.as_deref() == spec.actor;
             if !same {
                 return Err(stale(
                     "This request key was already used for a different preview. Make the preview again.",
@@ -204,7 +258,7 @@ impl Management {
                 .revision(conn)
                 .map_err(|error| ManagementError::Store(error.to_string()))
         })?;
-        let expires_at = now + stored.preview_retention_hours.max(1) as f64 * 3600.0;
+        let expires_at = now + spec.retention_hours.max(1) as f64 * 3600.0;
         let job_id = self.setup.ids.new_id();
         let summary = Summary::default();
         self.write(|tx| {
@@ -212,19 +266,22 @@ impl Management {
                 tx,
                 &NewJob {
                     id: &job_id,
-                    requested_by: actor,
-                    idempotency_key: request.idempotency_key.as_deref(),
-                    mode: JobMode::Preview.as_str(),
-                    selection_json: &selection_json,
+                    requested_by: spec.actor,
+                    idempotency_key: spec.idempotency_key,
+                    mode: spec.mode.as_str(),
+                    selection_json: &spec.selection_json,
                     profile_snapshot_json: &profile_json,
-                    revisions: &revisions,
+                    revisions: &spec.revisions,
                     catalog_revision: i64::try_from(catalog_revision).unwrap_or(i64::MAX),
                     token_hash: &token_hash,
                     now,
                     expires_at,
-                    target_root_id: request.target_root_id.as_deref(),
-                    linked_job_id: None,
+                    target_root_id: spec.target_root_id,
+                    linked_job_id: spec.linked_job_id,
                     summary: &summary,
+                    origin: spec.origin,
+                    intent: &spec.intent,
+                    proposed_settings_revision: spec.proposed_settings_revision,
                 },
             )
         })?;
@@ -238,8 +295,8 @@ impl Management {
     }
 
     /// Why a ready job can no longer be applied as planned.
-    fn stale_reasons(&self, snapshot: &Snapshot) -> Vec<String> {
-        if JobMode::parse(&snapshot.mode) == Some(JobMode::Undo) {
+    pub(super) fn stale_reasons(&self, snapshot: &Snapshot) -> Vec<String> {
+        if snapshot.job_mode().is_some_and(JobMode::restores) {
             return Vec::new();
         }
         let mut found = Vec::new();
@@ -279,8 +336,15 @@ impl Management {
         } else {
             Vec::new()
         };
-        let undo_available_count =
-            self.read(|conn| Ok(store::undo_available(conn, job_id, today_day())?))?;
+        let undo = self.read(|conn| Ok(store::undo_counts(conn, job_id, today_day())?))?;
+        let baseline_available_count =
+            self.read(|conn| Ok(store::baseline_available(conn, job_id)?))?;
+        let external_refreshes = self
+            .read(|conn| Ok(store::external_refreshes(conn, job_id)?))
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, job_id, "media server refresh records unreadable");
+                Vec::new()
+            });
         let (profile_id, profile_name) = snapshot.profile_label();
         let worker_stalled = snapshot.job.state.as_str() == "running"
             && snapshot.lease_expires_at.is_none_or(|at| at <= now);
@@ -306,7 +370,12 @@ impl Management {
             lease_expires_at: snapshot.lease_expires_at,
             heartbeat_at: snapshot.heartbeat_at,
             worker_stalled,
-            undo_available_count,
+            undo_available_count: undo.available,
+            undo_expired_count: undo.expired,
+            undo_expires_at: undo.first_expiry_day.map(|day| day as f64 * 86_400.0),
+            baseline_available_count,
+            proposed_settings_revision: snapshot.proposed_settings_revision,
+            external_refreshes,
             job: snapshot.job,
         })
     }
@@ -435,21 +504,51 @@ impl Management {
         if !detail.ready_for_confirmation {
             return Err(stale("This preview is not ready to apply."));
         }
-        let (mode, phase) = match JobMode::parse(&snapshot.mode) {
-            Some(JobMode::Undo) => (JobMode::Undo, "undoing"),
-            _ => (JobMode::Apply, "applying"),
+        let mode = match snapshot.job_mode() {
+            Some(
+                mode @ (JobMode::Undo | JobMode::BaselineRestore | JobMode::DuplicateResolution),
+            ) => mode,
+            _ => JobMode::Apply,
+        };
+        self.begin(
+            job_id,
+            mode,
+            request.expected_row_revision,
+            &request.idempotency_key,
+        )
+    }
+
+    /// Turn a ready job into queued apply work, one row per album.
+    pub(super) fn begin(
+        &self,
+        job_id: &str,
+        mode: JobMode,
+        expected_row_revision: i64,
+        idempotency_key: &str,
+    ) -> Result<OperationJob, ManagementError> {
+        let phase = match mode {
+            JobMode::Undo => "undoing",
+            JobMode::BaselineRestore => "restoring",
+            _ => "applying",
         };
         let now = now_unix();
         let job = self.write(|tx| {
             let current = ops::job(tx, job_id)?.ok_or(ManagementError::NotFound(
                 "This management job does not exist.",
             ))?;
-            if current.row_revision != request.expected_row_revision {
+            if current.row_revision != expected_row_revision {
                 return Err(stale(
                     "This preview changed since the page loaded. Reload the page and try again.",
                 ));
             }
             let bundles = store::writable_bundles(tx, job_id)?;
+            if bundles.is_empty() && mode == JobMode::DuplicateResolution {
+                // Keeping both files: the decision is the whole job.
+                store::complete_without_work(tx, job_id, "DUPLICATE_KEPT", now)?;
+                return ops::job(tx, job_id)?.ok_or(ManagementError::NotFound(
+                    "This management job does not exist.",
+                ));
+            }
             if bundles.is_empty() {
                 return Err(ManagementError::Conflict(
                     "Nothing in this preview can be written: every file is unchanged or blocked. \
@@ -462,7 +561,7 @@ impl Management {
                 job_id,
                 mode.as_str(),
                 phase,
-                &request.idempotency_key,
+                idempotency_key,
                 &bundles,
                 now,
             )
@@ -561,7 +660,7 @@ impl Management {
                 tx,
                 &NewJob {
                     id: &new_id,
-                    requested_by: actor,
+                    requested_by: Some(actor),
                     idempotency_key: Some(idempotency_key),
                     mode: JobMode::Undo.as_str(),
                     selection_json: &source.selection_json,
@@ -574,6 +673,9 @@ impl Management {
                     target_root_id: source.target_root_id.as_deref(),
                     linked_job_id: Some(job_id),
                     summary: &summary,
+                    origin: Origin::Manual,
+                    intent: &JobIntent::default(),
+                    proposed_settings_revision: None,
                 },
             )
         })?;
@@ -635,7 +737,7 @@ impl Management {
 
     /// Honour a pause, a stop, or a server shutdown. True when the job
     /// left `running` (or went back to the queue) and the step must end.
-    fn checkpoint(&self, job_id: &str, worker: &str) -> Result<bool, ManagementError> {
+    pub(super) fn checkpoint(&self, job_id: &str, worker: &str) -> Result<bool, ManagementError> {
         if self
             .shutdown
             .as_ref()
@@ -647,11 +749,11 @@ impl Management {
         self.write(|tx| Ok(ops::checkpoint(tx, job_id, worker, now_unix())?.is_some()))
     }
 
-    fn heartbeat(&self, job_id: &str, worker: &str) -> Result<bool, ManagementError> {
+    pub(super) fn heartbeat(&self, job_id: &str, worker: &str) -> Result<bool, ManagementError> {
         self.read(|conn| Ok(store::heartbeat(conn, job_id, worker, now_unix())?))
     }
 
-    fn pinned(snapshot: &Snapshot) -> Result<PinnedProfile, ManagementError> {
+    pub(super) fn pinned(snapshot: &Snapshot) -> Result<PinnedProfile, ManagementError> {
         serde_json::from_str(&snapshot.profile_snapshot_json).map_err(|error| {
             ManagementError::Store(format!("stored profile snapshot unreadable: {error}"))
         })
@@ -662,24 +764,62 @@ impl Management {
     fn plan(&self, job_id: &str, worker: &str) -> Result<(), ManagementError> {
         let snapshot = self.snapshot(job_id)?;
         self.read(|conn| Ok(store::clear_items(conn, job_id)?))?;
-        let summary = if JobMode::parse(&snapshot.mode) == Some(JobMode::Undo) {
-            match self.plan_undo(&snapshot, worker)? {
-                Some(summary) => summary,
-                None => return Ok(()),
-            }
-        } else {
-            match self.plan_preview(&snapshot, worker)? {
-                Some(summary) => summary,
-                None => return Ok(()),
-            }
+        let planned = match snapshot.job_mode() {
+            Some(JobMode::Undo) => self.plan_undo(&snapshot, worker)?,
+            Some(JobMode::BaselineRestore) => self.plan_baseline_restore(&snapshot, worker)?,
+            Some(JobMode::DuplicateResolution) => self.plan_duplicate(&snapshot, worker)?,
+            _ => self.plan_preview(&snapshot, worker)?,
         };
-        self.write(|tx| store::finish_planning(tx, job_id, worker, &summary, now_unix()))?;
+        let Some(summary) = planned else {
+            return Ok(());
+        };
+        let finished =
+            self.write(|tx| store::finish_planning(tx, job_id, worker, &summary, now_unix()))?;
+        if finished && snapshot.origin != Origin::Manual.as_str() {
+            self.apply_automatic(job_id, &summary);
+        }
         Ok(())
+    }
+
+    /// Apply a preview automatic management made, when nothing in it is
+    /// blocked (as v2 did). A preview with a blocked file waits on the
+    /// operations page with each file's reason, for an administrator.
+    fn apply_automatic(&self, job_id: &str, summary: &Summary) {
+        if summary.blocked_count > 0 || summary.stale_count > 0 {
+            tracing::info!(
+                job_id,
+                blocked = summary.blocked_count,
+                "automatic management preview has blocked files; it waits for review"
+            );
+            return;
+        }
+        let outcome = self
+            .read(|conn| Ok(ops::job(conn, job_id)?))
+            .and_then(|job| {
+                let job = job.ok_or(ManagementError::NotFound(
+                    "This management job does not exist.",
+                ))?;
+                self.begin(
+                    job_id,
+                    JobMode::AutomaticApply,
+                    job.row_revision,
+                    &format!("automatic-apply:{job_id}"),
+                )
+            });
+        match outcome {
+            Ok(_) => tracing::info!(job_id, "automatic management applies"),
+            // Nothing to write: the files already look the way the
+            // profile wants them.
+            Err(ManagementError::Conflict(reason)) => {
+                tracing::info!(job_id, reason, "automatic management had nothing to apply");
+            }
+            Err(error) => tracing::warn!(%error, job_id, "automatic management apply refused"),
+        }
     }
 
     /// Store one album's items. False when the job was paused, stopped
     /// or taken away, so planning stops.
-    fn keep_items(
+    pub(super) fn keep_items(
         &self,
         snapshot: &Snapshot,
         worker: &str,
@@ -699,6 +839,7 @@ impl Management {
         worker: &str,
     ) -> Result<Option<Summary>, ManagementError> {
         let pinned = Self::pinned(snapshot)?;
+        let intent = snapshot.intent();
         let selection: Selection = serde_json::from_str(&snapshot.selection_json)?;
         let scripts = CompiledScripts::new(&pinned);
         let sandbox = self.setup.publish_sandbox().map_err(|error| {
@@ -713,12 +854,19 @@ impl Management {
             registry: &registry,
             target_root: snapshot.target_root_id.as_deref(),
             manage_unconfirmed: planner::manage_unconfirmed(&self.setup),
+            tag_edit: intent.tag_edit.as_ref(),
         };
         // Files that move take their whole album along, so an album is
-        // never split between its old and new folder (as in v2).
+        // never split between its old and new folder (as in v2). An
+        // album-wide tag edit changes every file of the album too.
         let organizes = pinned.profile.organization.rename_enabled
             || pinned.profile.organization.move_enabled
-            || snapshot.target_root_id.is_some();
+            || snapshot.target_root_id.is_some()
+            || intent.tag_edit.as_ref().is_some_and(|edit| {
+                edit.fields
+                    .iter()
+                    .any(|field| field.subject_kind == "album")
+            });
         let mut albums = self.read(|conn| selection::albums(conn, &selection))?;
         let picked: usize = albums
             .iter()
@@ -780,8 +928,14 @@ impl Management {
             let Some(first) = source_items.first().cloned() else {
                 continue;
             };
-            let items =
-                self.plan_undo_bundle(&bundle_id, bundle_ordinal, ordinal, &first, &source_items)?;
+            let items = self.plan_undo_bundle(
+                &source_id,
+                &bundle_id,
+                bundle_ordinal,
+                ordinal,
+                &first,
+                &source_items,
+            )?;
             ordinal += items.len() as i64;
             summary.bundle_count += 1;
             for item in &items {
@@ -798,6 +952,7 @@ impl Management {
 
     fn plan_undo_bundle(
         &self,
+        source_job: &str,
         bundle_id: &str,
         bundle_ordinal: i64,
         first_ordinal: i64,
@@ -805,7 +960,7 @@ impl Management {
         source_items: &[PlannedItem],
     ) -> Result<Vec<PlannedItem>, ManagementError> {
         let album_id = first.album_id.clone();
-        let override_of = |track_id: &str| self.override_revision(&album_id, track_id);
+        let override_of = self.override_lookup(&album_id, Some((source_job, bundle_ordinal)));
         let files = match self.setup.undo_files(bundle_id, &override_of) {
             Ok(files) => files,
             Err(crate::library::service::ServiceError::NotFound) => Default::default(),
@@ -914,8 +1069,35 @@ impl Management {
         Ok(items)
     }
 
+    /// The override revision a write compares for each file of an album.
+    /// For an undo of a tag edit, the overrides the edit itself saved do
+    /// not count as a change: the file's revision then reads as it was
+    /// before the edit, so the edit can be undone.
+    pub(super) fn override_lookup<'a>(
+        &'a self,
+        album_id: &'a str,
+        undoes: Option<(&str, i64)>,
+    ) -> impl Fn(&str) -> u64 + 'a {
+        let saved = undoes
+            .map(|(job, ordinal)| {
+                self.read(|conn| Ok(store::edit_override_revisions(conn, job, ordinal)?))
+                    .unwrap_or_else(|error| {
+                        tracing::warn!(%error, job, "tag edit override record unreadable");
+                        Default::default()
+                    })
+            })
+            .unwrap_or_default();
+        move |track_id: &str| {
+            let live = self.override_revision(album_id, track_id);
+            match saved.get(track_id) {
+                Some((after, before)) if *after == live => *before,
+                _ => live,
+            }
+        }
+    }
+
     /// The current revision of a file's saved tag overrides.
-    fn override_revision(&self, album_id: &str, track_id: &str) -> u64 {
+    pub(super) fn override_revision(&self, album_id: &str, track_id: &str) -> u64 {
         self.setup
             .identify_store
             .with_connection(|conn| planner::overrides(conn, album_id, track_id))
@@ -931,14 +1113,16 @@ impl Management {
     /// scan is done.
     fn apply_work(&self, job_id: &str, worker: &str) -> Result<(), ManagementError> {
         let snapshot = self.snapshot(job_id)?;
-        let undo = JobMode::parse(&snapshot.mode) == Some(JobMode::Undo);
+        let undo = snapshot.job_mode().is_some_and(JobMode::restores);
         // Whether the job moves files: then an album must still be
         // exactly the files that were planned.
-        let organizes = snapshot.target_root_id.is_some()
-            || Self::pinned(&snapshot).is_ok_and(|pinned| {
-                pinned.profile.organization.rename_enabled
-                    || pinned.profile.organization.move_enabled
-            });
+        // A duplicate resolution moves one file of an album on purpose.
+        let organizes = snapshot.job_mode() != Some(JobMode::DuplicateResolution)
+            && (snapshot.target_root_id.is_some()
+                || Self::pinned(&snapshot).is_ok_and(|pinned| {
+                    pinned.profile.organization.rename_enabled
+                        || pinned.profile.organization.move_enabled
+                }));
         loop {
             if self.checkpoint(job_id, worker)? {
                 return Ok(());
@@ -949,7 +1133,11 @@ impl Management {
             }
             let now = now_unix();
             let Some(ordinal) = self.write(|tx| Ok(ops::claim_work(tx, job_id, now)?))? else {
-                self.write(|tx| Ok(store::finish_apply(tx, job_id, worker, now_unix())?))?;
+                let finished =
+                    self.write(|tx| Ok(store::finish_apply(tx, job_id, worker, now_unix())?))?;
+                if finished {
+                    self.queue_external_refreshes(&snapshot);
+                }
                 return Ok(());
             };
             let Some((failure, result)) = self.apply_album(&snapshot, ordinal, undo, organizes)?
@@ -959,6 +1147,14 @@ impl Management {
                 self.write(|tx| Ok(store::release(tx, job_id, worker, now_unix())?))?;
                 return Ok(());
             };
+            let mut result = result;
+            if failure.is_none()
+                && let Some(extra) = self.after_album(&snapshot, ordinal)
+                && let (Some(result), serde_json::Value::Object(extra)) =
+                    (result.as_object_mut(), extra)
+            {
+                result.extend(extra);
+            }
             self.write(|tx| {
                 Ok(store::finish_work(
                     tx,
@@ -974,7 +1170,7 @@ impl Management {
 
     /// Whether the publisher committed `bundle_id`. An unreadable journal
     /// counts as not committed, and says so in the log.
-    fn committed(&self, bundle_id: &str) -> bool {
+    pub(super) fn committed(&self, bundle_id: &str) -> bool {
         self.setup
             .held_bundles
             .committed(bundle_id)
@@ -1107,7 +1303,13 @@ impl Management {
             .first()
             .map(|item| item.album_id.clone())
             .unwrap_or_default();
-        let override_of = |track_id: &str| self.override_revision(&album_id, track_id);
+        let undoes = match (snapshot.job_mode(), &snapshot.linked_job_id, items.first()) {
+            (Some(JobMode::Undo), Some(source), Some(first)) => {
+                Some((source.as_str(), first.bundle_ordinal))
+            }
+            _ => None,
+        };
+        let override_of = self.override_lookup(&album_id, undoes);
         let pins = SealPins {
             profile: profile::seal_revision(&snapshot.profile_revision),
             naming: profile::seal_revision(&snapshot.naming_revision),

@@ -500,6 +500,15 @@ pub async fn build(config: AppConfig) -> Result<(Router, Background), BootError>
     .with_library_catalog(Arc::new(SqliteLibraryPolicyCatalog {
         pool: runtime.pool().clone(),
     }));
+    // Activation dry runs save the settings through the same service as
+    // the settings page, so the two never save over each other.
+    if library
+        .management_settings
+        .set(settings.library_management_shared())
+        .is_err()
+    {
+        tracing::warn!("library management settings service was already attached");
+    }
     let plugins = PluginsSetup::build(
         plugin_host,
         auth.users.clone(),

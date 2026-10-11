@@ -186,6 +186,17 @@ pub struct LibrarySetup {
     /// Called after each scan run completes (the library image refresh
     /// kick), set at boot.
     pub scan_completed: ScanCompletedSlot,
+    /// The shared outbound HTTP client, for media-server refreshes after a
+    /// management run. `None` in test bundles.
+    pub http: Option<reqwest::Client>,
+    /// The settings page's Library Management service, attached at boot so
+    /// an activation dry run saves through it. Empty in test bundles: a
+    /// private one is used then.
+    pub management_settings: std::sync::Arc<
+        std::sync::OnceLock<
+            std::sync::Arc<crate::settings::management::service::LibraryManagementService>,
+        >,
+    >,
     /// Scratch state of a test bundle, removed with the last clone.
     #[cfg(any(test, feature = "test-support"))]
     pub scratch: Option<Arc<crate::tooling::scratch::ScratchDir>>,
@@ -268,6 +279,7 @@ impl LibrarySetup {
         });
         let mut setup = Self::assemble(users, ids, make, None, contrib, db_path, config)?;
         setup.releases = Some(imports);
+        setup.http = Some(http.shared().clone());
         let registry = setup.registry.clone();
         setup.fingerprints = Some(Arc::new(
             super::identify::sources::AcoustIdFingerprints::new(
@@ -472,6 +484,8 @@ impl LibrarySetup {
             events,
             removal_hook: Default::default(),
             scan_completed,
+            http: None,
+            management_settings: Default::default(),
             #[cfg(any(test, feature = "test-support"))]
             scratch: None,
         })
@@ -607,6 +621,7 @@ impl LibrarySetup {
                 ),
             ),
             super::operations::spawn_loop(self, shutdown.clone()),
+            super::management::spawn_loop(self, shutdown.clone()),
             (
                 "library-publish",
                 tokio::spawn(publish_loop(self.clone(), shutdown)),

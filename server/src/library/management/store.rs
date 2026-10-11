@@ -12,7 +12,7 @@ use rusqlite::{Connection, OptionalExtension as _, Transaction, params};
 
 use super::models::{
     DesiredDocument, Eligibility, HistoryFilter, HistoryItem, ItemDiff, ItemFacts, ItemFilter,
-    ItemPage, PlannedItem, ResultItem, ResultPage, Revisions, Summary,
+    ItemPage, JobIntent, JobMode, Origin, PlannedItem, ResultItem, ResultPage, Revisions, Summary,
 };
 use super::reasons::{self, ItemReason};
 use crate::library::operations::models::OperationJob;
@@ -46,11 +46,22 @@ pub struct Snapshot {
     pub idempotency_key: Option<String>,
     pub lease_expires_at: Option<f64>,
     pub heartbeat_at: Option<f64>,
+    /// For an activation dry run: the settings it was made for.
+    pub proposed_settings_revision: Option<String>,
 }
 
 impl Snapshot {
     pub fn summary(&self) -> Summary {
         serde_json::from_str(&self.summary_json).unwrap_or_default()
+    }
+
+    /// What the job carries besides its selection; v2 rows read as empty.
+    pub fn intent(&self) -> JobIntent {
+        serde_json::from_str(&self.intent_json).unwrap_or_default()
+    }
+
+    pub fn job_mode(&self) -> Option<JobMode> {
+        JobMode::parse(&self.mode)
     }
 
     /// The pinned profile's id and name, from v3 or v2 snapshots alike.
@@ -72,7 +83,7 @@ const SNAPSHOT_COLUMNS: &str = "s.mode, s.origin, s.phase, s.selection_json, s.p
      s.settings_revision, s.naming_revision, s.policy_revision, s.catalog_revision, \
      s.profile_snapshot_json, s.preview_token_hash, s.preview_created_at, s.preview_expires_at, \
      s.target_root_id, s.linked_operation_job_id, s.intent_json, s.summary_json, \
-     j.idempotency_key, j.lease_expires_at, j.heartbeat_at, j.id";
+     j.idempotency_key, j.lease_expires_at, j.heartbeat_at, j.id, s.proposed_settings_revision";
 
 fn map_snapshot(conn: &Connection, row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<Snapshot>> {
     let job_id: String = row.get(20)?;
@@ -101,6 +112,7 @@ fn map_snapshot(conn: &Connection, row: &rusqlite::Row<'_>) -> rusqlite::Result<
         idempotency_key: row.get(17)?,
         lease_expires_at: row.get(18)?,
         heartbeat_at: row.get(19)?,
+        proposed_settings_revision: row.get(21)?,
     }))
 }
 
@@ -130,7 +142,7 @@ pub fn job_for_key(conn: &Connection, key: &str) -> rusqlite::Result<Option<Stri
 /// A job to create.
 pub struct NewJob<'a> {
     pub id: &'a str,
-    pub requested_by: &'a str,
+    pub requested_by: Option<&'a str>,
     pub idempotency_key: Option<&'a str>,
     pub mode: &'a str,
     pub selection_json: &'a str,
@@ -143,6 +155,9 @@ pub struct NewJob<'a> {
     pub target_root_id: Option<&'a str>,
     pub linked_job_id: Option<&'a str>,
     pub summary: &'a Summary,
+    pub origin: Origin,
+    pub intent: &'a JobIntent,
+    pub proposed_settings_revision: Option<&'a str>,
 }
 
 /// Create a queued job in its planning phase.
@@ -168,9 +183,9 @@ pub fn insert_job(
          selection_json, profile_revision, settings_revision, naming_revision, policy_revision, \
          catalog_revision, profile_snapshot_json, preview_token_hash, preview_created_at, \
          preview_expires_at, target_root_id, linked_operation_job_id, intent_json, summary_json, \
-         created_at, updated_at) \
-         VALUES (?1, ?2, 'manual', 'planning', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, \
-         ?14, ?15, ?16, ?11, ?11)",
+         created_at, updated_at, proposed_settings_revision) \
+         VALUES (?1, ?2, ?17, 'planning', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, \
+         ?14, ?15, ?16, ?11, ?11, ?18)",
         params![
             job.id,
             job.mode,
@@ -186,8 +201,13 @@ pub fn insert_job(
             job.expires_at,
             job.target_root_id,
             job.linked_job_id,
-            serde_json::json!({ "overrides_revision": job.revisions.overrides }).to_string(),
+            serde_json::to_string(&JobIntent {
+                overrides_revision: job.revisions.overrides.clone(),
+                ..job.intent.clone()
+            })?,
             serde_json::to_string(job.summary)?,
+            job.origin.as_str(),
+            job.proposed_settings_revision,
         ],
     )?;
     Ok(())
@@ -204,7 +224,7 @@ pub fn claim(
             "SELECT j.id, s.phase FROM library_operation_jobs j \
              JOIN library_management_job_snapshots s ON s.job_id = j.id \
              WHERE j.kind = ?1 AND j.state = 'queued' \
-             AND s.phase IN ('planning', 'applying', 'undoing') \
+             AND s.phase IN ('planning', 'applying', 'undoing', 'restoring') \
              ORDER BY j.updated_at, j.created_at, j.id LIMIT 1",
             params![KIND],
             |row| Ok((row.get(0)?, row.get(1)?)),
@@ -577,6 +597,28 @@ pub fn finish_apply(
     Ok(changed == 1)
 }
 
+/// End a ready job that has nothing to write, as done.
+pub fn complete_without_work(
+    tx: &Transaction<'_>,
+    job_id: &str,
+    code: &str,
+    now: f64,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "UPDATE library_operation_jobs SET state = 'succeeded', terminal_code = ?2, \
+         terminal_at = ?3, expected_work_count = 0, updated_at = ?3, \
+         row_revision = row_revision + 1, event_revision = event_revision + 1 \
+         WHERE id = ?1 AND state = 'ready'",
+        params![job_id, code, now],
+    )?;
+    tx.execute(
+        "UPDATE library_management_job_snapshots SET phase = 'complete', updated_at = ?2, \
+         row_revision = row_revision + 1 WHERE job_id = ?1",
+        params![job_id, now],
+    )?;
+    Ok(())
+}
+
 /// Hand a running job back to the queue (the server is stopping).
 pub fn release(tx: &Transaction<'_>, job_id: &str, worker: &str, now: f64) -> rusqlite::Result<()> {
     tx.execute(
@@ -807,15 +849,79 @@ pub fn applied_bundles(conn: &Connection, job_id: &str) -> rusqlite::Result<Vec<
     rows.collect()
 }
 
-/// Files of a job that can still be undone today.
-pub fn undo_available(conn: &Connection, job_id: &str, today: i64) -> rusqlite::Result<i64> {
+/// How much of a job's apply can still be undone.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UndoCounts {
+    pub available: i64,
+    pub expired: i64,
+    /// The day the first remaining undo runs out.
+    pub first_expiry_day: Option<i64>,
+}
+
+/// Files of a job that can still be undone today, files whose undo ran
+/// out (their before-state was purged, or is past its day), and when the
+/// next one runs out.
+pub fn undo_counts(conn: &Connection, job_id: &str, today: i64) -> rusqlite::Result<UndoCounts> {
     conn.query_row(
-        "SELECT COUNT(*) FROM library_publish_snapshots WHERE expires_day > ?2 AND bundle_id IN \
-         (SELECT json_extract(result_json, '$.bundle_id') FROM library_operation_work \
-         WHERE job_id = ?1 AND state = 'succeeded')",
+        "WITH bundles AS (SELECT json_extract(result_json, '$.bundle_id') AS bundle_id \
+           FROM library_operation_work WHERE job_id = ?1 AND state = 'succeeded' \
+           AND json_extract(result_json, '$.bundle_id') IS NOT NULL), \
+         written AS (SELECT DISTINCT j.bundle_id, j.track_id FROM library_publish_journal j \
+           JOIN bundles b ON b.bundle_id = j.bundle_id \
+           WHERE j.kind = 'audio' AND j.track_id IS NOT NULL \
+           AND j.state IN ('committed', 'cleaned', 'cleanup_pending')) \
+         SELECT \
+           (SELECT COUNT(*) FROM library_publish_snapshots s JOIN bundles b \
+             ON b.bundle_id = s.bundle_id WHERE s.expires_day > ?2), \
+           (SELECT COUNT(*) FROM written w WHERE NOT EXISTS (SELECT 1 \
+             FROM library_publish_snapshots s WHERE s.bundle_id = w.bundle_id \
+             AND s.track_id = w.track_id AND s.expires_day > ?2)), \
+           (SELECT MIN(s.expires_day) FROM library_publish_snapshots s JOIN bundles b \
+             ON b.bundle_id = s.bundle_id WHERE s.expires_day > ?2)",
         params![job_id, today],
+        |row| {
+            Ok(UndoCounts {
+                available: row.get(0)?,
+                expired: row.get(1)?,
+                first_expiry_day: row.get(2)?,
+            })
+        },
+    )
+}
+
+/// Files of a job with a saved original a baseline restore could use.
+pub fn baseline_available(conn: &Connection, job_id: &str) -> rusqlite::Result<i64> {
+    conn.query_row(
+        "SELECT COUNT(DISTINCT p.local_track_id) FROM library_management_plan_items p \
+         JOIN library_publish_baselines b ON b.track_id = p.local_track_id \
+         WHERE p.job_id = ?1",
+        params![job_id],
         |row| row.get(0),
     )
+}
+
+/// The media-server refreshes an apply asked for, as the pages show them.
+pub fn external_refreshes(
+    conn: &Connection,
+    job_id: &str,
+) -> rusqlite::Result<Vec<serde_json::Value>> {
+    let mut statement = conn.prepare_cached(
+        "SELECT target, state, attempts, max_attempts, failure_code, updated_at, completed_at \
+         FROM library_management_external_refresh_deliveries WHERE operation_job_id = ?1 \
+         ORDER BY target",
+    )?;
+    let rows = statement.query_map(params![job_id], |row| {
+        Ok(serde_json::json!({
+            "target": row.get::<_, String>(0)?,
+            "state": row.get::<_, String>(1)?,
+            "attempts": row.get::<_, i64>(2)?,
+            "max_attempts": row.get::<_, i64>(3)?,
+            "failure_code": row.get::<_, Option<String>>(4)?,
+            "updated_at": row.get::<_, f64>(5)?,
+            "completed_at": row.get::<_, Option<f64>>(6)?,
+        }))
+    })?;
+    rows.collect()
 }
 
 /// One page of management history, newest first.
@@ -881,4 +987,321 @@ pub fn history(
         None
     };
     Ok((items, next))
+}
+
+// ---------------------------------------------------------------------
+// After an album is written.
+// ---------------------------------------------------------------------
+
+/// What a profile run left on one file, so automatic management can tell
+/// a file it already manages from one it has not seen.
+pub struct ManagedMark<'a> {
+    pub track_id: &'a str,
+    pub root_id: &'a str,
+    pub profile_id: &'a str,
+    pub profile_revision: &'a str,
+    pub naming_revision: &'a str,
+    pub override_revision: u64,
+    pub job_id: &'a str,
+}
+
+/// Record that a profile run wrote (or left as it wanted) one file.
+pub fn mark_managed(
+    tx: &Transaction<'_>,
+    mark: &ManagedMark<'_>,
+    now: f64,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO library_track_management_state (local_track_id, applied_profile_id, \
+         applied_profile_revision, applied_naming_script_revision, applied_override_revision, \
+         last_operation_job_id, managed_root_id, last_managed_at, last_outcome) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'succeeded') \
+         ON CONFLICT (local_track_id) DO UPDATE SET \
+         applied_profile_id = excluded.applied_profile_id, \
+         applied_profile_revision = excluded.applied_profile_revision, \
+         applied_naming_script_revision = excluded.applied_naming_script_revision, \
+         applied_override_revision = excluded.applied_override_revision, \
+         last_operation_job_id = excluded.last_operation_job_id, \
+         managed_root_id = excluded.managed_root_id, \
+         last_managed_at = excluded.last_managed_at, last_outcome = 'succeeded', \
+         last_reason_code = NULL, \
+         row_revision = library_track_management_state.row_revision + 1",
+        params![
+            mark.track_id,
+            mark.profile_id,
+            mark.profile_revision,
+            mark.naming_revision,
+            mark.override_revision.to_string(),
+            mark.job_id,
+            mark.root_id,
+            now
+        ],
+    )?;
+    Ok(())
+}
+
+/// Record that a baseline restore put one file back to its original:
+/// automatic management leaves it alone until it is activated again.
+pub fn mark_restored(
+    tx: &Transaction<'_>,
+    track_id: &str,
+    job_id: &str,
+    now: f64,
+) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO library_track_management_state (local_track_id, last_operation_job_id, \
+         last_managed_at, last_outcome) VALUES (?1, ?2, ?3, 'restored') \
+         ON CONFLICT (local_track_id) DO UPDATE SET applied_profile_id = NULL, \
+         applied_profile_revision = NULL, applied_naming_script_revision = NULL, \
+         applied_override_revision = NULL, last_operation_job_id = excluded.last_operation_job_id, \
+         last_managed_at = excluded.last_managed_at, last_outcome = 'restored', \
+         row_revision = library_track_management_state.row_revision + 1",
+        params![track_id, job_id, now],
+    )?;
+    Ok(())
+}
+
+/// One file's management state, as automatic management compares it.
+#[derive(Debug, Clone, Default)]
+pub struct TrackState {
+    pub profile_id: Option<String>,
+    pub profile_revision: Option<String>,
+    pub naming_revision: Option<String>,
+    pub override_revision: Option<String>,
+    pub root_id: Option<String>,
+    pub outcome: Option<String>,
+    pub managed_at: Option<f64>,
+}
+
+pub fn track_state(conn: &Connection, track_id: &str) -> rusqlite::Result<Option<TrackState>> {
+    conn.query_row(
+        "SELECT applied_profile_id, applied_profile_revision, applied_naming_script_revision, \
+         applied_override_revision, managed_root_id, last_outcome, last_managed_at \
+         FROM library_track_management_state WHERE local_track_id = ?1",
+        params![track_id],
+        |row| {
+            Ok(TrackState {
+                profile_id: row.get(0)?,
+                profile_revision: row.get(1)?,
+                naming_revision: row.get(2)?,
+                override_revision: row.get(3)?,
+                root_id: row.get(4)?,
+                outcome: row.get(5)?,
+                managed_at: row.get(6)?,
+            })
+        },
+    )
+    .optional()
+}
+
+/// Save (or drop) the overrides a tag edit asked to keep. Safe to run
+/// twice: an override is found by its subject and field, and its id is
+/// derived from the job, so a retry updates the same row.
+pub fn save_tag_edit(
+    tx: &Transaction<'_>,
+    edit: &super::models::TagEditIntent,
+    job_id: &str,
+    actor: Option<&str>,
+    now: f64,
+) -> rusqlite::Result<()> {
+    use super::models::TagEditMode;
+    if edit.mode == TagEditMode::WriteOnce {
+        return Ok(());
+    }
+    for field in &edit.fields {
+        let album = field.subject_kind == "album";
+        let (subject_id, column, table) = if album {
+            (&edit.local_album_id, "local_album_id", "local_albums")
+        } else {
+            (&edit.local_track_id, "local_track_id", "local_tracks")
+        };
+        if edit.mode == TagEditMode::ResetCanonical {
+            tx.execute(
+                &format!(
+                    "DELETE FROM library_management_overrides WHERE subject_kind = ?1 \
+                     AND {column} = ?2 AND field_name = ?3"
+                ),
+                params![field.subject_kind, subject_id, field.field_name],
+            )?;
+            continue;
+        }
+        let (mode, value) = match field.values.as_slice() {
+            [] => ("clear", serde_json::Value::Null),
+            [one] => ("replace", serde_json::Value::String(one.clone())),
+            many => ("replace", serde_json::Value::from(many.to_vec())),
+        };
+        let updated = tx.execute(
+            &format!(
+                "UPDATE library_management_overrides SET value_json = ?4, mode = ?5, \
+                 actor_user_id = ?6, updated_at = ?7, row_revision = row_revision + 1 \
+                 WHERE subject_kind = ?1 AND {column} = ?2 AND field_name = ?3 \
+                 AND (value_json <> ?4 OR mode <> ?5)"
+            ),
+            params![
+                field.subject_kind,
+                subject_id,
+                field.field_name,
+                value.to_string(),
+                mode,
+                actor,
+                now
+            ],
+        )?;
+        if updated > 0 {
+            continue;
+        }
+        let id = sha256_hex(
+            format!(
+                "{job_id}\u{0}{}\u{0}{subject_id}\u{0}{}",
+                field.subject_kind, field.field_name
+            )
+            .as_bytes(),
+        );
+        tx.execute(
+            &format!(
+                "INSERT OR IGNORE INTO library_management_overrides (id, subject_kind, {column}, \
+                 field_name, value_json, mode, actor_user_id, reason, subject_revision, \
+                 created_at, updated_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'tag_editor', \
+                 COALESCE((SELECT row_revision FROM {table} WHERE id = ?3), 1), ?8, ?8)"
+            ),
+            params![
+                &id[..32],
+                field.subject_kind,
+                subject_id,
+                field.field_name,
+                value.to_string(),
+                mode,
+                actor,
+                now
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/// The override revisions a tag edit left on each file of one album:
+/// track -> (after the edit, before it).
+pub fn edit_override_revisions(
+    conn: &Connection,
+    job_id: &str,
+    ordinal: i64,
+) -> rusqlite::Result<std::collections::HashMap<String, (u64, u64)>> {
+    let raw: Option<String> = conn
+        .query_row(
+            "SELECT json_extract(result_json, '$.override_revisions') FROM library_operation_work \
+             WHERE job_id = ?1 AND ordinal = ?2",
+            params![job_id, ordinal],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
+    Ok(raw
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default())
+}
+
+/// Media-server refreshes to send for a finished apply, one per server.
+pub fn queue_refreshes(
+    tx: &Transaction<'_>,
+    job_id: &str,
+    targets: &[&str],
+    max_attempts: i64,
+    retry_delay_seconds: i64,
+    now: f64,
+) -> rusqlite::Result<()> {
+    for target in targets {
+        tx.execute(
+            "INSERT OR IGNORE INTO library_management_external_refresh_deliveries (id, \
+             operation_job_id, target, state, max_attempts, retry_delay_seconds, not_before, \
+             created_at, updated_at) VALUES (?1, ?2, ?3, 'pending', ?4, ?5, ?6, ?6, ?6)",
+            params![
+                &sha256_hex(format!("{job_id}\u{0}{target}").as_bytes())[..32],
+                job_id,
+                target,
+                max_attempts.clamp(1, 21),
+                retry_delay_seconds.clamp(1, 3600),
+                now
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/// One media-server refresh due now.
+#[derive(Debug, Clone)]
+pub struct DueRefresh {
+    pub id: String,
+    pub target: String,
+    pub attempts: i64,
+    pub max_attempts: i64,
+    pub retry_delay_seconds: i64,
+}
+
+/// Claim the next refresh due now.
+pub fn claim_refresh(
+    tx: &Transaction<'_>,
+    worker: &str,
+    now: f64,
+) -> rusqlite::Result<Option<DueRefresh>> {
+    let due = tx
+        .query_row(
+            "SELECT id, target, attempts, max_attempts, retry_delay_seconds \
+             FROM library_management_external_refresh_deliveries \
+             WHERE (state IN ('pending', 'retry_wait') AND not_before <= ?1) \
+             OR (state = 'delivering' AND COALESCE(lease_expires_at, 0) <= ?1) \
+             ORDER BY not_before, id LIMIT 1",
+            params![now],
+            |row| {
+                Ok(DueRefresh {
+                    id: row.get(0)?,
+                    target: row.get(1)?,
+                    attempts: row.get(2)?,
+                    max_attempts: row.get(3)?,
+                    retry_delay_seconds: row.get(4)?,
+                })
+            },
+        )
+        .optional()?;
+    if let Some(due) = &due {
+        tx.execute(
+            "UPDATE library_management_external_refresh_deliveries SET state = 'delivering', \
+             attempts = MIN(attempts + 1, max_attempts), lease_owner = ?2, \
+             lease_expires_at = ?3, updated_at = ?4, row_revision = row_revision + 1 \
+             WHERE id = ?1",
+            params![due.id, worker, now + 120.0, now],
+        )?;
+    }
+    Ok(due)
+}
+
+/// Record how one refresh attempt went: `succeeded`, `unavailable`
+/// (the server is not set up), or a failure that waits and retries until
+/// its attempts run out.
+pub fn finish_refresh(
+    tx: &Transaction<'_>,
+    due: &DueRefresh,
+    outcome: Result<(), &str>,
+    now: f64,
+) -> rusqlite::Result<()> {
+    let attempts = due.attempts + 1;
+    let (state, code, not_before, done) = match outcome {
+        Ok(()) => ("succeeded", None, now, Some(now)),
+        Err("NOT_CONFIGURED") => ("unavailable", Some("NOT_CONFIGURED"), now, Some(now)),
+        Err(code) if attempts >= due.max_attempts => ("failed", Some(code), now, Some(now)),
+        Err(code) => (
+            "retry_wait",
+            Some(code),
+            now + due.retry_delay_seconds as f64,
+            None,
+        ),
+    };
+    tx.execute(
+        "UPDATE library_management_external_refresh_deliveries SET state = ?2, \
+         failure_code = ?3, not_before = ?4, completed_at = ?5, lease_owner = NULL, \
+         lease_expires_at = NULL, updated_at = ?6, row_revision = row_revision + 1 \
+         WHERE id = ?1",
+        params![due.id, state, code, not_before, done, now],
+    )?;
+    Ok(())
 }
