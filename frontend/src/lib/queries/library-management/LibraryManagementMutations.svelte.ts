@@ -22,12 +22,10 @@ import type {
 	LibraryManagementPreviewDetailResponse,
 	LibraryManagementPreviewReissueResponse,
 	LibraryManagementProfileCopyRequest,
-	LibraryManagementProfileCreateRequest,
 	LibraryManagementProfileDeleteRequest,
 	LibraryManagementProfileExportRequest,
 	LibraryManagementProfileImportPreviewRequest,
 	LibraryManagementProfileImportRequest,
-	LibraryManagementProfileUpdateRequest,
 	LibraryManagementSettingsImpactRequest,
 	LibraryManagementSettingsResponse,
 	LibraryManagementSettingsUpdateRequest,
@@ -63,24 +61,10 @@ export const validateLibraryManagementSettingsMutation = () =>
 			api.global.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.validate(), request)
 	}));
 
-export const createLibraryManagementProfileMutation = () =>
-	createMutation(() => ({
-		mutationFn: (request: LibraryManagementProfileCreateRequest) =>
-			api.global.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.profiles(), request),
-		onSuccess: invalidateLibraryManagementSurfaces
-	}));
-
 export const copyLibraryManagementProfileMutation = () =>
 	createMutation(() => ({
 		mutationFn: (input: { profileId: string; request: LibraryManagementProfileCopyRequest }) =>
 			api.global.v3.POST(LIBRARY_MANAGEMENT_ENDPOINTS.copyProfile(input.profileId), input.request),
-		onSuccess: invalidateLibraryManagementSurfaces
-	}));
-
-export const updateLibraryManagementProfileMutation = () =>
-	createMutation(() => ({
-		mutationFn: (input: { profileId: string; request: LibraryManagementProfileUpdateRequest }) =>
-			api.global.v3.PUT(LIBRARY_MANAGEMENT_ENDPOINTS.profile(input.profileId), input.request),
 		onSuccess: invalidateLibraryManagementSurfaces
 	}));
 

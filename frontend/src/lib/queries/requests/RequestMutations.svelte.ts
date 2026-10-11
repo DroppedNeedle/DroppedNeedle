@@ -154,23 +154,3 @@ export const createClearHistoryMutation = () =>
 		onError: (err) =>
 			toastStore.show({ message: errorMessage(err, 'Could not remove that item'), type: 'error' })
 	}));
-
-export const createSyncRequestsMutation = () =>
-	createMutation(() => ({
-		mutationFn: () => api.global.v3.POST(REQUESTS_ENDPOINTS.sync()),
-		onMutate: () => ({ userId: authStore.user?.id }),
-		onSuccess: async (data, _vars, context) => {
-			if (!sameUser(context.userId)) return;
-			await invalidateRequestSurface();
-			notifyPendingApprovalCountChanged();
-			toastStore.show({
-				message:
-					data.reconciled > 0
-						? `Synced ${data.reconciled} request${data.reconciled === 1 ? '' : 's'}`
-						: 'Requests already in sync',
-				type: 'info'
-			});
-		},
-		onError: (err) =>
-			toastStore.show({ message: errorMessage(err, 'Could not sync requests'), type: 'error' })
-	}));

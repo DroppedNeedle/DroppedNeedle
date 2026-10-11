@@ -26,10 +26,3 @@ export const getLibraryPolicyTreeQuery = (enabled: Getter<boolean> = () => true)
 		queryKey: LibraryQueryKeyFactory.policyTree(),
 		queryFn: ({ signal }) => api.global.v3.GET(LibraryV3Api.policyTree(), { signal })
 	}));
-
-export const getLibraryPathMappingQuery = (enabled: Getter<boolean> = () => false) =>
-	createQuery(() => ({
-		enabled: enabled(),
-		queryKey: LibraryQueryKeyFactory.pathMapping(),
-		queryFn: ({ signal }) => api.global.v3.GET(LibraryV3Api.pathMapping(), { signal })
-	}));

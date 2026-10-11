@@ -101,20 +101,6 @@ export const getLibraryManagementTagEditorQuery = (
 		};
 	});
 
-export const getLibraryManagementProfileQuery = (
-	getUserId: Getter<string | null | undefined>,
-	getProfileId: Getter<string | null>
-) =>
-	createQuery(() => {
-		const profileId = getProfileId();
-		return {
-			enabled: Boolean(profileId),
-			queryKey: LibraryManagementQueryKeyFactory.profile(getUserId(), profileId ?? ''),
-			queryFn: ({ signal }) =>
-				api.global.v3.GET(LIBRARY_MANAGEMENT_ENDPOINTS.profile(profileId ?? ''), { signal })
-		};
-	});
-
 export const getLibraryManagementPresetDiffQuery = (
 	getUserId: Getter<string | null | undefined>,
 	getProfileId: Getter<string | null>

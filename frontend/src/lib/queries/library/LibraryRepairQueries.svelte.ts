@@ -3,7 +3,7 @@ import type { Getter } from 'runed';
 import { api } from '$lib/api/client';
 import { LibraryQueryKeyFactory } from './LibraryQueryKeyFactory';
 import { LibraryV3Api } from './LibraryV3Api';
-import { toOperationList, toOperationResponse } from './libraryOperationAdapters';
+import { toOperationList } from './libraryOperationAdapters';
 import type { RepairEstimateResponse, RepairFindingListResponse } from './LibraryOperationsTypes';
 
 export const getLibraryRepairsQuery = (enabled: Getter<boolean> = () => true) =>
@@ -17,19 +17,6 @@ export const getLibraryRepairsQuery = (enabled: Getter<boolean> = () => true) =>
 			),
 		getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined
 	}));
-
-export const getLibraryRepairQuery = (getJobId: Getter<string | null>) =>
-	createQuery(() => {
-		const jobId = getJobId();
-		return {
-			enabled: Boolean(jobId),
-			queryKey: LibraryQueryKeyFactory.repair(jobId ?? ''),
-			queryFn: async ({ signal }) =>
-				toOperationResponse(
-					await api.global.v3.GET(LibraryV3Api.identityRepair(jobId ?? ''), { signal })
-				)
-		};
-	});
 
 export const getLibraryRepairEstimateQuery = (
 	getRootIds: Getter<string[]>,

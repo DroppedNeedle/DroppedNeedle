@@ -2,8 +2,8 @@ import { createMutation } from '@tanstack/svelte-query';
 
 import { toastStore } from '$lib/stores/toast';
 
-import { pollPlexFlow, startPlexFlow } from './PlexFlowApi';
-import type { PlexPollResult, PlexPurpose, PlexStartBody } from './types';
+import { startPlexFlow } from './PlexFlowApi';
+import type { PlexPurpose, PlexStartBody } from './types';
 
 export interface PlexStartVars {
 	purpose: PlexPurpose;
@@ -22,11 +22,4 @@ export const createPlexStartMutation = () =>
 				message: errorMessage(err, 'Could not reach Plex. Try again.'),
 				type: 'error'
 			})
-	}));
-
-// Polling is a read: completion effects (store the session, refresh the
-// account list, keep the token) belong to the calling purpose, not the flow.
-export const createPlexPollMutation = <P extends PlexPurpose>(purpose: P) =>
-	createMutation(() => ({
-		mutationFn: (pinId: number): Promise<PlexPollResult<P>> => pollPlexFlow(purpose, pinId)
 	}));

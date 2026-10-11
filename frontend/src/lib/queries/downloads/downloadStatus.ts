@@ -232,12 +232,3 @@ function _retryChainKey(task: DownloadTask): string | null {
 	const identity = task.download_type === 'track' ? task.recording_mbid : task.release_group_mbid;
 	return identity ? `${task.download_type}:${identity}:${task.user_id}` : null;
 }
-
-// featured "now pressing": most recent downloading/processing item, else most recent active item
-export function nowPressing(tasks: DownloadTask[]): DownloadTask | null {
-	const active = tasks.filter((t) => tabForTask(t) === 'active');
-	if (active.length === 0) return null;
-	const live = active.filter((t) => t.status === 'downloading' || t.status === 'processing');
-	const pool = live.length > 0 ? live : active;
-	return pool.reduce((best, t) => (t.created_at > best.created_at ? t : best), pool[0]);
-}
