@@ -3034,26 +3034,79 @@ async fn management_step(library: &LibrarySetup) -> bool {
         .expect("worker step runs")
 }
 
-/// A Library Management job end to end: an album whose edition is a best
-/// guess is left alone with its reason; once confirmed, preview it from
-/// the Picard-style profile, page its planned file, apply it (tags
-/// written, file renamed by the naming script), read the result, then
-/// preview the undo and apply that, which puts the file back exactly as
-/// it was.
+/// Make a ready preview and apply it; returns the job id once the worker
+/// wrote it.
+async fn management_run(
+    library: &LibrarySetup,
+    request: droppedneedle::library::management::service::PreviewRequest,
+) -> String {
+    use droppedneedle::library::management::service::{ApplyRequest, Management};
+    let management = Management::new(library);
+    let handle = management
+        .create_preview(request, "admin")
+        .expect("preview queued");
+    assert!(management_step(library).await, "planning runs");
+    let detail = management.detail(&handle.job_id).expect("detail");
+    assert!(detail.ready_for_confirmation, "{:?}", detail.stale_reasons);
+    management
+        .apply(
+            &handle.job_id,
+            ApplyRequest {
+                preview_token: handle.preview_token,
+                expected_row_revision: detail.job.row_revision,
+                idempotency_key: format!("apply-{}", handle.job_id),
+                confirmation: true,
+            },
+        )
+        .expect("apply queued");
+    assert!(management_step(library).await, "apply runs");
+    let applied = management.detail(&handle.job_id).expect("detail");
+    assert_eq!(applied.job.state.as_str(), "succeeded");
+    handle.job_id
+}
+
+/// A Library Management job end to end:
+/// - an album whose edition is a best guess is left alone with its reason;
+/// - once confirmed, picking one file still plans (and moves) the whole
+///   album, and a rename that only changes letter case goes through;
+/// - the Picard-style profile then retags and moves the album, its cover
+///   and rip log travel with it, a wrong token is refused, and results
+///   and history read back;
+/// - an undo preview, applied, puts files and sidecars back with their
+///   tags, and a second undo is refused.
 #[tokio::test]
 async fn library_management_preview_apply_undo() {
     use droppedneedle::library::management::models::{ItemFilter, Selection, SelectionKind};
     use droppedneedle::library::management::service::{ApplyRequest, Management, PreviewRequest};
     use droppedneedle::library::scan::CatalogStore as _;
+    use droppedneedle::library::tags::save::{TagEdit, save_tags};
+    use droppedneedle::library::tags::{TagField, read_fields};
+    use droppedneedle::runtime_config::sections::NamingScript;
     use droppedneedle::settings::management as lm;
 
     let (_scratch, library, music) = bare_library("lib-management-jobs");
-    let file = plant(&music, "incoming/01.flac", "management_full.flac");
-    let original = droppedneedle::library::tags::read_fields(&file).expect("fields read");
+    let first = plant(
+        &music,
+        "incoming/management track.flac",
+        "management_full.flac",
+    );
+    let second = plant(&music, "incoming/second.flac", "management_full.flac");
+    save_tags(
+        &second,
+        &[
+            TagEdit::verbatim(TagField::Title, vec!["Second Song".to_owned()]),
+            TagEdit::verbatim(TagField::TrackNumber, vec!["3".to_owned()]),
+            TagEdit::verbatim(TagField::MusicBrainzRecordingId, Vec::new()),
+            TagEdit::verbatim(TagField::MusicBrainzReleaseTrackId, Vec::new()),
+        ],
+    )
+    .expect("second file retagged");
+    std::fs::write(music.join("incoming/cover.jpg"), b"cover bytes").expect("cover");
+    std::fs::write(music.join("incoming/rip.log"), b"rip log").expect("log");
     add_music_root(&library, &music).await;
     let track = library
         .scan_store
-        .track_at("music", "incoming/01.flac")
+        .track_at("music", "incoming/management track.flac")
         .expect("track indexed");
     let album = library.scan_store.album_for_track(&track).expect("album");
     library
@@ -3069,29 +3122,55 @@ async fn library_management_preview_apply_undo() {
              VALUES ('admin', 'Admin', 'admin', '2026-01-01T00:00:00Z')",
         )
         .expect("admin row");
-    let settings = library
-        .config
-        .save(lm::initial_settings(""))
-        .expect("management settings saved");
+    // A second profile names files after their title in place, so the
+    // first file's rename only changes letter case.
+    let mut settings = lm::initial_settings("");
+    settings.naming_scripts.push(NamingScript {
+        id: "in-place".to_owned(),
+        name: "In place".to_owned(),
+        source: "incoming/{title}.{ext}".to_owned(),
+        ..NamingScript::default()
+    });
+    let mut in_place = settings
+        .profiles
+        .iter()
+        .find(|profile| profile.id == lm::PICARD_ORGANIZER_PROFILE_ID)
+        .expect("picard preset")
+        .clone();
+    in_place.id = "in-place".to_owned();
+    in_place.name = "In place".to_owned();
+    in_place.organization.naming_script_id = "in-place".to_owned();
+    in_place.organization.multi_disc_naming_script_id = None;
+    settings.profiles.push(in_place);
+    let settings = library.config.save(settings).expect("settings saved");
 
     let management = Management::new(&library);
-    let request = |key: &str| PreviewRequest {
-        selection: Selection {
-            kind: SelectionKind::Albums,
-            ids: vec![album.clone()],
-            catalog_filter: None,
-        },
-        profile_id: lm::PICARD_ORGANIZER_PROFILE_ID.to_owned(),
-        expected_settings_revision: lm::settings_revision(&settings),
-        expected_policy_revision: library.live_registry().policy_revision().to_owned(),
-        idempotency_key: Some(key.to_owned()),
-        target_root_id: None,
-        overrides: None,
-    };
+    let request =
+        |profile: &str, kind: SelectionKind, ids: Vec<String>, key: &str| PreviewRequest {
+            selection: Selection {
+                kind,
+                ids,
+                catalog_filter: None,
+            },
+            profile_id: profile.to_owned(),
+            expected_settings_revision: lm::settings_revision(&settings),
+            expected_policy_revision: library.live_registry().policy_revision().to_owned(),
+            idempotency_key: Some(key.to_owned()),
+            target_root_id: None,
+            overrides: None,
+        };
 
     // The tie was decided as a best guess: its files wait, and say why.
     let guessed = management
-        .create_preview(request("preview-guess"), "admin")
+        .create_preview(
+            request(
+                lm::PICARD_ORGANIZER_PROFILE_ID,
+                SelectionKind::Albums,
+                vec![album.clone()],
+                "preview-guess",
+            ),
+            "admin",
+        )
         .expect("preview queued");
     assert!(management_step(&library).await, "planning runs");
     let page = management
@@ -3100,27 +3179,68 @@ async fn library_management_preview_apply_undo() {
     let reason = page.items[0].facts.reason.clone().expect("a reason");
     assert_eq!(reason.code, "UNCONFIRMED_MATCH");
     assert!(!reason.action.is_empty());
-
     droppedneedle::library::operations::service::Operations::new(&library)
         .confirm_match(&album, "admin")
         .expect("match confirmed");
+
+    // One picked file moves its whole album; the case-only rename is the
+    // file itself, not a collision.
+    let in_place_job = management_run(
+        &library,
+        request(
+            "in-place",
+            SelectionKind::Tracks,
+            vec![track.clone()],
+            "preview-in-place",
+        ),
+    )
+    .await;
+    let detail = management.detail(&in_place_job).expect("detail");
+    assert_eq!(detail.summary.selected_item_count, Some(1));
+    assert_eq!(detail.summary.item_count, 2, "the whole album is planned");
+    assert!(music.join("incoming/Management Track.flac").exists());
+    assert!(music.join("incoming/Second Song.flac").exists());
+    assert!(!first.exists() && !second.exists());
+    let renamed = music.join("incoming/Management Track.flac");
+    let tagged = read_fields(&renamed).expect("fields read");
+
+    // The Picard-style profile moves the album; its sidecars come along.
     let handle = management
-        .create_preview(request("preview-1"), "admin")
+        .create_preview(
+            request(
+                lm::PICARD_ORGANIZER_PROFILE_ID,
+                SelectionKind::Albums,
+                vec![album.clone()],
+                "preview-picard",
+            ),
+            "admin",
+        )
         .expect("preview queued");
     assert!(management_step(&library).await, "planning runs");
     let detail = management.detail(&handle.job_id).expect("detail");
     assert!(detail.ready_for_confirmation, "{:?}", detail.stale_reasons);
-    assert_eq!(detail.summary.item_count, 1);
     let page = management
         .items(&handle.job_id, -1, 100, &ItemFilter::default())
         .expect("items page");
-    let item = &page.items[0];
+    let item = page
+        .items
+        .iter()
+        .find(|item| item.source_rel == "incoming/Management Track.flac")
+        .expect("planned file");
     assert!(item.eligibility.writes(), "{:?}", item.facts.reason);
     let dest = item.dest_rel.clone().expect("destination planned");
-    assert_ne!(dest, "incoming/01.flac", "the naming script moves the file");
-    assert!(item.diff.tags_changed, "edition tags are written");
-
-    // A wrong token is refused; the real one queues the album.
+    let dest_dir = std::path::Path::new(&dest)
+        .parent()
+        .expect("destination folder")
+        .to_path_buf();
+    assert_eq!(
+        page.items
+            .iter()
+            .map(|item| item.diff.sidecars.len())
+            .sum::<usize>(),
+        2,
+        "cover and log are planned"
+    );
     let wrong = management.apply(
         &handle.job_id,
         ApplyRequest {
@@ -3145,15 +3265,23 @@ async fn library_management_preview_apply_undo() {
     assert!(management_step(&library).await, "apply runs");
     let applied = management.detail(&handle.job_id).expect("detail");
     assert_eq!(applied.job.state.as_str(), "succeeded");
-    assert_eq!(applied.phase, "complete");
-    assert!(!file.exists(), "the source moved");
+    assert!(!renamed.exists(), "the source moved");
     assert!(music.join(&dest).exists(), "the file sits at its new path");
+    assert!(music.join(&dest_dir).join("cover.jpg").exists());
+    assert!(music.join(&dest_dir).join("rip.log").exists());
+    assert!(!music.join("incoming/cover.jpg").exists());
     let results = management
         .results(&handle.job_id, -1, 100)
         .expect("results");
-    assert_eq!(results.items[0].work_state, "succeeded");
+    assert!(
+        results
+            .items
+            .iter()
+            .all(|item| item.work_state == "succeeded")
+    );
     assert!(applied.undo_available_count >= 1);
 
+    // Undo puts files, tags and sidecars back; a second undo is refused.
     let undo = management
         .undo_preview(&handle.job_id, applied.job.row_revision, "undo-1", "admin")
         .expect("undo preview queued");
@@ -3175,12 +3303,24 @@ async fn library_management_preview_apply_undo() {
     let undone = management.detail(&undo.job_id).expect("detail");
     assert_eq!(undone.job.state.as_str(), "succeeded");
     assert_eq!(
-        droppedneedle::library::tags::read_fields(&file).expect("restored file reads"),
-        original,
+        read_fields(&renamed).expect("restored file reads"),
+        tagged,
         "undo puts every tag back"
+    );
+    assert_eq!(
+        std::fs::read(music.join("incoming/cover.jpg")).expect("cover back"),
+        b"cover bytes"
+    );
+    assert!(music.join("incoming/rip.log").exists());
+    let source = management.detail(&handle.job_id).expect("detail");
+    assert!(
+        management
+            .undo_preview(&handle.job_id, source.job.row_revision, "undo-2", "admin")
+            .is_err(),
+        "an undone run cannot be undone twice"
     );
     let (history, _) = management
         .history(Default::default())
         .expect("history reads");
-    assert_eq!(history.len(), 3);
+    assert_eq!(history.len(), 4);
 }

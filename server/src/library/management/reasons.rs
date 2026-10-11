@@ -163,6 +163,30 @@ pub fn position_collision() -> ItemReason {
     )
 }
 
+pub fn sidecar_collision() -> ItemReason {
+    ItemReason::new(
+        "SIDECAR_COLLISION",
+        "A file that travels with this album (such as cover.jpg or a .cue sheet) already exists where the album would go, and files are never overwritten.",
+        "Move or remove the file at the destination, or turn off moving sidecar files in the profile, then make a new preview.",
+    )
+}
+
+pub fn sidecar_unreadable() -> ItemReason {
+    ItemReason::new(
+        "SIDECAR_COLLISION",
+        "A file that travels with this album could not be read, is a symbolic link, or there are too many of them to move safely.",
+        "Check the album folder, or turn off moving sidecar files in the profile, then make a new preview.",
+    )
+}
+
+pub fn album_changed() -> ItemReason {
+    ItemReason::new(
+        "ALBUM_CHANGED",
+        "Files were added to, removed from or regrouped in this album after the preview was made, so it was left alone.",
+        "Make a new preview.",
+    )
+}
+
 pub fn bundle_blocked() -> ItemReason {
     ItemReason::new(
         "BUNDLE_BLOCKED",

@@ -13,7 +13,7 @@ use rusqlite::{Connection, OptionalExtension as _, params};
 
 use super::models::{
     DesiredDocument, DesiredField, Eligibility, ItemDiff, ItemFacts, ManagementError,
-    PinnedProfile, PlannedItem,
+    PinnedProfile, PlannedItem, SidecarMove,
 };
 use super::profile::{self, CompiledScripts, NamingFacts};
 use super::reasons::{self, ItemReason};
@@ -439,6 +439,230 @@ fn plan_file(
     Ok(())
 }
 
+/// Most sidecar files one album may carry, and most directory entries
+/// looked at to find them (as in v2).
+const MAX_SIDECARS: usize = 1_000;
+const MAX_SIDECAR_ENTRIES: usize = 10_000;
+
+/// Shell-style match with `*` and `?`, on already case-folded text.
+fn glob(pattern: &[char], text: &[char]) -> bool {
+    match (pattern.first(), text.first()) {
+        (None, None) => true,
+        (Some('*'), _) => {
+            glob(&pattern[1..], text) || (!text.is_empty() && glob(pattern, &text[1..]))
+        }
+        (Some('?'), Some(_)) => glob(&pattern[1..], &text[1..]),
+        (Some(p), Some(t)) if p == t => glob(&pattern[1..], &text[1..]),
+        _ => false,
+    }
+}
+
+/// True when a sidecar pattern matches `relative` (folded). Patterns with
+/// a slash match the path below the album folder; others match files in
+/// the album folder itself.
+fn sidecar_match(patterns: &[Vec<char>], relative: &str) -> bool {
+    let text: Vec<char> = relative.chars().collect();
+    patterns
+        .iter()
+        .any(|pattern| (pattern.contains(&'/') || !relative.contains('/')) && glob(pattern, &text))
+}
+
+/// Files below `dir` relative to it, sorted, skipping symlinked folders.
+/// `None` when the folder is too large to walk or a matching file is a
+/// symbolic link.
+fn sidecar_candidates(dir: &Path, deep: bool, patterns: &[Vec<char>]) -> Option<Vec<String>> {
+    let mut found = Vec::new();
+    let mut pending = vec![String::new()];
+    let mut examined = 0;
+    while let Some(prefix) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(dir.join(&prefix)) else {
+            continue;
+        };
+        let mut entries: Vec<_> = entries.filter_map(Result::ok).collect();
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            examined += 1;
+            if examined > MAX_SIDECAR_ENTRIES {
+                return None;
+            }
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            let relative = if prefix.is_empty() {
+                name
+            } else {
+                format!("{prefix}/{name}")
+            };
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            let folded = caseless::default_case_fold_str(&relative);
+            if kind.is_dir() {
+                if deep {
+                    pending.push(relative);
+                }
+                continue;
+            }
+            if !sidecar_match(patterns, &folded) {
+                continue;
+            }
+            if kind.is_symlink() {
+                return None;
+            }
+            if kind.is_file() && tags::format_for_path(Path::new(&relative)).is_err() {
+                found.push(relative);
+            }
+        }
+    }
+    if found.len() > MAX_SIDECARS {
+        return None;
+    }
+    found.sort();
+    Some(found)
+}
+
+/// Sidecars (cover art, cue sheets, logs) travel with the album when its
+/// folder moves, as v2 did: the files in the first moving file's folder
+/// that match the profile's patterns go to its new folder. A sidecar
+/// that would land on an existing file blocks the album instead.
+fn plan_sidecars(ctx: &PlanContext<'_>, items: &mut [PlannedItem]) {
+    let organization = &ctx.pinned.profile.organization;
+    if !organization.move_sidecars || organization.sidecar_patterns.is_empty() {
+        return;
+    }
+    let Some(index) = items.iter().position(|item| {
+        item.desired
+            .plan
+            .as_ref()
+            .is_some_and(|plan| plan.kind == PlanKind::Move)
+    }) else {
+        return;
+    };
+    let Some(plan) = items[index].desired.plan.clone() else {
+        return;
+    };
+    let parent = |rel: &str| {
+        Path::new(rel)
+            .parent()
+            .map(|parent| parent.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    };
+    let (source_dir, dest_dir) = (parent(&plan.source_rel), parent(&plan.dest_rel));
+    if source_dir == dest_dir && plan.source_root == plan.dest_root {
+        return;
+    }
+    if source_dir.is_empty() {
+        items[index].facts.warnings.push(
+            "Files that travel with albums (cover.jpg, .cue sheets) are not moved for an album              at the top of a library folder."
+                .to_owned(),
+        );
+        if items[index].eligibility == Eligibility::Eligible {
+            items[index].eligibility = Eligibility::Warning;
+        }
+        return;
+    }
+    let patterns: Vec<Vec<char>> = organization
+        .sidecar_patterns
+        .iter()
+        .map(|pattern| caseless::default_case_fold_str(pattern).chars().collect())
+        .collect();
+    let deep = patterns.iter().any(|pattern| pattern.contains(&'/'));
+    let Ok(source_path) = ctx
+        .sandbox
+        .resolve_no_symlink(&plan.source_root, &source_dir)
+    else {
+        items[index].block(reasons::sidecar_unreadable());
+        return;
+    };
+    let Some(found) = sidecar_candidates(&source_path, deep, &patterns) else {
+        items[index].block(reasons::sidecar_unreadable());
+        return;
+    };
+    let audio: HashSet<_> = items
+        .iter()
+        .filter_map(|item| item.desired.plan.as_ref())
+        .map(|plan| collision_key(&plan.dest_root, &plan.dest_rel))
+        .collect();
+    let mut seen = HashSet::new();
+    let mut sidecars = Vec::new();
+    for relative in found {
+        let source_rel = format!("{source_dir}/{relative}");
+        let dest_rel = if dest_dir.is_empty() {
+            relative.clone()
+        } else {
+            format!("{dest_dir}/{relative}")
+        };
+        let key = collision_key(&plan.dest_root, &dest_rel);
+        let occupied = audio.contains(&key)
+            || !seen.insert(key)
+            || ctx
+                .sandbox
+                .resolve_no_symlink(&plan.dest_root, &dest_rel)
+                .map_or(true, |path| {
+                    path.symlink_metadata().is_ok() || folded_sibling_exists(&path)
+                });
+        if occupied {
+            items[index].block(reasons::sidecar_collision());
+            return;
+        }
+        let bytes = ctx
+            .sandbox
+            .resolve_no_symlink(&plan.source_root, &source_rel)
+            .and_then(|path| crate::library::publish::paths::read_regular_file(&path));
+        let Ok(bytes) = bytes else {
+            items[index].block(reasons::sidecar_unreadable());
+            return;
+        };
+        sidecars.push(crate::library::publish::planner::SidecarPlan {
+            source_root: plan.source_root.clone(),
+            source_rel: source_rel.clone(),
+            dest_root: plan.dest_root.clone(),
+            dest_rel: dest_rel.clone(),
+            fingerprint: FileFingerprint {
+                size: bytes.len() as u64,
+                sha256: sha256_hex(&bytes),
+            },
+        });
+    }
+    if sidecars.is_empty() {
+        return;
+    }
+    let item = &mut items[index];
+    item.diff.sidecars = sidecars
+        .iter()
+        .map(|sidecar| SidecarMove {
+            source_relative_path: sidecar.source_rel.clone(),
+            destination_relative_path: sidecar.dest_rel.clone(),
+        })
+        .collect();
+    if let Some(plan) = item.desired.plan.as_mut() {
+        let bytes: u64 = sidecars
+            .iter()
+            .map(|sidecar| sidecar.fingerprint.size)
+            .sum();
+        plan.staged_bytes_estimate += bytes;
+        item.estimated_bytes += bytes;
+        plan.capabilities.push(Capability::Sidecars);
+        plan.sidecars = sidecars;
+    }
+}
+
+/// True when another name in the folder folds to the same name.
+fn folded_sibling_exists(path: &Path) -> bool {
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name().and_then(|n| n.to_str()))
+    else {
+        return false;
+    };
+    let wanted = caseless::default_case_fold_str(name);
+    std::fs::read_dir(parent).is_ok_and(|entries| {
+        entries.filter_map(Result::ok).any(|entry| {
+            entry.file_name().to_str().is_some_and(|other| {
+                other != name && caseless::default_case_fold_str(other) == wanted
+            })
+        })
+    })
+}
+
 /// Block files whose destination is taken: by another file of this run
 /// or by a file on disk that is not the file itself.
 fn check_collisions(ctx: &PlanContext<'_>, items: &mut [PlannedItem]) {
@@ -539,6 +763,7 @@ pub fn plan_album(
             item.block(reason);
         }
     }
+    plan_sidecars(ctx, &mut items);
     check_collisions(ctx, &mut items);
     let writes: Vec<PlanItem> = items
         .iter()

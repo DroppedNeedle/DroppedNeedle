@@ -80,6 +80,21 @@ impl HeldBundles {
         }
     }
 
+    /// True when the publisher committed `bundle_id`: its files changed
+    /// even if whoever asked never heard back. Blocking.
+    pub fn committed(&self, bundle_id: &str) -> Result<bool, PublishError> {
+        use super::publish::JournalState;
+        let conn = crate::db::open_connection(&self.db_path)
+            .map_err(|error| PublishError::Store(error.to_string()))?;
+        let journals = JournalStore::new(&conn).bundle(bundle_id)?;
+        Ok(journals.iter().any(|journal| {
+            matches!(
+                journal.state,
+                JournalState::Committed | JournalState::Cleaned | JournalState::CleanupPending
+            )
+        }))
+    }
+
     /// Bundle ids with unsettled journals. Blocking.
     pub fn list(&self) -> Result<Vec<String>, PublishError> {
         let conn = crate::db::open_connection(&self.db_path)
@@ -239,6 +254,8 @@ pub(crate) enum UndoSkip {
 pub(crate) struct UndoFile {
     pub plan: PlanItem,
     pub current: BTreeMap<String, Vec<String>>,
+    /// Sidecars that changed or whose old path is taken: they stay put.
+    pub sidecars_left: Vec<String>,
 }
 
 /// What undoing one bundle would do.
@@ -775,6 +792,8 @@ impl LibrarySetup {
             .map_err(publish_error)?;
         let mut live = live;
         live.catalog_revision = catalog_revision;
+        open.publisher
+            .set_undo_retention_days(self.undo_retention_days());
         let outcome = open
             .publisher
             .publish(&entry.sealed, &live, &entry.docs)
@@ -869,6 +888,17 @@ impl LibrarySetup {
         })
     }
 
+    /// How long undo keeps before-states, read from the settings per call.
+    fn undo_retention_days(&self) -> i64 {
+        self.config
+            .get::<crate::runtime_config::sections::LibraryManagement>()
+            .map(|settings| settings.undo_retention_days)
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, "management settings unreadable; default undo retention");
+                super::publish::DEFAULT_UNDO_RETENTION_DAYS as i64
+            })
+    }
+
     /// The sandbox over the usable roots, opening the publish cell when
     /// the root set changed. Blocking.
     pub(crate) fn publish_sandbox(&self) -> Result<Sandbox, PublishError> {
@@ -892,6 +922,7 @@ impl LibrarySetup {
     /// that moved since. Blocking: the job worker runs it.
     pub(crate) fn publish_plans(
         &self,
+        bundle_id: &str,
         plan_items: Vec<PlanItem>,
         pins: SealPins,
         override_of: &dyn Fn(&str) -> u64,
@@ -917,8 +948,10 @@ impl LibrarySetup {
             );
         }
         let catalog_revision = SqliteCatalog.revision(open.publisher.connection())?;
+        open.publisher
+            .set_undo_retention_days(self.undo_retention_days());
         let bundle = PlanBundle {
-            id: self.ids.new_id(),
+            id: bundle_id.to_owned(),
             items: plan_items,
             profile_revision: pins.profile,
             naming_revision: pins.naming,
@@ -1021,6 +1054,39 @@ impl LibrarySetup {
         self.undo_files_in(open, bundle_id, override_of)
     }
 
+    /// Sidecars an apply moved, moved back: each one still holding the
+    /// bytes the apply put there, going to an old path nothing took since.
+    /// The others stay where they are and are named in the second list.
+    fn undo_sidecars(
+        sandbox: &Sandbox,
+        moved: &[super::publish::planner::SidecarPlan],
+    ) -> (Vec<super::publish::planner::SidecarPlan>, Vec<String>) {
+        let mut back = Vec::new();
+        let mut left = Vec::new();
+        for sidecar in moved {
+            let unchanged = sandbox
+                .resolve_no_symlink(&sidecar.dest_root, &sidecar.dest_rel)
+                .ok()
+                .and_then(|path| super::publish::paths::read_regular_file(&path).ok())
+                .is_some_and(|bytes| sha256_hex(&bytes) == sidecar.fingerprint.sha256);
+            let free = sandbox
+                .resolve_no_symlink(&sidecar.source_root, &sidecar.source_rel)
+                .is_ok_and(|path| path.symlink_metadata().is_err());
+            if unchanged && free {
+                back.push(super::publish::planner::SidecarPlan {
+                    source_root: sidecar.dest_root.clone(),
+                    source_rel: sidecar.dest_rel.clone(),
+                    dest_root: sidecar.source_root.clone(),
+                    dest_rel: sidecar.source_rel.clone(),
+                    fingerprint: sidecar.fingerprint.clone(),
+                });
+            } else {
+                left.push(sidecar.dest_rel.clone());
+            }
+        }
+        (back, left)
+    }
+
     /// [`undo_files`](Self::undo_files) under a publish cell the caller holds.
     fn undo_files_in(
         &self,
@@ -1118,9 +1184,21 @@ impl LibrarySetup {
             today_day: today_day(),
         };
         let sandbox = open.sandbox.clone();
+        let live_paths: Vec<PathBuf> = live
+            .locations
+            .values()
+            .filter_map(|(root, rel)| sandbox.resolve_no_symlink(root, rel).ok())
+            .collect();
         let plan = plan_undo(bundle_id, &live_inputs, &live, &|root_id, rel_path| {
             match sandbox.resolve_no_symlink(root_id, rel_path) {
-                Ok(path) => path.symlink_metadata().is_ok(),
+                // Undoing a case-only rename on a case-folding filesystem
+                // reaches the file itself: that is not an occupier.
+                Ok(path) => {
+                    path.symlink_metadata().is_ok()
+                        && !live_paths
+                            .iter()
+                            .any(|live| super::publish::paths::same_file(live, &path))
+                }
                 // An unresolvable restore target fails closed as
                 // occupied: undo never writes through a symlink.
                 Err(_) => true,
@@ -1156,8 +1234,16 @@ impl LibrarySetup {
             let current = Self::live_doc(&open.sandbox, &live_loc.0, &live_loc.1)
                 .map(|doc| doc.managed)
                 .unwrap_or_default();
+            let (sidecars, left) = by_track
+                .get(item.track_id.as_str())
+                .map(|source| Self::undo_sidecars(&open.sandbox, &source.sidecars))
+                .unwrap_or_default();
+            if !sidecars.is_empty() {
+                capabilities.push(Capability::Sidecars);
+            }
             files.eligible.push(UndoFile {
                 current,
+                sidecars_left: left,
                 plan: PlanItem {
                     track_id: item.track_id.clone(),
                     source_root: live_loc.0.clone(),
@@ -1175,7 +1261,7 @@ impl LibrarySetup {
                     capabilities,
                     format,
                     managed_updates: item.doc.managed.clone(),
-                    sidecars: Vec::new(),
+                    sidecars,
                     staged_bytes_estimate: fingerprint.size + STAGED_HEADROOM_BYTES,
                     adopt: None,
                 },
@@ -1373,6 +1459,8 @@ impl LibrarySetup {
             today_day() + PREVIEW_TTL_DAYS,
         );
         let live = self.seal_live(&open.sandbox, &sealed.bundle, &token_hash)?;
+        open.publisher
+            .set_undo_retention_days(self.undo_retention_days());
         let outcome = open
             .publisher
             .publish(&sealed, &live, &docs)

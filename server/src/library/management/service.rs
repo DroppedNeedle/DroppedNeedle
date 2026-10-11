@@ -530,6 +530,20 @@ impl Management {
                 existing: true,
             });
         }
+        let undos = self.read(|conn| Ok(store::live_undos(conn, job_id)?))?;
+        if undos
+            .iter()
+            .any(|(state, phase)| state == "succeeded" && phase == "complete")
+        {
+            return Err(stale(
+                "This operation was already undone, so there is nothing left to undo.",
+            ));
+        }
+        if !undos.is_empty() {
+            return Err(stale(
+                "An undo for this operation is already waiting or running. Open it from the history.",
+            ));
+        }
         let stored = self.settings()?;
         let expires_at = now + stored.preview_retention_hours.max(1) as f64 * 3600.0;
         let (token, token_hash) = self.token();
@@ -700,7 +714,21 @@ impl Management {
             target_root: snapshot.target_root_id.as_deref(),
             manage_unconfirmed: planner::manage_unconfirmed(&self.setup),
         };
-        let albums = self.read(|conn| selection::albums(conn, &selection))?;
+        // Files that move take their whole album along, so an album is
+        // never split between its old and new folder (as in v2).
+        let organizes = pinned.profile.organization.rename_enabled
+            || pinned.profile.organization.move_enabled
+            || snapshot.target_root_id.is_some();
+        let mut albums = self.read(|conn| selection::albums(conn, &selection))?;
+        let picked: usize = albums
+            .iter()
+            .filter_map(|scope| scope.track_ids.as_ref().map(Vec::len))
+            .sum();
+        if organizes {
+            for scope in &mut albums {
+                scope.track_ids = None;
+            }
+        }
         let mut summary = Summary::default();
         let mut ordinal = 0;
         for (bundle_ordinal, scope) in albums.iter().enumerate() {
@@ -718,7 +746,11 @@ impl Management {
                 return Ok(None);
             }
         }
-        summary.selected_item_count = Some(summary.item_count);
+        summary.selected_item_count = Some(if picked > 0 {
+            picked as i64
+        } else {
+            summary.item_count
+        });
         summary.expanded_track_count = summary.item_count;
         Ok(Some(summary))
     }
@@ -829,6 +861,23 @@ impl Management {
                     value: profile::json_value(values),
                 })
                 .collect();
+            item.diff.sidecars = file
+                .plan
+                .sidecars
+                .iter()
+                .map(|sidecar| super::models::SidecarMove {
+                    source_relative_path: sidecar.source_rel.clone(),
+                    destination_relative_path: sidecar.dest_rel.clone(),
+                })
+                .collect();
+            for left in &file.sidecars_left {
+                item.facts.warnings.push(format!(
+                    "{left} changed or its old place is taken, so it stays where it is."
+                ));
+            }
+            if !item.facts.warnings.is_empty() {
+                item.eligibility = super::models::Eligibility::Warning;
+            }
             item.desired.plan = Some(file.plan);
             items.push(item);
         }
@@ -871,12 +920,25 @@ impl Management {
             })
     }
 
-    /// Write the queued albums of an applying job one at a time.
+    /// Write the queued albums of an applying job one at a time. A scan
+    /// that starts in between hands the job back to the queue until the
+    /// scan is done.
     fn apply_work(&self, job_id: &str, worker: &str) -> Result<(), ManagementError> {
         let snapshot = self.snapshot(job_id)?;
         let undo = JobMode::parse(&snapshot.mode) == Some(JobMode::Undo);
+        // Whether the job moves files: then an album must still be
+        // exactly the files that were planned.
+        let organizes = snapshot.target_root_id.is_some()
+            || Self::pinned(&snapshot).is_ok_and(|pinned| {
+                pinned.profile.organization.rename_enabled
+                    || pinned.profile.organization.move_enabled
+            });
         loop {
             if self.checkpoint(job_id, worker)? {
+                return Ok(());
+            }
+            if !self.setup.coordinator.current().is_empty() {
+                self.write(|tx| Ok(store::release(tx, job_id, worker, now_unix())?))?;
                 return Ok(());
             }
             let now = now_unix();
@@ -884,21 +946,7 @@ impl Management {
                 self.write(|tx| Ok(store::finish_apply(tx, job_id, worker, now_unix())?))?;
                 return Ok(());
             };
-            let items = self.read(|conn| Ok(store::bundle_items(conn, job_id, ordinal)?))?;
-            let (failure, result) = match self.publish_album(&snapshot, &items, undo) {
-                Ok(applied) => (
-                    None,
-                    serde_json::json!({
-                        "bundle_id": applied.bundle_id,
-                        "outcome": applied.outcome,
-                        "files": applied.files.len(),
-                    }),
-                ),
-                Err(reason) => {
-                    let result = serde_json::json!({ "reason": reason });
-                    (Some(reason), result)
-                }
-            };
+            let (failure, result) = self.apply_album(&snapshot, ordinal, undo, organizes)?;
             self.write(|tx| {
                 Ok(store::finish_work(
                     tx,
@@ -912,20 +960,111 @@ impl Management {
         }
     }
 
-    /// Publish one album; the error is the reason every file in it shares.
-    fn publish_album(
+    /// Whether the publisher committed `bundle_id`. An unreadable journal
+    /// counts as not committed, and says so in the log.
+    fn committed(&self, bundle_id: &str) -> bool {
+        self.setup
+            .held_bundles
+            .committed(bundle_id)
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, bundle_id, "publish journal unreadable");
+                false
+            })
+    }
+
+    /// Apply one album: its outcome and the result to record. The bundle id
+    /// is recorded on the work row before anything is written, so an album
+    /// the publisher committed is never lost to a crash or a late error:
+    /// it counts as written and can be undone.
+    fn apply_album(
+        &self,
+        snapshot: &Snapshot,
+        ordinal: i64,
+        undo: bool,
+        organizes: bool,
+    ) -> Result<(Option<ItemReason>, serde_json::Value), ManagementError> {
+        let job_id = snapshot.job.id.as_str();
+        let written = |bundle_id: &str, outcome: &str| serde_json::json!({ "bundle_id": bundle_id, "outcome": outcome });
+        if let Some(earlier) = self.read(|conn| Ok(store::work_bundle(conn, job_id, ordinal)?))?
+            && self.committed(&earlier)
+        {
+            return Ok((None, written(&earlier, "committed")));
+        }
+        let bundle_id = self.setup.ids.new_id();
+        self.read(|conn| Ok(store::set_work_bundle(conn, job_id, ordinal, &bundle_id)?))?;
+        let items = self.read(|conn| Ok(store::bundle_items(conn, job_id, ordinal)?))?;
+        Ok(
+            match self.publish_album(snapshot, &items, undo, organizes, &bundle_id) {
+                Ok(applied) => (None, written(&applied.bundle_id, &applied.outcome)),
+                Err(_) if self.committed(&bundle_id) => (None, written(&bundle_id, "committed")),
+                Err(reason) => {
+                    let result = serde_json::json!({ "bundle_id": bundle_id, "reason": reason });
+                    (Some(reason), result)
+                }
+            },
+        )
+    }
+
+    /// Why an album may no longer be written as planned: settings, its
+    /// match, or its files moved since the preview.
+    fn album_gate(
         &self,
         snapshot: &Snapshot,
         items: &[PlannedItem],
-        undo: bool,
-    ) -> Result<crate::library::manage::AppliedBundle, ItemReason> {
-        if !undo && !self.stale_reasons(snapshot).is_empty() {
+        organizes: bool,
+    ) -> Result<(), ItemReason> {
+        if !self.stale_reasons(snapshot).is_empty() {
             return Err(ItemReason {
                 code: "PROFILE_CHANGED".to_owned(),
                 message: "Library Management settings or the library folders changed while this run was applying."
                     .to_owned(),
                 action: "Make a new preview for the albums that were not written yet.".to_owned(),
             });
+        }
+        let Some(first) = items.first() else {
+            return Err(reasons::not_scheduled());
+        };
+        let manage_unconfirmed = planner::manage_unconfirmed(&self.setup);
+        let state = self.read(|conn| {
+            Ok((
+                planner::match_gate(conn, &first.album_id, manage_unconfirmed)?,
+                store::album_state(conn, &first.album_id)?,
+            ))
+        });
+        let (gate, (revision, tracks)) = state.map_err(|error| {
+            tracing::error!(%error, album = first.album_id, "album state unreadable; album left alone");
+            reasons::write_failed()
+        })?;
+        if let Some(reason) = gate {
+            return Err(reason);
+        }
+        let planned: std::collections::BTreeSet<&str> = items
+            .iter()
+            .filter_map(|item| item.track_id.as_deref())
+            .collect();
+        let current: std::collections::BTreeSet<&str> = tracks.iter().map(String::as_str).collect();
+        let membership_holds = if organizes {
+            planned == current
+        } else {
+            planned.is_subset(&current)
+        };
+        if revision != Some(first.album_revision) || !membership_holds {
+            return Err(reasons::album_changed());
+        }
+        Ok(())
+    }
+
+    /// Publish one album; the error is the reason every file in it shares.
+    fn publish_album(
+        &self,
+        snapshot: &Snapshot,
+        items: &[PlannedItem],
+        undo: bool,
+        organizes: bool,
+        bundle_id: &str,
+    ) -> Result<crate::library::manage::AppliedBundle, ItemReason> {
+        if !undo {
+            self.album_gate(snapshot, items, organizes)?;
         }
         let plans = planner::bundle_plans(items);
         if plans.is_empty() {
@@ -942,7 +1081,7 @@ impl Management {
             settings: profile::seal_revision(&snapshot.settings_revision),
         };
         self.setup
-            .publish_plans(plans, pins, &override_of)
+            .publish_plans(bundle_id, plans, pins, &override_of)
             .map_err(|error| {
                 let reason = reasons::from_publish(&error);
                 if reason.code == "WRITE_FAILED" || reason.code == "BASELINE_UNAVAILABLE" {

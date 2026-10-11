@@ -707,6 +707,75 @@ pub fn results(
     })
 }
 
+/// The bundle id an album's work row recorded before publishing, if any.
+pub fn work_bundle(
+    conn: &Connection,
+    job_id: &str,
+    ordinal: i64,
+) -> rusqlite::Result<Option<String>> {
+    conn.query_row(
+        "SELECT json_extract(result_json, '$.bundle_id') FROM library_operation_work \
+         WHERE job_id = ?1 AND ordinal = ?2",
+        params![job_id, ordinal],
+        |row| row.get(0),
+    )
+    .optional()
+    .map(Option::flatten)
+}
+
+/// Record the bundle id an album is about to publish under.
+pub fn set_work_bundle(
+    conn: &Connection,
+    job_id: &str,
+    ordinal: i64,
+    bundle_id: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE library_operation_work SET result_json = ?3, row_revision = row_revision + 1 \
+         WHERE job_id = ?1 AND ordinal = ?2",
+        params![
+            job_id,
+            ordinal,
+            serde_json::json!({ "bundle_id": bundle_id }).to_string()
+        ],
+    )?;
+    Ok(())
+}
+
+/// An album's revision and its indexed files now.
+pub fn album_state(
+    conn: &Connection,
+    album_id: &str,
+) -> rusqlite::Result<(Option<i64>, Vec<String>)> {
+    let revision = conn
+        .query_row(
+            "SELECT row_revision FROM local_albums WHERE id = ?1",
+            params![album_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let mut statement = conn.prepare_cached(
+        "SELECT id FROM local_tracks WHERE local_album_id = ?1 AND availability = 'indexed'",
+    )?;
+    let tracks = statement
+        .query_map(params![album_id], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<String>>>()?;
+    Ok((revision, tracks))
+}
+
+/// Undo jobs made for `job_id` that did not end in failure or discard:
+/// (state, phase).
+pub fn live_undos(conn: &Connection, job_id: &str) -> rusqlite::Result<Vec<(String, String)>> {
+    let mut statement = conn.prepare(
+        "SELECT j.state, s.phase FROM library_management_job_snapshots s \
+         JOIN library_operation_jobs j ON j.id = s.job_id \
+         WHERE s.linked_operation_job_id = ?1 AND s.mode = 'undo' \
+         AND j.state NOT IN ('failed', 'cancelled', 'stopped')",
+    )?;
+    let rows = statement.query_map(params![job_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    rows.collect()
+}
+
 /// Published bundles of an applied job: (bundle ordinal, bundle id).
 pub fn applied_bundles(conn: &Connection, job_id: &str) -> rusqlite::Result<Vec<(i64, String)>> {
     let mut statement = conn.prepare(
