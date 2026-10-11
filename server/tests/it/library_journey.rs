@@ -4510,4 +4510,56 @@ async fn library_journey_review_exclude_restore_dismiss() {
     )
     .await;
     assert_eq!(body["total"], json!(1));
+
+    // A bulk keep-as-tagged previews first, and applies only that preview.
+    conn.execute(
+        "INSERT INTO library_identify_reviews (id, local_album_id, reason_code, \
+         candidates_json, state, created_ms, updated_ms) \
+         VALUES ('rev-2', ?1, 'EDITION_CLEARED_CONFLICT', '[]', 'pending', 2, 2)",
+        [&album],
+    )
+    .expect("second review filed");
+    let selection = json!({"action": "keep_tagged", "filter": {"root_id": "music"}});
+    let (status, preview) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/reviews/bulk-preview",
+        &headers,
+        Some(selection.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["eligible"], json!(1));
+    let mut stale = selection.clone();
+    stale["preview_token"] = json!("not-the-preview");
+    let (status, _) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/reviews/bulk-apply",
+        &headers,
+        Some(stale),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let mut apply = selection;
+    apply["preview_token"] = preview["preview_token"].clone();
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/reviews/bulk-apply",
+        &headers,
+        Some(apply),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["applied"], json!(1));
+    let (_, body) = call(
+        lib.router(),
+        "GET",
+        "/api/v3/library/reviews/rev-2",
+        &headers,
+        None,
+    )
+    .await;
+    assert_eq!(body["state"], json!("rejected"));
 }

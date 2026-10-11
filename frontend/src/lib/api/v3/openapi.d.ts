@@ -4890,6 +4890,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/reviews/bulk-apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply a previewed bulk change. Refused when the selection changed
+         *     since the preview.
+         */
+        post: operations["apply_bulk_reviews"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/reviews/bulk-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview a bulk change: how many reviews it changes, which it skips and
+         *     why, and the token that applies exactly this change.
+         */
+        post: operations["preview_bulk_reviews"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/reviews/retry-pending": {
         parameters: {
             query?: never;
@@ -20139,6 +20179,49 @@ export interface components {
             success: boolean;
             task_id: string;
         };
+        /** @description A bulk review change: what to do, and to which reviews. */
+        ReviewBulkBody: {
+            /** @description `keep_tagged`, `exclude` or `accept`. */
+            action: string;
+            /**
+             * @description Accept only: the release to use. Each review's best release when
+             *     empty.
+             */
+            candidate_key?: string | null;
+            /** @description Reviews matching a list filter (paging is ignored). */
+            filter?: components["schemas"]["ReviewsQuery"];
+            /** @description Apply only: the token the preview returned. */
+            preview_token?: string | null;
+            /** @description Reviews picked by hand. Combined with `filter` when both are given. */
+            review_ids?: string[];
+        };
+        /** @description What a bulk review change would do. */
+        ReviewBulkPreviewResponse: {
+            /**
+             * Format: int32
+             * @description Reviews the change would apply to.
+             */
+            eligible: number;
+            /**
+             * Format: int64
+             * @description Reviews the selection matched.
+             */
+            matched: number;
+            /** @description Pass back to apply exactly this change. */
+            preview_token: string;
+            /** @description Reviews it would leave alone, grouped by why. */
+            skipped: components["schemas"]["SkippedReviews"][];
+        };
+        /** @description What a bulk review change did. */
+        ReviewBulkResponse: {
+            /**
+             * Format: int32
+             * @description Reviews changed.
+             */
+            applied: number;
+            /** @description Reviews left alone, grouped by why. */
+            skipped: components["schemas"]["SkippedReviews"][];
+        };
         /** @description Review resolution answer. */
         ReviewResolveResponse: {
             identity?: null | components["schemas"]["IdentityView"];
@@ -20164,6 +20247,11 @@ export interface components {
             confirm_local_metadata?: boolean;
             /** @description Makes a retried request return the same job (single review only). */
             idempotency_key?: string | null;
+            /**
+             * @description Retry all only: albums in these library folders (every folder
+             *     when empty).
+             */
+            root_ids?: string[];
         };
         /** @description One identification review and the album it is about. */
         ReviewView: {
@@ -20197,6 +20285,63 @@ export interface components {
              * @description When it last changed (Unix milliseconds).
              */
             updated_ms: number;
+        };
+        /** @description Review list filter and paging. A bulk change takes the same filter. */
+        ReviewsQuery: {
+            /** @description Only this album's reviews. */
+            album_id?: string | null;
+            /**
+             * Format: int64
+             * @description Filed at or after this time (Unix milliseconds).
+             */
+            created_from?: number | null;
+            /**
+             * Format: int64
+             * @description Filed at or before this time (Unix milliseconds).
+             */
+            created_to?: number | null;
+            /** @description Leave out albums whose identification is still queued or running. */
+            exclude_active_jobs?: boolean | null;
+            /**
+             * @description Albums with an identification job in this state: `queued`,
+             *     `running`, `deferred`, `succeeded`, `failed` or `attention`.
+             */
+            job_state?: string | null;
+            /**
+             * Format: int32
+             * @description Page size, 1 to 200 (default 50).
+             */
+            limit?: number | null;
+            /** Format: int32 */
+            offset?: number | null;
+            /**
+             * @description Albums with a file under this folder policy: `automatic`,
+             *     `local_metadata` or `excluded`.
+             */
+            policy?: string | null;
+            /** @description Only reviews filed with this reason code. */
+            reason_code?: string | null;
+            /** @description Albums with a file in this library folder. */
+            root_id?: string | null;
+            /** @description Album title or artist contains this, ignoring case. */
+            search?: string | null;
+            /** @description `newest` (default) or `oldest` change first. */
+            sort?: string | null;
+            /**
+             * @description `pending` (default), `approved`, `rejected`, `dismissed`,
+             *     `excluded` or `all`.
+             */
+            state?: string | null;
+            /**
+             * Format: int64
+             * @description Changed at or after this time (Unix milliseconds).
+             */
+            updated_from?: number | null;
+            /**
+             * Format: int64
+             * @description Changed at or before this time (Unix milliseconds).
+             */
+            updated_to?: number | null;
         };
         /** @description One page of reviews. */
         ReviewsResponse: {
@@ -34180,6 +34325,30 @@ export interface operations {
                 reason_code?: string;
                 /** @description Album title or artist contains this, ignoring case. */
                 search?: string;
+                /** @description Albums with a file in this library folder. */
+                root_id?: string;
+                /**
+                 * @description Albums with a file under this folder policy: `automatic`,
+                 *     `local_metadata` or `excluded`.
+                 */
+                policy?: string;
+                /**
+                 * @description Albums with an identification job in this state: `queued`,
+                 *     `running`, `deferred`, `succeeded`, `failed` or `attention`.
+                 */
+                job_state?: string;
+                /** @description Leave out albums whose identification is still queued or running. */
+                exclude_active_jobs?: boolean;
+                /** @description Filed at or after this time (Unix milliseconds). */
+                created_from?: number;
+                /** @description Filed at or before this time (Unix milliseconds). */
+                created_to?: number;
+                /** @description Changed at or after this time (Unix milliseconds). */
+                updated_from?: number;
+                /** @description Changed at or before this time (Unix milliseconds). */
+                updated_to?: number;
+                /** @description `newest` (default) or `oldest` change first. */
+                sort?: string;
                 /** @description Page size, 1 to 200 (default 50). */
                 limit?: number;
                 offset?: number;
@@ -34208,6 +34377,103 @@ export interface operations {
             };
             /** @description Not authenticated */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    apply_bulk_reviews: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewBulkBody"];
+            };
+        };
+        responses: {
+            /** @description What changed and what did not */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewBulkResponse"];
+                };
+            };
+            /** @description Unknown action or filter value, or no preview token */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required (admin to exclude) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The selection changed since the preview */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    preview_bulk_reviews: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewBulkBody"];
+            };
+        };
+        responses: {
+            /** @description What the change would do */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReviewBulkPreviewResponse"];
+                };
+            };
+            /** @description Unknown action or filter value */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Curator role required (admin to exclude) */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

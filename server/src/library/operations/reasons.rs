@@ -230,6 +230,36 @@ pub const REVIEW_NOT_EXCLUDED: Reason = reason(
     "This album's files were not taken out from its review, so there is nothing to put back.",
     "Reload the list to see the review's current state.",
 );
+pub const REVIEW_SELECTION_CHANGED: Reason = reason(
+    "REVIEW_SELECTION_CHANGED",
+    "The reviews you selected changed after the preview.",
+    "Preview again, then apply.",
+);
+pub const REVIEW_NO_CANDIDATE: Reason = reason(
+    "REVIEW_NO_CANDIDATE",
+    "This review has no release to use.",
+    "Open the album and pick an edition, or keep it as tagged.",
+);
+pub const REVIEW_CANDIDATE_MISSING: Reason = reason(
+    "REVIEW_CANDIDATE_MISSING",
+    "This review does not list the release you chose.",
+    "Leave the release empty to use each review's best match, or select fewer reviews.",
+);
+pub const REVIEW_ACTION_FAILED: Reason = reason(
+    "REVIEW_ACTION_FAILED",
+    "The change could not be saved for this review.",
+    "Try it again from the review; if it keeps failing, check the server log.",
+);
+pub const REVIEW_FILTER_INVALID: Reason = reason(
+    "REVIEW_FILTER_INVALID",
+    "One of the review filters has a value this version does not know.",
+    "Reload the page and pick the filter again.",
+);
+pub const REVIEW_BULK_ACTION_INVALID: Reason = reason(
+    "REVIEW_BULK_ACTION_INVALID",
+    "That is not something a bulk review change can do.",
+    "Use keep_tagged, exclude or accept.",
+);
 pub const REVIEW_STATE_INVALID: Reason = reason(
     "REVIEW_STATE_INVALID",
     "That is not a review state.",

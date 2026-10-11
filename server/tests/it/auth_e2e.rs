@@ -2097,6 +2097,16 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     ),
     (
         "POST",
+        "/api/v3/library/reviews/bulk-preview",
+        Posture::Curator,
+    ),
+    (
+        "POST",
+        "/api/v3/library/reviews/bulk-apply",
+        Posture::Curator,
+    ),
+    (
+        "POST",
         "/api/v3/library/reviews/{id}/dismiss",
         Posture::Curator,
     ),

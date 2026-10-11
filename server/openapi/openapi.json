@@ -11898,6 +11898,91 @@
             }
           },
           {
+            "name": "root_id",
+            "in": "query",
+            "description": "Albums with a file in this library folder.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "policy",
+            "in": "query",
+            "description": "Albums with a file under this folder policy: `automatic`,\n`local_metadata` or `excluded`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_state",
+            "in": "query",
+            "description": "Albums with an identification job in this state: `queued`,\n`running`, `deferred`, `succeeded`, `failed` or `attention`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "exclude_active_jobs",
+            "in": "query",
+            "description": "Leave out albums whose identification is still queued or running.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "created_from",
+            "in": "query",
+            "description": "Filed at or after this time (Unix milliseconds).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "created_to",
+            "in": "query",
+            "description": "Filed at or before this time (Unix milliseconds).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "updated_from",
+            "in": "query",
+            "description": "Changed at or after this time (Unix milliseconds).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "updated_to",
+            "in": "query",
+            "description": "Changed at or before this time (Unix milliseconds).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "`newest` (default) or `oldest` change first.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "description": "Page size, 1 to 200 (default 50).",
@@ -11935,6 +12020,89 @@
           },
           "401": {
             "description": "Not authenticated"
+          }
+        }
+      }
+    },
+    "/api/v3/library/reviews/bulk-apply": {
+      "post": {
+        "tags": [
+          "crate::library::http::reviews"
+        ],
+        "summary": "Apply a previewed bulk change. Refused when the selection changed\nsince the preview.",
+        "operationId": "apply_bulk_reviews",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewBulkBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What changed and what did not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewBulkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown action or filter value, or no preview token"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required (admin to exclude)"
+          },
+          "409": {
+            "description": "The selection changed since the preview"
+          }
+        }
+      }
+    },
+    "/api/v3/library/reviews/bulk-preview": {
+      "post": {
+        "tags": [
+          "crate::library::http::reviews"
+        ],
+        "summary": "Preview a bulk change: how many reviews it changes, which it skips and\nwhy, and the token that applies exactly this change.",
+        "operationId": "preview_bulk_reviews",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewBulkBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What the change would do",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewBulkPreviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown action or filter value"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Curator role required (admin to exclude)"
           }
         }
       }
@@ -46557,6 +46725,102 @@
           }
         }
       },
+      "ReviewBulkBody": {
+        "type": "object",
+        "description": "A bulk review change: what to do, and to which reviews.",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "`keep_tagged`, `exclude` or `accept`."
+          },
+          "candidate_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Accept only: the release to use. Each review's best release when\nempty."
+          },
+          "filter": {
+            "$ref": "#/components/schemas/ReviewsQuery",
+            "description": "Reviews matching a list filter (paging is ignored)."
+          },
+          "preview_token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Apply only: the token the preview returned."
+          },
+          "review_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Reviews picked by hand. Combined with `filter` when both are given."
+          }
+        }
+      },
+      "ReviewBulkPreviewResponse": {
+        "type": "object",
+        "description": "What a bulk review change would do.",
+        "required": [
+          "matched",
+          "eligible",
+          "skipped",
+          "preview_token"
+        ],
+        "properties": {
+          "eligible": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Reviews the change would apply to.",
+            "minimum": 0
+          },
+          "matched": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Reviews the selection matched.",
+            "minimum": 0
+          },
+          "preview_token": {
+            "type": "string",
+            "description": "Pass back to apply exactly this change."
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkippedReviews"
+            },
+            "description": "Reviews it would leave alone, grouped by why."
+          }
+        }
+      },
+      "ReviewBulkResponse": {
+        "type": "object",
+        "description": "What a bulk review change did.",
+        "required": [
+          "applied",
+          "skipped"
+        ],
+        "properties": {
+          "applied": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Reviews changed.",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkippedReviews"
+            },
+            "description": "Reviews left alone, grouped by why."
+          }
+        }
+      },
       "ReviewResolveResponse": {
         "type": "object",
         "description": "Review resolution answer.",
@@ -46618,6 +46882,13 @@
               "null"
             ],
             "description": "Makes a retried request return the same job (single review only)."
+          },
+          "root_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Retry all only: albums in these library folders (every folder\nwhen empty)."
           }
         }
       },
@@ -46695,6 +46966,124 @@
             "type": "integer",
             "format": "int64",
             "description": "When it last changed (Unix milliseconds)."
+          }
+        }
+      },
+      "ReviewsQuery": {
+        "type": "object",
+        "description": "Review list filter and paging. A bulk change takes the same filter.",
+        "properties": {
+          "album_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only this album's reviews."
+          },
+          "created_from": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Filed at or after this time (Unix milliseconds)."
+          },
+          "created_to": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Filed at or before this time (Unix milliseconds)."
+          },
+          "exclude_active_jobs": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Leave out albums whose identification is still queued or running."
+          },
+          "job_state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Albums with an identification job in this state: `queued`,\n`running`, `deferred`, `succeeded`, `failed` or `attention`."
+          },
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Page size, 1 to 200 (default 50).",
+            "minimum": 0
+          },
+          "offset": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "policy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Albums with a file under this folder policy: `automatic`,\n`local_metadata` or `excluded`."
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only reviews filed with this reason code."
+          },
+          "root_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Albums with a file in this library folder."
+          },
+          "search": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Album title or artist contains this, ignoring case."
+          },
+          "sort": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`newest` (default) or `oldest` change first."
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`pending` (default), `approved`, `rejected`, `dismissed`,\n`excluded` or `all`."
+          },
+          "updated_from": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Changed at or after this time (Unix milliseconds)."
+          },
+          "updated_to": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Changed at or before this time (Unix milliseconds)."
           }
         }
       },

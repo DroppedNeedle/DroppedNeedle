@@ -276,6 +276,28 @@ pub struct ReviewRetryAllResponse {
     pub skipped: Vec<SkippedReviews>,
 }
 
+/// What a bulk review change would do.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ReviewBulkPreviewResponse {
+    /// Reviews the selection matched.
+    pub matched: u64,
+    /// Reviews the change would apply to.
+    pub eligible: u32,
+    /// Reviews it would leave alone, grouped by why.
+    pub skipped: Vec<SkippedReviews>,
+    /// Pass back to apply exactly this change.
+    pub preview_token: String,
+}
+
+/// What a bulk review change did.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct ReviewBulkResponse {
+    /// Reviews changed.
+    pub applied: u32,
+    /// Reviews left alone, grouped by why.
+    pub skipped: Vec<SkippedReviews>,
+}
+
 /// Reviews one reason held back.
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct SkippedReviews {
@@ -293,6 +315,10 @@ pub struct ReviewRetryBody {
     /// metadata policy.
     #[serde(default)]
     pub confirm_local_metadata: bool,
+    /// Retry all only: albums in these library folders (every folder
+    /// when empty).
+    #[serde(default)]
+    pub root_ids: Vec<String>,
 }
 
 /// Approve a review with the curator's chosen candidate.

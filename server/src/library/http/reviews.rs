@@ -14,19 +14,21 @@ use axum::{
     routing::{get, post},
 };
 use serde::Deserialize;
-use utoipa::IntoParams;
+use utoipa::{IntoParams, ToSchema};
 
 use super::auth::{Principal, RequireAdmin, RequireCurator};
 use super::error::{LibraryError, ValidJson, ValidQuery};
 use super::models::{
-    ApproveBody, CandidateView, IdentityView, PenaltyView, ReviewResolveResponse,
-    ReviewRetryAllResponse, ReviewRetryBody, ReviewView, ReviewsResponse, SkippedReviews, snake,
+    ApproveBody, CandidateView, IdentityView, PenaltyView, ReviewBulkPreviewResponse,
+    ReviewBulkResponse, ReviewResolveResponse, ReviewRetryAllResponse, ReviewRetryBody, ReviewView,
+    ReviewsResponse, SkippedReviews, snake,
 };
 use super::operations::{OperationView, OperationsHttpError, blocking, job_view};
 use crate::library::identify::models::{AlbumIdentity, CandidateEvidence};
-use crate::library::operations::reasons::review_reason;
+use crate::library::operations::models::OperationError;
+use crate::library::operations::reasons::{self, review_reason};
 use crate::library::operations::reviews::{
-    ReviewAction, ReviewFilter, ReviewRow, parse_state, state_name,
+    BulkAction, ReviewAction, ReviewFilter, ReviewRow, Tally, parse_state, state_name,
 };
 use crate::library::operations::service::Operations;
 use crate::library::wiring::LibrarySetup;
@@ -42,6 +44,8 @@ pub fn reviews_router() -> Router<LibrarySetup> {
             "/library/reviews/retry-pending",
             post(retry_pending_reviews),
         )
+        .route("/library/reviews/bulk-preview", post(preview_bulk_reviews))
+        .route("/library/reviews/bulk-apply", post(apply_bulk_reviews))
         .route("/library/reviews/{id}", get(get_review))
         .route("/library/reviews/{id}/approve", post(approve_review))
         .route("/library/reviews/{id}/reject", post(reject_review))
@@ -52,8 +56,8 @@ pub fn reviews_router() -> Router<LibrarySetup> {
         .route("/library/reviews/{id}/retry", post(retry_review))
 }
 
-/// Review list filter and paging.
-#[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+/// Review list filter and paging. A bulk change takes the same filter.
+#[derive(Debug, Clone, Default, Deserialize, IntoParams, ToSchema)]
 #[into_params(parameter_in = Query)]
 pub struct ReviewsQuery {
     /// `pending` (default), `approved`, `rejected`, `dismissed`,
@@ -65,6 +69,26 @@ pub struct ReviewsQuery {
     pub reason_code: Option<String>,
     /// Album title or artist contains this, ignoring case.
     pub search: Option<String>,
+    /// Albums with a file in this library folder.
+    pub root_id: Option<String>,
+    /// Albums with a file under this folder policy: `automatic`,
+    /// `local_metadata` or `excluded`.
+    pub policy: Option<String>,
+    /// Albums with an identification job in this state: `queued`,
+    /// `running`, `deferred`, `succeeded`, `failed` or `attention`.
+    pub job_state: Option<String>,
+    /// Leave out albums whose identification is still queued or running.
+    pub exclude_active_jobs: Option<bool>,
+    /// Filed at or after this time (Unix milliseconds).
+    pub created_from: Option<i64>,
+    /// Filed at or before this time (Unix milliseconds).
+    pub created_to: Option<i64>,
+    /// Changed at or after this time (Unix milliseconds).
+    pub updated_from: Option<i64>,
+    /// Changed at or before this time (Unix milliseconds).
+    pub updated_to: Option<i64>,
+    /// `newest` (default) or `oldest` change first.
+    pub sort: Option<String>,
     /// Page size, 1 to 200 (default 50).
     pub limit: Option<u32>,
     pub offset: Option<u32>,
@@ -144,21 +168,8 @@ pub async fn list_reviews(
     _caller: Principal,
     ValidQuery(query): ValidQuery<ReviewsQuery>,
 ) -> Result<Json<ReviewsResponse>, OperationsHttpError> {
-    let review_state = if query.state.is_none() {
-        Some(crate::library::identify::models::ReviewState::Pending)
-    } else {
-        parse_state(query.state.as_deref())?
-    };
-    let limit = query.limit.unwrap_or(50).clamp(1, PAGE_MAX);
-    let offset = query.offset.unwrap_or(0);
-    let filter = ReviewFilter {
-        state: review_state,
-        album_id: query.album_id.filter(|id| !id.is_empty()),
-        reason_code: query.reason_code.filter(|code| !code.is_empty()),
-        search: query.search,
-        limit,
-        offset,
-    };
+    let filter = review_filter(query, Vec::new())?;
+    let (limit, offset) = (filter.limit, filter.offset);
     let ops = Operations::new(&state);
     let (rows, total) = blocking(move || ops.reviews(&filter)).await?;
     Ok(Json(ReviewsResponse {
@@ -167,6 +178,64 @@ pub async fn list_reviews(
         limit,
         offset,
     }))
+}
+
+fn known(value: Option<String>, allowed: &[&str]) -> Result<Option<String>, OperationError> {
+    match value.filter(|value| !value.is_empty()) {
+        Some(value) if !allowed.contains(&value.as_str()) => {
+            Err(OperationError::Invalid(reasons::REVIEW_FILTER_INVALID))
+        }
+        other => Ok(other),
+    }
+}
+
+/// The store filter for a list query (or a bulk selection).
+fn review_filter(
+    query: ReviewsQuery,
+    review_ids: Vec<String>,
+) -> Result<ReviewFilter, OperationError> {
+    let state = if query.state.is_none() {
+        Some(crate::library::identify::models::ReviewState::Pending)
+    } else {
+        parse_state(query.state.as_deref())?
+    };
+    let oldest_first = match query.sort.as_deref() {
+        None | Some("") | Some("newest") => false,
+        Some("oldest") => true,
+        Some(_) => return Err(OperationError::Invalid(reasons::REVIEW_FILTER_INVALID)),
+    };
+    Ok(ReviewFilter {
+        state,
+        album_id: query.album_id.filter(|id| !id.is_empty()),
+        reason_code: query.reason_code.filter(|code| !code.is_empty()),
+        search: query.search,
+        review_ids,
+        root_ids: query
+            .root_id
+            .filter(|id| !id.is_empty())
+            .into_iter()
+            .collect(),
+        policy: known(query.policy, &["automatic", "local_metadata", "excluded"])?,
+        job_state: known(
+            query.job_state,
+            &[
+                "queued",
+                "running",
+                "deferred",
+                "succeeded",
+                "failed",
+                "attention",
+            ],
+        )?,
+        exclude_active_jobs: query.exclude_active_jobs.unwrap_or(false),
+        created_from: query.created_from,
+        created_to: query.created_to,
+        updated_from: query.updated_from,
+        updated_to: query.updated_to,
+        oldest_first,
+        limit: query.limit.unwrap_or(50).clamp(1, PAGE_MAX),
+        offset: query.offset.unwrap_or(0),
+    })
 }
 
 /// One review with its candidates.
@@ -407,10 +476,12 @@ pub async fn retry_pending_reviews(
 ) -> Result<Json<ReviewRetryAllResponse>, OperationsHttpError> {
     let ops = Operations::new(&state);
     let actor = caller.0.user_id;
-    let outcome =
-        blocking(move || ops.retry_pending_reviews(&actor, body.confirm_local_metadata)).await?;
+    let outcome = blocking(move || {
+        ops.retry_pending_reviews(&actor, body.confirm_local_metadata, body.root_ids)
+    })
+    .await?;
     Ok(Json(ReviewRetryAllResponse {
-        started: outcome.started,
+        started: outcome.done,
         skipped: outcome
             .skipped
             .into_iter()
@@ -419,5 +490,127 @@ pub async fn retry_pending_reviews(
                 count,
             })
             .collect(),
+    }))
+}
+
+/// A bulk review change: what to do, and to which reviews.
+#[derive(Debug, Clone, Deserialize, ToSchema)]
+pub struct ReviewBulkBody {
+    /// `keep_tagged`, `exclude` or `accept`.
+    pub action: String,
+    /// Reviews picked by hand. Combined with `filter` when both are given.
+    #[serde(default)]
+    pub review_ids: Vec<String>,
+    /// Reviews matching a list filter (paging is ignored).
+    #[serde(default)]
+    pub filter: ReviewsQuery,
+    /// Accept only: the release to use. Each review's best release when
+    /// empty.
+    #[serde(default)]
+    pub candidate_key: Option<String>,
+    /// Apply only: the token the preview returned.
+    #[serde(default)]
+    pub preview_token: Option<String>,
+}
+
+fn bulk_action(raw: &str) -> Result<BulkAction, OperationError> {
+    match raw {
+        "keep_tagged" => Ok(BulkAction::KeepTagged),
+        "exclude" => Ok(BulkAction::Exclude),
+        "accept" => Ok(BulkAction::Accept),
+        _ => Err(OperationError::Invalid(reasons::REVIEW_BULK_ACTION_INVALID)),
+    }
+}
+
+fn skipped_view(skipped: Vec<(reasons::Reason, u32)>) -> Vec<SkippedReviews> {
+    skipped
+        .into_iter()
+        .map(|(reason, count)| SkippedReviews {
+            reason: reason.into(),
+            count,
+        })
+        .collect()
+}
+
+/// Parse a bulk body; taking files out of the library is admin-only.
+fn bulk_request(
+    body: ReviewBulkBody,
+    caller: &RequireCurator,
+) -> Result<(BulkAction, ReviewFilter, Option<String>, Option<String>), OperationsHttpError> {
+    let action = bulk_action(&body.action)?;
+    if action == BulkAction::Exclude && !caller.0.role.is_admin() {
+        return Err(LibraryError::Forbidden {
+            message: "Admin role required".to_owned(),
+        }
+        .into());
+    }
+    let filter = review_filter(body.filter, body.review_ids)?;
+    let key = body.candidate_key.filter(|key| !key.is_empty());
+    Ok((action, filter, key, body.preview_token))
+}
+
+/// Preview a bulk change: how many reviews it changes, which it skips and
+/// why, and the token that applies exactly this change.
+#[utoipa::path(
+    post,
+    path = "/api/v3/library/reviews/bulk-preview",
+    request_body = ReviewBulkBody,
+    responses(
+        (status = 200, description = "What the change would do", body = ReviewBulkPreviewResponse),
+        (status = 400, description = "Unknown action or filter value"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Curator role required (admin to exclude)"),
+    )
+)]
+pub async fn preview_bulk_reviews(
+    State(state): State<LibrarySetup>,
+    caller: RequireCurator,
+    ValidJson(body): ValidJson<ReviewBulkBody>,
+) -> Result<Json<ReviewBulkPreviewResponse>, OperationsHttpError> {
+    let (action, filter, key, _) = bulk_request(body, &caller)?;
+    let ops = Operations::new(&state);
+    let plan = blocking(move || ops.preview_bulk_reviews(action, &filter, key.as_deref())).await?;
+    Ok(Json(ReviewBulkPreviewResponse {
+        matched: plan.matched,
+        eligible: u32::try_from(plan.items.len()).unwrap_or(u32::MAX),
+        skipped: skipped_view(plan.skipped),
+        preview_token: plan.token,
+    }))
+}
+
+/// Apply a previewed bulk change. Refused when the selection changed
+/// since the preview.
+#[utoipa::path(
+    post,
+    path = "/api/v3/library/reviews/bulk-apply",
+    request_body = ReviewBulkBody,
+    responses(
+        (status = 200, description = "What changed and what did not", body = ReviewBulkResponse),
+        (status = 400, description = "Unknown action or filter value, or no preview token"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Curator role required (admin to exclude)"),
+        (status = 409, description = "The selection changed since the preview"),
+    )
+)]
+pub async fn apply_bulk_reviews(
+    State(state): State<LibrarySetup>,
+    caller: RequireCurator,
+    ValidJson(body): ValidJson<ReviewBulkBody>,
+) -> Result<Json<ReviewBulkResponse>, OperationsHttpError> {
+    let actor = caller.0.user_id.clone();
+    let (action, filter, key, token) = bulk_request(body, &caller)?;
+    let Some(token) = token.filter(|token| !token.is_empty()) else {
+        return Err(LibraryError::InvalidInput {
+            message: "Preview the change first".to_owned(),
+        }
+        .into());
+    };
+    let ops = Operations::new(&state);
+    let Tally { done, skipped } =
+        blocking(move || ops.apply_bulk_reviews(action, &filter, key.as_deref(), &token, &actor))
+            .await?;
+    Ok(Json(ReviewBulkResponse {
+        applied: done,
+        skipped: skipped_view(skipped),
     }))
 }

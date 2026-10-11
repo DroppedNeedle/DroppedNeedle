@@ -23,7 +23,8 @@ use crate::library::identify::sqlite::{bump_identification_stream, map_review};
 /// The match-state reason a detached album shows.
 const DETACHED: &str = "DETACHED_BY_PERSON";
 
-/// Which reviews a listing returns.
+/// Which reviews a listing returns. Empty lists and `None` filter
+/// nothing.
 #[derive(Debug, Clone, Default)]
 pub struct ReviewFilter {
     /// One state, or every state when `None`.
@@ -32,6 +33,24 @@ pub struct ReviewFilter {
     pub reason_code: Option<String>,
     /// Matches the album title or artist, case-insensitive.
     pub search: Option<String>,
+    /// Only these reviews (a bulk selection by hand).
+    pub review_ids: Vec<String>,
+    /// Albums with a file in one of these library folders.
+    pub root_ids: Vec<String>,
+    /// Albums with a file under this folder policy (`automatic`,
+    /// `local_metadata` or `excluded`).
+    pub policy: Option<String>,
+    /// Albums with an identification job in this state.
+    pub job_state: Option<String>,
+    /// Leave out albums whose identification is queued or running.
+    pub exclude_active_jobs: bool,
+    /// Filed or changed inside these bounds (Unix milliseconds).
+    pub created_from: Option<i64>,
+    pub created_to: Option<i64>,
+    pub updated_from: Option<i64>,
+    pub updated_to: Option<i64>,
+    /// Oldest change first instead of newest.
+    pub oldest_first: bool,
     pub limit: u32,
     pub offset: u32,
 }
@@ -104,37 +123,195 @@ pub fn list(conn: &Connection, filter: &ReviewFilter) -> rusqlite::Result<(Vec<R
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| format!("%{}%", value.to_lowercase()));
+    let json_list = |values: &[String]| {
+        (!values.is_empty()).then(|| serde_json::Value::from(values.to_vec()).to_string())
+    };
+    let review_ids = json_list(&filter.review_ids);
+    let root_ids = json_list(&filter.root_ids);
     let state = filter.state.map(state_name);
     let clause = "FROM library_identify_reviews r \
          JOIN local_albums a ON a.id = r.local_album_id \
          WHERE a.retired_into_album_id IS NULL \
-         AND (?1 IS NULL OR r.state = ?1) \
-         AND (?2 IS NULL OR r.local_album_id = ?2) \
-         AND (?3 IS NULL OR r.reason_code = ?3) \
-         AND (?4 IS NULL OR lower(a.title) LIKE ?4 OR lower(COALESCE(a.album_artist_name, '')) LIKE ?4)";
-    let total: i64 = conn.query_row(
-        &format!("SELECT COUNT(*) {clause}"),
-        params![state, filter.album_id, filter.reason_code, search],
-        |row| row.get(0),
-    )?;
+         AND (:state IS NULL OR r.state = :state) \
+         AND (:album IS NULL OR r.local_album_id = :album) \
+         AND (:reason IS NULL OR r.reason_code = :reason) \
+         AND (:search IS NULL OR lower(a.title) LIKE :search \
+              OR lower(COALESCE(a.album_artist_name, '')) LIKE :search) \
+         AND (:ids IS NULL OR r.id IN (SELECT value FROM json_each(:ids))) \
+         AND (:roots IS NULL OR EXISTS (SELECT 1 FROM local_tracks t \
+              WHERE t.local_album_id = r.local_album_id \
+              AND t.root_id IN (SELECT value FROM json_each(:roots)))) \
+         AND (:policy IS NULL OR EXISTS (SELECT 1 FROM local_tracks t \
+              WHERE t.local_album_id = r.local_album_id AND t.applied_policy = :policy)) \
+         AND (:job IS NULL OR EXISTS (SELECT 1 FROM library_identify_jobs j \
+              WHERE j.local_album_id = r.local_album_id AND j.state = :job)) \
+         AND (:no_active = 0 OR NOT EXISTS (SELECT 1 FROM library_identify_jobs j \
+              WHERE j.local_album_id = r.local_album_id \
+              AND j.state IN ('queued', 'running', 'deferred'))) \
+         AND (:created_from IS NULL OR r.created_ms >= :created_from) \
+         AND (:created_to IS NULL OR r.created_ms <= :created_to) \
+         AND (:updated_from IS NULL OR r.updated_ms >= :updated_from) \
+         AND (:updated_to IS NULL OR r.updated_ms <= :updated_to)";
+    let params = rusqlite::named_params! {
+        ":state": state,
+        ":album": filter.album_id,
+        ":reason": filter.reason_code,
+        ":search": search,
+        ":ids": review_ids,
+        ":roots": root_ids,
+        ":policy": filter.policy,
+        ":job": filter.job_state,
+        ":no_active": filter.exclude_active_jobs,
+        ":created_from": filter.created_from,
+        ":created_to": filter.created_to,
+        ":updated_from": filter.updated_from,
+        ":updated_to": filter.updated_to,
+    };
+    let total: i64 = conn.query_row(&format!("SELECT COUNT(*) {clause}"), params, |row| {
+        row.get(0)
+    })?;
+    let order = if filter.oldest_first { "ASC" } else { "DESC" };
     let mut statement = conn.prepare(&format!(
-        "SELECT {ROW_COLUMNS} {clause} ORDER BY r.updated_ms DESC, r.id LIMIT ?5 OFFSET ?6"
+        "SELECT {ROW_COLUMNS} {clause} ORDER BY r.updated_ms {order}, r.id \
+         LIMIT {} OFFSET {}",
+        filter.limit, filter.offset
     ))?;
     let rows = statement
-        .query_map(
-            params![
-                state,
-                filter.album_id,
-                filter.reason_code,
-                search,
-                filter.limit,
-                filter.offset
-            ],
-            map_row,
-        )?
+        .query_map(params, map_row)?
         .filter_map(Result::transpose)
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok((rows, u64::try_from(total).unwrap_or(0)))
+}
+
+/// How many reviews a batch changed, and why the rest were left alone.
+#[derive(Debug, Clone, Default)]
+pub struct Tally {
+    pub done: u32,
+    /// Each reason once, with how many reviews it held back.
+    pub skipped: Vec<(reasons::Reason, u32)>,
+}
+
+impl Tally {
+    pub fn skip(&mut self, reason: reasons::Reason) {
+        match self
+            .skipped
+            .iter_mut()
+            .find(|(seen, _)| seen.code == reason.code)
+        {
+            Some((_, count)) => *count += 1,
+            None => self.skipped.push((reason, 1)),
+        }
+    }
+}
+
+/// What a bulk action does to each selected review.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BulkAction {
+    /// Keep the album as tagged.
+    KeepTagged,
+    /// Take the album's files out of the library.
+    Exclude,
+    /// Use the chosen release, or each review's best one.
+    Accept,
+}
+
+impl BulkAction {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::KeepTagged => "keep_tagged",
+            Self::Exclude => "exclude",
+            Self::Accept => "accept",
+        }
+    }
+}
+
+/// One review a bulk action will change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BulkItem {
+    pub review_id: String,
+    /// The release an accept uses.
+    pub candidate_key: Option<String>,
+}
+
+/// A bulk action's preview.
+#[derive(Debug, Clone)]
+pub struct BulkPlan {
+    /// Reviews the selection matched.
+    pub matched: u64,
+    pub items: Vec<BulkItem>,
+    pub skipped: Vec<(reasons::Reason, u32)>,
+    /// Names exactly this action over exactly these reviews.
+    pub token: String,
+}
+
+/// Work out which selected reviews a bulk action changes. Only pending
+/// reviews change; an accept needs the chosen release on the review, or
+/// any release when none was chosen (the best one is used).
+pub fn plan_bulk(
+    rows: &[ReviewRow],
+    matched: u64,
+    action: BulkAction,
+    candidate_key: Option<&str>,
+) -> BulkPlan {
+    use sha2::Digest as _;
+
+    let mut tally = Tally::default();
+    let mut items = Vec::new();
+    for row in rows {
+        let review = &row.review;
+        if review.state != ReviewState::Pending {
+            tally.skip(reasons::REVIEW_SETTLED);
+            continue;
+        }
+        let candidate = if action == BulkAction::Accept {
+            let chosen = match candidate_key {
+                Some(key) => review
+                    .candidates
+                    .iter()
+                    .find(|candidate| candidate.candidate_key == key),
+                None => review
+                    .candidates
+                    .iter()
+                    .max_by(|a, b| a.score.total_cmp(&b.score)),
+            };
+            match chosen {
+                Some(candidate) => Some(candidate.candidate_key.clone()),
+                None => {
+                    tally.skip(if candidate_key.is_some() {
+                        reasons::REVIEW_CANDIDATE_MISSING
+                    } else {
+                        reasons::REVIEW_NO_CANDIDATE
+                    });
+                    continue;
+                }
+            }
+        } else {
+            None
+        };
+        items.push(BulkItem {
+            review_id: review.id.clone(),
+            candidate_key: candidate,
+        });
+    }
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(action.name());
+    for item in &items {
+        hasher.update(b"\n");
+        hasher.update(&item.review_id);
+        hasher.update(b"=");
+        hasher.update(item.candidate_key.as_deref().unwrap_or_default());
+    }
+    let token = hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    BulkPlan {
+        matched,
+        items,
+        skipped: tally.skipped,
+        token,
+    }
 }
 
 /// One review by id.

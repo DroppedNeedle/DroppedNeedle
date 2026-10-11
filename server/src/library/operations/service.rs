@@ -32,29 +32,8 @@ use crate::library::identify::stores::{FactsSource as _, IdentityStore as _};
 use crate::library::matching::model::Release;
 use crate::library::wiring::{LibrarySetup, ScanCoordinator};
 
-/// Most reviews one "retry all" starts.
-pub const RETRY_ALL_MAX: u32 = 5_000;
-
-/// What a "retry all" started, and why the rest did not start.
-#[derive(Debug, Clone, Default)]
-pub struct RetryAll {
-    pub started: u32,
-    /// Each reason once, with how many reviews it held back.
-    pub skipped: Vec<(reasons::Reason, u32)>,
-}
-
-impl RetryAll {
-    fn skip(&mut self, reason: reasons::Reason) {
-        match self
-            .skipped
-            .iter_mut()
-            .find(|(seen, _)| seen.code == reason.code)
-        {
-            Some((_, count)) => *count += 1,
-            None => self.skipped.push((reason, 1)),
-        }
-    }
-}
+/// Most reviews one "retry all" or bulk action takes on.
+pub const BULK_MAX: u32 = 5_000;
 
 /// Largest edition-finder page, as in v2.
 pub const RELEASE_PAGE_MAX: u32 = 12;
@@ -243,31 +222,114 @@ impl Operations {
         Ok(job)
     }
 
-    /// Start identification again for every pending review's album, up
-    /// to [`RETRY_ALL_MAX`]. Albums that cannot start (excluded, no files,
-    /// Local metadata without the confirmation) keep their review and are
-    /// counted by reason. Blocking.
+    /// Start identification again for every pending review's album in
+    /// `root_ids` (every folder when empty), up to [`BULK_MAX`]. Albums
+    /// that cannot start (excluded, no files, Local metadata without the
+    /// confirmation) keep their review and are counted by reason. Blocking.
     pub fn retry_pending_reviews(
         &self,
         actor: &str,
         one_off_local_metadata: bool,
-    ) -> Result<RetryAll, OperationError> {
+        root_ids: Vec<String>,
+    ) -> Result<reviews::Tally, OperationError> {
         let filter = reviews::ReviewFilter {
             state: Some(crate::library::identify::models::ReviewState::Pending),
-            limit: RETRY_ALL_MAX,
+            root_ids,
+            limit: BULK_MAX,
             ..reviews::ReviewFilter::default()
         };
         let (rows, _) = self.reviews(&filter)?;
-        let mut outcome = RetryAll::default();
+        let mut outcome = reviews::Tally::default();
         for row in rows {
             match self.retry_review(&row.review.id, actor, None, one_off_local_metadata) {
-                Ok(_) => outcome.started += 1,
+                Ok(_) => outcome.done += 1,
                 Err(
                     OperationError::NotFound(reason)
                     | OperationError::Invalid(reason)
                     | OperationError::Conflict(reason),
                 ) => outcome.skip(reason),
                 Err(other) => return Err(other),
+            }
+        }
+        Ok(outcome)
+    }
+
+    /// What a bulk action would do to the reviews `filter` selects: the
+    /// reviews it changes, the ones it skips by reason, and the token that
+    /// apply needs. Blocking.
+    pub fn preview_bulk_reviews(
+        &self,
+        action: reviews::BulkAction,
+        filter: &reviews::ReviewFilter,
+        candidate_key: Option<&str>,
+    ) -> Result<reviews::BulkPlan, OperationError> {
+        let filter = reviews::ReviewFilter {
+            limit: BULK_MAX,
+            offset: 0,
+            ..filter.clone()
+        };
+        let (rows, matched) = self.reviews(&filter)?;
+        Ok(reviews::plan_bulk(&rows, matched, action, candidate_key))
+    }
+
+    /// Apply a previewed bulk action. Refused when the selection changed
+    /// since the preview (the token no longer matches). Blocking.
+    pub fn apply_bulk_reviews(
+        &self,
+        action: reviews::BulkAction,
+        filter: &reviews::ReviewFilter,
+        candidate_key: Option<&str>,
+        preview_token: &str,
+        actor: &str,
+    ) -> Result<reviews::Tally, OperationError> {
+        let plan = self.preview_bulk_reviews(action, filter, candidate_key)?;
+        if plan.token != preview_token {
+            return Err(OperationError::Conflict(reasons::REVIEW_SELECTION_CHANGED));
+        }
+        let mut outcome = reviews::Tally {
+            done: 0,
+            skipped: plan.skipped.clone(),
+        };
+        for item in &plan.items {
+            let applied = match (action, item.candidate_key.as_deref()) {
+                (reviews::BulkAction::KeepTagged, _) => {
+                    Ok(self.identify.reject_candidates(&item.review_id, actor))
+                }
+                (reviews::BulkAction::Accept, Some(key)) => self
+                    .identify
+                    .approve_candidate(&item.review_id, actor, key)
+                    .map_err(|error| error.to_string()),
+                (reviews::BulkAction::Accept, None) => Ok(false),
+                (reviews::BulkAction::Exclude, _) => {
+                    match self.write(|tx| {
+                        reviews::settle(
+                            tx,
+                            &item.review_id,
+                            reviews::ReviewAction::Exclude,
+                            actor,
+                            now_unix(),
+                        )
+                    }) {
+                        Ok(()) => Ok(true),
+                        Err(
+                            OperationError::NotFound(reason)
+                            | OperationError::Invalid(reason)
+                            | OperationError::Conflict(reason),
+                        ) => {
+                            outcome.skip(reason);
+                            continue;
+                        }
+                        Err(other) => Err(other.to_string()),
+                    }
+                }
+            };
+            match applied {
+                Ok(true) => outcome.done += 1,
+                Ok(false) => outcome.skip(reasons::REVIEW_SETTLED),
+                Err(cause) => {
+                    tracing::warn!(review = item.review_id, %cause, "bulk review action failed");
+                    outcome.skip(reasons::REVIEW_ACTION_FAILED);
+                }
             }
         }
         Ok(outcome)
