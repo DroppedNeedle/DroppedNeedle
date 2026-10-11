@@ -2215,8 +2215,16 @@ const MATRIX: &[(&str, &str, Posture)] = &[
     // Identity repairs, preparations and scan diagnostics: admin-only, as in v2.
     ("POST", "/api/v3/library/identity-repairs", Posture::Admin),
     ("GET", "/api/v3/library/identity-repairs", Posture::Admin),
-    ("GET", "/api/v3/library/identity-repairs/estimate", Posture::Admin),
-    ("GET", "/api/v3/library/identity-repairs/{job_id}", Posture::Admin),
+    (
+        "GET",
+        "/api/v3/library/identity-repairs/estimate",
+        Posture::Admin,
+    ),
+    (
+        "GET",
+        "/api/v3/library/identity-repairs/{job_id}",
+        Posture::Admin,
+    ),
     (
         "GET",
         "/api/v3/library/identity-repairs/{job_id}/findings",

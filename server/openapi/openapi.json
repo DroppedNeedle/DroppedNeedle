@@ -9241,6 +9241,474 @@
         }
       }
     },
+    "/api/v3/library/identity-repairs": {
+      "get": {
+        "tags": [
+          "crate::library::http::repairs"
+        ],
+        "operationId": "list_repairs",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Repair jobs, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationListView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad page size or cursor"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "crate::library::http::repairs"
+        ],
+        "operationId": "create_repair",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RepairCreateBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The repair job (new, or the one this key started)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad body"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "409": {
+            "description": "The idempotency key started another kind of job"
+          }
+        }
+      }
+    },
+    "/api/v3/library/identity-repairs/estimate": {
+      "get": {
+        "tags": [
+          "crate::library::http::repairs"
+        ],
+        "operationId": "estimate_repair",
+        "parameters": [
+          {
+            "name": "root_id",
+            "in": "query",
+            "description": "Library roots; none means every root",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "explode": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Estimate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepairEstimateView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        }
+      }
+    },
+    "/api/v3/library/identity-repairs/{job_id}": {
+      "get": {
+        "tags": [
+          "crate::library::http::repairs"
+        ],
+        "operationId": "get_repair",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Repair job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Repair job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown repair job"
+          }
+        }
+      }
+    },
+    "/api/v3/library/identity-repairs/{job_id}/apply": {
+      "post": {
+        "tags": [
+          "crate::library::http::repairs"
+        ],
+        "operationId": "apply_repair",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Repair job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RepairApplyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Applying in the background",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Confirmation missing"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown repair job"
+          },
+          "409": {
+            "description": "The report changed since it was read"
+          }
+        }
+      }
+    },
+    "/api/v3/library/identity-repairs/{job_id}/findings": {
+      "get": {
+        "tags": [
+          "crate::library::http::repairs"
+        ],
+        "operationId": "repair_findings",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Repair job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "finding_category",
+            "in": "path",
+            "description": "Repairs: `valid`, `safe_detach`, `needs_review`, `unverifiable`,\n`manual_identity`. Preparations: `ready`, `mapping_ready`,\n`exact_release_required`, `exact_release_auto_accepted`,\n`needs_review`, `unverifiable`.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Findings, newest change first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepairFindingListView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad page size, cursor or category"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown repair job"
+          }
+        }
+      }
+    },
+    "/api/v3/library/identity-repairs/{job_id}/pause": {
+      "post": {
+        "tags": [
+          "crate::library::http::repairs"
+        ],
+        "operationId": "pause_repair",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Repair job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationControlBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Repair job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown repair job"
+          },
+          "409": {
+            "description": "Stale revision or reused idempotency key"
+          }
+        }
+      }
+    },
+    "/api/v3/library/identity-repairs/{job_id}/resume": {
+      "post": {
+        "tags": [
+          "crate::library::http::repairs"
+        ],
+        "operationId": "resume_repair",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Repair job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationControlBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Repair job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown repair job"
+          },
+          "409": {
+            "description": "Stale revision or reused idempotency key"
+          }
+        }
+      }
+    },
+    "/api/v3/library/identity-repairs/{job_id}/stop": {
+      "post": {
+        "tags": [
+          "crate::library::http::repairs"
+        ],
+        "operationId": "stop_repair",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Repair job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationControlBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Repair job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown repair job"
+          },
+          "409": {
+            "description": "Stale revision or reused idempotency key"
+          }
+        }
+      }
+    },
     "/api/v3/library/manage/apply": {
       "post": {
         "tags": [
@@ -9415,6 +9883,368 @@
           },
           "409": {
             "description": "Undo blocked for a file"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/identity-preparations": {
+      "get": {
+        "tags": [
+          "crate::library::http::repairs"
+        ],
+        "operationId": "list_preparations",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Preparation jobs, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationListView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad page size or cursor"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "crate::library::http::repairs"
+        ],
+        "operationId": "create_preparation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreparationCreateBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The preparation job (new, or the one this key started)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad body"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "409": {
+            "description": "The idempotency key started another kind of job"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/identity-preparations/estimate": {
+      "get": {
+        "tags": [
+          "crate::library::http::repairs"
+        ],
+        "operationId": "estimate_preparation",
+        "parameters": [
+          {
+            "name": "root_id",
+            "in": "query",
+            "description": "Library roots; none means every root",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "explode": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Estimate",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreparationEstimateView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/identity-preparations/{job_id}": {
+      "get": {
+        "tags": [
+          "crate::library::http::repairs"
+        ],
+        "operationId": "get_preparation",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Preparation job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Preparation job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown preparation job"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/identity-preparations/{job_id}/apply": {
+      "post": {
+        "tags": [
+          "crate::library::http::repairs"
+        ],
+        "operationId": "apply_preparation",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Preparation job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RepairApplyBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Applying in the background",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Confirmation missing, or the report used older rules"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown preparation job"
+          },
+          "409": {
+            "description": "The report changed since it was read"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/identity-preparations/{job_id}/discard": {
+      "post": {
+        "tags": [
+          "crate::library::http::repairs"
+        ],
+        "operationId": "discard_preparation",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Preparation job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OperationControlBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Dismissed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown preparation job"
+          },
+          "409": {
+            "description": "The report changed since it was read"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/identity-preparations/{job_id}/findings": {
+      "get": {
+        "tags": [
+          "crate::library::http::repairs"
+        ],
+        "operationId": "preparation_findings",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Preparation job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "finding_category",
+            "in": "path",
+            "description": "Repairs: `valid`, `safe_detach`, `needs_review`, `unverifiable`,\n`manual_identity`. Preparations: `ready`, `mapping_ready`,\n`exact_release_required`, `exact_release_auto_accepted`,\n`needs_review`, `unverifiable`.",
+            "required": true,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Findings that still describe their album",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RepairFindingListView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad page size, cursor or category"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown preparation job"
           }
         }
       }
@@ -10919,6 +11749,49 @@
           },
           "404": {
             "description": "Unknown run id"
+          }
+        }
+      }
+    },
+    "/api/v3/library/scan/runs/{id}/diagnostics": {
+      "get": {
+        "tags": [
+          "crate::library::http::repairs"
+        ],
+        "operationId": "scan_diagnostics",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Scan run id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Redacted diagnostic report, as a JSON download",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad run id, or the report is over the 2 MB limit"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown scan run"
           }
         }
       }
@@ -24666,6 +25539,24 @@
           }
         }
       },
+      "AutomaticEditionUndoInfoView": {
+        "type": "object",
+        "description": "The revisions to echo when undoing the album's automatic edition.",
+        "required": [
+          "expected_album_revision",
+          "expected_identity_revision"
+        ],
+        "properties": {
+          "expected_album_revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expected_identity_revision": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "AutomaticEditionUndoResponse": {
         "type": "object",
         "description": "What the undo did.",
@@ -38120,6 +39011,27 @@
           }
         }
       },
+      "OperationListView": {
+        "type": "object",
+        "description": "One page of repair or preparation jobs, newest first.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OperationView"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "OperationResult": {
         "type": "object",
         "description": "Bare success acknowledgement.",
@@ -38251,6 +39163,17 @@
               "$ref": "#/components/schemas/ReidentificationCandidateView"
             },
             "description": "Candidates a re-identification waits on, best first."
+          },
+          "repair_summary": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RepairSummaryView",
+                "description": "An identity repair or preparation's report, once its check is done."
+              }
+            ]
           },
           "results": {
             "type": "array",
@@ -40298,6 +41221,64 @@
           "status": {
             "type": "string",
             "description": "`started`."
+          }
+        }
+      },
+      "PreparationCreateBody": {
+        "type": "object",
+        "description": "Start an identity preparation.",
+        "required": [
+          "idempotency_key"
+        ],
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "description": "Makes a retried request return the same job."
+          },
+          "root_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Library roots to prepare; none means every root."
+          }
+        }
+      },
+      "PreparationEstimateView": {
+        "type": "object",
+        "description": "Where the albums Library Management may touch stand today.",
+        "required": [
+          "album_count",
+          "ready_album_count",
+          "mapping_required_count",
+          "exact_release_required_count",
+          "selected_root_count",
+          "queued_preparation_count"
+        ],
+        "properties": {
+          "album_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "exact_release_required_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "mapping_required_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "queued_preparation_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "ready_album_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "selected_root_count": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       },
@@ -42688,6 +43669,346 @@
           "status": {
             "type": "string",
             "description": "Always \"ok\"."
+          }
+        }
+      },
+      "RepairApplyBody": {
+        "type": "object",
+        "description": "Apply a ready report.",
+        "required": [
+          "expected_row_revision",
+          "confirmation"
+        ],
+        "properties": {
+          "confirmation": {
+            "type": "boolean",
+            "description": "Must be true: Apply changes album matches."
+          },
+          "expected_row_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The job's `row_revision` as last read."
+          }
+        }
+      },
+      "RepairCreateBody": {
+        "type": "object",
+        "description": "Start an identity repair.",
+        "required": [
+          "idempotency_key"
+        ],
+        "properties": {
+          "idempotency_key": {
+            "type": "string",
+            "description": "Makes a retried request return the same job."
+          },
+          "root_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Library roots to check; none means every root."
+          },
+          "source_matcher_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only recheck identities this matcher version wrote."
+          },
+          "target_matcher_version": {
+            "type": "string"
+          }
+        }
+      },
+      "RepairEstimateView": {
+        "type": "object",
+        "description": "How many albums an identity repair would check.",
+        "required": [
+          "identity_count",
+          "selected_root_count",
+          "queued_repair_count"
+        ],
+        "properties": {
+          "identity_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "queued_repair_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "selected_root_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "RepairFindingListView": {
+        "type": "object",
+        "description": "One page of findings.",
+        "required": [
+          "items",
+          "has_more",
+          "current_counts_by_finding",
+          "refresh_required"
+        ],
+        "properties": {
+          "current_counts_by_finding": {
+            "type": "object",
+            "description": "Findings per code that still describe their album.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RepairFindingView"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "refresh_required": {
+            "type": "boolean",
+            "description": "The report used older rules; run a fresh check before applying."
+          }
+        }
+      },
+      "RepairFindingView": {
+        "type": "object",
+        "description": "One album's finding.",
+        "required": [
+          "id",
+          "local_album_id",
+          "album_title",
+          "cover_available",
+          "finding_code",
+          "reason_code",
+          "reason",
+          "confidence",
+          "apply_eligible",
+          "state",
+          "updated_at",
+          "row_revision"
+        ],
+        "properties": {
+          "album_artist_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "album_title": {
+            "type": "string"
+          },
+          "album_year": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "apply_eligible": {
+            "type": "boolean"
+          },
+          "apply_result": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`DETACHED`, `MAPPINGS_ACCEPTED`, `EDITION_ACCEPTED`, or\n`STALE_SUBJECT`."
+          },
+          "automatic_undo": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AutomaticEditionUndoInfoView"
+              }
+            ]
+          },
+          "confidence": {
+            "type": "string",
+            "description": "`complete` when Apply may act on it, `bounded` otherwise."
+          },
+          "cover_available": {
+            "type": "boolean"
+          },
+          "evidence_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Always empty: v3 keeps no separate evidence rows."
+          },
+          "finding_code": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "local_album_id": {
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/ReasonView",
+            "description": "What the finding means and what to do about it."
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "review_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "row_revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "state": {
+            "type": "string",
+            "description": "`open`, `applied`, `skipped`, or `stale`."
+          },
+          "suggested_edition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SuggestedEditionView"
+              }
+            ]
+          },
+          "updated_at": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "RepairSummaryView": {
+        "type": "object",
+        "description": "What a finished check found.",
+        "required": [
+          "total_identities",
+          "remaining_identities",
+          "input_track_count",
+          "playable_after_detach_track_count",
+          "estimated_apply_changes",
+          "catalog_snapshot_revision",
+          "target_matcher_version",
+          "counts_by_finding",
+          "counts_by_reason",
+          "album_counts_by_root",
+          "provider_deferred_count",
+          "failed_evidence_count",
+          "purpose",
+          "ready_album_count",
+          "mapping_candidate_count",
+          "exact_release_required_count",
+          "needs_review_count"
+        ],
+        "properties": {
+          "album_counts_by_root": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "catalog_snapshot_revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "counts_by_finding": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "counts_by_reason": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "estimated_apply_changes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Albums Apply would change."
+          },
+          "exact_release_required_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "failed_evidence_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "input_track_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "mapping_candidate_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "needs_review_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "playable_after_detach_track_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "provider_deferred_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "purpose": {
+            "type": "string",
+            "description": "`existing_matches`, `management_readiness`, or\n`catalog_identity_hygiene`."
+          },
+          "ready_album_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "remaining_identities": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "target_matcher_version": {
+            "type": "string"
+          },
+          "total_identities": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Albums checked."
           }
         }
       },
@@ -46265,6 +47586,64 @@
             ],
             "format": "int32",
             "description": "Release year, when known."
+          }
+        }
+      },
+      "SuggestedEditionView": {
+        "type": "object",
+        "description": "The edition a preparation suggests for an album.",
+        "required": [
+          "release_mbid",
+          "release_group_mbid",
+          "title",
+          "track_count",
+          "competing_count"
+        ],
+        "properties": {
+          "auto_gate": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "With automatic edition acceptance on: `AUTO_ACCEPT`, or why the\nsuggestion waits for a person."
+          },
+          "competing_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many editions fit the files.",
+            "minimum": 0
+          },
+          "country": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "date": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "release_group_mbid": {
+            "type": "string"
+          },
+          "release_mbid": {
+            "type": "string"
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "track_count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },

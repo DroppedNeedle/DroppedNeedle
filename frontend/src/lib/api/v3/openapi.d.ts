@@ -4001,6 +4001,134 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/identity-repairs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_repairs"];
+        put?: never;
+        post: operations["create_repair"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/identity-repairs/estimate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["estimate_repair"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/identity-repairs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_repair"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/identity-repairs/{job_id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["apply_repair"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/identity-repairs/{job_id}/findings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["repair_findings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/identity-repairs/{job_id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["pause_repair"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/identity-repairs/{job_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resume_repair"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/identity-repairs/{job_id}/stop": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["stop_repair"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/manage/apply": {
         parameters: {
             query?: never;
@@ -4063,6 +4191,102 @@ export interface paths {
         put?: never;
         /** Undo one published bundle as a new operation. */
         post: operations["manage_undo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/identity-preparations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_preparations"];
+        put?: never;
+        post: operations["create_preparation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/identity-preparations/estimate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["estimate_preparation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/identity-preparations/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_preparation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/identity-preparations/{job_id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["apply_preparation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/identity-preparations/{job_id}/discard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["discard_preparation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/identity-preparations/{job_id}/findings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["preparation_findings"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4577,6 +4801,22 @@ export interface paths {
         };
         /** Get one scan run with its scopes and discovered files. */
         get: operations["get_run"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/scan/runs/{id}/diagnostics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["scan_diagnostics"];
         put?: never;
         post?: never;
         delete?: never;
@@ -10525,6 +10765,13 @@ export interface components {
         };
         /** @description Undo the album's last automatic edition. */
         AutomaticEditionUndoBody: {
+            /** Format: int64 */
+            expected_album_revision: number;
+            /** Format: int64 */
+            expected_identity_revision: number;
+        };
+        /** @description The revisions to echo when undoing the album's automatic edition. */
+        AutomaticEditionUndoInfoView: {
             /** Format: int64 */
             expected_album_revision: number;
             /** Format: int64 */
@@ -16670,6 +16917,11 @@ export interface components {
             /** @description Makes a retried control a no-op. */
             idempotency_key?: string | null;
         };
+        /** @description One page of repair or preparation jobs, newest first. */
+        OperationListView: {
+            items: components["schemas"]["OperationView"][];
+            next_cursor?: string | null;
+        };
         /** @description Bare success acknowledgement. */
         OperationResult: {
             /** @description Whether the operation succeeded. */
@@ -16715,6 +16967,7 @@ export interface components {
             kind: string;
             /** @description Candidates a re-identification waits on, best first. */
             reidentification_candidates: components["schemas"]["ReidentificationCandidateView"][];
+            repair_summary?: null | components["schemas"]["RepairSummaryView"];
             /** @description The first 100 work results. */
             results: components["schemas"]["OperationWorkResultView"][];
             results_truncated: boolean;
@@ -17695,6 +17948,27 @@ export interface components {
             job: string;
             /** @description `started`. */
             status: string;
+        };
+        /** @description Start an identity preparation. */
+        PreparationCreateBody: {
+            /** @description Makes a retried request return the same job. */
+            idempotency_key: string;
+            /** @description Library roots to prepare; none means every root. */
+            root_ids?: string[];
+        };
+        /** @description Where the albums Library Management may touch stand today. */
+        PreparationEstimateView: {
+            /** Format: int64 */
+            album_count: number;
+            /** Format: int64 */
+            exact_release_required_count: number;
+            /** Format: int64 */
+            mapping_required_count: number;
+            /** Format: int64 */
+            queued_preparation_count: number;
+            /** Format: int64 */
+            ready_album_count: number;
+            selected_root_count: number;
         };
         /** @description One previewed track. */
         PreviewTrackItem: {
@@ -18725,6 +18999,127 @@ export interface components {
             message: string;
             /** @description Always "ok". */
             status: string;
+        };
+        /** @description Apply a ready report. */
+        RepairApplyBody: {
+            /** @description Must be true: Apply changes album matches. */
+            confirmation: boolean;
+            /**
+             * Format: int64
+             * @description The job's `row_revision` as last read.
+             */
+            expected_row_revision: number;
+        };
+        /** @description Start an identity repair. */
+        RepairCreateBody: {
+            /** @description Makes a retried request return the same job. */
+            idempotency_key: string;
+            /** @description Library roots to check; none means every root. */
+            root_ids?: string[];
+            /** @description Only recheck identities this matcher version wrote. */
+            source_matcher_version?: string | null;
+            target_matcher_version?: string;
+        };
+        /** @description How many albums an identity repair would check. */
+        RepairEstimateView: {
+            /** Format: int64 */
+            identity_count: number;
+            /** Format: int64 */
+            queued_repair_count: number;
+            selected_root_count: number;
+        };
+        /** @description One page of findings. */
+        RepairFindingListView: {
+            /** @description Findings per code that still describe their album. */
+            current_counts_by_finding: {
+                [key: string]: number;
+            };
+            has_more: boolean;
+            items: components["schemas"]["RepairFindingView"][];
+            next_cursor?: string | null;
+            /** @description The report used older rules; run a fresh check before applying. */
+            refresh_required: boolean;
+        };
+        /** @description One album's finding. */
+        RepairFindingView: {
+            album_artist_name?: string | null;
+            album_title: string;
+            /** Format: int64 */
+            album_year?: number | null;
+            apply_eligible: boolean;
+            /**
+             * @description `DETACHED`, `MAPPINGS_ACCEPTED`, `EDITION_ACCEPTED`, or
+             *     `STALE_SUBJECT`.
+             */
+            apply_result?: string | null;
+            automatic_undo?: null | components["schemas"]["AutomaticEditionUndoInfoView"];
+            /** @description `complete` when Apply may act on it, `bounded` otherwise. */
+            confidence: string;
+            cover_available: boolean;
+            /** @description Always empty: v3 keeps no separate evidence rows. */
+            evidence_id?: string | null;
+            finding_code: string;
+            id: string;
+            local_album_id: string;
+            /** @description What the finding means and what to do about it. */
+            reason: components["schemas"]["ReasonView"];
+            reason_code: string;
+            review_id?: string | null;
+            /** Format: int64 */
+            row_revision: number;
+            /** @description `open`, `applied`, `skipped`, or `stale`. */
+            state: string;
+            suggested_edition?: null | components["schemas"]["SuggestedEditionView"];
+            /** Format: double */
+            updated_at: number;
+        };
+        /** @description What a finished check found. */
+        RepairSummaryView: {
+            album_counts_by_root: {
+                [key: string]: number;
+            };
+            /** Format: int64 */
+            catalog_snapshot_revision: number;
+            counts_by_finding: {
+                [key: string]: number;
+            };
+            counts_by_reason: {
+                [key: string]: number;
+            };
+            /**
+             * Format: int64
+             * @description Albums Apply would change.
+             */
+            estimated_apply_changes: number;
+            /** Format: int64 */
+            exact_release_required_count: number;
+            /** Format: int64 */
+            failed_evidence_count: number;
+            /** Format: int64 */
+            input_track_count: number;
+            /** Format: int64 */
+            mapping_candidate_count: number;
+            /** Format: int64 */
+            needs_review_count: number;
+            /** Format: int64 */
+            playable_after_detach_track_count: number;
+            /** Format: int64 */
+            provider_deferred_count: number;
+            /**
+             * @description `existing_matches`, `management_readiness`, or
+             *     `catalog_identity_hygiene`.
+             */
+            purpose: string;
+            /** Format: int64 */
+            ready_album_count: number;
+            /** Format: int64 */
+            remaining_identities: number;
+            target_matcher_version: string;
+            /**
+             * Format: int64
+             * @description Albums checked.
+             */
+            total_identities: number;
         };
         /** @description ReplayGain enrichment block. */
         ReplayGainManagementSettings: {
@@ -20378,6 +20773,27 @@ export interface components {
              * @description Release year, when known.
              */
             year?: number | null;
+        };
+        /** @description The edition a preparation suggests for an album. */
+        SuggestedEditionView: {
+            /**
+             * @description With automatic edition acceptance on: `AUTO_ACCEPT`, or why the
+             *     suggestion waits for a person.
+             */
+            auto_gate?: string | null;
+            /**
+             * Format: int32
+             * @description How many editions fit the files.
+             */
+            competing_count: number;
+            country?: string | null;
+            date?: string | null;
+            release_group_mbid: string;
+            release_mbid: string;
+            status?: string | null;
+            title: string;
+            /** Format: int32 */
+            track_count: number;
         };
         /** @description One suggested track, tagged with why it was picked. */
         SuggestionTrack: {
@@ -30278,6 +30694,470 @@ export interface operations {
             };
         };
     };
+    list_repairs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                limit: number | null;
+                cursor: string | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Repair jobs, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationListView"];
+                };
+            };
+            /** @description Bad page size or cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    create_repair: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepairCreateBody"];
+            };
+        };
+        responses: {
+            /** @description The repair job (new, or the one this key started) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationView"];
+                };
+            };
+            /** @description Bad body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The idempotency key started another kind of job */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    estimate_repair: {
+        parameters: {
+            query?: {
+                /** @description Library roots; none means every root */
+                root_id?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Estimate */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepairEstimateView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_repair: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repair job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Repair job */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown repair job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    apply_repair: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repair job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepairApplyBody"];
+            };
+        };
+        responses: {
+            /** @description Applying in the background */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationView"];
+                };
+            };
+            /** @description Confirmation missing */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown repair job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The report changed since it was read */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    repair_findings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repair job id */
+                job_id: string;
+                limit: number | null;
+                cursor: string | null;
+                /**
+                 * @description Repairs: `valid`, `safe_detach`, `needs_review`, `unverifiable`,
+                 *     `manual_identity`. Preparations: `ready`, `mapping_ready`,
+                 *     `exact_release_required`, `exact_release_auto_accepted`,
+                 *     `needs_review`, `unverifiable`.
+                 */
+                finding_category: string | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Findings, newest change first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepairFindingListView"];
+                };
+            };
+            /** @description Bad page size, cursor or category */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown repair job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    pause_repair: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repair job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationControlBody"];
+            };
+        };
+        responses: {
+            /** @description Repair job */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown repair job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Stale revision or reused idempotency key */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    resume_repair: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repair job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationControlBody"];
+            };
+        };
+        responses: {
+            /** @description Repair job */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown repair job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Stale revision or reused idempotency key */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    stop_repair: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repair job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationControlBody"];
+            };
+        };
+        responses: {
+            /** @description Repair job */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown repair job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Stale revision or reused idempotency key */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     manage_apply: {
         parameters: {
             query?: never;
@@ -30493,6 +31373,360 @@ export interface operations {
             };
             /** @description Undo blocked for a file */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_preparations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                limit: number | null;
+                cursor: string | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Preparation jobs, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationListView"];
+                };
+            };
+            /** @description Bad page size or cursor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    create_preparation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreparationCreateBody"];
+            };
+        };
+        responses: {
+            /** @description The preparation job (new, or the one this key started) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationView"];
+                };
+            };
+            /** @description Bad body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The idempotency key started another kind of job */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    estimate_preparation: {
+        parameters: {
+            query?: {
+                /** @description Library roots; none means every root */
+                root_id?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Estimate */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreparationEstimateView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_preparation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Preparation job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Preparation job */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown preparation job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    apply_preparation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Preparation job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepairApplyBody"];
+            };
+        };
+        responses: {
+            /** @description Applying in the background */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationView"];
+                };
+            };
+            /** @description Confirmation missing, or the report used older rules */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown preparation job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The report changed since it was read */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    discard_preparation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Preparation job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OperationControlBody"];
+            };
+        };
+        responses: {
+            /** @description Dismissed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OperationView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown preparation job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The report changed since it was read */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    preparation_findings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Preparation job id */
+                job_id: string;
+                limit: number | null;
+                cursor: string | null;
+                /**
+                 * @description Repairs: `valid`, `safe_detach`, `needs_review`, `unverifiable`,
+                 *     `manual_identity`. Preparations: `ready`, `mapping_ready`,
+                 *     `exact_release_required`, `exact_release_auto_accepted`,
+                 *     `needs_review`, `unverifiable`.
+                 */
+                finding_category: string | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Findings that still describe their album */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepairFindingListView"];
+                };
+            };
+            /** @description Bad page size, cursor or category */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown preparation job */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -31993,6 +33227,57 @@ export interface operations {
                 content?: never;
             };
             /** @description Unknown run id */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    scan_diagnostics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Scan run id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redacted diagnostic report, as a JSON download */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Bad run id, or the report is over the 2 MB limit */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown scan run */
             404: {
                 headers: {
                     [name: string]: unknown;
