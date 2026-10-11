@@ -190,30 +190,82 @@ pub fn readiness_exact(
         })
 }
 
+/// Top score an edition needs to be accepted without a person (v2's).
+pub const MIN_AUTO_ACCEPT_SCORE: f64 = 0.95;
+/// Lead over the next edition an automatic acceptance needs (v2's).
+pub const AUTO_ACCEPT_MARGIN: f64 = 0.05;
+
+/// v2's automatic acceptance gate over the suggestible editions, best
+/// first: the best scores at least 0.95, the matcher would accept it on
+/// its own, and it is alone, or beats the next by 0.05 without tying any
+/// other on score, status, date and country. Returns `AUTO_ACCEPT` or the
+/// reason the suggestion waits for a person.
+pub fn auto_gate(ranked: &[(&ReidentificationCandidate, EditionSummary)]) -> &'static str {
+    let Some((top, top_summary)) = ranked.first() else {
+        return "EMPTY";
+    };
+    let score = top.evidence.score;
+    if score < MIN_AUTO_ACCEPT_SCORE {
+        return "BELOW_MIN_SCORE";
+    }
+    if !top.automatic_safe {
+        return "NON_QUALIFYING_REASON";
+    }
+    let key = |candidate: &ReidentificationCandidate, summary: &EditionSummary| {
+        (
+            candidate.evidence.score.to_bits(),
+            summary.status.clone(),
+            summary.date.clone(),
+            summary.country.clone(),
+        )
+    };
+    let top_key = key(top, top_summary);
+    if ranked[1..]
+        .iter()
+        .any(|(other, summary)| key(other, summary) == top_key)
+    {
+        return "TIE";
+    }
+    if let Some((next, _)) = ranked.get(1)
+        && score - next.evidence.score < AUTO_ACCEPT_MARGIN
+    {
+        return "MARGIN_TOO_NARROW";
+    }
+    "AUTO_ACCEPT"
+}
+
 /// Identity preparation for an album without an exact release: suggest
 /// the best edition that places every file, inside the album's release
-/// group when it has one. `candidates` come best first.
+/// group when it has one. `candidates` come best first. With
+/// `auto_accept_enabled` the suggestion goes through the automatic
+/// acceptance gate; an album someone chose is never accepted
+/// automatically.
 pub fn readiness_suggest(
     identity: &IdentityState,
     candidates: &[ReidentificationCandidate],
+    auto_accept_enabled: bool,
     summary_for: impl Fn(&ReidentificationCandidate) -> EditionSummary,
 ) -> Verdict {
-    let suggestible: Vec<&ReidentificationCandidate> = candidates
+    let ranked: Vec<(&ReidentificationCandidate, EditionSummary)> = candidates
         .iter()
         .filter(|candidate| candidate.evidence.release_mbid.is_some())
         .filter(|candidate| same_group(identity, candidate))
         .filter(|candidate| full_mapping(candidate).is_some())
+        .map(|candidate| (candidate, summary_for(candidate)))
         .collect();
-    let Some(winner) = suggestible.first() else {
+    let Some((winner, summary)) = ranked.first() else {
         return Verdict::new("exact_release_required", "EXACT_EDITION_NOT_ACCEPTED");
     };
-    let mut summary = summary_for(winner);
-    summary.competing_count = suggestible.len() as u32;
+    let mut summary = summary.clone();
+    summary.competing_count = ranked.len() as u32;
+    let gate = (auto_accept_enabled && !identity.manual).then(|| auto_gate(&ranked));
+    summary.auto_gate = gate.map(str::to_owned);
     Verdict::new("exact_release_suggested", "EXACT_EDITION_SUGGESTED")
         .eligible()
         .with(FindingPayload {
             summary: Some(summary),
             candidate: Some((*winner).clone()),
+            auto_accept: gate == Some("AUTO_ACCEPT"),
             ..FindingPayload::default()
         })
 }
@@ -352,10 +404,37 @@ mod tests {
             manual: true,
         };
         let suggest = |id: &IdentityState| {
-            readiness_suggest(id, std::slice::from_ref(&good), |_| {
+            readiness_suggest(id, std::slice::from_ref(&good), true, |_| {
                 EditionSummary::default()
             })
         };
+        // The automatic gate: a lone safe edition at 0.95 or more passes;
+        // a close runner-up, a tie, or an album someone chose never does.
+        let mut best = good.clone();
+        best.evidence.score = 0.97;
+        let blank = EditionSummary::default;
+        assert_eq!(auto_gate(&[(&best, blank())]), "AUTO_ACCEPT");
+        let mut close = best.clone();
+        close.automatic_safe = false;
+        close.evidence.score = 0.95;
+        assert_eq!(
+            auto_gate(&[(&best, blank()), (&close, blank())]),
+            "MARGIN_TOO_NARROW"
+        );
+        assert_eq!(auto_gate(&[(&best, blank()), (&best, blank())]), "TIE");
+        let chosen = IdentityState {
+            manual: true,
+            ..IdentityState::default()
+        };
+        let held = readiness_suggest(&chosen, std::slice::from_ref(&best), true, |_| blank());
+        assert!(!held.payload.auto_accept);
+        let open = readiness_suggest(
+            &IdentityState::default(),
+            std::slice::from_ref(&best),
+            true,
+            |_| blank(),
+        );
+        assert!(open.payload.auto_accept);
         assert_eq!(suggest(&other_group).finding_code, "exact_release_required");
         let no_identity = IdentityState::default();
         assert_eq!(

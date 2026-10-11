@@ -3600,4 +3600,94 @@ async fn library_journey_identity_repair_and_preparation() {
     )
     .await;
     assert_eq!(list["items"].as_array().map(Vec::len), Some(1), "{list}");
+
+    // Automatic edition acceptance: with the profile switch on, an album
+    // without an exact edition gets the one edition that clearly fits,
+    // as an unconfirmed automatic match with its undo.
+    {
+        use droppedneedle::runtime_config::sections::{
+            LibraryManagement, LibraryManagementProfile,
+        };
+        let mut settings: LibraryManagement = lib.library.config.get().expect("settings");
+        let mut profile = LibraryManagementProfile {
+            id: "auto".to_owned(),
+            name: "Auto".to_owned(),
+            ..LibraryManagementProfile::default()
+        };
+        profile.identity.automatic_edition_acceptance_enabled = true;
+        settings.profiles.push(profile);
+        settings.default_profile_id = "auto".to_owned();
+        lib.library.config.save(settings).expect("settings saved");
+        let conn = droppedneedle::db::open_connection(&lib.db_path).expect("db opens");
+        conn.execute(
+            "DELETE FROM local_track_external_identities WHERE local_track_id IN \
+             (SELECT id FROM local_tracks WHERE local_album_id = ?1)",
+            [&album],
+        )
+        .expect("track rows cleared");
+        conn.execute(
+            "DELETE FROM local_album_external_identities WHERE local_album_id = ?1",
+            [&album],
+        )
+        .expect("album identity cleared");
+    }
+    let (_, job) = call(
+        lib.router(),
+        "POST",
+        "/api/v3/library/management/identity-preparations",
+        &headers,
+        Some(json!({"idempotency_key": "prep-auto"})),
+    )
+    .await;
+    let auto_path = format!(
+        "/api/v3/library/management/identity-preparations/{}",
+        job["id"].as_str().expect("id")
+    );
+    let ready = settle_repair(&lib, &headers, &auto_path).await;
+    assert_eq!(ready["state"], json!("ready"), "{ready}");
+    let (_, findings) = call(
+        lib.router(),
+        "GET",
+        &format!("{auto_path}/findings"),
+        &headers,
+        None,
+    )
+    .await;
+    let item = &findings["items"][0];
+    assert_eq!(
+        item["apply_result"],
+        json!("EDITION_AUTO_ACCEPTED"),
+        "{findings}"
+    );
+    assert_eq!(item["suggested_edition"]["auto_gate"], json!("AUTO_ACCEPT"));
+    let accepted = lib
+        .library
+        .identify_store
+        .album_identity(&album)
+        .expect("accepted");
+    assert_eq!(accepted.release_mbid.as_deref(), Some(release.id.as_str()));
+    let flag: String = droppedneedle::db::open_connection(&lib.db_path)
+        .expect("db opens")
+        .query_row(
+            "SELECT state || ':' || reason_code FROM library_album_match_state \
+             WHERE local_album_id = ?1",
+            [&album],
+            |row| row.get(0),
+        )
+        .expect("match state");
+    assert_eq!(flag, "unconfirmed:EDITION_AUTO_ACCEPTED");
+    let undo = &item["automatic_undo"];
+    let (status, body) = call(
+        lib.router(),
+        "POST",
+        &format!("/api/v3/library/albums/{album}/undo-automatic-edition"),
+        &headers,
+        Some(json!({
+            "expected_album_revision": undo["expected_album_revision"],
+            "expected_identity_revision": undo["expected_identity_revision"],
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(lib.library.identify_store.album_identity(&album).is_none());
 }

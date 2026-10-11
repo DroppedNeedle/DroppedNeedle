@@ -228,7 +228,8 @@ pub struct SuggestedEditionView {
     pub date: Option<String>,
     pub country: Option<String>,
     pub status: Option<String>,
-    /// Automatic acceptance gate; always empty in this version.
+    /// With automatic edition acceptance on: `AUTO_ACCEPT`, or why the
+    /// suggestion waits for a person.
     pub auto_gate: Option<String>,
 }
 
@@ -302,7 +303,7 @@ fn finding_view(row: FindingRow) -> RepairFindingView {
                 date: summary.date,
                 country: summary.country,
                 status: summary.status,
-                auto_gate: None,
+                auto_gate: summary.auto_gate,
             }
         });
     RepairFindingView {

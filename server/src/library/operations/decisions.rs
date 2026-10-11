@@ -913,6 +913,12 @@ pub fn undo_automatic_edition(
          WHERE id = ?1",
         params![undo_id, now, action],
     )?;
+    // The unconfirmed flag an automatic acceptance set goes with it.
+    tx.execute(
+        "DELETE FROM library_album_match_state WHERE local_album_id = ?1 \
+         AND reason_code = 'EDITION_AUTO_ACCEPTED'",
+        params![album_id],
+    )?;
     bump_catalog(tx)?;
     Ok(UndoOutcome {
         local_album_id: album_id.to_owned(),

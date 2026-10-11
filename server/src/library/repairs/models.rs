@@ -70,6 +70,10 @@ pub struct Scope {
     pub purpose: Option<String>,
     #[serde(default)]
     pub legacy_only: bool,
+    /// Cleanup after one scan: only albums that run changed, plus empty
+    /// shells.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scan_run_id: Option<String>,
 }
 
 /// The album as it was when it was checked. Apply refuses to act on an
@@ -101,6 +105,11 @@ pub struct EditionSummary {
     pub track_count: u32,
     /// How many editions fit the files; more than one means a choice.
     pub competing_count: u32,
+    /// With automatic edition acceptance on: `AUTO_ACCEPT`, or why the
+    /// suggestion waits for a person (`BELOW_MIN_SCORE`, `TIE`,
+    /// `MARGIN_TOO_NARROW`, `NON_QUALIFYING_REASON`).
+    #[serde(default)]
+    pub auto_gate: Option<String>,
 }
 
 /// What Apply needs to repeat a finding's change, kept in the finding's
@@ -115,6 +124,9 @@ pub struct FindingPayload {
     /// For `exact_release_suggested`: the edition and how it scored.
     pub summary: Option<EditionSummary>,
     pub candidate: Option<ReidentificationCandidate>,
+    /// The suggestion passed the automatic acceptance gate: the check
+    /// applies it at once, as an unconfirmed automatic edition.
+    pub auto_accept: bool,
 }
 
 /// One album's verdict, before it is stored.
@@ -213,6 +225,8 @@ pub struct NewRepair {
     pub idempotency_key: String,
     pub root_ids: Vec<String>,
     pub album_ids: Vec<String>,
+    /// Hygiene after this scan run only.
+    pub scan_run_id: Option<String>,
     /// Only identities this matcher version wrote (v2's filter).
     pub source_matcher_version: Option<String>,
     pub target_matcher_version: String,

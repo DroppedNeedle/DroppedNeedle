@@ -128,6 +128,11 @@ pub fn finding(code: &str) -> Reason {
             "The album has no exact edition yet, and one fits every file.",
             "Apply the report to use the suggested edition, or pick another from the album page.",
         ),
+        "EXACT_EDITION_AUTO_ACCEPTED" => reason(
+            "EXACT_EDITION_AUTO_ACCEPTED",
+            "Automatic edition acceptance applied the one edition that clearly fits every file. It stays unconfirmed until someone looks at it.",
+            "Confirm it from the album page, or undo it here.",
+        ),
         "EXACT_EDITION_NOT_ACCEPTED" => reason(
             "EXACT_EDITION_NOT_ACCEPTED",
             "The album has no exact edition, and no edition fits every file closely enough to suggest.",

@@ -6,8 +6,8 @@
 //! own reads lock the same connection, so they are never called from
 //! inside a transaction here.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use rusqlite::{Connection, Transaction, TransactionBehavior};
@@ -35,6 +35,8 @@ use crate::library::operations::reidentify::evaluation;
 use crate::library::operations::service::Operations;
 use crate::library::operations::store as jobs;
 use crate::library::wiring::{LibrarySetup, ScanCoordinator};
+use crate::runtime_config::ConfigStore;
+use crate::runtime_config::sections::LibraryManagement;
 
 /// How long one worker turn may run before the job goes back to the
 /// queue, so other operations get their turn.
@@ -69,6 +71,9 @@ pub struct Repairs {
     ids: Arc<dyn IdGenerator>,
     coordinator: Arc<ScanCoordinator>,
     hygiene_checked: Arc<AtomicBool>,
+    /// The scan run whose cleanup this worker already queued or skipped.
+    hygiene_scan: Arc<Mutex<Option<String>>>,
+    config: Arc<ConfigStore>,
 }
 
 impl Repairs {
@@ -80,6 +85,8 @@ impl Repairs {
             ids: setup.ids.clone(),
             coordinator: setup.coordinator.clone(),
             hygiene_checked: Arc::new(AtomicBool::new(false)),
+            hygiene_scan: Arc::new(Mutex::new(None)),
+            config: setup.config.clone(),
         }
     }
 
@@ -124,6 +131,7 @@ impl Repairs {
             idempotency_key: idempotency_key.to_owned(),
             root_ids: dedupe(root_ids),
             album_ids: Vec::new(),
+            scan_run_id: None,
             source_matcher_version,
             target_matcher_version,
         };
@@ -262,6 +270,7 @@ impl Repairs {
                 idempotency_key: store::HYGIENE_BACKFILL_KEY.to_owned(),
                 root_ids: Vec::new(),
                 album_ids: Vec::new(),
+                scan_run_id: None,
                 source_matcher_version: None,
                 target_matcher_version: HYGIENE_VERSION.to_owned(),
             };
@@ -269,11 +278,76 @@ impl Repairs {
         })
     }
 
+    /// After each finished scan, queue a cleanup of the albums that scan
+    /// changed and of empty album shells (v2's per-album hygiene). Checked
+    /// once per run; nothing is queued when no album qualifies.
+    fn queue_hygiene_after_scan(&self) -> Result<(), OperationError> {
+        let Some(run) = self.read(|conn| Ok(store::latest_completed_scan(conn)?))? else {
+            return Ok(());
+        };
+        {
+            let mut seen = self
+                .hygiene_scan
+                .lock()
+                .map_err(|_| OperationError::Store("hygiene marker poisoned".to_owned()))?;
+            if seen.as_deref() == Some(run.as_str()) {
+                return Ok(());
+            }
+            *seen = Some(run.clone());
+        }
+        self.write(|tx| {
+            if store::hygiene_count_after_scan(tx, &run)? == 0 {
+                return Ok(());
+            }
+            let new = NewRepair {
+                job_id: self.ids.new_id(),
+                purpose: Purpose::CatalogIdentityHygiene,
+                requested_by_user_id: None,
+                idempotency_key: store::hygiene_scan_key(&run),
+                root_ids: Vec::new(),
+                album_ids: Vec::new(),
+                scan_run_id: Some(run.clone()),
+                source_matcher_version: None,
+                target_matcher_version: HYGIENE_VERSION.to_owned(),
+            };
+            store::create(tx, &new, now_unix()).map(|_| ())
+        })
+    }
+
+    /// Whether the album's root has automatic edition acceptance on: the
+    /// root's Library Management profile with its overrides, or the
+    /// default profile for a root without an assignment.
+    fn auto_accept_enabled(&self, root_id: &str) -> bool {
+        let settings = match self.config.get::<LibraryManagement>() {
+            Ok(settings) => settings,
+            Err(error) => {
+                tracing::warn!(%error, "library management settings unreadable; no automatic edition acceptance");
+                return false;
+            }
+        };
+        let profile = match settings
+            .root_assignments
+            .iter()
+            .find(|assignment| assignment.root_id == root_id)
+        {
+            Some(assignment) => {
+                crate::settings::management::pin_profile(&settings, assignment).ok()
+            }
+            None => settings
+                .profiles
+                .iter()
+                .find(|profile| profile.id == settings.default_profile_id)
+                .cloned(),
+        };
+        profile.is_some_and(|profile| profile.identity.automatic_edition_acceptance_enabled)
+    }
+
     /// Claim the next due repair job and work on it for one turn. Returns
     /// the job as it was left, or `None` when nothing was due. Store calls
     /// block: run this on a blocking thread.
     pub async fn run_next(&self, worker: &str) -> Result<Option<OperationJob>, OperationError> {
         self.queue_hygiene_once()?;
+        self.queue_hygiene_after_scan()?;
         let now = now_unix();
         let claimed = self.write(|tx| {
             jobs::recover_expired(tx, now)?;
@@ -365,6 +439,7 @@ impl Repairs {
                         if !jobs::holds(tx, &job.id, worker)? {
                             return Ok(());
                         }
+                        let now = now_unix();
                         store::save_finding(
                             tx,
                             &job.id,
@@ -373,8 +448,9 @@ impl Repairs {
                             &album_id,
                             &verdict,
                             identity_revision,
-                            now_unix(),
-                        )
+                            now,
+                        )?;
+                        store::auto_accept(tx, &job.id, &album_id, &verdict, now).map(|_| ())
                     })?,
                     Checked::Deferred => {
                         return self.write(|tx| {
@@ -509,9 +585,12 @@ impl Repairs {
                     )
                 }
             }
-            None => classify::readiness_suggest(&identity, &candidates, |candidate| {
-                summary_for(&recall, candidate)
-            }),
+            None => classify::readiness_suggest(
+                &identity,
+                &candidates,
+                self.auto_accept_enabled(&subject.root_id),
+                |candidate| summary_for(&recall, candidate),
+            ),
         };
         found(verdict)
     }
@@ -540,6 +619,7 @@ fn summary_for(recall: &RecallResult, candidate: &ReidentificationCandidate) -> 
             |release| release.tracks.len() as u32,
         ),
         competing_count: 1,
+        auto_gate: None,
     }
 }
 

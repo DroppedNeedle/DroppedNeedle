@@ -97,6 +97,7 @@ fn scope_sql(
     purpose: Purpose,
     root_ids: &[String],
     album_ids: &[String],
+    scan_run_id: Option<&str>,
     source_matcher_version: Option<&str>,
 ) -> (String, Vec<Value>) {
     let mut values = Vec::new();
@@ -134,9 +135,20 @@ fn scope_sql(
                 values.extend(album_ids.iter().cloned().map(Value::Text));
                 format!("AND a.id IN ({})", vec!["?"; album_ids.len()].join(","))
             };
+            let run = match scan_run_id {
+                Some(run) => {
+                    values.push(Value::Text(run.to_owned()));
+                    "AND (NOT EXISTS (SELECT 1 FROM local_tracks t WHERE t.local_album_id = a.id) \
+                     OR EXISTS (SELECT 1 FROM library_scan_inventory inv \
+                     JOIN local_tracks t ON t.id = inv.local_track_id WHERE inv.run_id = ? \
+                     AND inv.comparison_result IN ('new','changed') \
+                     AND t.local_album_id = a.id))"
+                }
+                None => "",
+            };
             format!(
                 "FROM local_albums a WHERE a.retired_into_album_id IS NULL \
-                 AND {HYGIENE_CANDIDATE} {roots} {albums}"
+                 AND {HYGIENE_CANDIDATE} {roots} {albums} {run}"
             )
         }
     };
@@ -200,6 +212,7 @@ pub fn create(
         new.purpose,
         &new.root_ids,
         &new.album_ids,
+        new.scan_run_id.as_deref(),
         new.source_matcher_version.as_deref(),
     );
     let mut values = vec![
@@ -222,6 +235,7 @@ pub fn create(
         album_ids: new.album_ids.clone(),
         purpose: Some(new.purpose.as_str().to_owned()),
         legacy_only: false,
+        scan_run_id: new.scan_run_id.clone(),
     };
     tx.execute(
         "INSERT INTO library_repair_snapshots (job_id, scope_json, source_matcher_version, \
@@ -282,6 +296,38 @@ pub fn hygiene_candidates_exist(conn: &Connection) -> rusqlite::Result<bool> {
     )
 }
 
+/// The latest finished scan run, for the per-scan cleanup.
+pub fn latest_completed_scan(conn: &Connection) -> rusqlite::Result<Option<String>> {
+    conn.query_row(
+        "SELECT id FROM library_scan_runs WHERE state = 'completed' \
+         ORDER BY terminal_at DESC, id DESC LIMIT 1",
+        [],
+        |row| row.get(0),
+    )
+    .optional()
+}
+
+/// How many albums a cleanup after `run_id` would look at.
+pub fn hygiene_count_after_scan(conn: &Connection, run_id: &str) -> rusqlite::Result<i64> {
+    let (scope, values) = scope_sql(
+        Purpose::CatalogIdentityHygiene,
+        &[],
+        &[],
+        Some(run_id),
+        None,
+    );
+    conn.query_row(
+        &format!("SELECT COUNT(*) {scope}"),
+        params_from_iter(values),
+        |row| row.get(0),
+    )
+}
+
+/// Idempotency key of the cleanup after one scan run.
+pub fn hygiene_scan_key(run_id: &str) -> String {
+    format!("catalog-identity-hygiene:v1:scan:{run_id}")
+}
+
 pub fn hygiene_backfill_queued(conn: &Connection) -> rusqlite::Result<bool> {
     conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM library_operation_jobs WHERE idempotency_key = ?1)",
@@ -306,7 +352,7 @@ fn active_count(conn: &Connection, purpose: Purpose) -> rusqlite::Result<i64> {
 }
 
 pub fn estimate_repair(conn: &Connection, root_ids: &[String]) -> rusqlite::Result<RepairEstimate> {
-    let (scope, values) = scope_sql(Purpose::ExistingMatches, root_ids, &[], None);
+    let (scope, values) = scope_sql(Purpose::ExistingMatches, root_ids, &[], None, None);
     let identity_count = conn.query_row(
         &format!("SELECT COUNT(*) {scope}"),
         params_from_iter(values),
@@ -325,7 +371,7 @@ pub fn estimate_preparation(
     conn: &Connection,
     root_ids: &[String],
 ) -> rusqlite::Result<PreparationEstimate> {
-    let (scope, values) = scope_sql(Purpose::ManagementReadiness, root_ids, &[], None);
+    let (scope, values) = scope_sql(Purpose::ManagementReadiness, root_ids, &[], None, None);
     let sql = format!(
         "SELECT i.release_group_mbid, i.release_mbid, \
          (SELECT COUNT(*) FROM local_tracks t WHERE t.local_album_id = a.id \
@@ -424,6 +470,8 @@ pub struct Subject {
     pub policies: Vec<String>,
     /// `Some(current)` when a custom edition is active.
     pub custom_current: Option<bool>,
+    /// The library root the album lives in.
+    pub root_id: String,
 }
 
 /// The album as it is now; `None` once it is retired or has no files.
@@ -477,7 +525,13 @@ pub fn subject(conn: &Connection, album_id: &str) -> rusqlite::Result<Option<Sub
             |row| row.get(0),
         )
         .optional()?;
+    let root_id: String = conn.query_row(
+        "SELECT root_id FROM local_albums WHERE id = ?1",
+        params![album_id],
+        |row| row.get(0),
+    )?;
     Ok(Some(Subject {
+        root_id,
         identity_revision: identity.as_ref().map(|(_, revision)| *revision),
         identity: identity.map(|(state, _)| state),
         tracks,
@@ -639,6 +693,43 @@ pub fn save_finding(
         now,
     )?;
     Ok(())
+}
+
+/// Apply a suggestion that passed the automatic acceptance gate, if the
+/// album still looks the way it was checked. The finding becomes
+/// `exact_release_auto_accepted`; otherwise it stays a suggestion.
+pub fn auto_accept(
+    tx: &Transaction<'_>,
+    job_id: &str,
+    album_id: &str,
+    verdict: &Verdict,
+    now: f64,
+) -> Result<bool, OperationError> {
+    let Some(candidate) = verdict.payload.candidate.as_ref() else {
+        return Ok(false);
+    };
+    if !verdict.payload.auto_accept || !guard_holds(tx, album_id, verdict.payload.guard.as_ref())? {
+        return Ok(false);
+    }
+    let accepted = crate::library::operations::choice::accept_automatic(
+        tx,
+        album_id,
+        candidate,
+        "EDITION_AUTO_ACCEPTED",
+        Some(job_id),
+        now,
+    )?;
+    if accepted.is_none() {
+        return Ok(false);
+    }
+    tx.execute(
+        "UPDATE library_identity_repair_findings SET finding_code = 'exact_release_auto_accepted', \
+         reason_code = 'EXACT_EDITION_AUTO_ACCEPTED', apply_eligible = 0, state = 'applied', \
+         apply_result = 'EDITION_AUTO_ACCEPTED', updated_at = ?3, row_revision = row_revision + 1 \
+         WHERE job_id = ?1 AND local_album_id = ?2 AND finding_code = 'exact_release_suggested'",
+        params![job_id, album_id, now],
+    )?;
+    Ok(true)
 }
 
 /// Release a running job back to the queue: it used its turn, or must
@@ -929,9 +1020,12 @@ pub fn findings_page(
     limit: usize,
 ) -> rusqlite::Result<FindingPage> {
     let current = if purpose == Purpose::ManagementReadiness {
-        "AND f.state = 'open' AND a.row_revision = f.expected_album_revision \
+        "AND ((f.state = 'open' AND a.row_revision = f.expected_album_revision \
          AND ((f.expected_identity_revision IS NULL AND i.row_revision IS NULL) \
-         OR i.row_revision = f.expected_identity_revision)"
+         OR i.row_revision = f.expected_identity_revision)) \
+         OR (f.finding_code = 'exact_release_auto_accepted' AND f.state = 'applied' \
+         AND EXISTS (SELECT 1 FROM library_automatic_edition_undo u \
+         WHERE u.local_album_id = f.local_album_id AND u.consumed_at IS NULL)))"
     } else {
         ""
     };
