@@ -1780,7 +1780,8 @@ async fn baseline_restore_removes_fields_added_later() {
 }
 
 /// A release document answers to its merged ids through their own rows,
-/// and a refetch replaces every row rather than adding to them.
+/// and a refetch by the canonical id (no redirect, so no merged ids)
+/// replaces every row and still answers to them.
 #[test]
 fn release_documents_answer_to_merged_ids() {
     use droppedneedle::library::identify::stores::ReleaseStore as _;
@@ -1794,6 +1795,7 @@ fn release_documents_answer_to_merged_ids() {
     };
     store.save_release(&release);
     release.title = "Refetched".to_owned();
+    release.old_ids.clear();
     store.save_release(&release);
     for id in ["rel-new", "rel-old"] {
         let found = store.release(id, None).expect("document found");

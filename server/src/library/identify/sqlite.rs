@@ -1004,6 +1004,22 @@ impl ReleaseStore for SqliteIdentifyStore {
     }
 
     fn save_release(&self, release: &Release) {
+        // A refetch by the canonical id carries no redirect, so it would
+        // forget the merged ids an earlier lookup learned: keep them.
+        let canonical = release.id.trim().to_ascii_lowercase();
+        let mut release = release.clone();
+        if let Some(stored) = self.release(&canonical, None) {
+            for old in stored.old_ids {
+                if !release
+                    .old_ids
+                    .iter()
+                    .any(|known| known.eq_ignore_ascii_case(&old))
+                {
+                    release.old_ids.push(old);
+                }
+            }
+        }
+        let release = &release;
         let payload = match serde_json::to_string(release) {
             Ok(payload) => payload,
             Err(error) => {
@@ -1015,7 +1031,7 @@ impl ReleaseStore for SqliteIdentifyStore {
         // The release's own id plus every merged id that redirects to it:
         // each gets a row with the same payload, so a lookup by any of them
         // stays a plain indexed match on entity_id.
-        let mut entities = vec![release.id.trim().to_ascii_lowercase()];
+        let mut entities = vec![canonical];
         for old in &release.old_ids {
             let old = old.trim().to_ascii_lowercase();
             if !old.is_empty() && !entities.contains(&old) {
