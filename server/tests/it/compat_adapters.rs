@@ -241,13 +241,16 @@ async fn jellyfin_adapter_serves_ranges_maps_faults_and_forwards_transcodes() {
 struct NoRemote;
 
 impl droppedneedle::stream::gateway::RemoteReader for NoRemote {
-    async fn fetch(
+    async fn open_stream(
         &self,
         _source: droppedneedle::stream::routes::AudioSource,
         _key: &str,
         _user_id: &str,
-    ) -> Result<droppedneedle::stream::gateway::RemoteMedia, StreamFault> {
-        Err(StreamFault::NotFound)
+        _head_only: bool,
+    ) -> Result<droppedneedle::stream::routes::StreamMedia, StreamFault> {
+        let canned: Result<droppedneedle::stream::gateway::RemoteMedia, StreamFault> =
+            async { Err(StreamFault::NotFound) }.await;
+        canned.map(Into::into)
     }
 }
 

@@ -35,16 +35,21 @@ struct FakeRemote {
 }
 
 impl RemoteReader for FakeRemote {
-    async fn fetch(
+    async fn open_stream(
         &self,
         _source: AudioSource,
         key: &str,
         _user_id: &str,
-    ) -> Result<RemoteMedia, StreamFault> {
-        if let Some(fault) = self.faults.get(key) {
-            return Err(fault.clone());
+        _head_only: bool,
+    ) -> Result<droppedneedle::stream::routes::StreamMedia, StreamFault> {
+        let canned: Result<RemoteMedia, StreamFault> = async {
+            if let Some(fault) = self.faults.get(key) {
+                return Err(fault.clone());
+            }
+            self.objects.get(key).cloned().ok_or(StreamFault::NotFound)
         }
-        self.objects.get(key).cloned().ok_or(StreamFault::NotFound)
+        .await;
+        canned.map(Into::into)
     }
 }
 

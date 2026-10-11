@@ -145,13 +145,15 @@ async fn fixture() -> Fixture {
 struct NoRemote;
 
 impl RemoteReader for NoRemote {
-    async fn fetch(
+    async fn open_stream(
         &self,
         _source: AudioSource,
         _key: &str,
         _user_id: &str,
-    ) -> Result<RemoteMedia, StreamFault> {
-        Err(StreamFault::NotFound)
+        _head_only: bool,
+    ) -> Result<droppedneedle::stream::routes::StreamMedia, StreamFault> {
+        let canned: Result<RemoteMedia, StreamFault> = async { Err(StreamFault::NotFound) }.await;
+        canned.map(Into::into)
     }
 }
 

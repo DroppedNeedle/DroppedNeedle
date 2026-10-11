@@ -623,13 +623,15 @@ struct CannedRemote {
 }
 
 impl RemoteReader for CannedRemote {
-    async fn fetch(
+    async fn open_stream(
         &self,
         _source: AudioSource,
         _key: &str,
         _user_id: &str,
-    ) -> Result<RemoteMedia, StreamFault> {
-        Ok(self.media.clone())
+        _head_only: bool,
+    ) -> Result<droppedneedle::stream::routes::StreamMedia, StreamFault> {
+        let canned: Result<RemoteMedia, StreamFault> = async { Ok(self.media.clone()) }.await;
+        canned.map(Into::into)
     }
 }
 
@@ -670,15 +672,20 @@ impl BlockingRemote {
 }
 
 impl RemoteReader for BlockingRemote {
-    async fn fetch(
+    async fn open_stream(
         &self,
         _source: AudioSource,
         _key: &str,
         _user_id: &str,
-    ) -> Result<RemoteMedia, StreamFault> {
-        self.inner.entries.fetch_add(1, Ordering::SeqCst);
-        self.inner.release.notified().await;
-        Ok(self.inner.media.clone())
+        _head_only: bool,
+    ) -> Result<droppedneedle::stream::routes::StreamMedia, StreamFault> {
+        let canned: Result<RemoteMedia, StreamFault> = async {
+            self.inner.entries.fetch_add(1, Ordering::SeqCst);
+            self.inner.release.notified().await;
+            Ok(self.inner.media.clone())
+        }
+        .await;
+        canned.map(Into::into)
     }
 }
 

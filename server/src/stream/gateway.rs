@@ -12,9 +12,10 @@
 //! instead, sandboxed to that root.
 //! The streaming open hands the routes a file body read by range, or the
 //! transcode output chunk by chunk; HEAD answers from file metadata and
-//! never starts ffmpeg. The whole-object open stays for the compat
-//! adapters. Range slicing, 206/416 decisions, and headers stay in the
-//! routes file.
+//! never starts ffmpeg. The whole-object open collects a streamed open in
+//! memory; nothing in the server calls it (the compat adapters stream too),
+//! it stays for the engine seam's tests. Range slicing, 206/416 decisions,
+//! and headers stay in the routes file.
 //!
 //! The streaming open hands its direct lease back inside [`StreamMedia`],
 //! so a caller that moves it into the response body bounds response
@@ -43,7 +44,8 @@ use super::transcode::{
     decide, estimate_size, out_media_type,
 };
 
-/// One proxied remote read: upstream bytes plus the upstream content type.
+/// A canned remote object, for scripted readers: upstream bytes plus the
+/// upstream content type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteMedia {
     /// Upstream-resolved content type (upstream wins for remotes).
@@ -52,38 +54,31 @@ pub struct RemoteMedia {
     pub bytes: Vec<u8>,
 }
 
+impl From<RemoteMedia> for StreamMedia {
+    fn from(media: RemoteMedia) -> Self {
+        StreamMedia::from(OpenMedia {
+            content_type: media.content_type,
+            total_len: media.bytes.len() as u64,
+            transcoded: false,
+            estimated_len: None,
+            bytes: media.bytes,
+        })
+    }
+}
+
 /// Remote byte source. `media` implements this over the remotes
 /// adapter (per-user connections + credential store); tests script it.
 pub trait RemoteReader: Send + Sync {
-    /// Fetch one remote object, or fail with a routable [`StreamFault`].
-    fn fetch(
-        &self,
-        source: AudioSource,
-        key: &str,
-        user_id: &str,
-    ) -> impl Future<Output = Result<RemoteMedia, StreamFault>> + Send;
-
-    /// Open one remote object for streaming; `head_only` needs only its
-    /// metadata. The default reads it whole through [`Self::fetch`].
+    /// Open one remote object for streaming, or fail with a routable
+    /// [`StreamFault`]; `head_only` needs only its metadata. A sized
+    /// answer should stream by range, so nothing holds the whole file.
     fn open_stream(
         &self,
         source: AudioSource,
         key: &str,
         user_id: &str,
         head_only: bool,
-    ) -> impl Future<Output = Result<StreamMedia, StreamFault>> + Send {
-        let _ = head_only;
-        async move {
-            let media = self.fetch(source, key, user_id).await?;
-            Ok(StreamMedia::from(OpenMedia {
-                content_type: media.content_type,
-                total_len: media.bytes.len() as u64,
-                transcoded: false,
-                estimated_len: None,
-                bytes: media.bytes,
-            }))
-        }
-    }
+    ) -> impl Future<Output = Result<StreamMedia, StreamFault>> + Send;
 }
 
 /// Where the transcode policy comes from: read again on every open, so a
@@ -169,7 +164,13 @@ impl<R: RemoteReader, T: Transcoder> StreamEngine for Gateway<R, T> {
                 let media = self.stream_plugin(&request, false).await?;
                 whole_media(media).await
             }
-            source => self.open_remote(source, &request).await,
+            source => {
+                let media = self
+                    .remote
+                    .open_stream(source, &request.key, &request.user_id, false)
+                    .await?;
+                whole_media(media).await
+            }
         }
     }
 
@@ -551,27 +552,6 @@ impl<R: RemoteReader, T: Transcoder> Gateway<R, T> {
         Ok(media)
     }
 
-    /// Proxied remote read. Direct-only: the ffmpeg service takes a local
-    /// path, so transcode hints are ignored here and server-side transcode
-    /// stays a remotes-adapter concern.
-    async fn open_remote(
-        &self,
-        source: AudioSource,
-        request: &StreamOpen,
-    ) -> Result<OpenMedia, StreamFault> {
-        let media = self
-            .remote
-            .fetch(source, &request.key, &request.user_id)
-            .await?;
-        Ok(OpenMedia {
-            content_type: media.content_type,
-            total_len: media.bytes.len() as u64,
-            transcoded: false,
-            estimated_len: None,
-            bytes: media.bytes,
-        })
-    }
-
     /// Join `key` under the constructor root, refusing anything that
     /// escapes it. Only gateways without the library wired read this way.
     /// The refusal message is fixed: the key never reaches the wire.
@@ -728,7 +708,7 @@ async fn whole_media(media: StreamMedia) -> Result<OpenMedia, StreamFault> {
                 })?);
                 if bytes.len() > cap {
                     return Err(StreamFault::Internal {
-                        cause: "plugin stream is over 500 MiB".to_owned(),
+                        cause: "stream is over 500 MiB".to_owned(),
                     });
                 }
             }

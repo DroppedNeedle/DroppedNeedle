@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use crate::stream::gateway::{RemoteMedia, RemoteReader};
+use crate::stream::gateway::RemoteReader;
 use crate::stream::ranged;
 use crate::stream::routes::{AudioSource, MediaBody, StreamFault, StreamMedia};
 
@@ -146,24 +146,6 @@ impl RemotesRemoteReader {
 }
 
 impl RemoteReader for RemotesRemoteReader {
-    async fn fetch(
-        &self,
-        source: AudioSource,
-        key: &str,
-        user_id: &str,
-    ) -> Result<RemoteMedia, StreamFault> {
-        let (response, _) = self.audio_response(source, key, user_id, false).await?;
-        let content_type = content_type(&response);
-        let bytes = response.bytes().await.map_err(|cause| {
-            tracing::warn!(cause = %cause.without_url(), source = source.as_str(), "remote audio read failed");
-            StreamFault::Upstream { source }
-        })?;
-        Ok(RemoteMedia {
-            content_type,
-            bytes: bytes.to_vec(),
-        })
-    }
-
     async fn open_stream(
         &self,
         source: AudioSource,
