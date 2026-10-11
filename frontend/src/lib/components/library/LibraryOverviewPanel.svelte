@@ -21,7 +21,7 @@
 	import { getLibraryRunHistoryQuery } from '$lib/queries/library/LibraryOperationQueries.svelte';
 	import { requestLibraryRun } from '$lib/queries/library/LibraryOperationMutations.svelte';
 	import { getTargetLibrarySettingsQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
-	import { getLibraryReviewsQuery } from '$lib/queries/library/LibraryReviewQueries.svelte';
+	import { getPendingReviewCountQuery } from '$lib/queries/library/LibraryReviewQueries.svelte';
 	import {
 		getLibraryScanScheduleQuery,
 		getLibraryStatsQuery
@@ -50,7 +50,7 @@
 	const statsQuery = getLibraryStatsQuery();
 	const historyQuery = getLibraryRunHistoryQuery(() => authStore.isAdmin);
 	const scheduleQuery = getLibraryScanScheduleQuery(() => authStore.isAdmin);
-	const reviewsQuery = getLibraryReviewsQuery(() => ({ state: 'needs_review' }));
+	const reviewsQuery = getPendingReviewCountQuery();
 	const settingsQuery = getTargetLibrarySettingsQuery(() => authStore.isAdmin);
 	const operationsQuery = getLibraryManagementOperationsQuery(
 		() => authStore.user?.id,
@@ -115,7 +115,7 @@
 	const totalTracks = $derived(statsQuery.data?.total_tracks ?? 0);
 	const localOnlyCount = $derived(statsQuery.data?.local_only_count ?? 0);
 	const latestTerminalRun = $derived(historyQuery.data?.pages[0]?.items[0] ?? null);
-	const reviewCount = $derived(reviewsQuery.data?.pages[0]?.filtered_total ?? 0);
+	const reviewCount = $derived(reviewsQuery.data ?? 0);
 	const readyPreviewCount = $derived(
 		(operationsQuery.data?.pages.flatMap((result) => result.items) ?? []).filter(
 			(item) => item.operation.state === 'ready' && !item.activation_preview

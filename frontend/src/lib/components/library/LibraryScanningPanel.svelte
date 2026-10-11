@@ -23,7 +23,7 @@
 		requestLibraryRun
 	} from '$lib/queries/library/LibraryOperationMutations.svelte';
 	import { getTargetLibrarySettingsQuery } from '$lib/queries/library/LibraryPolicyQueries.svelte';
-	import { getLibraryReviewsQuery } from '$lib/queries/library/LibraryReviewQueries.svelte';
+	import { getPendingReviewCountQuery } from '$lib/queries/library/LibraryReviewQueries.svelte';
 	import { getArtistReconciliationProgressQuery } from '$lib/queries/artist-reconciliation/ArtistReconciliationQueries.svelte';
 	import { getLibraryScanScheduleQuery } from '$lib/queries/library/LibraryQueries.svelte';
 	import { withBasePath } from '$lib/utils/basePath';
@@ -35,7 +35,7 @@
 	const runsQuery = getCurrentLibraryRunsQuery(() => authStore.isAdmin);
 	const settingsQuery = getTargetLibrarySettingsQuery(() => authStore.isAdmin);
 	const scheduleQuery = getLibraryScanScheduleQuery(() => authStore.isAdmin);
-	const reviewsQuery = getLibraryReviewsQuery(() => ({ state: 'needs_review' }));
+	const reviewsQuery = getPendingReviewCountQuery();
 	const artistReconciliationQuery = getArtistReconciliationProgressQuery(() => authStore.isAdmin);
 	const runDetailQuery = getLibraryRunQuery(() => runsQuery.data?.active?.id ?? null);
 	const requestRun = requestLibraryRun();
@@ -55,7 +55,7 @@
 	const scopes = $derived(runDetailQuery.data?.snapshot.scopes ?? []);
 	const policyRevision = $derived(settingsQuery.data?.policy_revision ?? '');
 	const libraryEnabled = $derived(settingsQuery.data?.enabled ?? true);
-	const reviewCount = $derived(reviewsQuery.data?.pages[0]?.filtered_total ?? 0);
+	const reviewCount = $derived(reviewsQuery.data ?? 0);
 	const roots = $derived(settingsQuery.data?.library_roots ?? []);
 	const scopeLabel = $derived(
 		activeRun?.aggregate_scope === 'all'
@@ -84,7 +84,6 @@
 	let workKind = $state<'rescan_files' | 'policy_reconcile' | 'retry_identification'>(
 		'rescan_files'
 	);
-	const catalogRevision = $derived(reviewsQuery.data?.pages[0]?.catalog_revision ?? 0);
 	const attentionCount = $derived(identification?.attention_count ?? 0);
 	const deferredReasonBreakdown = $derived(
 		Object.entries(identification?.deferred_reason_counts ?? {})
@@ -559,7 +558,6 @@
 <LibraryWorkDialog
 	open={workDialogOpen}
 	kind={workKind}
-	{catalogRevision}
 	pending={requestRun.isPending}
 	onclose={() => (workDialogOpen = false)}
 	onconfirm={(scopeIds) =>

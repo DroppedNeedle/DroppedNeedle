@@ -9,8 +9,15 @@
 		getWaitingAlbumsQuery
 	} from '$lib/queries/albums/EditionQueries.svelte';
 
+	interface Props {
+		initialView?: 'unconfirmed' | 'unmatched';
+	}
+
+	let { initialView = 'unconfirmed' }: Props = $props();
+
 	const PAGE = 50;
-	let view = $state<'unconfirmed' | 'unmatched'>('unconfirmed');
+	// svelte-ignore state_referenced_locally
+	let view = $state<'unconfirmed' | 'unmatched'>(initialView);
 	let offset = $state(0);
 
 	const query = getWaitingAlbumsQuery(

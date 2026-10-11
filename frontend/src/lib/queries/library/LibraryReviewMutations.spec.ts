@@ -7,7 +7,7 @@ vi.mock('@tanstack/svelte-query', () => ({
 const apiPost = vi.hoisted(() => vi.fn());
 
 vi.mock('$lib/api/client', () => ({
-	api: { global: { post: apiPost } }
+	api: { global: { v3: { POST: apiPost } } }
 }));
 
 const invalidate = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
@@ -32,8 +32,7 @@ import { actOnLibraryReview, type ReviewAction } from './LibraryReviewMutations.
 const REVIEW_LOCAL_KEYS = [
 	['library', 'reviews'],
 	['library', 'activity'],
-	['library', 'operations'],
-	['library', 'reviews', 'detail', 'review-1']
+	['library', 'operations']
 ];
 // Catalog layer keys - only for catalog-mutating actions.
 const CATALOG_KEYS = [['library'], ['artist'], ['home'], ['discover']];
@@ -44,17 +43,17 @@ beforeEach(() => {
 });
 
 describe('review action invalidation scoping', () => {
-	it.each<ReviewAction>(['detach_keep_tagged', 'exclude', 'restore'])(
+	it.each<ReviewAction>(['detach', 'exclude', 'restore'])(
 		'sweeps the catalog layer for catalog-mutating action %s',
 		async (action) => {
-			const mutation = actOnLibraryReview(action) as unknown as {
+			const mutation = actOnLibraryReview() as unknown as {
 				onSuccess: (
 					result: unknown,
-					input: { reviewId: string; body: Record<string, unknown> }
+					input: { reviewId: string; action: ReviewAction }
 				) => Promise<void>;
 			};
 
-			await mutation.onSuccess({}, { reviewId: 'review-1', body: {} });
+			await mutation.onSuccess({}, { reviewId: 'review-1', action });
 
 			const keys = invalidate.mock.calls.map(([filters]) => filters.queryKey);
 			for (const key of [...REVIEW_LOCAL_KEYS, ...CATALOG_KEYS]) {
@@ -66,14 +65,14 @@ describe('review action invalidation scoping', () => {
 	it.each<ReviewAction>(['dismiss', 'keep_tagged'])(
 		'keeps %s review-local: no library/artist/home/discover sweep',
 		async (action) => {
-			const mutation = actOnLibraryReview(action) as unknown as {
+			const mutation = actOnLibraryReview() as unknown as {
 				onSuccess: (
 					result: unknown,
-					input: { reviewId: string; body: Record<string, unknown> }
+					input: { reviewId: string; action: ReviewAction }
 				) => Promise<void>;
 			};
 
-			await mutation.onSuccess({}, { reviewId: 'review-1', body: {} });
+			await mutation.onSuccess({}, { reviewId: 'review-1', action });
 
 			const keys = invalidate.mock.calls.map(([filters]) => filters.queryKey);
 			for (const key of REVIEW_LOCAL_KEYS) {

@@ -30,7 +30,7 @@ const h = vi.hoisted(() => ({
 		isSuccess: true,
 		isLoading: false
 	} as Record<string, unknown>,
-	reviews: { data: { pages: [{ filtered_total: 12 }] } } as Record<string, unknown>,
+	reviews: { data: 12 } as Record<string, unknown>,
 	artistReconciliation: {
 		data: {
 			automatically_resolved_count: 14,
@@ -61,9 +61,7 @@ const h = vi.hoisted(() => ({
 	stopRun: vi.fn(),
 	pauseIdentification: vi.fn(),
 	requestRun: vi.fn(),
-	bulkPreview: vi.fn(),
 	bulkApply: vi.fn(),
-	bulkPreviewReset: vi.fn(),
 	bulkApplyReset: vi.fn(),
 	controlOperationMutate: vi.fn(),
 	toast: vi.fn()
@@ -136,23 +134,17 @@ vi.mock('$lib/queries/library/LibraryPolicyQueries.svelte', () => ({
 	})
 }));
 vi.mock('$lib/queries/library/LibraryReviewQueries.svelte', () => ({
-	getLibraryReviewsQuery: () => h.reviews
+	getPendingReviewCountQuery: () => h.reviews
 }));
 vi.mock('$lib/queries/artist-reconciliation/ArtistReconciliationQueries.svelte', () => ({
 	getArtistReconciliationProgressQuery: () => h.artistReconciliation
 }));
 vi.mock('$lib/queries/library/LibraryReviewMutations.svelte', () => ({
-	previewBulkLibraryReview: () => ({
-		mutateAsync: h.bulkPreview,
-		reset: h.bulkPreviewReset,
-		data: undefined,
-		isPending: false,
-		isError: false
-	}),
-	applyBulkLibraryReview: () => ({
+	retryPendingLibraryReviews: () => ({
 		mutateAsync: h.bulkApply,
 		reset: h.bulkApplyReset,
 		data: undefined,
+		error: null,
 		isPending: false,
 		isError: false
 	})
@@ -244,7 +236,7 @@ beforeEach(() => {
 	};
 	h.detail = { data: undefined };
 	h.operation = { data: undefined };
-	h.reviews = { data: { pages: [{ filtered_total: 12 }] } };
+	h.reviews = { data: 12 };
 	h.pauseRun.mockResolvedValue({});
 	h.resumeRun.mockResolvedValue({});
 	h.stopRun.mockResolvedValue({});
@@ -287,26 +279,13 @@ describe('LibraryScanningPanel', () => {
 		expect(h.stopRun).toHaveBeenCalledWith({ runId: 'run-1', expectedRevision: 11 });
 	});
 
-	it('opens the shared scoped retry preview with immutable policy IDs', async () => {
-		h.reviews = { data: { pages: [{ filtered_total: 12, catalog_revision: 42 }] } };
+	it('retries every album that waits for a decision', async () => {
+		h.reviews = { data: 12 };
 		await render(LibraryScanningPanel);
 		await page.getByRole('button', { name: 'Retry identification...' }).click();
 		await expect.element(page.getByRole('heading', { name: 'Retry identification' })).toBeVisible();
-		await page.getByRole('checkbox').nth(1).click();
-		await expect.element(page.getByText(/one-off external identification action/)).toBeVisible();
-		await page.getByRole('button', { name: 'Preview retry' }).click();
-		expect(h.bulkPreview).toHaveBeenCalledWith({
-			action: 'retry',
-			selection: {
-				review_ids: [],
-				expected_revisions: {},
-				normalized_filter: {
-					states: JSON.stringify(['needs_review', 'keep_tagged']),
-					scope_revision: 'policy-1',
-					scope_ids: JSON.stringify(['rule-local'])
-				},
-				catalog_revision: 42
-			}
-		});
+		await page.getByRole('checkbox').click();
+		await page.getByRole('button', { name: 'Retry 12 albums' }).click();
+		expect(h.bulkApply).toHaveBeenCalledWith({ confirmLocalMetadata: true });
 	});
 });

@@ -1,5 +1,6 @@
 import { v3 } from '$lib/api/v3/endpoint';
 import type {
+	LibraryReviewParams,
 	LibraryV3AlbumsParams,
 	LibraryV3ArtistsParams,
 	LibraryV3PageParams,
@@ -120,6 +121,29 @@ export const LibraryV3Api = {
 	lyrics: (trackId: string) => v3('/api/v3/library/tracks/{id}/lyrics', { path: { id: trackId } }),
 	recentlyAdded: (limit: number) => v3('/api/v3/library/recently-added', { query: { limit } }),
 	stats: () => v3('/api/v3/library/stats'),
+	// Identification reviews: list, read, and every way to settle one.
+	reviews: (params: LibraryReviewParams) =>
+		v3('/api/v3/library/reviews', {
+			query: {
+				state: params.state ?? 'pending',
+				limit: params.limit,
+				offset: params.offset,
+				...(params.search ? { search: params.search } : {}),
+				...(params.reasonCode ? { reason_code: params.reasonCode } : {})
+			}
+		}),
+	review: (reviewId: string) => v3('/api/v3/library/reviews/{id}', { path: { id: reviewId } }),
+	dismissReview: (reviewId: string) =>
+		v3('/api/v3/library/reviews/{id}/dismiss', { path: { id: reviewId } }),
+	detachReview: (reviewId: string) =>
+		v3('/api/v3/library/reviews/{id}/detach', { path: { id: reviewId } }),
+	excludeReview: (reviewId: string) =>
+		v3('/api/v3/library/reviews/{id}/exclude', { path: { id: reviewId } }),
+	restoreReview: (reviewId: string) =>
+		v3('/api/v3/library/reviews/{id}/restore', { path: { id: reviewId } }),
+	retryReview: (reviewId: string) =>
+		v3('/api/v3/library/reviews/{id}/retry', { path: { id: reviewId } }),
+	retryPendingReviews: () => v3('/api/v3/library/reviews/retry-pending'),
 	approveReview: (reviewId: string) =>
 		v3('/api/v3/library/reviews/{id}/approve', { path: { id: reviewId } }),
 	rejectReview: (reviewId: string) =>

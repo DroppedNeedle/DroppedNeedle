@@ -33,6 +33,17 @@ export interface LibraryV3TracksParams {
 	genre?: string;
 }
 
+export type LibraryReviewState =
+	'pending' | 'approved' | 'rejected' | 'dismissed' | 'excluded' | 'all';
+
+export interface LibraryReviewParams {
+	limit: number;
+	offset: number;
+	state?: LibraryReviewState;
+	search?: string;
+	reasonCode?: string;
+}
+
 export interface LibraryV3PageParams {
 	limit?: number;
 	offset?: number;

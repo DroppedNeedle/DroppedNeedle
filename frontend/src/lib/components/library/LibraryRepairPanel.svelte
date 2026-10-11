@@ -212,9 +212,7 @@
 					{#if repair.state === 'succeeded' && repair.repair_summary?.estimated_apply_changes}
 						<a
 							class="text-sm link link-primary sm:col-span-2 sm:justify-self-end"
-							href={withBasePath(
-								'/library/review?state=needs_review&reason=LEGACY_IDENTITY_FAILED_SAFETY_RULES'
-							)}>Review detached albums</a
+							href={withBasePath('/library/review?view=unmatched')}>Review detached albums</a
 						>
 					{/if}
 				</div>
