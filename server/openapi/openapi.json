@@ -10116,6 +10116,192 @@
         }
       }
     },
+    "/api/v3/library/management/automatic/skipped": {
+      "get": {
+        "tags": [
+          "crate::library::http::management_tools"
+        ],
+        "summary": "Albums automatic management skipped, newest first, each with why.",
+        "operationId": "list_management_automatic_skipped",
+        "responses": {
+          "200": {
+            "description": "Skipped albums",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementSkippedPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/baselines/purge": {
+      "post": {
+        "tags": [
+          "crate::library::http::management_tools"
+        ],
+        "summary": "Delete every saved original for good.",
+        "operationId": "purge_management_baselines",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManagementPurgeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Originals purged",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementPurgeView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Confirmation missing"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "409": {
+            "description": "The impact changed, or a restore or write is running"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/baselines/purge-impact": {
+      "post": {
+        "tags": [
+          "crate::library::http::management_tools"
+        ],
+        "summary": "What a purge of the saved originals would remove.",
+        "operationId": "get_management_purge_impact",
+        "responses": {
+          "200": {
+            "description": "Purge impact",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementPurgeImpactView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/baselines/restore-previews": {
+      "post": {
+        "tags": [
+          "crate::library::http::management_tools"
+        ],
+        "summary": "Preview putting the selected albums back to their originals.",
+        "operationId": "create_management_restore_preview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManagementRestorePreviewBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Preview queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementPreviewCreatedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid selection"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "409": {
+            "description": "Settings or library folders changed"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/duplicate-resolution-previews": {
+      "post": {
+        "tags": [
+          "crate::library::http::management_tools"
+        ],
+        "summary": "Preview settling one file whose destination is taken.",
+        "operationId": "create_management_duplicate_preview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManagementDuplicateBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Preview queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementPreviewCreatedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown preview or file"
+          },
+          "409": {
+            "description": "The preview or settings changed"
+          }
+        }
+      }
+    },
     "/api/v3/library/management/identity-preparations": {
       "get": {
         "tags": [
@@ -11096,6 +11282,167 @@
           },
           "409": {
             "description": "Preview no longer ready"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/recovery/diagnostics": {
+      "get": {
+        "tags": [
+          "crate::library::http::management_tools"
+        ],
+        "summary": "What the publish journal holds, and the writes that need you.",
+        "operationId": "get_management_recovery_diagnostics",
+        "responses": {
+          "200": {
+            "description": "Journal diagnostics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementRecoveryView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/recovery/import-bundles/{bundle_id}/resolve": {
+      "post": {
+        "tags": [
+          "crate::library::http::management_tools"
+        ],
+        "summary": "Close a write that needs attention once its files check out. Nothing\non disk changes.",
+        "operationId": "resolve_management_bundle",
+        "parameters": [
+          {
+            "name": "bundle_id",
+            "in": "path",
+            "description": "Publish bundle id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Write closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementResolveView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown write"
+          },
+          "409": {
+            "description": "A file is missing or different, or the write needs no attention"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/tag-edit-previews": {
+      "post": {
+        "tags": [
+          "crate::library::http::management_tools"
+        ],
+        "summary": "Preview a tag edit; apply it like any preview.",
+        "operationId": "create_management_tag_edit_preview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManagementTagEditPreviewBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Preview queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementPreviewCreatedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid edit"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown track"
+          },
+          "409": {
+            "description": "Settings or library folders changed"
+          }
+        }
+      }
+    },
+    "/api/v3/library/management/tracks/{track_id}/tag-editor": {
+      "get": {
+        "tags": [
+          "crate::library::http::management_tools"
+        ],
+        "summary": "The tag editor for one file.",
+        "operationId": "get_management_tag_editor",
+        "parameters": [
+          {
+            "name": "track_id",
+            "in": "path",
+            "description": "Library track id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file's tags",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementTagEditorView"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown track"
+          },
+          "409": {
+            "description": "The file cannot be read now"
           }
         }
       }
@@ -19433,6 +19780,52 @@
         }
       }
     },
+    "/api/v3/settings/library-management/activation-confirmations": {
+      "post": {
+        "tags": [
+          "crate::library::http::management_tools"
+        ],
+        "summary": "Save settings that turn automatic management on, with their dry runs.",
+        "operationId": "confirm_management_activation",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManagementActivationConfirmBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Settings saved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryManagementSettingsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing confirmation or proof"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown dry run"
+          },
+          "409": {
+            "description": "A dry run is stale or settings changed"
+          }
+        }
+      }
+    },
     "/api/v3/settings/library-management/activation-health": {
       "get": {
         "tags": [
@@ -19450,6 +19843,93 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v3/settings/library-management/activation-previews": {
+      "post": {
+        "tags": [
+          "crate::library::http::management_tools"
+        ],
+        "summary": "Dry-run a library folder under proposed settings. Nothing changes.",
+        "operationId": "create_management_activation_preview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManagementActivationPreviewBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Dry run queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementPreviewCreatedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The folder has no automatic trigger, or invalid settings"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "409": {
+            "description": "Settings or library folders changed"
+          }
+        }
+      }
+    },
+    "/api/v3/settings/library-management/activation-previews/{job_id}": {
+      "get": {
+        "tags": [
+          "crate::library::http::management_tools"
+        ],
+        "summary": "One dry run.",
+        "operationId": "get_management_activation_preview",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Dry run job id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dry run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManagementJobView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a dry run"
+          },
+          "401": {
+            "description": "Not authenticated"
+          },
+          "403": {
+            "description": "Admin role required"
+          },
+          "404": {
+            "description": "Unknown job"
           }
         }
       }
@@ -35430,6 +35910,14 @@
             "description": "Activation pins (set by the activation flow).",
             "default": null
           },
+          "activation_confirmed_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who confirmed the dry run.",
+            "default": null
+          },
           "activation_naming_policy_revision": {
             "type": [
               "string",
@@ -37240,6 +37728,82 @@
           }
         }
       },
+      "ManagementActivationConfirmBody": {
+        "type": "object",
+        "description": "Save settings with the dry runs that confirm them.",
+        "required": [
+          "settings",
+          "proofs",
+          "expected_settings_revision"
+        ],
+        "properties": {
+          "confirmation": {
+            "type": "boolean"
+          },
+          "expected_settings_revision": {
+            "type": "string"
+          },
+          "proofs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagementActivationProofBody"
+            }
+          },
+          "settings": {
+            "$ref": "#/components/schemas/LibraryManagementSettings"
+          }
+        }
+      },
+      "ManagementActivationPreviewBody": {
+        "type": "object",
+        "description": "Dry-run one library folder under proposed settings.",
+        "required": [
+          "root_id",
+          "settings",
+          "expected_settings_revision",
+          "expected_policy_revision"
+        ],
+        "properties": {
+          "expected_policy_revision": {
+            "type": "string"
+          },
+          "expected_settings_revision": {
+            "type": "string"
+          },
+          "idempotency_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "root_id": {
+            "type": "string"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/LibraryManagementSettings"
+          }
+        }
+      },
+      "ManagementActivationProofBody": {
+        "type": "object",
+        "description": "One dry run offered as proof.",
+        "required": [
+          "root_id",
+          "job_id",
+          "preview_token"
+        ],
+        "properties": {
+          "job_id": {
+            "type": "string"
+          },
+          "preview_token": {
+            "type": "string"
+          },
+          "root_id": {
+            "type": "string"
+          }
+        }
+      },
       "ManagementApplyBody": {
         "type": "object",
         "description": "Apply a ready preview.",
@@ -37262,6 +37826,30 @@
           },
           "preview_token": {
             "type": "string"
+          }
+        }
+      },
+      "ManagementAttentionBundleView": {
+        "type": "object",
+        "description": "A write that needs an administrator.",
+        "required": [
+          "bundle_id",
+          "file_count",
+          "sample_paths"
+        ],
+        "properties": {
+          "bundle_id": {
+            "type": "string"
+          },
+          "file_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sample_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -37314,6 +37902,79 @@
         ],
         "properties": {
           "expected_operation_row_revision": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ManagementDuplicateAction": {
+        "type": "string",
+        "description": "What to do with a file whose place is taken.",
+        "enum": [
+          "keep_existing",
+          "keep_incoming_alternate",
+          "recycle_existing_keep_incoming",
+          "recycle_incoming_keep_existing"
+        ]
+      },
+      "ManagementDuplicateBody": {
+        "type": "object",
+        "description": "Settle one file a preview could not place.",
+        "required": [
+          "source_job_id",
+          "source_plan_item_ordinal",
+          "expected_source_operation_row_revision",
+          "collision_kind",
+          "existing_root_id",
+          "existing_relative_path",
+          "action",
+          "expected_settings_revision",
+          "expected_policy_revision",
+          "idempotency_key"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/ManagementDuplicateAction"
+          },
+          "alternate_relative_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For `keep_incoming_alternate`: where the incoming file goes."
+          },
+          "collision_kind": {
+            "type": "string"
+          },
+          "existing_local_track_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "existing_relative_path": {
+            "type": "string"
+          },
+          "existing_root_id": {
+            "type": "string"
+          },
+          "expected_policy_revision": {
+            "type": "string"
+          },
+          "expected_settings_revision": {
+            "type": "string"
+          },
+          "expected_source_operation_row_revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "idempotency_key": {
+            "type": "string"
+          },
+          "source_job_id": {
+            "type": "string"
+          },
+          "source_plan_item_ordinal": {
             "type": "integer",
             "format": "int64"
           }
@@ -37894,6 +38555,104 @@
           }
         }
       },
+      "ManagementPurgeBody": {
+        "type": "object",
+        "description": "Delete every saved original for good.",
+        "required": [
+          "impact_token",
+          "expected_catalog_revision",
+          "typed_confirmation",
+          "idempotency_key"
+        ],
+        "properties": {
+          "expected_catalog_revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "idempotency_key": {
+            "type": "string"
+          },
+          "impact_token": {
+            "type": "string"
+          },
+          "typed_confirmation": {
+            "type": "string",
+            "description": "Must be `CONFIRM`."
+          }
+        }
+      },
+      "ManagementPurgeImpactView": {
+        "type": "object",
+        "description": "What a purge of the saved originals would remove.",
+        "required": [
+          "baseline_count",
+          "referenced_blob_count",
+          "referenced_blob_bytes",
+          "blocked_journal_count",
+          "active_restore_count",
+          "catalog_revision",
+          "impact_token"
+        ],
+        "properties": {
+          "active_restore_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "baseline_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "blocked_journal_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "catalog_revision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Echo on the purge."
+          },
+          "impact_token": {
+            "type": "string",
+            "description": "Echo on the purge."
+          },
+          "referenced_blob_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "referenced_blob_count": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ManagementPurgeView": {
+        "type": "object",
+        "description": "What a purge removed.",
+        "required": [
+          "purged_baseline_count",
+          "detached_reference_count",
+          "cleaned_blob_count",
+          "existing"
+        ],
+        "properties": {
+          "cleaned_blob_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "detached_reference_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "existing": {
+            "type": "boolean",
+            "description": "True when the request key named an earlier purge."
+          },
+          "purged_baseline_count": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "ManagementReasonView": {
         "type": "object",
         "description": "Why a file is left alone or failed: a stable code, a plain sentence,\nand what to do about it. v2 history carries only the code.",
@@ -37911,6 +38670,116 @@
           },
           "message": {
             "type": "string"
+          }
+        }
+      },
+      "ManagementRecoveryView": {
+        "type": "object",
+        "description": "The publish journal at a glance.",
+        "required": [
+          "recoverable_bundle_count",
+          "nonterminal_journal_count",
+          "needs_attention_count",
+          "cleanup_pending_count",
+          "state_counts",
+          "needs_attention_bundles"
+        ],
+        "properties": {
+          "cleanup_pending_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "needs_attention_bundles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagementAttentionBundleView"
+            }
+          },
+          "needs_attention_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Files in writes that need an administrator."
+          },
+          "nonterminal_journal_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "oldest_updated_at": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "recoverable_bundle_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Writes recovery will still finish or unwind."
+          },
+          "state_counts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ManagementResolveView": {
+        "type": "object",
+        "description": "A closed write.",
+        "required": [
+          "bundle_id",
+          "state",
+          "verified_files",
+          "total_files",
+          "note"
+        ],
+        "properties": {
+          "bundle_id": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string",
+            "description": "What closing did, and did not do, in words."
+          },
+          "state": {
+            "type": "string"
+          },
+          "total_files": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "verified_files": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ManagementRestorePreviewBody": {
+        "type": "object",
+        "description": "Preview putting files back the way they were before management.",
+        "required": [
+          "selection",
+          "expected_settings_revision",
+          "expected_policy_revision",
+          "idempotency_key"
+        ],
+        "properties": {
+          "expected_policy_revision": {
+            "type": "string"
+          },
+          "expected_settings_revision": {
+            "type": "string"
+          },
+          "idempotency_key": {
+            "type": "string"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/ManagementSelectionBody"
           }
         }
       },
@@ -38023,6 +38892,58 @@
           "tracks",
           "filter"
         ]
+      },
+      "ManagementSkippedAlbumView": {
+        "type": "object",
+        "description": "An album automatic management skipped.",
+        "required": [
+          "album_id",
+          "album_title",
+          "reason",
+          "attempts",
+          "updated_at"
+        ],
+        "properties": {
+          "album_id": {
+            "type": "string"
+          },
+          "album_title": {
+            "type": "string"
+          },
+          "artist_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "attempts": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/ManagementReasonView",
+            "description": "Why, in words, with what to do about it."
+          },
+          "updated_at": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "ManagementSkippedPage": {
+        "type": "object",
+        "description": "Albums automatic management skipped.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagementSkippedAlbumView"
+            }
+          }
+        }
       },
       "ManagementSummaryView": {
         "type": "object",
@@ -38153,6 +39074,179 @@
             "format": "int64"
           },
           "warning_count": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ManagementTagEditFieldBody": {
+        "type": "object",
+        "description": "One edited tag.",
+        "required": [
+          "field_name"
+        ],
+        "properties": {
+          "field_name": {
+            "type": "string"
+          },
+          "value": {
+            "description": "Text, a number, true/false, a list, or null to clear. Ignored for\na reset."
+          }
+        }
+      },
+      "ManagementTagEditMode": {
+        "type": "string",
+        "description": "How a tag edit is kept.",
+        "enum": [
+          "save_override",
+          "write_once",
+          "reset_canonical"
+        ]
+      },
+      "ManagementTagEditPreviewBody": {
+        "type": "object",
+        "description": "Preview a tag edit.",
+        "required": [
+          "local_track_id",
+          "mode",
+          "expected_settings_revision",
+          "expected_policy_revision",
+          "fields"
+        ],
+        "properties": {
+          "expected_policy_revision": {
+            "type": "string"
+          },
+          "expected_settings_revision": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagementTagEditFieldBody"
+            }
+          },
+          "idempotency_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "local_track_id": {
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ManagementTagEditMode"
+          }
+        }
+      },
+      "ManagementTagEditorFieldView": {
+        "type": "object",
+        "description": "One tag in the editor.",
+        "required": [
+          "field_name",
+          "scope",
+          "cardinality",
+          "current_value"
+        ],
+        "properties": {
+          "cardinality": {
+            "type": "string",
+            "description": "`string`, `integer`, `boolean`, or `ordered_strings`."
+          },
+          "current_value": {
+            "description": "The file's value now: text, a number, true/false, a list, or null."
+          },
+          "field_name": {
+            "type": "string"
+          },
+          "override_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "override_mode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`replace`, `preserve`, or `clear`."
+          },
+          "override_row_revision": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "scope": {
+            "type": "string",
+            "description": "`album` (applies to every file of the album) or `track`."
+          }
+        }
+      },
+      "ManagementTagEditorView": {
+        "type": "object",
+        "description": "One file's tags, saved overrides and match.",
+        "required": [
+          "local_track_id",
+          "local_album_id",
+          "root_id",
+          "profile_id",
+          "profile_name",
+          "settings_revision",
+          "policy_revision",
+          "track_revision",
+          "album_revision",
+          "accepted_identity",
+          "fields"
+        ],
+        "properties": {
+          "accepted_identity": {
+            "type": "boolean"
+          },
+          "album_revision": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ManagementTagEditorFieldView"
+            }
+          },
+          "identity_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the file has no accepted match, as a reason code."
+          },
+          "local_album_id": {
+            "type": "string"
+          },
+          "local_track_id": {
+            "type": "string"
+          },
+          "policy_revision": {
+            "type": "string",
+            "description": "Echo on the edit preview."
+          },
+          "profile_id": {
+            "type": "string"
+          },
+          "profile_name": {
+            "type": "string"
+          },
+          "root_id": {
+            "type": "string"
+          },
+          "settings_revision": {
+            "type": "string",
+            "description": "Echo on the edit preview."
+          },
+          "track_revision": {
             "type": "integer",
             "format": "int64"
           }

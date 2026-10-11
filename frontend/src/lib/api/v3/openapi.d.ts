@@ -4277,6 +4277,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/library/management/automatic/skipped": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Albums automatic management skipped, newest first, each with why. */
+        get: operations["list_management_automatic_skipped"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/baselines/purge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Delete every saved original for good. */
+        post: operations["purge_management_baselines"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/baselines/purge-impact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** What a purge of the saved originals would remove. */
+        post: operations["get_management_purge_impact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/baselines/restore-previews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview putting the selected albums back to their originals. */
+        post: operations["create_management_restore_preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/duplicate-resolution-previews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview settling one file whose destination is taken. */
+        post: operations["create_management_duplicate_preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/library/management/identity-preparations": {
         parameters: {
             query?: never;
@@ -4549,6 +4634,77 @@ export interface paths {
          *     stops working).
          */
         post: operations["reissue_management_preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/recovery/diagnostics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** What the publish journal holds, and the writes that need you. */
+        get: operations["get_management_recovery_diagnostics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/recovery/import-bundles/{bundle_id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Close a write that needs attention once its files check out. Nothing
+         *     on disk changes.
+         */
+        post: operations["resolve_management_bundle"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/tag-edit-previews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview a tag edit; apply it like any preview. */
+        post: operations["create_management_tag_edit_preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/library/management/tracks/{track_id}/tag-editor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The tag editor for one file. */
+        get: operations["get_management_tag_editor"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -7849,6 +8005,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v3/settings/library-management/activation-confirmations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Save settings that turn automatic management on, with their dry runs. */
+        post: operations["confirm_management_activation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v3/settings/library-management/activation-health": {
         parameters: {
             query?: never;
@@ -7858,6 +8031,40 @@ export interface paths {
         };
         /** Dry-run activation health for the active automatic roots. */
         get: operations["get_library_management_activation_health"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library-management/activation-previews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dry-run a library folder under proposed settings. Nothing changes. */
+        post: operations["create_management_activation_preview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v3/settings/library-management/activation-previews/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One dry run. */
+        get: operations["get_management_activation_preview"];
         put?: never;
         post?: never;
         delete?: never;
@@ -15212,6 +15419,11 @@ export interface components {
              */
             activation_confirmed_at: number | null;
             /**
+             * @description Who confirmed the dry run.
+             * @default null
+             */
+            activation_confirmed_by: string | null;
+            /**
              * @description Activation pins (set by the activation flow).
              * @default null
              */
@@ -16128,6 +16340,27 @@ export interface components {
             /** @default replace */
             mode: components["schemas"]["FieldMode"];
         };
+        /** @description Save settings with the dry runs that confirm them. */
+        ManagementActivationConfirmBody: {
+            confirmation?: boolean;
+            expected_settings_revision: string;
+            proofs: components["schemas"]["ManagementActivationProofBody"][];
+            settings: components["schemas"]["LibraryManagementSettings"];
+        };
+        /** @description Dry-run one library folder under proposed settings. */
+        ManagementActivationPreviewBody: {
+            expected_policy_revision: string;
+            expected_settings_revision: string;
+            idempotency_key?: string | null;
+            root_id: string;
+            settings: components["schemas"]["LibraryManagementSettings"];
+        };
+        /** @description One dry run offered as proof. */
+        ManagementActivationProofBody: {
+            job_id: string;
+            preview_token: string;
+            root_id: string;
+        };
         /** @description Apply a ready preview. */
         ManagementApplyBody: {
             /** @description Must be true: the administrator confirmed the change. */
@@ -16136,6 +16369,13 @@ export interface components {
             expected_operation_row_revision: number;
             idempotency_key: string;
             preview_token: string;
+        };
+        /** @description A write that needs an administrator. */
+        ManagementAttentionBundleView: {
+            bundle_id: string;
+            /** Format: int64 */
+            file_count: number;
+            sample_paths: string[];
         };
         /** @description Catalog filter for a `filter` selection. */
         ManagementCatalogFilterBody: {
@@ -16152,6 +16392,29 @@ export interface components {
         ManagementDiscardBody: {
             /** Format: int64 */
             expected_operation_row_revision: number;
+        };
+        /**
+         * @description What to do with a file whose place is taken.
+         * @enum {string}
+         */
+        ManagementDuplicateAction: "keep_existing" | "keep_incoming_alternate" | "recycle_existing_keep_incoming" | "recycle_incoming_keep_existing";
+        /** @description Settle one file a preview could not place. */
+        ManagementDuplicateBody: {
+            action: components["schemas"]["ManagementDuplicateAction"];
+            /** @description For `keep_incoming_alternate`: where the incoming file goes. */
+            alternate_relative_path?: string | null;
+            collision_kind: string;
+            existing_local_track_id?: string | null;
+            existing_relative_path: string;
+            existing_root_id: string;
+            expected_policy_revision: string;
+            expected_settings_revision: string;
+            /** Format: int64 */
+            expected_source_operation_row_revision: number;
+            idempotency_key: string;
+            source_job_id: string;
+            /** Format: int64 */
+            source_plan_item_ordinal: number;
         };
         /** @description One row of management history. */
         ManagementHistoryItemView: {
@@ -16335,6 +16598,46 @@ export interface components {
             job_id: string;
             preview_token: string;
         };
+        /** @description Delete every saved original for good. */
+        ManagementPurgeBody: {
+            /** Format: int64 */
+            expected_catalog_revision: number;
+            idempotency_key: string;
+            impact_token: string;
+            /** @description Must be `CONFIRM`. */
+            typed_confirmation: string;
+        };
+        /** @description What a purge of the saved originals would remove. */
+        ManagementPurgeImpactView: {
+            /** Format: int64 */
+            active_restore_count: number;
+            /** Format: int64 */
+            baseline_count: number;
+            /** Format: int64 */
+            blocked_journal_count: number;
+            /**
+             * Format: int64
+             * @description Echo on the purge.
+             */
+            catalog_revision: number;
+            /** @description Echo on the purge. */
+            impact_token: string;
+            /** Format: int64 */
+            referenced_blob_bytes: number;
+            /** Format: int64 */
+            referenced_blob_count: number;
+        };
+        /** @description What a purge removed. */
+        ManagementPurgeView: {
+            /** Format: int64 */
+            cleaned_blob_count: number;
+            /** Format: int64 */
+            detached_reference_count: number;
+            /** @description True when the request key named an earlier purge. */
+            existing: boolean;
+            /** Format: int64 */
+            purged_baseline_count: number;
+        };
         /**
          * @description Why a file is left alone or failed: a stable code, a plain sentence,
          *     and what to do about it. v2 history carries only the code.
@@ -16343,6 +16646,47 @@ export interface components {
             action: string;
             code: string;
             message: string;
+        };
+        /** @description The publish journal at a glance. */
+        ManagementRecoveryView: {
+            /** Format: int64 */
+            cleanup_pending_count: number;
+            needs_attention_bundles: components["schemas"]["ManagementAttentionBundleView"][];
+            /**
+             * Format: int64
+             * @description Files in writes that need an administrator.
+             */
+            needs_attention_count: number;
+            /** Format: int64 */
+            nonterminal_journal_count: number;
+            /** Format: double */
+            oldest_updated_at?: number | null;
+            /**
+             * Format: int64
+             * @description Writes recovery will still finish or unwind.
+             */
+            recoverable_bundle_count: number;
+            state_counts: {
+                [key: string]: number;
+            };
+        };
+        /** @description A closed write. */
+        ManagementResolveView: {
+            bundle_id: string;
+            /** @description What closing did, and did not do, in words. */
+            note: string;
+            state: string;
+            /** Format: int64 */
+            total_files: number;
+            /** Format: int64 */
+            verified_files: number;
+        };
+        /** @description Preview putting files back the way they were before management. */
+        ManagementRestorePreviewBody: {
+            expected_policy_revision: string;
+            expected_settings_revision: string;
+            idempotency_key: string;
+            selection: components["schemas"]["ManagementSelectionBody"];
         };
         /** @description One file after apply. */
         ManagementResultItemView: {
@@ -16375,6 +16719,22 @@ export interface components {
          * @enum {string}
          */
         ManagementSelectionKind: "roots" | "artists" | "albums" | "tracks" | "filter";
+        /** @description An album automatic management skipped. */
+        ManagementSkippedAlbumView: {
+            album_id: string;
+            album_title: string;
+            artist_name?: string | null;
+            /** Format: int64 */
+            attempts: number;
+            /** @description Why, in words, with what to do about it. */
+            reason: components["schemas"]["ManagementReasonView"];
+            /** Format: double */
+            updated_at: number;
+        };
+        /** @description Albums automatic management skipped. */
+        ManagementSkippedPage: {
+            items: components["schemas"]["ManagementSkippedAlbumView"][];
+        };
         /** @description What a preview counted. */
         ManagementSummaryView: {
             /** Format: int64 */
@@ -16421,6 +16781,64 @@ export interface components {
             tag_change_count: number;
             /** Format: int64 */
             warning_count: number;
+        };
+        /** @description One edited tag. */
+        ManagementTagEditFieldBody: {
+            field_name: string;
+            /**
+             * @description Text, a number, true/false, a list, or null to clear. Ignored for
+             *     a reset.
+             */
+            value?: unknown;
+        };
+        /**
+         * @description How a tag edit is kept.
+         * @enum {string}
+         */
+        ManagementTagEditMode: "save_override" | "write_once" | "reset_canonical";
+        /** @description Preview a tag edit. */
+        ManagementTagEditPreviewBody: {
+            expected_policy_revision: string;
+            expected_settings_revision: string;
+            fields: components["schemas"]["ManagementTagEditFieldBody"][];
+            idempotency_key?: string | null;
+            local_track_id: string;
+            mode: components["schemas"]["ManagementTagEditMode"];
+        };
+        /** @description One tag in the editor. */
+        ManagementTagEditorFieldView: {
+            /** @description `string`, `integer`, `boolean`, or `ordered_strings`. */
+            cardinality: string;
+            /** @description The file's value now: text, a number, true/false, a list, or null. */
+            current_value: unknown;
+            field_name: string;
+            override_id?: string | null;
+            /** @description `replace`, `preserve`, or `clear`. */
+            override_mode?: string | null;
+            /** Format: int64 */
+            override_row_revision?: number | null;
+            /** @description `album` (applies to every file of the album) or `track`. */
+            scope: string;
+        };
+        /** @description One file's tags, saved overrides and match. */
+        ManagementTagEditorView: {
+            accepted_identity: boolean;
+            /** Format: int64 */
+            album_revision: number;
+            fields: components["schemas"]["ManagementTagEditorFieldView"][];
+            /** @description Why the file has no accepted match, as a reason code. */
+            identity_reason?: string | null;
+            local_album_id: string;
+            local_track_id: string;
+            /** @description Echo on the edit preview. */
+            policy_revision: string;
+            profile_id: string;
+            profile_name: string;
+            root_id: string;
+            /** @description Echo on the edit preview. */
+            settings_revision: string;
+            /** Format: int64 */
+            track_revision: number;
         };
         /** @description Preview undoing an applied job. */
         ManagementUndoPreviewBody: {
@@ -31812,6 +32230,237 @@ export interface operations {
             };
         };
     };
+    list_management_automatic_skipped: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Skipped albums */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementSkippedPage"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    purge_management_baselines: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManagementPurgeBody"];
+            };
+        };
+        responses: {
+            /** @description Originals purged */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementPurgeView"];
+                };
+            };
+            /** @description Confirmation missing */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The impact changed, or a restore or write is running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_management_purge_impact: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Purge impact */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementPurgeImpactView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    create_management_restore_preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManagementRestorePreviewBody"];
+            };
+        };
+        responses: {
+            /** @description Preview queued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementPreviewCreatedResponse"];
+                };
+            };
+            /** @description Invalid selection */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Settings or library folders changed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    create_management_duplicate_preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManagementDuplicateBody"];
+            };
+        };
+        responses: {
+            /** @description Preview queued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementPreviewCreatedResponse"];
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown preview or file */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The preview or settings changed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     list_preparations: {
         parameters: {
             query?: never;
@@ -32699,6 +33348,201 @@ export interface operations {
                 content?: never;
             };
             /** @description Preview no longer ready */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_management_recovery_diagnostics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Journal diagnostics */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementRecoveryView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    resolve_management_bundle: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Publish bundle id */
+                bundle_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Write closed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementResolveView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown write */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A file is missing or different, or the write needs no attention */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    create_management_tag_edit_preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManagementTagEditPreviewBody"];
+            };
+        };
+        responses: {
+            /** @description Preview queued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementPreviewCreatedResponse"];
+                };
+            };
+            /** @description Invalid edit */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown track */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Settings or library folders changed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_management_tag_editor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Library track id */
+                track_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file's tags */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementTagEditorView"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown track */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The file cannot be read now */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -39866,6 +40710,65 @@ export interface operations {
             };
         };
     };
+    confirm_management_activation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManagementActivationConfirmBody"];
+            };
+        };
+        responses: {
+            /** @description Settings saved */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryManagementSettingsResponse"];
+                };
+            };
+            /** @description Missing confirmation or proof */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown dry run */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description A dry run is stale or settings changed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     get_library_management_activation_health: {
         parameters: {
             query?: never;
@@ -39883,6 +40786,109 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["LibraryManagementActivationHealthResponse"];
                 };
+            };
+        };
+    };
+    create_management_activation_preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManagementActivationPreviewBody"];
+            };
+        };
+        responses: {
+            /** @description Dry run queued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementPreviewCreatedResponse"];
+                };
+            };
+            /** @description The folder has no automatic trigger, or invalid settings */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Settings or library folders changed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_management_activation_preview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Dry run job id */
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dry run */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManagementJobView"];
+                };
+            };
+            /** @description Not a dry run */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Admin role required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown job */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
